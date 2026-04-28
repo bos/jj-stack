@@ -3,14 +3,9 @@
 Runs a series of read-only checks and prints a status line for each. Nothing
 is changed. Exit status is 0 if all checks pass or warn; 1 if any check fails.
 
-Checks run in order:
-
-- a Git remote can be resolved to a single remote
-- the remote URL points at a GitHub repository
-- a GitHub token is available via environment variable or the gh CLI
-- jj-review can reach the GitHub API and access the repository
-- the trunk branch can be determined from the GitHub repository
-- no interrupted operations are waiting for recovery
+It checks remote resolution, GitHub repository discovery, GitHub token
+availability, GitHub API access, trunk discovery, and whether interrupted
+operations are waiting for recovery.
 """
 
 from __future__ import annotations

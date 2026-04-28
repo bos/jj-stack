@@ -452,7 +452,7 @@ def _fetch_selected_stack_bookmarks(
         if len(candidates) > 1:
             raise CliError(
                 t"Could not safely import the selected stack because "
-                t"{ui.change_id(change_id)} matches multiple remote review branches on "
+                t"{ui.change_id(change_id)} matches multiple review branches on "
                 t"{ui.bookmark(remote.name)}: "
                 t"{ui.join(ui.bookmark, candidates)}."
             )

@@ -109,9 +109,9 @@ Use the head change ID printed in the warning. To inspect first, run:
 jj-review status <head-change-id>
 ```
 
-Status reports which saved submit baseline changed: local commits, review parents, or stack
-membership. `submit` refreshes that stack's PR branches and base branches on GitHub so reviewers
-see the current local stack.
+Status reports what changed since the last successful submit: local commits, review parents, or
+stack membership. `submit` refreshes that stack's PR branches and base branches on GitHub so
+reviewers see the current local stack.
 
 ## `land` says the local change differs from what reviewers approved
 

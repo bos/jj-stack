@@ -315,14 +315,14 @@ async def _abort_submit(
     remote_branch_cleanup_block: Message | None = None
     if (recorded_remote := remotes_by_name.get(remote_name)) is None:
         remote_branch_cleanup_block = t"recorded remote {ui.bookmark(remote_name)} is no " \
-            t"longer configured; abort will not guess where to delete remote review branches"
+            t"longer configured; abort will not guess where to delete review branches"
     else:
         current_github_repository = parse_github_repo(recorded_remote)
         if current_github_repository != recorded_github_repository:
             remote_branch_cleanup_block = (
                 t"recorded remote {ui.bookmark(remote_name)} no longer points at "
                 t"{recorded_github_repository.full_name}; abort will not guess where to "
-                t"delete remote review branches"
+                t"delete review branches"
             )
 
     per_change_ok: list[bool] = []

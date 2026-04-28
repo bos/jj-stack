@@ -273,6 +273,7 @@ def test_main_help_smoke_renders_without_error(
     assert "jj-review" in captured.out
     assert "Traceback" not in captured.err
 
+
 def _patch_fake_jj_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

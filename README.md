@@ -40,18 +40,17 @@ its impact in the best ways I could find:
 (Early versions started out naively using the REST API serially, and they were horrendously
 slow. The tool as it stands is now tens of times faster on stacks of even modest size.)
 
-## Why should your agent use it?
+## Why use it with coding agents?
 
-A typical 2026-era coding agent will barf out a giant hairball of code in one convulsive glob,
-given the opportunity. How can `jj-review` help manage this?
+Like people, coding agents produce better, more reviewable work when a task is split into
+smaller, self-contained steps.
 
-Any reviewer, human or not (and you *do* actually review code, right?) is going to have a vastly
-easier time with a series of smaller, self-contained increments. So at least from the *demand*
-side, the benefit of a tool like this is clear.
+Any reviewer, human or not, will have an easier time with a series of smaller, self-contained
+incremental changes. This matters even more when review feedback needs to be applied to one part
+of a stack without obscuring the rest of the work.
 
-- Agents work best when tasks are decomposed. A stacked review lets an agent revise only those
-  commits that are wrong (and their descendants, as required) then resubmit, instead of
-  reopening one enormous PR where review-driven changes get lost in the maelstrom.
+- Agents work best when tasks are decomposed. A stacked review lets an agent revise only the
+  commits that are wrong (and their descendants as needed), then resubmit.
 
 - Smaller PRs are far easier for both humans and agents to re-read after feedback. Context
   windows are bigger in 2026, but agent attention is still limited, and human attention is under
@@ -60,24 +59,19 @@ side, the benefit of a tool like this is clear.
 - Validation is more easily staged. It's easier to approve and land good-to-go changes while
   others are still in flux.
 
-- Mutable local history is more valuable with agents. You've seen how an agent will often
-  produce a first draft that needs aggressive reshaping. `jj` is the best tool to rework changes
-  and history, and `jj-review` offers the smoothest way to get the cleaned-up result to GitHub.
+- Mutable local history is more valuable with agents. Agent-produced first drafts often need
+  reshaping, and `jj` is the best tool to rework changes and history before refreshing GitHub.
 
-## But *ew*, it was written by an agent!
+## Development note
 
-If you simply *must* clutch your pearls because of a tool written by AI, then this one offers
-you a rich vein of offense that is yours to take.
+This project has been developed with heavy agent assistance. Judge it by the behaviour it provides:
 
-- I haven't written a single line of code (user-facing docs? different story)
-- Despite attention to the internals, the code is more chaotic than I enjoy
-
-However:
-
-- The user experience is solid
-- The test suite is good: around 450 tests with >85% coverage as of April 2026
-- I was able to vastly improve performance without losing my mind to the depravities of GraphQL
-  or async Python
+- The user experience is treated as part of correctness
+- User-facing docs are managed separately from the generated implementation work
+- The test suite covers the main workflows, with around 550 tests and greater than 80% coverage
+  as of April 2026
+- Performance has been a major focus, with a lot of attention to concurrent and batched
+  operations when those are costly (e.g. roundtrips to the GitHub API)
 
 ## Quick start
 
