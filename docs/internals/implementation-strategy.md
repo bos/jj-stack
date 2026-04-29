@@ -190,6 +190,9 @@ It does not decide stack topology or branch naming.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
+Interrupted-operation records carry `started_at` and ordered change IDs; status renders those
+fields directly as age-stamped recovery guidance with change-ID-based commands, without adding
+derived recovery state to the tracking file.
 
 Repo-scoped inspection treats orphan-only tracking as first-class output. `list` can
 render those saved orphan rows directly without loading bookmark state when no live

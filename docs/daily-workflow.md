@@ -236,13 +236,16 @@ jj-review submit
 ## When something goes wrong
 
 If a command is interrupted mid-way (crash, Ctrl-C, network failure), `status`
-will report an interrupted operation. Use `abort` to undo the partial work and
-get back to a clean state:
+will report an interrupted operation, when it started, and whether it belongs
+to the stack currently being shown. Use the command lines printed by `status`
+to inspect or continue the recorded stack:
 
 ```bash
-jj-review status        # see what was interrupted
-jj-review abort --dry-run   # preview what would be undone
-jj-review abort         # undo and clean up
+jj-review status              # see what was interrupted
+jj-review status <change-id>  # inspect the interrupted stack
+jj-review submit <change-id>  # finish an interrupted submit
+jj-review abort --dry-run     # preview what abort would undo
+jj-review abort               # undo and clean up, if the preview looks right
 ```
 
 For interrupted `submit`, the recorded notice identifies the stack it started

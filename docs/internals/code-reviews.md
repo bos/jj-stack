@@ -87,6 +87,14 @@ Pay attention to:
 - modules being invented to just contain one or two things
 - small validation or guardrail code that hardens behavior without a real user need
 
+## Bad smells
+
+Agents like to sometimes introduce sloppy practices:
+
+- `Any` or `object` in a type signature when a more specific type would be appropriate
+- `cast(...)` or `getattr`: occasionally okay in the test suite, with a high bar; effectively
+  never okay in the main `src` tree
+
 ## Testing
 
 Use [testing-philosophy.md](testing-philosophy.md) as the guide for judging whether added or

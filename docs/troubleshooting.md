@@ -211,11 +211,20 @@ jj-review status
 `status` names the command that was cut short and the stack it was working on. From there you
 have two options: **finish what was started**, or **back out**.
 
+Interrupted-operation lines include when the command started. Recent records usually mean a
+command failed or was interrupted during your current work; older records usually mean leftover
+state from a previous day. If `status` says the interrupted operation is not for the stack shown
+above, start by inspecting the printed change ID:
+
+```bash
+jj-review status <change-id>
+```
+
 ### Finish what was started
 
-Re-run the same command, passing the revset `status` named so you don't accidentally operate on
-a different stack. `jj-review` reads the interrupted-operation record, picks up where it left
-off, and skips the work that already completed.
+Re-run the same command, passing the change ID or revset `status` printed so you don't
+accidentally operate on a different stack. `jj-review` reads the interrupted-operation record,
+picks up where it left off, and skips the work that already completed.
 
 | If `status` says was interrupted | Re-run                                   |
 | -------------------------------- | ---------------------------------------- |

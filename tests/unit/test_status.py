@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 from jj_review import console as console_module
 from jj_review.commands import status as status_module
 from jj_review.config import RepoConfig
+from jj_review.models.intent import SubmitIntent
 from jj_review.review.status import StatusResult
 from jj_review.review.topology import SubmittedStateDisagreement
 
@@ -125,7 +127,84 @@ def test_render_status_intent_lines_reports_stale_and_interrupted_operations(
 
     assert "Stale incomplete operations (change IDs no longer in repo):" in lines
     assert any("submit on @" in line and "process alive" in line for line in lines)
-    assert any("land on @" in line and "inspect before re-running" in line for line in lines)
+    assert any("land on @" in line and "started at unknown time" in line for line in lines)
+    assert any("inspect with jj-review status" in line for line in lines)
+
+
+def test_render_status_intent_lines_guides_submit_for_different_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(status_module, "pid_is_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        status_module,
+        "_now_utc",
+        lambda: datetime(2026, 4, 29, 12, tzinfo=UTC),
+    )
+    intent = SubmitIntent(
+        kind="submit",
+        pid=99999999,
+        label="submit for nnszmtlx (from @-)",
+        display_revset="@-",
+        ordered_change_ids=("nnszmtlxaaaaaaaa",),
+        ordered_commit_ids=("recordedcommit",),
+        remote_name="origin",
+        github_host="github.test",
+        github_owner="octo-org",
+        github_repo="stacked-review",
+        bookmarks={},
+        started_at="2026-04-25T11:00:00+00:00",
+    )
+    prepared_status = SimpleNamespace(
+        stale_intents=(),
+        outstanding_intents=(SimpleNamespace(intent=intent),),
+        prepared=SimpleNamespace(
+            status_revisions=(
+                SimpleNamespace(
+                    revision=SimpleNamespace(
+                        change_id="xvxxlmonaaaaaaaa",
+                        commit_id="currentcommit",
+                    )
+                ),
+            ),
+            remote=None,
+        ),
+        github_repository=None,
+    )
+
+    lines = _render_lines(
+        *status_module.render_status_intent_lines(prepared_status=prepared_status)
+    )
+    normalized_lines = " ".join(" ".join(line.split()) for line in lines)
+
+    assert "submit for nnszmtlx, started 4d ago from @-" in normalized_lines
+    assert "this is not the stack shown above" in normalized_lines
+    assert "inspect with jj-review status nnszmtlx" in normalized_lines
+    assert "finish with jj-review submit nnszmtlx" in normalized_lines
+    assert "preview backout with jj-review abort --dry-run" in normalized_lines
+    assert "recorded stack differs from the current selection" not in normalized_lines
+
+
+@pytest.mark.parametrize(
+    ("started_at", "expected"),
+    [
+        ("2026-04-29T11:59:35+00:00", "just now"),
+        ("2026-04-29T11:47:00+00:00", "13m ago"),
+        ("2026-04-29T07:30:00+00:00", "4h ago"),
+        ("2026-04-25T11:00:00+00:00", "4d ago"),
+        ("2026-04-20T11:00:00+00:00", "2026-04-20"),
+    ],
+)
+def test_format_operation_age_uses_relative_time_for_recent_records(
+    started_at: str,
+    expected: str,
+) -> None:
+    assert (
+        status_module._format_operation_age(
+            started_at,
+            now=datetime(2026, 4, 29, 12, tzinfo=UTC),
+        )
+        == expected
+    )
 
 
 def test_status_summary_truncates_middle_of_long_unsubmitted_sections() -> None:

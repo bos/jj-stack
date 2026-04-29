@@ -410,6 +410,11 @@ configured well enough to resolve a remote or GitHub target. Default output stay
 concise — one effective summary per change rather than dumping saved-data and transport
 diagnostics inline.
 
+When interrupted-operation records exist, `status` renders them as recovery guidance:
+the command that was interrupted, the recorded stack head, the original selector, the
+age from `started_at`, whether the record matches the stack currently shown, and stable
+change-ID-based commands to inspect, continue, or preview abort behavior.
+
 `status` may add a repo-level advisory for other tracked stacks when the saved
 submitted state disagrees with the current DAG: either a tracked change's saved
 `last_submitted_commit_id` differs from its current commit, or the saved topology

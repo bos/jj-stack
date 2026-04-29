@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -23,6 +24,7 @@ from jj_review.formatting import (
     format_status_annotation,
     render_revision_blocks,
     render_revision_lines,
+    short_change_id,
 )
 from jj_review.github.error_messages import (
     github_unavailable_message,
@@ -453,6 +455,8 @@ def _render_prepared_status(
     ):
         exit_code = max(exit_code, 1)
     return exit_code
+
+
 def render_status_selection_lines(*, prepared_status) -> tuple[object, ...]:
     """Render exceptional local selection context lines."""
 
@@ -802,14 +806,10 @@ def _submitted_state_disagreement_rows(
     disagreements: Sequence[SubmittedStateDisagreement],
 ) -> tuple[tuple[object, object], ...]:
     commit_changed = tuple(
-        disagreement.change_id
-        for disagreement in disagreements
-        if disagreement.commit_changed
+        disagreement.change_id for disagreement in disagreements if disagreement.commit_changed
     )
     parent_changed = tuple(
-        disagreement.change_id
-        for disagreement in disagreements
-        if disagreement.parent_changed
+        disagreement.change_id for disagreement in disagreements if disagreement.parent_changed
     )
     stack_head_changed = tuple(
         disagreement.change_id
@@ -904,92 +904,12 @@ def render_status_intent_lines(*, prepared_status) -> tuple[object, ...]:
     if prepared_status.outstanding_intents:
         lines.extend(("", "Interrupted operations recorded:"))
         for loaded in prepared_status.outstanding_intents:
-            alive = pid_is_alive(loaded.intent.pid)
-            description = _render_intent_description(loaded.intent)
-            if alive:
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        format_status_annotation(f"in progress, PID {loaded.intent.pid}"),
-                    )
+            lines.extend(
+                _render_interrupted_intent_block(
+                    loaded=loaded,
+                    prepared_status=prepared_status,
                 )
-            elif isinstance(loaded.intent, SubmitIntent):
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        _render_interrupted_submit_status_line(
-                            intent=loaded.intent,
-                            prepared_status=prepared_status,
-                        ),
-                    )
-                )
-            elif isinstance(loaded.intent, CleanupRebaseIntent | CloseIntent):
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        _render_interrupted_match_status_line(
-                            match=_match_ordered_intent(
-                                intent=loaded.intent,
-                                prepared_status=prepared_status,
-                            ),
-                            rerun_command=_render_rerun_command(
-                                command=_intent_rerun_command(loaded.intent),
-                                revset=prepared_status.selected_revset,
-                            ),
-                        ),
-                    )
-                )
-            elif isinstance(loaded.intent, RelinkIntent):
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        (
-                            "interrupted, inspect before rerunning ",
-                            ui.cmd("relink"),
-                            " again",
-                        ),
-                    )
-                )
-            elif isinstance(loaded.intent, CleanupIntent):
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        (
-                            "interrupted, inspect before rerunning ",
-                            ui.cmd("cleanup"),
-                            " again",
-                        ),
-                    )
-                )
-            elif isinstance(loaded.intent, AbortIntent):
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        (
-                            "interrupted, inspect before rerunning ",
-                            ui.cmd("abort"),
-                            " again",
-                        ),
-                    )
-                )
-            elif isinstance(loaded.intent, LandIntent):
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        (
-                            "interrupted, inspect before rerunning ",
-                            ui.cmd("land"),
-                            " again",
-                        ),
-                    )
-                )
-            else:
-                lines.append(
-                    _prefixed_intent_line(
-                        description,
-                        format_status_annotation("interrupted, inspect before re-running"),
-                    )
-                )
+            )
     return tuple(lines)
 
 
@@ -1041,15 +961,82 @@ def _interrupted_intent_blocks_status(*, loaded, prepared_status) -> bool:
     return bool(loaded.intent.change_ids() & current_change_id_set)
 
 
-def _render_interrupted_submit_status_line(
+def _render_interrupted_intent_block(
+    *,
+    loaded,
+    prepared_status,
+) -> tuple[object, ...]:
+    intent = loaded.intent
+    header = _render_interrupted_intent_header(intent)
+    lines: list[object] = [("  ", header)]
+
+    if pid_is_alive(intent.pid):
+        lines.append(
+            (
+                "    ",
+                t"still in progress (PID {intent.pid}); run "
+                t"{ui.cmd('jj-review status')} again after it finishes",
+            )
+        )
+        return tuple(lines)
+
+    if isinstance(intent, SubmitIntent):
+        detail_lines = _interrupted_submit_detail_lines(
+            intent=intent,
+            prepared_status=prepared_status,
+        )
+    elif isinstance(intent, CleanupRebaseIntent | CloseIntent):
+        detail_lines = _interrupted_ordered_detail_lines(
+            intent=intent,
+            match=_match_ordered_intent(
+                intent=intent,
+                prepared_status=prepared_status,
+            ),
+        )
+    elif isinstance(intent, LandIntent):
+        detail_lines = _interrupted_ordered_detail_lines(
+            intent=intent,
+            match=_match_land_intent(intent=intent, prepared_status=prepared_status),
+        )
+    elif isinstance(intent, RelinkIntent):
+        detail_lines = (
+            (
+                "inspect with ",
+                _render_status_command(intent),
+                " before rerunning ",
+                ui.cmd("jj-review relink"),
+            ),
+        )
+    elif isinstance(intent, CleanupIntent):
+        detail_lines = (
+            (
+                "inspect with ",
+                _render_status_command(intent),
+                "; rerun ",
+                ui.cmd("jj-review cleanup"),
+                " if still needed",
+            ),
+        )
+    elif isinstance(intent, AbortIntent):
+        detail_lines = (
+            (
+                "previous abort was interrupted; rerun ",
+                ui.cmd("jj-review abort"),
+                " if cleanup is still needed",
+            ),
+        )
+    else:
+        detail_lines = (("inspect with ", ui.cmd("jj-review status")),)
+
+    lines.extend(("    ", detail) for detail in detail_lines)
+    return tuple(lines)
+
+
+def _interrupted_submit_detail_lines(
     *,
     intent: SubmitIntent,
     prepared_status,
-) -> object:
-    rerun_command = _render_rerun_command(
-        command="submit",
-        revset=prepared_status.selected_revset,
-    )
+) -> tuple[object, ...]:
     current_change_ids = tuple(
         prepared_revision.revision.change_id
         for prepared_revision in prepared_status.prepared.status_revisions
@@ -1064,28 +1051,33 @@ def _render_interrupted_submit_status_line(
         current_commit_ids=current_commit_ids,
         current_identity=_current_submit_identity(prepared_status=prepared_status),
     )
+    resume_command = _render_resume_command(intent)
+    abort_command = ui.cmd("jj-review abort --dry-run")
     if decision is SubmitStatusDecision.CONTINUE:
-        status = (
-            "interrupted, rerun ",
-            rerun_command,
-            " to continue on the current stack",
+        return (
+            "this matches the stack shown above",
+            ("continue with ", resume_command, ", or preview backout with ", abort_command),
         )
-    elif decision is SubmitStatusDecision.CURRENT_STACK:
-        status = (
-            "interrupted, recorded stack was rewritten; rerunning ",
-            rerun_command,
-            " will submit the current stack",
+    if decision is SubmitStatusDecision.CURRENT_STACK:
+        return (
+            "the recorded stack was rewritten; rerunning submit will use the stack shown above",
+            ("continue with ", resume_command, ", or preview backout with ", abort_command),
         )
-    elif decision is SubmitStatusDecision.INSPECT:
-        status = (
-            "interrupted, current stack matches but the recorded submit target "
-            "does not; inspect before running ",
-            rerun_command,
-            " again",
+    if decision is SubmitStatusDecision.INSPECT:
+        return (
+            "this matches the stack shown above, but the recorded submit target is different",
+            (
+                "inspect before continuing with ",
+                resume_command,
+                "; preview backout with ",
+                abort_command,
+            ),
         )
-    else:
-        status = "interrupted, recorded stack differs from the current selection"
-    return status
+    return (
+        "this is not the stack shown above",
+        ("inspect with ", _render_status_command(intent)),
+        ("finish with ", resume_command, ", or preview backout with ", abort_command),
+    )
 
 
 def _current_submit_identity(*, prepared_status) -> SubmitRecoveryIdentity | None:
@@ -1099,19 +1091,15 @@ def _current_submit_identity(*, prepared_status) -> SubmitRecoveryIdentity | Non
     )
 
 
-def _render_rerun_command(*, command: str, revset: str) -> tuple[object, ...]:
-    """Render an explicit rerun command for the current selection."""
-
-    return (
-        ui.cmd(command),
-        " ",
-        ui.revset(revset),
-    )
-
-
-def _intent_rerun_command(intent: CleanupRebaseIntent | CloseIntent) -> str:
+def _intent_rerun_command(
+    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent,
+) -> str:
+    if isinstance(intent, SubmitIntent):
+        return "submit"
     if isinstance(intent, CleanupRebaseIntent):
         return "cleanup --rebase"
+    if isinstance(intent, LandIntent):
+        return "land"
     return "close --cleanup" if intent.cleanup else "close"
 
 
@@ -1141,47 +1129,206 @@ def _match_ordered_intent(
     )
 
 
-def _render_interrupted_match_status_line(
+def _match_land_intent(
+    *,
+    intent: LandIntent,
+    prepared_status,
+) -> SubmitIntentMatch:
+    current_change_ids = tuple(
+        prepared_revision.revision.change_id
+        for prepared_revision in prepared_status.prepared.status_revisions
+    )
+    current_commit_ids = tuple(
+        prepared_revision.revision.commit_id
+        for prepared_revision in prepared_status.prepared.status_revisions
+    )
+    if intent.ordered_change_ids == current_change_ids:
+        if intent.ordered_commit_ids and intent.ordered_commit_ids == current_commit_ids:
+            return "exact"
+        return "same-logical"
+    if set(intent.ordered_change_ids) == set(current_change_ids):
+        return "same-logical"
+    if set(intent.ordered_change_ids).issubset(current_change_ids):
+        return "covered"
+    if set(current_change_ids).issubset(intent.ordered_change_ids):
+        return "trimmed"
+    if set(intent.ordered_change_ids) & set(current_change_ids):
+        return "overlap"
+    return "disjoint"
+
+
+def _interrupted_ordered_detail_lines(
     *,
     match: SubmitIntentMatch,
-    rerun_command: tuple[object, ...],
-) -> object:
-    """Render the interrupted-status message for an ordered-stack intent match."""
+    intent: CleanupRebaseIntent | CloseIntent | LandIntent,
+) -> tuple[object, ...]:
+    resume_command = _render_resume_command(intent)
 
     if match == "exact":
         return (
-            "interrupted, rerun ",
-            rerun_command,
-            " to continue on the current stack",
+            "this matches the stack shown above",
+            ("continue with ", resume_command),
         )
     if match == "same-logical":
+        command = _intent_rerun_command(intent)
         return (
-            "interrupted, recorded stack was rewritten; rerunning ",
-            rerun_command,
-            " will use the current stack",
+            (
+                "the recorded stack was rewritten; rerunning ",
+                command,
+                " will use the stack shown above",
+            ),
+            ("continue with ", resume_command),
         )
     if match == "covered":
         return (
-            "interrupted, the recorded changes are all included in the current stack; ",
-            "rerunning ",
-            rerun_command,
-            " will use the current stack",
+            "the recorded changes are all included in the stack shown above",
+            ("continue with ", resume_command),
         )
     if match == "trimmed":
         return (
-            "interrupted, the recorded stack still includes changes that are no "
-            "longer on the current stack; ",
-            "rerunning ",
-            rerun_command,
-            " will use the current stack",
+            "the recorded stack includes changes that are no longer in the stack shown above",
+            (
+                "inspect with ",
+                _render_status_command(intent),
+                " before continuing with ",
+                resume_command,
+            ),
         )
     if match == "overlap":
         return (
-            "interrupted, current stack differs; inspect before running ",
-            rerun_command,
-            " again",
+            "the recorded stack partly overlaps the stack shown above",
+            (
+                "inspect with ",
+                _render_status_command(intent),
+                " before continuing with ",
+                resume_command,
+            ),
         )
-    return "interrupted, recorded stack differs from the current selection"
+    return (
+        "this is not the stack shown above",
+        ("inspect with ", _render_status_command(intent)),
+        ("finish with ", resume_command),
+    )
+
+
+def _render_resume_command(
+    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent,
+) -> ui.SemanticText:
+    selector = _intent_selector(intent)
+    command = f"jj-review {_intent_rerun_command(intent)}"
+    if selector is not None:
+        command = f"{command} {selector}"
+    return ui.cmd(command)
+
+
+def _render_status_command(intent) -> ui.SemanticText:
+    selector = _intent_selector(intent)
+    command = "jj-review status"
+    if selector is not None:
+        command = f"{command} {selector}"
+    return ui.cmd(command)
+
+
+def _intent_selector(intent) -> str | None:
+    if isinstance(intent, SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent):
+        if intent.ordered_change_ids:
+            return short_change_id(intent.ordered_change_ids[-1])
+    if isinstance(intent, RelinkIntent):
+        return short_change_id(intent.change_id)
+    return None
+
+
+def _render_interrupted_intent_header(intent) -> object:
+    started = _render_started_at(intent)
+    if isinstance(intent, SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent):
+        return (
+            _render_intent_command(intent),
+            " for ",
+            _render_recorded_stack_head(intent),
+            ", ",
+            started,
+            " from ",
+            ui.revset(intent.display_revset),
+        )
+    if isinstance(intent, RelinkIntent):
+        return (
+            _render_intent_command(intent),
+            " for ",
+            ui.change_id(intent.change_id),
+            ", ",
+            started,
+        )
+    return (_render_intent_command(intent), ", ", started)
+
+
+def _render_intent_command(intent) -> object:
+    if isinstance(intent, SubmitIntent):
+        return ui.cmd("submit")
+    if isinstance(intent, CleanupRebaseIntent):
+        return ui.cmd("cleanup --rebase")
+    if isinstance(intent, CloseIntent):
+        return ui.cmd("close --cleanup" if intent.cleanup else "close")
+    if isinstance(intent, LandIntent):
+        return ui.cmd("land")
+    if isinstance(intent, RelinkIntent):
+        return ui.cmd("relink")
+    if isinstance(intent, CleanupIntent):
+        return ui.cmd("cleanup")
+    if isinstance(intent, AbortIntent):
+        return ui.cmd("abort")
+    return intent.label
+
+
+def _render_recorded_stack_head(
+    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent,
+) -> object:
+    if not intent.ordered_change_ids:
+        return "stack"
+    return ui.change_id(intent.ordered_change_ids[-1])
+
+
+def _render_started_at(intent) -> str:
+    started_at = getattr(intent, "started_at", None)
+    if not isinstance(started_at, str):
+        return "started at unknown time"
+    return f"started {_format_operation_age(started_at)}"
+
+
+def _format_operation_age(
+    started_at: str,
+    *,
+    now: datetime | None = None,
+) -> str:
+    if now is None:
+        now = _now_utc()
+    try:
+        started = datetime.fromisoformat(started_at)
+    except ValueError:
+        return "at unknown time"
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    else:
+        started = started.astimezone(UTC)
+
+    elapsed_seconds = int((now - started).total_seconds())
+    if elapsed_seconds < 0:
+        return started.date().isoformat()
+    if elapsed_seconds < 60:
+        return "just now"
+    elapsed_minutes = elapsed_seconds // 60
+    if elapsed_minutes < 60:
+        return f"{elapsed_minutes}m ago"
+    elapsed_hours = elapsed_minutes // 60
+    if elapsed_hours < 24:
+        return f"{elapsed_hours}h ago"
+    elapsed_days = elapsed_hours // 24
+    if elapsed_days < 7:
+        return f"{elapsed_days}d ago"
+    return started.date().isoformat()
+
+
+def _now_utc() -> datetime:
+    return datetime.now(UTC)
 
 
 def _render_summary_revision_lines(
