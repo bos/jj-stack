@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -85,7 +85,7 @@ class LandIntent(OrderedChangeIdsIntent):
     selected_pr_number: int | None = None
 
 
-IntentFile: TypeAlias = Annotated[
+type IntentFile = Annotated[
     SubmitIntent
     | CleanupIntent
     | CleanupRebaseIntent

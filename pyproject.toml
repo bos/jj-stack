@@ -61,7 +61,6 @@ src = ["src", "tests", "tools"]
 target-version = "py314"
 
 [tool.ruff.lint]
-ignore = ["UP040", "UP047"]
 select = ["B", "E", "F", "I", "UP"]
 
 [tool.ruff.lint.isort]

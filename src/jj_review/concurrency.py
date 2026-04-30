@@ -5,12 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Sequence
 from enum import Enum
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
 DEFAULT_BOUNDED_CONCURRENCY = 8
-
-_TaskItemT = TypeVar("_TaskItemT")
-_TaskResultT = TypeVar("_TaskResultT")
 
 
 class _Missing(Enum):
@@ -20,13 +17,13 @@ class _Missing(Enum):
 _MISSING: Literal[_Missing.MISSING] = _Missing.MISSING
 
 
-async def run_bounded_tasks(
+async def run_bounded_tasks[TaskItemT, TaskResultT](
     *,
     concurrency: int,
-    items: Sequence[_TaskItemT],
-    run_item: Callable[[_TaskItemT], Coroutine[Any, Any, _TaskResultT]],
-    on_success: Callable[[int, _TaskResultT], None] | None = None,
-) -> list[_TaskResultT]:
+    items: Sequence[TaskItemT],
+    run_item: Callable[[TaskItemT], Coroutine[Any, Any, TaskResultT]],
+    on_success: Callable[[int, TaskResultT], None] | None = None,
+) -> list[TaskResultT]:
     """Run work with bounded in-flight tasks while preserving result order.
 
     New work stops launching after the first failure, but already-started work
@@ -37,8 +34,8 @@ async def run_bounded_tasks(
         return []
 
     item_iter = iter(enumerate(items))
-    in_flight: dict[asyncio.Task[_TaskResultT], int] = {}
-    results: list[_TaskResultT | Literal[_Missing.MISSING]] = [_MISSING] * len(items)
+    in_flight: dict[asyncio.Task[TaskResultT], int] = {}
+    results: list[TaskResultT | Literal[_Missing.MISSING]] = [_MISSING] * len(items)
     first_failure: tuple[int, Exception] | None = None
 
     def start_next() -> bool:
@@ -88,7 +85,7 @@ async def run_bounded_tasks(
     if first_failure is not None:
         raise first_failure[1]
 
-    completed_results: list[_TaskResultT] = []
+    completed_results: list[TaskResultT] = []
     for result in results:
         if result is _MISSING:
             raise AssertionError("Bounded task runner completed without a task result.")

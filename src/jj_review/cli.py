@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from jj_review import __version__, bootstrap, commands, console, ui
 from jj_review.bootstrap import APP_START
@@ -31,7 +31,6 @@ from jj_review.errors import CliError, error_hint, error_message
 from jj_review.jj import JjCliArgs
 
 logger = logging.getLogger(__name__)
-SubparserT = TypeVar("SubparserT", bound=ArgumentParser)
 _COLOR_CHOICES: tuple[RequestedColorMode, ...] = ("always", "never", "debug", "auto")
 _TOP_LEVEL_HELP_USAGE = "jj-review [--help] [--color WHEN] [--version] [<command> ...]"
 _TOP_LEVEL_HELP_DESCRIPTION = """
@@ -1137,7 +1136,7 @@ def _is_grouped_status_flag(arg: str) -> bool:
     return arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) <= {"f", "v", "h"}
 
 
-def _add_revision_command(
+def _add_revision_command[SubparserT: ArgumentParser](
     subparsers: _SubParsersAction[SubparserT],
     *,
     command: str,
@@ -1161,7 +1160,7 @@ def _add_revision_command(
     return parser
 
 
-def _add_relink_parser(
+def _add_relink_parser[SubparserT: ArgumentParser](
     subparsers: _SubParsersAction[SubparserT],
     *,
     command: str,
@@ -1182,7 +1181,7 @@ def _add_relink_parser(
     return parser
 
 
-def _add_import_parser(
+def _add_import_parser[SubparserT: ArgumentParser](
     subparsers: _SubParsersAction[SubparserT],
     *,
     command: str,

@@ -10,7 +10,7 @@ import subprocess
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from email.utils import parsedate_to_datetime
-from typing import Any, TypeVar
+from typing import Any
 from urllib.parse import urlparse
 
 import httpxyz
@@ -25,7 +25,6 @@ from jj_review.models.github import (
 )
 
 logger = logging.getLogger(__name__)
-ChunkValue = TypeVar("ChunkValue")
 _GRAPHQL_PULL_REQUEST_BATCH_SIZE = 25
 
 _DEFAULT_RATE_LIMIT_RETRIES = 3
@@ -700,7 +699,11 @@ def _graphql_mutation_pull_request_payload(
     )
 
 
-def _chunked(values: Sequence[ChunkValue], *, size: int) -> list[tuple[ChunkValue, ...]]:
+def _chunked[ChunkValue](
+    values: Sequence[ChunkValue],
+    *,
+    size: int,
+) -> list[tuple[ChunkValue, ...]]:
     return [tuple(values[index : index + size]) for index in range(0, len(values), size)]
 
 
@@ -1008,10 +1011,7 @@ def _issue_comments_from_graphql(
     return comments, has_next_page
 
 
-GraphqlModel = TypeVar("GraphqlModel", bound=BaseModel)
-
-
-def _validate_graphql_model(
+def _validate_graphql_model[GraphqlModel: BaseModel](
     payload: object,
     *,
     model: type[GraphqlModel],

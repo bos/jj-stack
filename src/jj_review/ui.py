@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from string.templatelib import Interpolation, Template, convert
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +21,6 @@ class SemanticText:
 
 StatusValue = Literal["ok", "warn", "fail", "skip"]
 type Message = str | Template | SemanticText | tuple[Any, ...]
-T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +116,7 @@ def status(value: StatusValue) -> StatusBadge:
     return StatusBadge(value=value)
 
 
-def join(
+def join[T](
     render_item: Callable[[T], object],
     items: Iterable[T],
 ) -> tuple[object, ...]:
