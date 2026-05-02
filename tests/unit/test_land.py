@@ -364,7 +364,6 @@ def test_report_stale_land_intents_does_not_claim_resume_without_resume_match() 
     stderr = StringIO()
     with console.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
         _report_stale_land_intents(
-            current_landed_change_ids=("change-1",),
             prepared_status=prepared_status,
             resume_intent=None,
             stale_intents=[loaded_intent],

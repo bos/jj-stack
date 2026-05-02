@@ -67,7 +67,6 @@ def prepare_land_execution_state(
         trunk_branch=trunk_branch,
     )
     _report_stale_land_intents(
-        current_landed_change_ids=current_landed_change_ids,
         prepared_status=prepared_status,
         resume_intent=resume_intent,
         stale_intents=stale_intents,
@@ -133,7 +132,6 @@ class CompletedLandResume(Exception):
 
 def _report_stale_land_intents(
     *,
-    current_landed_change_ids: tuple[str, ...],
     prepared_status: PreparedStatus,
     resume_intent: ResumeLandIntent | None,
     stale_intents: list[LoadedIntent],
