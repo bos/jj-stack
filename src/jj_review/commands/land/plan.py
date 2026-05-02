@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Literal
+
 from jj_review import ui
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState
@@ -12,23 +15,23 @@ from jj_review.review.status import (
     ReviewStatusRevision,
     StatusResult,
 )
+from jj_review.ui import Message
 
 from .models import (
     BookmarkStateReader,
-    DivergenceClassifier,
-    DivergenceKind,
     LandAction,
-    LandActionBody,
     LandPlan,
     LandRevision,
     ReviewBookmarkCleanupPlan,
 )
 
+DivergenceKind = Literal["in_sync", "diff_equivalent", "content_divergent"]
+
 
 def build_land_plan(
     *,
     bypass_readiness: bool,
-    classify_divergence: DivergenceClassifier,
+    client: JjClient,
     prepared_status: PreparedStatus,
     status_result: StatusResult,
     trunk_branch: str,
@@ -39,7 +42,11 @@ def build_land_plan(
     )
     landed_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=bypass_readiness,
-        classify_divergence=classify_divergence,
+        classify_divergence=lambda local_commit_id, remote_target: _classify_revision_divergence(
+            client=client,
+            local_commit_id=local_commit_id,
+            remote_target=remote_target,
+        ),
         path_revisions=path_revisions,
     )
 
@@ -74,18 +81,6 @@ def _classify_revision_divergence(
         return "diff_equivalent"
     return "content_divergent"
 
-
-def make_divergence_classifier(client: JjClient) -> DivergenceClassifier:
-    def classifier(local_commit_id: str, remote_target: str | None) -> DivergenceKind:
-        return _classify_revision_divergence(
-            client=client,
-            local_commit_id=local_commit_id,
-            remote_target=remote_target,
-        )
-
-    return classifier
-
-
 def _resolve_land_path_revisions(
     *,
     prepared_status: PreparedStatus,
@@ -109,7 +104,7 @@ def _resolve_land_path_revisions(
 def _collect_landable_prefix(
     *,
     bypass_readiness: bool,
-    classify_divergence: DivergenceClassifier,
+    classify_divergence: Callable[[str, str | None], DivergenceKind],
     path_revisions: tuple[tuple[PreparedRevision, ReviewStatusRevision], ...],
 ) -> tuple[tuple[LandRevision, ...], LandAction | None]:
     landed_revisions: list[LandRevision] = []
@@ -155,10 +150,10 @@ def _collect_landable_prefix(
 def land_boundary_message(
     *,
     bypass_readiness: bool,
-    classify_divergence: DivergenceClassifier,
+    classify_divergence: Callable[[str, str | None], DivergenceKind],
     prepared_revision: PreparedRevision,
     revision: ReviewStatusRevision,
-) -> LandActionBody | None:
+) -> Message | None:
     if prepared_revision.revision.conflict:
         return (
             t"before {revision.subject} {ui.change_id(revision.change_id)} because "

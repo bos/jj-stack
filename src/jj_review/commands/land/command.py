@@ -65,7 +65,6 @@ from .models import (
 )
 from .plan import (
     build_land_plan,
-    make_divergence_classifier,
     plan_review_bookmark_cleanup_for_revisions,
     planned_land_actions,
 )
@@ -197,7 +196,11 @@ async def stream_land_async(
             t"Could not inspect GitHub pull request state for {ui.cmd('land')}: "
             t"{status_result.github_error}"
         )
-    if selected_stack_is_not_on_current_trunk(prepared_status=prepared_status):
+    selected_stack_is_off_trunk = (
+        bool(prepared.stack.revisions)
+        and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
+    )
+    if selected_stack_is_off_trunk:
         raise stack_not_on_trunk_error(
             prepared_status=prepared_status,
             status_result=status_result,
@@ -233,7 +236,7 @@ async def stream_land_async(
         )
         plan = build_land_plan(
             bypass_readiness=prepared_land.bypass_readiness,
-            classify_divergence=make_divergence_classifier(prepared.client),
+            client=prepared.client,
             prepared_status=prepared_status,
             status_result=status_result,
             trunk_branch=trunk_branch,
@@ -272,15 +275,6 @@ async def stream_land_async(
             trunk_branch=trunk_branch,
             trunk_subject=prepared.stack.trunk.subject,
         )
-
-
-def selected_stack_is_not_on_current_trunk(*, prepared_status: PreparedStatus) -> bool:
-    prepared = prepared_status.prepared
-    return (
-        bool(prepared.stack.revisions)
-        and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
-    )
-
 
 def stack_not_on_trunk_error(
     *,

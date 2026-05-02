@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -13,19 +12,14 @@ from jj_review.models.intent import LandIntent, LoadedIntent
 from jj_review.review.status import PreparedStatus
 from jj_review.ui import Message, plain_text
 
-LandActionStatus = Literal["applied", "blocked", "planned"]
-DivergenceKind = Literal["in_sync", "diff_equivalent", "content_divergent"]
-type LandActionBody = Message
-type DivergenceClassifier = Callable[[str, str | None], DivergenceKind]
-
 
 @dataclass(frozen=True, slots=True)
 class LandAction:
     """One planned, applied, or blocked landing action."""
 
     kind: str
-    body: LandActionBody
-    status: LandActionStatus
+    body: Message
+    status: Literal["applied", "blocked", "planned"]
 
     @property
     def message(self) -> str:
@@ -123,19 +117,3 @@ class BookmarkStateReader(Protocol):
 
     def get_bookmark_state(self, bookmark: str) -> BookmarkState:
         """Return local and remote state for the named bookmark."""
-
-
-class BookmarkRestorer(Protocol):
-    """Subset of the jj client interface needed for local trunk restoration."""
-
-    def forget_bookmarks(self, bookmarks: Sequence[str]) -> None:
-        """Forget local bookmarks."""
-
-    def set_bookmark(
-        self,
-        bookmark: str,
-        revision: str,
-        *,
-        allow_backwards: bool = False,
-    ) -> None:
-        """Create or move a local bookmark."""

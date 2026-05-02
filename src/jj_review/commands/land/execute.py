@@ -13,7 +13,6 @@ from jj_review.review.status import normalize_pull_request_state
 from jj_review.state.intents import save_intent, write_new_intent
 
 from .models import (
-    BookmarkRestorer,
     BookmarkStateReader,
     LandAction,
     LandPlan,
@@ -24,18 +23,6 @@ from .models import (
 )
 from .plan import completed_land_actions, planned_land_actions
 from .resume import CompletedLandResume, build_land_intent, prepare_land_execution_state
-
-
-def restore_local_trunk_bookmark(
-    *,
-    client: BookmarkRestorer,
-    original_target: str | None,
-    trunk_branch: str,
-) -> None:
-    if original_target is None:
-        client.forget_bookmarks((trunk_branch,))
-        return
-    client.set_bookmark(trunk_branch, original_target, allow_backwards=True)
 
 
 def ensure_trunk_branch_matches_selected_trunk(
@@ -219,11 +206,14 @@ async def execute_land_plan(
                     bookmarks=(trunk_branch,),
                 )
             except BaseException:
-                restore_local_trunk_bookmark(
-                    client=prepared.client,
-                    original_target=original_trunk_target,
-                    trunk_branch=trunk_branch,
-                )
+                if original_trunk_target is None:
+                    prepared.client.forget_bookmarks((trunk_branch,))
+                else:
+                    prepared.client.set_bookmark(
+                        trunk_branch,
+                        original_trunk_target,
+                        allow_backwards=True,
+                    )
                 raise
             actions.append(
                 LandAction(

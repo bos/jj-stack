@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +9,6 @@ import pytest
 
 from jj_review import console
 from jj_review.commands.land import (
-    DivergenceKind,
     LandAction,
     LandResult,
     PreparedLand,
@@ -19,11 +17,11 @@ from jj_review.commands.land import (
 from jj_review.commands.land.command import stack_not_on_trunk_error
 from jj_review.commands.land.execute import (
     ensure_trunk_branch_matches_selected_trunk,
-    restore_local_trunk_bookmark,
     updated_landed_change,
 )
 from jj_review.commands.land.models import LandPlan
 from jj_review.commands.land.plan import (
+    DivergenceKind,
     completed_land_actions,
     land_boundary_message,
     plan_review_bookmark_cleanup,
@@ -442,32 +440,6 @@ def test_resume_land_plan_rejects_incomplete_intent_data() -> None:
         resume_land_plan(intent=broken_intent, trunk_branch="main")
 
 
-def test_restore_local_trunk_bookmark_resets_existing_target() -> None:
-    client = _BookmarkRestorerStub()
-
-    restore_local_trunk_bookmark(
-        client=client,
-        original_target="trunk-commit",
-        trunk_branch="main",
-    )
-
-    assert client.set_calls == [("main", "trunk-commit", True)]
-    assert client.forget_calls == []
-
-
-def test_restore_local_trunk_bookmark_forgets_bookmark_when_original_target_missing() -> None:
-    client = _BookmarkRestorerStub()
-
-    restore_local_trunk_bookmark(
-        client=client,
-        original_target=None,
-        trunk_branch="main",
-    )
-
-    assert client.forget_calls == ["main"]
-    assert client.set_calls == []
-
-
 def test_plan_review_bookmark_cleanup_forgets_owned_landed_bookmark() -> None:
     plan = plan_review_bookmark_cleanup(
         bookmark="bosullivan/feature-aaaaaaaa",
@@ -788,21 +760,3 @@ class _BookmarkClientStub:
     def get_bookmark_state(self, bookmark: str) -> BookmarkState:
         assert bookmark == self._bookmark_state.name
         return self._bookmark_state
-
-
-class _BookmarkRestorerStub:
-    def __init__(self) -> None:
-        self.forget_calls: list[str] = []
-        self.set_calls: list[tuple[str, str, bool]] = []
-
-    def forget_bookmarks(self, bookmarks: Sequence[str]) -> None:
-        self.forget_calls.extend(bookmarks)
-
-    def set_bookmark(
-        self,
-        bookmark: str,
-        revision: str,
-        *,
-        allow_backwards: bool = False,
-    ) -> None:
-        self.set_calls.append((bookmark, revision, allow_backwards))

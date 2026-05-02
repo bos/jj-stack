@@ -10,11 +10,7 @@ from .command import (
     stream_land as stream_land,
 )
 from .models import (
-    DivergenceClassifier as DivergenceClassifier,
-    DivergenceKind as DivergenceKind,
     LandAction as LandAction,
-    LandActionBody as LandActionBody,
-    LandActionStatus as LandActionStatus,
     LandPlan as LandPlan,
     LandResult as LandResult,
     LandRevision as LandRevision,
