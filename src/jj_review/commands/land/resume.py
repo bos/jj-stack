@@ -5,34 +5,29 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from jj_review import console, ui
 from jj_review.errors import CliError
-from jj_review.models.intent import LandIntent
+from jj_review.github.resolution import ParsedGithubRepo
+from jj_review.models.intent import LandIntent, LoadedIntent
 from jj_review.review.intents import (
     describe_intent,
     match_ordered_change_ids,
     retire_superseded_intents,
 )
+from jj_review.review.status import PreparedStatus
 from jj_review.state.intents import check_same_kind_intent
 
-from . import (
+from .models import (
     LandAction,
     LandResult,
     PreparedLand,
+    _BookmarkStateReader,
     _LandExecutionState,
     _LandPlan,
     _LandRevision,
     _ResumeLandIntent,
 )
-
-if TYPE_CHECKING:
-    from jj_review.github.resolution import ParsedGithubRepo
-    from jj_review.models.intent import LoadedIntent
-    from jj_review.review.status import PreparedStatus
-
-    from . import _BookmarkStateReader
 
 
 def _prepare_land_execution_state(

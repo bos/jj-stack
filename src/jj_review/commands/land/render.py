@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from jj_review import console, ui
+from jj_review.ui import Message
 
-if TYPE_CHECKING:
-    from jj_review.ui import Message
-
-    from . import LandAction, LandActionStatus, LandResult
+from .models import LandAction, LandActionStatus, LandResult
 
 
 def _print_land_result(result: LandResult) -> None:

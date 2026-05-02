@@ -2,29 +2,27 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from jj_review import ui
+from jj_review.jj import JjClient
+from jj_review.models.bookmarks import BookmarkState
 from jj_review.review.bookmarks import is_review_bookmark
+from jj_review.review.status import (
+    PreparedRevision,
+    PreparedStatus,
+    ReviewStatusRevision,
+    StatusResult,
+)
 
-from . import LandAction, _LandPlan, _LandRevision, _ReviewBookmarkCleanupPlan
-
-if TYPE_CHECKING:
-    from jj_review.jj import JjClient
-    from jj_review.models.bookmarks import BookmarkState
-    from jj_review.review.status import (
-        PreparedRevision,
-        PreparedStatus,
-        ReviewStatusRevision,
-        StatusResult,
-    )
-
-    from . import (
-        DivergenceClassifier,
-        DivergenceKind,
-        LandActionBody,
-        _BookmarkStateReader,
-    )
+from .models import (
+    DivergenceClassifier,
+    DivergenceKind,
+    LandAction,
+    LandActionBody,
+    _BookmarkStateReader,
+    _LandPlan,
+    _LandRevision,
+    _ReviewBookmarkCleanupPlan,
+)
 
 
 def _build_land_plan(
