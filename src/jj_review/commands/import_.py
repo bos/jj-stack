@@ -47,7 +47,6 @@ from jj_review.review.status import (
     PreparedStatus,
     StatusResult,
     prepare_status,
-    prepared_status_github_inspection_count,
     stream_status_async,
 )
 from jj_review.ui import Message, plain_text
@@ -215,10 +214,7 @@ async def _run_import_async(
             t"{import_cmd} cannot proceed because the current stack has no matching "
             t"remote pull request."
         )
-    progress_total = prepared_status_github_inspection_count(
-        discover_remote_review=True,
-        prepared_status=prepared_status,
-    )
+    progress_total = prepared_status.github_inspection_count(discover_remote_review=True)
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = await stream_status_async(
             discover_remote_review=True,

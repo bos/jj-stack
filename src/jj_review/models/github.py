@@ -1,6 +1,6 @@
 """GitHub API response models."""
 
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -44,6 +44,11 @@ class GithubPullRequest(BaseModel):
     review_decision: str | None = None
     state: str
     title: str
+
+    def normalize_state(self) -> Self:
+        if self.state != "closed" or self.merged_at is None:
+            return self
+        return self.model_copy(update={"state": "merged"})
 
     @model_validator(mode="before")
     @classmethod

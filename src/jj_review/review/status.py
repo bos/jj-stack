@@ -100,6 +100,44 @@ class ReviewStatusRevision:
     managed_comments_lookup: ManagedCommentsLookup | None
     subject: str
 
+    def pull_request(self) -> GithubPullRequest | None:
+        lookup = self.pull_request_lookup
+        if lookup is None:
+            return None
+        return lookup.pull_request
+
+    def pull_request_number(self) -> int | None:
+        pull_request = self.pull_request()
+        if pull_request is None:
+            return None
+        return pull_request.number
+
+    def pull_request_base_ref(self) -> str | None:
+        pull_request = self.pull_request()
+        if pull_request is None:
+            return None
+        return pull_request.base.ref
+
+    def has_merged_pull_request(self) -> bool:
+        lookup = self.pull_request_lookup
+        pull_request = self.pull_request()
+        return (
+            lookup is not None
+            and lookup.state == "closed"
+            and pull_request is not None
+            and pull_request.state == "merged"
+        )
+
+    def has_closed_unmerged_pull_request(self) -> bool:
+        lookup = self.pull_request_lookup
+        pull_request = self.pull_request()
+        return (
+            lookup is not None
+            and lookup.state == "closed"
+            and pull_request is not None
+            and pull_request.state != "merged"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StatusResult:
@@ -127,6 +165,20 @@ class PreparedStatus:
     selected_revset: str
     stale_intents: tuple[LoadedIntent, ...]
     base_parent_subject: str
+
+    def github_inspection_count(self, *, discover_remote_review: bool = False) -> int:
+        """Return how many selected revisions need live GitHub inspection."""
+
+        if self.github_repository is None:
+            return 0
+        return sum(
+            1
+            for prepared_revision in self.prepared.status_revisions
+            if _needs_github_inspection(
+                prepared_revision,
+                discover_remote_review=discover_remote_review,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,7 +458,7 @@ async def stream_status_async(
     prepared_revisions_for_github = tuple(
         prepared_revision
         for prepared_revision in prepared.status_revisions
-        if _prepared_revision_needs_github_inspection(
+        if _needs_github_inspection(
             prepared_revision,
             discover_remote_review=discover_remote_review,
         )
@@ -614,26 +666,7 @@ def build_status_revisions_for_prepared_stack(
     )
 
 
-def prepared_status_github_inspection_count(
-    *,
-    discover_remote_review: bool = False,
-    prepared_status: PreparedStatus,
-) -> int:
-    """Return how many selected revisions need live GitHub inspection."""
-
-    if prepared_status.github_repository is None:
-        return 0
-    return sum(
-        1
-        for prepared_revision in prepared_status.prepared.status_revisions
-        if _prepared_revision_needs_github_inspection(
-            prepared_revision,
-            discover_remote_review=discover_remote_review,
-        )
-    )
-
-
-def _prepared_revision_needs_github_inspection(
+def _needs_github_inspection(
     prepared_revision: PreparedRevision,
     *,
     discover_remote_review: bool,
@@ -646,7 +679,7 @@ def _prepared_revision_needs_github_inspection(
 
 def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:
     for revision in revisions:
-        if revision.local_divergent and not revision_has_merged_pull_request(revision):
+        if revision.local_divergent and not revision.has_merged_pull_request():
             return True
         pull_request_lookup = revision.pull_request_lookup
         if pull_request_lookup is not None and (
@@ -670,23 +703,6 @@ def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:
         }:
             return True
     return False
-
-
-def revision_has_merged_pull_request(revision: ReviewStatusRevision) -> bool:
-    lookup = revision.pull_request_lookup
-    return (
-        lookup is not None
-        and lookup.state == "closed"
-        and lookup.pull_request is not None
-        and lookup.pull_request.state == "merged"
-    )
-
-
-def revision_pull_request_number(revision: ReviewStatusRevision) -> int | None:
-    lookup = revision.pull_request_lookup
-    if lookup is None or lookup.pull_request is None:
-        return None
-    return lookup.pull_request.number
 
 
 def _resolved_review_decision(
@@ -1014,7 +1030,7 @@ def _pull_request_lookup_from_discovered(
         )
 
     pull_request = pull_requests[0]
-    effective_pull_request = normalize_pull_request_state(pull_request)
+    effective_pull_request = pull_request.normalize_state()
     if effective_pull_request.state != "open":
         return PullRequestLookup(
             message=(
@@ -1039,12 +1055,6 @@ def _pull_request_lookup_from_discovered(
         repository_error=None,
         state="open",
     )
-
-
-def normalize_pull_request_state(pull_request: GithubPullRequest) -> GithubPullRequest:
-    if pull_request.state != "closed" or pull_request.merged_at is None:
-        return pull_request
-    return pull_request.model_copy(update={"state": "merged"})
 
 
 async def _inspect_managed_comments(

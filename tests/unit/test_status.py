@@ -28,6 +28,7 @@ def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> 
     merged_revision = SimpleNamespace(
         cached_change=None,
         change_id="abcdefghijkl",
+        has_merged_pull_request=lambda: True,
         link_state="active",
         local_divergent=False,
         pull_request_lookup=SimpleNamespace(
@@ -38,6 +39,7 @@ def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> 
             ),
             state="closed",
         ),
+        pull_request_number=lambda: 5,
         managed_comments_lookup=None,
     )
 

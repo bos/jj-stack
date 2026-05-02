@@ -74,7 +74,6 @@ from jj_review.review.status import (
     PreparedStatus,
     ReviewStatusRevision,
     prepare_status,
-    prepared_status_github_inspection_count,
     stream_status,
 )
 from jj_review.review.submit_recovery import (
@@ -427,9 +426,7 @@ def stream_close(
     """Inspect GitHub state for prepared close inputs and optionally stream actions."""
 
     prepared_status = prepared_close.prepared_status
-    progress_total = prepared_status_github_inspection_count(
-        prepared_status=prepared_status,
-    )
+    progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = stream_status(
             inspect_stack_comments=True,

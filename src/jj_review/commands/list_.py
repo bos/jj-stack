@@ -36,7 +36,6 @@ from jj_review.review.status import (
     pinned_bookmarks_for_revisions,
     prepare_stack_for_status,
     refresh_remote_state_for_status,
-    revision_has_merged_pull_request,
 )
 from jj_review.review.topology import enumerate_orphaned_records, submitted_state_disagreement
 from jj_review.state.store import ReviewStateStore
@@ -413,9 +412,7 @@ def _status_fragments(
     if github_error is not None or remote_error is not None:
         fragments.append(ui.semantic_text("GitHub unavailable", "warning", "heading"))
 
-    merged_ancestors = sum(
-        1 for revision in revisions if revision_has_merged_pull_request(revision)
-    )
+    merged_ancestors = sum(1 for revision in revisions if revision.has_merged_pull_request())
     if merged_ancestors:
         label = (
             "cleanup needed"

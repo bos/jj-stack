@@ -57,10 +57,7 @@ from jj_review.review.selection import (
 from jj_review.review.status import (
     StatusResult,
     prepare_status,
-    prepared_status_github_inspection_count,
     refresh_remote_state_for_status,
-    revision_has_merged_pull_request,
-    revision_pull_request_number,
     status_preparation_cli_error,
     stream_status,
 )
@@ -393,9 +390,7 @@ def _render_prepared_status(
     if selection_lines:
         _emit_lines(selection_lines, emitter=console.warning)
 
-    progress_total = prepared_status_github_inspection_count(
-        prepared_status=prepared_status,
-    )
+    progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         result = stream_status(
             on_revision=lambda _revision, _github_available: progress.advance(),
@@ -658,12 +653,12 @@ def render_status_advisory_lines(
     """Render any advisories that follow the status stack output."""
 
     cleanup_revisions = [
-        revision for revision in result.revisions if revision_has_merged_pull_request(revision)
+        revision for revision in result.revisions if revision.has_merged_pull_request()
     ]
     divergent_revisions = [
         revision
         for revision in result.revisions
-        if revision.local_divergent and not revision_has_merged_pull_request(revision)
+        if revision.local_divergent and not revision.has_merged_pull_request()
     ]
     link_revisions = [
         revision for revision in result.revisions if _revision_has_link_advisory(revision)
@@ -756,7 +751,7 @@ def render_status_advisory_lines(
             )
         )
         for revision in cleanup_revisions:
-            pull_request_number = revision_pull_request_number(revision)
+            pull_request_number = revision.pull_request_number()
             pull_request_label = (
                 f"PR #{pull_request_number}" if pull_request_number is not None else "merged PR"
             )
@@ -1454,7 +1449,7 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
         else:
             summary = message
 
-    if revision.local_divergent and not revision_has_merged_pull_request(revision):
+    if revision.local_divergent and not revision.has_merged_pull_request():
         summary = f"{summary}, multiple visible revisions"
 
     managed_comments_lookup = revision.managed_comments_lookup

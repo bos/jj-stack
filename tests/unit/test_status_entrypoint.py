@@ -25,6 +25,7 @@ def test_status_updates_tty_progress_bar_while_streaming(
         status_module,
         "prepare_status",
         lambda **kwargs: SimpleNamespace(
+            github_inspection_count=lambda: 2,
             prepared=SimpleNamespace(
                 client=SimpleNamespace(
                     list_bookmark_states=lambda: {},
@@ -120,6 +121,7 @@ def test_status_passes_cli_color_override_to_native_jj_rendering(
         status_module,
         "prepare_status",
         lambda **kwargs: SimpleNamespace(
+            github_inspection_count=lambda: 0,
             prepared=SimpleNamespace(
                 client=SimpleNamespace(
                     list_bookmark_states=lambda: {},

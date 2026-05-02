@@ -132,34 +132,47 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     ] == [None, None]
 
 
+def _status_revision(
+    *,
+    change_id: str,
+    number: int,
+    pull_request_state: str,
+    subject: str,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        cached_change=None,
+        change_id=change_id,
+        has_closed_unmerged_pull_request=lambda: pull_request_state == "closed",
+        has_merged_pull_request=lambda: pull_request_state == "merged",
+        link_state="active",
+        local_divergent=False,
+        pull_request_lookup=SimpleNamespace(
+            pull_request=SimpleNamespace(
+                base=SimpleNamespace(ref="main"),
+                number=number,
+                state=pull_request_state,
+            ),
+            state="closed" if pull_request_state == "merged" else "open",
+        ),
+        pull_request_base_ref=lambda: "main",
+        pull_request_number=lambda: number,
+        subject=subject,
+    )
+
+
 def test_stream_rebase_plans_rebase_for_survivor_above_merged_path_revision(
     monkeypatch,
 ) -> None:
-    merged_revision = SimpleNamespace(
-        cached_change=None,
+    merged_revision = _status_revision(
         change_id="merged-change",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
-            pull_request=SimpleNamespace(
-                base=SimpleNamespace(ref="main"),
-                number=1,
-                state="merged",
-            ),
-            state="closed",
-        ),
+        number=1,
+        pull_request_state="merged",
         subject="merged feature",
     )
-    survivor_revision = SimpleNamespace(
+    survivor_revision = _status_revision(
         change_id="survivor-change",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
-            pull_request=SimpleNamespace(
-                base=SimpleNamespace(ref="main"),
-                number=2,
-                state="open",
-            ),
-            state="open",
-        ),
+        number=2,
+        pull_request_state="open",
         subject="survivor feature",
     )
     prepared_rebase = PreparedRebase(
@@ -168,6 +181,7 @@ def test_stream_rebase_plans_rebase_for_survivor_above_merged_path_revision(
         prepared_status=cast(
             PreparedStatus,
             SimpleNamespace(
+                github_inspection_count=lambda: 2,
                 github_repository=None,
                 prepared=SimpleNamespace(
                     client=SimpleNamespace(),
@@ -233,31 +247,16 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
         def rebase_revision(self, *, source: str, destination: str) -> None:
             rebase_calls.append((source, destination))
 
-    merged_revision = SimpleNamespace(
-        cached_change=None,
+    merged_revision = _status_revision(
         change_id="merged-change",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
-            pull_request=SimpleNamespace(
-                base=SimpleNamespace(ref="main"),
-                number=1,
-                state="merged",
-            ),
-            state="closed",
-        ),
+        number=1,
+        pull_request_state="merged",
         subject="merged feature",
     )
-    survivor_revision = SimpleNamespace(
+    survivor_revision = _status_revision(
         change_id="survivor-change",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
-            pull_request=SimpleNamespace(
-                base=SimpleNamespace(ref="main"),
-                number=2,
-                state="open",
-            ),
-            state="open",
-        ),
+        number=2,
+        pull_request_state="open",
         subject="survivor feature",
     )
     prepared_rebase = PreparedRebase(
@@ -266,6 +265,7 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
         prepared_status=cast(
             PreparedStatus,
             SimpleNamespace(
+                github_inspection_count=lambda: 2,
                 github_repository=None,
                 prepared=SimpleNamespace(
                     client=FakeClient(),

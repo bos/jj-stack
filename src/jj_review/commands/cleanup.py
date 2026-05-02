@@ -63,9 +63,6 @@ from jj_review.review.status import (
     PreparedStatus,
     ReviewStatusRevision,
     prepare_status,
-    prepared_status_github_inspection_count,
-    revision_has_merged_pull_request,
-    revision_pull_request_number,
     status_preparation_cli_error,
     stream_status,
 )
@@ -533,9 +530,7 @@ def _stream_rebase(
     prepared_status = prepared_rebase.prepared_status
     if not _prepared_rebase_has_potential_work(prepared_status=prepared_status):
         return RebaseResult(actions=(), blocked=False)
-    progress_total = prepared_status_github_inspection_count(
-        prepared_status=prepared_status,
-    )
+    progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = stream_status(
             inspect_stack_comments=True,
@@ -728,10 +723,10 @@ def _record_rebase_policy_actions(
     """Warn when a merged PR targeted another review branch."""
 
     for revision in merged_revisions:
-        pull_request_number = revision_pull_request_number(revision)
+        pull_request_number = revision.pull_request_number()
         if pull_request_number is None:
             continue
-        base_ref = _revision_pull_request_base_ref(revision)
+        base_ref = revision.pull_request_base_ref()
         if base_ref is None or not is_review_bookmark(base_ref, prefix=prefix):
             continue
         record_action(
@@ -831,10 +826,10 @@ def _plan_rebase_operations(
     prepared_status: PreparedStatus,
 ) -> _RebaseOperationPlan:
     merged_revisions = tuple(
-        revision for revision in path_revisions if revision_has_merged_pull_request(revision)
+        revision for revision in path_revisions if revision.has_merged_pull_request()
     )
     closed_unmerged_revisions = tuple(
-        revision for revision in path_revisions if _revision_is_closed_unmerged(revision)
+        revision for revision in path_revisions if revision.has_closed_unmerged_pull_request()
     )
     revisions_by_change_id = {revision.change_id: revision for revision in path_revisions}
     current_commit_id_by_change_id = {
@@ -877,14 +872,14 @@ def _collect_rebase_pre_actions(
         blocked = True
         actions.append(
             CleanupAction(
-                kind="rebase",
-                status="blocked",
-                body=(
-                    t"cannot rebase past {_revision_label_template(revision)} because "
-                    t"PR #{revision_pull_request_number(revision)} is closed without "
-                    t"merge; decide whether to keep or drop that change first"
-                ),
-            )
+                    kind="rebase",
+                    status="blocked",
+                    body=(
+                        t"cannot rebase past {_revision_label_template(revision)} because "
+                        t"PR #{revision.pull_request_number()} is closed without "
+                        t"merge; decide whether to keep or drop that change first"
+                    ),
+                )
         )
 
     for revision in merged_revisions:
@@ -925,9 +920,9 @@ def _plan_rebase_rebases(
         revision = revisions_by_change_id.get(prepared_revision.revision.change_id)
         if revision is None:
             continue
-        if revision_has_merged_pull_request(revision):
+        if revision.has_merged_pull_request():
             continue
-        if _revision_is_closed_unmerged(revision):
+        if revision.has_closed_unmerged_pull_request():
             continue
         if revision.local_divergent:
             blocked = True
@@ -965,25 +960,8 @@ def _rebase_parent_is_merged(
         if candidate.revision.commit_id != parent_commit_id:
             continue
         revision = revisions_by_change_id.get(candidate.revision.change_id)
-        return revision is not None and revision_has_merged_pull_request(revision)
+        return revision is not None and revision.has_merged_pull_request()
     return False
-
-
-def _revision_is_closed_unmerged(revision: ReviewStatusRevision) -> bool:
-    lookup = revision.pull_request_lookup
-    return (
-        lookup is not None
-        and lookup.state == "closed"
-        and lookup.pull_request is not None
-        and lookup.pull_request.state != "merged"
-    )
-
-
-def _revision_pull_request_base_ref(revision: ReviewStatusRevision) -> str | None:
-    lookup = revision.pull_request_lookup
-    if lookup is None or lookup.pull_request is None:
-        return None
-    return lookup.pull_request.base.ref
 
 
 async def _run_cleanup_async(

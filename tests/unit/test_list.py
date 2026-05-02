@@ -26,12 +26,34 @@ def _open_revision(
         Any,
         SimpleNamespace(
             cached_change=SimpleNamespace(has_review_identity=True),
+            has_merged_pull_request=lambda: False,
             link_state="active",
             pull_request_lookup=SimpleNamespace(
                 pull_request=SimpleNamespace(is_draft=is_draft, state="open"),
                 review_decision=review_decision,
                 review_decision_error=None,
                 state="open",
+            ),
+        ),
+    )
+
+
+def _missing_revision() -> ReviewStatusRevision:
+    return cast(
+        Any,
+        SimpleNamespace(
+            cached_change=SimpleNamespace(
+                has_review_identity=True,
+                pr_number=7,
+                pr_url="https://example.test/pr/7",
+            ),
+            has_merged_pull_request=lambda: False,
+            link_state="active",
+            pull_request_lookup=SimpleNamespace(
+                pull_request=None,
+                review_decision=None,
+                review_decision_error=None,
+                state="missing",
             ),
         ),
     )
@@ -141,23 +163,7 @@ def test_state_from_status_collapses_approved_label_when_all_open_are_approved()
 
 
 def test_state_from_status_marks_stale_saved_pull_request_link() -> None:
-    revision = cast(
-        Any,
-        SimpleNamespace(
-            cached_change=SimpleNamespace(
-                has_review_identity=True,
-                pr_number=7,
-                pr_url="https://example.test/pr/7",
-            ),
-            link_state="active",
-            pull_request_lookup=SimpleNamespace(
-                pull_request=None,
-                review_decision=None,
-                review_decision_error=None,
-                state="missing",
-            ),
-        ),
-    )
+    revision = _missing_revision()
 
     rendered = _render(
         _state_from_status(

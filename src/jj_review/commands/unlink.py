@@ -20,7 +20,6 @@ from jj_review.review.bookmarks import bookmark_ownership_for_source
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.review.status import (
     prepare_status,
-    prepared_status_github_inspection_count,
     stream_status_async,
 )
 
@@ -95,9 +94,7 @@ async def _run_unlink_async(
     if not prepared.status_revisions:
         raise CliError("The selected stack has no changes to review.")
 
-    progress_total = prepared_status_github_inspection_count(
-        prepared_status=prepared_status,
-    )
+    progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = await stream_status_async(
             persist_cache_updates=False,
