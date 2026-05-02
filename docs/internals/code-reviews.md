@@ -63,8 +63,8 @@ Prefer language that matches how a jj user thinks, not how the implementation is
 
 ## Performance matters
 
-Flag changes that may create user-visible latency, unnecessary subprocess
-overhead, or work that scales poorly with repo size.
+Flag changes that may create user-visible latency, unnecessary subprocess overhead, or work that
+scales poorly with repo size.
 
 Examples:
 
@@ -72,6 +72,9 @@ Examples:
 - operations that could be batched or run concurrently
 - poor algorithmic choices
 - failure to account for `jj` startup overhead in a large repo, or slow GitHub responses
+
+Some past changes introduced multiple calls to `jj`, or to the GitHub REST API, when one batched
+`jj` call or a single GraphQL query would have been much faster.
 
 ## Review code for product need and maintainability
 
@@ -89,11 +92,11 @@ Pay attention to:
 
 ## Bad smells
 
-Agents like to sometimes introduce sloppy practices:
+Agents sometimes introduce sloppy practices:
 
-- `Any` or `object` in a type signature when a more specific type would be appropriate
+- `Any` or `object` in a type signature, when a more specific type would be appropriate
 - `cast(...)` or `getattr`: occasionally okay in the test suite, with a high bar; effectively
-  never okay in the main `src` tree
+  *never* okay in the main `src` tree
 
 ## Testing
 
