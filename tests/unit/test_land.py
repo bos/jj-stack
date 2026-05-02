@@ -12,42 +12,46 @@ from jj_review.commands.land import (
     LandAction,
     LandResult,
     PreparedLand,
-    stream_land,
 )
-from jj_review.commands.land.command import stack_not_on_trunk_error
+from jj_review.commands.land.command import _stack_not_on_trunk_error, _stream_land
 from jj_review.commands.land.execute import (
+    _updated_landed_change,
     ensure_trunk_branch_matches_selected_trunk,
-    updated_landed_change,
 )
 from jj_review.commands.land.models import LandPlan
 from jj_review.commands.land.plan import (
-    DivergenceKind,
-    completed_land_actions,
-    land_boundary_message,
-    plan_review_bookmark_cleanup,
+    _DivergenceKind,
+    _land_boundary_message,
+    _plan_review_bookmark_cleanup,
 )
 from jj_review.commands.land.resume import (
-    remote_trunk_matches_commit,
-    report_stale_land_intents,
-    resume_land_plan,
+    _remote_trunk_matches_commit,
+    _report_stale_land_intents,
+    _resume_land_plan,
 )
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_review.models.github import GithubBranchRef, GithubPullRequest
 from jj_review.models.intent import LandIntent, LoadedIntent
-from jj_review.models.review_state import CachedChange
-from jj_review.review.status import PreparedStatus, ReviewStatusRevision, StatusResult
+from jj_review.models.review_state import CachedChange, LinkState
+from jj_review.review.status import (
+    PreparedStatus,
+    PullRequestLookup,
+    PullRequestLookupState,
+    ReviewStatusRevision,
+    StatusResult,
+)
 from jj_review.ui import plain_text
 
 
-def _assume_diff_equivalent(local_commit_id: str, remote_target: str | None) -> DivergenceKind:
+def _assume_diff_equivalent(local_commit_id: str, remote_target: str | None) -> _DivergenceKind:
     if remote_target is None or remote_target == local_commit_id:
         return "in_sync"
     return "diff_equivalent"
 
 
-def _assume_content_divergent(local_commit_id: str, remote_target: str | None) -> DivergenceKind:
+def _assume_content_divergent(local_commit_id: str, remote_target: str | None) -> _DivergenceKind:
     if remote_target is None or remote_target == local_commit_id:
         return "in_sync"
     return "content_divergent"
@@ -75,11 +79,6 @@ def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
         trunk_subject="base",
     )
 
-    monkeypatch.setattr(
-        "jj_review.commands.land.command.prepared_status_github_inspection_count",
-        lambda *, prepared_status: 0,
-    )
-
     def fake_stream_status(**kwargs):
         assert kwargs["inspect_stack_comments"] is False
         return cast(StatusResult, SimpleNamespace())
@@ -90,16 +89,16 @@ def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
 
     monkeypatch.setattr("jj_review.commands.land.command.stream_status", fake_stream_status)
     monkeypatch.setattr(
-        "jj_review.commands.land.command.stream_land_async",
+        "jj_review.commands.land.command._stream_land_async",
         fake_stream_land_async,
     )
 
-    result = stream_land(prepared_land=prepared_land)
+    result = _stream_land(prepared_land=prepared_land)
 
     assert result == expected_result
 
 
-def test_completed_land_actions_include_boundary_reason_for_partial_land() -> None:
+def test_land_plan_completed_actions_include_boundary_reason_for_partial_land() -> None:
     applied_action = LandAction(kind="trunk", body="push trunk", status="applied")
     boundary_action = LandAction(
         kind="boundary",
@@ -114,7 +113,7 @@ def test_completed_land_actions_include_boundary_reason_for_partial_land() -> No
         trunk_branch="main",
     )
 
-    actions = completed_land_actions(actions=(applied_action,), plan=plan)
+    actions = plan.completed_actions(actions=(applied_action,))
 
     assert actions == (applied_action, boundary_action)
 
@@ -131,7 +130,7 @@ def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -
         subject="feature 1",
     )
 
-    message = land_boundary_message(
+    message = _land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_diff_equivalent,
         prepared_revision=prepared_revision,
@@ -153,7 +152,7 @@ def test_land_boundary_message_allows_ready_revision_without_remote_state() -> N
         with_remote_state=False,
     )
 
-    message = land_boundary_message(
+    message = _land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_diff_equivalent,
         prepared_revision=prepared_revision,
@@ -175,7 +174,7 @@ def test_land_boundary_message_blocks_content_divergent_revision() -> None:
         subject="feature 1",
     )
 
-    message = land_boundary_message(
+    message = _land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_content_divergent,
         prepared_revision=prepared_revision,
@@ -199,7 +198,7 @@ def test_land_boundary_message_prefers_unlinked_state_over_content_divergence() 
         subject="feature 1",
     )
 
-    message = land_boundary_message(
+    message = _land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_content_divergent,
         prepared_revision=prepared_revision,
@@ -223,7 +222,7 @@ def test_land_boundary_message_prefers_missing_pr_over_content_divergence() -> N
         subject="feature 1",
     )
 
-    message = land_boundary_message(
+    message = _land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_content_divergent,
         prepared_revision=prepared_revision,
@@ -263,7 +262,7 @@ def test_stack_not_on_trunk_error_recommends_rebase_when_no_changes_have_landed(
         ),
     )
 
-    error = stack_not_on_trunk_error(
+    error = _stack_not_on_trunk_error(
         prepared_status=prepared_status,
         status_result=status_result,
     )
@@ -303,7 +302,7 @@ def test_stack_not_on_trunk_error_recommends_cleanup_when_stack_has_landed_chang
         ),
     )
 
-    error = stack_not_on_trunk_error(
+    error = _stack_not_on_trunk_error(
         prepared_status=prepared_status,
         status_result=status_result,
     )
@@ -315,8 +314,8 @@ def test_stack_not_on_trunk_error_recommends_cleanup_when_stack_has_landed_chang
     assert "jj rebase -s" not in rendered_hint
 
 
-def test_updated_landed_change_marks_pr_merged_and_clears_stack_comment() -> None:
-    updated = updated_landed_change(
+def test_landed_revision_updates_cached_change_after_merge() -> None:
+    updated = _updated_landed_change(
         bookmark="review/feature-1-aaaaaaaa",
         bookmark_managed=True,
         cached_change=CachedChange(
@@ -364,7 +363,7 @@ def test_report_stale_land_intents_does_not_claim_resume_without_resume_match() 
     stdout = StringIO()
     stderr = StringIO()
     with console.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
-        report_stale_land_intents(
+        _report_stale_land_intents(
             current_landed_change_ids=("change-1",),
             prepared_status=prepared_status,
             resume_intent=None,
@@ -386,7 +385,7 @@ def test_remote_trunk_matches_commit_requires_matching_remote_and_local_state() 
     )
 
     assert (
-        remote_trunk_matches_commit(
+        _remote_trunk_matches_commit(
             client=client,
             remote_name="origin",
             trunk_branch="main",
@@ -395,7 +394,7 @@ def test_remote_trunk_matches_commit_requires_matching_remote_and_local_state() 
         is True
     )
     assert (
-        remote_trunk_matches_commit(
+        _remote_trunk_matches_commit(
             client=client,
             remote_name="origin",
             trunk_branch="main",
@@ -415,7 +414,7 @@ def test_resume_land_plan_skips_completed_change_ids() -> None:
             completed_change_ids=("change-1",),
         ).intent,
     )
-    plan = resume_land_plan(
+    plan = _resume_land_plan(
         intent=intent,
         trunk_branch="main",
     )
@@ -437,11 +436,11 @@ def test_resume_land_plan_rejects_incomplete_intent_data() -> None:
     broken_intent = intent.model_copy(update={"landed_subjects": {"change-1": "feature 1"}})
 
     with pytest.raises(CliError, match="Interrupted land intent"):
-        resume_land_plan(intent=broken_intent, trunk_branch="main")
+        _resume_land_plan(intent=broken_intent, trunk_branch="main")
 
 
-def test_plan_review_bookmark_cleanup_forgets_owned_landed_bookmark() -> None:
-    plan = plan_review_bookmark_cleanup(
+def test_plan_review_bookmark_cleanup_forgets_owned_bookmark() -> None:
+    plan = _plan_review_bookmark_cleanup(
         bookmark="bosullivan/feature-aaaaaaaa",
         bookmark_managed=True,
         cleanup_user_bookmarks=False,
@@ -461,7 +460,7 @@ def test_plan_review_bookmark_cleanup_forgets_owned_landed_bookmark() -> None:
 
 
 def test_plan_review_bookmark_cleanup_skips_external_bookmark() -> None:
-    plan = plan_review_bookmark_cleanup(
+    plan = _plan_review_bookmark_cleanup(
         bookmark="review/feature-aaaaaaaa",
         bookmark_managed=False,
         cleanup_user_bookmarks=False,
@@ -478,7 +477,7 @@ def test_plan_review_bookmark_cleanup_skips_external_bookmark() -> None:
 
 
 def test_plan_review_bookmark_cleanup_forgets_external_bookmark_when_configured() -> None:
-    plan = plan_review_bookmark_cleanup(
+    plan = _plan_review_bookmark_cleanup(
         bookmark="potato/feature-aaaaaaaa",
         bookmark_managed=False,
         cleanup_user_bookmarks=True,
@@ -497,7 +496,7 @@ def test_plan_review_bookmark_cleanup_forgets_external_bookmark_when_configured(
 
 
 def test_plan_review_bookmark_cleanup_blocks_conflicted_bookmark() -> None:
-    plan = plan_review_bookmark_cleanup(
+    plan = _plan_review_bookmark_cleanup(
         bookmark="review/feature-aaaaaaaa",
         bookmark_managed=True,
         cleanup_user_bookmarks=False,
@@ -517,7 +516,7 @@ def test_plan_review_bookmark_cleanup_blocks_conflicted_bookmark() -> None:
 
 
 def test_plan_review_bookmark_cleanup_blocks_moved_bookmark() -> None:
-    plan = plan_review_bookmark_cleanup(
+    plan = _plan_review_bookmark_cleanup(
         bookmark="review/feature-aaaaaaaa",
         bookmark_managed=True,
         cleanup_user_bookmarks=False,
@@ -613,36 +612,37 @@ def _status_revision(
     remote_target: str | None = None,
     with_remote_state: bool = True,
     pull_request: GithubPullRequest,
-    pull_request_state: str,
+    pull_request_state: PullRequestLookupState,
     review_decision: str | None = None,
     review_decision_error: str | None = None,
     subject: str,
-    link_state: str = "active",
+    link_state: LinkState = "active",
 ) -> ReviewStatusRevision:
-    return cast(
-        ReviewStatusRevision,
-        SimpleNamespace(
-            bookmark=f"review/{change_id}",
-            change_id=change_id,
-            link_state=link_state,
-            local_divergent=False,
-            pull_request_lookup=SimpleNamespace(
-                message=None,
-                pull_request=pull_request,
-                review_decision=review_decision,
-                review_decision_error=review_decision_error,
-                state=pull_request_state,
-            ),
-            remote_state=(
-                RemoteBookmarkState(
-                    remote="origin",
-                    targets=((remote_target,) if remote_target is not None else (commit_id,)),
-                )
-                if with_remote_state
-                else None
-            ),
-            subject=subject,
+    return ReviewStatusRevision(
+        bookmark=f"review/{change_id}",
+        bookmark_source="generated",
+        cached_change=None,
+        change_id=change_id,
+        commit_id=commit_id,
+        link_state=link_state,
+        local_divergent=False,
+        pull_request_lookup=PullRequestLookup(
+            message=None,
+            pull_request=pull_request,
+            review_decision=review_decision,
+            review_decision_error=review_decision_error,
+            state=pull_request_state,
         ),
+        remote_state=(
+            RemoteBookmarkState(
+                remote="origin",
+                targets=((remote_target,) if remote_target is not None else (commit_id,)),
+            )
+            if with_remote_state
+            else None
+        ),
+        managed_comments_lookup=None,
+        subject=subject,
     )
 
 
@@ -689,6 +689,7 @@ def _prepared_status(
     return cast(
         PreparedStatus,
         SimpleNamespace(
+            github_inspection_count=lambda *, discover_remote_review=False: 0,
             prepared=SimpleNamespace(
                 stack=SimpleNamespace(trunk=SimpleNamespace(commit_id="trunk-commit")),
                 status_revisions=status_revisions,

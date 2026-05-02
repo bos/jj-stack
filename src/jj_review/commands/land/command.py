@@ -50,8 +50,6 @@ from jj_review.review.status import (
     PreparedStatus,
     StatusResult,
     prepare_status,
-    prepared_status_github_inspection_count,
-    revision_has_merged_pull_request,
     stream_status,
 )
 
@@ -66,7 +64,6 @@ from .models import (
 from .plan import (
     build_land_plan,
     plan_review_bookmark_cleanup_for_revisions,
-    planned_land_actions,
 )
 from .render import print_land_result
 
@@ -110,7 +107,7 @@ def land(
             revset=revset,
         )
     with console.spinner(description="Inspecting jj stack"):
-        prepared_land = prepare_land(
+        prepared_land = _prepare_land(
             cleanup_bookmarks=not skip_cleanup,
             dry_run=dry_run,
             bypass_readiness=bypass_readiness,
@@ -119,12 +116,12 @@ def land(
             revset=resolved_revset,
             selected_pr_number=pull_request_number,
         )
-    result = stream_land(prepared_land=prepared_land)
+    result = _stream_land(prepared_land=prepared_land)
     print_land_result(result)
     return 1 if result.blocked else 0
 
 
-def prepare_land(
+def _prepare_land(
     *,
     cleanup_bookmarks: bool,
     dry_run: bool,
@@ -163,13 +160,11 @@ def prepare_land(
     )
 
 
-def stream_land(*, prepared_land: PreparedLand) -> LandResult:
+def _stream_land(*, prepared_land: PreparedLand) -> LandResult:
     """Inspect GitHub state for the prepared path and optionally execute `land`."""
 
     prepared_status = prepared_land.prepared_status
-    progress_total = prepared_status_github_inspection_count(
-        prepared_status=prepared_status,
-    )
+    progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = stream_status(
             inspect_stack_comments=False,
@@ -177,14 +172,14 @@ def stream_land(*, prepared_land: PreparedLand) -> LandResult:
             prepared_status=prepared_status,
         )
     return asyncio.run(
-        stream_land_async(
+        _stream_land_async(
             prepared_land=prepared_land,
             status_result=status_result,
         )
     )
 
 
-async def stream_land_async(
+async def _stream_land_async(
     *,
     prepared_land: PreparedLand,
     status_result: StatusResult,
@@ -201,7 +196,7 @@ async def stream_land_async(
         and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
     )
     if selected_stack_is_off_trunk:
-        raise stack_not_on_trunk_error(
+        raise _stack_not_on_trunk_error(
             prepared_status=prepared_status,
             status_result=status_result,
         )
@@ -250,8 +245,7 @@ async def stream_land_async(
         )
         if prepared_land.dry_run:
             return LandResult(
-                actions=planned_land_actions(
-                    plan=plan,
+                actions=plan.planned_actions(
                     bookmark_cleanup_plans=bookmark_cleanup_plans,
                 ),
                 applied=False,
@@ -276,13 +270,13 @@ async def stream_land_async(
             trunk_subject=prepared.stack.trunk.subject,
         )
 
-def stack_not_on_trunk_error(
+def _stack_not_on_trunk_error(
     *,
     prepared_status: PreparedStatus,
     status_result: StatusResult,
 ) -> CliError:
     message = t"Selected stack is not based on the current {ui.revset('trunk()')}."
-    if any(revision_has_merged_pull_request(revision) for revision in status_result.revisions):
+    if any(revision.has_merged_pull_request() for revision in status_result.revisions):
         return CliError(
             message,
             hint=(

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
+from jj_review import ui
 from jj_review.config import RepoConfig
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.intent import LandIntent, LoadedIntent
@@ -81,6 +82,61 @@ class LandPlan:
     @property
     def resubmit_revisions(self) -> tuple[LandRevision, ...]:
         return tuple(revision for revision in self.landed_revisions if revision.needs_resubmit)
+
+    def planned_actions(
+        self,
+        *,
+        bookmark_cleanup_plans: tuple[ReviewBookmarkCleanupPlan, ...] = (),
+    ) -> tuple[LandAction, ...]:
+        if self.blocked:
+            return () if self.boundary_action is None else (self.boundary_action,)
+
+        actions: list[LandAction] = []
+        bookmark_cleanup_by_change_id = {
+            cleanup_plan.change_id: cleanup_plan.action
+            for cleanup_plan in bookmark_cleanup_plans
+        }
+        if self.push_trunk and self.landed_revisions:
+            for resubmit_revision in self.resubmit_revisions:
+                actions.append(
+                    LandAction(
+                        kind="review branch",
+                        body=t"refresh {ui.bookmark(resubmit_revision.bookmark)} to match "
+                        t"{resubmit_revision.subject} "
+                        t"{ui.change_id(resubmit_revision.change_id)} before landing",
+                        status="planned",
+                    )
+                )
+            actions.append(
+                LandAction(
+                    kind="trunk",
+                    body=t"push {ui.bookmark(self.trunk_branch)} to "
+                    t"{self.landed_revisions[-1].subject} "
+                    t"{ui.change_id(self.landed_revisions[-1].change_id)}",
+                    status="planned",
+                )
+            )
+            for landed_revision in self.landed_revisions:
+                actions.append(
+                    LandAction(
+                        kind="pull request",
+                        body=t"finalize PR #{landed_revision.pull_request_number} for "
+                        t"{landed_revision.subject} "
+                        t"{ui.change_id(landed_revision.change_id)}",
+                        status="planned",
+                    )
+                )
+                cleanup_action = bookmark_cleanup_by_change_id.get(landed_revision.change_id)
+                if cleanup_action is not None:
+                    actions.append(cleanup_action)
+        if self.boundary_action is not None:
+            actions.append(self.boundary_action)
+        return tuple(actions)
+
+    def completed_actions(self, *, actions: tuple[LandAction, ...]) -> tuple[LandAction, ...]:
+        if self.boundary_action is None:
+            return actions
+        return (*actions, self.boundary_action)
 
 
 @dataclass(frozen=True, slots=True)

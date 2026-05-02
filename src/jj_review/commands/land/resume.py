@@ -66,7 +66,7 @@ def prepare_land_execution_state(
         stale_intents=stale_intents,
         trunk_branch=trunk_branch,
     )
-    report_stale_land_intents(
+    _report_stale_land_intents(
         current_landed_change_ids=current_landed_change_ids,
         prepared_status=prepared_status,
         resume_intent=resume_intent,
@@ -76,7 +76,7 @@ def prepare_land_execution_state(
     execution_plan = plan
     trunk_transition_already_succeeded = (
         resume_intent is not None
-        and remote_trunk_matches_commit(
+        and _remote_trunk_matches_commit(
             client=prepared_status.prepared.client,
             remote_name=remote_name,
             trunk_branch=trunk_branch,
@@ -84,7 +84,7 @@ def prepare_land_execution_state(
         )
     )
     if trunk_transition_already_succeeded and resume_intent is not None:
-        execution_plan = resume_land_plan(
+        execution_plan = _resume_land_plan(
             intent=resume_intent.intent,
             trunk_branch=trunk_branch,
         )
@@ -131,7 +131,7 @@ class CompletedLandResume(Exception):
         self.result = result
 
 
-def report_stale_land_intents(
+def _report_stale_land_intents(
     *,
     current_landed_change_ids: tuple[str, ...],
     prepared_status: PreparedStatus,
@@ -224,7 +224,7 @@ def _find_resume_land_intent(
     return tail_match
 
 
-def remote_trunk_matches_commit(
+def _remote_trunk_matches_commit(
     *,
     client: BookmarkStateReader,
     remote_name: str,
@@ -239,7 +239,7 @@ def remote_trunk_matches_commit(
     return remote_state is not None and remote_state.target == commit_id
 
 
-def resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
+def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
     completed_change_ids = set(intent.completed_change_ids)
     landed_revisions: list[LandRevision] = []
     for change_id in intent.landed_change_ids:

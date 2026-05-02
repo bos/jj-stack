@@ -25,7 +25,7 @@ from .models import (
     ReviewBookmarkCleanupPlan,
 )
 
-DivergenceKind = Literal["in_sync", "diff_equivalent", "content_divergent"]
+_DivergenceKind = Literal["in_sync", "diff_equivalent", "content_divergent"]
 
 
 def build_land_plan(
@@ -70,7 +70,7 @@ def _classify_revision_divergence(
     client: JjClient,
     local_commit_id: str,
     remote_target: str | None,
-) -> DivergenceKind:
+) -> _DivergenceKind:
     """Classify how the local commit differs from the remote review branch tip."""
 
     if remote_target is None or remote_target == local_commit_id:
@@ -104,12 +104,12 @@ def _resolve_land_path_revisions(
 def _collect_landable_prefix(
     *,
     bypass_readiness: bool,
-    classify_divergence: Callable[[str, str | None], DivergenceKind],
+    classify_divergence: Callable[[str, str | None], _DivergenceKind],
     path_revisions: tuple[tuple[PreparedRevision, ReviewStatusRevision], ...],
 ) -> tuple[tuple[LandRevision, ...], LandAction | None]:
     landed_revisions: list[LandRevision] = []
     for prepared_revision, revision in path_revisions:
-        boundary_message = land_boundary_message(
+        boundary_message = _land_boundary_message(
             bypass_readiness=bypass_readiness,
             classify_divergence=classify_divergence,
             prepared_revision=prepared_revision,
@@ -147,10 +147,10 @@ def _collect_landable_prefix(
     return tuple(landed_revisions), None
 
 
-def land_boundary_message(
+def _land_boundary_message(
     *,
     bypass_readiness: bool,
-    classify_divergence: Callable[[str, str | None], DivergenceKind],
+    classify_divergence: Callable[[str, str | None], _DivergenceKind],
     prepared_revision: PreparedRevision,
     revision: ReviewStatusRevision,
 ) -> Message | None:
@@ -252,67 +252,7 @@ def land_boundary_message(
     )
 
 
-def planned_land_actions(
-    *,
-    plan: LandPlan,
-    bookmark_cleanup_plans: tuple[ReviewBookmarkCleanupPlan, ...] = (),
-) -> tuple[LandAction, ...]:
-    if plan.blocked:
-        return () if plan.boundary_action is None else (plan.boundary_action,)
-
-    actions: list[LandAction] = []
-    bookmark_cleanup_by_change_id = {
-        cleanup_plan.change_id: cleanup_plan.action for cleanup_plan in bookmark_cleanup_plans
-    }
-    if plan.push_trunk and plan.landed_revisions:
-        for resubmit_revision in plan.resubmit_revisions:
-            actions.append(
-                LandAction(
-                    kind="review branch",
-                    body=t"refresh {ui.bookmark(resubmit_revision.bookmark)} to match "
-                    t"{resubmit_revision.subject} "
-                    t"{ui.change_id(resubmit_revision.change_id)} before landing",
-                    status="planned",
-                )
-            )
-        actions.append(
-            LandAction(
-                kind="trunk",
-                body=t"push {ui.bookmark(plan.trunk_branch)} to "
-                t"{plan.landed_revisions[-1].subject} "
-                t"{ui.change_id(plan.landed_revisions[-1].change_id)}",
-                status="planned",
-            )
-        )
-        for landed_revision in plan.landed_revisions:
-            actions.append(
-                LandAction(
-                    kind="pull request",
-                    body=t"finalize PR #{landed_revision.pull_request_number} for "
-                    t"{landed_revision.subject} "
-                    t"{ui.change_id(landed_revision.change_id)}",
-                    status="planned",
-                )
-            )
-            cleanup_action = bookmark_cleanup_by_change_id.get(landed_revision.change_id)
-            if cleanup_action is not None:
-                actions.append(cleanup_action)
-    if plan.boundary_action is not None:
-        actions.append(plan.boundary_action)
-    return tuple(actions)
-
-
-def completed_land_actions(
-    *,
-    actions: tuple[LandAction, ...],
-    plan: LandPlan,
-) -> tuple[LandAction, ...]:
-    if plan.boundary_action is None:
-        return actions
-    return (*actions, plan.boundary_action)
-
-
-def plan_review_bookmark_cleanup(
+def _plan_review_bookmark_cleanup(
     *,
     bookmark: str,
     bookmark_managed: bool,
@@ -385,7 +325,7 @@ def plan_review_bookmark_cleanup_for_revisions(
         return ()
     cleanup_plans: list[ReviewBookmarkCleanupPlan] = []
     for landed_revision in landed_revisions:
-        cleanup_plan = plan_review_bookmark_cleanup(
+        cleanup_plan = _plan_review_bookmark_cleanup(
             bookmark=landed_revision.bookmark,
             bookmark_managed=landed_revision.bookmark_managed,
             cleanup_user_bookmarks=cleanup_user_bookmarks,

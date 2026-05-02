@@ -9,7 +9,6 @@ from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange
 from jj_review.review.intents import retire_superseded_intents
-from jj_review.review.status import normalize_pull_request_state
 from jj_review.state.intents import save_intent, write_new_intent
 
 from .models import (
@@ -21,7 +20,6 @@ from .models import (
     PreparedLand,
     ReviewBookmarkCleanupPlan,
 )
-from .plan import completed_land_actions, planned_land_actions
 from .resume import CompletedLandResume, build_land_intent, prepare_land_execution_state
 
 
@@ -110,7 +108,7 @@ async def execute_land_plan(
     execution_plan = execution_state.execution_plan
     if execution_plan.blocked:
         return LandResult(
-            actions=planned_land_actions(plan=execution_plan),
+            actions=execution_plan.planned_actions(),
             applied=False,
             bypass_readiness=prepared_land.bypass_readiness,
             blocked=True,
@@ -176,7 +174,7 @@ async def execute_land_plan(
                             status="applied",
                         )
                     )
-                dismissed_action = await check_post_resubmit_approvals(
+                dismissed_action = await _check_post_resubmit_approvals(
                     bypass_readiness=prepared_land.bypass_readiness,
                     github_client=github_client,
                     github_repository=github_repository,
@@ -235,7 +233,7 @@ async def execute_land_plan(
                 t"{landed_revision.subject} "
                 t"{ui.change_id(landed_revision.change_id)}..."
             )
-            final_pull_request = await finalize_landed_pull_request(
+            final_pull_request = await _finalize_landed_pull_request(
                 cached_change=state_changes.get(landed_revision.change_id),
                 github_client=github_client,
                 github_repository=github_repository,
@@ -256,7 +254,7 @@ async def execute_land_plan(
                 if landed_index > 0
                 else None
             )
-            state_changes[landed_revision.change_id] = updated_landed_change(
+            state_changes[landed_revision.change_id] = _updated_landed_change(
                 bookmark=landed_revision.bookmark,
                 bookmark_managed=landed_revision.bookmark_managed,
                 cached_change=state_changes.get(landed_revision.change_id),
@@ -292,7 +290,7 @@ async def execute_land_plan(
             save_intent(intent_path, land_intent)
         succeeded = True
         return LandResult(
-            actions=completed_land_actions(actions=tuple(actions), plan=execution_plan),
+            actions=execution_plan.completed_actions(actions=tuple(actions)),
             applied=True,
             bypass_readiness=prepared_land.bypass_readiness,
             blocked=False,
@@ -308,7 +306,7 @@ async def execute_land_plan(
             intent_path.unlink(missing_ok=True)
 
 
-async def check_post_resubmit_approvals(
+async def _check_post_resubmit_approvals(
     *,
     bypass_readiness: bool,
     github_client: GithubClient,
@@ -346,7 +344,7 @@ async def check_post_resubmit_approvals(
     return None
 
 
-async def finalize_landed_pull_request(
+async def _finalize_landed_pull_request(
     *,
     cached_change: CachedChange | None,
     github_client: GithubClient,
@@ -364,7 +362,7 @@ async def finalize_landed_pull_request(
         raise CliError(
             t"Could not load PR #{landed_revision.pull_request_number} during land"
         ) from error
-    pull_request = normalize_pull_request_state(pull_request)
+    pull_request = pull_request.normalize_state()
     if pull_request.state == "open" and pull_request.base.ref != trunk_branch:
         try:
             pull_request = await github_client.update_pull_request(
@@ -380,7 +378,7 @@ async def finalize_landed_pull_request(
                 t"Could not retarget PR #{pull_request.number} to "
                 t"{ui.bookmark(trunk_branch)}"
             ) from error
-        pull_request = normalize_pull_request_state(pull_request)
+        pull_request = pull_request.normalize_state()
     if pull_request.state == "open":
         try:
             await github_client.close_pull_request(
@@ -395,7 +393,7 @@ async def finalize_landed_pull_request(
             )
         except GithubClientError as error:
             raise CliError(t"Could not close PR #{pull_request.number} after landing") from error
-        pull_request = normalize_pull_request_state(pull_request)
+        pull_request = pull_request.normalize_state()
     if cached_change is not None:
         for comment_id, label in (
             (cached_change.navigation_comment_id, "stack navigation comment"),
@@ -415,7 +413,7 @@ async def finalize_landed_pull_request(
     return pull_request
 
 
-def updated_landed_change(
+def _updated_landed_change(
     *,
     bookmark: str,
     bookmark_managed: bool,
