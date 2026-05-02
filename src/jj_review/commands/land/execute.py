@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
 from jj_review import console, ui
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
+from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
-from jj_review.models.review_state import CachedChange
+from jj_review.models.intent import LandIntent
+from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.intents import retire_superseded_intents
 from jj_review.state.intents import save_intent, write_new_intent
+from jj_review.state.store import ReviewStateStore
 
 from .models import (
     BookmarkStateReader,
@@ -21,6 +27,35 @@ from .models import (
     ReviewBookmarkCleanupPlan,
 )
 from .resume import CompletedLandResume, build_land_intent, prepare_land_execution_state
+
+
+@dataclass(frozen=True, slots=True)
+class _LandResultContext:
+    bypass_readiness: bool
+    github_repository: str
+    remote_name: str
+    selected_revset: str
+    trunk_branch: str
+    trunk_subject: str
+
+    def result(
+        self,
+        *,
+        actions: tuple[LandAction, ...],
+        applied: bool,
+        blocked: bool,
+    ) -> LandResult:
+        return LandResult(
+            actions=actions,
+            applied=applied,
+            bypass_readiness=self.bypass_readiness,
+            blocked=blocked,
+            github_repository=self.github_repository,
+            remote_name=self.remote_name,
+            selected_revset=self.selected_revset,
+            trunk_branch=self.trunk_branch,
+            trunk_subject=self.trunk_subject,
+        )
 
 
 def ensure_trunk_branch_matches_selected_trunk(
@@ -92,6 +127,14 @@ async def execute_land_plan(
 
     prepared_status = prepared_land.prepared_status
     prepared = prepared_status.prepared
+    result_context = _LandResultContext(
+        bypass_readiness=prepared_land.bypass_readiness,
+        github_repository=github_repository.full_name,
+        remote_name=remote_name,
+        selected_revset=selected_revset,
+        trunk_branch=trunk_branch,
+        trunk_subject=trunk_subject,
+    )
     try:
         execution_state = prepare_land_execution_state(
             github_repository=github_repository,
@@ -107,16 +150,10 @@ async def execute_land_plan(
         return resume.result
     execution_plan = execution_state.execution_plan
     if execution_plan.blocked:
-        return LandResult(
+        return result_context.result(
             actions=execution_plan.planned_actions(),
             applied=False,
-            bypass_readiness=prepared_land.bypass_readiness,
             blocked=True,
-            github_repository=github_repository.full_name,
-            remote_name=remote_name,
-            selected_revset=selected_revset,
-            trunk_branch=trunk_branch,
-            trunk_subject=trunk_subject,
         )
 
     state = prepared.state_store.load()
@@ -144,166 +181,278 @@ async def execute_land_plan(
     bookmark_cleanup_by_change_id = {
         cleanup_plan.change_id: cleanup_plan for cleanup_plan in bookmark_cleanup_plans
     }
-    original_trunk_target = prepared.client.get_bookmark_state(trunk_branch).local_target
     try:
-        if execution_plan.push_trunk:
-            resubmit_revisions = execution_plan.resubmit_revisions
-            if resubmit_revisions:
-                console.output(
-                    t"Refreshing {len(resubmit_revisions)} review "
-                    t"{'branch' if len(resubmit_revisions) == 1 else 'branches'} "
-                    t"to match the rebased local stack..."
-                )
-                for resubmit_revision in resubmit_revisions:
-                    prepared.client.set_bookmark(
-                        resubmit_revision.bookmark,
-                        resubmit_revision.commit_id,
-                        allow_backwards=True,
-                    )
-                prepared.client.push_bookmarks(
-                    remote=remote_name,
-                    bookmarks=tuple(revision.bookmark for revision in resubmit_revisions),
-                )
-                for resubmit_revision in resubmit_revisions:
-                    actions.append(
-                        LandAction(
-                            kind="review branch",
-                            body=t"refresh {ui.bookmark(resubmit_revision.bookmark)} to "
-                            t"{resubmit_revision.subject} "
-                            t"{ui.change_id(resubmit_revision.change_id)}",
-                            status="applied",
-                        )
-                    )
-                dismissed_action = await _check_post_resubmit_approvals(
-                    bypass_readiness=prepared_land.bypass_readiness,
-                    github_client=github_client,
-                    github_repository=github_repository,
-                    resubmit_revisions=resubmit_revisions,
-                    trunk_branch=trunk_branch,
-                )
-                if dismissed_action is not None:
-                    actions.append(dismissed_action)
-                    return LandResult(
-                        actions=tuple(actions),
-                        applied=True,
-                        bypass_readiness=prepared_land.bypass_readiness,
-                        blocked=True,
-                        github_repository=github_repository.full_name,
-                        remote_name=remote_name,
-                        selected_revset=selected_revset,
-                        trunk_branch=trunk_branch,
-                        trunk_subject=trunk_subject,
-                    )
-            try:
-                prepared.client.set_bookmark(
-                    trunk_branch,
-                    execution_plan.planned_revisions[-1].commit_id,
-                )
-                prepared.client.push_bookmarks(
-                    remote=remote_name,
-                    bookmarks=(trunk_branch,),
-                )
-            except BaseException:
-                if original_trunk_target is None:
-                    prepared.client.forget_bookmarks((trunk_branch,))
-                else:
-                    prepared.client.set_bookmark(
-                        trunk_branch,
-                        original_trunk_target,
-                        allow_backwards=True,
-                    )
-                raise
-            actions.append(
-                LandAction(
-                    kind="trunk",
-                    body=t"push {ui.bookmark(trunk_branch)} to "
-                    t"{execution_plan.planned_revisions[-1].subject} "
-                    t"{ui.change_id(execution_plan.planned_revisions[-1].change_id)}",
-                    status="applied",
-                )
-            )
-        landed_head_change_id = (
-            execution_plan.planned_revisions[-1].change_id
-            if execution_plan.planned_revisions
-            else None
+        blocked_result = await _apply_trunk_transition(
+            actions=actions,
+            client=prepared.client,
+            execution_plan=execution_plan,
+            github_client=github_client,
+            github_repository=github_repository,
+            prepared_land=prepared_land,
+            remote_name=remote_name,
+            result_context=result_context,
+            trunk_branch=trunk_branch,
         )
-        for landed_index, landed_revision in enumerate(execution_plan.planned_revisions):
-            console.output(
-                t"Finalizing PR #{landed_revision.pull_request_number} for "
-                t"{landed_revision.subject} "
-                t"{ui.change_id(landed_revision.change_id)}..."
-            )
-            final_pull_request = await _finalize_landed_pull_request(
-                cached_change=state_changes.get(landed_revision.change_id),
-                github_client=github_client,
-                github_repository=github_repository,
-                landed_revision=landed_revision,
-                trunk_branch=trunk_branch,
-            )
-            actions.append(
-                LandAction(
-                    kind="pull request",
-                    body=t"finalize PR #{landed_revision.pull_request_number} for "
-                    t"{landed_revision.subject} "
-                    t"{ui.change_id(landed_revision.change_id)}",
-                    status="applied",
-                )
-            )
-            landed_parent_change_id = (
-                execution_plan.planned_revisions[landed_index - 1].change_id
-                if landed_index > 0
-                else None
-            )
-            state_changes[landed_revision.change_id] = _updated_landed_change(
-                bookmark=landed_revision.bookmark,
-                bookmark_managed=landed_revision.bookmark_managed,
-                cached_change=state_changes.get(landed_revision.change_id),
-                commit_id=landed_revision.commit_id,
-                parent_change_id=landed_parent_change_id,
-                pull_request=final_pull_request,
-                stack_head_change_id=landed_head_change_id,
-            )
-            prepared.state_store.save(state.model_copy(update={"changes": dict(state_changes)}))
-            cleanup_plan = bookmark_cleanup_by_change_id.get(landed_revision.change_id)
-            if cleanup_plan is not None:
-                if cleanup_plan.can_forget:
-                    prepared.client.forget_bookmarks((cleanup_plan.bookmark,))
-                    actions.append(
-                        LandAction(
-                            kind="local bookmark",
-                            body=t"forget {ui.bookmark(cleanup_plan.bookmark)} "
-                            t"for {ui.change_id(landed_revision.change_id)}",
-                            status="applied",
-                        )
-                    )
-                else:
-                    actions.append(cleanup_plan.action)
-            land_intent = land_intent.model_copy(
-                update={
-                    "completed_change_ids": tuple(
-                        dict.fromkeys(
-                            (*land_intent.completed_change_ids, landed_revision.change_id)
-                        )
-                    )
-                }
-            )
-            save_intent(intent_path, land_intent)
+        if blocked_result is not None:
+            return blocked_result
+        land_intent = await _finalize_planned_revisions(
+            actions=actions,
+            bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
+            client=prepared.client,
+            execution_plan=execution_plan,
+            github_client=github_client,
+            github_repository=github_repository,
+            intent_path=intent_path,
+            land_intent=land_intent,
+            state=state,
+            state_changes=state_changes,
+            state_store=prepared.state_store,
+            trunk_branch=trunk_branch,
+        )
         succeeded = True
-        return LandResult(
+        return result_context.result(
             actions=execution_plan.completed_actions(actions=tuple(actions)),
             applied=True,
-            bypass_readiness=prepared_land.bypass_readiness,
             blocked=False,
-            github_repository=github_repository.full_name,
-            remote_name=remote_name,
-            selected_revset=selected_revset,
-            trunk_branch=trunk_branch,
-            trunk_subject=trunk_subject,
         )
     finally:
         if succeeded:
             retire_superseded_intents(execution_state.stale_intents, land_intent)
             intent_path.unlink(missing_ok=True)
+
+
+async def _apply_trunk_transition(
+    *,
+    actions: list[LandAction],
+    client: JjClient,
+    execution_plan: LandPlan,
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+    prepared_land: PreparedLand,
+    remote_name: str,
+    result_context: _LandResultContext,
+    trunk_branch: str,
+) -> LandResult | None:
+    if not execution_plan.push_trunk:
+        return None
+
+    refresh_actions, dismissed_action = await _refresh_rebased_review_branches(
+        bypass_readiness=prepared_land.bypass_readiness,
+        client=client,
+        github_client=github_client,
+        github_repository=github_repository,
+        resubmit_revisions=execution_plan.resubmit_revisions,
+        remote_name=remote_name,
+        trunk_branch=trunk_branch,
+    )
+    actions.extend(refresh_actions)
+    if dismissed_action is not None:
+        actions.append(dismissed_action)
+        return result_context.result(
+            actions=tuple(actions),
+            applied=True,
+            blocked=True,
+        )
+
+    actions.append(
+        _push_trunk_bookmark(
+            client=client,
+            remote_name=remote_name,
+            trunk_branch=trunk_branch,
+            trunk_revision=execution_plan.planned_revisions[-1],
+        )
+    )
+    return None
+
+
+async def _refresh_rebased_review_branches(
+    *,
+    bypass_readiness: bool,
+    client: JjClient,
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+    resubmit_revisions: tuple[LandRevision, ...],
+    remote_name: str,
+    trunk_branch: str,
+) -> tuple[tuple[LandAction, ...], LandAction | None]:
+    if not resubmit_revisions:
+        return (), None
+
+    console.output(
+        t"Refreshing {len(resubmit_revisions)} review "
+        t"{'branch' if len(resubmit_revisions) == 1 else 'branches'} "
+        t"to match the rebased local stack..."
+    )
+    for resubmit_revision in resubmit_revisions:
+        client.set_bookmark(
+            resubmit_revision.bookmark,
+            resubmit_revision.commit_id,
+            allow_backwards=True,
+        )
+    client.push_bookmarks(
+        remote=remote_name,
+        bookmarks=tuple(revision.bookmark for revision in resubmit_revisions),
+    )
+    actions = tuple(
+        LandAction(
+            kind="review branch",
+            body=t"refresh {ui.bookmark(revision.bookmark)} to "
+            t"{revision.subject} "
+            t"{ui.change_id(revision.change_id)}",
+            status="applied",
+        )
+        for revision in resubmit_revisions
+    )
+    dismissed_action = await _check_post_resubmit_approvals(
+        bypass_readiness=bypass_readiness,
+        github_client=github_client,
+        github_repository=github_repository,
+        resubmit_revisions=resubmit_revisions,
+        trunk_branch=trunk_branch,
+    )
+    return actions, dismissed_action
+
+
+def _push_trunk_bookmark(
+    *,
+    client: JjClient,
+    remote_name: str,
+    trunk_branch: str,
+    trunk_revision: LandRevision,
+) -> LandAction:
+    original_trunk_target = client.get_bookmark_state(trunk_branch).local_target
+    try:
+        client.set_bookmark(trunk_branch, trunk_revision.commit_id)
+        client.push_bookmarks(
+            remote=remote_name,
+            bookmarks=(trunk_branch,),
+        )
+    except BaseException:
+        _restore_local_trunk_bookmark(
+            client=client,
+            original_target=original_trunk_target,
+            trunk_branch=trunk_branch,
+        )
+        raise
+    return LandAction(
+        kind="trunk",
+        body=t"push {ui.bookmark(trunk_branch)} to "
+        t"{trunk_revision.subject} "
+        t"{ui.change_id(trunk_revision.change_id)}",
+        status="applied",
+    )
+
+
+def _restore_local_trunk_bookmark(
+    *,
+    client: JjClient,
+    original_target: str | None,
+    trunk_branch: str,
+) -> None:
+    if original_target is None:
+        client.forget_bookmarks((trunk_branch,))
+        return
+    client.set_bookmark(trunk_branch, original_target, allow_backwards=True)
+
+
+async def _finalize_planned_revisions(
+    *,
+    actions: list[LandAction],
+    bookmark_cleanup_by_change_id: dict[str, ReviewBookmarkCleanupPlan],
+    client: JjClient,
+    execution_plan: LandPlan,
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+    intent_path: Path,
+    land_intent: LandIntent,
+    state: ReviewState,
+    state_changes: dict[str, CachedChange],
+    state_store: ReviewStateStore,
+    trunk_branch: str,
+) -> LandIntent:
+    landed_head_change_id = (
+        execution_plan.planned_revisions[-1].change_id
+        if execution_plan.planned_revisions
+        else None
+    )
+    for landed_index, landed_revision in enumerate(execution_plan.planned_revisions):
+        console.output(
+            t"Finalizing PR #{landed_revision.pull_request_number} for "
+            t"{landed_revision.subject} "
+            t"{ui.change_id(landed_revision.change_id)}..."
+        )
+        final_pull_request = await _finalize_landed_pull_request(
+            cached_change=state_changes.get(landed_revision.change_id),
+            github_client=github_client,
+            github_repository=github_repository,
+            landed_revision=landed_revision,
+            trunk_branch=trunk_branch,
+        )
+        actions.append(
+            LandAction(
+                kind="pull request",
+                body=t"finalize PR #{landed_revision.pull_request_number} for "
+                t"{landed_revision.subject} "
+                t"{ui.change_id(landed_revision.change_id)}",
+                status="applied",
+            )
+        )
+        landed_parent_change_id = (
+            execution_plan.planned_revisions[landed_index - 1].change_id
+            if landed_index > 0
+            else None
+        )
+        state_changes[landed_revision.change_id] = _updated_landed_change(
+            bookmark=landed_revision.bookmark,
+            bookmark_managed=landed_revision.bookmark_managed,
+            cached_change=state_changes.get(landed_revision.change_id),
+            commit_id=landed_revision.commit_id,
+            parent_change_id=landed_parent_change_id,
+            pull_request=final_pull_request,
+            stack_head_change_id=landed_head_change_id,
+        )
+        state_store.save(state.model_copy(update={"changes": dict(state_changes)}))
+        cleanup_plan = bookmark_cleanup_by_change_id.get(landed_revision.change_id)
+        if cleanup_plan is not None:
+            actions.extend(_apply_review_bookmark_cleanup(client, cleanup_plan, landed_revision))
+        land_intent = _mark_land_intent_completed(
+            intent=land_intent,
+            landed_revision=landed_revision,
+        )
+        save_intent(intent_path, land_intent)
+    return land_intent
+
+
+def _apply_review_bookmark_cleanup(
+    client: JjClient,
+    cleanup_plan: ReviewBookmarkCleanupPlan,
+    landed_revision: LandRevision,
+) -> tuple[LandAction, ...]:
+    if not cleanup_plan.can_forget:
+        return (cleanup_plan.action,)
+    client.forget_bookmarks((cleanup_plan.bookmark,))
+    return (
+        LandAction(
+            kind="local bookmark",
+            body=t"forget {ui.bookmark(cleanup_plan.bookmark)} "
+            t"for {ui.change_id(landed_revision.change_id)}",
+            status="applied",
+        ),
+    )
+
+
+def _mark_land_intent_completed(
+    *,
+    intent: LandIntent,
+    landed_revision: LandRevision,
+) -> LandIntent:
+    return intent.model_copy(
+        update={
+            "completed_change_ids": tuple(
+                dict.fromkeys((*intent.completed_change_ids, landed_revision.change_id))
+            )
+        }
+    )
 
 
 async def _check_post_resubmit_approvals(
