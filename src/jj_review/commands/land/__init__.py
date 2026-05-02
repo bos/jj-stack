@@ -76,6 +76,8 @@ from jj_review.review.status import (
 from jj_review.state.intents import check_same_kind_intent, save_intent, write_new_intent
 from jj_review.ui import Message, plain_text
 
+from .render import _print_land_result
+
 HELP = "Land the ready changes at the bottom of a stack"
 
 LandActionStatus = Literal["applied", "blocked", "planned"]
@@ -255,58 +257,6 @@ def land(
     result = stream_land(prepared_land=prepared_land)
     _print_land_result(result)
     return 1 if result.blocked else 0
-
-
-def _print_land_result(result: LandResult) -> None:
-    console.output(t"Trunk: {result.trunk_subject} -> {ui.bookmark(result.trunk_branch)}")
-    if result.actions:
-        if result.applied:
-            header = "Applied land actions:"
-        elif result.blocked:
-            header = "Land blocked:"
-        else:
-            header = "Planned land actions:"
-        console.output(header)
-        for action in result.actions:
-            prefix, prefix_style, body_style = _land_action_presentation(action.status)
-            console.output(
-                ui.prefixed_line(
-                    f"{prefix} ",
-                    (_render_land_action_label(action), ": ", action.body),
-                    prefix_labels=prefix_style,
-                    message_labels=body_style,
-                )
-            )
-
-
-def _land_action_presentation(
-    status: LandActionStatus,
-) -> tuple[str, tuple[str, ...] | None, tuple[str, ...] | None]:
-    if status == "applied":
-        return (
-            "  ✓",
-            ("signature status good",),
-            None,
-        )
-    if status == "planned":
-        return (
-            "  ~",
-            ("hint heading",),
-            None,
-        )
-    if status == "blocked":
-        return (
-            "  ✗",
-            ("error heading",),
-            ("warning heading",),
-        )
-    return ("  ?", None, None)
-
-
-def _render_land_action_label(action: LandAction) -> ui.Message:
-    if action.kind == "boundary":
-        return ui.semantic_text("stop", "prefix")
-    return ui.semantic_text(action.kind, "prefix")
 
 
 def prepare_land(
@@ -1578,5 +1528,4 @@ def _build_land_intent(
         selected_pr_number=selected_pr_number,
         started_at=datetime.now(UTC).isoformat(),
     )
-
 
