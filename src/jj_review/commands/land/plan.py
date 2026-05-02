@@ -14,25 +14,25 @@ from jj_review.review.status import (
 )
 
 from .models import (
+    BookmarkStateReader,
     DivergenceClassifier,
     DivergenceKind,
     LandAction,
     LandActionBody,
-    _BookmarkStateReader,
-    _LandPlan,
-    _LandRevision,
-    _ReviewBookmarkCleanupPlan,
+    LandPlan,
+    LandRevision,
+    ReviewBookmarkCleanupPlan,
 )
 
 
-def _build_land_plan(
+def build_land_plan(
     *,
     bypass_readiness: bool,
     classify_divergence: DivergenceClassifier,
     prepared_status: PreparedStatus,
     status_result: StatusResult,
     trunk_branch: str,
-) -> _LandPlan:
+) -> LandPlan:
     path_revisions = _resolve_land_path_revisions(
         prepared_status=prepared_status,
         status_result=status_result,
@@ -49,7 +49,7 @@ def _build_land_plan(
             body="No changes on the selected stack are ready to land.",
             status="blocked",
         )
-    return _LandPlan(
+    return LandPlan(
         blocked=not landed_revisions,
         boundary_action=boundary_action,
         landed_revisions=tuple(landed_revisions),
@@ -75,7 +75,7 @@ def _classify_revision_divergence(
     return "content_divergent"
 
 
-def _make_divergence_classifier(client: JjClient) -> DivergenceClassifier:
+def make_divergence_classifier(client: JjClient) -> DivergenceClassifier:
     def classifier(local_commit_id: str, remote_target: str | None) -> DivergenceKind:
         return _classify_revision_divergence(
             client=client,
@@ -111,10 +111,10 @@ def _collect_landable_prefix(
     bypass_readiness: bool,
     classify_divergence: DivergenceClassifier,
     path_revisions: tuple[tuple[PreparedRevision, ReviewStatusRevision], ...],
-) -> tuple[tuple[_LandRevision, ...], LandAction | None]:
-    landed_revisions: list[_LandRevision] = []
+) -> tuple[tuple[LandRevision, ...], LandAction | None]:
+    landed_revisions: list[LandRevision] = []
     for prepared_revision, revision in path_revisions:
-        boundary_message = _land_boundary_message(
+        boundary_message = land_boundary_message(
             bypass_readiness=bypass_readiness,
             classify_divergence=classify_divergence,
             prepared_revision=prepared_revision,
@@ -135,7 +135,7 @@ def _collect_landable_prefix(
         )
         divergence = classify_divergence(local_commit_id, remote_target)
         landed_revisions.append(
-            _LandRevision(
+            LandRevision(
                 bookmark=revision.bookmark,
                 bookmark_managed=(
                     revision.cached_change.manages_bookmark
@@ -152,7 +152,7 @@ def _collect_landable_prefix(
     return tuple(landed_revisions), None
 
 
-def _land_boundary_message(
+def land_boundary_message(
     *,
     bypass_readiness: bool,
     classify_divergence: DivergenceClassifier,
@@ -257,10 +257,10 @@ def _land_boundary_message(
     )
 
 
-def _planned_land_actions(
+def planned_land_actions(
     *,
-    plan: _LandPlan,
-    bookmark_cleanup_plans: tuple[_ReviewBookmarkCleanupPlan, ...] = (),
+    plan: LandPlan,
+    bookmark_cleanup_plans: tuple[ReviewBookmarkCleanupPlan, ...] = (),
 ) -> tuple[LandAction, ...]:
     if plan.blocked:
         return () if plan.boundary_action is None else (plan.boundary_action,)
@@ -307,17 +307,17 @@ def _planned_land_actions(
     return tuple(actions)
 
 
-def _completed_land_actions(
+def completed_land_actions(
     *,
     actions: tuple[LandAction, ...],
-    plan: _LandPlan,
+    plan: LandPlan,
 ) -> tuple[LandAction, ...]:
     if plan.boundary_action is None:
         return actions
     return (*actions, plan.boundary_action)
 
 
-def _plan_review_bookmark_cleanup(
+def plan_review_bookmark_cleanup(
     *,
     bookmark: str,
     bookmark_managed: bool,
@@ -326,7 +326,7 @@ def _plan_review_bookmark_cleanup(
     bookmark_state: BookmarkState,
     change_id: str,
     commit_id: str,
-) -> _ReviewBookmarkCleanupPlan | None:
+) -> ReviewBookmarkCleanupPlan | None:
     """Validate whether `land` can forget one landed local review bookmark."""
 
     if bookmark_managed:
@@ -337,7 +337,7 @@ def _plan_review_bookmark_cleanup(
     if not bookmark_state.local_targets:
         return None
     if len(bookmark_state.local_targets) > 1:
-        return _ReviewBookmarkCleanupPlan(
+        return ReviewBookmarkCleanupPlan(
             action=LandAction(
                 kind="local bookmark",
                 body=t"cannot forget {ui.bookmark(bookmark)} because it is conflicted",
@@ -351,7 +351,7 @@ def _plan_review_bookmark_cleanup(
     if local_target is None:
         return None
     if local_target != commit_id:
-        return _ReviewBookmarkCleanupPlan(
+        return ReviewBookmarkCleanupPlan(
             action=LandAction(
                 kind="local bookmark",
                 body=(
@@ -364,7 +364,7 @@ def _plan_review_bookmark_cleanup(
             can_forget=False,
             change_id=change_id,
         )
-    return _ReviewBookmarkCleanupPlan(
+    return ReviewBookmarkCleanupPlan(
         action=LandAction(
             kind="local bookmark",
             body=t"forget {ui.bookmark(bookmark)}",
@@ -376,21 +376,21 @@ def _plan_review_bookmark_cleanup(
     )
 
 
-def _plan_review_bookmark_cleanup_for_revisions(
+def plan_review_bookmark_cleanup_for_revisions(
     *,
-    client: _BookmarkStateReader,
+    client: BookmarkStateReader,
     prefix: str,
     cleanup_bookmarks: bool,
     cleanup_user_bookmarks: bool,
-    landed_revisions: tuple[_LandRevision, ...],
-) -> tuple[_ReviewBookmarkCleanupPlan, ...]:
+    landed_revisions: tuple[LandRevision, ...],
+) -> tuple[ReviewBookmarkCleanupPlan, ...]:
     """Plan which landed local review bookmarks `land` should forget."""
 
     if not cleanup_bookmarks:
         return ()
-    cleanup_plans: list[_ReviewBookmarkCleanupPlan] = []
+    cleanup_plans: list[ReviewBookmarkCleanupPlan] = []
     for landed_revision in landed_revisions:
-        cleanup_plan = _plan_review_bookmark_cleanup(
+        cleanup_plan = plan_review_bookmark_cleanup(
             bookmark=landed_revision.bookmark,
             bookmark_managed=landed_revision.bookmark_managed,
             cleanup_user_bookmarks=cleanup_user_bookmarks,

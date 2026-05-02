@@ -33,7 +33,7 @@ _SUBMIT_CONFIG_MODULES = (
     "jj_review.commands.relink",
     "jj_review.commands.close",
     "jj_review.commands.cleanup",
-    "jj_review.commands.land",
+    "jj_review.commands.land.command",
     "jj_review.review.status",
 )
 

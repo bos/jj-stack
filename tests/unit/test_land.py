@@ -14,18 +14,24 @@ from jj_review.commands.land import (
     LandAction,
     LandResult,
     PreparedLand,
-    _completed_land_actions,
-    _ensure_trunk_branch_matches_selected_trunk,
-    _land_boundary_message,
-    _LandPlan,
-    _plan_review_bookmark_cleanup,
-    _remote_trunk_matches_commit,
-    _report_stale_land_intents,
-    _restore_local_trunk_bookmark,
-    _resume_land_plan,
-    _stack_not_on_trunk_error,
-    _updated_landed_change,
     stream_land,
+)
+from jj_review.commands.land.command import (
+    ensure_trunk_branch_matches_selected_trunk,
+    restore_local_trunk_bookmark,
+    stack_not_on_trunk_error,
+    updated_landed_change,
+)
+from jj_review.commands.land.models import LandPlan
+from jj_review.commands.land.plan import (
+    completed_land_actions,
+    land_boundary_message,
+    plan_review_bookmark_cleanup,
+)
+from jj_review.commands.land.resume import (
+    remote_trunk_matches_commit,
+    report_stale_land_intents,
+    resume_land_plan,
 )
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
@@ -72,7 +78,7 @@ def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
     )
 
     monkeypatch.setattr(
-        "jj_review.commands.land.prepared_status_github_inspection_count",
+        "jj_review.commands.land.command.prepared_status_github_inspection_count",
         lambda *, prepared_status: 0,
     )
 
@@ -84,8 +90,11 @@ def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
         assert status_result is not None
         return expected_result
 
-    monkeypatch.setattr("jj_review.commands.land.stream_status", fake_stream_status)
-    monkeypatch.setattr("jj_review.commands.land._stream_land_async", fake_stream_land_async)
+    monkeypatch.setattr("jj_review.commands.land.command.stream_status", fake_stream_status)
+    monkeypatch.setattr(
+        "jj_review.commands.land.command.stream_land_async",
+        fake_stream_land_async,
+    )
 
     result = stream_land(prepared_land=prepared_land)
 
@@ -99,7 +108,7 @@ def test_completed_land_actions_include_boundary_reason_for_partial_land() -> No
         body="before top because PR is draft",
         status="planned",
     )
-    plan = _LandPlan(
+    plan = LandPlan(
         blocked=False,
         boundary_action=boundary_action,
         landed_revisions=(),
@@ -107,7 +116,7 @@ def test_completed_land_actions_include_boundary_reason_for_partial_land() -> No
         trunk_branch="main",
     )
 
-    actions = _completed_land_actions(actions=(applied_action,), plan=plan)
+    actions = completed_land_actions(actions=(applied_action,), plan=plan)
 
     assert actions == (applied_action, boundary_action)
 
@@ -124,7 +133,7 @@ def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -
         subject="feature 1",
     )
 
-    message = _land_boundary_message(
+    message = land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_diff_equivalent,
         prepared_revision=prepared_revision,
@@ -146,7 +155,7 @@ def test_land_boundary_message_allows_ready_revision_without_remote_state() -> N
         with_remote_state=False,
     )
 
-    message = _land_boundary_message(
+    message = land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_diff_equivalent,
         prepared_revision=prepared_revision,
@@ -168,7 +177,7 @@ def test_land_boundary_message_blocks_content_divergent_revision() -> None:
         subject="feature 1",
     )
 
-    message = _land_boundary_message(
+    message = land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_content_divergent,
         prepared_revision=prepared_revision,
@@ -192,7 +201,7 @@ def test_land_boundary_message_prefers_unlinked_state_over_content_divergence() 
         subject="feature 1",
     )
 
-    message = _land_boundary_message(
+    message = land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_content_divergent,
         prepared_revision=prepared_revision,
@@ -216,7 +225,7 @@ def test_land_boundary_message_prefers_missing_pr_over_content_divergence() -> N
         subject="feature 1",
     )
 
-    message = _land_boundary_message(
+    message = land_boundary_message(
         bypass_readiness=False,
         classify_divergence=_assume_content_divergent,
         prepared_revision=prepared_revision,
@@ -256,7 +265,7 @@ def test_stack_not_on_trunk_error_recommends_rebase_when_no_changes_have_landed(
         ),
     )
 
-    error = _stack_not_on_trunk_error(
+    error = stack_not_on_trunk_error(
         prepared_status=prepared_status,
         status_result=status_result,
     )
@@ -296,7 +305,7 @@ def test_stack_not_on_trunk_error_recommends_cleanup_when_stack_has_landed_chang
         ),
     )
 
-    error = _stack_not_on_trunk_error(
+    error = stack_not_on_trunk_error(
         prepared_status=prepared_status,
         status_result=status_result,
     )
@@ -309,7 +318,7 @@ def test_stack_not_on_trunk_error_recommends_cleanup_when_stack_has_landed_chang
 
 
 def test_updated_landed_change_marks_pr_merged_and_clears_stack_comment() -> None:
-    updated = _updated_landed_change(
+    updated = updated_landed_change(
         bookmark="review/feature-1-aaaaaaaa",
         bookmark_managed=True,
         cached_change=CachedChange(
@@ -357,7 +366,7 @@ def test_report_stale_land_intents_does_not_claim_resume_without_resume_match() 
     stdout = StringIO()
     stderr = StringIO()
     with console.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
-        _report_stale_land_intents(
+        report_stale_land_intents(
             current_landed_change_ids=("change-1",),
             prepared_status=prepared_status,
             resume_intent=None,
@@ -379,7 +388,7 @@ def test_remote_trunk_matches_commit_requires_matching_remote_and_local_state() 
     )
 
     assert (
-        _remote_trunk_matches_commit(
+        remote_trunk_matches_commit(
             client=client,
             remote_name="origin",
             trunk_branch="main",
@@ -388,7 +397,7 @@ def test_remote_trunk_matches_commit_requires_matching_remote_and_local_state() 
         is True
     )
     assert (
-        _remote_trunk_matches_commit(
+        remote_trunk_matches_commit(
             client=client,
             remote_name="origin",
             trunk_branch="main",
@@ -408,7 +417,7 @@ def test_resume_land_plan_skips_completed_change_ids() -> None:
             completed_change_ids=("change-1",),
         ).intent,
     )
-    plan = _resume_land_plan(
+    plan = resume_land_plan(
         intent=intent,
         trunk_branch="main",
     )
@@ -430,13 +439,13 @@ def test_resume_land_plan_rejects_incomplete_intent_data() -> None:
     broken_intent = intent.model_copy(update={"landed_subjects": {"change-1": "feature 1"}})
 
     with pytest.raises(CliError, match="Interrupted land intent"):
-        _resume_land_plan(intent=broken_intent, trunk_branch="main")
+        resume_land_plan(intent=broken_intent, trunk_branch="main")
 
 
 def test_restore_local_trunk_bookmark_resets_existing_target() -> None:
     client = _BookmarkRestorerStub()
 
-    _restore_local_trunk_bookmark(
+    restore_local_trunk_bookmark(
         client=client,
         original_target="trunk-commit",
         trunk_branch="main",
@@ -449,7 +458,7 @@ def test_restore_local_trunk_bookmark_resets_existing_target() -> None:
 def test_restore_local_trunk_bookmark_forgets_bookmark_when_original_target_missing() -> None:
     client = _BookmarkRestorerStub()
 
-    _restore_local_trunk_bookmark(
+    restore_local_trunk_bookmark(
         client=client,
         original_target=None,
         trunk_branch="main",
@@ -460,7 +469,7 @@ def test_restore_local_trunk_bookmark_forgets_bookmark_when_original_target_miss
 
 
 def test_plan_review_bookmark_cleanup_forgets_owned_landed_bookmark() -> None:
-    plan = _plan_review_bookmark_cleanup(
+    plan = plan_review_bookmark_cleanup(
         bookmark="bosullivan/feature-aaaaaaaa",
         bookmark_managed=True,
         cleanup_user_bookmarks=False,
@@ -480,7 +489,7 @@ def test_plan_review_bookmark_cleanup_forgets_owned_landed_bookmark() -> None:
 
 
 def test_plan_review_bookmark_cleanup_skips_external_bookmark() -> None:
-    plan = _plan_review_bookmark_cleanup(
+    plan = plan_review_bookmark_cleanup(
         bookmark="review/feature-aaaaaaaa",
         bookmark_managed=False,
         cleanup_user_bookmarks=False,
@@ -497,7 +506,7 @@ def test_plan_review_bookmark_cleanup_skips_external_bookmark() -> None:
 
 
 def test_plan_review_bookmark_cleanup_forgets_external_bookmark_when_configured() -> None:
-    plan = _plan_review_bookmark_cleanup(
+    plan = plan_review_bookmark_cleanup(
         bookmark="potato/feature-aaaaaaaa",
         bookmark_managed=False,
         cleanup_user_bookmarks=True,
@@ -516,7 +525,7 @@ def test_plan_review_bookmark_cleanup_forgets_external_bookmark_when_configured(
 
 
 def test_plan_review_bookmark_cleanup_blocks_conflicted_bookmark() -> None:
-    plan = _plan_review_bookmark_cleanup(
+    plan = plan_review_bookmark_cleanup(
         bookmark="review/feature-aaaaaaaa",
         bookmark_managed=True,
         cleanup_user_bookmarks=False,
@@ -536,7 +545,7 @@ def test_plan_review_bookmark_cleanup_blocks_conflicted_bookmark() -> None:
 
 
 def test_plan_review_bookmark_cleanup_blocks_moved_bookmark() -> None:
-    plan = _plan_review_bookmark_cleanup(
+    plan = plan_review_bookmark_cleanup(
         bookmark="review/feature-aaaaaaaa",
         bookmark_managed=True,
         cleanup_user_bookmarks=False,
@@ -559,7 +568,7 @@ def test_ensure_trunk_branch_matches_selected_trunk_rejects_missing_remote_bookm
     client = _BookmarkClientStub(BookmarkState(name="main", local_targets=("commit-1",)))
 
     with pytest.raises(CliError, match="Remote trunk bookmark main@origin is not available"):
-        _ensure_trunk_branch_matches_selected_trunk(
+        ensure_trunk_branch_matches_selected_trunk(
             client=client,
             remote_name="origin",
             trunk_branch="main",
@@ -617,7 +626,7 @@ def test_ensure_trunk_branch_matches_selected_trunk_rejects_unsafe_bookmarks(
     client = _BookmarkClientStub(bookmark_state)
 
     with pytest.raises(CliError, match=message):
-        _ensure_trunk_branch_matches_selected_trunk(
+        ensure_trunk_branch_matches_selected_trunk(
             client=client,
             remote_name="origin",
             trunk_branch="main",

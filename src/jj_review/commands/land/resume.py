@@ -19,28 +19,28 @@ from jj_review.review.status import PreparedStatus
 from jj_review.state.intents import check_same_kind_intent
 
 from .models import (
+    BookmarkStateReader,
     LandAction,
+    LandExecutionState,
+    LandPlan,
     LandResult,
+    LandRevision,
     PreparedLand,
-    _BookmarkStateReader,
-    _LandExecutionState,
-    _LandPlan,
-    _LandRevision,
-    _ResumeLandIntent,
+    ResumeLandIntent,
 )
 
 
-def _prepare_land_execution_state(
+def prepare_land_execution_state(
     *,
     github_repository: ParsedGithubRepo,
-    plan: _LandPlan,
+    plan: LandPlan,
     prepared_land: PreparedLand,
     prepared_status: PreparedStatus,
     remote_name: str,
     selected_revset: str,
     trunk_branch: str,
     trunk_subject: str,
-) -> _LandExecutionState:
+) -> LandExecutionState:
     """Resolve resume state before live execution."""
 
     state_dir = prepared_status.prepared.state_store.require_writable()
@@ -48,7 +48,7 @@ def _prepare_land_execution_state(
     current_landed_change_ids = tuple(revision.change_id for revision in plan.landed_revisions)
     stale_intents = check_same_kind_intent(
         state_dir,
-        _build_land_intent(
+        build_land_intent(
             bypass_readiness=prepared_land.bypass_readiness,
             cleanup_bookmarks=prepared_land.cleanup_bookmarks,
             landed_revisions=plan.landed_revisions,
@@ -66,7 +66,7 @@ def _prepare_land_execution_state(
         stale_intents=stale_intents,
         trunk_branch=trunk_branch,
     )
-    _report_stale_land_intents(
+    report_stale_land_intents(
         current_landed_change_ids=current_landed_change_ids,
         prepared_status=prepared_status,
         resume_intent=resume_intent,
@@ -76,7 +76,7 @@ def _prepare_land_execution_state(
     execution_plan = plan
     trunk_transition_already_succeeded = (
         resume_intent is not None
-        and _remote_trunk_matches_commit(
+        and remote_trunk_matches_commit(
             client=prepared_status.prepared.client,
             remote_name=remote_name,
             trunk_branch=trunk_branch,
@@ -84,7 +84,7 @@ def _prepare_land_execution_state(
         )
     )
     if trunk_transition_already_succeeded and resume_intent is not None:
-        execution_plan = _resume_land_plan(
+        execution_plan = resume_land_plan(
             intent=resume_intent.intent,
             trunk_branch=trunk_branch,
         )
@@ -93,7 +93,7 @@ def _prepare_land_execution_state(
         if resume_intent is not None:
             retire_superseded_intents(stale_intents, resume_intent.intent)
             resume_intent.path.unlink(missing_ok=True)
-        raise _CompletedLandResume(
+        raise CompletedLandResume(
             LandResult(
                 actions=(
                     LandAction(
@@ -115,7 +115,7 @@ def _prepare_land_execution_state(
 
     if not execution_plan.push_trunk and not execution_plan.landed_revisions:
         raise AssertionError("Resume execution without remaining work must be handled above.")
-    return _LandExecutionState(
+    return LandExecutionState(
         execution_plan=execution_plan,
         resume_intent=resume_intent,
         stale_intents=stale_intents,
@@ -123,7 +123,7 @@ def _prepare_land_execution_state(
     )
 
 
-class _CompletedLandResume(Exception):
+class CompletedLandResume(Exception):
     """Internal sentinel used when a resumed land already finished previously."""
 
     def __init__(self, result: LandResult) -> None:
@@ -131,11 +131,11 @@ class _CompletedLandResume(Exception):
         self.result = result
 
 
-def _report_stale_land_intents(
+def report_stale_land_intents(
     *,
     current_landed_change_ids: tuple[str, ...],
     prepared_status: PreparedStatus,
-    resume_intent: _ResumeLandIntent | None,
+    resume_intent: ResumeLandIntent | None,
     stale_intents: list[LoadedIntent],
 ) -> None:
     """Print resumable land intent diagnostics for live execution."""
@@ -177,7 +177,7 @@ def _find_resume_land_intent(
     selected_pr_number: int | None,
     stale_intents: Sequence[LoadedIntent],
     trunk_branch: str,
-) -> _ResumeLandIntent | None:
+) -> ResumeLandIntent | None:
     current_change_ids = tuple(
         prepared_revision.revision.change_id
         for prepared_revision in prepared_status.prepared.status_revisions
@@ -186,7 +186,7 @@ def _find_resume_land_intent(
         prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
     )
-    tail_match: _ResumeLandIntent | None = None
+    tail_match: ResumeLandIntent | None = None
     for loaded in stale_intents:
         if not isinstance(loaded.intent, LandIntent):
             continue
@@ -204,7 +204,7 @@ def _find_resume_land_intent(
             and intent.ordered_commit_ids == current_commit_ids
             and intent.landed_change_ids == current_landed_change_ids
         ):
-            return _ResumeLandIntent(
+            return ResumeLandIntent(
                 intent=intent,
                 path=loaded.path,
                 mode="exact-path",
@@ -216,7 +216,7 @@ def _find_resume_land_intent(
             intent.ordered_change_ids[prefix_length:] == current_change_ids
             and intent.ordered_commit_ids[prefix_length:] == current_commit_ids
         ):
-            tail_match = _ResumeLandIntent(
+            tail_match = ResumeLandIntent(
                 intent=intent,
                 path=loaded.path,
                 mode="tail-after-landed-prefix",
@@ -224,9 +224,9 @@ def _find_resume_land_intent(
     return tail_match
 
 
-def _remote_trunk_matches_commit(
+def remote_trunk_matches_commit(
     *,
-    client: _BookmarkStateReader,
+    client: BookmarkStateReader,
     remote_name: str,
     trunk_branch: str,
     commit_id: str,
@@ -239,15 +239,15 @@ def _remote_trunk_matches_commit(
     return remote_state is not None and remote_state.target == commit_id
 
 
-def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> _LandPlan:
+def resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
     completed_change_ids = set(intent.completed_change_ids)
-    landed_revisions: list[_LandRevision] = []
+    landed_revisions: list[LandRevision] = []
     for change_id in intent.landed_change_ids:
         if change_id in completed_change_ids:
             continue
         try:
             landed_revisions.append(
-                _LandRevision(
+                LandRevision(
                     bookmark=intent.landed_bookmarks[change_id],
                     bookmark_managed=intent.landed_bookmark_managed[change_id],
                     change_id=change_id,
@@ -262,7 +262,7 @@ def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> _LandPlan:
                 t"Interrupted land intent for {intent.label} is incomplete. "
                 t"Re-run {ui.cmd('land')} to refresh the plan."
             ) from error
-    return _LandPlan(
+    return LandPlan(
         blocked=False,
         boundary_action=None,
         landed_revisions=tuple(landed_revisions),
@@ -271,11 +271,11 @@ def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> _LandPlan:
     )
 
 
-def _build_land_intent(
+def build_land_intent(
     *,
     bypass_readiness: bool,
     cleanup_bookmarks: bool,
-    landed_revisions: tuple[_LandRevision, ...],
+    landed_revisions: tuple[LandRevision, ...],
     prepared_status: PreparedStatus,
     selected_pr_number: int | None,
     trunk_branch: str,

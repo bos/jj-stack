@@ -62,7 +62,7 @@ class PreparedLand:
 
 
 @dataclass(frozen=True, slots=True)
-class _LandRevision:
+class LandRevision:
     """One landed change plus its GitHub link."""
 
     bookmark: str
@@ -75,22 +75,22 @@ class _LandRevision:
 
 
 @dataclass(frozen=True, slots=True)
-class _LandPlan:
+class LandPlan:
     """Resolved landing plan for the selected stack."""
 
     blocked: bool
     boundary_action: LandAction | None
-    landed_revisions: tuple[_LandRevision, ...]
+    landed_revisions: tuple[LandRevision, ...]
     push_trunk: bool
     trunk_branch: str
 
     @property
-    def resubmit_revisions(self) -> tuple[_LandRevision, ...]:
+    def resubmit_revisions(self) -> tuple[LandRevision, ...]:
         return tuple(revision for revision in self.landed_revisions if revision.needs_resubmit)
 
 
 @dataclass(frozen=True, slots=True)
-class _ReviewBookmarkCleanupPlan:
+class ReviewBookmarkCleanupPlan:
     """Planned post-land cleanup for one landed local review bookmark."""
 
     action: LandAction
@@ -100,7 +100,7 @@ class _ReviewBookmarkCleanupPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class _ResumeLandIntent:
+class ResumeLandIntent:
     """A stale land intent that still matches the current selected stack."""
 
     intent: LandIntent
@@ -109,23 +109,23 @@ class _ResumeLandIntent:
 
 
 @dataclass(frozen=True, slots=True)
-class _LandExecutionState:
+class LandExecutionState:
     """Resolved live-run land state after resume checks."""
 
-    execution_plan: _LandPlan
-    resume_intent: _ResumeLandIntent | None
+    execution_plan: LandPlan
+    resume_intent: ResumeLandIntent | None
     stale_intents: list[LoadedIntent]
     state_dir: Path
 
 
-class _BookmarkStateReader(Protocol):
+class BookmarkStateReader(Protocol):
     """Subset of the jj client interface needed for trunk bookmark inspection."""
 
     def get_bookmark_state(self, bookmark: str) -> BookmarkState:
         """Return local and remote state for the named bookmark."""
 
 
-class _BookmarkRestorer(Protocol):
+class BookmarkRestorer(Protocol):
     """Subset of the jj client interface needed for local trunk restoration."""
 
     def forget_bookmarks(self, bookmarks: Sequence[str]) -> None:

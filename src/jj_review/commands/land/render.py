@@ -8,7 +8,7 @@ from jj_review.ui import Message
 from .models import LandAction, LandActionStatus, LandResult
 
 
-def _print_land_result(result: LandResult) -> None:
+def print_land_result(result: LandResult) -> None:
     console.output(t"Trunk: {result.trunk_subject} -> {ui.bookmark(result.trunk_branch)}")
     if result.actions:
         if result.applied:

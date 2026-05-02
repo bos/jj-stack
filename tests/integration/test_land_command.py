@@ -493,7 +493,7 @@ def test_land_blocks_dismissed_approval_after_resubmit(
             review.state = "DISMISSED"
 
     monkeypatch.setattr(
-        "jj_review.commands.land.JjClient.push_bookmarks",
+        "jj_review.commands.land.command.JjClient.push_bookmarks",
         dismissing_push,
     )
 
@@ -714,7 +714,7 @@ def test_land_resumes_after_trunk_push_interruption(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.land",),
+        modules=("jj_review.commands.land.command",),
         client_type=FailingFinalizeClient,
     )
 
@@ -733,7 +733,7 @@ def test_land_resumes_after_trunk_push_interruption(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.land",),
+        modules=("jj_review.commands.land.command",),
     )
 
     second_exit_code = run_main(repo, config_path, "land")
