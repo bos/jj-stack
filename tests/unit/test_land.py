@@ -16,10 +16,10 @@ from jj_review.commands.land import (
     PreparedLand,
     stream_land,
 )
-from jj_review.commands.land.command import (
+from jj_review.commands.land.command import stack_not_on_trunk_error
+from jj_review.commands.land.execute import (
     ensure_trunk_branch_matches_selected_trunk,
     restore_local_trunk_bookmark,
-    stack_not_on_trunk_error,
     updated_landed_change,
 )
 from jj_review.commands.land.models import LandPlan
