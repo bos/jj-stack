@@ -241,7 +241,7 @@ async def _stream_land_async(
             prefix=prepared_land.config.bookmark_prefix,
             cleanup_bookmarks=prepared_land.cleanup_bookmarks,
             cleanup_user_bookmarks=prepared_land.config.cleanup_user_bookmarks,
-            landed_revisions=plan.landed_revisions,
+            planned_revisions=plan.planned_revisions,
         )
         if prepared_land.dry_run:
             return LandResult(

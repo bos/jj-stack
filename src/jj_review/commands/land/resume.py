@@ -45,13 +45,13 @@ def prepare_land_execution_state(
 
     state_dir = prepared_status.prepared.state_store.require_writable()
 
-    current_landed_change_ids = tuple(revision.change_id for revision in plan.landed_revisions)
+    current_planned_change_ids = tuple(revision.change_id for revision in plan.planned_revisions)
     stale_intents = check_same_kind_intent(
         state_dir,
         build_land_intent(
             bypass_readiness=prepared_land.bypass_readiness,
             cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-            landed_revisions=plan.landed_revisions,
+            planned_revisions=plan.planned_revisions,
             prepared_status=prepared_status,
             selected_pr_number=prepared_land.selected_pr_number,
             trunk_branch=trunk_branch,
@@ -60,7 +60,7 @@ def prepare_land_execution_state(
     resume_intent = _find_resume_land_intent(
         bypass_readiness=prepared_land.bypass_readiness,
         cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-        current_landed_change_ids=current_landed_change_ids,
+        current_planned_change_ids=current_planned_change_ids,
         prepared_status=prepared_status,
         selected_pr_number=prepared_land.selected_pr_number,
         stale_intents=stale_intents,
@@ -88,10 +88,13 @@ def prepare_land_execution_state(
             trunk_branch=trunk_branch,
         )
 
-    if not execution_plan.landed_revisions and not execution_plan.push_trunk:
-        if resume_intent is not None:
-            retire_superseded_intents(stale_intents, resume_intent.intent)
-            resume_intent.path.unlink(missing_ok=True)
+    if (
+        resume_intent is not None
+        and not execution_plan.planned_revisions
+        and not execution_plan.push_trunk
+    ):
+        retire_superseded_intents(stale_intents, resume_intent.intent)
+        resume_intent.path.unlink(missing_ok=True)
         raise CompletedLandResume(
             LandResult(
                 actions=(
@@ -112,8 +115,16 @@ def prepare_land_execution_state(
             )
         )
 
-    if not execution_plan.push_trunk and not execution_plan.landed_revisions:
+    if not execution_plan.planned_revisions and not execution_plan.push_trunk:
+        if execution_plan.blocked:
+            return LandExecutionState(
+                execution_plan=execution_plan,
+                resume_intent=resume_intent,
+                stale_intents=stale_intents,
+                state_dir=state_dir,
+            )
         raise AssertionError("Resume execution without remaining work must be handled above.")
+
     return LandExecutionState(
         execution_plan=execution_plan,
         resume_intent=resume_intent,
@@ -170,7 +181,7 @@ def _find_resume_land_intent(
     *,
     bypass_readiness: bool,
     cleanup_bookmarks: bool,
-    current_landed_change_ids: tuple[str, ...],
+    current_planned_change_ids: tuple[str, ...],
     prepared_status: PreparedStatus,
     selected_pr_number: int | None,
     stale_intents: Sequence[LoadedIntent],
@@ -200,7 +211,7 @@ def _find_resume_land_intent(
         if (
             intent.ordered_change_ids == current_change_ids
             and intent.ordered_commit_ids == current_commit_ids
-            and intent.landed_change_ids == current_landed_change_ids
+            and intent.landed_change_ids == current_planned_change_ids
         ):
             return ResumeLandIntent(
                 intent=intent,
@@ -239,12 +250,12 @@ def _remote_trunk_matches_commit(
 
 def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
     completed_change_ids = set(intent.completed_change_ids)
-    landed_revisions: list[LandRevision] = []
+    planned_revisions: list[LandRevision] = []
     for change_id in intent.landed_change_ids:
         if change_id in completed_change_ids:
             continue
         try:
-            landed_revisions.append(
+            planned_revisions.append(
                 LandRevision(
                     bookmark=intent.landed_bookmarks[change_id],
                     bookmark_managed=intent.landed_bookmark_managed[change_id],
@@ -263,7 +274,7 @@ def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
     return LandPlan(
         blocked=False,
         boundary_action=None,
-        landed_revisions=tuple(landed_revisions),
+        planned_revisions=tuple(planned_revisions),
         push_trunk=False,
         trunk_branch=trunk_branch,
     )
@@ -273,7 +284,7 @@ def build_land_intent(
     *,
     bypass_readiness: bool,
     cleanup_bookmarks: bool,
-    landed_revisions: tuple[LandRevision, ...],
+    planned_revisions: tuple[LandRevision, ...],
     prepared_status: PreparedStatus,
     selected_pr_number: int | None,
     trunk_branch: str,
@@ -286,10 +297,10 @@ def build_land_intent(
         prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
     )
-    landed_change_ids = tuple(revision.change_id for revision in landed_revisions)
+    landed_change_ids = tuple(revision.change_id for revision in planned_revisions)
     landed_commit_id = (
-        landed_revisions[-1].commit_id
-        if landed_revisions
+        planned_revisions[-1].commit_id
+        if planned_revisions
         else prepared_status.prepared.stack.trunk.commit_id
     )
     return LandIntent(
@@ -302,17 +313,21 @@ def build_land_intent(
         ordered_change_ids=ordered_change_ids,
         ordered_commit_ids=ordered_commit_ids,
         landed_change_ids=landed_change_ids,
-        landed_bookmarks={revision.change_id: revision.bookmark for revision in landed_revisions},
+        landed_bookmarks={
+            revision.change_id: revision.bookmark for revision in planned_revisions
+        },
         landed_bookmark_managed={
-            revision.change_id: revision.bookmark_managed for revision in landed_revisions
+            revision.change_id: revision.bookmark_managed for revision in planned_revisions
         },
         landed_commit_ids={
-            revision.change_id: revision.commit_id for revision in landed_revisions
+            revision.change_id: revision.commit_id for revision in planned_revisions
         },
         landed_pull_request_numbers={
-            revision.change_id: revision.pull_request_number for revision in landed_revisions
+            revision.change_id: revision.pull_request_number for revision in planned_revisions
         },
-        landed_subjects={revision.change_id: revision.subject for revision in landed_revisions},
+        landed_subjects={
+            revision.change_id: revision.subject for revision in planned_revisions
+        },
         completed_change_ids=(),
         trunk_branch=trunk_branch,
         landed_commit_id=landed_commit_id,

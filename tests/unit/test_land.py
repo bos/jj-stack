@@ -108,8 +108,8 @@ def test_land_plan_completed_actions_include_boundary_reason_for_partial_land() 
     plan = LandPlan(
         blocked=False,
         boundary_action=boundary_action,
-        landed_revisions=(),
-        push_trunk=True,
+        planned_revisions=(),
+        push_trunk=False,
         trunk_branch="main",
     )
 
@@ -420,8 +420,9 @@ def test_resume_land_plan_skips_completed_change_ids() -> None:
 
     assert plan.blocked is False
     assert plan.push_trunk is False
-    assert [revision.change_id for revision in plan.landed_revisions] == ["change-2"]
-    assert [revision.pull_request_number for revision in plan.landed_revisions] == [2]
+    assert [revision.change_id for revision in plan.planned_revisions] == ["change-2"]
+    assert [revision.pull_request_number for revision in plan.planned_revisions] == [2]
+
 
 def test_resume_land_plan_rejects_incomplete_intent_data() -> None:
     intent = cast(

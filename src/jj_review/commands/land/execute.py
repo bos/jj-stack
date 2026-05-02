@@ -127,7 +127,7 @@ async def execute_land_plan(
         else build_land_intent(
             bypass_readiness=prepared_land.bypass_readiness,
             cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-            landed_revisions=execution_plan.landed_revisions,
+            planned_revisions=execution_plan.planned_revisions,
             prepared_status=prepared_status,
             selected_pr_number=prepared_land.selected_pr_number,
             trunk_branch=trunk_branch,
@@ -197,7 +197,7 @@ async def execute_land_plan(
             try:
                 prepared.client.set_bookmark(
                     trunk_branch,
-                    execution_plan.landed_revisions[-1].commit_id,
+                    execution_plan.planned_revisions[-1].commit_id,
                 )
                 prepared.client.push_bookmarks(
                     remote=remote_name,
@@ -217,17 +217,17 @@ async def execute_land_plan(
                 LandAction(
                     kind="trunk",
                     body=t"push {ui.bookmark(trunk_branch)} to "
-                    t"{execution_plan.landed_revisions[-1].subject} "
-                    t"{ui.change_id(execution_plan.landed_revisions[-1].change_id)}",
+                    t"{execution_plan.planned_revisions[-1].subject} "
+                    t"{ui.change_id(execution_plan.planned_revisions[-1].change_id)}",
                     status="applied",
                 )
             )
         landed_head_change_id = (
-            execution_plan.landed_revisions[-1].change_id
-            if execution_plan.landed_revisions
+            execution_plan.planned_revisions[-1].change_id
+            if execution_plan.planned_revisions
             else None
         )
-        for landed_index, landed_revision in enumerate(execution_plan.landed_revisions):
+        for landed_index, landed_revision in enumerate(execution_plan.planned_revisions):
             console.output(
                 t"Finalizing PR #{landed_revision.pull_request_number} for "
                 t"{landed_revision.subject} "
@@ -250,7 +250,7 @@ async def execute_land_plan(
                 )
             )
             landed_parent_change_id = (
-                execution_plan.landed_revisions[landed_index - 1].change_id
+                execution_plan.planned_revisions[landed_index - 1].change_id
                 if landed_index > 0
                 else None
             )

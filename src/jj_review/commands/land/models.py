@@ -75,13 +75,14 @@ class LandPlan:
 
     blocked: bool
     boundary_action: LandAction | None
-    landed_revisions: tuple[LandRevision, ...]
+    # Revisions this run should land or finish finalizing after a resumed trunk push.
+    planned_revisions: tuple[LandRevision, ...]
     push_trunk: bool
     trunk_branch: str
 
     @property
     def resubmit_revisions(self) -> tuple[LandRevision, ...]:
-        return tuple(revision for revision in self.landed_revisions if revision.needs_resubmit)
+        return tuple(revision for revision in self.planned_revisions if revision.needs_resubmit)
 
     def planned_actions(
         self,
@@ -96,7 +97,7 @@ class LandPlan:
             cleanup_plan.change_id: cleanup_plan.action
             for cleanup_plan in bookmark_cleanup_plans
         }
-        if self.push_trunk and self.landed_revisions:
+        if self.push_trunk and self.planned_revisions:
             for resubmit_revision in self.resubmit_revisions:
                 actions.append(
                     LandAction(
@@ -111,12 +112,12 @@ class LandPlan:
                 LandAction(
                     kind="trunk",
                     body=t"push {ui.bookmark(self.trunk_branch)} to "
-                    t"{self.landed_revisions[-1].subject} "
-                    t"{ui.change_id(self.landed_revisions[-1].change_id)}",
+                    t"{self.planned_revisions[-1].subject} "
+                    t"{ui.change_id(self.planned_revisions[-1].change_id)}",
                     status="planned",
                 )
             )
-            for landed_revision in self.landed_revisions:
+            for landed_revision in self.planned_revisions:
                 actions.append(
                     LandAction(
                         kind="pull request",

@@ -40,7 +40,7 @@ def build_land_plan(
         prepared_status=prepared_status,
         status_result=status_result,
     )
-    landed_revisions, boundary_action = _collect_landable_prefix(
+    planned_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=bypass_readiness,
         classify_divergence=lambda local_commit_id, remote_target: _classify_revision_divergence(
             client=client,
@@ -50,17 +50,17 @@ def build_land_plan(
         path_revisions=path_revisions,
     )
 
-    if not landed_revisions and boundary_action is None:
+    if not planned_revisions and boundary_action is None:
         boundary_action = LandAction(
             kind="boundary",
             body="No changes on the selected stack are ready to land.",
             status="blocked",
         )
     return LandPlan(
-        blocked=not landed_revisions,
+        blocked=not planned_revisions,
         boundary_action=boundary_action,
-        landed_revisions=tuple(landed_revisions),
-        push_trunk=True,
+        planned_revisions=tuple(planned_revisions),
+        push_trunk=bool(planned_revisions),
         trunk_branch=trunk_branch,
     )
 
@@ -107,7 +107,7 @@ def _collect_landable_prefix(
     classify_divergence: Callable[[str, str | None], _DivergenceKind],
     path_revisions: tuple[tuple[PreparedRevision, ReviewStatusRevision], ...],
 ) -> tuple[tuple[LandRevision, ...], LandAction | None]:
-    landed_revisions: list[LandRevision] = []
+    planned_revisions: list[LandRevision] = []
     for prepared_revision, revision in path_revisions:
         boundary_message = _land_boundary_message(
             bypass_readiness=bypass_readiness,
@@ -116,10 +116,10 @@ def _collect_landable_prefix(
             revision=revision,
         )
         if boundary_message is not None:
-            return tuple(landed_revisions), LandAction(
+            return tuple(planned_revisions), LandAction(
                 kind="boundary",
                 body=boundary_message,
-                status="blocked" if not landed_revisions else "planned",
+                status="blocked" if not planned_revisions else "planned",
             )
         pull_request_lookup = revision.pull_request_lookup
         if pull_request_lookup is None or pull_request_lookup.pull_request is None:
@@ -129,7 +129,7 @@ def _collect_landable_prefix(
             revision.remote_state.target if revision.remote_state is not None else None
         )
         divergence = classify_divergence(local_commit_id, remote_target)
-        landed_revisions.append(
+        planned_revisions.append(
             LandRevision(
                 bookmark=revision.bookmark,
                 bookmark_managed=(
@@ -144,7 +144,7 @@ def _collect_landable_prefix(
                 subject=revision.subject,
             )
         )
-    return tuple(landed_revisions), None
+    return tuple(planned_revisions), None
 
 
 def _land_boundary_message(
@@ -317,14 +317,14 @@ def plan_review_bookmark_cleanup_for_revisions(
     prefix: str,
     cleanup_bookmarks: bool,
     cleanup_user_bookmarks: bool,
-    landed_revisions: tuple[LandRevision, ...],
+    planned_revisions: tuple[LandRevision, ...],
 ) -> tuple[ReviewBookmarkCleanupPlan, ...]:
     """Plan which landed local review bookmarks `land` should forget."""
 
     if not cleanup_bookmarks:
         return ()
     cleanup_plans: list[ReviewBookmarkCleanupPlan] = []
-    for landed_revision in landed_revisions:
+    for landed_revision in planned_revisions:
         cleanup_plan = _plan_review_bookmark_cleanup(
             bookmark=landed_revision.bookmark,
             bookmark_managed=landed_revision.bookmark_managed,
