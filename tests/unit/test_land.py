@@ -20,6 +20,7 @@ from jj_review.commands.land.execute import (
 )
 from jj_review.commands.land.models import LandPlan
 from jj_review.commands.land.plan import (
+    _collect_landable_prefix,
     _DivergenceKind,
     _land_boundary_message,
     _plan_review_bookmark_cleanup,
@@ -138,6 +139,35 @@ def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -
     )
 
     assert message is None
+
+
+def test_landable_prefix_reuses_the_divergence_decision_for_resubmit() -> None:
+    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
+    revision = _status_revision(
+        change_id="change-1",
+        commit_id="commit-1",
+        remote_target="other-tip",
+        pull_request=_pull_request(number=1),
+        pull_request_state="open",
+        review_decision="approved",
+        subject="feature 1",
+    )
+    classifier_calls: list[tuple[str, str | None]] = []
+
+    def classify_once(local_commit_id: str, remote_target: str | None) -> _DivergenceKind:
+        classifier_calls.append((local_commit_id, remote_target))
+        return "diff_equivalent"
+
+    planned_revisions, boundary_action = _collect_landable_prefix(
+        bypass_readiness=False,
+        classify_divergence=classify_once,
+        path_revisions=((prepared_revision, revision),),
+    )
+
+    assert boundary_action is None
+    assert classifier_calls == [("commit-1", "other-tip")]
+    assert len(planned_revisions) == 1
+    assert planned_revisions[0].needs_resubmit is True
 
 
 def test_land_boundary_message_allows_ready_revision_without_remote_state() -> None:

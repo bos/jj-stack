@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Literal
 
 from jj_review import ui
@@ -26,6 +27,12 @@ from .models import (
 )
 
 _DivergenceKind = Literal["in_sync", "diff_equivalent", "content_divergent"]
+
+
+@dataclass(frozen=True, slots=True)
+class _LandabilityDecision:
+    boundary_message: Message | None
+    needs_resubmit: bool = False
 
 
 def build_land_plan(
@@ -81,6 +88,7 @@ def _classify_revision_divergence(
         return "diff_equivalent"
     return "content_divergent"
 
+
 def _resolve_land_path_revisions(
     *,
     prepared_status: PreparedStatus,
@@ -109,26 +117,22 @@ def _collect_landable_prefix(
 ) -> tuple[tuple[LandRevision, ...], LandAction | None]:
     planned_revisions: list[LandRevision] = []
     for prepared_revision, revision in path_revisions:
-        boundary_message = _land_boundary_message(
+        decision = _landability_decision(
             bypass_readiness=bypass_readiness,
             classify_divergence=classify_divergence,
             prepared_revision=prepared_revision,
             revision=revision,
         )
-        if boundary_message is not None:
+        if decision.boundary_message is not None:
             return tuple(planned_revisions), LandAction(
                 kind="boundary",
-                body=boundary_message,
+                body=decision.boundary_message,
                 status="blocked" if not planned_revisions else "planned",
             )
         pull_request_lookup = revision.pull_request_lookup
         if pull_request_lookup is None or pull_request_lookup.pull_request is None:
             raise AssertionError("Landable revisions require resolved pull requests.")
         local_commit_id = prepared_revision.revision.commit_id
-        remote_target = (
-            revision.remote_state.target if revision.remote_state is not None else None
-        )
-        divergence = classify_divergence(local_commit_id, remote_target)
         planned_revisions.append(
             LandRevision(
                 bookmark=revision.bookmark,
@@ -139,7 +143,7 @@ def _collect_landable_prefix(
                 ),
                 change_id=revision.change_id,
                 commit_id=local_commit_id,
-                needs_resubmit=divergence == "diff_equivalent",
+                needs_resubmit=decision.needs_resubmit,
                 pull_request_number=pull_request_lookup.pull_request.number,
                 subject=revision.subject,
             )
@@ -154,26 +158,49 @@ def _land_boundary_message(
     prepared_revision: PreparedRevision,
     revision: ReviewStatusRevision,
 ) -> Message | None:
+    return _landability_decision(
+        bypass_readiness=bypass_readiness,
+        classify_divergence=classify_divergence,
+        prepared_revision=prepared_revision,
+        revision=revision,
+    ).boundary_message
+
+
+def _landability_decision(
+    *,
+    bypass_readiness: bool,
+    classify_divergence: Callable[[str, str | None], _DivergenceKind],
+    prepared_revision: PreparedRevision,
+    revision: ReviewStatusRevision,
+) -> _LandabilityDecision:
     if prepared_revision.revision.conflict:
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"this change still has unresolved conflicts"
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                t"this change still has unresolved conflicts"
+            )
         )
     if revision.link_state == "unlinked":
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"this change is unlinked from review tracking; run {ui.cmd('relink')} first"
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                t"this change is unlinked from review tracking; run {ui.cmd('relink')} first"
+            )
         )
     if revision.local_divergent:
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"multiple visible revisions still share that change ID"
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                t"multiple visible revisions still share that change ID"
+            )
         )
     pull_request_lookup = revision.pull_request_lookup
     if pull_request_lookup is None:
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"GitHub pull request state is unavailable"
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                t"GitHub pull request state is unavailable"
+            )
         )
     if pull_request_lookup.state == "open":
         pull_request = pull_request_lookup.pull_request
@@ -181,74 +208,104 @@ def _land_boundary_message(
             raise AssertionError("Open land boundary requires a pull request payload.")
         if pull_request_lookup.review_decision_error is not None:
             detail = pull_request_lookup.review_decision_error
-            return (
-                t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                t"because {detail}"
+            return _LandabilityDecision(
+                boundary_message=(
+                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
+                    t"because {detail}"
+                )
             )
         remote_target = (
             revision.remote_state.target if revision.remote_state is not None else None
         )
-        if (
-            classify_divergence(prepared_revision.revision.commit_id, remote_target)
-            == "content_divergent"
-        ):
-            return (
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"the local change differs from what reviewers approved; rerun "
-                t"{ui.cmd('submit')} to update the PR and request re-review"
+        divergence = classify_divergence(prepared_revision.revision.commit_id, remote_target)
+        if divergence == "content_divergent":
+            return _LandabilityDecision(
+                boundary_message=(
+                    t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                    t"the local change differs from what reviewers approved; rerun "
+                    t"{ui.cmd('submit')} to update the PR and request re-review"
+                )
             )
         if pull_request.is_draft:
             if bypass_readiness:
-                return None
-            return (
-                t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                t"because PR #{pull_request.number} is still a draft"
+                return _LandabilityDecision(
+                    boundary_message=None,
+                    needs_resubmit=divergence == "diff_equivalent",
+                )
+            return _LandabilityDecision(
+                boundary_message=(
+                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
+                    t"because PR #{pull_request.number} is still a draft"
+                )
             )
         if pull_request_lookup.review_decision == "changes_requested":
             if bypass_readiness:
-                return None
-            return (
-                t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                t"because PR #{pull_request.number} has changes requested"
+                return _LandabilityDecision(
+                    boundary_message=None,
+                    needs_resubmit=divergence == "diff_equivalent",
+                )
+            return _LandabilityDecision(
+                boundary_message=(
+                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
+                    t"because PR #{pull_request.number} has changes requested"
+                )
             )
         if pull_request_lookup.review_decision != "approved":
             if bypass_readiness:
-                return None
-            return (
-                t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                t"because PR #{pull_request.number} is not approved"
+                return _LandabilityDecision(
+                    boundary_message=None,
+                    needs_resubmit=divergence == "diff_equivalent",
+                )
+            return _LandabilityDecision(
+                boundary_message=(
+                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
+                    t"because PR #{pull_request.number} is not approved"
+                )
             )
-        return None
+        return _LandabilityDecision(
+            boundary_message=None,
+            needs_resubmit=divergence == "diff_equivalent",
+        )
     if pull_request_lookup.state == "missing":
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"GitHub no longer reports a pull request for its branch; run "
-            t"{ui.cmd('status --fetch')} or {ui.cmd('relink')} first"
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                t"GitHub no longer reports a pull request for its branch; run "
+                t"{ui.cmd('status --fetch')} or {ui.cmd('relink')} first"
+            )
         )
     if pull_request_lookup.state == "ambiguous":
         detail = pull_request_lookup.message or "GitHub reports an ambiguous PR link"
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"{detail} Run {ui.cmd('status --fetch')} and repair the PR link with "
-            t"{ui.cmd('relink')}."
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                t"{detail} Run {ui.cmd('status --fetch')} and repair the PR link with "
+                t"{ui.cmd('relink')}."
+            )
         )
     if pull_request_lookup.state == "error":
         detail = pull_request_lookup.message or "GitHub lookup failed"
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because {detail}"
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because {detail}"
+            )
         )
     pull_request = pull_request_lookup.pull_request
     if pull_request is None:
         raise AssertionError("Closed land boundary requires a pull request payload.")
     if pull_request.state == "merged":
-        return (
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"PR #{pull_request.number} is already merged; run "
-            t"{ui.cmd('cleanup --rebase')} first"
+        return _LandabilityDecision(
+            boundary_message=(
+                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                t"PR #{pull_request.number} is already merged; run "
+                t"{ui.cmd('cleanup --rebase')} first"
+            )
         )
-    return (
-        t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-        t"PR #{pull_request.number} is closed without merge"
+    return _LandabilityDecision(
+        boundary_message=(
+            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+            t"PR #{pull_request.number} is closed without merge"
+        )
     )
 
 
