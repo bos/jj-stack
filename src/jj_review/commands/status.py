@@ -1032,6 +1032,21 @@ def _interrupted_submit_detail_lines(
     intent: SubmitIntent,
     prepared_status,
 ) -> tuple[object, ...]:
+    if _recorded_stack_head_visible(intent=intent, prepared_status=prepared_status) is False:
+        return (
+            (
+                "change ",
+                ui.change_id(_intent_selector(intent) or intent.display_revset),
+                " from this interrupted submit is no longer visible in jj",
+            ),
+            (
+                "preview clearing this notice with ",
+                ui.cmd("jj-review abort --dry-run"),
+                "; clear it with ",
+                ui.cmd("jj-review abort"),
+            ),
+        )
+
     current_change_ids = tuple(
         prepared_revision.revision.change_id
         for prepared_revision in prepared_status.prepared.status_revisions
@@ -1084,6 +1099,19 @@ def _current_submit_identity(*, prepared_status) -> SubmitRecoveryIdentity | Non
         remote_name=current_remote.name,
         github_repository=current_github_repository,
     )
+
+
+def _recorded_stack_head_visible(*, intent: SubmitIntent, prepared_status) -> bool | None:
+    """Return whether the recorded submit head still resolves, when status can tell."""
+
+    if not intent.ordered_change_ids:
+        return None
+    client = getattr(prepared_status.prepared, "client", None)
+    if client is None:
+        return None
+    head_change_id = intent.ordered_change_ids[-1]
+    revisions = client.query_revisions_by_change_ids((head_change_id,)).get(head_change_id, ())
+    return bool(revisions)
 
 
 def _intent_rerun_command(

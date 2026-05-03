@@ -222,7 +222,7 @@ async def _abort_intent_async(
     actions: list[AbortAction] = []
     if note:
         actions.append(AbortAction(kind="note", body=note, status="skipped"))
-    _plan_intent_file_removal(actions=actions, dry_run=dry_run, intent_path=loaded.path)
+    _plan_intent_file_removal(actions=actions, dry_run=dry_run)
     if not dry_run:
         loaded.path.unlink(missing_ok=True)
 
@@ -239,26 +239,26 @@ async def _abort_intent_async(
 def _non_submit_note(intent) -> Message | None:
     if isinstance(intent, LandIntent):
         return t"Landing cannot be retracted; changes already merged to trunk are " \
-            t"permanent. The incomplete operation record will be cleared so future " \
+            t"permanent. The interrupted-operation notice will be cleared so future " \
             t"commands can proceed. Run {ui.cmd('status')} to inspect the current state."
     if isinstance(intent, CleanupRebaseIntent):
         return t"Rebase changes to local jj history cannot be automatically reversed. " \
-            t"The incomplete operation record will be cleared. Inspect with " \
+            t"The interrupted-operation notice will be cleared. Inspect with " \
             t"{ui.cmd('jj log')} and repair manually if needed."
     if isinstance(intent, CloseIntent):
         return t"Close operations cannot be automatically reversed here. " \
-            t"The incomplete operation record will be cleared. Run {ui.cmd('status')} " \
+            t"The interrupted-operation notice will be cleared. Run {ui.cmd('status')} " \
             t"to inspect which pull requests were closed, and reopen them on GitHub " \
             t"if needed."
     if isinstance(intent, RelinkIntent):
         return t"Relink changes which PR a change tracks in local data. " \
-            t"The incomplete operation record will be cleared. Run {ui.cmd('status')} " \
+            t"The interrupted-operation notice will be cleared. Run {ui.cmd('status')} " \
             t"to confirm the current link state looks correct."
     return None
 
 
 # ---------------------------------------------------------------------------
-# Submit retraction
+# Interrupted submit abort
 # ---------------------------------------------------------------------------
 
 
@@ -274,6 +274,34 @@ async def _abort_submit(
 
     actions: list[AbortAction] = []
     if not _submit_intent_matches_recorded_stack(intent=intent, jj_client=jj_client):
+        if not _submit_intent_head_visible(intent=intent, jj_client=jj_client):
+            selector = _submit_intent_selector(intent)
+            changed = "would be changed" if dry_run else "were changed"
+            actions.append(
+                AbortAction(
+                    kind="github",
+                    body=(
+                        t"no pull requests or review branches {changed}; "
+                        t"change {ui.change_id(selector)} is no longer visible in jj"
+                    ),
+                    status="skipped",
+                )
+            )
+            _plan_intent_file_removal(
+                actions=actions,
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                intent_path.unlink(missing_ok=True)
+            return AbortResult(
+                actions=tuple(actions),
+                applied=not dry_run,
+                dry_run=dry_run,
+                intent_kind=intent.kind,
+                intent_label=describe_intent(intent),
+                intent_started_at=intent.started_at,
+            )
+
         actions.append(
             AbortAction(
                 kind="submit intent",
@@ -286,11 +314,11 @@ async def _abort_submit(
         )
         actions.append(
             AbortAction(
-                kind="record",
-                body=t"operation record kept — to continue, run "
-                t"{ui.cmd(f'submit {_submit_intent_selector(intent)}')}; "
+                kind="notice",
+                body=t"kept — to continue, run "
+                t"{ui.cmd(f'jj-review submit {_submit_intent_selector(intent)}')}; "
                 t"to retract the partial work, run "
-                t"{ui.cmd(f'close --cleanup {_submit_intent_selector(intent)}')}",
+                t"{ui.cmd(f'jj-review close --cleanup {_submit_intent_selector(intent)}')}",
                 status="skipped",
             )
         )
@@ -366,15 +394,15 @@ async def _abort_submit(
         state_store.save(state.model_copy(update={"changes": next_changes}))
 
     if all_retracted or dry_run:
-        _plan_intent_file_removal(actions=actions, dry_run=dry_run, intent_path=intent_path)
+        _plan_intent_file_removal(actions=actions, dry_run=dry_run)
         if not dry_run:
             intent_path.unlink(missing_ok=True)
     else:
         actions.append(
             AbortAction(
-                kind="record",
+                kind="notice",
                 body=(
-                    t"operation record kept — fix the blocked steps above, "
+                    t"kept — fix the blocked steps above, "
                     t"then run {ui.cmd('abort')} again to retry"
                 ),
                 status="skipped",
@@ -409,6 +437,21 @@ def _submit_intent_matches_recorded_stack(
     return recorded_submit_still_exists_exactly(
         intent=intent,
         commit_ids_by_change_id=commit_ids_by_change_id,
+    )
+
+
+def _submit_intent_head_visible(
+    *,
+    intent: SubmitIntent,
+    jj_client: JjClient,
+) -> bool:
+    """Return True when the interrupted submit's top change still resolves."""
+
+    if not intent.ordered_change_ids:
+        return False
+    head_change_id = intent.ordered_change_ids[-1]
+    return bool(
+        jj_client.query_revisions_by_change_ids((head_change_id,)).get(head_change_id, ())
     )
 
 
@@ -605,13 +648,16 @@ def _plan_intent_file_removal(
     *,
     actions: list[AbortAction],
     dry_run: bool,
-    intent_path: Path,
 ) -> None:
-    verb = "would clear" if dry_run else "cleared"
+    body = (
+        "would clear it from future status output"
+        if dry_run
+        else "cleared it from future status output"
+    )
     actions.append(
         AbortAction(
-            kind="record",
-            body=f"{verb} incomplete operation record ({intent_path.name})",
+            kind="notice",
+            body=body,
             status="planned" if dry_run else "applied",
         )
     )

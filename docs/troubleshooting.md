@@ -211,8 +211,8 @@ jj-review status
 `status` names the command that was cut short and the stack it was working on. From there you
 have two options: **finish what was started**, or **back out**.
 
-Interrupted-operation lines include when the command started. Recent records usually mean a
-command failed or was interrupted during your current work; older records usually mean leftover
+Interrupted-operation lines include when the command started. Recent notices usually mean a
+command failed or was interrupted during your current work; older notices usually mean leftover
 state from a previous day. If `status` says the interrupted operation is not for the stack shown
 above, start by inspecting the printed change ID:
 
@@ -223,8 +223,8 @@ jj-review status <change-id>
 ### Finish what was started
 
 Re-run the same command, passing the change ID or revset `status` printed so you don't
-accidentally operate on a different stack. `jj-review` reads the interrupted-operation record,
-picks up where it left off, and skips the work that already completed.
+accidentally operate on a different stack. `jj-review` picks up where it left off and skips the
+work that already completed.
 
 | If `status` says was interrupted | Re-run                                   |
 | -------------------------------- | ---------------------------------------- |
@@ -249,11 +249,11 @@ What `abort` actually does depends on which command was interrupted:
 - **`submit`**: closes any PRs it created, deletes the corresponding remote branches, forgets
   the local bookmarks, and clears the tracking entries. This is the only case where `abort`
   performs a real undo.
-- **`close`**: clears the interrupted-operation record. It does **not** reopen PRs that were
+- **`close`**: clears the interrupted-operation notice. It does **not** reopen PRs that were
   already closed.
-- **`cleanup --rebase`**: clears the interrupted-operation record. It does **not** restore the
+- **`cleanup --rebase`**: clears the interrupted-operation notice. It does **not** restore the
   old local history. Use `jj op restore` if you want to undo the rebase itself.
-- **`land`**: clears the interrupted-operation record. It **cannot** un-merge changes that
+- **`land`**: clears the interrupted-operation notice. It **cannot** un-merge changes that
   already reached `trunk()`.
 
 If you want to fully back out one of the latter three, you have to do it by hand; `abort` is
@@ -272,3 +272,9 @@ options:
   explicit revset for that stack. A successful `close --cleanup` closes the open PRs, deletes
   the review branches, and clears the interrupted `submit` record once the recorded review
   artifacts for that stack are gone.
+
+If the change ID printed by `status` no longer exists, the original stack head has been
+abandoned or otherwise dropped from visible history. In that case `abort` only clears the
+interrupted-operation notice; it does not close PRs or delete review branches for that missing
+stack. Run `jj-review abort --dry-run` to preview the change, then run `jj-review abort` to
+clear the notice.

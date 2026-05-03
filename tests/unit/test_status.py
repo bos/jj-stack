@@ -186,6 +186,68 @@ def test_render_status_intent_lines_guides_submit_for_different_stack(
     assert "recorded stack differs from the current selection" not in normalized_lines
 
 
+def test_render_status_intent_lines_avoids_missing_recorded_submit_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(status_module, "pid_is_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        status_module,
+        "_now_utc",
+        lambda: datetime(2026, 4, 29, 12, tzinfo=UTC),
+    )
+
+    class MissingHeadClient:
+        def query_revisions_by_change_ids(self, change_ids):
+            return {change_id: () for change_id in change_ids}
+
+    intent = SubmitIntent(
+        kind="submit",
+        pid=99999999,
+        label="submit for nnszmtlx (from @-)",
+        display_revset="@-",
+        ordered_change_ids=("aaaaaaaabbbbbbbb", "nnszmtlxaaaaaaaa"),
+        ordered_commit_ids=("bottomcommit", "headcommit"),
+        remote_name="origin",
+        github_host="github.test",
+        github_owner="octo-org",
+        github_repo="stacked-review",
+        bookmarks={},
+        started_at="2026-04-25T11:00:00+00:00",
+    )
+    prepared_status = SimpleNamespace(
+        stale_intents=(),
+        outstanding_intents=(SimpleNamespace(intent=intent),),
+        prepared=SimpleNamespace(
+            client=MissingHeadClient(),
+            status_revisions=(
+                SimpleNamespace(
+                    revision=SimpleNamespace(
+                        change_id="xvxxlmonaaaaaaaa",
+                        commit_id="currentcommit",
+                    )
+                ),
+            ),
+            remote=None,
+        ),
+        github_repository=None,
+    )
+
+    lines = _render_lines(
+        *status_module.render_status_intent_lines(prepared_status=prepared_status)
+    )
+    normalized_lines = " ".join(" ".join(line.split()) for line in lines)
+
+    assert (
+        "change nnszmtlx from this interrupted submit is no longer visible in jj"
+        in normalized_lines
+    )
+    assert "jj-review abort --dry-run" in normalized_lines
+    assert "jj-review abort" in normalized_lines
+    assert "jj-review cleanup" not in normalized_lines
+    assert "jj-review submit nnszmtlx" not in normalized_lines
+    assert "jj-review close --cleanup nnszmtlx" not in normalized_lines
+
+
 @pytest.mark.parametrize(
     ("started_at", "expected"),
     [

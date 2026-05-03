@@ -411,7 +411,7 @@ concise — one effective summary per change rather than dumping saved-data and 
 diagnostics inline.
 
 When interrupted-operation records exist, `status` renders them as recovery guidance:
-the command that was interrupted, the recorded stack head, the original selector, the
+the command that was interrupted, the saved top change, the original selector, the
 age from `started_at`, whether the record matches the stack currently shown, and stable
 change-ID-based commands to inspect, continue, or preview abort behavior.
 
@@ -950,6 +950,11 @@ a diagnostic so the user knows to inspect state manually.
 `abort` mutates by default; `--dry-run` previews what would be undone. It is
 conservative — it only removes state the tool can prove was written during this
 operation, and stops rather than guessing when the evidence is ambiguous.
+
+If an interrupted `submit` no longer has a visible top change, the original stack
+cannot be continued or closed by revset. In that case `abort` clears only the unusable
+interrupted-operation record, reports that it did not close PRs or delete review
+branches, and avoids presenting cleanup as an alternate way to clear the notice.
 
 `abort` operates on all outstanding records for the current repo. "Outstanding" means
 the record is for changes that still exist locally (not stale by the standard

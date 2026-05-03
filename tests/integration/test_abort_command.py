@@ -193,11 +193,58 @@ def test_abort_refuses_submit_retraction_after_stack_rewrite(
         "abort will not guess",
         "current stack has changed since this submit",
     )
-    assert "operation record kept" in captured.out
+    assert "notice: kept" in captured.out
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
     assert fake_repo.pull_requests[1].state == "open"
     assert state_store.list_intents()
+
+
+def test_abort_clears_submit_record_when_recorded_head_was_abandoned(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    bottom, head = JjClient(repo).discover_review_stack().revisions
+    state_store = ReviewStateStore.for_repo(repo)
+    intent = SubmitIntent(
+        kind="submit",
+        pid=99999999,
+        label=f"submit on {head.change_id[:8]}",
+        display_revset=head.change_id[:8],
+        ordered_commit_ids=(bottom.commit_id, head.commit_id),
+        remote_name="origin",
+        github_host="github.test",
+        github_owner="octo-org",
+        github_repo="stacked-review",
+        ordered_change_ids=(bottom.change_id, head.change_id),
+        bookmarks={
+            bottom.change_id: f"review/change-{bottom.change_id[:8]}",
+            head.change_id: f"review/change-{head.change_id[:8]}",
+        },
+        started_at="2026-01-01T00:00:00+00:00",
+    )
+    write_new_intent(state_store.state_dir, intent)
+
+    run_command(["jj", "abandon", head.change_id], repo)
+
+    exit_code = run_main(repo, config_path, "abort")
+    captured = capsys.readouterr()
+    normalized_output = " ".join(captured.out.split())
+
+    assert exit_code == 0
+    assert "Applied abort actions" in captured.out
+    assert "github: no pull requests or review branches were changed" in normalized_output
+    assert f"change {head.change_id[:8]} is no longer visible in jj" in normalized_output
+    assert "cannot safely" not in normalized_output
+    assert "jj-review cleanup" not in captured.out
+    assert f"close --cleanup {head.change_id[:8]}" not in normalized_output
+    assert not state_store.list_intents()
 
 
 def test_abort_keeps_local_bookmark_when_remote_bookmark_is_conflicted(
@@ -301,7 +348,7 @@ def test_abort_removes_cleanup_restack_intent_with_note(
 
     assert exit_code == 0
     assert "Applied abort actions" in captured.out
-    assert "cleared incomplete operation record" in captured.out
+    assert "cleared it from future status output" in captured.out
     assert "rebase" in captured.out  # note about manual inspection
     assert not state_store.list_intents()
 

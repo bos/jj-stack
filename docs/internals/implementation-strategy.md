@@ -192,7 +192,9 @@ Tracking state stays minimal, optional, and non-authoritative. It is a small ver
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
 Interrupted-operation records carry `started_at` and ordered change IDs; status renders those
 fields directly as age-stamped recovery guidance with change-ID-based commands, without adding
-derived recovery state to the tracking file.
+derived recovery state to the tracking file. If the top change from an interrupted submit no
+longer resolves, status suppresses revset-based continuation guidance and abort can clear only
+the unusable operation record.
 
 Repo-scoped inspection treats orphan-only tracking as first-class output. `list` can
 render those saved orphan rows directly without loading bookmark state when no live
