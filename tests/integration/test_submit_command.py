@@ -654,7 +654,7 @@ def test_submit_dry_run_skips_github_for_never_tracked_local_stack(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=NoGithubReadsClient,
     )
 
@@ -725,7 +725,7 @@ def test_submit_dry_run_skips_stack_comment_github_reads(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=NoCommentReadsClient,
     )
 
@@ -783,7 +783,7 @@ def test_submit_batches_stack_comment_reads_with_graphql(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=CountingCommentLookupClient,
     )
 
@@ -1094,7 +1094,7 @@ def test_submit_reports_stack_comment_update_failures_without_traceback(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=FailingCommentUpdateClient,
     )
 
@@ -1275,7 +1275,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
         raise RuntimeError("Simulated failure after untracked remote update")
 
     monkeypatch.setattr(
-        "jj_review.commands.submit.JjClient.update_untracked_remote_bookmark",
+        "jj_review.commands.submit.command.JjClient.update_untracked_remote_bookmark",
         update_untracked_remote_bookmark_then_fail,
     )
 
@@ -1295,7 +1295,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
     intent_path.write_text(json.dumps(intent_data, indent=2) + "\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        "jj_review.commands.submit.JjClient.update_untracked_remote_bookmark",
+        "jj_review.commands.submit.command.JjClient.update_untracked_remote_bookmark",
         original_update_untracked_remote_bookmark,
     )
 
@@ -1665,7 +1665,7 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=FailSpecificPullRequestClient,
     )
 
@@ -1733,7 +1733,7 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=FlakyMetadataClient,
     )
 
@@ -1784,7 +1784,7 @@ def test_submit_unchanged_rerun_skips_pull_request_metadata_writes(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
     )
 
     assert run_main(repo, config_path, "submit") == 0
@@ -1813,7 +1813,7 @@ def test_submit_unchanged_rerun_skips_pull_request_metadata_writes(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=NoMetadataWritesClient,
     )
 
@@ -1844,7 +1844,7 @@ def test_submit_re_request_adds_prior_approved_and_changes_requested_reviewers(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
     )
 
     assert run_main(repo, config_path, "submit") == 0
@@ -1919,7 +1919,7 @@ def test_submit_cli_reviewers_override_configured_reviewers(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
     )
 
     exit_code = run_main(
@@ -1964,7 +1964,7 @@ def test_submit_cli_labels_override_configured_labels(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
     )
 
     exit_code = run_main(
@@ -2043,9 +2043,9 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=FlakyCommentClient,
-        concurrency_limits={"jj_review.commands.submit": 2},
+        concurrency_limits={"jj_review.commands.submit.command": 2},
     )
 
     assert run_main(repo, config_path, "submit") == 1
@@ -2130,7 +2130,7 @@ def test_submit_retains_intent_file_after_failed_submit(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit",),
+        modules=("jj_review.commands.submit.command",),
         client_type=FailOnFirstPRClient,
     )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from jj_review.commands.submit import (
+from jj_review.commands.submit.command import (
     _ensure_pull_request_link_is_consistent,
     _ensure_remote_can_be_updated,
     _preflight_conflicted_revisions,

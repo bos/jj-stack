@@ -520,7 +520,7 @@ def _configure_import_environment(
 ) -> Path:
     return configure_fake_github_environment(
         command_modules=(
-            "jj_review.commands.submit",
+            "jj_review.commands.submit.command",
             "jj_review.review.status",
             "jj_review.commands.import_",
         ),

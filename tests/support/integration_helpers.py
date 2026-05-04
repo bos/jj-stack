@@ -29,7 +29,7 @@ _CACHED_TEMPLATE: Path | None = None
 _CACHED_SUBMITTED_FEATURE_TEMPLATE: Path | None = None
 _SUBMIT_CONFIG_MODULES = (
     "jj_review.commands.abort",
-    "jj_review.commands.submit",
+    "jj_review.commands.submit.command",
     "jj_review.commands.relink",
     "jj_review.commands.close",
     "jj_review.commands.cleanup",

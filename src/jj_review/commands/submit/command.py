@@ -19,30 +19,17 @@ the corresponding configured defaults for this run.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import subprocess
-import tempfile
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Protocol
 
 from jj_review import console, ui
 from jj_review.bootstrap import bootstrap_context
-from jj_review.commands._close_actions import (
-    comment_matches_kind as _managed_comment_matches_kind,
-)
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
-from jj_review.formatting import (
-    format_pull_request_label,
-    render_revision_blocks,
-    render_revision_lines,
-    short_change_id,
-)
+from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.resolution import (
     ParsedGithubRepo,
@@ -52,15 +39,9 @@ from jj_review.github.resolution import (
     resolve_trunk_branch,
     select_submit_remote,
 )
-from jj_review.github.stack_comments import (
-    StackCommentKind,
-    stack_comment_label,
-    stack_comment_marker,
-)
-from jj_review.jj import JjCliArgs, JjClient, JjCommandError
+from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import (
-    GithubIssueComment,
     GithubPullRequest,
     GithubPullRequestReview,
 )
@@ -94,187 +75,33 @@ from jj_review.state.intents import (
 from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 
+from .descriptions import resolve_generated_descriptions
+from .models import (
+    GeneratedDescription,
+    InterruptedRemoteBookmarkRepairer,
+    LocalBookmarkAction,
+    PendingPullRequestSync,
+    PreparedSubmitInputs,
+    PreparedSubmitRevision,
+    PrivateCommitFinder,
+    PullRequestAction,
+    PullRequestSyncResult,
+    PushOperation,
+    RemoteBookmarkAction,
+    RemoteBookmarkSyncer,
+    SubmitDraftMode,
+    SubmitIntentState,
+    SubmitResult,
+    SubmittedPullRequestSync,
+    SubmittedRevision,
+)
+from .render import print_submit_result, render_selected_line
+from .stack_comments import sync_stack_comments
+
 HELP = "Send a jj stack to GitHub for review"
 
 
-LocalBookmarkAction = Literal["created", "moved", "unchanged"]
-PullRequestAction = Literal["created", "unchanged", "updated"]
-SubmitDraftMode = Literal["default", "draft", "draft_all", "publish"]
-RemoteBookmarkAction = Literal["pushed", "up to date"]
-PushOperation = Literal["batch", "git_update", "up_to_date"]
 _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
-_DESCRIBE_WITH_STACK_INPUT_ENV = "JJ_REVIEW_STACK_INPUT_FILE"
-
-
-@dataclass(frozen=True, slots=True)
-class SubmittedRevision:
-    """Remote bookmark and GitHub result for one revision in the submitted stack."""
-
-    bookmark: str
-    bookmark_source: BookmarkSource
-    change_id: str
-    commit_id: str
-    local_action: LocalBookmarkAction
-    native_revision: LocalRevision
-    pull_request_action: PullRequestAction
-    pull_request_is_draft: bool | None
-    pull_request_number: int | None
-    pull_request_title: str | None
-    pull_request_url: str | None
-    remote_action: RemoteBookmarkAction
-    subject: str
-
-
-@dataclass(frozen=True, slots=True)
-class SubmitResult:
-    """Remote bookmark and pull request state for the selected stack."""
-
-    client: JjClient
-    dry_run: bool
-    remote: GitRemote
-    revisions: tuple[SubmittedRevision, ...]
-    selected_change_id: str
-    selected_revset: str
-    selected_subject: str
-    trunk_change_id: str
-    trunk_branch: str
-    trunk: LocalRevision
-    trunk_subject: str
-
-
-@dataclass(frozen=True, slots=True)
-class PullRequestSyncResult:
-    """Result of creating, reusing, or updating one pull request."""
-
-    action: PullRequestAction
-    cached_change: CachedChange | None
-    pull_request: GithubPullRequest | None
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratedDescription:
-    """Generated title/body pair for a pull request or stack summary."""
-
-    body: str
-    title: str
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedSubmitRevision:
-    """Local submit state gathered before remote and GitHub mutation."""
-
-    bookmark: str
-    bookmark_source: BookmarkSource
-    change_id: str
-    expected_remote_target: str | None
-    local_action: LocalBookmarkAction
-    push_operation: PushOperation
-    remote_action: RemoteBookmarkAction
-    revision: LocalRevision
-
-
-@dataclass(frozen=True, slots=True)
-class SubmittedPullRequestSync:
-    """One completed PR sync plus its saved-data update."""
-
-    cached_change: CachedChange | None
-    submitted_revision: SubmittedRevision
-
-
-@dataclass(frozen=True, slots=True)
-class PendingPullRequestSync:
-    """One queued PR sync task."""
-
-    base_branch: str
-    discovered_pull_request: GithubPullRequest | None
-    generated_description: GeneratedDescription
-    parent_change_id: str | None
-    prepared_revision: PreparedSubmitRevision
-    stack_head_change_id: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class PendingStackCommentSync:
-    """One queued stack-comment sync task."""
-
-    cached_change: CachedChange
-    change_id: str
-    navigation_comment_body: str | None
-    overview_comment_body: str | None
-    pull_request_number: int
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedSubmitInputs:
-    """Local submit inputs prepared before GitHub mutations begin."""
-
-    bookmark_states: dict[str, BookmarkState]
-    bookmark_result: BookmarkResolutionResult
-    client: JjClient
-    generated_pull_request_descriptions: dict[str, GeneratedDescription]
-    generated_stack_description: GeneratedDescription | None
-    remote: GitRemote
-    stack: LocalStack
-    state: ReviewState
-
-
-@dataclass(frozen=True, slots=True)
-class _SubmitIntentState:
-    """Prepared submit intent bookkeeping for resumable runs."""
-
-    intent: SubmitIntent
-    intent_path: Path | None
-    stale_intents: list[LoadedIntent]
-
-
-class BookmarkStateReader(Protocol):
-    """Subset of the jj client interface needed for trunk-branch fallback."""
-
-    def list_bookmark_states(self) -> dict[str, BookmarkState]:
-        """Return bookmark state keyed by bookmark name."""
-
-
-class PrivateCommitFinder(Protocol):
-    """Subset of the jj client interface needed for git.private-commits checks."""
-
-    def find_private_commits(
-        self,
-        revisions: tuple[LocalRevision, ...],
-    ) -> tuple[LocalRevision, ...]:
-        """Return the revisions blocked by the repo's private-commit policy."""
-
-
-class RemoteBookmarkSyncer(Protocol):
-    """Subset of the jj client interface needed for remote bookmark updates."""
-
-    def push_bookmarks(self, *, remote: str, bookmarks: tuple[str, ...]) -> None:
-        """Push a batch of bookmarks to the selected remote."""
-
-    def update_untracked_remote_bookmark(
-        self,
-        *,
-        remote: str,
-        bookmark: str,
-        desired_target: str,
-        expected_remote_target: str,
-    ) -> None:
-        """Update an existing untracked remote bookmark without importing it first."""
-
-
-class InterruptedRemoteBookmarkRepairer(Protocol):
-    """Subset of the jj client interface needed for stale remote bookmark repair."""
-
-    def fetch_remote(self, *, remote: str) -> None:
-        """Refresh remembered remote bookmark state for the selected remote."""
-
-    def list_bookmark_states(
-        self,
-        bookmarks: tuple[str, ...] | None = None,
-    ) -> dict[str, BookmarkState]:
-        """Return local and remote state for the requested bookmark names."""
-
-    def track_bookmark(self, *, remote: str, bookmark: str) -> None:
-        """Track an existing remote bookmark locally."""
 
 
 def submit(
@@ -320,7 +147,7 @@ def submit(
         nonlocal emitted_prepared
         if revset is None:
             console.output(
-                _render_selected_line(
+                render_selected_line(
                     selected_change_id=selected_change_id,
                     selected_subject=selected_subject,
                 )
@@ -352,160 +179,13 @@ def submit(
     if not emitted_prepared:
         if revset is None:
             console.output(
-                _render_selected_line(
+                render_selected_line(
                     selected_change_id=result.selected_change_id,
                     selected_subject=result.selected_subject,
                 )
             )
-    client = result.client
-    prerendered_blocks: dict[str, tuple[str, ...]] = {}
-    if client is not None:
-        # Overlap the native `jj log` subprocess startup cost before we print
-        # the final summary for large stacks.
-        with console.spinner(description="Rendering jj log"):
-            prerendered_blocks = render_revision_blocks(
-                client=client,
-                revisions=tuple(revision.native_revision for revision in result.revisions)
-                + (result.trunk,),
-            )
-    if not result.revisions:
-        for line in _render_submit_trunk_lines(
-            client=client,
-            prerendered_lines=prerendered_blocks.get(result.trunk.commit_id),
-            result=result,
-        ):
-            if client is None:
-                console.output(line)
-            else:
-                console.output(line, soft_wrap=True)
-        console.note(
-            "The selected stack has no changes to review.",
-            soft_wrap=True,
-        )
-        return 0
-
-    if result.dry_run:
-        console.note("Dry run: no local, remote, or GitHub changes applied.", soft_wrap=True)
-        console.output("Planned changes:")
-    else:
-        console.output("Submitted changes:")
-    for revision in reversed(result.revisions):
-        for line in _render_submit_revision_lines(
-            client=client,
-            prerendered_lines=prerendered_blocks.get(revision.commit_id),
-            revision=revision,
-        ):
-            if client is None:
-                console.output(line)
-            else:
-                console.output(line, soft_wrap=True)
-    for line in _render_submit_trunk_lines(
-        client=client,
-        prerendered_lines=prerendered_blocks.get(result.trunk.commit_id),
-        result=result,
-    ):
-        if client is None:
-            console.output(line)
-        else:
-            console.output(line, soft_wrap=True)
-    if not result.dry_run:
-        top_pull_request_url = result.revisions[-1].pull_request_url
-        if top_pull_request_url is not None:
-            console.output(ui.prefixed_line("Top of stack: ", top_pull_request_url))
+    print_submit_result(result)
     return 0
-
-
-def _render_submit_pr_suffix(
-    *,
-    action: str,
-    is_draft: bool | None,
-    pull_request_number: int | None,
-) -> str:
-    if pull_request_number is None:
-        if action == "created":
-            return "new PR"
-        if action == "updated":
-            return "PR updated"
-        return "PR unchanged"
-    label = format_pull_request_label(
-        pull_request_number,
-        is_draft=bool(is_draft),
-    )
-    if action == "created":
-        return label
-    return f"{label} {action}"
-
-
-def _render_selected_line(
-    *,
-    selected_change_id: str,
-    selected_subject: str,
-) -> ui.PrefixedLine:
-    return ui.prefixed_line(
-        "Selected: ",
-        t"{selected_subject} ({ui.change_id(selected_change_id)})",
-    )
-
-
-def _render_submit_revision_lines(
-    *,
-    client: JjClient | None,
-    prerendered_lines: tuple[str, ...] | None = None,
-    revision,
-) -> tuple[object, ...]:
-    summary = _render_submit_revision_summary(revision)
-    if client is None:
-        return (
-            ui.prefixed_line(
-                "- ",
-                t"{revision.subject} ({ui.change_id(revision.change_id)}): {summary}",
-            ),
-        )
-    return render_revision_lines(
-        client=client,
-        prerendered_lines=prerendered_lines,
-        revision=revision,
-        bookmark=revision.bookmark,
-        suffix=summary,
-    )
-
-
-def _render_submit_revision_summary(revision) -> str:
-    parts: list[str] = []
-    if revision.pull_request_action != "created":
-        if revision.remote_action == "up to date":
-            parts.append("already pushed")
-        else:
-            parts.append("pushed")
-    parts.append(
-        _render_submit_pr_suffix(
-            action=revision.pull_request_action,
-            is_draft=revision.pull_request_is_draft,
-            pull_request_number=revision.pull_request_number,
-        )
-    )
-    return ", ".join(parts)
-
-
-def _render_submit_trunk_lines(
-    *,
-    client: JjClient | None,
-    prerendered_lines: tuple[str, ...] | None = None,
-    result,
-) -> tuple[object, ...]:
-    if client is None:
-        return (
-            ui.prefixed_line(
-                "Trunk: ",
-                t"{result.trunk_subject} ({ui.change_id(result.trunk_change_id)}) "
-                t"-> {ui.bookmark(result.trunk_branch)}",
-            ),
-        )
-    return render_revision_lines(
-        client=client,
-        prerendered_lines=prerendered_lines,
-        revision=result.trunk,
-    )
 
 
 def _build_submit_result(
@@ -544,7 +224,7 @@ def _prepare_submit_inputs(
     revset: str | None,
     state_store: ReviewStateStore,
     use_bookmarks: tuple[str, ...],
-) -> _PreparedSubmitInputs:
+) -> PreparedSubmitInputs:
     """Load local submit state before any GitHub mutation begins."""
 
     client = jj_client
@@ -587,13 +267,13 @@ def _prepare_submit_inputs(
     (
         generated_pull_request_descriptions,
         generated_stack_description,
-    ) = _resolve_generated_descriptions(
+    ) = resolve_generated_descriptions(
         describe_with=describe_with,
         jj_client=client,
         selected_revset=stack.selected_revset,
         revisions=stack.revisions,
     )
-    return _PreparedSubmitInputs(
+    return PreparedSubmitInputs(
         bookmark_states=bookmark_states,
         bookmark_result=bookmark_result,
         client=client,
@@ -613,7 +293,7 @@ def _start_submit_intent(
     remote_name: str,
     stack: LocalStack,
     state_store: ReviewStateStore,
-) -> _SubmitIntentState:
+) -> SubmitIntentState:
     """Prepare submit intent state before any remote mutation begins."""
 
     ordered_change_ids = tuple(revision.change_id for revision in stack.revisions)
@@ -652,7 +332,7 @@ def _start_submit_intent(
             ordered_commit_ids=ordered_commit_ids,
             stale_intents=stale_intents,
         )
-        return _SubmitIntentState(intent=intent, intent_path=None, stale_intents=stale_intents)
+        return SubmitIntentState(intent=intent, intent_path=None, stale_intents=stale_intents)
 
     state_dir = state_store.require_writable()
     stale_intents = check_same_kind_intent(state_dir, intent)
@@ -662,7 +342,7 @@ def _start_submit_intent(
         ordered_commit_ids=ordered_commit_ids,
         stale_intents=stale_intents,
     )
-    return _SubmitIntentState(
+    return SubmitIntentState(
         intent=intent,
         intent_path=write_new_intent(state_dir, intent),
         stale_intents=stale_intents,
@@ -1013,7 +693,8 @@ async def _run_submit_async(
                 )
 
             if not dry_run:
-                await _sync_stack_comments(
+                await sync_stack_comments(
+                    concurrency=_GITHUB_INSPECTION_CONCURRENCY,
                     dry_run=dry_run,
                     generated_stack_description=prepared_inputs.generated_stack_description,
                     github_client=github_client,
@@ -1300,172 +981,6 @@ def _save_submit_state_checkpoint(
     state_store.save(interim_state)
 
 
-def _resolve_generated_descriptions(
-    *,
-    describe_with: str | None,
-    jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
-    selected_revset: str,
-) -> tuple[dict[str, GeneratedDescription], GeneratedDescription | None]:
-    if describe_with is None:
-        return (
-            {
-                revision.change_id: GeneratedDescription(
-                    body=_pull_request_body(revision.description),
-                    title=revision.subject,
-                )
-                for revision in revisions
-            },
-            None,
-        )
-
-    generated_descriptions = {
-        revision.change_id: _run_description_command(
-            command=describe_with,
-            kind="pr",
-            repo_root=jj_client.repo_root,
-            revset=revision.change_id,
-        )
-        for revision in revisions
-    }
-    generated_stack_description = None
-    if len(revisions) > 1:
-        stack_input = _build_stack_description_input(
-            generated_descriptions=generated_descriptions,
-            jj_client=jj_client,
-            revisions=revisions,
-        )
-        with tempfile.TemporaryDirectory(prefix="jj-review-describe-with-") as tempdir:
-            stack_input_path = Path(tempdir) / "stack-input.json"
-            stack_input_path.write_text(json.dumps(stack_input), encoding="utf-8")
-            generated_stack_description = _run_description_command(
-                command=describe_with,
-                extra_env={
-                    _DESCRIBE_WITH_STACK_INPUT_ENV: str(stack_input_path),
-                },
-                kind="stack",
-                repo_root=jj_client.repo_root,
-                revset=selected_revset,
-            )
-    return generated_descriptions, generated_stack_description
-
-
-def _build_stack_description_input(
-    *,
-    generated_descriptions: dict[str, GeneratedDescription],
-    jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
-) -> dict[str, object]:
-    return {
-        "revisions": [
-            {
-                "body": generated_descriptions[revision.change_id].body,
-                "change_id": revision.change_id,
-                "diffstat": _describe_with_diffstat(
-                    jj_client=jj_client,
-                    revset=revision.change_id,
-                ),
-                "title": generated_descriptions[revision.change_id].title,
-            }
-            for revision in revisions
-        ]
-    }
-
-
-def _describe_with_diffstat(*, jj_client: JjClient, revset: str) -> str:
-    try:
-        stdout = jj_client.show_with_stat(revset)
-    except JjCommandError as error:
-        raise CliError(
-            t"Could not collect diffstat for --stack {ui.revset(revset)}: {error}"
-        ) from error
-
-    lines = stdout.rstrip().splitlines()
-    diffstat_lines: list[str] = []
-    for line in reversed(lines):
-        if not line.strip():
-            if diffstat_lines:
-                break
-            continue
-        diffstat_lines.append(line)
-    return "\n".join(reversed(diffstat_lines))
-
-
-def _run_description_command(
-    *,
-    command: str,
-    extra_env: dict[str, str] | None = None,
-    kind: Literal["pr", "stack"],
-    repo_root: Path,
-    revset: str,
-) -> GeneratedDescription:
-    try:
-        completed = subprocess.run(
-            [command, f"--{kind}", revset],
-            capture_output=True,
-            check=False,
-            cwd=repo_root,
-            env=(
-                None
-                if extra_env is None
-                else {
-                    **os.environ,
-                    **extra_env,
-                }
-            ),
-            text=True,
-        )
-    except FileNotFoundError as error:
-        raise CliError(t"Describe helper {ui.cmd(command)} was not found.") from error
-    except OSError as error:
-        raise CliError(t"Could not run describe helper {ui.cmd(command)}: {error}") from error
-
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()
-        if not detail:
-            detail = f"exit status {completed.returncode}"
-        raise CliError(
-            t"Describe helper {ui.cmd(command)} failed for {ui.cmd(f'--{kind}')} "
-            t"{ui.revset(revset)}: {detail}"
-        )
-
-    output = completed.stdout.strip()
-    if not output:
-        raise CliError(
-            t"Describe helper {ui.cmd(command)} produced no JSON for "
-            t"{ui.cmd(f'--{kind}')} "
-            t"{ui.revset(revset)}."
-        )
-
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise CliError(
-            t"Describe helper {ui.cmd(command)} returned invalid JSON for "
-            t"{ui.cmd(f'--{kind}')} "
-            t"{ui.revset(revset)}: {error}"
-        ) from error
-
-    if not isinstance(payload, dict):
-        raise CliError(
-            t"Describe helper {ui.cmd(command)} must return a JSON object for "
-            t"{ui.cmd(f'--{kind}')} "
-            t"{ui.revset(revset)}."
-        )
-
-    title = payload.get("title")
-    body = payload.get("body")
-    if not isinstance(title, str) or not isinstance(body, str):
-        raise CliError(
-            t"Describe helper {ui.cmd(command)} must return string "
-            t"{ui.cmd('title')} and "
-            t"{ui.cmd('body')} fields for "
-            t"{ui.cmd(f'--{kind}')} {ui.revset(revset)}."
-        )
-
-    return GeneratedDescription(body=body, title=title)
-
-
 async def _sync_pull_requests(
     *,
     draft_mode: SubmitDraftMode,
@@ -1501,12 +1016,13 @@ async def _sync_pull_requests(
     )
 
     def handle_success(_index: int, submitted: SubmittedPullRequestSync) -> None:
-        _record_pull_request_success(
+        if submitted.cached_change is not None:
+            state_changes[submitted.submitted_revision.change_id] = submitted.cached_change
+        _save_submit_state_checkpoint(
             dry_run=dry_run,
             state=state,
             state_changes=state_changes,
             state_store=state_store,
-            submitted=submitted,
         )
         if on_progress is not None:
             on_progress()
@@ -1529,24 +1045,6 @@ async def _sync_pull_requests(
         on_success=handle_success,
     )
     return tuple(submitted.submitted_revision for submitted in submitted_revisions)
-
-
-def _record_pull_request_success(
-    *,
-    dry_run: bool,
-    state: ReviewState,
-    state_changes: dict[str, CachedChange],
-    state_store: ReviewStateStore,
-    submitted: SubmittedPullRequestSync,
-) -> None:
-    if submitted.cached_change is not None:
-        state_changes[submitted.submitted_revision.change_id] = submitted.cached_change
-    _save_submit_state_checkpoint(
-        dry_run=dry_run,
-        state=state,
-        state_changes=state_changes,
-        state_store=state_store,
-    )
 
 
 async def _sync_pull_request_task(
@@ -2038,405 +1536,6 @@ async def _update_pull_request(
         )
     except GithubClientError as error:
         raise CliError(f"Could not update pull request #{pull_request.number}") from error
-
-
-async def _sync_stack_comments(
-    *,
-    dry_run: bool,
-    generated_stack_description: GeneratedDescription | None,
-    github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
-    revisions: tuple[SubmittedRevision, ...],
-    state: ReviewState,
-    state_changes: dict[str, CachedChange],
-    state_store: ReviewStateStore,
-    trunk_branch: str,
-) -> None:
-    if not revisions:
-        return
-
-    head_change_id = revisions[-1].change_id
-    has_navigation_comments = len(revisions) > 1
-    has_overview_comment = bool(
-        has_navigation_comments
-        and generated_stack_description is not None
-        and _render_generated_stack_description(generated_stack_description)
-    )
-    pending: list[PendingStackCommentSync] = []
-    for revision in revisions:
-        if revision.pull_request_number is None:
-            continue
-        cached_change = state_changes.get(revision.change_id) or state.changes.get(
-            revision.change_id
-        )
-        if cached_change is None:
-            if dry_run:
-                continue
-            raise AssertionError("Stack summary comments require a saved pull request link.")
-        navigation_comment_body = None
-        if has_navigation_comments:
-            navigation_comment_body = _render_navigation_comment(
-                current=revision,
-                revisions=revisions,
-                trunk_branch=trunk_branch,
-            )
-        overview_comment_body = None
-        if has_overview_comment and revision.change_id == head_change_id:
-            overview_comment_body = _render_overview_comment(
-                stack_description=generated_stack_description
-            )
-        pending.append(
-            PendingStackCommentSync(
-                cached_change=cached_change,
-                change_id=revision.change_id,
-                navigation_comment_body=navigation_comment_body,
-                overview_comment_body=overview_comment_body,
-                pull_request_number=revision.pull_request_number,
-            )
-        )
-    if not pending:
-        return
-    with console.spinner(description="Loading stack comments"):
-        try:
-            comments_by_pull_request_number = (
-                await github_client.get_issue_comments_by_pull_request_numbers(
-                    github_repository.owner,
-                    github_repository.repo,
-                    pull_numbers=tuple(
-                        pending_sync.pull_request_number for pending_sync in pending
-                    ),
-                )
-            )
-        except GithubClientError as error:
-            raise CliError("Could not list stack comments") from error
-
-    with console.progress(description="Syncing stack comments", total=len(pending)) as progress:
-
-        def handle_success(_index: int, result: tuple[str, CachedChange]) -> None:
-            _record_stack_comment_success(
-                dry_run=dry_run,
-                result=result,
-                state=state,
-                state_changes=state_changes,
-                state_store=state_store,
-            )
-            progress.advance()
-
-        await run_bounded_tasks(
-            concurrency=_GITHUB_INSPECTION_CONCURRENCY,
-            items=tuple(pending),
-            run_item=lambda pending_sync: _sync_stack_comment_task(
-                dry_run=dry_run,
-                github_client=github_client,
-                github_repository=github_repository,
-                comments=comments_by_pull_request_number[pending_sync.pull_request_number],
-                pending_sync=pending_sync,
-            ),
-            on_success=handle_success,
-        )
-
-
-def _record_stack_comment_success(
-    *,
-    dry_run: bool,
-    result: tuple[str, CachedChange],
-    state: ReviewState,
-    state_changes: dict[str, CachedChange],
-    state_store: ReviewStateStore,
-) -> None:
-    change_id, updated_change = result
-    if state_changes.get(change_id) != updated_change:
-        state_changes[change_id] = updated_change
-        _save_submit_state_checkpoint(
-            dry_run=dry_run,
-            state=state,
-            state_changes=state_changes,
-            state_store=state_store,
-        )
-
-
-async def _sync_stack_comment_task(
-    *,
-    comments: tuple[GithubIssueComment, ...],
-    dry_run: bool,
-    github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
-    pending_sync: PendingStackCommentSync,
-) -> tuple[str, CachedChange]:
-    navigation_comment = await _sync_managed_comment(
-        cached_comment_id=pending_sync.cached_change.navigation_comment_id,
-        comment_body=pending_sync.navigation_comment_body,
-        comments=comments,
-        dry_run=dry_run,
-        github_client=github_client,
-        github_repository=github_repository,
-        kind="navigation",
-        pull_request_number=pending_sync.pull_request_number,
-    )
-    overview_comment = await _sync_managed_comment(
-        cached_comment_id=pending_sync.cached_change.overview_comment_id,
-        comment_body=pending_sync.overview_comment_body,
-        comments=comments,
-        dry_run=dry_run,
-        github_client=github_client,
-        github_repository=github_repository,
-        kind="overview",
-        pull_request_number=pending_sync.pull_request_number,
-    )
-    updated_change = pending_sync.cached_change.model_copy(
-        update={
-            "navigation_comment_id": (
-                None if navigation_comment is None else navigation_comment.id
-            ),
-            "overview_comment_id": None if overview_comment is None else overview_comment.id,
-        }
-    )
-    return pending_sync.change_id, updated_change
-
-
-
-async def _sync_managed_comment(
-    *,
-    cached_comment_id: int | None,
-    comment_body: str | None,
-    comments: tuple[GithubIssueComment, ...],
-    dry_run: bool,
-    github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
-    kind: StackCommentKind,
-    pull_request_number: int,
-) -> GithubIssueComment | None:
-    existing_comment = _resolve_saved_managed_comment(
-        cached_comment_id=cached_comment_id,
-        comments=comments,
-        kind=kind,
-        pull_request_number=pull_request_number,
-    )
-    if comment_body is None:
-        if existing_comment is None:
-            return None
-        if not dry_run:
-            await _delete_stack_comment(
-                comment_id=existing_comment.id,
-                github_client=github_client,
-                github_repository=github_repository,
-                kind=kind,
-            )
-        return None
-    if existing_comment is not None:
-        if existing_comment.body == comment_body:
-            return existing_comment
-        if dry_run:
-            return existing_comment
-        return await _update_stack_comment(
-            comment_body=comment_body,
-            comment_id=existing_comment.id,
-            github_client=github_client,
-            github_repository=github_repository,
-            kind=kind,
-        )
-    if dry_run:
-        return None
-    return await _create_stack_comment(
-        comment_body=comment_body,
-        github_client=github_client,
-        github_repository=github_repository,
-        kind=kind,
-        pull_request_number=pull_request_number,
-    )
-
-
-def _resolve_saved_managed_comment(
-    *,
-    cached_comment_id: int | None,
-    comments: tuple[GithubIssueComment, ...],
-    kind: StackCommentKind,
-    pull_request_number: int,
-) -> GithubIssueComment | None:
-    if cached_comment_id is not None:
-        cached_comment = next(
-            (comment for comment in comments if comment.id == cached_comment_id),
-            None,
-        )
-        if cached_comment is not None:
-            if not _managed_comment_matches_kind(body=cached_comment.body, kind=kind):
-                raise CliError(
-                    t"Saved {stack_comment_label(kind)} #{cached_comment_id} for pull request "
-                    t"#{pull_request_number} does not belong to jj-review.",
-                    hint=(
-                        t"Inspect the PR link with {ui.cmd('status --fetch')} or "
-                        t"delete the saved comment ID before submitting again."
-                    ),
-                )
-            return cached_comment
-    return _discover_managed_comment(
-        comments=comments,
-        kind=kind,
-    )
-
-
-def _discover_managed_comment(
-    *,
-    comments: tuple[GithubIssueComment, ...],
-    kind: StackCommentKind,
-) -> GithubIssueComment | None:
-    matching_comments = [
-        comment
-        for comment in comments
-        if _managed_comment_matches_kind(body=comment.body, kind=kind)
-    ]
-    if not matching_comments:
-        return None
-    if len(matching_comments) > 1:
-        comment_ids = ", ".join(str(comment.id) for comment in matching_comments)
-        raise CliError(
-            t"GitHub reports multiple jj-review {stack_comment_label(kind)}s for the same "
-            t"pull request: {comment_ids}.",
-            hint=(
-                t"Inspect the PR link with {ui.cmd('status --fetch')} or delete the "
-                t"extra {stack_comment_label(kind)}s before submitting again."
-            ),
-        )
-    return matching_comments[0]
-
-
-async def _create_stack_comment(
-    *,
-    comment_body: str,
-    github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
-    kind: StackCommentKind,
-    pull_request_number: int,
-) -> GithubIssueComment:
-    try:
-        return await github_client.create_issue_comment(
-            github_repository.owner,
-            github_repository.repo,
-            issue_number=pull_request_number,
-            body=comment_body,
-        )
-    except GithubClientError as error:
-        raise CliError(
-            f"Could not create a {stack_comment_label(kind)} for pull request "
-            f"#{pull_request_number}"
-        ) from error
-
-
-async def _update_stack_comment(
-    *,
-    comment_body: str,
-    comment_id: int,
-    github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
-    kind: StackCommentKind,
-) -> GithubIssueComment:
-    try:
-        return await github_client.update_issue_comment(
-            github_repository.owner,
-            github_repository.repo,
-            comment_id=comment_id,
-            body=comment_body,
-        )
-    except GithubClientError as error:
-        raise CliError(f"Could not update {stack_comment_label(kind)} #{comment_id}") from error
-
-
-async def _delete_stack_comment(
-    *,
-    comment_id: int,
-    github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
-    kind: StackCommentKind,
-) -> None:
-    try:
-        await github_client.delete_issue_comment(
-            github_repository.owner,
-            github_repository.repo,
-            comment_id=comment_id,
-        )
-    except GithubClientError as error:
-        if error.status_code == 404:
-            return
-        raise CliError(f"Could not delete {stack_comment_label(kind)} #{comment_id}") from error
-
-
-def _render_navigation_comment(
-    *,
-    current: SubmittedRevision,
-    revisions: tuple[SubmittedRevision, ...],
-    trunk_branch: str,
-) -> str:
-    lines = [stack_comment_marker("navigation")]
-    lines.extend(
-        [
-            "This pull request is part of a stack tracked by `jj-review`.",
-            "",
-            "Stack:",
-        ]
-    )
-    lines.extend(_render_navigation_comment_entries(current=current, revisions=revisions))
-    lines.append(f"trunk `{trunk_branch}`")
-    return "\n".join(lines)
-
-
-def _render_overview_comment(
-    *,
-    stack_description: GeneratedDescription | None,
-) -> str | None:
-    description_lines = _render_generated_stack_description(stack_description)
-    if not description_lines:
-        return None
-    return "\n".join([stack_comment_marker("overview"), *description_lines])
-
-
-def _render_generated_stack_description(
-    stack_description: GeneratedDescription | None,
-) -> list[str]:
-    if stack_description is None:
-        return []
-
-    lines: list[str] = []
-    if stack_description.title:
-        lines.append(f"## {stack_description.title}")
-    if stack_description.body:
-        if lines:
-            lines.append("")
-        lines.extend(stack_description.body.splitlines())
-    return lines
-
-
-def _render_navigation_comment_entries(
-    *,
-    current: SubmittedRevision,
-    revisions: tuple[SubmittedRevision, ...],
-) -> list[str]:
-    return [
-        _render_navigation_comment_entry(current=current, revision=revision)
-        for revision in reversed(revisions)
-    ]
-
-
-def _render_navigation_comment_entry(
-    *,
-    current: SubmittedRevision,
-    revision: SubmittedRevision,
-) -> str:
-    title = revision.pull_request_title or revision.subject
-    if revision.change_id == current.change_id:
-        return f"**{title} (this PR)**"
-    if revision.pull_request_url is None:
-        return title
-    return f"[{title}]({revision.pull_request_url})"
-
-
-def _pull_request_body(description: str) -> str:
-    lines = description.splitlines()
-    if not lines:
-        return ""
-    body = "\n".join(lines[1:]).strip()
-    if body:
-        return body
-    return lines[0].strip()
 
 
 def _updated_cached_change(
