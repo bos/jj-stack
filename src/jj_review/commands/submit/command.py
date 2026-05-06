@@ -652,9 +652,22 @@ async def _run_submit_async(
                     trunk_commit_id=stack.trunk.commit_id,
                 )
 
+            pending_syncs = _pending_pull_request_syncs(
+                discovered_pull_requests=discovered_pull_requests,
+                generated_descriptions=prepared_inputs.generated_pull_request_descriptions,
+                prepared_revisions=prepared_revisions,
+                trunk_branch=trunk_branch,
+            )
             if not dry_run and any(
                 revision.remote_action == "pushed" for revision in prepared_revisions
             ):
+                await _retarget_review_bases_before_branch_push(
+                    github_client=github_client,
+                    github_repository=github_repository,
+                    pending_syncs=pending_syncs,
+                    prepared_revisions=prepared_revisions,
+                    trunk_branch=trunk_branch,
+                )
                 with console.spinner(description="Pushing review branches"):
                     _sync_remote_bookmarks(
                         client=client,
@@ -678,18 +691,15 @@ async def _run_submit_async(
                     dry_run=dry_run,
                     github_client=github_client,
                     github_repository=github_repository,
-                    prepared_revisions=prepared_revisions,
-                    discovered_pull_requests=discovered_pull_requests,
                     labels=resolved_labels,
                     on_progress=progress.advance,
+                    pending_syncs=pending_syncs,
                     re_request=re_request,
                     reviewers=resolved_reviewers,
                     state=bookmark_result.state,
                     state_changes=state_changes,
                     state_store=state_store,
                     team_reviewers=resolved_team_reviewers,
-                    trunk_branch=trunk_branch,
-                    generated_descriptions=prepared_inputs.generated_pull_request_descriptions,
                 )
 
             if not dry_run:
@@ -984,37 +994,19 @@ def _save_submit_state_checkpoint(
 async def _sync_pull_requests(
     *,
     draft_mode: SubmitDraftMode,
-    discovered_pull_requests: dict[str, GithubPullRequest | None],
     dry_run: bool,
-    generated_descriptions: dict[str, GeneratedDescription],
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     labels: list[str],
+    pending_syncs: tuple[PendingPullRequestSync, ...],
     re_request: bool,
-    prepared_revisions: tuple[PreparedSubmitRevision, ...],
     reviewers: list[str],
     state: ReviewState,
     state_changes: dict[str, CachedChange],
     state_store: ReviewStateStore,
     team_reviewers: list[str],
-    trunk_branch: str,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[SubmittedRevision, ...]:
-    stack_head_change_id = prepared_revisions[-1].change_id if prepared_revisions else None
-    pending = tuple(
-        PendingPullRequestSync(
-            base_branch=prepared_revisions[index - 1].bookmark if index > 0 else trunk_branch,
-            discovered_pull_request=discovered_pull_requests[prepared_revision.bookmark],
-            generated_description=generated_descriptions[prepared_revision.change_id],
-            parent_change_id=(
-                prepared_revisions[index - 1].change_id if index > 0 else None
-            ),
-            prepared_revision=prepared_revision,
-            stack_head_change_id=stack_head_change_id,
-        )
-        for index, prepared_revision in enumerate(prepared_revisions)
-    )
-
     def handle_success(_index: int, submitted: SubmittedPullRequestSync) -> None:
         if submitted.cached_change is not None:
             state_changes[submitted.submitted_revision.change_id] = submitted.cached_change
@@ -1029,7 +1021,7 @@ async def _sync_pull_requests(
 
     submitted_revisions = await run_bounded_tasks(
         concurrency=_GITHUB_INSPECTION_CONCURRENCY,
-        items=pending,
+        items=pending_syncs,
         run_item=lambda pending_sync: _sync_pull_request_task(
             draft_mode=draft_mode,
             dry_run=dry_run,
@@ -1045,6 +1037,103 @@ async def _sync_pull_requests(
         on_success=handle_success,
     )
     return tuple(submitted.submitted_revision for submitted in submitted_revisions)
+
+
+def _pending_pull_request_syncs(
+    *,
+    discovered_pull_requests: dict[str, GithubPullRequest | None],
+    generated_descriptions: dict[str, GeneratedDescription],
+    prepared_revisions: tuple[PreparedSubmitRevision, ...],
+    trunk_branch: str,
+) -> tuple[PendingPullRequestSync, ...]:
+    """Build the desired pull-request sync plan for the submitted stack."""
+
+    stack_head_change_id = prepared_revisions[-1].change_id if prepared_revisions else None
+    return tuple(
+        PendingPullRequestSync(
+            base_branch=prepared_revisions[index - 1].bookmark if index > 0 else trunk_branch,
+            discovered_pull_request=discovered_pull_requests[prepared_revision.bookmark],
+            generated_description=generated_descriptions[prepared_revision.change_id],
+            parent_change_id=(
+                prepared_revisions[index - 1].change_id if index > 0 else None
+            ),
+            prepared_revision=prepared_revision,
+            stack_head_change_id=stack_head_change_id,
+        )
+        for index, prepared_revision in enumerate(prepared_revisions)
+    )
+
+
+async def _retarget_review_bases_before_branch_push(
+    *,
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+    pending_syncs: tuple[PendingPullRequestSync, ...],
+    prepared_revisions: tuple[PreparedSubmitRevision, ...],
+    trunk_branch: str,
+) -> None:
+    """Move stale stacked PR bases to trunk before rewritten branches are pushed."""
+
+    submitted_bookmarks = {revision.bookmark for revision in prepared_revisions}
+    retarget_syncs = tuple(
+        pending_sync
+        for pending_sync in pending_syncs
+        if _needs_pre_push_base_retarget(
+            pending_sync=pending_sync,
+            submitted_bookmarks=submitted_bookmarks,
+        )
+    )
+    await run_bounded_tasks(
+        concurrency=_GITHUB_INSPECTION_CONCURRENCY,
+        items=retarget_syncs,
+        run_item=lambda pending_sync: _retarget_review_base_before_branch_push(
+            github_client=github_client,
+            github_repository=github_repository,
+            pending_sync=pending_sync,
+            trunk_branch=trunk_branch,
+        ),
+    )
+
+
+def _needs_pre_push_base_retarget(
+    *,
+    pending_sync: PendingPullRequestSync,
+    submitted_bookmarks: set[str],
+) -> bool:
+    """Whether a PR's stale review base should be moved before branch push."""
+
+    pull_request = pending_sync.discovered_pull_request
+    if pull_request is None or pull_request.state != "open":
+        return False
+    if pull_request.base.ref == pending_sync.base_branch:
+        return False
+    return pull_request.base.ref in submitted_bookmarks
+
+
+async def _retarget_review_base_before_branch_push(
+    *,
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+    pending_sync: PendingPullRequestSync,
+    trunk_branch: str,
+) -> None:
+    pull_request = pending_sync.discovered_pull_request
+    if pull_request is None:
+        raise AssertionError("Pre-push retarget requires a discovered pull request.")
+    try:
+        await github_client.update_pull_request(
+            github_repository.owner,
+            github_repository.repo,
+            pull_number=pull_request.number,
+            base=trunk_branch,
+            body=pull_request.body or "",
+            title=pull_request.title,
+        )
+    except GithubClientError as error:
+        raise CliError(
+            t"Could not retarget PR #{pull_request.number} to "
+            t"{ui.bookmark(trunk_branch)} before pushing review branches"
+        ) from error
 
 
 async def _sync_pull_request_task(

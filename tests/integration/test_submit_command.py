@@ -118,6 +118,56 @@ def test_submit_projects_review_bookmarks_to_selected_remote(
     assert fake_repo.pull_requests[2].base_ref == first_bookmark
 
 
+def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+    commit_file(repo, "feature 4", "feature-4.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    old_bottom_change_id = initial_stack.revisions[0].change_id
+    old_top_change_id = initial_stack.revisions[-1].change_id
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(["jj", "rebase", "-r", old_bottom_change_id, "-A", old_top_change_id], repo)
+    reordered_stack = JjClient(repo).discover_review_stack()
+
+    assert [revision.subject for revision in reordered_stack.revisions] == [
+        "feature 2",
+        "feature 3",
+        "feature 4",
+        "feature 1",
+    ]
+    assert run_main(repo, config_path, "submit", reordered_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    refreshed_state = ReviewStateStore.for_repo(repo).load()
+    bookmarks_by_subject = {
+        revision.subject: refreshed_state.changes[revision.change_id].bookmark
+        for revision in reordered_stack.revisions
+    }
+    pull_requests_by_title = {
+        pull_request.title: pull_request for pull_request in fake_repo.pull_requests.values()
+    }
+
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
+    assert all(
+        pull_request.merged_at is None for pull_request in fake_repo.pull_requests.values()
+    )
+    assert pull_requests_by_title["feature 2"].base_ref == "main"
+    assert pull_requests_by_title["feature 3"].base_ref == bookmarks_by_subject["feature 2"]
+    assert pull_requests_by_title["feature 4"].base_ref == bookmarks_by_subject["feature 3"]
+    assert pull_requests_by_title["feature 1"].base_ref == bookmarks_by_subject["feature 4"]
+
+
 def test_submit_uses_configured_bookmark_prefix(
     tmp_path: Path,
     monkeypatch,

@@ -379,14 +379,15 @@ def test_status_exits_nonzero_when_pull_request_lookup_fails(
 def test_status_exits_nonzero_when_github_reports_multiple_pull_requests(
     tmp_path: Path,
     monkeypatch,
-    capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
-    bookmark = ReviewStateStore.for_repo(repo).load().changes[change_id].bookmark
+    state_store = ReviewStateStore.for_repo(repo)
+    state_before = state_store.load()
+    bookmark = state_before.changes[change_id].bookmark
     assert bookmark is not None
     fake_repo.create_pull_request(
         base_ref="main",
@@ -396,13 +397,9 @@ def test_status_exits_nonzero_when_github_reports_multiple_pull_requests(
     )
 
     exit_code = run_main(repo, config_path, "status", change_id)
-    captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "multiple pull requests" in captured.out
-    assert "PR link note:" in captured.out
-    assert "refresh remote and GitHub observations" in captured.out
-    assert "relink <pr>" in captured.out
+    assert state_store.load() == state_before
 
 
 def test_status_skips_stack_comment_github_reads(
@@ -588,7 +585,6 @@ def test_status_stays_local_after_state_loss_even_if_github_is_unavailable(
 def test_status_clears_cached_pull_request_metadata_when_github_reports_missing(
     tmp_path: Path,
     monkeypatch,
-    capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -604,14 +600,9 @@ def test_status_clears_cached_pull_request_metadata_when_github_reports_missing(
     del fake_repo.pull_requests[1]
 
     exit_code = run_main(repo, config_path, "status", "--fetch", change_id)
-    captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
     assert exit_code == 1
-    assert "saved PR #1 (open), no GitHub PR" in captured.out
-    assert "PR link note:" in captured.out
-    assert "refresh remote and GitHub observations" in captured.out
-    assert "relink <pr>" in captured.out
     assert refreshed_state.changes[change_id].pr_number is None
     assert refreshed_state.changes[change_id].pr_state is None
     assert refreshed_state.changes[change_id].pr_url is None

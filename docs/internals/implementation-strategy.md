@@ -168,6 +168,13 @@ When endpoint semantics allow it, the client and command layers prefer batched o
 bounded-parallel GitHub work over one-request-per-item serial loops. Ordering
 constraints stay explicit at the command layer when the visible result needs a specific
 sequence.
+
+Before `submit` pushes rewritten review branches, it retargets any existing PR whose
+stale base is another review branch in the submitted stack back to the trunk branch.
+After the push, normal PR sync retargets it to the final stacked base. This avoids the
+GitHub behavior where a reordered stack can make a stale base branch already contain a
+PR head, causing GitHub to close the PR as merged before `submit` can repair the base.
+
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page
 is incomplete.

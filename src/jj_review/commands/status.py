@@ -769,11 +769,10 @@ def render_status_advisory_lines(
         rows.append(
             (
                 "PR link",
-                t"PR link note: refresh remote and GitHub observations with "
-                t"{ui.cmd('jj-review status --fetch')} {ui.revset(result.selected_revset)}. "
-                t"If the existing PR should stay attached to one of these changes, repair "
-                t"that PR link intentionally with {ui.cmd('jj-review relink <pr>')} "
-                t"{ui.revset(result.selected_revset)}.",
+                t"PR link note: saved PR links do not match GitHub for one or more "
+                t"changes below. To refresh, run "
+                t"{ui.cmd('jj-review status --fetch <change>')}. To attach an open PR "
+                t"on purpose, run {ui.cmd('jj-review relink <pr> <change>')}.",
             )
         )
         for revision in link_revisions:
