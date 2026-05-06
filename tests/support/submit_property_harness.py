@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from typing import Any
 
 from jj_review.jj import JjClient
 from jj_review.models.review_state import CachedChange
-from jj_review.state.store import ReviewStateStore
+from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
@@ -22,6 +23,7 @@ from .submit_property_scenarios import (
     StackEditScenario,
     StackMergeScenario,
     StackMoveScenario,
+    SubmitRetryScenario,
     filename_for_label,
     initial_label,
     subject_for_label,
@@ -124,6 +126,76 @@ def replay_boundary_drift_scenario(
     assert len(fake_repo.pull_requests) == before_pr_count
     assert _pull_request_snapshots(fake_repo) == before_pull_requests
     assert fake_repo.pull_request_events == []
+
+
+def replay_interrupted_submit_retry_scenario(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: SubmitRetryScenario,
+    submit: SubmitRunner,
+) -> None:
+    """Replay one failed submit and assert rerunning converges the selected stack."""
+
+    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
+    baseline: dict[str, SubmittedBaseline] | None = None
+    submit_revset: str | None = None
+
+    if scenario.failure_point == "update_pull_request":
+        assert submit(None) == 0
+        discard_output()
+        baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+        _approve_initial_pull_requests(fake_repo, baseline)
+        _rewrite_pull_request_body(
+            repo=repo,
+            label=scenario.failure_label,
+            labels_to_change_ids=labels_to_change_ids,
+        )
+        submit_revset = labels_to_change_ids[initial_label(scenario.initial_size)]
+        fake_repo.pull_request_events.clear()
+
+    assert submit(submit_revset) != 0
+    discard_output()
+    _mark_submit_intents_dead(repo)
+
+    assert submit(submit_revset) == 0
+    discard_output()
+    assert list(_submit_intent_paths(repo)) == []
+
+    stack = _discover_stack_for_labels(
+        repo=repo,
+        labels=scenario.final_live_labels,
+        labels_to_change_ids=labels_to_change_ids,
+    )
+    if baseline is None:
+        _assert_new_submit_invariants(
+            fake_repo=fake_repo,
+            labels_to_change_ids=labels_to_change_ids,
+            repo=repo,
+            scenario=scenario,
+            stack=stack,
+        )
+    else:
+        selected_scenario = StackEditScenario(
+            final_live_labels=scenario.final_live_labels,
+            hazard_class=scenario.failure_point,
+            initial_size=scenario.initial_size,
+            name=scenario.name,
+            operations=(),
+            orphaned_labels=(),
+            rewritten_initial_labels=(scenario.failure_label,),
+        )
+        _assert_successful_submit_invariants(
+            baseline=baseline,
+            fake_repo=fake_repo,
+            labels_to_change_ids=labels_to_change_ids,
+            repo=repo,
+            scenario=selected_scenario,
+            stack=stack,
+            strict_base_events=False,
+        )
+    _assert_retry_metadata(fake_repo)
 
 
 def replay_cross_stack_split_scenario(
@@ -551,6 +623,25 @@ def _apply_stack_edit_operation(
     raise AssertionError(f"unsupported stack edit operation: {operation.kind}")
 
 
+def _rewrite_pull_request_body(
+    *,
+    repo: Path,
+    label: str,
+    labels_to_change_ids: dict[str, str],
+) -> None:
+    run_command(
+        [
+            "jj",
+            "describe",
+            "-r",
+            labels_to_change_ids[label],
+            "-m",
+            f"{subject_for_label(label)}\n\nupdated body",
+        ],
+        repo,
+    )
+
+
 def _discover_expected_stack(
     *,
     repo: Path,
@@ -575,6 +666,51 @@ def _discover_stack_for_labels(
     expected_change_ids = tuple(labels_to_change_ids[label] for label in labels)
     assert tuple(revision.change_id for revision in stack.revisions) == expected_change_ids
     return stack
+
+
+def _assert_new_submit_invariants(
+    *,
+    fake_repo: FakeGithubRepository,
+    labels_to_change_ids: dict[str, str],
+    repo: Path,
+    scenario: SubmitRetryScenario,
+    stack,
+) -> None:
+    state = ReviewStateStore.for_repo(repo).load()
+    bookmarks_by_label: dict[str, str] = {}
+    stack_head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
+
+    for index, label in enumerate(scenario.final_live_labels):
+        revision = stack.revisions[index]
+        cached_change = state.changes[revision.change_id]
+        bookmark = cached_change.bookmark
+        pr_number = cached_change.pr_number
+        assert bookmark is not None, scenario.trace
+        assert pr_number is not None, scenario.trace
+        bookmarks_by_label[label] = bookmark
+
+        pull_request = fake_repo.pull_requests[pr_number]
+        expected_parent_change_id = (
+            labels_to_change_ids[scenario.final_live_labels[index - 1]]
+            if index > 0
+            else None
+        )
+        expected_base_ref = (
+            bookmarks_by_label[scenario.final_live_labels[index - 1]]
+            if index > 0
+            else "main"
+        )
+        assert _read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
+        assert pull_request.base_ref == expected_base_ref
+        assert pull_request.head_ref == bookmark
+        assert pull_request.merged_at is None
+        assert pull_request.state == "open"
+        assert pull_request.title == subject_for_label(label)
+        assert cached_change.last_submitted_commit_id == revision.commit_id
+        assert cached_change.last_submitted_parent_change_id == expected_parent_change_id
+        assert cached_change.last_submitted_stack_head_change_id == stack_head_change_id
+
+    assert len(fake_repo.pull_requests) == scenario.initial_size
 
 
 def _assert_successful_submit_invariants(
@@ -734,6 +870,13 @@ def _assert_deferred_labels_untouched(
             assert event.kind != "base", event
 
 
+def _assert_retry_metadata(fake_repo: FakeGithubRepository) -> None:
+    for pull_request in fake_repo.pull_requests.values():
+        assert "needs-review" in pull_request.labels
+        assert "alice" in pull_request.requested_reviewers
+        assert "platform" in pull_request.requested_team_reviewers
+
+
 def _apply_boundary_drift(
     *,
     fake_repo: FakeGithubRepository,
@@ -805,6 +948,20 @@ def _apply_boundary_drift(
         )
         return labels_to_change_ids[label]
     raise AssertionError(f"unsupported boundary drift kind: {drift_kind}")
+
+
+def _submit_intent_paths(repo: Path) -> tuple[Path, ...]:
+    state_dir = resolve_state_path(repo).parent
+    return tuple(sorted(state_dir.glob("incomplete-*.json")))
+
+
+def _mark_submit_intents_dead(repo: Path) -> None:
+    intent_paths = _submit_intent_paths(repo)
+    assert intent_paths
+    for intent_path in intent_paths:
+        data = json.loads(intent_path.read_text(encoding="utf-8"))
+        data["pid"] = 999_999_999
+        intent_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def _pull_request_snapshots(fake_repo: FakeGithubRepository) -> dict[int, tuple[str, ...]]:

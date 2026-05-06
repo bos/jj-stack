@@ -24,11 +24,18 @@ BoundaryDriftKind = Literal[
     "remote_branch_drift",
     "wrong_saved_pr_number",
 ]
+SubmitRetryFailurePoint = Literal[
+    "after_remote_push",
+    "create_pull_request",
+    "update_pull_request",
+    "pull_request_metadata",
+]
 
 DEFAULT_STACK_EDIT_SCENARIO_COUNT = 8
 DEFAULT_CROSS_STACK_SCENARIO_COUNT = 8
 DEFAULT_STACK_MERGE_SCENARIO_COUNT = 8
 DEFAULT_STACK_MOVE_SCENARIO_COUNT = 8
+DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT = 8
 DEFAULT_STACK_EDIT_SCENARIO_SEED = 8675309
 MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
 
@@ -99,6 +106,28 @@ class BoundaryDriftScenario:
     drift_kind: BoundaryDriftKind
     initial_size: int
     label: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitRetryScenario:
+    """A submit that fails after partial mutation and should converge on retry."""
+
+    name: str
+    failure_point: SubmitRetryFailurePoint
+    initial_size: int
+    failure_label: str
+
+    @property
+    def trace(self) -> str:
+        return f"{self.failure_point}:{self.failure_label}"
+
+    @property
+    def final_live_labels(self) -> tuple[str, ...]:
+        return tuple(initial_label(index) for index in range(1, self.initial_size + 1))
+
+    @property
+    def canonical_key(self) -> tuple[str, int, str]:
+        return (self.failure_point, self.initial_size, self.failure_label)
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,6 +432,24 @@ def stack_move_scenarios_from_environment() -> tuple[StackMoveScenario, ...]:
     return generate_stack_move_scenarios(count=count, seed=seed)
 
 
+def submit_retry_scenarios_from_environment() -> tuple[SubmitRetryScenario, ...]:
+    """Return deterministic interrupted-submit retry scenarios for the pytest adapter."""
+
+    count = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_RETRY_SCENARIOS",
+            str(DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
+        )
+    )
+    return generate_submit_retry_scenarios(count=count, seed=seed)
+
+
 def generate_stack_edit_scenarios(
     *,
     count: int,
@@ -474,6 +521,50 @@ def generate_stack_merge_scenarios(
             hazard_class="random",
             name=f"merge-random-{attempts:03d}",
             second_size=second_size,
+        )
+        if scenario.canonical_key in seen:
+            continue
+        seen.add(scenario.canonical_key)
+        scenarios.append(scenario)
+
+    return tuple(scenarios)
+
+
+def generate_submit_retry_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[SubmitRetryScenario, ...]:
+    """Generate retry scenarios for one-shot submit failures."""
+
+    if count < 1:
+        return ()
+
+    scenarios: list[SubmitRetryScenario] = []
+    seen: set[tuple[str, int, str]] = set()
+    for scenario in _fixed_submit_retry_scenarios():
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+
+    rng = random.Random(seed + 4)
+    max_attempts = count * MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER
+    attempts = 0
+    failure_points: tuple[SubmitRetryFailurePoint, ...] = (
+        "after_remote_push",
+        "create_pull_request",
+        "update_pull_request",
+        "pull_request_metadata",
+    )
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        initial_size = rng.randint(2, 5)
+        scenario = SubmitRetryScenario(
+            failure_label=initial_label(rng.randint(1, initial_size)),
+            failure_point=rng.choice(failure_points),
+            initial_size=initial_size,
+            name=f"retry-random-{attempts:03d}",
         )
         if scenario.canonical_key in seen:
             continue
@@ -618,6 +709,35 @@ def boundary_drift_scenarios() -> tuple[BoundaryDriftScenario, ...]:
             initial_size=3,
             label="c2",
             name="remote-branch-drift",
+        ),
+    )
+
+
+def _fixed_submit_retry_scenarios() -> tuple[SubmitRetryScenario, ...]:
+    return (
+        SubmitRetryScenario(
+            failure_label="c1",
+            failure_point="after_remote_push",
+            initial_size=3,
+            name="retry-after-remote-push",
+        ),
+        SubmitRetryScenario(
+            failure_label="c2",
+            failure_point="create_pull_request",
+            initial_size=3,
+            name="retry-create-middle-pr",
+        ),
+        SubmitRetryScenario(
+            failure_label="c2",
+            failure_point="update_pull_request",
+            initial_size=3,
+            name="retry-update-middle-pr",
+        ),
+        SubmitRetryScenario(
+            failure_label="c1",
+            failure_point="pull_request_metadata",
+            initial_size=2,
+            name="retry-metadata-sync",
         ),
     )
 

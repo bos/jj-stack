@@ -56,6 +56,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--retry-scenarios",
+        type=_non_negative_int,
+        help=(
+            "Number of generated interrupted-submit retry scenarios to run "
+            "(default: max(4, scenarios // 10))."
+        ),
+    )
+    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -92,6 +100,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if stack_move_scenarios is None:
         stack_move_scenarios = max(4, args.scenarios // 10)
     env["JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS"] = str(stack_move_scenarios)
+    retry_scenarios = args.retry_scenarios
+    if retry_scenarios is None:
+        retry_scenarios = max(4, args.scenarios // 10)
+    env["JJ_REVIEW_SUBMIT_PROPERTY_RETRY_SCENARIOS"] = str(retry_scenarios)
     if args.seed is not None:
         env["JJ_REVIEW_SUBMIT_PROPERTY_SEED"] = str(args.seed)
 

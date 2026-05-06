@@ -202,6 +202,31 @@ The invariant is negative: no new PRs, no closed/reopened selected-stack PRs, no
 branch updates for the protected stack, and a non-zero command result. Exact diagnostic
 wording is out of scope.
 
+## Interrupted-Submit Retry Harness
+
+Boundary-drift scenarios assert that unsafe external state blocks mutation. Retry
+scenarios cover the opposite case: `submit` has already performed some intended
+mutation, then a later operation fails. The expected behavior is not rollback; it is a
+safe rerun that discovers the partial artifacts and converges on the same final review
+state without duplicate PRs or lost metadata.
+
+Interrupted-submit scenarios create a fresh stack, install a one-shot failure at one
+mutation checkpoint, run `submit`, mark the retained submit intent as stale, then rerun
+`submit`. The oracle asserts:
+
+- every selected change has exactly one PR after retry
+- remote review branches point at the selected `jj` commits
+- PR heads, bases, titles, and saved topology match the selected DAG
+- configured labels and reviewers converge even if the first run failed during metadata
+  sync
+- an existing reviewed PR keeps its PR number and approval when the failed run was a PR
+  update rather than the first submit
+
+The initial failure family covers after remote branch push, after PR creation, after PR
+update, and after PR metadata label sync. Later retry families can add stack-comment
+failures, draft-state mutations, review rerequest mutations, and failures interleaved
+with external GitHub changes.
+
 ## Invariants
 
 For every live change after the final submit:
@@ -257,8 +282,8 @@ $ tests/run_submit_property_scenarios.py 500
 
 The runner accepts the scenario count as a positional argument. It also supports
 `--seed <int>`, `--cross-stack-scenarios <N>`, `--stack-merge-scenarios <N>`,
-`--stack-move-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest
-arguments after `--`.
+`--stack-move-scenarios <N>`, `--retry-scenarios <N>`, `--jobs <N|auto>`,
+`--no-sync`, and additional pytest arguments after `--`.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:
@@ -285,6 +310,8 @@ The opt-in runner sets these environment variables for the pytest adapter:
   merge scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS`: target number of unique cross-stack
   single-change move scenarios
+- `JJ_REVIEW_SUBMIT_PROPERTY_RETRY_SCENARIOS`: target number of unique interrupted
+  submit retry scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_SEED`: deterministic random seed
 
 Those variables configure the adapter; they are not part of the core harness contract.
