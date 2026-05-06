@@ -872,6 +872,38 @@ def test_query_ancestor_membership_includes_target_itself_when_supplied() -> Non
     assert result == {"target"}
 
 
+def test_push_bookmarks_issues_one_atomic_jj_invocation_for_a_batch() -> None:
+    seen_commands: list[tuple[str, ...]] = []
+
+    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == Path("/repo")
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    JjClient(Path("/repo"), runner=runner).push_bookmarks(
+        remote="origin", bookmarks=("review/feat-1", "review/feat-2", "review/feat-3")
+    )
+
+    assert len(seen_commands) == 1, "all bookmarks must land in a single jj invocation"
+    invocation = seen_commands[0]
+    assert invocation[:3] == ("jj", "git", "push")
+    assert "--remote" in invocation and "origin" in invocation
+    assert invocation.count("--bookmark") == 3
+    assert {"review/feat-1", "review/feat-2", "review/feat-3"}.issubset(set(invocation))
+
+
+def test_push_bookmarks_skips_jj_invocation_when_batch_is_empty() -> None:
+    seen_commands: list[tuple[str, ...]] = []
+
+    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    JjClient(Path("/repo"), runner=runner).push_bookmarks(remote="origin", bookmarks=())
+
+    assert seen_commands == []
+
+
 def _template() -> str:
     return (
         r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '

@@ -858,6 +858,31 @@ names explicitly. The tool wants to be able to say:
 So the core primitive is "create or move bookmark, then push bookmark", not "blindly
 push change with generated name".
 
+### Push ordering and atomicity
+
+Pushes for review-branch bookmarks issued by `submit` go through `jj git push
+--remote <name> --bookmark <a> --bookmark <b> ...` as a single invocation. That
+maps to one `git push` to GitHub and lands as one atomic ref-update batch from
+GitHub's perspective. The pre-push auto-close predictor relies on this: GitHub
+re-evaluates each PR exactly once per push, so the predictor's simulation of the
+post-push commit IDs only needs to match a single landing point, not a sequence
+of intermediate states.
+
+The exception is the rare path where a pre-existing review-branch ref is present
+on the remote but untracked locally. There the tool falls back to a per-bookmark
+`git push --force-with-lease ...` against the colocated Git store so it can lock
+the update against the expected remote target. When this fallback fires alongside
+batch pushes for other bookmarks in the same submit, the operations are
+sequential rather than atomic; GitHub may briefly observe an intermediate state
+where the batch refs are at their new commits but the per-bookmark refs are
+still at the old. The post-push PR-state check is the backstop that surfaces any
+auto-close that fires during that window.
+
+The invariant is therefore: never split the normal-case push into per-bookmark
+operations as an optimization, since doing so would expose every submit to the
+intermediate-state window that is currently confined to the rare untracked-ref
+path.
+
 ### GitHub integration
 
 The GitHub adapter can use either:
