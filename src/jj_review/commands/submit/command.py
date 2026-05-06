@@ -433,7 +433,18 @@ def _prepare_submit_revisions(
         )
 
         if local_action != "unchanged" and not dry_run:
-            client.set_bookmark(resolution.bookmark, revision.commit_id)
+            allow_backwards = _bookmark_is_already_managed_for_change(
+                bookmark=resolution.bookmark,
+                bookmark_state=bookmark_state,
+                cached_change=bookmark_result.state.changes.get(revision.change_id),
+                change_id=revision.change_id,
+                jj_client=client,
+            )
+            client.set_bookmark(
+                resolution.bookmark,
+                revision.commit_id,
+                allow_backwards=allow_backwards,
+            )
 
         expected_remote_target: str | None = None
         if remote_state is not None and remote_state.target == revision.commit_id:
@@ -815,6 +826,45 @@ def _repair_interrupted_untracked_remote_bookmarks(
         if local_target is None or remote_state.target != local_target:
             continue
         client.track_bookmark(remote=remote.name, bookmark=bookmark)
+
+
+def _bookmark_is_already_managed_for_change(
+    *,
+    bookmark: str,
+    bookmark_state: BookmarkState,
+    cached_change: CachedChange | None,
+    change_id: str,
+    jj_client: JjClient,
+) -> bool:
+    """Whether `submit` is reasserting an already-managed bookmark for the same change.
+
+    Same-change rewrites such as `jj split` can leave the bookmark pointing at a sibling
+    of the desired commit (the other half of the split, or any post-rewrite commit that
+    is not a descendant of the previous target). `jj bookmark set` refuses such
+    "backwards or sideways" moves by default. The move is legitimate when the tool's
+    saved state already records this bookmark as managed for this change, or when the
+    bookmark's current local target itself resolves to the same logical change as the
+    desired commit. In either case `allow_backwards` is correct. For any other case the
+    default guard stays in effect so an unrelated bookmark cannot be silently
+    retargeted.
+
+    A hidden `local_target` (e.g., abandoned by the user manually) returns False on the
+    same-change-id branch because `query_revisions` does not surface hidden revisions.
+    That keeps the default guard in effect, which is the safer behavior: forcing the
+    move would require recovering a hidden commit's identity that we cannot prove.
+    """
+
+    if (
+        cached_change is not None
+        and cached_change.manages_bookmark
+        and cached_change.bookmark == bookmark
+    ):
+        return True
+    local_target = bookmark_state.local_target
+    if local_target is None:
+        return False
+    revisions = jj_client.query_revisions(f"'{local_target}'")
+    return len(revisions) == 1 and revisions[0].change_id == change_id
 
 
 def _resolve_local_action(

@@ -449,6 +449,68 @@ def test_submit_preserves_prs_when_adjacent_changes_are_swapped(
     assert len(fake_repo.pull_requests) == 3
 
 
+def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    write_file(repo / "feature-2a.txt", "alpha\n")
+    write_file(repo / "feature-2b.txt", "beta\n")
+    run_command(["jj", "describe", "-m", "feature 2"], repo)
+    run_command(["jj", "new", "-m", "feature 3"], repo)
+    write_file(repo / "feature-3.txt", "gamma\n")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    original_middle_change_id = next(
+        revision.change_id
+        for revision in initial_stack.revisions
+        if revision.subject == "feature 2"
+    )
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+    initial_state = ReviewStateStore.for_repo(repo).load()
+    original_middle_pr_number = initial_state.changes[original_middle_change_id].pr_number
+    assert original_middle_pr_number is not None
+
+    monkeypatch.setenv("EDITOR", "true")
+    monkeypatch.setenv("VISUAL", "true")
+    monkeypatch.setenv("JJ_EDITOR", "true")
+    run_command(
+        ["jj", "split", "-r", original_middle_change_id, "feature-2a.txt"],
+        repo,
+    )
+
+    split_stack = JjClient(repo).discover_review_stack()
+    assert len(split_stack.revisions) == 4
+    assert split_stack.revisions[0].subject == "feature 1"
+    assert split_stack.revisions[-1].subject == "feature 3"
+
+    assert run_main(repo, config_path, "submit", split_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    refreshed_state = ReviewStateStore.for_repo(repo).load()
+    assert (
+        refreshed_state.changes[original_middle_change_id].pr_number
+        == original_middle_pr_number
+    )
+    pr_numbers = {
+        refreshed_state.changes[revision.change_id].pr_number
+        for revision in split_stack.revisions
+    }
+    assert None not in pr_numbers
+    assert len(pr_numbers) == 4
+    assert all(
+        fake_repo.pull_requests[pr_number].state == "open"
+        for pr_number in pr_numbers
+        if pr_number is not None
+    )
+    assert len(fake_repo.pull_requests) == 4
+
+
 def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     tmp_path: Path,
     monkeypatch,

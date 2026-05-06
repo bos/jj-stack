@@ -124,34 +124,21 @@ that the predictor pre-retargets it before push. The fake GitHub already
 simulates the head-contained-in-base auto-close, so the missing piece is the
 fixture, not the simulator.
 
-## Submit + `jj split` Bookmark Move Backwards
+## Submit Bookmark Same-Change Fallback Path Coverage
 
-_Benefit: medium — `jj split` is a normal stack edit; today resubmitting a
-split stack fails with a confusing bookmark-set error._
+_Benefit: small — a safety-net branch with no direct test today, easy to
+let rot._
 
-`jj bookmark set` refuses to move a bookmark "backwards or sideways" unless
-`--allow-backwards` is passed. After a `jj split`, the change that keeps
-the original `change_id` ends up at a successor commit whose tree is a
-proper subset of the pre-split commit's tree, on a different DAG line than
-the bookmark's current target. The other reorder-style rewrite tests pass
-because their successor commit is on the new linear path that the bookmark
-ends up needing to follow; split is the one shape where the bookmark must
-move sideways to a strictly smaller successor. `submit`'s local-bookmark
-update at `commands/submit/command.py:436` does not pass `allow_backwards`,
-so the bookmark refuses to track the split successor and the resubmit
-aborts.
-
-A focused integration test covering `jj split` should land alongside the
-fix. The remote-side guard (`_ensure_remote_can_be_updated`) already
-verifies the link is proven for the change's bookmark, so the fix is
-local-only.
-
-Recommended fix: a selective check on `submit`'s local set — when the
-bookmark currently points at any successor of the change's resolved
-commit, allow the move; otherwise keep the existing guard. Passing
-`allow_backwards=True` unconditionally would disable a real safety net for
-bookmarks that are not the change's own tracked bookmark, so do not take
-that shortcut.
+The bookmark-managed check that decides whether to pass `allow_backwards`
+to `set_bookmark` has two arms: a fast path off the saved cached state's
+`manages_bookmark` record, and a fallback that asks `jj` whether the
+bookmark's current local target resolves to the same `change_id` as the
+desired commit. The split integration test exercises only the first arm
+because the prior submit always populates the cache. A focused fixture
+that wipes or constructs a state without the managed record (e.g., an
+imported or relinked stack on its first submit, or a state file mutated
+between submits) would lock in the fallback so a future refactor cannot
+silently break it.
 
 ## Submit + `jj squash` Coverage
 
@@ -164,8 +151,8 @@ change but does not exercise the squash-with-content-moved pattern, which
 interacts with the PR auto-close predictor and the bookmark-tracking rules
 differently — the survivor's commit grows to include the abandoned change's
 diff, while the abandoned change's PR becomes orphaned. Worth a focused
-fixture once the split fix above lands so the bookmark machinery is
-working uniformly.
+fixture so the squash shape is locked in independently of the existing
+abandon coverage.
 
 ## Post-Submit Closure Detector — Coverage Gaps
 
