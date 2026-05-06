@@ -421,27 +421,42 @@ class JjClient:
                 revisions_by_commit_id.setdefault(revision.commit_id, revision)
         return tuple(revisions_by_commit_id.values())
 
-    def query_ancestor_membership(
+    def query_paired_ancestor_membership(
         self,
-        *,
-        candidate_commit_ids: Sequence[str],
-        target_commit_id: str,
+        pairs: Sequence[tuple[str, str]],
     ) -> set[str]:
-        """Return candidate commit IDs that are ancestors of `target_commit_id` (or equal)."""
+        """Return subject commit IDs from `pairs` that are ancestors of their target.
 
-        ordered_candidates = tuple(dict.fromkeys(candidate_commit_ids))
-        if not ordered_candidates:
+        For each `(subject, target)` pair, the subject appears in the result iff
+        `subject` is reachable from `target` (i.e., the subject is in `::target`).
+        Equal commit IDs count as ancestors. The check runs as one `jj log`
+        invocation regardless of pair count: each pair becomes one term in a unioned
+        revset of the form `(subject_i & ::target_i)`, and a subject's commit_id
+        appears in the output iff its own paired target contains it. Repeated pairs
+        are deduped; a subject paired with two different targets is a caller bug
+        and raises `ValueError` rather than silently picking one.
+        """
+
+        deduped: dict[str, str] = {}
+        for subject, target in pairs:
+            existing = deduped.get(subject)
+            if existing is None:
+                deduped[subject] = target
+                continue
+            if existing != target:
+                raise ValueError(
+                    "query_paired_ancestor_membership received conflicting targets for "
+                    f"subject {subject!r}: {existing!r} and {target!r}"
+                )
+        if not deduped:
             return set()
 
-        target_revset = f"::{_quote_revset_symbol(target_commit_id)}"
-        ancestor_commit_ids: set[str] = set()
-        for chunk in _chunked(ordered_candidates):
-            revisions = self._query_revisions(
-                f"({_union_revset_symbols(chunk)}) & {target_revset}"
-            )
-            for revision in revisions:
-                ancestor_commit_ids.add(revision.commit_id)
-        return ancestor_commit_ids
+        terms = " | ".join(
+            f"({_quote_revset_symbol(subject)} & ::{_quote_revset_symbol(target)})"
+            for subject, target in deduped.items()
+        )
+        revisions = self._query_revisions(terms)
+        return {revision.commit_id for revision in revisions}
 
     def supported_review_stack_change_ids(
         self,

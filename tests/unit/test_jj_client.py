@@ -813,60 +813,90 @@ def test_find_private_commits_skips_empty_policy() -> None:
     assert result == ()
 
 
-def test_query_ancestor_membership_returns_only_ancestor_candidates() -> None:
+def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation() -> None:
+    seen_commands: list[tuple[str, ...]] = []
     candidate_a = _revision_line(
         commit_id="cand-a", parents=["trunk"], change_id="a-change", description="a\n"
     )
     candidate_b = _revision_line(
         commit_id="cand-b", parents=["cand-a"], change_id="b-change", description="b\n"
     )
-    responses: dict[tuple[str, ...], str] = {
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "(('cand-a' | 'cand-b' | 'cand-c')) & ::'target'",
-            "-T",
-            _template(),
-        ): candidate_a + candidate_b,
-    }
 
-    result = JjClient(Path("/repo"), runner=_runner(responses)).query_ancestor_membership(
-        candidate_commit_ids=("cand-a", "cand-b", "cand-c"),
-        target_commit_id="target",
+    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == Path("/repo")
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(
+            command, 0, stdout=candidate_a + candidate_b, stderr=""
+        )
+
+    result = JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
+        (("cand-a", "base-1"), ("cand-b", "base-2"), ("cand-c", "base-3")),
     )
 
     assert result == {"cand-a", "cand-b"}
+    assert len(seen_commands) == 1, "all pairs must land in a single jj invocation"
+    invocation = seen_commands[0]
+    assert invocation[:3] == ("jj", "log", "--no-graph")
+    revset = invocation[invocation.index("-r") + 1]
+    assert "('cand-a' & ::'base-1')" in revset
+    assert "('cand-b' & ::'base-2')" in revset
+    assert "('cand-c' & ::'base-3')" in revset
 
 
-def test_query_ancestor_membership_short_circuits_on_empty_candidates() -> None:
-    result = JjClient(
-        Path("/repo"), runner=_runner({})
-    ).query_ancestor_membership(candidate_commit_ids=(), target_commit_id="target")
+def test_query_paired_ancestor_membership_short_circuits_on_empty_pairs() -> None:
+    seen_commands: list[tuple[str, ...]] = []
+
+    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    result = JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(())
 
     assert result == set()
+    assert seen_commands == []
 
 
-def test_query_ancestor_membership_includes_target_itself_when_supplied() -> None:
+def test_query_paired_ancestor_membership_dedupes_repeated_pairs() -> None:
+    seen_commands: list[tuple[str, ...]] = []
+    candidate_a = _revision_line(
+        commit_id="cand-a", parents=["trunk"], change_id="a-change", description="a\n"
+    )
+
+    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0, stdout=candidate_a, stderr="")
+
+    JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
+        (("cand-a", "base-1"), ("cand-a", "base-1")),
+    )
+
+    assert len(seen_commands) == 1
+    revset = seen_commands[0][seen_commands[0].index("-r") + 1]
+    assert revset.count("'cand-a'") == 1
+
+
+def test_query_paired_ancestor_membership_rejects_conflicting_targets() -> None:
+    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("jj should not be invoked when input is malformed")
+
+    with pytest.raises(ValueError, match="conflicting targets"):
+        JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
+            (("cand-a", "base-1"), ("cand-a", "base-2")),
+        )
+
+
+def test_query_paired_ancestor_membership_includes_target_itself_for_self_pair() -> None:
     target_revision = _revision_line(
         commit_id="target", parents=["trunk"], change_id="t-change", description="t\n"
     )
-    responses: dict[tuple[str, ...], str] = {
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "('target') & ::'target'",
-            "-T",
-            _template(),
-        ): target_revision,
-    }
 
-    result = JjClient(Path("/repo"), runner=_runner(responses)).query_ancestor_membership(
-        candidate_commit_ids=("target",),
-        target_commit_id="target",
+    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        revset = tuple(command)[tuple(command).index("-r") + 1]
+        assert revset == "('target' & ::'target')"
+        return subprocess.CompletedProcess(command, 0, stdout=target_revision, stderr="")
+
+    result = JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
+        (("target", "target"),),
     )
 
     assert result == {"target"}

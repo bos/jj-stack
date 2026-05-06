@@ -1173,7 +1173,7 @@ def _predict_pull_requests_auto_closed_by_push(
         prepared_revision.bookmark: prepared_revision.revision.commit_id
         for prepared_revision in prepared_revisions
     }
-    grouped: dict[str, list[tuple[str, PendingPullRequestSync]]] = {}
+    candidates: list[tuple[str, str, PendingPullRequestSync]] = []
     for pending_sync in pending_syncs:
         pull_request = pending_sync.discovered_pull_request
         if pull_request is None or pull_request.state != "open":
@@ -1189,18 +1189,18 @@ def _predict_pull_requests_auto_closed_by_push(
         )
         if base_after_push is None:
             continue
-        grouped.setdefault(base_after_push, []).append((head_after_push, pending_sync))
+        candidates.append((head_after_push, base_after_push, pending_sync))
 
-    auto_closed: list[PendingPullRequestSync] = []
-    for base_commit_id, candidates in grouped.items():
-        ancestor_commit_ids = jj_client.query_ancestor_membership(
-            candidate_commit_ids=tuple({head for head, _ in candidates}),
-            target_commit_id=base_commit_id,
-        )
-        for head_commit_id, pending_sync in candidates:
-            if head_commit_id in ancestor_commit_ids:
-                auto_closed.append(pending_sync)
-    return tuple(auto_closed)
+    if not candidates:
+        return ()
+    auto_close_heads = jj_client.query_paired_ancestor_membership(
+        tuple((head, base) for head, base, _ in candidates),
+    )
+    return tuple(
+        pending_sync
+        for head, _, pending_sync in candidates
+        if head in auto_close_heads
+    )
 
 
 def _resolve_post_push_commit(
