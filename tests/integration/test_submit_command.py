@@ -511,6 +511,81 @@ def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
     assert len(fake_repo.pull_requests) == 4
 
 
+def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """`jj squash` plus auto-abandon collapses two reviewed changes; orphan survives."""
+
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    change_ids_by_subject = {
+        revision.subject: revision.change_id for revision in initial_stack.revisions
+    }
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+    initial_state = ReviewStateStore.for_repo(repo).load()
+    surviving_pr_number = initial_state.changes[change_ids_by_subject["feature 1"]].pr_number
+    orphaned_change = initial_state.changes[change_ids_by_subject["feature 2"]]
+    orphaned_pr_number = orphaned_change.pr_number
+    orphaned_bookmark = orphaned_change.bookmark
+    assert surviving_pr_number is not None
+    assert orphaned_pr_number is not None
+    assert orphaned_bookmark is not None
+    orphaned_remote_target = read_remote_ref(fake_repo.git_dir, orphaned_bookmark)
+    orphaned_pr_base_ref = fake_repo.pull_requests[orphaned_pr_number].base_ref
+
+    monkeypatch.setenv("EDITOR", "true")
+    monkeypatch.setenv("VISUAL", "true")
+    monkeypatch.setenv("JJ_EDITOR", "true")
+    run_command(
+        [
+            "jj",
+            "squash",
+            "--from",
+            change_ids_by_subject["feature 2"],
+            "--into",
+            change_ids_by_subject["feature 1"],
+        ],
+        repo,
+    )
+
+    surviving_stack = JjClient(repo).discover_review_stack(
+        change_ids_by_subject["feature 3"]
+    )
+    assert [revision.subject for revision in surviving_stack.revisions] == [
+        "feature 1",
+        "feature 3",
+    ]
+    assert run_main(repo, config_path, "submit", surviving_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=surviving_stack,
+    )
+
+    refreshed_state = ReviewStateStore.for_repo(repo).load()
+    assert (
+        refreshed_state.changes[change_ids_by_subject["feature 1"]].pr_number
+        == surviving_pr_number
+    )
+    orphaned_pr = fake_repo.pull_requests[orphaned_pr_number]
+    assert orphaned_pr.state == "open"
+    assert orphaned_pr.merged_at is None
+    assert orphaned_pr.base_ref == orphaned_pr_base_ref
+    assert read_remote_ref(fake_repo.git_dir, orphaned_bookmark) == orphaned_remote_target
+    assert len(fake_repo.pull_requests) == 3
+
+
 def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     tmp_path: Path,
     monkeypatch,

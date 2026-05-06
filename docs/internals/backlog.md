@@ -140,20 +140,6 @@ imported or relinked stack on its first submit, or a state file mutated
 between submits) would lock in the fallback so a future refactor cannot
 silently break it.
 
-## Submit + `jj squash` Coverage
-
-_Benefit: small — squash is a common edit; today there is no integration
-test that exercises it specifically._
-
-`jj squash` rewrites two changes into one (or moves content from one into
-another and abandons the source). The existing abandon test deletes a
-change but does not exercise the squash-with-content-moved pattern, which
-interacts with the PR auto-close predictor and the bookmark-tracking rules
-differently — the survivor's commit grows to include the abandoned change's
-diff, while the abandoned change's PR becomes orphaned. Worth a focused
-fixture so the squash shape is locked in independently of the existing
-abandon coverage.
-
 ## Post-Submit Closure Detector — Coverage Gaps
 
 _Benefit: small — the predictor and the existing detector already cover the
