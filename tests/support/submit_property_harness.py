@@ -21,6 +21,7 @@ from .submit_property_scenarios import (
     StackEditOperation,
     StackEditScenario,
     StackMergeScenario,
+    StackMoveScenario,
     filename_for_label,
     initial_label,
     subject_for_label,
@@ -255,6 +256,82 @@ def replay_stack_merge_scenario(
         scenario=selected_scenario,
         stack=merged_stack,
         strict_base_events=True,
+    )
+
+
+def replay_stack_move_scenario(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: StackMoveScenario,
+    submit: SubmitRunner,
+) -> None:
+    """Replay moving one submitted change into another submitted stack."""
+
+    labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
+    assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
+    discard_output()
+
+    labels_to_change_ids.update(
+        _create_labeled_stack(repo, scenario.second_stack_labels)
+    )
+    assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
+    discard_output()
+
+    baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+    _approve_initial_pull_requests(fake_repo, baseline)
+    fake_repo.pull_request_events.clear()
+
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-r",
+            labels_to_change_ids[scenario.source_label],
+            "-A" if scenario.placement == "after" else "-B",
+            labels_to_change_ids[scenario.target_label],
+        ],
+        repo,
+    )
+    selected_stack = _discover_stack_for_labels(
+        repo=repo,
+        labels=scenario.selected_labels,
+        labels_to_change_ids=labels_to_change_ids,
+    )
+    if scenario.deferred_stack_labels:
+        _discover_stack_for_labels(
+            repo=repo,
+            labels=scenario.deferred_stack_labels,
+            labels_to_change_ids=labels_to_change_ids,
+        )
+
+    assert submit(selected_stack.head.change_id) == 0
+    discard_output()
+
+    selected_scenario = StackEditScenario(
+        final_live_labels=scenario.selected_labels,
+        hazard_class=scenario.hazard_class,
+        initial_size=scenario.initial_size,
+        name=scenario.name,
+        operations=(),
+        orphaned_labels=(),
+        rewritten_initial_labels=scenario.rewritten_initial_labels,
+    )
+    _assert_successful_submit_invariants(
+        baseline=baseline,
+        fake_repo=fake_repo,
+        labels_to_change_ids=labels_to_change_ids,
+        repo=repo,
+        scenario=selected_scenario,
+        stack=selected_stack,
+        strict_base_events=True,
+    )
+    _assert_deferred_labels_untouched(
+        baseline=baseline,
+        deferred_labels=scenario.deferred_labels,
+        fake_repo=fake_repo,
+        repo=repo,
     )
 
 
@@ -621,11 +698,26 @@ def _assert_deferred_stack_untouched(
     repo: Path,
     scenario: CrossStackSplitScenario,
 ) -> None:
+    _assert_deferred_labels_untouched(
+        baseline=baseline,
+        deferred_labels=scenario.deferred_labels,
+        fake_repo=fake_repo,
+        repo=repo,
+    )
+
+
+def _assert_deferred_labels_untouched(
+    *,
+    baseline: dict[str, SubmittedBaseline],
+    deferred_labels: tuple[str, ...],
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+) -> None:
     state = ReviewStateStore.for_repo(repo).load()
     deferred_pr_numbers = {
-        baseline[label].pr_number for label in scenario.deferred_labels
+        baseline[label].pr_number for label in deferred_labels
     }
-    for label in scenario.deferred_labels:
+    for label in deferred_labels:
         submitted = baseline[label]
         cached_change = state.changes[submitted.change_id]
         pull_request = fake_repo.pull_requests[submitted.pr_number]

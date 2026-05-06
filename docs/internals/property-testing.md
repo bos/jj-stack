@@ -9,7 +9,8 @@ testing should spend its budget on those cross-system invariants.
 ## Requirements
 
 - Test user-reachable stack edits: reorder, reparent, insert, abandon, rewrite,
-  squash, split-stack suffix moves, and combinations of those edits after an initial
+  squash, split-stack suffix moves, two-stack merges, single-change moves between
+  independently submitted stacks, and combinations of those edits after an initial
   successful submit.
 - Use real `jj` commands, real remote branch updates, the CLI entrypoint, and the fake
   GitHub server for integration coverage. A pure model may supplement this, but it must
@@ -129,9 +130,7 @@ then submit only the selected resulting stack. The oracle asserts:
 
 The initial operation family is intentionally suffix moves because that is the common
 linear-stack edit that produces two selected-parent chains without introducing merge
-commits. Later cross-stack families can add moving one change between independently
-submitted stacks and merging two selected chains once the expected shared-ancestor rules
-are encoded in the model.
+commits.
 
 ## Stack-Merge Harness
 
@@ -153,9 +152,31 @@ The oracle asserts:
 
 The initial scenario family covers both directions: appending the second stack after the
 first and appending the first stack after the second, with small stack sizes plus random
-size combinations. Moving a single change between two independently submitted stacks is
-the next cross-stack success oracle; it needs to prove the destination selected stack is
-updated while the source stack remainder is deferred unchanged.
+size combinations.
+
+## Stack-Move Harness
+
+Moving one change between two independently submitted linear stacks is also a supported
+cross-stack rewrite. The destination selected stack should adopt the moved change's
+existing review, because the logical `jj` change is the same. The source-stack remainder
+is a deferred live stack, so submitting the destination stack must not silently update its
+PRs or saved local tracking.
+
+Stack-move scenarios create two separate stacks from trunk, submit both, approve every
+PR, then rebase exactly one source-stack revision before or after a target-stack
+revision. The oracle submits only the destination stack head and asserts:
+
+- every selected destination-stack change keeps its PR number
+- the moved source-stack change keeps its PR number and approval
+- selected PR bases and branch heads match the new destination DAG
+- source-stack remainder PR branches still point at their originally submitted commits
+- source-stack remainder PR bases, state, saved tracking, and approvals are unchanged
+- no original PR is closed, merged, or replaced during the move submit
+- fake GitHub recorded no base-retarget event for a deferred source-stack PR
+
+The fixed scenario family covers moving a middle, head, bottom, and single-stack-source
+change, with insertion before and after destination revisions. Random scenarios vary both
+stack sizes, source direction, source index, target index, and insertion side.
 
 ## Boundary-drift Harness
 
@@ -236,7 +257,8 @@ $ tests/run_submit_property_scenarios.py 500
 
 The runner accepts the scenario count as a positional argument. It also supports
 `--seed <int>`, `--cross-stack-scenarios <N>`, `--stack-merge-scenarios <N>`,
-`--jobs <N|auto>`, `--no-sync`, and additional pytest arguments after `--`.
+`--stack-move-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest
+arguments after `--`.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:
@@ -261,6 +283,8 @@ The opt-in runner sets these environment variables for the pytest adapter:
   split scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS`: target number of unique two-stack
   merge scenarios
+- `JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS`: target number of unique cross-stack
+  single-change move scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_SEED`: deterministic random seed
 
 Those variables configure the adapter; they are not part of the core harness contract.

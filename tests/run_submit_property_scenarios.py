@@ -48,6 +48,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--stack-move-scenarios",
+        type=_non_negative_int,
+        help=(
+            "Number of generated cross-stack single-change move scenarios to run "
+            "(default: max(4, scenarios // 10))."
+        ),
+    )
+    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -80,6 +88,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if stack_merge_scenarios is None:
         stack_merge_scenarios = max(4, args.scenarios // 10)
     env["JJ_REVIEW_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS"] = str(stack_merge_scenarios)
+    stack_move_scenarios = args.stack_move_scenarios
+    if stack_move_scenarios is None:
+        stack_move_scenarios = max(4, args.scenarios // 10)
+    env["JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS"] = str(stack_move_scenarios)
     if args.seed is not None:
         env["JJ_REVIEW_SUBMIT_PROPERTY_SEED"] = str(args.seed)
 

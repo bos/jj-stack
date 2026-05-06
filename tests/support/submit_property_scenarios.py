@@ -27,6 +27,7 @@ BoundaryDriftKind = Literal[
 DEFAULT_STACK_EDIT_SCENARIO_COUNT = 8
 DEFAULT_CROSS_STACK_SCENARIO_COUNT = 8
 DEFAULT_STACK_MERGE_SCENARIO_COUNT = 8
+DEFAULT_STACK_MOVE_SCENARIO_COUNT = 8
 DEFAULT_STACK_EDIT_SCENARIO_SEED = 8675309
 MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
 
@@ -166,6 +167,49 @@ class StackMergeScenario:
         return (
             self.hazard_class,
             self.selected_labels,
+            self.rewritten_initial_labels,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StackMoveScenario:
+    """A rewrite that moves one change between independently submitted stacks."""
+
+    name: str
+    hazard_class: str
+    first_stack_labels: tuple[str, ...]
+    second_stack_labels: tuple[str, ...]
+    source_label: str
+    target_label: str
+    placement: Literal["after", "before"]
+    selected_labels: tuple[str, ...]
+    deferred_labels: tuple[str, ...]
+    deferred_stack_labels: tuple[str, ...]
+    rewritten_initial_labels: tuple[str, ...]
+
+    @property
+    def initial_size(self) -> int:
+        return len(self.first_stack_labels) + len(self.second_stack_labels)
+
+    @property
+    def trace(self) -> str:
+        return f"move_change_{self.placement}:{self.source_label}:{self.target_label}"
+
+    @property
+    def canonical_key(
+        self,
+    ) -> tuple[
+        str,
+        str,
+        tuple[str, ...],
+        tuple[str, ...],
+        tuple[str, ...],
+    ]:
+        return (
+            self.hazard_class,
+            self.placement,
+            self.selected_labels,
+            self.deferred_labels,
             self.rewritten_initial_labels,
         )
 
@@ -340,6 +384,24 @@ def stack_merge_scenarios_from_environment() -> tuple[StackMergeScenario, ...]:
     return generate_stack_merge_scenarios(count=count, seed=seed)
 
 
+def stack_move_scenarios_from_environment() -> tuple[StackMoveScenario, ...]:
+    """Return deterministic cross-stack move scenarios for the pytest adapter."""
+
+    count = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS",
+            str(DEFAULT_STACK_MOVE_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
+        )
+    )
+    return generate_stack_move_scenarios(count=count, seed=seed)
+
+
 def generate_stack_edit_scenarios(
     *,
     count: int,
@@ -411,6 +473,60 @@ def generate_stack_merge_scenarios(
             hazard_class="random",
             name=f"merge-random-{attempts:03d}",
             second_size=second_size,
+        )
+        if scenario.canonical_key in seen:
+            continue
+        seen.add(scenario.canonical_key)
+        scenarios.append(scenario)
+
+    return tuple(scenarios)
+
+
+def generate_stack_move_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[StackMoveScenario, ...]:
+    """Generate scenarios that move one change between submitted stacks."""
+
+    if count < 1:
+        return ()
+
+    scenarios: list[StackMoveScenario] = []
+    seen: set[
+        tuple[
+            str,
+            str,
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+        ]
+    ] = set()
+    for scenario in _fixed_stack_move_scenarios():
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+
+    rng = random.Random(seed + 3)
+    max_attempts = count * MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER
+    attempts = 0
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        first_size = rng.randint(1, 5)
+        second_size = rng.randint(1, 5)
+        source_from_first = rng.choice((True, False))
+        source_size = first_size if source_from_first else second_size
+        target_size = second_size if source_from_first else first_size
+        scenario = _stack_move_scenario(
+            first_size=first_size,
+            hazard_class="random",
+            name=f"move-random-{attempts:03d}",
+            placement=rng.choice(("after", "before")),
+            second_size=second_size,
+            source_from_first=source_from_first,
+            source_index=rng.randrange(source_size),
+            target_index=rng.randrange(target_size),
         )
         if scenario.canonical_key in seen:
             continue
@@ -497,6 +613,132 @@ def boundary_drift_scenarios() -> tuple[BoundaryDriftScenario, ...]:
             name="wrong-saved-pr-number",
         ),
     )
+
+
+def _fixed_stack_move_scenarios() -> tuple[StackMoveScenario, ...]:
+    return (
+        _stack_move_scenario(
+            first_size=3,
+            hazard_class="move-middle-into-head",
+            name="move-first-middle-after-second-head",
+            placement="after",
+            second_size=2,
+            source_from_first=True,
+            source_index=1,
+            target_index=1,
+        ),
+        _stack_move_scenario(
+            first_size=3,
+            hazard_class="move-head-into-middle",
+            name="move-first-head-before-second-head",
+            placement="before",
+            second_size=3,
+            source_from_first=True,
+            source_index=2,
+            target_index=2,
+        ),
+        _stack_move_scenario(
+            first_size=2,
+            hazard_class="move-bottom-into-bottom",
+            name="move-second-bottom-before-first-bottom",
+            placement="before",
+            second_size=3,
+            source_from_first=False,
+            source_index=0,
+            target_index=0,
+        ),
+        _stack_move_scenario(
+            first_size=3,
+            hazard_class="move-single-source",
+            name="move-single-second-after-first-middle",
+            placement="after",
+            second_size=1,
+            source_from_first=False,
+            source_index=0,
+            target_index=1,
+        ),
+    )
+
+
+def _stack_move_scenario(
+    *,
+    first_size: int,
+    hazard_class: str,
+    name: str,
+    placement: Literal["after", "before"],
+    second_size: int,
+    source_from_first: bool,
+    source_index: int,
+    target_index: int,
+) -> StackMoveScenario:
+    first_labels = tuple(_stack_label("a", index) for index in range(1, first_size + 1))
+    second_labels = tuple(_stack_label("b", index) for index in range(1, second_size + 1))
+    source_labels = first_labels if source_from_first else second_labels
+    target_labels = second_labels if source_from_first else first_labels
+    source_label = source_labels[source_index]
+    target_label = target_labels[target_index]
+    selected_labels = _insert_moved_label(
+        moved_label=source_label,
+        placement=placement,
+        target_label=target_label,
+        target_labels=target_labels,
+    )
+    deferred_stack_labels = tuple(label for label in source_labels if label != source_label)
+    rewritten_initial_labels = _stack_move_rewritten_labels(
+        placement=placement,
+        source_index=source_index,
+        source_label=source_label,
+        source_labels=source_labels,
+        target_index=target_index,
+        target_labels=target_labels,
+    )
+    return StackMoveScenario(
+        deferred_labels=deferred_stack_labels,
+        deferred_stack_labels=deferred_stack_labels,
+        first_stack_labels=first_labels,
+        hazard_class=hazard_class,
+        name=name,
+        placement=placement,
+        rewritten_initial_labels=rewritten_initial_labels,
+        second_stack_labels=second_labels,
+        selected_labels=selected_labels,
+        source_label=source_label,
+        target_label=target_label,
+    )
+
+
+def _insert_moved_label(
+    *,
+    moved_label: str,
+    placement: Literal["after", "before"],
+    target_label: str,
+    target_labels: tuple[str, ...],
+) -> tuple[str, ...]:
+    target_position = target_labels.index(target_label)
+    insert_position = target_position + 1 if placement == "after" else target_position
+    return (
+        *target_labels[:insert_position],
+        moved_label,
+        *target_labels[insert_position:],
+    )
+
+
+def _stack_move_rewritten_labels(
+    *,
+    placement: Literal["after", "before"],
+    source_index: int,
+    source_label: str,
+    source_labels: tuple[str, ...],
+    target_index: int,
+    target_labels: tuple[str, ...],
+) -> tuple[str, ...]:
+    target_rewrite_start = target_index + 1 if placement == "after" else target_index
+    rewritten = {
+        source_label,
+        *source_labels[source_index + 1 :],
+        *target_labels[target_rewrite_start:],
+    }
+    return tuple(sorted(rewritten, key=_label_sort_key))
 
 
 def _fixed_stack_merge_scenarios() -> tuple[StackMergeScenario, ...]:

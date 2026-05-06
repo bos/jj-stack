@@ -185,9 +185,11 @@ change while preserving the orphaned PR. A separate cross-stack split oracle exe
 suffix moves that leave a deferred live stack behind, proving the selected submit does
 not mutate that deferred stack's PRs or saved tracking. A stack-merge oracle exercises
 two independently submitted stacks merged into one selected linear stack, proving PR
-identity and approvals follow `change_id` across the new combined chain. The property
-coverage also includes representative fail-closed replay for external drift, conflicted
-rebases, and merge commits selected after an initial submit.
+identity and approvals follow `change_id` across the new combined chain. A stack-move
+oracle exercises moving one change between independently submitted stacks, proving the
+destination stack adopts that change's existing PR while the source remainder is left
+untouched. The property coverage also includes representative fail-closed replay for
+external drift, conflicted rebases, and merge commits selected after an initial submit.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page
