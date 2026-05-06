@@ -324,6 +324,10 @@ Given a chosen head revision:
      stop rather than silently taking over the branch
    - when updating an existing untracked remote bookmark, do not import its old target
      into the local bookmark before the remote update completes
+   - before pushing rewritten review branches, protect existing open PRs from GitHub's
+     reachability-based close/merge behavior: if a PR's current base is another review
+     branch in the selected stack and the recalculated base is different, first retarget
+     that PR to the resolved trunk branch
    - otherwise push the bookmark
    - compute the GitHub base branch:
      - the nearest still-open ancestor PR in the chain, if any
@@ -347,6 +351,14 @@ Given a chosen head revision:
 
 The bottom-up ordering matches stack dependency order, and the parent relation is read
 from the DAG, not from saved metadata.
+
+Submission is allowed to have brief intermediate GitHub states, but they must preserve
+review identity. In particular, a rewritten stack must not leave an existing selected-stack
+PR pointing at a base branch that now contains that PR's head; GitHub can interpret that as
+merged and close the PR before `submit` finishes repairing the stack. If a submit is
+interrupted after the protective trunk retarget and before final PR sync, the result should
+be a repairable flat or partially restacked set of the same open PRs, not closed or replaced
+reviews.
 
 For a stack with exactly one change, `submit` behaves like a plain PR-submit flow: no
 stack helper invocation, no navigation or overview comments, and any older nav/overview

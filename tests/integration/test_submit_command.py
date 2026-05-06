@@ -70,6 +70,40 @@ def _overview_comments(fake_repo, issue_number: int):
         if is_overview_comment(comment.body)
     ]
 
+
+def _assert_stack_pull_requests_match_dag(
+    *,
+    fake_repo,
+    repo: Path,
+    stack,
+    trunk_branch: str = "main",
+) -> None:
+    state = ReviewStateStore.for_repo(repo).load()
+    bookmarks_by_change: dict[str, str] = {}
+    pull_requests_by_change = {}
+    for revision in stack.revisions:
+        cached_change = state.changes[revision.change_id]
+        bookmark = cached_change.bookmark
+        pr_number = cached_change.pr_number
+        assert bookmark is not None
+        assert pr_number is not None
+        bookmarks_by_change[revision.change_id] = bookmark
+        pull_requests_by_change[revision.change_id] = fake_repo.pull_requests[pr_number]
+        assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
+
+    for index, revision in enumerate(stack.revisions):
+        pull_request = pull_requests_by_change[revision.change_id]
+        expected_base = (
+            bookmarks_by_change[stack.revisions[index - 1].change_id]
+            if index > 0
+            else trunk_branch
+        )
+        assert pull_request.title == revision.subject
+        assert pull_request.state == "open"
+        assert pull_request.merged_at is None
+        assert pull_request.base_ref == expected_base
+
+
 def test_submit_projects_review_bookmarks_to_selected_remote(
     tmp_path: Path,
     monkeypatch,
@@ -166,6 +200,155 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
     assert pull_requests_by_title["feature 3"].base_ref == bookmarks_by_subject["feature 2"]
     assert pull_requests_by_title["feature 4"].base_ref == bookmarks_by_subject["feature 3"]
     assert pull_requests_by_title["feature 1"].base_ref == bookmarks_by_subject["feature 4"]
+
+
+def test_submit_preserves_prs_when_middle_change_moves_to_stack_top(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+    commit_file(repo, "feature 4", "feature-4.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    change_ids_by_subject = {
+        revision.subject: revision.change_id for revision in initial_stack.revisions
+    }
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-r",
+            change_ids_by_subject["feature 2"],
+            "-A",
+            change_ids_by_subject["feature 4"],
+        ],
+        repo,
+    )
+    moved_stack = JjClient(repo).discover_review_stack()
+
+    assert [revision.subject for revision in moved_stack.revisions] == [
+        "feature 1",
+        "feature 3",
+        "feature 4",
+        "feature 2",
+    ]
+    assert run_main(repo, config_path, "submit", moved_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=moved_stack,
+    )
+    assert len(fake_repo.pull_requests) == 4
+
+
+def test_submit_preserves_existing_prs_when_change_is_inserted_in_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    change_ids_by_subject = {
+        revision.subject: revision.change_id for revision in initial_stack.revisions
+    }
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(["jj", "new", change_ids_by_subject["feature 1"]], repo)
+    commit_file(repo, "feature inserted", "feature-inserted.txt")
+    inserted_change_id = JjClient(repo).discover_review_stack().head.change_id
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-s",
+            change_ids_by_subject["feature 2"],
+            "-d",
+            inserted_change_id,
+        ],
+        repo,
+    )
+    inserted_stack = JjClient(repo).discover_review_stack(change_ids_by_subject["feature 3"])
+
+    assert [revision.subject for revision in inserted_stack.revisions] == [
+        "feature 1",
+        "feature inserted",
+        "feature 2",
+        "feature 3",
+    ]
+    assert run_main(repo, config_path, "submit", inserted_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=inserted_stack,
+    )
+    assert len(fake_repo.pull_requests) == 4
+
+
+def test_submit_preserves_orphaned_pr_when_middle_change_is_abandoned(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    change_ids_by_subject = {
+        revision.subject: revision.change_id for revision in initial_stack.revisions
+    }
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+    initial_state = ReviewStateStore.for_repo(repo).load()
+    orphaned_change = initial_state.changes[change_ids_by_subject["feature 2"]]
+    orphaned_bookmark = orphaned_change.bookmark
+    orphaned_pr_number = orphaned_change.pr_number
+    assert orphaned_bookmark is not None
+    assert orphaned_pr_number is not None
+    orphaned_remote_target = read_remote_ref(fake_repo.git_dir, orphaned_bookmark)
+
+    run_command(["jj", "abandon", change_ids_by_subject["feature 2"]], repo)
+    surviving_stack = JjClient(repo).discover_review_stack(change_ids_by_subject["feature 3"])
+
+    assert [revision.subject for revision in surviving_stack.revisions] == [
+        "feature 1",
+        "feature 3",
+    ]
+    assert run_main(repo, config_path, "submit", surviving_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=surviving_stack,
+    )
+    assert len(fake_repo.pull_requests) == 3
+    assert fake_repo.pull_requests[orphaned_pr_number].state == "open"
+    assert fake_repo.pull_requests[orphaned_pr_number].merged_at is None
+    assert read_remote_ref(fake_repo.git_dir, orphaned_bookmark) == orphaned_remote_target
 
 
 def test_submit_uses_configured_bookmark_prefix(

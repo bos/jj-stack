@@ -174,6 +174,9 @@ stale base is another review branch in the submitted stack back to the trunk bra
 After the push, normal PR sync retargets it to the final stacked base. This avoids the
 GitHub behavior where a reordered stack can make a stale base branch already contain a
 PR head, causing GitHub to close the PR as merged before `submit` can repair the base.
+The integration coverage exercises the user-visible semantics for representative stack
+edits: moving the old bottom change, moving a middle change, inserting a new change, and
+abandoning a middle change while preserving the orphaned PR.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page
