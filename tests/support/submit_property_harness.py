@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import Any
 
 from jj_review.jj import JjClient
+from jj_review.models.review_state import CachedChange
 from jj_review.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
-from .integration_helpers import commit_file, run_command
+from .integration_helpers import commit_file, run_command, write_file
 from .submit_property_scenarios import (
     BoundaryDriftKind,
     BoundaryDriftScenario,
+    CrossStackSplitScenario,
     StackEditOperation,
     StackEditScenario,
     filename_for_label,
@@ -30,6 +32,7 @@ OutputDiscarder = Callable[[], Any]
 @dataclass(frozen=True, slots=True)
 class SubmittedBaseline:
     bookmark: str
+    cached_change: CachedChange
     change_id: str
     pr_base_ref: str
     pr_number: int
@@ -98,8 +101,9 @@ def replay_boundary_drift_scenario(
     discard_output()
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
 
-    _apply_boundary_drift(
+    submit_revset = _apply_boundary_drift(
         fake_repo=fake_repo,
+        labels_to_change_ids=labels_to_change_ids,
         repo=repo,
         baseline=baseline,
         label=scenario.label,
@@ -107,23 +111,84 @@ def replay_boundary_drift_scenario(
     )
     before_refs = _remote_refs(fake_repo.git_dir)
     before_pr_count = len(fake_repo.pull_requests)
-    before_pr_states = {
-        number: pull_request.state for number, pull_request in fake_repo.pull_requests.items()
-    }
+    before_pull_requests = _pull_request_snapshots(fake_repo)
     fake_repo.pull_request_events.clear()
 
-    stack = JjClient(repo).discover_review_stack(
-        labels_to_change_ids[initial_label(scenario.initial_size)]
-    )
-    assert submit(stack.head.change_id) != 0
+    assert submit(submit_revset) != 0
     discard_output()
 
     assert _remote_refs(fake_repo.git_dir) == before_refs
     assert len(fake_repo.pull_requests) == before_pr_count
-    assert {
-        number: pull_request.state for number, pull_request in fake_repo.pull_requests.items()
-    } == before_pr_states
+    assert _pull_request_snapshots(fake_repo) == before_pull_requests
     assert fake_repo.pull_request_events == []
+
+
+def replay_cross_stack_split_scenario(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: CrossStackSplitScenario,
+    submit: SubmitRunner,
+) -> None:
+    """Replay a split-stack rewrite and assert only the selected stack is updated."""
+
+    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
+
+    assert submit(None) == 0
+    discard_output()
+    baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+    _approve_initial_pull_requests(fake_repo, baseline)
+    fake_repo.pull_request_events.clear()
+
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-s",
+            labels_to_change_ids[scenario.source_label],
+            "-d",
+            labels_to_change_ids[scenario.target_label],
+        ],
+        repo,
+    )
+    selected_stack = _discover_stack_for_labels(
+        repo=repo,
+        labels=scenario.selected_labels,
+        labels_to_change_ids=labels_to_change_ids,
+    )
+    _discover_stack_for_labels(
+        repo=repo,
+        labels=scenario.deferred_stack_labels,
+        labels_to_change_ids=labels_to_change_ids,
+    )
+
+    assert submit(selected_stack.head.change_id) == 0
+    discard_output()
+
+    selected_scenario = StackEditScenario(
+        final_live_labels=scenario.selected_labels,
+        hazard_class=scenario.hazard_class,
+        initial_size=scenario.initial_size,
+        name=scenario.name,
+        operations=(),
+        orphaned_labels=(),
+        rewritten_initial_labels=scenario.rewritten_initial_labels,
+    )
+    _assert_successful_submit_invariants(
+        baseline=baseline,
+        fake_repo=fake_repo,
+        labels_to_change_ids=labels_to_change_ids,
+        repo=repo,
+        scenario=selected_scenario,
+        stack=selected_stack,
+    )
+    _assert_deferred_stack_untouched(
+        baseline=baseline,
+        fake_repo=fake_repo,
+        repo=repo,
+        scenario=scenario,
+    )
 
 
 def _create_initial_stack(repo: Path, initial_size: int) -> dict[str, str]:
@@ -156,6 +221,7 @@ def _capture_submitted_baseline(
         pull_request = fake_repo.pull_requests[pr_number]
         baseline[label] = SubmittedBaseline(
             bookmark=bookmark,
+            cached_change=cached_change,
             change_id=change_id,
             pr_base_ref=pull_request.base_ref,
             pr_number=pr_number,
@@ -199,6 +265,50 @@ def _apply_stack_edit_operation(
         )
         return [*live_labels[:index], *live_labels[index + 1 :], operation.label]
 
+    if operation.kind == "move_after":
+        if operation.target_label is None:
+            raise AssertionError("move_after operation requires a target label.")
+        run_command(
+            [
+                "jj",
+                "rebase",
+                "-r",
+                labels_to_change_ids[operation.label],
+                "-A",
+                labels_to_change_ids[operation.target_label],
+            ],
+            repo,
+        )
+        live_labels = [label for label in live_labels if label != operation.label]
+        target_index = live_labels.index(operation.target_label)
+        return [
+            *live_labels[: target_index + 1],
+            operation.label,
+            *live_labels[target_index + 1 :],
+        ]
+
+    if operation.kind == "move_before":
+        if operation.target_label is None:
+            raise AssertionError("move_before operation requires a target label.")
+        run_command(
+            [
+                "jj",
+                "rebase",
+                "-r",
+                labels_to_change_ids[operation.label],
+                "-B",
+                labels_to_change_ids[operation.target_label],
+            ],
+            repo,
+        )
+        live_labels = [label for label in live_labels if label != operation.label]
+        target_index = live_labels.index(operation.target_label)
+        return [
+            *live_labels[:target_index],
+            operation.label,
+            *live_labels[target_index:],
+        ]
+
     if operation.kind == "insert_after":
         if operation.new_label is None:
             raise AssertionError("insert_after operation requires a new label.")
@@ -230,8 +340,63 @@ def _apply_stack_edit_operation(
             *live_labels[index + 1 :],
         ]
 
+    if operation.kind == "insert_before":
+        if operation.new_label is None:
+            raise AssertionError("insert_before operation requires a new label.")
+        index = live_labels.index(operation.label)
+        run_command(["jj", "new", "-B", labels_to_change_ids[operation.label]], repo)
+        commit_file(
+            repo,
+            subject_for_label(operation.new_label),
+            filename_for_label(operation.new_label),
+        )
+        inserted_stack = JjClient(repo).discover_review_stack()
+        labels_to_change_ids[operation.new_label] = inserted_stack.head.change_id
+        return [
+            *live_labels[:index],
+            operation.new_label,
+            *live_labels[index:],
+        ]
+
     if operation.kind == "abandon":
         run_command(["jj", "abandon", labels_to_change_ids[operation.label]], repo)
+        return [label for label in live_labels if label != operation.label]
+
+    if operation.kind == "rewrite":
+        run_command(["jj", "new", labels_to_change_ids[operation.label]], repo)
+        write_file(
+            repo / filename_for_label(operation.label),
+            f"{subject_for_label(operation.label)} rewritten\n",
+        )
+        run_command(
+            [
+                "jj",
+                "squash",
+                "--into",
+                labels_to_change_ids[operation.label],
+                "--use-destination-message",
+            ],
+            repo,
+        )
+        return live_labels
+
+    if operation.kind == "squash_into_previous":
+        index = live_labels.index(operation.label)
+        if index == 0:
+            raise AssertionError("squash_into_previous requires a non-bottom label.")
+        target_label = live_labels[index - 1]
+        run_command(
+            [
+                "jj",
+                "squash",
+                "--from",
+                labels_to_change_ids[operation.label],
+                "--into",
+                labels_to_change_ids[target_label],
+                "--use-destination-message",
+            ],
+            repo,
+        )
         return [label for label in live_labels if label != operation.label]
 
     raise AssertionError(f"unsupported stack edit operation: {operation.kind}")
@@ -243,11 +408,22 @@ def _discover_expected_stack(
     labels_to_change_ids: dict[str, str],
     scenario: StackEditScenario,
 ):
-    head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
-    stack = JjClient(repo).discover_review_stack(head_change_id)
-    expected_change_ids = tuple(
-        labels_to_change_ids[label] for label in scenario.final_live_labels
+    return _discover_stack_for_labels(
+        repo=repo,
+        labels=scenario.final_live_labels,
+        labels_to_change_ids=labels_to_change_ids,
     )
+
+
+def _discover_stack_for_labels(
+    *,
+    repo: Path,
+    labels: tuple[str, ...],
+    labels_to_change_ids: dict[str, str],
+):
+    head_change_id = labels_to_change_ids[labels[-1]]
+    stack = JjClient(repo).discover_review_stack(head_change_id)
+    expected_change_ids = tuple(labels_to_change_ids[label] for label in labels)
     assert tuple(revision.change_id for revision in stack.revisions) == expected_change_ids
     return stack
 
@@ -344,14 +520,43 @@ def _assert_no_transient_damage_events(
             assert event.kind != "base", event
 
 
+def _assert_deferred_stack_untouched(
+    *,
+    baseline: dict[str, SubmittedBaseline],
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: CrossStackSplitScenario,
+) -> None:
+    state = ReviewStateStore.for_repo(repo).load()
+    deferred_pr_numbers = {
+        baseline[label].pr_number for label in scenario.deferred_labels
+    }
+    for label in scenario.deferred_labels:
+        submitted = baseline[label]
+        cached_change = state.changes[submitted.change_id]
+        pull_request = fake_repo.pull_requests[submitted.pr_number]
+        assert cached_change == submitted.cached_change
+        assert _read_remote_ref(fake_repo.git_dir, submitted.bookmark) == submitted.remote_target
+        assert pull_request.base_ref == submitted.pr_base_ref
+        assert pull_request.head_ref == submitted.bookmark
+        assert pull_request.merged_at is None
+        assert pull_request.state == "open"
+        _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
+
+    for event in fake_repo.pull_request_events:
+        if event.pull_request_number in deferred_pr_numbers:
+            assert event.kind != "base", event
+
+
 def _apply_boundary_drift(
     *,
     fake_repo: FakeGithubRepository,
+    labels_to_change_ids: dict[str, str],
     repo: Path,
     baseline: dict[str, SubmittedBaseline],
     label: str,
     drift_kind: BoundaryDriftKind,
-) -> None:
+) -> str:
     submitted = baseline[label]
     if drift_kind == "closed_pr":
         fake_repo.update_pull_request_state(
@@ -359,7 +564,26 @@ def _apply_boundary_drift(
             state="closed",
             reason="test_drift",
         )
-        return
+        return labels_to_change_ids[label]
+    if drift_kind == "conflicted_rebase":
+        conflicted_label = initial_label(1)
+        run_command(["jj", "new", "main"], repo)
+        write_file(repo / filename_for_label(conflicted_label), "trunk conflicting edit\n")
+        run_command(["jj", "commit", "-m", "trunk conflicting edit"], repo)
+        run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
+        run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "main"], repo)
+        run_command(
+            ["jj", "rebase", "-s", labels_to_change_ids[conflicted_label], "-d", "main"],
+            repo,
+        )
+        return labels_to_change_ids[label]
+    if drift_kind == "merge_commit":
+        run_command(["jj", "new", "main"], repo)
+        commit_file(repo, "side branch", "side-branch.txt")
+        side_change_id = JjClient(repo).resolve_revision("@-").change_id
+        run_command(["jj", "new", labels_to_change_ids[label], side_change_id], repo)
+        commit_file(repo, "merge commit", "merge-commit.txt")
+        return JjClient(repo).resolve_revision("@-").change_id
     if drift_kind == "wrong_saved_pr_number":
         state_store = ReviewStateStore.for_repo(repo)
         state = state_store.load()
@@ -375,8 +599,22 @@ def _apply_boundary_drift(
                 }
             )
         )
-        return
+        return labels_to_change_ids[label]
     raise AssertionError(f"unsupported boundary drift kind: {drift_kind}")
+
+
+def _pull_request_snapshots(fake_repo: FakeGithubRepository) -> dict[int, tuple[str, ...]]:
+    return {
+        number: (
+            pull_request.base_ref,
+            pull_request.head_ref,
+            pull_request.state,
+            pull_request.merged_at or "",
+            pull_request.title,
+            pull_request.body,
+        )
+        for number, pull_request in fake_repo.pull_requests.items()
+    }
 
 
 def _read_remote_ref(remote: Path, bookmark: str) -> str:

@@ -32,6 +32,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Deterministic scenario seed. Defaults to the harness seed.",
     )
     parser.add_argument(
+        "--cross-stack-scenarios",
+        type=_non_negative_int,
+        help=(
+            "Number of generated cross-stack split scenarios to run "
+            "(default: max(4, scenarios // 10))."
+        ),
+    )
+    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -56,6 +64,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     env = _command_env()
     env["JJ_REVIEW_SUBMIT_PROPERTY_SCENARIOS"] = str(args.scenarios)
+    cross_stack_scenarios = args.cross_stack_scenarios
+    if cross_stack_scenarios is None:
+        cross_stack_scenarios = max(4, args.scenarios // 10)
+    env["JJ_REVIEW_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS"] = str(cross_stack_scenarios)
     if args.seed is not None:
         env["JJ_REVIEW_SUBMIT_PROPERTY_SEED"] = str(args.seed)
 
@@ -80,6 +92,16 @@ def _positive_int(value: str) -> int:
         raise ArgumentTypeError("scenario count must be a positive integer") from error
     if parsed < 1:
         raise ArgumentTypeError("scenario count must be a positive integer")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise ArgumentTypeError("scenario count must be a non-negative integer") from error
+    if parsed < 0:
+        raise ArgumentTypeError("scenario count must be a non-negative integer")
     return parsed
 
 

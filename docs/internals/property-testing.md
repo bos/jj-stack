@@ -8,8 +8,9 @@ testing should spend its budget on those cross-system invariants.
 
 ## Requirements
 
-- Test user-reachable stack edits: reorder, reparent, insert, abandon, and combinations
-  of those edits after an initial successful submit.
+- Test user-reachable stack edits: reorder, reparent, insert, abandon, rewrite,
+  squash, split-stack suffix moves, and combinations of those edits after an initial
+  successful submit.
 - Use real `jj` commands, real remote branch updates, the CLI entrypoint, and the fake
   GitHub server for integration coverage. A pure model may supplement this, but it must
   not replace replay through the actual integration boundary.
@@ -83,20 +84,54 @@ The generated pool should start with a fixed corpus that always covers:
 - moving the old bottom change
 - moving a middle change
 - inserting a new change below existing submitted descendants
+- inserting a new change above existing submitted ancestors
 - abandoning a middle change
+- rewriting a reviewed change without changing topology
+- squashing one reviewed change into its predecessor
 
 Random generation then fills the remaining budget with unique scenario representatives.
 
-The supported operations should start narrow:
+The supported successful-submit operations should cover the common linear-stack edit
+surface:
 
 - move an existing live change to the top of the current stack
+- move an existing live change before or after another live change
 - insert a new change after an existing live change, then rebase descendants onto it
+- insert a new change before an existing live change
 - abandon an existing submitted change while at least one live change remains
+- rewrite an existing live change while preserving its `change_id`
+- squash a live change into its predecessor
 
-Those operations cover the failure class that caused approval loss while staying small
-enough for quick shrinking by inspection. Broader operations such as cross-stack moves,
-multi-stack merges, and interrupted-submit injection can be added once the first harness
-is stable.
+Those operations cover the common single-selected-stack failure classes while staying
+small enough for quick shrinking by inspection. Broader operations such as multi-stack
+merges, duplicate, split, and interrupted-submit injection can be added once their
+expected product semantics are represented directly in the scenario model.
+
+## Cross-Stack Split Harness
+
+Some ordinary `jj rebase -s ... -d ...` edits split one submitted stack into two live
+review stacks. Those scenarios need a separate oracle because the successful-submit
+invariant is no longer "every surviving submitted change is in the selected stack."
+
+Cross-stack split scenarios start from one submitted linear stack, move a suffix onto an
+earlier target so at least one submitted change is left behind on a deferred live stack,
+then submit only the selected resulting stack. The oracle asserts:
+
+- the selected resulting stack is rediscovered from the current DAG and submitted
+  normally
+- selected changes keep their PR numbers and approvals, and their PR bases and branch
+  heads match the selected DAG
+- deferred live-stack changes keep their saved local tracking record unchanged
+- deferred PR branches still point at their originally submitted commits
+- deferred PR bases, head branches, state, and approvals are unchanged
+- fake GitHub recorded no base-retarget event for a deferred PR and no state transition
+  for any original PR
+
+The initial operation family is intentionally suffix moves because that is the common
+linear-stack edit that produces two selected-parent chains without introducing merge
+commits. Later cross-stack families can add moving one change between independently
+submitted stacks and merging two selected chains once the expected shared-ancestor rules
+are encoded in the model.
 
 ## Boundary-drift Harness
 
@@ -109,6 +144,9 @@ Initial perturbations should stay representative rather than exhaustive. Start w
 
 - GitHub reports a saved PR head branch in a closed state
 - saved tracking points a change at a different PR number than GitHub reports
+- the selected stack has unresolved conflicts after a real `jj rebase`
+- the selected revision is a merge commit, which is outside the supported review-stack
+  shape
 
 Later perturbations can add cases such as:
 
@@ -173,8 +211,8 @@ $ tests/run_submit_property_scenarios.py 500
 ```
 
 The runner accepts the scenario count as a positional argument. It also supports
-`--seed <int>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest arguments after
-`--`.
+`--seed <int>`, `--cross-stack-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and
+additional pytest arguments after `--`.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:
@@ -195,6 +233,8 @@ builder from the caller.
 The opt-in runner sets these environment variables for the pytest adapter:
 
 - `JJ_REVIEW_SUBMIT_PROPERTY_SCENARIOS`: target number of unique generated scenarios
+- `JJ_REVIEW_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS`: target number of unique cross-stack
+  split scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_SEED`: deterministic random seed
 
 Those variables configure the adapter; they are not part of the core harness contract.

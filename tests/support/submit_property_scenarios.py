@@ -7,10 +7,25 @@ import random
 from dataclasses import dataclass
 from typing import Literal
 
-StackEditOperationKind = Literal["abandon", "insert_after", "move_to_top"]
-BoundaryDriftKind = Literal["closed_pr", "wrong_saved_pr_number"]
+StackEditOperationKind = Literal[
+    "abandon",
+    "insert_after",
+    "insert_before",
+    "move_after",
+    "move_before",
+    "move_to_top",
+    "rewrite",
+    "squash_into_previous",
+]
+BoundaryDriftKind = Literal[
+    "closed_pr",
+    "conflicted_rebase",
+    "merge_commit",
+    "wrong_saved_pr_number",
+]
 
 DEFAULT_STACK_EDIT_SCENARIO_COUNT = 8
+DEFAULT_CROSS_STACK_SCENARIO_COUNT = 8
 DEFAULT_STACK_EDIT_SCENARIO_SEED = 8675309
 MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
 
@@ -22,13 +37,18 @@ class StackEditOperation:
     kind: StackEditOperationKind
     label: str
     new_label: str | None = None
+    target_label: str | None = None
 
     @property
     def trace(self) -> str:
-        if self.kind == "insert_after":
+        if self.kind in {"insert_after", "insert_before"}:
             if self.new_label is None:
-                raise AssertionError("insert_after operation requires a new label.")
-            return f"insert_after:{self.label}:{self.new_label}"
+                raise AssertionError(f"{self.kind} operation requires a new label.")
+            return f"{self.kind}:{self.label}:{self.new_label}"
+        if self.kind in {"move_after", "move_before"}:
+            if self.target_label is None:
+                raise AssertionError(f"{self.kind} operation requires a target label.")
+            return f"{self.kind}:{self.label}:{self.target_label}"
         return f"{self.kind}:{self.label}"
 
 
@@ -78,6 +98,41 @@ class BoundaryDriftScenario:
     label: str
 
 
+@dataclass(frozen=True, slots=True)
+class CrossStackSplitScenario:
+    """A rewrite that splits one submitted stack into selected and deferred stacks."""
+
+    name: str
+    hazard_class: str
+    initial_size: int
+    source_label: str
+    target_label: str
+    selected_labels: tuple[str, ...]
+    deferred_labels: tuple[str, ...]
+    deferred_stack_labels: tuple[str, ...]
+    rewritten_initial_labels: tuple[str, ...]
+
+    @property
+    def trace(self) -> str:
+        return f"move_suffix_onto:{self.source_label}:{self.target_label}"
+
+    @property
+    def canonical_key(
+        self,
+    ) -> tuple[
+        str,
+        tuple[str, ...],
+        tuple[str, ...],
+        tuple[str, ...],
+    ]:
+        return (
+            self.hazard_class,
+            self.selected_labels,
+            self.deferred_labels,
+            self.rewritten_initial_labels,
+        )
+
+
 @dataclass(frozen=True)
 class _ScenarioModel:
     initial_size: int
@@ -94,16 +149,28 @@ class _ScenarioModel:
         next_insert_index = self.next_insert_index
 
         if operation.kind == "move_to_top":
-            index = live_labels.index(operation.label)
-            if index == len(live_labels) - 1:
-                raise AssertionError("move_to_top requires a non-top label.")
-            _mark_rewritten_initials(
+            _move_to_top(
+                live_labels,
+                operation.label,
                 rewritten_initial_labels,
-                live_labels[index:],
                 initial_size=self.initial_size,
             )
-            live_labels.pop(index)
-            live_labels.append(operation.label)
+        elif operation.kind == "move_after":
+            _move_after(
+                live_labels,
+                operation.label,
+                _require_target_label(operation),
+                rewritten_initial_labels,
+                initial_size=self.initial_size,
+            )
+        elif operation.kind == "move_before":
+            _move_before(
+                live_labels,
+                operation.label,
+                _require_target_label(operation),
+                rewritten_initial_labels,
+                initial_size=self.initial_size,
+            )
         elif operation.kind == "insert_after":
             if operation.new_label is None:
                 raise AssertionError("insert_after operation requires a new label.")
@@ -114,6 +181,17 @@ class _ScenarioModel:
                 initial_size=self.initial_size,
             )
             live_labels.insert(index + 1, operation.new_label)
+            next_insert_index += 1
+        elif operation.kind == "insert_before":
+            if operation.new_label is None:
+                raise AssertionError("insert_before operation requires a new label.")
+            index = live_labels.index(operation.label)
+            _mark_rewritten_initials(
+                rewritten_initial_labels,
+                live_labels[index:],
+                initial_size=self.initial_size,
+            )
+            live_labels.insert(index, operation.new_label)
             next_insert_index += 1
         elif operation.kind == "abandon":
             index = live_labels.index(operation.label)
@@ -128,6 +206,25 @@ class _ScenarioModel:
             )
             live_labels.pop(index)
             orphaned_labels.add(operation.label)
+        elif operation.kind == "rewrite":
+            index = live_labels.index(operation.label)
+            _mark_rewritten_initials(
+                rewritten_initial_labels,
+                live_labels[index:],
+                initial_size=self.initial_size,
+            )
+        elif operation.kind == "squash_into_previous":
+            index = live_labels.index(operation.label)
+            if index == 0:
+                raise AssertionError("squash_into_previous requires a non-bottom label.")
+            _mark_rewritten_initials(
+                rewritten_initial_labels,
+                live_labels[index - 1 :],
+                initial_size=self.initial_size,
+            )
+            live_labels.pop(index)
+            if operation.label.startswith("c"):
+                orphaned_labels.add(operation.label)
         else:
             raise AssertionError(f"unsupported operation kind: {operation.kind}")
 
@@ -170,6 +267,24 @@ def stack_edit_scenarios_from_environment() -> tuple[StackEditScenario, ...]:
     return generate_stack_edit_scenarios(count=count, seed=seed)
 
 
+def cross_stack_scenarios_from_environment() -> tuple[CrossStackSplitScenario, ...]:
+    """Return deterministic cross-stack split scenarios for the pytest adapter."""
+
+    count = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS",
+            str(DEFAULT_CROSS_STACK_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
+        )
+    )
+    return generate_cross_stack_split_scenarios(count=count, seed=seed)
+
+
 def generate_stack_edit_scenarios(
     *,
     count: int,
@@ -209,6 +324,54 @@ def generate_stack_edit_scenarios(
     return tuple(scenarios)
 
 
+def generate_cross_stack_split_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[CrossStackSplitScenario, ...]:
+    """Generate suffix-move scenarios that split one submitted stack into two stacks."""
+
+    if count < 1:
+        return ()
+
+    scenarios: list[CrossStackSplitScenario] = []
+    seen: set[
+        tuple[
+            str,
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+        ]
+    ] = set()
+    for scenario in _fixed_cross_stack_split_scenarios():
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+
+    rng = random.Random(seed + 1)
+    max_attempts = count * MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER
+    attempts = 0
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        initial_size = rng.randint(4, 8)
+        source_index = rng.randint(2, initial_size - 1)
+        target_index = rng.randint(0, source_index - 2)
+        scenario = _cross_stack_split_scenario(
+            initial_size=initial_size,
+            source_index=source_index,
+            target_index=target_index,
+            hazard_class="random",
+            name=f"cross-random-{attempts:03d}",
+        )
+        if scenario.canonical_key in seen:
+            continue
+        seen.add(scenario.canonical_key)
+        scenarios.append(scenario)
+
+    return tuple(scenarios)
+
+
 def boundary_drift_scenarios() -> tuple[BoundaryDriftScenario, ...]:
     """Representative fail-closed boundary-drift scenarios."""
 
@@ -220,11 +383,82 @@ def boundary_drift_scenarios() -> tuple[BoundaryDriftScenario, ...]:
             name="closed-pr",
         ),
         BoundaryDriftScenario(
+            drift_kind="conflicted_rebase",
+            initial_size=3,
+            label="c3",
+            name="conflicted-rebase",
+        ),
+        BoundaryDriftScenario(
+            drift_kind="merge_commit",
+            initial_size=3,
+            label="c3",
+            name="merge-commit",
+        ),
+        BoundaryDriftScenario(
             drift_kind="wrong_saved_pr_number",
             initial_size=3,
             label="c2",
             name="wrong-saved-pr-number",
         ),
+    )
+
+
+def _fixed_cross_stack_split_scenarios() -> tuple[CrossStackSplitScenario, ...]:
+    return (
+        _cross_stack_split_scenario(
+            initial_size=4,
+            source_index=2,
+            target_index=0,
+            hazard_class="split-middle",
+            name="split-middle-deferred-one",
+        ),
+        _cross_stack_split_scenario(
+            initial_size=5,
+            source_index=3,
+            target_index=1,
+            hazard_class="split-middle",
+            name="split-middle-after-two",
+        ),
+        _cross_stack_split_scenario(
+            initial_size=5,
+            source_index=2,
+            target_index=0,
+            hazard_class="split-long-selected",
+            name="split-long-selected",
+        ),
+        _cross_stack_split_scenario(
+            initial_size=6,
+            source_index=4,
+            target_index=1,
+            hazard_class="split-long-deferred",
+            name="split-long-deferred",
+        ),
+    )
+
+
+def _cross_stack_split_scenario(
+    *,
+    initial_size: int,
+    source_index: int,
+    target_index: int,
+    hazard_class: str,
+    name: str,
+) -> CrossStackSplitScenario:
+    labels = tuple(initial_label(index) for index in range(1, initial_size + 1))
+    if target_index + 1 >= source_index:
+        raise AssertionError("cross-stack split requires at least one deferred label.")
+    selected_labels = (*labels[: target_index + 1], *labels[source_index:])
+    deferred_labels = labels[target_index + 1 : source_index]
+    return CrossStackSplitScenario(
+        deferred_labels=deferred_labels,
+        deferred_stack_labels=(*labels[: target_index + 1], *deferred_labels),
+        hazard_class=hazard_class,
+        initial_size=initial_size,
+        name=name,
+        rewritten_initial_labels=labels[source_index:],
+        selected_labels=selected_labels,
+        source_label=labels[source_index],
+        target_label=labels[target_index],
     )
 
 
@@ -268,8 +502,26 @@ def _fixed_stack_edit_scenarios() -> tuple[StackEditScenario, ...]:
         )
         .to_scenario(hazard_class="insert-middle", name="insert-middle"),
         _model(3)
+        .append(
+            StackEditOperation(
+                kind="insert_before",
+                label="c2",
+                new_label="i1",
+            )
+        )
+        .to_scenario(hazard_class="insert-before-middle", name="insert-before-middle"),
+        _model(3)
         .append(StackEditOperation(kind="abandon", label="c2"))
         .to_scenario(hazard_class="abandon-middle", name="abandon-middle"),
+        _model(4)
+        .append(StackEditOperation(kind="move_before", label="c4", target_label="c2"))
+        .to_scenario(hazard_class="move-before-middle", name="move-before-middle"),
+        _model(3)
+        .append(StackEditOperation(kind="rewrite", label="c2"))
+        .to_scenario(hazard_class="rewrite-middle", name="rewrite-middle"),
+        _model(3)
+        .append(StackEditOperation(kind="squash_into_previous", label="c2"))
+        .to_scenario(hazard_class="squash-middle", name="squash-middle-into-previous"),
     )
 
 
@@ -278,9 +530,9 @@ def _random_stack_edit_scenario(
     *,
     attempts: int,
 ) -> StackEditScenario:
-    initial_size = rng.randint(2, 5)
+    initial_size = rng.randint(2, 6)
     model = _model(initial_size)
-    operation_count = rng.randint(1, 5)
+    operation_count = rng.randint(1, 7)
     for _ in range(operation_count):
         operations = _available_operations(model, rng)
         if not operations:
@@ -299,21 +551,60 @@ def _available_operations(
 ) -> tuple[StackEditOperation, ...]:
     operations: list[StackEditOperation] = []
     if len(model.live_labels) > 1:
-        movable = tuple(label for label in model.live_labels[:-1])
-        move_label = rng.choice(movable)
+        movable_to_top = tuple(label for label in model.live_labels[:-1])
+        move_label = rng.choice(movable_to_top)
         operations.append(StackEditOperation(kind="move_to_top", label=move_label))
+
+        move_after_candidates = _move_after_candidates(model.live_labels)
+        if move_after_candidates:
+            label, target_label = rng.choice(move_after_candidates)
+            operations.append(
+                StackEditOperation(
+                    kind="move_after",
+                    label=label,
+                    target_label=target_label,
+                )
+            )
+
+        move_before_candidates = _move_before_candidates(model.live_labels)
+        if move_before_candidates:
+            label, target_label = rng.choice(move_before_candidates)
+            operations.append(
+                StackEditOperation(
+                    kind="move_before",
+                    label=label,
+                    target_label=target_label,
+                )
+            )
 
         abandonable = tuple(label for label in model.live_labels if label.startswith("c"))
         if abandonable:
             abandon_label = rng.choice(abandonable)
             operations.append(StackEditOperation(kind="abandon", label=abandon_label))
 
-    if len(model.live_labels) < 6:
+        squashable = tuple(model.live_labels[1:])
+        squash_label = rng.choice(squashable)
+        operations.append(
+            StackEditOperation(kind="squash_into_previous", label=squash_label)
+        )
+
+    rewrite_label = rng.choice(model.live_labels)
+    operations.append(StackEditOperation(kind="rewrite", label=rewrite_label))
+
+    if len(model.live_labels) < 8:
         after_label = rng.choice(model.live_labels)
         operations.append(
             StackEditOperation(
                 kind="insert_after",
                 label=after_label,
+                new_label=inserted_label(model.next_insert_index),
+            )
+        )
+        before_label = rng.choice(model.live_labels)
+        operations.append(
+            StackEditOperation(
+                kind="insert_before",
+                label=before_label,
                 new_label=inserted_label(model.next_insert_index),
             )
         )
@@ -337,6 +628,99 @@ def _mark_rewritten_initials(
     for label in labels:
         if label.startswith("c") and int(label[1:]) <= initial_size:
             target.add(label)
+
+
+def _require_target_label(operation: StackEditOperation) -> str:
+    if operation.target_label is None:
+        raise AssertionError(f"{operation.kind} operation requires a target label.")
+    return operation.target_label
+
+
+def _move_to_top(
+    live_labels: list[str],
+    label: str,
+    rewritten_initial_labels: set[str],
+    *,
+    initial_size: int,
+) -> None:
+    index = live_labels.index(label)
+    if index == len(live_labels) - 1:
+        raise AssertionError("move_to_top requires a non-top label.")
+    _mark_rewritten_initials(
+        rewritten_initial_labels,
+        live_labels[index:],
+        initial_size=initial_size,
+    )
+    live_labels.pop(index)
+    live_labels.append(label)
+
+
+def _move_after(
+    live_labels: list[str],
+    label: str,
+    target_label: str,
+    rewritten_initial_labels: set[str],
+    *,
+    initial_size: int,
+) -> None:
+    index = live_labels.index(label)
+    target_index = live_labels.index(target_label)
+    if target_label == label:
+        raise AssertionError("move_after requires a different target label.")
+    if index == target_index + 1:
+        raise AssertionError("move_after requires a non-current parent target.")
+    _mark_rewritten_initials(
+        rewritten_initial_labels,
+        live_labels[min(index, target_index) :],
+        initial_size=initial_size,
+    )
+    moved = live_labels.pop(index)
+    target_index = live_labels.index(target_label)
+    live_labels.insert(target_index + 1, moved)
+
+
+def _move_before(
+    live_labels: list[str],
+    label: str,
+    target_label: str,
+    rewritten_initial_labels: set[str],
+    *,
+    initial_size: int,
+) -> None:
+    index = live_labels.index(label)
+    target_index = live_labels.index(target_label)
+    if target_label == label:
+        raise AssertionError("move_before requires a different target label.")
+    if index + 1 == target_index:
+        raise AssertionError("move_before requires a non-current child target.")
+    _mark_rewritten_initials(
+        rewritten_initial_labels,
+        live_labels[min(index, target_index) :],
+        initial_size=initial_size,
+    )
+    moved = live_labels.pop(index)
+    target_index = live_labels.index(target_label)
+    live_labels.insert(target_index, moved)
+
+
+def _move_after_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    candidates: list[tuple[str, str]] = []
+    for index, label in enumerate(live_labels):
+        for target_index, target_label in enumerate(live_labels):
+            if target_label == label or index == target_index + 1:
+                continue
+            candidates.append((label, target_label))
+    return tuple(candidates)
+
+
+def _move_before_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    candidates: list[tuple[str, str]] = []
+    for index, label in enumerate(live_labels):
+        for target_index, target_label in enumerate(live_labels):
+            if target_label == label or index + 1 == target_index:
+                continue
+            candidates.append((label, target_label))
+    return tuple(candidates)
 
 
 def _label_sort_key(label: str) -> tuple[str, int]:

@@ -178,9 +178,14 @@ resolved trunk branch. The normal post-push PR sync restores the final stacked b
 This generalizes the earlier heuristic ("base is a review branch in the submitted
 stack and differs from the new desired base") so that anomalous cases — for example,
 a non-stack base that already contains the head — are handled by the same code path.
-The integration coverage exercises the user-visible semantics for representative
-stack edits: moving the old bottom change, moving a middle change, inserting a new
-change, and abandoning a middle change while preserving the orphaned PR.
+The opt-in property coverage exercises the user-visible semantics for representative
+linear stack edits: moving individual changes, inserting above or below existing
+changes, rewriting a change, squashing a change into its predecessor, and abandoning a
+change while preserving the orphaned PR. A separate cross-stack split oracle exercises
+suffix moves that leave a deferred live stack behind, proving the selected submit does
+not mutate that deferred stack's PRs or saved tracking. The property coverage also
+includes representative fail-closed replay for external drift, conflicted rebases, and
+merge commits selected after an initial submit.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page
