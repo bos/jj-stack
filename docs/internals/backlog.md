@@ -124,6 +124,49 @@ that the predictor pre-retargets it before push. The fake GitHub already
 simulates the head-contained-in-base auto-close, so the missing piece is the
 fixture, not the simulator.
 
+## Submit + `jj split` Bookmark Move Backwards
+
+_Benefit: medium — `jj split` is a normal stack edit; today resubmitting a
+split stack fails with a confusing bookmark-set error._
+
+`jj bookmark set` refuses to move a bookmark "backwards or sideways" unless
+`--allow-backwards` is passed. After a `jj split`, the change that keeps
+the original `change_id` ends up at a successor commit whose tree is a
+proper subset of the pre-split commit's tree, on a different DAG line than
+the bookmark's current target. The other reorder-style rewrite tests pass
+because their successor commit is on the new linear path that the bookmark
+ends up needing to follow; split is the one shape where the bookmark must
+move sideways to a strictly smaller successor. `submit`'s local-bookmark
+update at `commands/submit/command.py:436` does not pass `allow_backwards`,
+so the bookmark refuses to track the split successor and the resubmit
+aborts.
+
+A focused integration test covering `jj split` should land alongside the
+fix. The remote-side guard (`_ensure_remote_can_be_updated`) already
+verifies the link is proven for the change's bookmark, so the fix is
+local-only.
+
+Recommended fix: a selective check on `submit`'s local set — when the
+bookmark currently points at any successor of the change's resolved
+commit, allow the move; otherwise keep the existing guard. Passing
+`allow_backwards=True` unconditionally would disable a real safety net for
+bookmarks that are not the change's own tracked bookmark, so do not take
+that shortcut.
+
+## Submit + `jj squash` Coverage
+
+_Benefit: small — squash is a common edit; today there is no integration
+test that exercises it specifically._
+
+`jj squash` rewrites two changes into one (or moves content from one into
+another and abandons the source). The existing abandon test deletes a
+change but does not exercise the squash-with-content-moved pattern, which
+interacts with the PR auto-close predictor and the bookmark-tracking rules
+differently — the survivor's commit grows to include the abandoned change's
+diff, while the abandoned change's PR becomes orphaned. Worth a focused
+fixture once the split fix above lands so the bookmark machinery is
+working uniformly.
+
 ## Post-Submit Closure Detector — Coverage Gaps
 
 _Benefit: small — the predictor and the existing detector already cover the

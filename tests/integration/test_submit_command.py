@@ -351,6 +351,104 @@ def test_submit_preserves_orphaned_pr_when_middle_change_is_abandoned(
     assert read_remote_ref(fake_repo.git_dir, orphaned_bookmark) == orphaned_remote_target
 
 
+def test_submit_preserves_prs_when_top_change_moves_to_stack_bottom(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+    commit_file(repo, "feature 4", "feature-4.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    change_ids_by_subject = {
+        revision.subject: revision.change_id for revision in initial_stack.revisions
+    }
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-r",
+            change_ids_by_subject["feature 4"],
+            "-B",
+            change_ids_by_subject["feature 1"],
+        ],
+        repo,
+    )
+    moved_stack = JjClient(repo).discover_review_stack()
+
+    assert [revision.subject for revision in moved_stack.revisions] == [
+        "feature 4",
+        "feature 1",
+        "feature 2",
+        "feature 3",
+    ]
+    assert run_main(repo, config_path, "submit", moved_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=moved_stack,
+    )
+    assert len(fake_repo.pull_requests) == 4
+
+
+def test_submit_preserves_prs_when_adjacent_changes_are_swapped(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    change_ids_by_subject = {
+        revision.subject: revision.change_id for revision in initial_stack.revisions
+    }
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-r",
+            change_ids_by_subject["feature 2"],
+            "-A",
+            change_ids_by_subject["feature 3"],
+        ],
+        repo,
+    )
+    swapped_stack = JjClient(repo).discover_review_stack()
+
+    assert [revision.subject for revision in swapped_stack.revisions] == [
+        "feature 1",
+        "feature 3",
+        "feature 2",
+    ]
+    assert run_main(repo, config_path, "submit", swapped_stack.head.change_id) == 0
+    capsys.readouterr()
+
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=swapped_stack,
+    )
+    assert len(fake_repo.pull_requests) == 3
+
+
 def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     tmp_path: Path,
     monkeypatch,
