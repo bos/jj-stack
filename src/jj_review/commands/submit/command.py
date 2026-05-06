@@ -662,10 +662,13 @@ async def _run_submit_async(
                 revision.remote_action == "pushed" for revision in prepared_revisions
             ):
                 await _retarget_review_bases_before_branch_push(
+                    bookmark_states=bookmark_states,
                     github_client=github_client,
                     github_repository=github_repository,
+                    jj_client=client,
                     pending_syncs=pending_syncs,
                     prepared_revisions=prepared_revisions,
+                    remote_name=remote.name,
                     trunk_branch=trunk_branch,
                 )
                 with console.spinner(description="Pushing review branches"):
@@ -1066,22 +1069,23 @@ def _pending_pull_request_syncs(
 
 async def _retarget_review_bases_before_branch_push(
     *,
+    bookmark_states: dict[str, BookmarkState],
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
+    jj_client: JjClient,
     pending_syncs: tuple[PendingPullRequestSync, ...],
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
+    remote_name: str,
     trunk_branch: str,
 ) -> None:
-    """Move stale stacked PR bases to trunk before rewritten branches are pushed."""
+    """Move PR bases that would auto-close after the push to trunk first."""
 
-    submitted_bookmarks = {revision.bookmark for revision in prepared_revisions}
-    retarget_syncs = tuple(
-        pending_sync
-        for pending_sync in pending_syncs
-        if _needs_pre_push_base_retarget(
-            pending_sync=pending_sync,
-            submitted_bookmarks=submitted_bookmarks,
-        )
+    retarget_syncs = _predict_pull_requests_auto_closed_by_push(
+        bookmark_states=bookmark_states,
+        jj_client=jj_client,
+        pending_syncs=pending_syncs,
+        prepared_revisions=prepared_revisions,
+        remote_name=remote_name,
     )
     await run_bounded_tasks(
         concurrency=_GITHUB_INSPECTION_CONCURRENCY,
@@ -1095,19 +1099,73 @@ async def _retarget_review_bases_before_branch_push(
     )
 
 
-def _needs_pre_push_base_retarget(
+def _predict_pull_requests_auto_closed_by_push(
     *,
-    pending_sync: PendingPullRequestSync,
-    submitted_bookmarks: set[str],
-) -> bool:
-    """Whether a PR's stale review base should be moved before branch push."""
+    bookmark_states: dict[str, BookmarkState],
+    jj_client: JjClient,
+    pending_syncs: tuple[PendingPullRequestSync, ...],
+    prepared_revisions: tuple[PreparedSubmitRevision, ...],
+    remote_name: str,
+) -> tuple[PendingPullRequestSync, ...]:
+    """Pending PRs that GitHub will auto-close (as merged) after the planned push.
 
-    pull_request = pending_sync.discovered_pull_request
-    if pull_request is None or pull_request.state != "open":
-        return False
-    if pull_request.base.ref == pending_sync.base_branch:
-        return False
-    return pull_request.base.ref in submitted_bookmarks
+    GitHub auto-closes an open PR when its head ref becomes contained in its base
+    ref. The push moves head and (transitively, via stacked bookmarks) base, so
+    the prediction is run against the post-push commit IDs each ref will hold.
+    """
+
+    push_targets = {
+        prepared_revision.bookmark: prepared_revision.revision.commit_id
+        for prepared_revision in prepared_revisions
+    }
+    grouped: dict[str, list[tuple[str, PendingPullRequestSync]]] = {}
+    for pending_sync in pending_syncs:
+        pull_request = pending_sync.discovered_pull_request
+        if pull_request is None or pull_request.state != "open":
+            continue
+        head_after_push = push_targets.get(pull_request.head.ref)
+        if head_after_push is None:
+            continue
+        base_after_push = _resolve_post_push_commit(
+            ref=pull_request.base.ref,
+            push_targets=push_targets,
+            bookmark_states=bookmark_states,
+            remote_name=remote_name,
+        )
+        if base_after_push is None:
+            continue
+        grouped.setdefault(base_after_push, []).append((head_after_push, pending_sync))
+
+    auto_closed: list[PendingPullRequestSync] = []
+    for base_commit_id, candidates in grouped.items():
+        ancestor_commit_ids = jj_client.query_ancestor_membership(
+            candidate_commit_ids=tuple({head for head, _ in candidates}),
+            target_commit_id=base_commit_id,
+        )
+        for head_commit_id, pending_sync in candidates:
+            if head_commit_id in ancestor_commit_ids:
+                auto_closed.append(pending_sync)
+    return tuple(auto_closed)
+
+
+def _resolve_post_push_commit(
+    *,
+    bookmark_states: dict[str, BookmarkState],
+    push_targets: dict[str, str],
+    ref: str,
+    remote_name: str,
+) -> str | None:
+    """Resolve the commit ID a ref will point at after the planned push lands."""
+
+    if ref in push_targets:
+        return push_targets[ref]
+    bookmark_state = bookmark_states.get(ref)
+    if bookmark_state is None:
+        return None
+    remote_state = bookmark_state.remote_target(remote_name)
+    if remote_state is None or remote_state.target is None:
+        return None
+    return remote_state.target
 
 
 async def _retarget_review_base_before_branch_push(

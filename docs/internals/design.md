@@ -325,9 +325,15 @@ Given a chosen head revision:
    - when updating an existing untracked remote bookmark, do not import its old target
      into the local bookmark before the remote update completes
    - before pushing rewritten review branches, protect existing open PRs from GitHub's
-     reachability-based close/merge behavior: if a PR's current base is another review
-     branch in the selected stack and the recalculated base is different, first retarget
-     that PR to the resolved trunk branch
+     reachability-based close/merge behavior: for every open PR whose head ref is in
+     the planned push set, simulate the post-push commit IDs of head and base; if the
+     post-push head is reachable from the post-push base, first retarget that PR to
+     the resolved trunk branch so the push lands without GitHub seeing a head fully
+     contained in its base. The simulator resolves a base ref through the push set
+     first, then through the local view of the push remote's tracked target. When
+     neither is available — for example, a PR whose base lives on a remote that has
+     not been imported into the push remote's tracking — the predictor skips that PR
+     rather than guess.
    - otherwise push the bookmark
    - compute the GitHub base branch:
      - the nearest still-open ancestor PR in the chain, if any
@@ -865,10 +871,10 @@ one before merging.
   GitHub re-evaluates each open PR and auto-closes (as merged) any whose head ref
   is now contained in its base ref. A reordered stack can make a stale stacked base
   contain a review-branch head it did not contain before. Defense: before pushing
-  rewritten review branches, `submit` retargets every open PR whose current base
-  is one of the review branches being pushed and whose recalculated base differs,
-  pointing it at the resolved trunk branch; the normal post-push PR sync then
-  restores the final stacked base.
+  rewritten review branches, `submit` simulates the post-push commit IDs of every
+  open PR's head and base refs and asks `jj` whether the post-push head is reachable
+  from the post-push base; any such PR is pre-retargeted to the resolved trunk
+  branch, and the normal post-push PR sync restores the final stacked base.
 
 - **Deletion of a remote review branch** (`jj git push --delete`, via
   `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the

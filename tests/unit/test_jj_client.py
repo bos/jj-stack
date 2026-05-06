@@ -813,6 +813,65 @@ def test_find_private_commits_skips_empty_policy() -> None:
     assert result == ()
 
 
+def test_query_ancestor_membership_returns_only_ancestor_candidates() -> None:
+    candidate_a = _revision_line(
+        commit_id="cand-a", parents=["trunk"], change_id="a-change", description="a\n"
+    )
+    candidate_b = _revision_line(
+        commit_id="cand-b", parents=["cand-a"], change_id="b-change", description="b\n"
+    )
+    responses: dict[tuple[str, ...], str] = {
+        (
+            "jj",
+            "log",
+            "--no-graph",
+            "-r",
+            "(('cand-a' | 'cand-b' | 'cand-c')) & ::'target'",
+            "-T",
+            _template(),
+        ): candidate_a + candidate_b,
+    }
+
+    result = JjClient(Path("/repo"), runner=_runner(responses)).query_ancestor_membership(
+        candidate_commit_ids=("cand-a", "cand-b", "cand-c"),
+        target_commit_id="target",
+    )
+
+    assert result == {"cand-a", "cand-b"}
+
+
+def test_query_ancestor_membership_short_circuits_on_empty_candidates() -> None:
+    result = JjClient(
+        Path("/repo"), runner=_runner({})
+    ).query_ancestor_membership(candidate_commit_ids=(), target_commit_id="target")
+
+    assert result == set()
+
+
+def test_query_ancestor_membership_includes_target_itself_when_supplied() -> None:
+    target_revision = _revision_line(
+        commit_id="target", parents=["trunk"], change_id="t-change", description="t\n"
+    )
+    responses: dict[tuple[str, ...], str] = {
+        (
+            "jj",
+            "log",
+            "--no-graph",
+            "-r",
+            "('target') & ::'target'",
+            "-T",
+            _template(),
+        ): target_revision,
+    }
+
+    result = JjClient(Path("/repo"), runner=_runner(responses)).query_ancestor_membership(
+        candidate_commit_ids=("target",),
+        target_commit_id="target",
+    )
+
+    assert result == {"target"}
+
+
 def _template() -> str:
     return (
         r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '

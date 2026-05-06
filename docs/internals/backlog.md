@@ -106,6 +106,24 @@ This is partly presentation, but it is also a real product capability: the
 tool should make the safe next action obvious without requiring the operator to
 read internal design notes.
 
+## Pre-Push Auto-Close Predictor — Out-of-Stack Base Coverage
+
+_Benefit: small — protects an unusual case (a PR base that already contains
+the planned new head, while sitting outside the submitted stack), but the
+case is rare in practice._
+
+The pre-push auto-close predictor in `submit` covers both the common stacked
+reorder case and the anomalous case where a non-stack base already contains
+the new head. The integration coverage today exercises only the stacked
+shape: a reorder fixture where every base sits inside the push set.
+
+The remaining follow-up here is a focused integration test that constructs
+the out-of-stack shape — for example, a PR whose base is the trunk branch
+after the change has been merged into trunk by some other route — and shows
+that the predictor pre-retargets it before push. The fake GitHub already
+simulates the head-contained-in-base auto-close, so the missing piece is the
+fixture, not the simulator.
+
 ## Documentation
 
 _Benefit: large — Phases 2–4 increase adoption and reduce confusion;

@@ -421,6 +421,28 @@ class JjClient:
                 revisions_by_commit_id.setdefault(revision.commit_id, revision)
         return tuple(revisions_by_commit_id.values())
 
+    def query_ancestor_membership(
+        self,
+        *,
+        candidate_commit_ids: Sequence[str],
+        target_commit_id: str,
+    ) -> set[str]:
+        """Return candidate commit IDs that are ancestors of `target_commit_id` (or equal)."""
+
+        ordered_candidates = tuple(dict.fromkeys(candidate_commit_ids))
+        if not ordered_candidates:
+            return set()
+
+        target_revset = f"::{_quote_revset_symbol(target_commit_id)}"
+        ancestor_commit_ids: set[str] = set()
+        for chunk in _chunked(ordered_candidates):
+            revisions = self._query_revisions(
+                f"({_union_revset_symbols(chunk)}) & {target_revset}"
+            )
+            for revision in revisions:
+                ancestor_commit_ids.add(revision.commit_id)
+        return ancestor_commit_ids
+
     def supported_review_stack_change_ids(
         self,
         candidate_revisions: Sequence[LocalRevision],
