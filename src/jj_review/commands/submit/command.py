@@ -402,6 +402,18 @@ def _prepare_submit_revisions(
     """Resolve bookmark mutations and push strategy for each stack revision."""
 
     prepared_revisions: list[PreparedSubmitRevision] = []
+    actual_remote_targets = _load_actual_remote_targets_for_saved_bookmarks(
+        bookmark_result=bookmark_result,
+        client=client,
+        remote=remote,
+        stack=stack,
+    )
+    _preflight_actual_remote_targets(
+        actual_remote_targets=actual_remote_targets,
+        bookmark_result=bookmark_result,
+        remote=remote,
+        stack=stack,
+    )
     for resolution, revision in zip(
         bookmark_result.resolutions,
         stack.revisions,
@@ -480,6 +492,106 @@ def _prepare_submit_revisions(
             )
         )
     return tuple(prepared_revisions)
+
+
+def _load_actual_remote_targets_for_saved_bookmarks(
+    *,
+    bookmark_result: BookmarkResolutionResult,
+    client: JjClient,
+    remote: GitRemote,
+    stack: LocalStack,
+) -> dict[str, str]:
+    bookmarks = tuple(
+        sorted(
+            {
+                resolution.bookmark
+                for resolution, revision in zip(
+                    bookmark_result.resolutions,
+                    stack.revisions,
+                    strict=True,
+                )
+                if _cached_change_has_saved_remote_target(
+                    bookmark_result.state.changes.get(revision.change_id),
+                    resolution.bookmark,
+                )
+            }
+        )
+    )
+    if not bookmarks:
+        return {}
+    return client.list_remote_branches(
+        remote=remote.name,
+        patterns=tuple(f"refs/heads/{bookmark}" for bookmark in bookmarks),
+    )
+
+
+def _preflight_actual_remote_targets(
+    *,
+    actual_remote_targets: dict[str, str],
+    bookmark_result: BookmarkResolutionResult,
+    remote: GitRemote,
+    stack: LocalStack,
+) -> None:
+    for resolution, revision in zip(
+        bookmark_result.resolutions,
+        stack.revisions,
+        strict=True,
+    ):
+        _ensure_actual_remote_target_is_safe(
+            actual_remote_targets=actual_remote_targets,
+            bookmark=resolution.bookmark,
+            cached_change=bookmark_result.state.changes.get(revision.change_id),
+            desired_target=revision.commit_id,
+            remote=remote.name,
+        )
+
+
+def _cached_change_has_saved_remote_target(
+    cached_change: CachedChange | None,
+    bookmark: str,
+) -> bool:
+    return (
+        cached_change is not None
+        and not cached_change.is_unlinked
+        and cached_change.bookmark == bookmark
+        and cached_change.last_submitted_commit_id is not None
+    )
+
+
+def _ensure_actual_remote_target_is_safe(
+    *,
+    actual_remote_targets: dict[str, str],
+    bookmark: str,
+    cached_change: CachedChange | None,
+    desired_target: str,
+    remote: str,
+) -> None:
+    if not _cached_change_has_saved_remote_target(cached_change, bookmark):
+        return
+    if cached_change is None:
+        raise AssertionError("Checked cached change must exist.")
+    saved_target = cached_change.last_submitted_commit_id
+    if saved_target is None:
+        raise AssertionError("Checked cached change must have a saved submitted commit.")
+    actual_target = actual_remote_targets.get(bookmark)
+    if actual_target in {saved_target, desired_target}:
+        return
+    if actual_target is None:
+        raise CliError(
+            t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} no longer exists.",
+            hint=(
+                t"Fetch and inspect the PR link before submitting again. If this branch "
+                t"should stay attached to this change, repair the link with relink."
+            ),
+        )
+    raise CliError(
+        t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} points to an "
+        t"unexpected commit.",
+        hint=(
+            t"Fetch and inspect the PR link before submitting again. If this branch "
+            t"should stay attached to this change, repair the link with relink."
+        ),
+    )
 
 
 def _build_local_only_dry_run_result(

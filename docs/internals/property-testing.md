@@ -189,14 +189,14 @@ Initial perturbations should stay representative rather than exhaustive. Start w
 
 - GitHub reports a saved PR head branch in a closed state
 - saved tracking points a change at a different PR number than GitHub reports
+- a saved review branch on the selected remote points at an unexpected commit
 - the selected stack has unresolved conflicts after a real `jj rebase`
 - the selected revision is a merge commit, which is outside the supported review-stack
   shape
 
 Later perturbations can add cases such as:
 
-- an existing remote review branch points at a different commit and the link is not
-  proven by local state
+- a saved review branch is missing from the selected remote
 
 The invariant is negative: no new PRs, no closed/reopened selected-stack PRs, no remote
 branch updates for the protected stack, and a non-zero command result. Exact diagnostic

@@ -1985,6 +1985,75 @@ def test_submit_fails_closed_when_github_reports_closed_pull_request_for_head_br
     assert fake_repo.pull_requests[1].state == "closed"
 
 
+def test_submit_fails_closed_when_saved_remote_branch_drifted_externally(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    stack = JjClient(repo).discover_review_stack()
+    middle_change_id = stack.revisions[1].change_id
+    top_change_id = stack.revisions[2].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+    middle_bookmark = initial_state.changes[middle_change_id].bookmark
+    top_target = initial_state.changes[top_change_id].last_submitted_commit_id
+    assert middle_bookmark is not None
+    assert top_target is not None
+
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(fake_repo.git_dir),
+            "update-ref",
+            f"refs/heads/{middle_bookmark}",
+            top_target,
+        ],
+        fake_repo.git_dir.parent,
+    )
+    drifted_refs = remote_refs(fake_repo.git_dir)
+    pull_requests_before = {
+        number: (
+            pull_request.base_ref,
+            pull_request.head_ref,
+            pull_request.state,
+            pull_request.merged_at,
+            pull_request.title,
+            pull_request.body,
+        )
+        for number, pull_request in fake_repo.pull_requests.items()
+    }
+    fake_repo.pull_request_events.clear()
+
+    exit_code = run_main(repo, config_path, "submit", middle_change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "unexpected commit" in captured.err
+    assert state_store.load() == initial_state
+    assert remote_refs(fake_repo.git_dir) == drifted_refs
+    assert {
+        number: (
+            pull_request.base_ref,
+            pull_request.head_ref,
+            pull_request.state,
+            pull_request.merged_at,
+            pull_request.title,
+            pull_request.body,
+        )
+        for number, pull_request in fake_repo.pull_requests.items()
+    } == pull_requests_before
+    assert fake_repo.pull_request_events == []
+
+
 def test_submit_reports_no_reviewable_commits_without_mutation_when_head_is_trunk(
     tmp_path: Path,
     monkeypatch,

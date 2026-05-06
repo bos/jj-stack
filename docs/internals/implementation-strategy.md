@@ -189,7 +189,8 @@ identity and approvals follow `change_id` across the new combined chain. A stack
 oracle exercises moving one change between independently submitted stacks, proving the
 destination stack adopts that change's existing PR while the source remainder is left
 untouched. The property coverage also includes representative fail-closed replay for
-external drift, conflicted rebases, and merge commits selected after an initial submit.
+external drift, remote review-branch drift, conflicted rebases, and merge commits
+selected after an initial submit.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page

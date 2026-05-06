@@ -284,7 +284,13 @@ Given a chosen head revision:
    conflicted snapshot.
 4. Resolve each change's bookmark using the reuse-first order from "Pull request
    branch" above.
-5. Look up GitHub PR state for those bookmarks.
+5. For saved review branches, verify the selected remote's actual branch head before
+   asking GitHub for PR state. The remote head is safe only when it still points at the
+   saved submitted commit, or already points at the selected change's current commit
+   after a previous interrupted submit pushed the branch. Any other target means the
+   branch drifted outside this submit, so `submit` stops before local bookmark, remote
+   branch, or GitHub mutation.
+6. Look up GitHub PR state for those bookmarks.
    - if the saved PR link disagrees with what GitHub reports, stop and require an
      explicit recovery flow rather than silently creating a replacement PR
    - by default, the PR title comes from the commit subject and the PR body from the
@@ -311,7 +317,7 @@ Given a chosen head revision:
      than replaying the full patch history.
    - helper output must be structured. Invalid output aborts `submit` before any local,
      remote, or GitHub mutation.
-6. Treat merged ancestors as no longer reviewable. Bottom-up for each remaining change:
+7. Treat merged ancestors as no longer reviewable. Bottom-up for each remaining change:
    - point the local bookmark at the current visible commit for the change
    - treat topology changes as meaningful even when the diff is unchanged: if the parent
      review change, bookmark target, or PR base changed, this is not a no-op

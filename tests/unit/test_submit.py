@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from jj_review.commands.submit.command import (
@@ -7,13 +9,16 @@ from jj_review.commands.submit.command import (
     _ensure_remote_can_be_updated,
     _preflight_conflicted_revisions,
     _preflight_private_commits,
+    _prepare_submit_revisions,
     _resolve_local_action,
 )
 from jj_review.errors import CliError
-from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
+from jj_review.jj import JjClient
+from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubBranchRef, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.models.stack import LocalRevision
+from jj_review.models.stack import LocalRevision, LocalStack
+from jj_review.review.bookmarks import BookmarkResolutionResult, ResolvedBookmark
 from tests.support.revision_helpers import make_revision
 
 
@@ -76,6 +81,85 @@ def test_ensure_remote_can_be_updated_allows_matching_untracked_remote_branch() 
     )
 
 
+def test_prepare_submit_revisions_preflights_remote_drift_before_local_bookmark_moves() -> None:
+    first_revision = make_revision(
+        commit_id="commit-1",
+        change_id="change-1",
+        description="feature 1\n",
+    )
+    second_revision = make_revision(
+        commit_id="commit-2",
+        change_id="change-2",
+        description="feature 2\n",
+    )
+    client = _FakeSubmitPreparationClient(
+        remote_targets={
+            "review/feature-1": "commit-1",
+            "review/feature-2": "unexpected-commit",
+        }
+    )
+
+    with pytest.raises(CliError, match="unexpected commit"):
+        _prepare_submit_revisions(
+            bookmark_result=BookmarkResolutionResult(
+                changed=False,
+                resolutions=(
+                    ResolvedBookmark(
+                        bookmark="review/feature-1",
+                        change_id="change-1",
+                        source="saved",
+                    ),
+                    ResolvedBookmark(
+                        bookmark="review/feature-2",
+                        change_id="change-2",
+                        source="saved",
+                    ),
+                ),
+                state=ReviewState(
+                    changes={
+                        "change-1": CachedChange(
+                            bookmark="review/feature-1",
+                            last_submitted_commit_id="commit-1",
+                        ),
+                        "change-2": CachedChange(
+                            bookmark="review/feature-2",
+                            last_submitted_commit_id="commit-2",
+                        ),
+                    }
+                ),
+            ),
+            bookmark_states={
+                "review/feature-1": BookmarkState(
+                    name="review/feature-1",
+                    remote_targets=(
+                        RemoteBookmarkState(
+                            remote="origin",
+                            targets=("commit-1",),
+                            tracking_targets=("commit-1",),
+                        ),
+                    ),
+                ),
+                "review/feature-2": BookmarkState(
+                    local_targets=("commit-2",),
+                    name="review/feature-2",
+                    remote_targets=(
+                        RemoteBookmarkState(
+                            remote="origin",
+                            targets=("commit-2",),
+                            tracking_targets=("commit-2",),
+                        ),
+                    ),
+                ),
+            },
+            client=cast(JjClient, client),
+            dry_run=False,
+            remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
+            stack=_local_stack(first_revision, second_revision),
+        )
+
+    assert client.set_bookmark_calls == []
+
+
 def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
     with pytest.raises(
         CliError,
@@ -114,6 +198,50 @@ class _FakeJjClientWithPrivateCommits:
         self, revisions: tuple[LocalRevision, ...]
     ) -> tuple[LocalRevision, ...]:
         return self._private_revisions
+
+
+class _FakeSubmitPreparationClient:
+    def __init__(self, *, remote_targets: dict[str, str]) -> None:
+        self._remote_targets = remote_targets
+        self.set_bookmark_calls: list[tuple[str, str]] = []
+
+    def list_remote_branches(
+        self,
+        *,
+        remote: str,
+        patterns: tuple[str, ...],
+    ) -> dict[str, str]:
+        return {
+            pattern.removeprefix("refs/heads/"): self._remote_targets[
+                pattern.removeprefix("refs/heads/")
+            ]
+            for pattern in patterns
+            if pattern.removeprefix("refs/heads/") in self._remote_targets
+        }
+
+    def set_bookmark(
+        self,
+        bookmark: str,
+        revision: str,
+        *,
+        allow_backwards: bool = False,
+    ) -> None:
+        self.set_bookmark_calls.append((bookmark, revision))
+
+
+def _local_stack(*revisions: LocalRevision) -> LocalStack:
+    trunk = make_revision(
+        commit_id="trunk",
+        change_id="trunk-change",
+        description="base\n",
+    )
+    return LocalStack(
+        base_parent=trunk,
+        head=revisions[-1],
+        revisions=revisions,
+        selected_revset=revisions[-1].change_id,
+        trunk=trunk,
+    )
 
 
 def test_preflight_private_commits_passes_when_no_private_commits() -> None:

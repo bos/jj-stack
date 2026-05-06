@@ -21,6 +21,7 @@ BoundaryDriftKind = Literal[
     "closed_pr",
     "conflicted_rebase",
     "merge_commit",
+    "remote_branch_drift",
     "wrong_saved_pr_number",
 ]
 
@@ -611,6 +612,12 @@ def boundary_drift_scenarios() -> tuple[BoundaryDriftScenario, ...]:
             initial_size=3,
             label="c2",
             name="wrong-saved-pr-number",
+        ),
+        BoundaryDriftScenario(
+            drift_kind="remote_branch_drift",
+            initial_size=3,
+            label="c2",
+            name="remote-branch-drift",
         ),
     )
 

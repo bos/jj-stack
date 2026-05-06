@@ -786,6 +786,24 @@ def _apply_boundary_drift(
             )
         )
         return labels_to_change_ids[label]
+    if drift_kind == "remote_branch_drift":
+        drift_target = next(
+            candidate.remote_target
+            for candidate_label, candidate in reversed(baseline.items())
+            if candidate_label != label
+        )
+        run_command(
+            [
+                "git",
+                "--git-dir",
+                str(fake_repo.git_dir),
+                "update-ref",
+                f"refs/heads/{submitted.bookmark}",
+                drift_target,
+            ],
+            fake_repo.git_dir.parent,
+        )
+        return labels_to_change_ids[label]
     raise AssertionError(f"unsupported boundary drift kind: {drift_kind}")
 
 
