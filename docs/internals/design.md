@@ -853,6 +853,81 @@ The GitHub adapter can use either:
 If plain `gh` commands that expect a Git repo are used in a non-colocated `jj` repo,
 remember that `GIT_DIR` may need to point at `.jj/repo/store/git`.
 
+### GitHub mutation surface
+
+Every GitHub mutation the tool issues is enumerated below together with the
+destructive default action GitHub may take in response and the in-tool defense that
+prevents it. Any new mutation must be added to this list, and any without a
+documented defense must either prove the destructive default does not apply or add
+one before merging.
+
+- **Push of a review-branch ref** (`jj git push --bookmark`). When the push lands,
+  GitHub re-evaluates each open PR and auto-closes (as merged) any whose head ref
+  is now contained in its base ref. A reordered stack can make a stale stacked base
+  contain a review-branch head it did not contain before. Defense: before pushing
+  rewritten review branches, `submit` retargets every open PR whose current base
+  is one of the review branches being pushed and whose recalculated base differs,
+  pointing it at the resolved trunk branch; the normal post-push PR sync then
+  restores the final stacked base.
+
+- **Deletion of a remote review branch** (`jj git push --delete`, via
+  `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the
+  deleted branch. Defense: branch deletion is invoked only by `cleanup`, `close`
+  (including the `close --pull-request <n>` orphan-close sub-mode), and `abort`,
+  and only after the corresponding PR is closed, merged, or absent. Open or
+  orphaned PRs keep their branch.
+
+- **`update_pull_request(base=…)`**. Setting a PR base to a branch that already
+  contains the PR's head triggers GitHub's merged auto-close. Defense: in `submit`,
+  base is set bottom-up to the parent change's bookmark — an ancestor of the head,
+  not a descendant — and the head ref has already been pushed to its updated
+  content. In `land`, retargeting a landed PR's base to trunk is the intended
+  close path; the tool follows the implicit close with an explicit
+  `close_pull_request`, so the final state never depends on GitHub's auto-close
+  firing.
+
+- **`update_pull_request(title|body)`**. The PATCH always carries `base`, `body`,
+  and `title` together, so changing only the title or body still re-asserts the
+  current base. When base is unchanged this is a no-op for the destructive default
+  above; when base changes the rules in the previous bullet apply.
+
+- **`create_pull_request`**. Creating a PR with a base that already contains the
+  head would trigger an immediate merged auto-close. Defense: bottom-up creation
+  order means the parent's bookmark always reflects an ancestor of the new PR's
+  head before the child PR is created.
+
+- **`close_pull_request`**. Destructive by design. Defense: only invoked by
+  `close` (including the `close --pull-request <n>` orphan-close sub-mode),
+  `abort`, or `land`, each on explicit user instruction or after a successful
+  merge.
+
+- **`convert_pull_request_to_draft`**. Repo policy may dismiss approvals on draft
+  conversion. Defense: only invoked for an existing open PR when `--draft=all` is
+  passed, never as part of default `submit` behavior.
+
+- **`mark_pull_request_ready_for_review`**. Repo policy may trigger required-CI
+  runs and other ready-for-review workflows. Defense: only invoked when
+  `--publish` is passed and the existing PR is currently a draft. New PRs are
+  created directly through `create_pull_request(draft=…)` and never round-trip
+  through this API.
+
+- **`add_labels`**, **`request_reviewers`**. Additive; no destructive default.
+
+- **`create_issue_comment`**, **`update_issue_comment`**. No destructive default.
+
+- **`delete_issue_comment`**. Deletes the targeted comment. Defense: every call
+  site passes a comment id resolved from a cached managed-comment id (or from
+  `find_managed_comment` matching the tool's content marker), never an id matched
+  by free-text alone. `submit`, `close`, `cleanup`, and `close-orphan` re-verify
+  the body before deletion or only delete via marker-matched discovery. `land`
+  trusts the cached navigation- and overview-comment ids without re-verifying the
+  body, on the rationale that those ids were written by the same tool during the
+  most recent successful submit. `cleanup` additionally limits deletion to managed
+  comments that no longer represent a live linked review stack.
+
+This list is the bar `submit`, `close`, `land`, `cleanup`, `abort`, and any future
+command must clear before introducing a new GitHub call.
+
 ### Cleanup semantics
 
 `jj review cleanup` has a concrete, conservative job:
