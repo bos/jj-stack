@@ -20,6 +20,7 @@ from .submit_property_scenarios import (
     CrossStackSplitScenario,
     StackEditOperation,
     StackEditScenario,
+    StackMergeScenario,
     filename_for_label,
     initial_label,
     subject_for_label,
@@ -82,6 +83,7 @@ def replay_successful_stack_edit_scenario(
         repo=repo,
         scenario=scenario,
         stack=stack,
+        strict_base_events=False,
     )
 
 
@@ -182,6 +184,7 @@ def replay_cross_stack_split_scenario(
         repo=repo,
         scenario=selected_scenario,
         stack=selected_stack,
+        strict_base_events=False,
     )
     _assert_deferred_stack_untouched(
         baseline=baseline,
@@ -191,8 +194,77 @@ def replay_cross_stack_split_scenario(
     )
 
 
+def replay_stack_merge_scenario(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: StackMergeScenario,
+    submit: SubmitRunner,
+) -> None:
+    """Replay two independently submitted stacks merged into one selected stack."""
+
+    labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
+    assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
+    discard_output()
+
+    labels_to_change_ids.update(
+        _create_labeled_stack(repo, scenario.second_stack_labels)
+    )
+    assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
+    discard_output()
+
+    baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+    _approve_initial_pull_requests(fake_repo, baseline)
+    fake_repo.pull_request_events.clear()
+
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-s",
+            labels_to_change_ids[scenario.source_label],
+            "-d",
+            labels_to_change_ids[scenario.target_label],
+        ],
+        repo,
+    )
+    merged_stack = _discover_stack_for_labels(
+        repo=repo,
+        labels=scenario.selected_labels,
+        labels_to_change_ids=labels_to_change_ids,
+    )
+
+    assert submit(merged_stack.head.change_id) == 0
+    discard_output()
+
+    selected_scenario = StackEditScenario(
+        final_live_labels=scenario.selected_labels,
+        hazard_class=scenario.hazard_class,
+        initial_size=scenario.initial_size,
+        name=scenario.name,
+        operations=(),
+        orphaned_labels=(),
+        rewritten_initial_labels=scenario.rewritten_initial_labels,
+    )
+    _assert_successful_submit_invariants(
+        baseline=baseline,
+        fake_repo=fake_repo,
+        labels_to_change_ids=labels_to_change_ids,
+        repo=repo,
+        scenario=selected_scenario,
+        stack=merged_stack,
+        strict_base_events=True,
+    )
+
+
 def _create_initial_stack(repo: Path, initial_size: int) -> dict[str, str]:
     labels = tuple(initial_label(index) for index in range(1, initial_size + 1))
+    return _create_labeled_stack(repo, labels)
+
+
+def _create_labeled_stack(repo: Path, labels: tuple[str, ...]) -> dict[str, str]:
+    run_command(["jj", "new", "main"], repo)
     for label in labels:
         commit_file(repo, subject_for_label(label), filename_for_label(label))
 
@@ -436,9 +508,11 @@ def _assert_successful_submit_invariants(
     repo: Path,
     scenario: StackEditScenario,
     stack,
+    strict_base_events: bool,
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
     revisions_by_label = dict(zip(scenario.final_live_labels, stack.revisions, strict=True))
+    expected_base_by_pr_number: dict[int, str] = {}
     live_pr_numbers: set[int] = set()
     bookmarks_by_label: dict[str, str] = {}
     stack_head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
@@ -453,6 +527,7 @@ def _assert_successful_submit_invariants(
         bookmarks_by_label[label] = bookmark
         live_pr_numbers.add(pr_number)
         if label in baseline:
+            assert bookmark == baseline[label].bookmark, scenario.trace
             assert pr_number == baseline[label].pr_number, scenario.trace
             _assert_approval_review_preserved(fake_repo, pr_number, label)
         else:
@@ -465,8 +540,10 @@ def _assert_successful_submit_invariants(
         expected_base_ref = (
             bookmarks_by_label[scenario.final_live_labels[index - 1]] if index > 0 else "main"
         )
+        expected_base_by_pr_number[pr_number] = expected_base_ref
         assert _read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
         assert pull_request.base_ref == expected_base_ref
+        assert pull_request.head_ref == bookmark
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         assert pull_request.title == subject_for_label(label)
@@ -483,6 +560,7 @@ def _assert_successful_submit_invariants(
         assert cached_change.pr_number == submitted.pr_number
         assert _read_remote_ref(fake_repo.git_dir, submitted.bookmark) == submitted.remote_target
         assert pull_request.base_ref == submitted.pr_base_ref
+        assert pull_request.head_ref == submitted.bookmark
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
@@ -491,7 +569,13 @@ def _assert_successful_submit_invariants(
         1 for label in scenario.final_live_labels if label.startswith("i")
     )
     assert len(fake_repo.pull_requests) == expected_pr_count
-    _assert_no_transient_damage_events(fake_repo, baseline, scenario)
+    _assert_no_transient_damage_events(
+        baseline=baseline,
+        expected_base_by_pr_number=expected_base_by_pr_number,
+        fake_repo=fake_repo,
+        scenario=scenario,
+        strict_base_events=strict_base_events,
+    )
 
 
 def _assert_approval_review_preserved(
@@ -506,18 +590,28 @@ def _assert_approval_review_preserved(
 
 
 def _assert_no_transient_damage_events(
-    fake_repo: FakeGithubRepository,
+    *,
     baseline: dict[str, SubmittedBaseline],
+    expected_base_by_pr_number: dict[int, str],
+    fake_repo: FakeGithubRepository,
     scenario: StackEditScenario,
+    strict_base_events: bool,
 ) -> None:
     original_pr_numbers = {submitted.pr_number for submitted in baseline.values()}
     orphan_pr_numbers = {baseline[label].pr_number for label in scenario.orphaned_labels}
+    expected_changed_base_pr_numbers = {
+        submitted.pr_number
+        for submitted in baseline.values()
+        if expected_base_by_pr_number.get(submitted.pr_number) != submitted.pr_base_ref
+    }
     for event in fake_repo.pull_request_events:
         if event.pull_request_number not in original_pr_numbers:
             continue
         assert event.kind != "state", event
         if event.pull_request_number in orphan_pr_numbers:
             assert event.kind != "base", event
+        if strict_base_events and event.kind == "base":
+            assert event.pull_request_number in expected_changed_base_pr_numbers, event
 
 
 def _assert_deferred_stack_untouched(

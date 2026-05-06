@@ -183,9 +183,11 @@ linear stack edits: moving individual changes, inserting above or below existing
 changes, rewriting a change, squashing a change into its predecessor, and abandoning a
 change while preserving the orphaned PR. A separate cross-stack split oracle exercises
 suffix moves that leave a deferred live stack behind, proving the selected submit does
-not mutate that deferred stack's PRs or saved tracking. The property coverage also
-includes representative fail-closed replay for external drift, conflicted rebases, and
-merge commits selected after an initial submit.
+not mutate that deferred stack's PRs or saved tracking. A stack-merge oracle exercises
+two independently submitted stacks merged into one selected linear stack, proving PR
+identity and approvals follow `change_id` across the new combined chain. The property
+coverage also includes representative fail-closed replay for external drift, conflicted
+rebases, and merge commits selected after an initial submit.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page

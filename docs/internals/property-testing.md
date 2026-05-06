@@ -133,6 +133,30 @@ commits. Later cross-stack families can add moving one change between independen
 submitted stacks and merging two selected chains once the expected shared-ancestor rules
 are encoded in the model.
 
+## Stack-Merge Harness
+
+Merging two independently submitted linear stacks into one selected stack is a supported
+cross-stack rewrite. The user has kept the same logical `jj` changes and moved them into
+one review chain, so the expected behavior is to keep the existing PRs rather than
+opening replacement reviews.
+
+Stack-merge scenarios create two separate stacks from trunk, submit both, approve every
+PR, rebase one stack root onto the other stack head, then submit the merged stack head.
+The oracle asserts:
+
+- every selected change from both original stacks keeps its PR number
+- original approvals remain attached to those PR numbers
+- every review branch points at the merged-stack commit for that `change_id`
+- every PR base is recalculated from the merged selected DAG
+- no PR is closed, merged, or replaced during the merge submit
+- the merged stack has one selected-stack topology in saved state
+
+The initial scenario family covers both directions: appending the second stack after the
+first and appending the first stack after the second, with small stack sizes plus random
+size combinations. Moving a single change between two independently submitted stacks is
+the next cross-stack success oracle; it needs to prove the destination selected stack is
+updated while the source stack remainder is deferred unchanged.
+
 ## Boundary-drift Harness
 
 Stack-edit scenarios cover successful repair after supported local DAG rewrites. They do
@@ -211,8 +235,8 @@ $ tests/run_submit_property_scenarios.py 500
 ```
 
 The runner accepts the scenario count as a positional argument. It also supports
-`--seed <int>`, `--cross-stack-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and
-additional pytest arguments after `--`.
+`--seed <int>`, `--cross-stack-scenarios <N>`, `--stack-merge-scenarios <N>`,
+`--jobs <N|auto>`, `--no-sync`, and additional pytest arguments after `--`.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:
@@ -235,6 +259,8 @@ The opt-in runner sets these environment variables for the pytest adapter:
 - `JJ_REVIEW_SUBMIT_PROPERTY_SCENARIOS`: target number of unique generated scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS`: target number of unique cross-stack
   split scenarios
+- `JJ_REVIEW_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS`: target number of unique two-stack
+  merge scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_SEED`: deterministic random seed
 
 Those variables configure the adapter; they are not part of the core harness contract.

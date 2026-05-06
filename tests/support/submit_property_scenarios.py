@@ -26,6 +26,7 @@ BoundaryDriftKind = Literal[
 
 DEFAULT_STACK_EDIT_SCENARIO_COUNT = 8
 DEFAULT_CROSS_STACK_SCENARIO_COUNT = 8
+DEFAULT_STACK_MERGE_SCENARIO_COUNT = 8
 DEFAULT_STACK_EDIT_SCENARIO_SEED = 8675309
 MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
 
@@ -129,6 +130,42 @@ class CrossStackSplitScenario:
             self.hazard_class,
             self.selected_labels,
             self.deferred_labels,
+            self.rewritten_initial_labels,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StackMergeScenario:
+    """A rewrite that merges two independently submitted stacks into one stack."""
+
+    name: str
+    hazard_class: str
+    first_stack_labels: tuple[str, ...]
+    second_stack_labels: tuple[str, ...]
+    selected_labels: tuple[str, ...]
+    source_label: str
+    target_label: str
+    rewritten_initial_labels: tuple[str, ...]
+
+    @property
+    def initial_size(self) -> int:
+        return len(self.first_stack_labels) + len(self.second_stack_labels)
+
+    @property
+    def trace(self) -> str:
+        return f"merge_stack_onto:{self.source_label}:{self.target_label}"
+
+    @property
+    def canonical_key(
+        self,
+    ) -> tuple[
+        str,
+        tuple[str, ...],
+        tuple[str, ...],
+    ]:
+        return (
+            self.hazard_class,
+            self.selected_labels,
             self.rewritten_initial_labels,
         )
 
@@ -285,6 +322,24 @@ def cross_stack_scenarios_from_environment() -> tuple[CrossStackSplitScenario, .
     return generate_cross_stack_split_scenarios(count=count, seed=seed)
 
 
+def stack_merge_scenarios_from_environment() -> tuple[StackMergeScenario, ...]:
+    """Return deterministic stack-merge scenarios for the pytest adapter."""
+
+    count = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS",
+            str(DEFAULT_STACK_MERGE_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
+        )
+    )
+    return generate_stack_merge_scenarios(count=count, seed=seed)
+
+
 def generate_stack_edit_scenarios(
     *,
     count: int,
@@ -316,6 +371,47 @@ def generate_stack_edit_scenarios(
     while len(scenarios) < count and attempts < max_attempts:
         attempts += 1
         scenario = _random_stack_edit_scenario(rng, attempts=attempts)
+        if scenario.canonical_key in seen:
+            continue
+        seen.add(scenario.canonical_key)
+        scenarios.append(scenario)
+
+    return tuple(scenarios)
+
+
+def generate_stack_merge_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[StackMergeScenario, ...]:
+    """Generate two-stack merge scenarios that should preserve every PR identity."""
+
+    if count < 1:
+        return ()
+
+    scenarios: list[StackMergeScenario] = []
+    seen: set[tuple[str, tuple[str, ...], tuple[str, ...]]] = set()
+    for scenario in _fixed_stack_merge_scenarios():
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+
+    rng = random.Random(seed + 2)
+    max_attempts = count * MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER
+    attempts = 0
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        first_size = rng.randint(1, 5)
+        second_size = rng.randint(1, 5)
+        first_then_second = rng.choice((True, False))
+        scenario = _stack_merge_scenario(
+            first_size=first_size,
+            first_then_second=first_then_second,
+            hazard_class="random",
+            name=f"merge-random-{attempts:03d}",
+            second_size=second_size,
+        )
         if scenario.canonical_key in seen:
             continue
         seen.add(scenario.canonical_key)
@@ -403,6 +499,71 @@ def boundary_drift_scenarios() -> tuple[BoundaryDriftScenario, ...]:
     )
 
 
+def _fixed_stack_merge_scenarios() -> tuple[StackMergeScenario, ...]:
+    return (
+        _stack_merge_scenario(
+            first_size=2,
+            first_then_second=True,
+            hazard_class="append-second",
+            name="merge-second-after-first",
+            second_size=2,
+        ),
+        _stack_merge_scenario(
+            first_size=2,
+            first_then_second=False,
+            hazard_class="append-first",
+            name="merge-first-after-second",
+            second_size=2,
+        ),
+        _stack_merge_scenario(
+            first_size=1,
+            first_then_second=True,
+            hazard_class="single-first",
+            name="merge-single-first",
+            second_size=3,
+        ),
+        _stack_merge_scenario(
+            first_size=3,
+            first_then_second=False,
+            hazard_class="single-second",
+            name="merge-single-second",
+            second_size=1,
+        ),
+    )
+
+
+def _stack_merge_scenario(
+    *,
+    first_size: int,
+    first_then_second: bool,
+    hazard_class: str,
+    name: str,
+    second_size: int,
+) -> StackMergeScenario:
+    first_labels = tuple(_stack_label("a", index) for index in range(1, first_size + 1))
+    second_labels = tuple(_stack_label("b", index) for index in range(1, second_size + 1))
+    if first_then_second:
+        selected_labels = (*first_labels, *second_labels)
+        source_label = second_labels[0]
+        target_label = first_labels[-1]
+        rewritten_initial_labels = second_labels
+    else:
+        selected_labels = (*second_labels, *first_labels)
+        source_label = first_labels[0]
+        target_label = second_labels[-1]
+        rewritten_initial_labels = first_labels
+    return StackMergeScenario(
+        first_stack_labels=first_labels,
+        hazard_class=hazard_class,
+        name=name,
+        rewritten_initial_labels=rewritten_initial_labels,
+        second_stack_labels=second_labels,
+        selected_labels=selected_labels,
+        source_label=source_label,
+        target_label=target_label,
+    )
+
+
 def _fixed_cross_stack_split_scenarios() -> tuple[CrossStackSplitScenario, ...]:
     return (
         _cross_stack_split_scenario(
@@ -470,9 +631,17 @@ def inserted_label(index: int) -> str:
     return f"i{index}"
 
 
+def _stack_label(prefix: str, index: int) -> str:
+    return f"{prefix}{index}"
+
+
 def subject_for_label(label: str) -> str:
     prefix = label[0]
     number = int(label[1:])
+    if prefix == "a":
+        return f"stack a feature {number}"
+    if prefix == "b":
+        return f"stack b feature {number}"
     if prefix == "c":
         return f"feature {number}"
     if prefix == "i":
