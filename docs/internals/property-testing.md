@@ -33,8 +33,8 @@ testing should spend its budget on those cross-system invariants.
   opening replacement reviews.
 - Make failures reproducible. Every generated scenario must have a stable name and a
   compact operation trace that can be copied into a deterministic regression test.
-- Keep the default suite fast. Deeper randomized exploration should be controlled by
-  runner configuration rather than imposed on every local `./check.py` run.
+- Keep the default suite fast. Property scenarios are opt-in and must not run from the
+  default `./check.py` pytest pass.
 - Use all available workers when exploration is widened. The core harness should expose
   generated scenarios as ordinary data so pytest, a future CLI runner, or a long-running
   explorer can distribute them across cores.
@@ -45,9 +45,10 @@ testing should spend its budget on those cross-system invariants.
 ## Integration Harness
 
 The core harness should be runner-agnostic. It owns scenario generation, replay, fake
-GitHub event inspection, and invariant checking as plain Python APIs. Pytest is only one
-adapter: it gives the default suite temporary directories, monkeypatching, captured
-output, concise assertion reporting, and `pytest-xdist` scheduling.
+GitHub event inspection, and invariant checking as plain Python APIs. Pytest is only the
+current execution adapter: it gives the opt-in runner temporary directories,
+monkeypatching, captured output, concise assertion reporting, and `pytest-xdist`
+scheduling.
 
 The integration layer generates small `StackEditScenario` values. Each scenario has:
 
@@ -161,11 +162,22 @@ failure often minimizes to a request-order artifact rather than a user-level sce
 
 Instead, the integration layer should generate a deterministic pool of candidate
 scenarios and expose the unique representatives as data. The pytest adapter can
-parameterize over that data, giving the suite all-core execution under `pytest -n auto`.
+parameterize over that data, giving the opt-in runner all-core execution under
+`pytest -n auto`.
 A future CLI runner can shard the same scenario list without depending on pytest.
 
-The defaults should be modest, for example eight to a dozen scenarios with short operation
-traces. Two environment variables are enough for deeper local exploration:
+Property scenarios are launched by hand:
+
+```console
+$ tests/run_submit_property_scenarios.py 500
+```
+
+The runner accepts the scenario count as a positional argument. It also supports
+`--seed <int>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest arguments after
+`--`.
+
+The generator defaults should remain modest for quick local runner invocations. Runner
+configuration supplies:
 
 - target number of unique generated scenarios
 - deterministic random seed
@@ -178,10 +190,9 @@ Collection under `pytest-xdist` must be deterministic on every worker, and a non
 runner should see the same scenario order. The generator therefore uses a fixed seed,
 stable sorting, no Python hash-order dependence, and concrete caps for stack size, trace
 length, and attempts. Each replay receives an explicit workspace directory and fake repo
-builder from the caller. The default budget should target seconds, not minutes, when the
-suite runs with `pytest -n auto`.
+builder from the caller.
 
-The pytest adapter may read these environment variables:
+The opt-in runner sets these environment variables for the pytest adapter:
 
 - `JJ_REVIEW_SUBMIT_PROPERTY_SCENARIOS`: target number of unique generated scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_SEED`: deterministic random seed

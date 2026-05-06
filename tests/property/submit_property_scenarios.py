@@ -3,19 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from ..support.integration_helpers import init_fake_github_repo
-from ..support.submit_property_harness import (
+from tests.integration.submit_command_helpers import configure_submit_environment, run_main
+from tests.support.integration_helpers import init_fake_github_repo
+from tests.support.submit_property_harness import (
     replay_boundary_drift_scenario,
     replay_successful_stack_edit_scenario,
 )
-from ..support.submit_property_scenarios import (
+from tests.support.submit_property_scenarios import (
     BoundaryDriftScenario,
     StackEditScenario,
     boundary_drift_scenarios,
     stack_edit_scenarios_from_environment,
 )
-from .submit_command_helpers import configure_submit_environment, run_main
 
 STACK_EDIT_SCENARIOS = stack_edit_scenarios_from_environment()
 BOUNDARY_DRIFT_SCENARIOS = boundary_drift_scenarios()

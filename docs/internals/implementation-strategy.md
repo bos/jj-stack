@@ -320,6 +320,17 @@ Three layers of tests:
 
 Local tests are the default.
 
+Property-style submit stack exploration is opt-in because larger scenario budgets are
+intentionally heavier than the default check. Run it by hand with:
+
+```text
+tests/run_submit_property_scenarios.py 500
+```
+
+The runner reuses the fake GitHub integration harness, generates deterministic stack-edit
+scenarios, and runs them through pytest-xdist so the work can spread across available
+cores.
+
 The default local verification command is:
 
 ```text
