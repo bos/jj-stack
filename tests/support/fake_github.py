@@ -94,6 +94,19 @@ class FakeGithubPullRequestReview:
         }
 
 
+@dataclass(slots=True, frozen=True)
+class FakeGithubPullRequestEvent:
+    """Observable PR mutation recorded by the fake API."""
+
+    kind: str
+    pull_request_number: int
+    new_base_ref: str | None = None
+    new_state: str | None = None
+    old_base_ref: str | None = None
+    old_state: str | None = None
+    reason: str | None = None
+
+
 @dataclass(slots=True)
 class FakeGithubIssueComment:
     """Mutable issue comment state served by the fake API."""
@@ -143,6 +156,7 @@ class FakeGithubRepository:
     next_pull_request_number: int = 1
     next_pull_request_review_id: int = 1
     issue_comments: dict[int, list[FakeGithubIssueComment]] = field(default_factory=dict)
+    pull_request_events: list[FakeGithubPullRequestEvent] = field(default_factory=list)
     pull_requests: dict[int, FakeGithubPullRequest] = field(default_factory=dict)
     pull_request_reviews: dict[int, list[FakeGithubPullRequestReview]] = field(
         default_factory=dict
@@ -203,9 +217,55 @@ class FakeGithubRepository:
             return
         if not self.is_ancestor(head_commit, base_commit):
             return
-        pull_request.state = "closed"
         if pull_request.merged_at is None:
             pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        self.update_pull_request_state(
+            pull_request,
+            state="closed",
+            reason="head_reachable_from_base",
+        )
+
+    def update_pull_request_base(
+        self,
+        pull_request: FakeGithubPullRequest,
+        *,
+        base_ref: str,
+        reason: str,
+    ) -> None:
+        if pull_request.base_ref == base_ref:
+            return
+        old_base_ref = pull_request.base_ref
+        pull_request.base_ref = base_ref
+        self.pull_request_events.append(
+            FakeGithubPullRequestEvent(
+                kind="base",
+                new_base_ref=base_ref,
+                old_base_ref=old_base_ref,
+                pull_request_number=pull_request.number,
+                reason=reason,
+            )
+        )
+
+    def update_pull_request_state(
+        self,
+        pull_request: FakeGithubPullRequest,
+        *,
+        state: str,
+        reason: str,
+    ) -> None:
+        if pull_request.state == state:
+            return
+        old_state = pull_request.state
+        pull_request.state = state
+        self.pull_request_events.append(
+            FakeGithubPullRequestEvent(
+                kind="state",
+                new_state=state,
+                old_state=old_state,
+                pull_request_number=pull_request.number,
+                reason=reason,
+            )
+        )
 
     def ref_target(self, branch: str) -> str | None:
         completed = subprocess.run(
@@ -494,7 +554,11 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         if "body" in payload:
             pull_request.body = _optional_string(payload, "body") or ""
         if "base" in payload:
-            pull_request.base_ref = _require_string(payload, "base")
+            repository.update_pull_request_base(
+                pull_request,
+                base_ref=_require_string(payload, "base"),
+                reason="api_update",
+            )
             _require_branch(repository, pull_request.base_ref)
         repository.refresh_pull_request_state(pull_request)
         return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
@@ -513,7 +577,11 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         state = _require_string(payload, "state")
         if state not in {"open", "closed"}:
             raise HTTPException(status_code=422, detail="Unsupported issue state.")
-        pull_request.state = state
+        repository.update_pull_request_state(
+            pull_request,
+            state=state,
+            reason="issue_update",
+        )
         if state == "closed":
             repository.refresh_pull_request_state(pull_request)
         return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)

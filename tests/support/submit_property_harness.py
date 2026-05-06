@@ -1,0 +1,408 @@
+"""Runner-agnostic replay helpers for submit property scenarios."""
+
+from __future__ import annotations
+
+import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from jj_review.jj import JjClient
+from jj_review.state.store import ReviewStateStore
+
+from .fake_github import FakeGithubRepository
+from .integration_helpers import commit_file, run_command
+from .submit_property_scenarios import (
+    BoundaryDriftKind,
+    BoundaryDriftScenario,
+    StackEditOperation,
+    StackEditScenario,
+    filename_for_label,
+    initial_label,
+    subject_for_label,
+)
+
+SubmitRunner = Callable[[str | None], int]
+OutputDiscarder = Callable[[], Any]
+
+
+@dataclass(frozen=True, slots=True)
+class SubmittedBaseline:
+    bookmark: str
+    change_id: str
+    pr_base_ref: str
+    pr_number: int
+    remote_target: str
+
+
+def replay_successful_stack_edit_scenario(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: StackEditScenario,
+    submit: SubmitRunner,
+) -> None:
+    """Replay one generated stack-edit scenario and assert successful invariants."""
+
+    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
+
+    assert submit(None) == 0
+    discard_output()
+    baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+    _approve_initial_pull_requests(fake_repo, baseline)
+    fake_repo.pull_request_events.clear()
+
+    live_labels = list(initial_label(index) for index in range(1, scenario.initial_size + 1))
+    for operation in scenario.operations:
+        live_labels = _apply_stack_edit_operation(
+            repo=repo,
+            labels_to_change_ids=labels_to_change_ids,
+            live_labels=live_labels,
+            operation=operation,
+        )
+
+    assert tuple(live_labels) == scenario.final_live_labels
+    stack = _discover_expected_stack(
+        repo=repo,
+        labels_to_change_ids=labels_to_change_ids,
+        scenario=scenario,
+    )
+    assert submit(stack.head.change_id) == 0
+    discard_output()
+
+    _assert_successful_submit_invariants(
+        baseline=baseline,
+        fake_repo=fake_repo,
+        labels_to_change_ids=labels_to_change_ids,
+        repo=repo,
+        scenario=scenario,
+        stack=stack,
+    )
+
+
+def replay_boundary_drift_scenario(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: BoundaryDriftScenario,
+    submit: SubmitRunner,
+) -> None:
+    """Replay one generated boundary-drift scenario and assert fail-closed behavior."""
+
+    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
+
+    assert submit(None) == 0
+    discard_output()
+    baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+
+    _apply_boundary_drift(
+        fake_repo=fake_repo,
+        repo=repo,
+        baseline=baseline,
+        label=scenario.label,
+        drift_kind=scenario.drift_kind,
+    )
+    before_refs = _remote_refs(fake_repo.git_dir)
+    before_pr_count = len(fake_repo.pull_requests)
+    before_pr_states = {
+        number: pull_request.state for number, pull_request in fake_repo.pull_requests.items()
+    }
+    fake_repo.pull_request_events.clear()
+
+    stack = JjClient(repo).discover_review_stack(
+        labels_to_change_ids[initial_label(scenario.initial_size)]
+    )
+    assert submit(stack.head.change_id) != 0
+    discard_output()
+
+    assert _remote_refs(fake_repo.git_dir) == before_refs
+    assert len(fake_repo.pull_requests) == before_pr_count
+    assert {
+        number: pull_request.state for number, pull_request in fake_repo.pull_requests.items()
+    } == before_pr_states
+    assert fake_repo.pull_request_events == []
+
+
+def _create_initial_stack(repo: Path, initial_size: int) -> dict[str, str]:
+    labels = tuple(initial_label(index) for index in range(1, initial_size + 1))
+    for label in labels:
+        commit_file(repo, subject_for_label(label), filename_for_label(label))
+
+    stack = JjClient(repo).discover_review_stack()
+    assert tuple(revision.subject for revision in stack.revisions) == tuple(
+        subject_for_label(label) for label in labels
+    )
+    return {
+        label: revision.change_id for label, revision in zip(labels, stack.revisions, strict=True)
+    }
+
+
+def _capture_submitted_baseline(
+    repo: Path,
+    fake_repo: FakeGithubRepository,
+    labels_to_change_ids: dict[str, str],
+) -> dict[str, SubmittedBaseline]:
+    state = ReviewStateStore.for_repo(repo).load()
+    baseline: dict[str, SubmittedBaseline] = {}
+    for label, change_id in labels_to_change_ids.items():
+        cached_change = state.changes[change_id]
+        bookmark = cached_change.bookmark
+        pr_number = cached_change.pr_number
+        assert bookmark is not None
+        assert pr_number is not None
+        pull_request = fake_repo.pull_requests[pr_number]
+        baseline[label] = SubmittedBaseline(
+            bookmark=bookmark,
+            change_id=change_id,
+            pr_base_ref=pull_request.base_ref,
+            pr_number=pr_number,
+            remote_target=_read_remote_ref(fake_repo.git_dir, bookmark),
+        )
+    return baseline
+
+
+def _approve_initial_pull_requests(
+    fake_repo: FakeGithubRepository,
+    baseline: dict[str, SubmittedBaseline],
+) -> None:
+    for label, submitted in baseline.items():
+        fake_repo.create_pull_request_review(
+            pull_number=submitted.pr_number,
+            reviewer_login=f"reviewer-{label}",
+            state="APPROVED",
+        )
+
+
+def _apply_stack_edit_operation(
+    *,
+    repo: Path,
+    labels_to_change_ids: dict[str, str],
+    live_labels: list[str],
+    operation: StackEditOperation,
+) -> list[str]:
+    if operation.kind == "move_to_top":
+        index = live_labels.index(operation.label)
+        top_label = live_labels[-1]
+        run_command(
+            [
+                "jj",
+                "rebase",
+                "-r",
+                labels_to_change_ids[operation.label],
+                "-A",
+                labels_to_change_ids[top_label],
+            ],
+            repo,
+        )
+        return [*live_labels[:index], *live_labels[index + 1 :], operation.label]
+
+    if operation.kind == "insert_after":
+        if operation.new_label is None:
+            raise AssertionError("insert_after operation requires a new label.")
+        index = live_labels.index(operation.label)
+        next_label = live_labels[index + 1] if index + 1 < len(live_labels) else None
+        run_command(["jj", "new", labels_to_change_ids[operation.label]], repo)
+        commit_file(
+            repo,
+            subject_for_label(operation.new_label),
+            filename_for_label(operation.new_label),
+        )
+        inserted_stack = JjClient(repo).discover_review_stack()
+        labels_to_change_ids[operation.new_label] = inserted_stack.head.change_id
+        if next_label is not None:
+            run_command(
+                [
+                    "jj",
+                    "rebase",
+                    "-s",
+                    labels_to_change_ids[next_label],
+                    "-d",
+                    labels_to_change_ids[operation.new_label],
+                ],
+                repo,
+            )
+        return [
+            *live_labels[: index + 1],
+            operation.new_label,
+            *live_labels[index + 1 :],
+        ]
+
+    if operation.kind == "abandon":
+        run_command(["jj", "abandon", labels_to_change_ids[operation.label]], repo)
+        return [label for label in live_labels if label != operation.label]
+
+    raise AssertionError(f"unsupported stack edit operation: {operation.kind}")
+
+
+def _discover_expected_stack(
+    *,
+    repo: Path,
+    labels_to_change_ids: dict[str, str],
+    scenario: StackEditScenario,
+):
+    head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
+    stack = JjClient(repo).discover_review_stack(head_change_id)
+    expected_change_ids = tuple(
+        labels_to_change_ids[label] for label in scenario.final_live_labels
+    )
+    assert tuple(revision.change_id for revision in stack.revisions) == expected_change_ids
+    return stack
+
+
+def _assert_successful_submit_invariants(
+    *,
+    baseline: dict[str, SubmittedBaseline],
+    fake_repo: FakeGithubRepository,
+    labels_to_change_ids: dict[str, str],
+    repo: Path,
+    scenario: StackEditScenario,
+    stack,
+) -> None:
+    state = ReviewStateStore.for_repo(repo).load()
+    revisions_by_label = dict(zip(scenario.final_live_labels, stack.revisions, strict=True))
+    live_pr_numbers: set[int] = set()
+    bookmarks_by_label: dict[str, str] = {}
+    stack_head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
+
+    for index, label in enumerate(scenario.final_live_labels):
+        revision = revisions_by_label[label]
+        cached_change = state.changes[revision.change_id]
+        bookmark = cached_change.bookmark
+        pr_number = cached_change.pr_number
+        assert bookmark is not None, scenario.trace
+        assert pr_number is not None, scenario.trace
+        bookmarks_by_label[label] = bookmark
+        live_pr_numbers.add(pr_number)
+        if label in baseline:
+            assert pr_number == baseline[label].pr_number, scenario.trace
+            _assert_approval_review_preserved(fake_repo, pr_number, label)
+        else:
+            assert pr_number not in {submitted.pr_number for submitted in baseline.values()}
+
+        pull_request = fake_repo.pull_requests[pr_number]
+        expected_parent_change_id = (
+            labels_to_change_ids[scenario.final_live_labels[index - 1]] if index > 0 else None
+        )
+        expected_base_ref = (
+            bookmarks_by_label[scenario.final_live_labels[index - 1]] if index > 0 else "main"
+        )
+        assert _read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
+        assert pull_request.base_ref == expected_base_ref
+        assert pull_request.merged_at is None
+        assert pull_request.state == "open"
+        assert pull_request.title == subject_for_label(label)
+        assert cached_change.last_submitted_commit_id == revision.commit_id
+        assert cached_change.last_submitted_parent_change_id == expected_parent_change_id
+        assert cached_change.last_submitted_stack_head_change_id == stack_head_change_id
+
+    for label in scenario.orphaned_labels:
+        submitted = baseline[label]
+        cached_change = state.changes[submitted.change_id]
+        pull_request = fake_repo.pull_requests[submitted.pr_number]
+        assert submitted.pr_number not in live_pr_numbers
+        assert cached_change.bookmark == submitted.bookmark
+        assert cached_change.pr_number == submitted.pr_number
+        assert _read_remote_ref(fake_repo.git_dir, submitted.bookmark) == submitted.remote_target
+        assert pull_request.base_ref == submitted.pr_base_ref
+        assert pull_request.merged_at is None
+        assert pull_request.state == "open"
+        _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
+
+    expected_pr_count = scenario.initial_size + sum(
+        1 for label in scenario.final_live_labels if label.startswith("i")
+    )
+    assert len(fake_repo.pull_requests) == expected_pr_count
+    _assert_no_transient_damage_events(fake_repo, baseline, scenario)
+
+
+def _assert_approval_review_preserved(
+    fake_repo: FakeGithubRepository,
+    pr_number: int,
+    label: str,
+) -> None:
+    assert any(
+        review.reviewer_login == f"reviewer-{label}" and review.state == "APPROVED"
+        for review in fake_repo.list_pull_request_reviews(pr_number)
+    )
+
+
+def _assert_no_transient_damage_events(
+    fake_repo: FakeGithubRepository,
+    baseline: dict[str, SubmittedBaseline],
+    scenario: StackEditScenario,
+) -> None:
+    original_pr_numbers = {submitted.pr_number for submitted in baseline.values()}
+    orphan_pr_numbers = {baseline[label].pr_number for label in scenario.orphaned_labels}
+    for event in fake_repo.pull_request_events:
+        if event.pull_request_number not in original_pr_numbers:
+            continue
+        assert event.kind != "state", event
+        if event.pull_request_number in orphan_pr_numbers:
+            assert event.kind != "base", event
+
+
+def _apply_boundary_drift(
+    *,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    baseline: dict[str, SubmittedBaseline],
+    label: str,
+    drift_kind: BoundaryDriftKind,
+) -> None:
+    submitted = baseline[label]
+    if drift_kind == "closed_pr":
+        fake_repo.update_pull_request_state(
+            fake_repo.pull_requests[submitted.pr_number],
+            state="closed",
+            reason="test_drift",
+        )
+        return
+    if drift_kind == "wrong_saved_pr_number":
+        state_store = ReviewStateStore.for_repo(repo)
+        state = state_store.load()
+        state_store.save(
+            state.model_copy(
+                update={
+                    "changes": {
+                        **state.changes,
+                        submitted.change_id: state.changes[submitted.change_id].model_copy(
+                            update={"pr_number": 999_999}
+                        ),
+                    }
+                }
+            )
+        )
+        return
+    raise AssertionError(f"unsupported boundary drift kind: {drift_kind}")
+
+
+def _read_remote_ref(remote: Path, bookmark: str) -> str:
+    completed = run_command(
+        ["git", "--git-dir", str(remote), "rev-parse", f"refs/heads/{bookmark}"],
+        remote.parent,
+    )
+    return completed.stdout.strip()
+
+
+def _remote_refs(remote: Path) -> dict[str, str]:
+    completed = subprocess.run(
+        ["git", "--git-dir", str(remote), "show-ref", "--heads"],
+        capture_output=True,
+        check=False,
+        cwd=remote.parent,
+        text=True,
+    )
+    if completed.returncode not in (0, 1):
+        raise AssertionError(
+            "['git', '--git-dir', "
+            f"{str(remote)!r}, 'show-ref', '--heads'] failed:\n"
+            f"stdout={completed.stdout}\nstderr={completed.stderr}"
+        )
+    refs: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        commit_id, ref_name = line.split(" ", maxsplit=1)
+        refs[ref_name] = commit_id
+    return refs
