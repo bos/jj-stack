@@ -333,7 +333,8 @@ Given a chosen head revision:
      first, then through the local view of the push remote's tracked target. When
      neither is available — for example, a PR whose base lives on a remote that has
      not been imported into the push remote's tracking — the predictor skips that PR
-     rather than guess.
+     rather than guess; the post-submit closure check below is the catch-all for
+     anything the predictor cannot model.
    - otherwise push the bookmark
    - compute the GitHub base branch:
      - the nearest still-open ancestor PR in the chain, if any
@@ -365,6 +366,14 @@ merged and close the PR before `submit` finishes repairing the stack. If a submi
 interrupted after the protective trunk retarget and before final PR sync, the result should
 be a repairable flat or partially restacked set of the same open PRs, not closed or replaced
 reviews.
+
+After all PR mutations and stack-comment work succeed, `submit` refetches the GitHub
+state of every PR that was open when the run began and fails the command if any of them
+are closed by the end. `submit` itself never closes a PR on purpose, so an open→closed
+transition is unambiguous evidence that GitHub's reachability-based auto-close fired in
+a way the pre-push predictor did not anticipate. The check is detection, not repair: it
+turns silent data loss into a loud error naming the affected PRs so the operator can
+reopen them on GitHub. Defense-in-depth for the predictor, not a substitute.
 
 For a stack with exactly one change, `submit` behaves like a plain PR-submit flow: no
 stack helper invocation, no navigation or overview comments, and any older nav/overview
@@ -874,7 +883,10 @@ one before merging.
   rewritten review branches, `submit` simulates the post-push commit IDs of every
   open PR's head and base refs and asks `jj` whether the post-push head is reachable
   from the post-push base; any such PR is pre-retargeted to the resolved trunk
-  branch, and the normal post-push PR sync restores the final stacked base.
+  branch, and the normal post-push PR sync restores the final stacked base. As a
+  defense-in-depth backstop for cases the predictor cannot model, `submit` refetches
+  PR states at the end of the run and raises a loud error naming any PR that
+  transitioned from open to closed during this submit.
 
 - **Deletion of a remote review branch** (`jj git push --delete`, via
   `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the

@@ -124,6 +124,27 @@ that the predictor pre-retargets it before push. The fake GitHub already
 simulates the head-contained-in-base auto-close, so the missing piece is the
 fixture, not the simulator.
 
+## Post-Submit Closure Detector — Coverage Gaps
+
+_Benefit: small — the predictor and the existing detector already cover the
+loud failure modes; these are residual gaps where state changes are silent
+or extremely rare._
+
+The post-submit detector raises when a PR transitions open → closed during
+`submit`. It does not currently distinguish:
+
+- a PR whose `is_draft` flipped during the run (state stays `"open"` either
+  way) — fine for the auto-close case but would not surface a hostile draft
+  toggle initiated outside `submit`
+- a PR that GitHub closed and a third party reopened mid-run; the detector
+  reads the post-run state and considers it clean
+- a PR that disappeared entirely (deleted, transferred) between discovery
+  and refetch; the helper currently silently skips a missing entry rather
+  than surfacing it
+
+If any of these turn out to bite real users, broaden the detector to compare
+more fields and to treat missing PRs as anomalies rather than absences.
+
 ## Documentation
 
 _Benefit: large — Phases 2–4 increase adoption and reduce confusion;

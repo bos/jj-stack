@@ -351,6 +351,46 @@ def test_submit_preserves_orphaned_pr_when_middle_change_is_abandoned(
     assert read_remote_ref(fake_repo.git_dir, orphaned_bookmark) == orphaned_remote_target
 
 
+def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """If the pre-push predictor misses an auto-close, the post-flight check fires."""
+
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+    commit_file(repo, "feature 4", "feature-4.txt")
+
+    initial_stack = JjClient(repo).discover_review_stack()
+    old_bottom_change_id = initial_stack.revisions[0].change_id
+    old_top_change_id = initial_stack.revisions[-1].change_id
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(["jj", "rebase", "-r", old_bottom_change_id, "-A", old_top_change_id], repo)
+    reordered_stack = JjClient(repo).discover_review_stack()
+
+    from jj_review.commands.submit import command as submit_command
+
+    monkeypatch.setattr(
+        submit_command,
+        "_predict_pull_requests_auto_closed_by_push",
+        lambda **_kwargs: (),
+    )
+
+    assert run_main(repo, config_path, "submit", reordered_stack.head.change_id) != 0
+    captured = capsys.readouterr()
+
+    assert "Pull request(s) #2 were open at the start of this submit" in captured.err
+    assert fake_repo.pull_requests[2].state == "closed"
+    assert fake_repo.pull_requests[2].merged_at is not None
+
+
 def test_submit_uses_configured_bookmark_prefix(
     tmp_path: Path,
     monkeypatch,

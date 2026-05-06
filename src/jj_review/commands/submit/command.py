@@ -718,6 +718,11 @@ async def _run_submit_async(
                     state_store=state_store,
                     trunk_branch=trunk_branch,
                 )
+                await _verify_no_unexpected_pull_request_closures(
+                    discovered_pull_requests=discovered_pull_requests,
+                    github_client=github_client,
+                    github_repository=github_repository,
+                )
 
         if not dry_run:
             next_state = bookmark_result.state.model_copy(update={"changes": state_changes})
@@ -1192,6 +1197,62 @@ async def _retarget_review_base_before_branch_push(
             t"Could not retarget PR #{pull_request.number} to "
             t"{ui.bookmark(trunk_branch)} before pushing review branches"
         ) from error
+
+
+async def _verify_no_unexpected_pull_request_closures(
+    *,
+    discovered_pull_requests: dict[str, GithubPullRequest | None],
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+) -> None:
+    """Detect open→closed transitions that happened during submit and raise loudly.
+
+    `submit` never closes pull requests on purpose. Any PR that was open at the
+    start of this run and is closed by the end means a GitHub destructive default
+    fired in a way the pre-push predictor did not anticipate (typically the
+    head-contained-in-base auto-close). Surface it loudly rather than persist
+    state that hides the loss.
+    """
+
+    initially_open_numbers = sorted(
+        {
+            pull_request.number
+            for pull_request in discovered_pull_requests.values()
+            if pull_request is not None and pull_request.state == "open"
+        }
+    )
+    if not initially_open_numbers:
+        return
+    try:
+        refetched = await github_client.get_pull_requests_by_numbers(
+            github_repository.owner,
+            github_repository.repo,
+            pull_numbers=initially_open_numbers,
+        )
+    except GithubClientError as error:
+        raise CliError(
+            "Could not refetch pull request states for the post-submit safety check"
+        ) from error
+
+    closed_numbers: list[int] = []
+    for number in initially_open_numbers:
+        pull_request = refetched.get(number)
+        if pull_request is None:
+            continue
+        if pull_request.state != "open":
+            closed_numbers.append(number)
+    if not closed_numbers:
+        return
+
+    rendered_numbers = ", ".join(f"#{number}" for number in closed_numbers)
+    raise CliError(
+        t"Pull request(s) {rendered_numbers} were open at the start of this submit "
+        t"but are closed by the end. GitHub closed them automatically because their "
+        t"head commit became reachable from the base branch during the push. Inspect "
+        t"those pull requests on GitHub and reopen any that should still be under "
+        t"review; rerunning {ui.cmd('jj-review submit')} after the bases are repaired "
+        t"is safe and will not reopen them on its own."
+    )
 
 
 async def _sync_pull_request_task(
