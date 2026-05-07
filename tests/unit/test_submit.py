@@ -7,11 +7,13 @@ import pytest
 from jj_review.commands.submit.command import (
     _ensure_pull_request_link_is_consistent,
     _ensure_remote_can_be_updated,
+    _preflight_atomic_remote_push_plan,
     _preflight_conflicted_revisions,
     _preflight_private_commits,
     _prepare_submit_revisions,
     _resolve_local_action,
 )
+from jj_review.commands.submit.models import PreparedSubmitRevision, PushOperation
 from jj_review.errors import CliError
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
@@ -160,6 +162,73 @@ def test_prepare_submit_revisions_preflights_remote_drift_before_local_bookmark_
     assert client.set_bookmark_calls == []
 
 
+def test_prepare_submit_revisions_rejects_non_atomic_push_before_bookmark_moves() -> None:
+    first_revision = make_revision(
+        commit_id="commit-1",
+        change_id="change-1",
+        description="feature 1\n",
+    )
+    second_revision = make_revision(
+        commit_id="commit-2",
+        change_id="change-2",
+        description="feature 2\n",
+    )
+    client = _FakeSubmitPreparationClient(remote_targets={})
+
+    with pytest.raises(CliError, match="not tracked locally"):
+        _prepare_submit_revisions(
+            bookmark_result=BookmarkResolutionResult(
+                changed=False,
+                resolutions=(
+                    ResolvedBookmark(
+                        bookmark="review/feature-1",
+                        change_id="change-1",
+                        source="saved",
+                    ),
+                    ResolvedBookmark(
+                        bookmark="review/feature-2",
+                        change_id="change-2",
+                        source="saved",
+                    ),
+                ),
+                state=ReviewState(
+                    changes={
+                        "change-1": CachedChange(bookmark="review/feature-1"),
+                        "change-2": CachedChange(bookmark="review/feature-2"),
+                    }
+                ),
+            ),
+            bookmark_states={
+                "review/feature-1": BookmarkState(
+                    local_targets=("old-commit-1",),
+                    name="review/feature-1",
+                ),
+                "review/feature-2": BookmarkState(
+                    local_targets=("old-commit-2",),
+                    name="review/feature-2",
+                    remote_targets=(
+                        RemoteBookmarkState(remote="origin", targets=("old-commit-2",)),
+                    ),
+                ),
+            },
+            client=cast(JjClient, client),
+            dry_run=False,
+            remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
+            stack=_local_stack(first_revision, second_revision),
+        )
+
+    assert client.set_bookmark_calls == []
+
+
+def test_preflight_atomic_remote_push_plan_allows_one_untracked_remote_update() -> None:
+    _preflight_atomic_remote_push_plan(
+        prepared_revisions=(
+            _prepared_revision("review/feature-1", "commit-1", "git_update"),
+        ),
+        remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
+    )
+
+
 def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
     with pytest.raises(
         CliError,
@@ -241,6 +310,27 @@ def _local_stack(*revisions: LocalRevision) -> LocalStack:
         revisions=revisions,
         selected_revset=revisions[-1].change_id,
         trunk=trunk,
+    )
+
+
+def _prepared_revision(
+    bookmark: str,
+    commit_id: str,
+    push_operation: PushOperation,
+) -> PreparedSubmitRevision:
+    return PreparedSubmitRevision(
+        bookmark=bookmark,
+        bookmark_source="saved",
+        change_id=f"{commit_id}-change",
+        expected_remote_target="old-commit" if push_operation == "git_update" else None,
+        local_action="unchanged",
+        push_operation=push_operation,
+        remote_action="pushed",
+        revision=make_revision(
+            commit_id=commit_id,
+            change_id=f"{commit_id}-change",
+            description=f"{bookmark}\n",
+        ),
     )
 
 

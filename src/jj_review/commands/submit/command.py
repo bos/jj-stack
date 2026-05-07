@@ -414,6 +414,7 @@ def _prepare_submit_revisions(
         remote=remote,
         stack=stack,
     )
+    local_bookmark_updates: list[tuple[PreparedSubmitRevision, BookmarkState]] = []
     for resolution, revision in zip(
         bookmark_result.resolutions,
         stack.revisions,
@@ -444,20 +445,6 @@ def _prepare_submit_revisions(
             state=bookmark_result.state,
         )
 
-        if local_action != "unchanged" and not dry_run:
-            allow_backwards = _bookmark_is_already_managed_for_change(
-                bookmark=resolution.bookmark,
-                bookmark_state=bookmark_state,
-                cached_change=bookmark_result.state.changes.get(revision.change_id),
-                change_id=revision.change_id,
-                jj_client=client,
-            )
-            client.set_bookmark(
-                resolution.bookmark,
-                revision.commit_id,
-                allow_backwards=allow_backwards,
-            )
-
         expected_remote_target: str | None = None
         if remote_state is not None and remote_state.target == revision.commit_id:
             push_operation: PushOperation = "up_to_date"
@@ -479,19 +466,80 @@ def _prepare_submit_revisions(
             push_operation = "batch"
             remote_action = "pushed"
 
-        prepared_revisions.append(
-            PreparedSubmitRevision(
-                bookmark=resolution.bookmark,
-                bookmark_source=resolution.source,
-                change_id=revision.change_id,
-                expected_remote_target=expected_remote_target,
-                local_action=local_action,
-                push_operation=push_operation,
-                remote_action=remote_action,
-                revision=revision,
-            )
+        prepared_revision = PreparedSubmitRevision(
+            bookmark=resolution.bookmark,
+            bookmark_source=resolution.source,
+            change_id=revision.change_id,
+            expected_remote_target=expected_remote_target,
+            local_action=local_action,
+            push_operation=push_operation,
+            remote_action=remote_action,
+            revision=revision,
         )
-    return tuple(prepared_revisions)
+        prepared_revisions.append(prepared_revision)
+        local_bookmark_updates.append((prepared_revision, bookmark_state))
+
+    prepared = tuple(prepared_revisions)
+    _preflight_atomic_remote_push_plan(prepared_revisions=prepared, remote=remote)
+
+    if not dry_run:
+        for prepared_revision, bookmark_state in local_bookmark_updates:
+            if prepared_revision.local_action == "unchanged":
+                continue
+            allow_backwards = _bookmark_is_already_managed_for_change(
+                bookmark=prepared_revision.bookmark,
+                bookmark_state=bookmark_state,
+                cached_change=bookmark_result.state.changes.get(
+                    prepared_revision.change_id
+                ),
+                change_id=prepared_revision.change_id,
+                jj_client=client,
+            )
+            client.set_bookmark(
+                prepared_revision.bookmark,
+                prepared_revision.revision.commit_id,
+                allow_backwards=allow_backwards,
+            )
+
+    return prepared
+
+
+def _preflight_atomic_remote_push_plan(
+    *,
+    prepared_revisions: tuple[PreparedSubmitRevision, ...],
+    remote: GitRemote,
+) -> None:
+    """Reject push plans that cannot be applied as one atomic remote update."""
+
+    remote_mutations = tuple(
+        revision
+        for revision in prepared_revisions
+        if revision.push_operation in {"batch", "git_update"}
+    )
+    if len(remote_mutations) <= 1:
+        return
+
+    fallback_revisions = tuple(
+        revision
+        for revision in remote_mutations
+        if revision.push_operation == "git_update"
+    )
+    if not fallback_revisions:
+        return
+
+    branches = ui.join(
+        lambda revision: ui.bookmark(f"{revision.bookmark}@{remote.name}"),
+        fallback_revisions,
+    )
+    raise CliError(
+        t"Submit would need to update multiple review branches, but "
+        t"{branches} are not tracked locally.",
+        hint=(
+            t"Fetch and track those review branches with "
+            t"{ui.cmd('jj git fetch')} and {ui.cmd('jj bookmark track')}, "
+            t"then retry so submit can push the stack as one atomic update."
+        ),
+    )
 
 
 def _load_actual_remote_targets_for_saved_bookmarks(

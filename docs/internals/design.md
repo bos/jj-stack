@@ -328,8 +328,12 @@ Given a chosen head revision:
    - if the remote bookmark exists but points elsewhere, only proceed when the match is
      already proven by local state, the saved record, or GitHub discovery; otherwise
      stop rather than silently taking over the branch
-   - when updating an existing untracked remote bookmark, do not import its old target
-     into the local bookmark before the remote update completes
+   - when updating exactly one existing untracked remote bookmark, do not import its old
+     target into the local bookmark before the remote update completes
+   - if a submit would update multiple remote bookmarks and any update needs the
+     untracked-remote fallback, stop before moving local bookmarks or mutating GitHub;
+     the user must fetch and track those branches first so the stack can be pushed as one
+     atomic update
    - before pushing rewritten review branches, protect existing open PRs from GitHub's
      reachability-based close/merge behavior: for every open PR whose head ref is in
      the planned push set, simulate the post-push commit IDs of head and base; if the
@@ -874,20 +878,17 @@ re-evaluates each PR exactly once per push, so the predictor's simulation of the
 post-push commit IDs only needs to match a single landing point, not a sequence
 of intermediate states.
 
-The exception is the rare path where a pre-existing review-branch ref is present
-on the remote but untracked locally. There the tool falls back to a per-bookmark
+The exception is the rare path where exactly one pre-existing review-branch ref is
+present on the remote but untracked locally. There the tool falls back to a single
 `git push --force-with-lease ...` against the colocated Git store so it can lock
-the update against the expected remote target. When this fallback fires alongside
-batch pushes for other bookmarks in the same submit, the operations are
-sequential rather than atomic; GitHub may briefly observe an intermediate state
-where the batch refs are at their new commits but the per-bookmark refs are
-still at the old. The post-push PR-state check is the backstop that surfaces any
-auto-close that fires during that window.
+the update against the expected remote target. If this fallback would be combined
+with any other remote bookmark update, `submit` stops before moving local bookmarks
+or mutating GitHub. The user must fetch and track the branch first, so the later
+submit can use the normal atomic `jj git push --bookmark ...` path.
 
 The invariant is therefore: never split the normal-case push into per-bookmark
-operations as an optimization, since doing so would expose every submit to the
-intermediate-state window that is currently confined to the rare untracked-ref
-path.
+operations as an optimization, and never mix the untracked-remote fallback with
+other remote bookmark updates.
 
 ### GitHub integration
 
