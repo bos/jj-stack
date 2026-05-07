@@ -1409,11 +1409,11 @@ async def _verify_no_unexpected_pull_request_closures(
     rendered_numbers = ", ".join(f"#{number}" for number in closed_numbers)
     raise CliError(
         t"Pull request(s) {rendered_numbers} were open at the start of this submit "
-        t"but are closed by the end. GitHub closed them automatically because their "
-        t"head commit became reachable from the base branch during the push. Inspect "
-        t"those pull requests on GitHub and reopen any that should still be under "
-        t"review; rerunning {ui.cmd('jj-review submit')} after the bases are repaired "
-        t"is safe and will not reopen them on its own."
+        t"but are closed by the end. GitHub closes a pull request automatically when "
+        t"its head commit becomes reachable from the base branch during a push. "
+        t"Reopen those pull requests on GitHub now to keep their existing reviews — "
+        t"once reopened, rerunning {ui.cmd('jj-review submit')} is safe and will "
+        t"restore the stacked bases."
     )
 
 
