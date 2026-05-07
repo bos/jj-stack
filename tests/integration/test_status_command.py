@@ -582,9 +582,10 @@ def test_status_stays_local_after_state_loss_even_if_github_is_unavailable(
     assert "saved PR #1" not in captured.out
 
 
-def test_status_clears_cached_pull_request_metadata_when_github_reports_missing(
+def test_status_preserves_cached_pull_request_metadata_when_github_reports_missing(
     tmp_path: Path,
     monkeypatch,
+    capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -600,12 +601,20 @@ def test_status_clears_cached_pull_request_metadata_when_github_reports_missing(
     del fake_repo.pull_requests[1]
 
     exit_code = run_main(repo, config_path, "status", "--fetch", change_id)
+    captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
     assert exit_code == 1
-    assert refreshed_state.changes[change_id].pr_number is None
-    assert refreshed_state.changes[change_id].pr_state is None
-    assert refreshed_state.changes[change_id].pr_url is None
+    assert "Missing GitHub PR" in captured.out
+    assert "remembered PR #1" in captured.out
+    assert "jj-review submit --restart" in captured.out
+    assert change_id in captured.out
+    assert refreshed_state.changes[change_id].pr_number == 1
+    assert refreshed_state.changes[change_id].pr_state == "open"
+    assert (
+        refreshed_state.changes[change_id].pr_url
+        == "https://github.test/octo-org/stacked-review/pull/1"
+    )
     assert refreshed_state.changes[change_id].navigation_comment_id is None
     assert refreshed_state.changes[change_id].overview_comment_id is None
 
@@ -659,7 +668,7 @@ def test_status_reports_merged_pull_request_state(
     refreshed_state = state_store.load()
 
     assert exit_code == 0
-    assert "PR #1 merged, cleanup needed" in captured.out
+    assert "PR #1 merged into main, cleanup needed" in captured.out
     assert refreshed_state.changes[change_id].pr_state == "merged"
     assert refreshed_state.changes[change_id].pr_review_decision is None
 

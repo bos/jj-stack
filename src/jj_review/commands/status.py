@@ -767,12 +767,9 @@ def render_status_advisory_lines(
 
     if link_revisions:
         rows.append(
-            (
-                "PR link",
-                t"PR link note: saved PR links do not match GitHub for one or more "
-                t"changes below. To refresh, run "
-                t"{ui.cmd('jj-review status --fetch <change>')}. To attach an open PR "
-                t"on purpose, run {ui.cmd('jj-review relink <pr> <change>')}.",
+            _link_advisory_summary_row(
+                link_revisions=tuple(link_revisions),
+                selected_revset=result.selected_revset,
             )
         )
         for revision in link_revisions:
@@ -877,6 +874,90 @@ def _advisory_table(rows: tuple[tuple[object, object], ...]) -> ui.DataTable:
         padding=(0, 2),
         show_header=False,
     )
+
+
+def _link_advisory_summary_row(
+    *,
+    link_revisions: tuple[object, ...],
+    selected_revset: str,
+) -> tuple[object, object]:
+    states = {_link_advisory_kind(revision) for revision in link_revisions}
+    change_phrase = _link_advisory_change_phrase(link_revisions)
+    restart_submit_command = ui.cmd(f"jj-review submit --restart {selected_revset}")
+    if states == {"closed"}:
+        label = (
+            "Closed GitHub PR"
+            if len(link_revisions) == 1
+            else "Closed GitHub PRs"
+        )
+        closed_phrase = "a closed PR" if len(link_revisions) == 1 else "closed PRs"
+        detail = (
+            f"GitHub reports {closed_phrase} for {change_phrase}; submit will not "
+            "reuse closed reviews. Reopen the PR on GitHub to continue that review, "
+            "relink an open replacement, or run ",
+            restart_submit_command,
+            " to create fresh PRs.",
+        )
+        return label, detail
+    if states == {"missing"}:
+        label = "Missing GitHub PR" if len(link_revisions) == 1 else "Missing GitHub PRs"
+        detail = (
+            "GitHub did not report a PR for the remembered review branch of "
+            f"{change_phrase}. Run ",
+            ui.cmd("jj-review status --fetch <change>"),
+            " if branch state may be stale. Relink an open PR if one exists; "
+            "otherwise run ",
+            restart_submit_command,
+            " to create fresh PRs.",
+        )
+        return label, detail
+    if states == {"ambiguous"}:
+        label = (
+            "Ambiguous GitHub PR"
+            if len(link_revisions) == 1
+            else "Ambiguous GitHub PRs"
+        )
+        detail = (
+            "GitHub reports multiple PRs for the remembered review branch of "
+            f"{change_phrase}. Run ",
+            ui.cmd("jj-review status --fetch <change>"),
+            " to refresh, then relink the intended open PR.",
+        )
+        return label, detail
+    if states == {"remembered"}:
+        label = "Saved GitHub PR" if len(link_revisions) == 1 else "Saved GitHub PRs"
+        detail = (
+            "GitHub found the remembered PR, but its head branch no longer matches "
+            f"{change_phrase}. Relink it if that PR should stay attached; "
+            "otherwise run ",
+            restart_submit_command,
+            " to create fresh PRs.",
+        )
+        return label, detail
+    detail = (
+        "GitHub reports closed, missing, or ambiguous PR state for one or more "
+        "changes shown above. Inspect the per-change rows, then reopen, relink, or run ",
+        restart_submit_command,
+        " as appropriate.",
+    )
+    return "GitHub PRs need repair", detail
+
+
+def _link_advisory_change_phrase(link_revisions: tuple[object, ...]) -> str:
+    if len(link_revisions) == 1:
+        return "the change shown above"
+    return "one or more changes shown above"
+
+
+def _link_advisory_kind(revision) -> str:
+    lookup = revision.pull_request_lookup
+    if lookup is None:
+        raise AssertionError("Link advisory requires a pull request lookup.")
+    if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
+        return "remembered"
+    if lookup.state in {"ambiguous", "closed", "missing"}:
+        return lookup.state
+    raise AssertionError(f"Unexpected link advisory state: {lookup.state}")
 
 
 def render_status_intent_lines(*, prepared_status) -> tuple[object, ...]:
@@ -1432,17 +1513,20 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
         else:
             summary = "unlinked"
     elif lookup is None:
-        if github_available:
-            summary = "not submitted"
-        elif cached_label is not None:
+        if cached_label is not None:
             summary = cached_label
+        elif _has_cached_review_identity(cached_change):
+            summary = "submitted, GitHub status unknown"
+        elif github_available:
+            summary = "not submitted"
         else:
             summary = "GitHub status unknown"
     elif lookup.state == "open":
         if lookup.pull_request is None:
             raise AssertionError("Open pull request lookup must include a pull request.")
-        summary = format_pull_request_label(
-            lookup.pull_request.number,
+        summary = _format_live_pull_request_label(
+            lookup=lookup,
+            pull_request_number=lookup.pull_request.number,
             is_draft=lookup.pull_request.is_draft,
         )
         review_decision = lookup.review_decision
@@ -1459,16 +1543,25 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
             summary = f"{summary} changes requested"
     elif lookup.state == "missing":
         if cached_label is not None:
-            summary = f"{cached_label}, no GitHub PR"
+            summary = f"{cached_label}, no PR found for branch"
+        elif _has_cached_review_identity(cached_change):
+            summary = "submitted, no PR found for branch"
         else:
             summary = "not submitted"
     elif lookup.state == "closed":
         if lookup.pull_request is None:
             raise AssertionError("Closed pull request lookup must include a pull request.")
+        pr_label = _format_live_pull_request_label(
+            lookup=lookup,
+            pull_request_number=lookup.pull_request.number,
+            is_draft=False,
+        )
         if lookup.pull_request.state == "merged":
-            summary = f"PR #{lookup.pull_request.number} merged, cleanup needed"
+            summary = (
+                f"{pr_label} merged into {lookup.pull_request.base.ref}, cleanup needed"
+            )
         else:
-            summary = f"PR #{lookup.pull_request.number} closed"
+            summary = f"{pr_label} closed"
     else:
         message = lookup.message or "GitHub lookup failed"
         if cached_label is not None:
@@ -1487,6 +1580,20 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
         message = managed_comments_lookup.message or "stack comment lookup failed"
         return f"{summary}, {message}"
     return summary
+
+
+def _format_live_pull_request_label(
+    *,
+    lookup,
+    pull_request_number: int,
+    is_draft: bool,
+) -> str:
+    prefix = "remembered " if getattr(lookup, "source", "head") == "remembered" else ""
+    return format_pull_request_label(
+        pull_request_number,
+        is_draft=is_draft,
+        prefix=prefix,
+    )
 
 
 def _emit_lines(
@@ -1537,6 +1644,8 @@ def _revision_has_link_advisory(revision) -> bool:
     lookup = revision.pull_request_lookup
     if lookup is None:
         return False
+    if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
+        return True
     if lookup.state == "ambiguous":
         return True
     if lookup.state == "missing":
@@ -1550,17 +1659,25 @@ def _revision_has_link_advisory(revision) -> bool:
     return False
 
 
-def _describe_link_advisory(revision) -> str:
+def _describe_link_advisory(revision) -> object:
     lookup = revision.pull_request_lookup
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
+    if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
+        return lookup.message
     if lookup.state == "ambiguous":
-        return lookup.message or "GitHub reports an ambiguous pull request link"
+        return lookup.message or "GitHub reports more than one matching pull request"
     if lookup.state == "missing":
-        cached_label = _format_cached_pull_request_label(revision.cached_change)
+        cached_change = revision.cached_change
+        if cached_change is not None and cached_change.pr_number is not None:
+            return (
+                f"GitHub did not report remembered PR #{cached_change.pr_number} "
+                "for this branch"
+            )
+        cached_label = _format_cached_pull_request_label(cached_change)
         if cached_label is None:
-            return "GitHub no longer reports a pull request for this branch"
-        return f"{cached_label} is no longer present on GitHub for this branch"
+            return "GitHub did not report a pull request for this branch"
+        return f"GitHub did not report {cached_label} for this branch"
     if lookup.state == "closed":
         pull_request = lookup.pull_request
         if pull_request is None:

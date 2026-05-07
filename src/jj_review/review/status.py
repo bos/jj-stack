@@ -59,6 +59,7 @@ _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
 HELP = "Check the review status of one or more jj stacks"
 
 PullRequestLookupState = Literal["ambiguous", "closed", "error", "missing", "open"]
+PullRequestLookupSource = Literal["head", "remembered"]
 ManagedCommentsLookupState = Literal["ambiguous", "error", "resolved"]
 
 
@@ -72,6 +73,7 @@ class PullRequestLookup:
     review_decision: str | None = None
     review_decision_error: str | None = None
     repository_error: ErrorMessage | None = None
+    source: PullRequestLookupSource = "head"
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,7 +736,7 @@ def _persist_status_cache_updates(
             continue
         pull_request_lookup = revision.pull_request_lookup
         if pull_request_lookup is not None:
-            if updated_change is None:
+            if updated_change is None and pull_request_lookup.state != "missing":
                 updated_change = CachedChange(
                     bookmark=revision.bookmark,
                     bookmark_ownership=bookmark_ownership_for_source(
@@ -742,22 +744,18 @@ def _persist_status_cache_updates(
                     ),
                 )
             if pull_request_lookup.state == "missing":
-                updated_change = updated_change.model_copy(
-                    update={
-                        "bookmark": revision.bookmark,
-                        "bookmark_ownership": bookmark_ownership_for_source(
-                            revision.bookmark_source
-                        ),
-                        "pr_is_draft": None,
-                        "pr_number": None,
-                        "pr_review_decision": None,
-                        "pr_state": None,
-                        "pr_url": None,
-                        "navigation_comment_id": None,
-                        "overview_comment_id": None,
-                    }
-                )
+                if updated_change is not None:
+                    updated_change = updated_change.model_copy(
+                        update={
+                            "bookmark": revision.bookmark,
+                            "bookmark_ownership": bookmark_ownership_for_source(
+                                revision.bookmark_source
+                            ),
+                        }
+                    )
             elif pull_request_lookup.pull_request is not None:
+                if updated_change is None:
+                    raise AssertionError("Pull request lookup must create cached state.")
                 pull_request = pull_request_lookup.pull_request
                 updated_change = updated_change.model_copy(
                     update={
@@ -969,7 +967,11 @@ async def _discover_pull_request_lookups(
     github_repository,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:
-    bookmarks = tuple(prepared_revision.bookmark for prepared_revision in prepared_revisions)
+    prepared_revisions_by_bookmark = {
+        prepared_revision.bookmark: prepared_revision
+        for prepared_revision in prepared_revisions
+    }
+    bookmarks = tuple(prepared_revisions_by_bookmark)
     if not bookmarks:
         return {}
 
@@ -996,13 +998,66 @@ async def _discover_pull_request_lookups(
             for bookmark in bookmarks
         }
 
-    return {
+    lookups = {
         bookmark: _pull_request_lookup_from_discovered(
             head_label=t"{github_repository.owner}:{ui.bookmark(bookmark)}",
             pull_requests=discovered_pull_requests.get(bookmark, ()),
         )
         for bookmark in bookmarks
     }
+    remembered_numbers = tuple(
+        prepared_revision.cached_change.pr_number
+        for bookmark, prepared_revision in prepared_revisions_by_bookmark.items()
+        if lookups[bookmark].state == "missing"
+        and prepared_revision.cached_change is not None
+        and prepared_revision.cached_change.pr_number is not None
+    )
+    if not remembered_numbers:
+        return lookups
+
+    try:
+        remembered_pull_requests = await github_client.get_pull_requests_by_numbers(
+            github_repository.owner,
+            github_repository.repo,
+            pull_numbers=remembered_numbers,
+        )
+    except GithubClientError as error:
+        lookup_error = summarize_github_lookup_error(
+            action="remembered pull request lookup",
+            error=error,
+        )
+        failed_lookups: dict[str, PullRequestLookup] = {}
+        for bookmark, lookup in lookups.items():
+            cached_change = prepared_revisions_by_bookmark[bookmark].cached_change
+            if (
+                lookup.state == "missing"
+                and cached_change is not None
+                and cached_change.pr_number is not None
+            ):
+                failed_lookups[bookmark] = PullRequestLookup(
+                    message=lookup_error,
+                    pull_request=None,
+                    repository_error=None,
+                    state="error",
+                )
+            else:
+                failed_lookups[bookmark] = lookup
+        return failed_lookups
+
+    for bookmark, lookup in tuple(lookups.items()):
+        if lookup.state != "missing":
+            continue
+        cached_change = prepared_revisions_by_bookmark[bookmark].cached_change
+        if cached_change is None or cached_change.pr_number is None:
+            continue
+        remembered_pull_request = remembered_pull_requests.get(cached_change.pr_number)
+        if remembered_pull_request is None:
+            continue
+        lookups[bookmark] = _pull_request_lookup_from_remembered(
+            bookmark=bookmark,
+            pull_request=remembered_pull_request,
+        )
+    return lookups
 
 
 def _pull_request_lookup_from_discovered(
@@ -1053,6 +1108,43 @@ def _pull_request_lookup_from_discovered(
         ),
         review_decision_error=None,
         repository_error=None,
+        state="open",
+    )
+
+
+def _pull_request_lookup_from_remembered(
+    *,
+    bookmark: str,
+    pull_request: GithubPullRequest,
+) -> PullRequestLookup:
+    effective_pull_request = pull_request.normalize_state()
+    message: ErrorMessage | None = None
+    if effective_pull_request.head.ref != bookmark:
+        message = (
+            t"Remembered PR #{effective_pull_request.number} now uses head branch "
+            t"{ui.bookmark(effective_pull_request.head.ref)}, not "
+            t"{ui.bookmark(bookmark)}."
+        )
+    if effective_pull_request.state != "open":
+        return PullRequestLookup(
+            message=message,
+            pull_request=effective_pull_request,
+            review_decision=None,
+            repository_error=None,
+            source="remembered",
+            state="closed",
+        )
+    return PullRequestLookup(
+        message=message,
+        pull_request=effective_pull_request,
+        review_decision=(
+            None
+            if effective_pull_request.is_draft
+            else effective_pull_request.review_decision
+        ),
+        review_decision_error=None,
+        repository_error=None,
+        source="remembered",
         state="open",
     )
 

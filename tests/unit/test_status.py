@@ -12,6 +12,7 @@ from jj_review import console as console_module
 from jj_review.commands import status as status_module
 from jj_review.config import RepoConfig
 from jj_review.models.intent import SubmitIntent
+from jj_review.models.review_state import CachedChange
 from jj_review.review.status import StatusResult
 from jj_review.review.topology import SubmittedStateDisagreement
 
@@ -98,6 +99,126 @@ def test_status_advises_submit_when_selected_stack_changed_since_submit() -> Non
     assert "New commit IDs abcdefgh" in normalized_lines
     assert "New PR bases bcdefghi" in normalized_lines
     assert "New stack head bcdefghi" in normalized_lines
+
+
+def test_status_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
+    revision = SimpleNamespace(
+        cached_change=None,
+        change_id="loqvlqrqabcdefghijkl",
+        has_merged_pull_request=lambda: False,
+        link_state="active",
+        local_divergent=False,
+        pull_request_lookup=SimpleNamespace(
+            pull_request=SimpleNamespace(number=21216, state="closed"),
+            state="closed",
+        ),
+        pull_request_number=lambda: 21216,
+        managed_comments_lookup=None,
+    )
+
+    lines = _render_lines(
+        *status_module.render_status_advisory_lines(
+            result=cast(
+                StatusResult,
+                SimpleNamespace(
+                    revisions=(revision,),
+                    selected_revset="@",
+                    submitted_state_disagreements=(),
+                ),
+            ),
+            config=RepoConfig(),
+        )
+    )
+    normalized_lines = " ".join(" ".join(line.split()) for line in lines)
+
+    assert "Closed GitHub PR" in normalized_lines
+    assert "GitHub reports a closed PR for the change shown above" in normalized_lines
+    assert "Reopen the PR on GitHub to continue that review" in normalized_lines
+    assert "relink an open replacement" in normalized_lines
+    assert "jj-review submit --restart @" in normalized_lines
+    assert "changes below" not in normalized_lines
+
+
+def test_status_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
+    revision = SimpleNamespace(
+        cached_change=CachedChange(
+            bookmark="review/feature-8-abcdefgh",
+            pr_number=42,
+        ),
+        change_id="abcdefgh1234",
+        has_merged_pull_request=lambda: False,
+        link_state="active",
+        local_divergent=False,
+        pull_request_lookup=SimpleNamespace(
+            pull_request=None,
+            state="missing",
+        ),
+        pull_request_number=lambda: None,
+        managed_comments_lookup=None,
+    )
+
+    lines = _render_lines(
+        *status_module.render_status_advisory_lines(
+            result=cast(
+                StatusResult,
+                SimpleNamespace(
+                    revisions=(revision,),
+                    selected_revset="@",
+                    submitted_state_disagreements=(),
+                ),
+            ),
+            config=RepoConfig(),
+        )
+    )
+    normalized_lines = " ".join(" ".join(line.split()) for line in lines)
+
+    assert "Missing GitHub PR" in normalized_lines
+    assert "GitHub did not report a PR for the remembered review branch" in normalized_lines
+    assert "jj-review status --fetch <change>" in normalized_lines
+    assert "Relink an open PR if one exists" in normalized_lines
+    assert "jj-review submit --restart @" in normalized_lines
+    assert "GitHub did not report remembered PR #42 for this branch" in normalized_lines
+
+
+def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
+    revision = SimpleNamespace(
+        bookmark="review/feature-8-abcdefgh",
+        cached_change=CachedChange(
+            bookmark="review/feature-8-abcdefgh",
+            last_submitted_commit_id="submitted-commit",
+        ),
+        change_id="abcdefgh1234",
+        commit_id="1234567890abcdef",
+        link_state="active",
+        local_divergent=False,
+        pull_request_lookup=SimpleNamespace(
+            pull_request=None,
+            state="missing",
+        ),
+        managed_comments_lookup=None,
+        subject="feature 8",
+    )
+
+    lines = status_module.render_status_summary_lines(
+        client=SimpleNamespace(
+            resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
+            render_revision_log_lines=lambda current_revision, *, color_when: (
+                f"○  {current_revision.change_id[:8]} {current_revision.commit_id[:8]}",
+                f"│  {current_revision.subject}",
+            ),
+        ),
+        github_available=True,
+        leading_separator=False,
+        result=SimpleNamespace(revisions=(revision,)),
+        verbose=False,
+    )
+
+    assert lines == (
+        "Submitted stack:",
+        "○  abcdefgh 12345678: submitted, no PR found for branch",
+        "│  feature 8",
+        "",
+    )
 
 
 def test_render_status_intent_lines_reports_stale_and_interrupted_operations(

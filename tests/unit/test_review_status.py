@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage
@@ -285,6 +285,57 @@ def test_pinned_bookmarks_for_revisions_uses_cached_bookmarks_and_dedupes() -> N
     )
 
     assert result == ("review/saved-aaaaaaaa", "review/saved-bbbbbbbb")
+
+
+def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_misses() -> None:
+    class FakeGithubClient:
+        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+            assert (owner, repo) == ("octo-org", "stacked-review")
+            assert head_refs == ("review/old-branch",)
+            return {"review/old-branch": ()}
+
+        async def get_pull_requests_by_numbers(self, owner, repo, *, pull_numbers):
+            assert (owner, repo) == ("octo-org", "stacked-review")
+            assert pull_numbers == (7,)
+            return {
+                7: GithubPullRequest.model_validate(
+                    {
+                        "base": {"ref": "review/base"},
+                        "head": {
+                            "label": "octo-org:review/old-branch",
+                            "ref": "review/old-branch",
+                        },
+                        "html_url": "https://github.test/octo-org/stacked-review/pull/7",
+                        "merged_at": "2026-03-16T12:00:00Z",
+                        "number": 7,
+                        "state": "closed",
+                        "title": "feature 7",
+                    }
+                )
+            }
+
+    prepared_revision = SimpleNamespace(
+        bookmark="review/old-branch",
+        cached_change=CachedChange(
+            bookmark="review/old-branch",
+            pr_number=7,
+        ),
+    )
+
+    lookups = asyncio.run(
+        status_module._discover_pull_request_lookups(
+            github_client=cast(Any, FakeGithubClient()),
+            github_repository=SimpleNamespace(owner="octo-org", repo="stacked-review"),
+            prepared_revisions=cast(Any, (prepared_revision,)),
+        )
+    )
+
+    lookup = lookups["review/old-branch"]
+    assert lookup.source == "remembered"
+    assert lookup.state == "closed"
+    assert lookup.pull_request is not None
+    assert lookup.pull_request.number == 7
+    assert lookup.pull_request.state == "merged"
 
 
 def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
