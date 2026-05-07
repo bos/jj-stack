@@ -35,3 +35,23 @@ jobs:
 
       - name: Run local verification suite
         run: ./check.py
+
+  submit-property-smoke:
+    runs-on: ubuntu-latest
+    env:
+      JJ_VERSION: v0.40.0
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.14"
+
+      - name: Install jj
+        run: echo "$(tools/install-jj-release.sh "$JJ_VERSION")" >> "$GITHUB_PATH"
+
+      - name: Run submit property smoke scenarios
+        run: tests/run_submit_property_scenarios.py 8 -n auto

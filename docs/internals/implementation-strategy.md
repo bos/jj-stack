@@ -343,6 +343,10 @@ The runner reuses the fake GitHub integration harness, generates deterministic s
 scenarios, and runs them through pytest-xdist so the work can spread across available
 cores.
 
+CI runs a small submit-property smoke budget on one Linux/jj-version combination so the
+generated stack-edit, cross-stack, and retry oracles cannot silently rot while keeping the
+full matrix focused on `./check.py`.
+
 The default local verification command is:
 
 ```text
