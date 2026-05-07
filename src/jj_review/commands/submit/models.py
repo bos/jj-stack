@@ -58,15 +58,6 @@ class SubmitResult:
 
 
 @dataclass(frozen=True, slots=True)
-class PullRequestSyncResult:
-    """Result of creating, reusing, or updating one pull request."""
-
-    action: PullRequestAction
-    cached_change: CachedChange | None
-    pull_request: GithubPullRequest | None
-
-
-@dataclass(frozen=True, slots=True)
 class GeneratedDescription:
     """Generated title/body pair for a pull request or stack summary."""
 
@@ -86,14 +77,6 @@ class PreparedSubmitRevision:
     push_operation: PushOperation
     remote_action: RemoteBookmarkAction
     revision: LocalRevision
-
-
-@dataclass(frozen=True, slots=True)
-class SubmittedPullRequestSync:
-    """One completed PR sync plus its saved-data update."""
-
-    cached_change: CachedChange | None
-    submitted_revision: SubmittedRevision
 
 
 @dataclass(frozen=True, slots=True)

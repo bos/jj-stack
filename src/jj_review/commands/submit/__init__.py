@@ -10,7 +10,6 @@ from .command import (
 from .models import (
     GeneratedDescription as GeneratedDescription,
     PreparedSubmitRevision as PreparedSubmitRevision,
-    PullRequestSyncResult as PullRequestSyncResult,
     SubmitResult as SubmitResult,
     SubmittedRevision as SubmittedRevision,
 )

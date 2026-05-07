@@ -4,16 +4,20 @@ from typing import cast
 
 import pytest
 
-from jj_review.commands.submit.command import (
-    _ensure_pull_request_link_is_consistent,
-    _ensure_remote_can_be_updated,
-    _preflight_atomic_remote_push_plan,
-    _preflight_conflicted_revisions,
-    _preflight_private_commits,
-    _prepare_submit_revisions,
-    _resolve_local_action,
+from jj_review.commands.submit.inputs import (
+    preflight_conflicted_revisions as _preflight_conflicted_revisions,
+    preflight_private_commits as _preflight_private_commits,
 )
 from jj_review.commands.submit.models import PreparedSubmitRevision, PushOperation
+from jj_review.commands.submit.pull_requests import (
+    _ensure_pull_request_link_is_consistent,
+)
+from jj_review.commands.submit.revisions import (
+    _ensure_remote_can_be_updated,
+    _preflight_atomic_remote_push_plan,
+    _resolve_local_action,
+    prepare_submit_revisions as _prepare_submit_revisions,
+)
 from jj_review.errors import CliError
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState

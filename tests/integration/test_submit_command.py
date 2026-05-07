@@ -610,11 +610,11 @@ def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     run_command(["jj", "rebase", "-r", old_bottom_change_id, "-A", old_top_change_id], repo)
     reordered_stack = JjClient(repo).discover_review_stack()
 
-    from jj_review.commands.submit import command as submit_command
+    from jj_review.commands.submit import auto_close as submit_auto_close
 
     monkeypatch.setattr(
-        submit_command,
-        "_predict_pull_requests_auto_closed_by_push",
+        submit_auto_close,
+        "predict_pull_requests_auto_closed_by_push",
         lambda **_kwargs: (),
     )
 
