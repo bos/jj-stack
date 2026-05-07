@@ -626,6 +626,51 @@ def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     assert fake_repo.pull_requests[2].merged_at is not None
 
 
+def test_submit_post_flight_check_catches_vanished_pull_request(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A PR open at start but no longer reported by GitHub at end fails closed."""
+
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(["jj", "describe", "-m", "feature 2 updated"], repo)
+
+    original_get_pull_requests_by_numbers = GithubClient.get_pull_requests_by_numbers
+
+    async def get_pull_requests_by_numbers_with_vanish(
+        self, owner, repo, *, pull_numbers
+    ):
+        result = await original_get_pull_requests_by_numbers(
+            self, owner, repo, pull_numbers=pull_numbers
+        )
+        if 2 in result:
+            result[2] = None
+        return result
+
+    monkeypatch.setattr(
+        GithubClient,
+        "get_pull_requests_by_numbers",
+        get_pull_requests_by_numbers_with_vanish,
+    )
+
+    assert run_main(repo, config_path, "submit") != 0
+    captured = capsys.readouterr()
+
+    assert (
+        "Pull request(s) #2 were open at the start of this submit but GitHub "
+        "no longer reports them"
+    ) in captured.err
+    assert "deleted or transferred" in captured.err
+
+
 def test_submit_uses_configured_bookmark_prefix(
     tmp_path: Path,
     monkeypatch,

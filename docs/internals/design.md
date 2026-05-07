@@ -379,11 +379,13 @@ reviews.
 
 After all PR mutations and stack-comment work succeed, `submit` refetches the GitHub
 state of every PR that was open when the run began and fails the command if any of them
-are closed by the end. `submit` itself never closes a PR on purpose, so an open→closed
-transition is unambiguous evidence that GitHub's reachability-based auto-close fired in
-a way the pre-push predictor did not anticipate. The check is detection, not repair: it
-turns silent data loss into a loud error naming the affected PRs so the operator can
-reopen them on GitHub. Defense-in-depth for the predictor, not a substitute.
+are no longer open by the end. `submit` itself never closes or removes a PR on purpose,
+so an open→closed transition is unambiguous evidence that GitHub's reachability-based
+auto-close fired in a way the pre-push predictor did not anticipate, and an open→missing
+transition means the PR was deleted or transferred during the run. The check is
+detection, not repair: it turns silent data loss into a loud error naming the affected
+PRs so the operator can reopen or restore them on GitHub. Defense-in-depth for the
+predictor, not a substitute.
 
 For a stack with exactly one change, `submit` behaves like a plain PR-submit flow: no
 stack helper invocation, no navigation or overview comments, and any older nav/overview
@@ -918,7 +920,7 @@ one before merging.
   branch, and the normal post-push PR sync restores the final stacked base. As a
   defense-in-depth backstop for cases the predictor cannot model, `submit` refetches
   PR states at the end of the run and raises a loud error naming any PR that
-  transitioned from open to closed during this submit.
+  transitioned from open to closed or to missing during this submit.
 
 - **Deletion of a remote review branch** (`jj git push --delete`, via
   `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the

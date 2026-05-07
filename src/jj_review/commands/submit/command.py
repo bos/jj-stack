@@ -1415,13 +1415,14 @@ async def _verify_no_unexpected_pull_request_closures(
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
 ) -> None:
-    """Detect open→closed transitions that happened during submit and raise loudly.
+    """Detect open→closed and open→missing transitions and raise loudly.
 
     `submit` never closes pull requests on purpose. Any PR that was open at the
-    start of this run and is closed by the end means a GitHub destructive default
-    fired in a way the pre-push predictor did not anticipate (typically the
-    head-contained-in-base auto-close). Surface it loudly rather than persist
-    state that hides the loss.
+    start of this run and is no longer open by the end means a GitHub destructive
+    default fired in a way the pre-push predictor did not anticipate (typically
+    the head-contained-in-base auto-close) or the PR vanished entirely (deleted
+    or transferred). Surface either case loudly rather than persist state that
+    hides the loss.
     """
 
     initially_open_numbers = sorted(
@@ -1445,24 +1446,42 @@ async def _verify_no_unexpected_pull_request_closures(
         ) from error
 
     closed_numbers: list[int] = []
+    missing_numbers: list[int] = []
     for number in initially_open_numbers:
         pull_request = refetched.get(number)
         if pull_request is None:
+            missing_numbers.append(number)
             continue
         if pull_request.state != "open":
             closed_numbers.append(number)
-    if not closed_numbers:
+    if not closed_numbers and not missing_numbers:
         return
 
-    rendered_numbers = ", ".join(f"#{number}" for number in closed_numbers)
-    raise CliError(
-        t"Pull request(s) {rendered_numbers} were open at the start of this submit "
-        t"but are closed by the end. GitHub closes a pull request automatically when "
-        t"its head commit becomes reachable from the base branch during a push. "
-        t"Reopen those pull requests on GitHub now to keep their existing reviews — "
-        t"once reopened, rerunning {ui.cmd('jj-review submit')} is safe and will "
-        t"restore the stacked bases."
+    message_parts: list[ui.Message] = []
+    if closed_numbers:
+        closed_rendered = ", ".join(f"#{number}" for number in closed_numbers)
+        message_parts.append(
+            t"Pull request(s) {closed_rendered} were open at the start of this submit "
+            t"but are closed by the end. GitHub closes a pull request automatically "
+            t"when its head commit becomes reachable from the base branch during a "
+            t"push. Reopen those pull requests on GitHub now to keep their existing "
+            t"reviews."
+        )
+    if missing_numbers:
+        missing_rendered = ", ".join(f"#{number}" for number in missing_numbers)
+        if message_parts:
+            message_parts.append(" ")
+        message_parts.append(
+            t"Pull request(s) {missing_rendered} were open at the start of this "
+            t"submit but GitHub no longer reports them. Inspect those pull requests "
+            t"on GitHub to see whether they were deleted or transferred."
+        )
+    message_parts.append(" ")
+    message_parts.append(
+        t"Once the affected pull requests are restored, rerunning "
+        t"{ui.cmd('jj-review submit')} is safe and will restore the stacked bases."
     )
+    raise CliError(tuple(message_parts))
 
 
 async def _sync_pull_request_task(
