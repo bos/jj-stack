@@ -425,35 +425,22 @@ class JjClient:
         self,
         pairs: Sequence[tuple[str, str]],
     ) -> set[str]:
-        """Return subject commit IDs from `pairs` that are ancestors of their target.
+        """Return subject commit IDs from `pairs` that are ancestors of any paired target.
 
-        For each `(subject, target)` pair, the subject appears in the result iff
-        `subject` is reachable from `target` (i.e., the subject is in `::target`).
-        Equal commit IDs count as ancestors. The check runs as one `jj log`
-        invocation regardless of pair count: each pair becomes one term in a unioned
-        revset of the form `(subject_i & ::target_i)`, and a subject's commit_id
-        appears in the output iff its own paired target contains it. Repeated pairs
-        are deduped; a subject paired with two different targets is a caller bug
-        and raises `ValueError` rather than silently picking one.
+        Each `(subject, target)` pair becomes one term in a unioned revset of the
+        form `(subject_i & ::target_i)`, so the whole check runs as one `jj log`
+        invocation regardless of pair count. A subject's commit_id appears in the
+        result iff at least one of its paired targets contains it. Equal commit
+        IDs count as ancestors. Repeated pairs are deduped.
         """
 
-        deduped: dict[str, str] = {}
-        for subject, target in pairs:
-            existing = deduped.get(subject)
-            if existing is None:
-                deduped[subject] = target
-                continue
-            if existing != target:
-                raise ValueError(
-                    "query_paired_ancestor_membership received conflicting targets for "
-                    f"subject {subject!r}: {existing!r} and {target!r}"
-                )
-        if not deduped:
+        deduped_pairs = tuple(dict.fromkeys(pairs))
+        if not deduped_pairs:
             return set()
 
         terms = " | ".join(
             f"({_quote_revset_symbol(subject)} & ::{_quote_revset_symbol(target)})"
-            for subject, target in deduped.items()
+            for subject, target in deduped_pairs
         )
         revisions = self._query_revisions(terms)
         return {revision.commit_id for revision in revisions}

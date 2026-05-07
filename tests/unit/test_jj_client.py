@@ -875,16 +875,6 @@ def test_query_paired_ancestor_membership_dedupes_repeated_pairs() -> None:
     assert revset.count("'cand-a'") == 1
 
 
-def test_query_paired_ancestor_membership_rejects_conflicting_targets() -> None:
-    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        raise AssertionError("jj should not be invoked when input is malformed")
-
-    with pytest.raises(ValueError, match="conflicting targets"):
-        JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
-            (("cand-a", "base-1"), ("cand-a", "base-2")),
-        )
-
-
 def test_query_paired_ancestor_membership_includes_target_itself_for_self_pair() -> None:
     target_revision = _revision_line(
         commit_id="target", parents=["trunk"], change_id="t-change", description="t\n"
