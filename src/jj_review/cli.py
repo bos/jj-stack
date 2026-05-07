@@ -99,6 +99,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[_HelpCommand, ...]], ...] = (
     (
         "Advanced repair",
         (
+            _HelpCommand("restart", commands.restart.HELP, hidden=True),
             _HelpCommand("relink", commands.relink.HELP, hidden=True),
             _HelpCommand("unlink", commands.unlink.HELP, hidden=True),
         ),
@@ -194,6 +195,7 @@ def build_parser() -> ArgumentParser:
             publish=args.publish,
             re_request=args.re_request,
             repository=args.repository,
+            restart=args.restart,
             reviewers=args.reviewers,
             revset=args.revset,
             team_reviewers=args.team_reviewers,
@@ -280,6 +282,12 @@ def build_parser() -> ArgumentParser:
             "pull request approved it or requested changes"
         ),
     )
+    _add_help_argument(
+        submit_parser,
+        "--restart",
+        action="store_true",
+        help="Forget previous PR tracking for selected changes and create fresh PRs",
+    )
     status_parser = _add_revision_command(
         subparsers,
         command="status",
@@ -355,6 +363,26 @@ def build_parser() -> ArgumentParser:
             repository=args.repository,
             revset=args.revset,
         ),
+    )
+    restart_parser = _add_revision_command(
+        subparsers,
+        command="restart",
+        help_text=_normalized_help_text(commands.restart.HELP),
+        description_text=commands.restart.__doc__ or "",
+        handler=lambda args: commands.restart.restart(
+            cli_args=_global_cli_args(args),
+            debug=args.debug,
+            dry_run=args.dry_run,
+            repository=args.repository,
+            revset=args.revset,
+        ),
+        revset_nargs=None,
+        revset_help="Stack head to prepare for fresh pull requests",
+    )
+    restart_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be reset without changing tracking data",
     )
     _add_revision_command(
         subparsers,

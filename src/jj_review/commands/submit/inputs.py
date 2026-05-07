@@ -16,6 +16,7 @@ from jj_review.review.bookmarks import (
     ensure_unique_bookmarks,
     match_bookmarks_for_revisions,
 )
+from jj_review.review.restart import restart_state_for_stack
 from jj_review.state.store import ReviewStateStore
 
 from .descriptions import resolve_generated_descriptions
@@ -30,6 +31,7 @@ def prepare_submit_inputs(
     dry_run: bool,
     jj_client: JjClient,
     on_prepared: Callable[[str, str], None] | None,
+    restart: bool,
     revset: str | None,
     state_store: ReviewStateStore,
     use_bookmarks: tuple[str, ...],
@@ -52,6 +54,18 @@ def prepare_submit_inputs(
         )
     state = state_store.load()
     bookmark_states = client.list_bookmark_states()
+    restarted_change_ids: frozenset[str] = frozenset()
+    if restart:
+        restart_result = restart_state_for_stack(
+            bookmark_states=bookmark_states,
+            config=config,
+            stack=stack,
+            state=state,
+        )
+        state = restart_result.state
+        restarted_change_ids = frozenset(
+            restarted.change_id for restarted in restart_result.changed
+        )
     matched_bookmarks = match_bookmarks_for_revisions(
         bookmark_states=bookmark_states,
         patterns=use_bookmarks,
@@ -89,6 +103,7 @@ def prepare_submit_inputs(
         generated_pull_request_descriptions=generated_pull_request_descriptions,
         generated_stack_description=generated_stack_description,
         remote=remote,
+        restarted_change_ids=restarted_change_ids,
         stack=stack,
         state=state,
     )

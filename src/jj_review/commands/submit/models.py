@@ -112,6 +112,7 @@ class PreparedSubmitInputs:
     generated_pull_request_descriptions: dict[str, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
     remote: GitRemote
+    restarted_change_ids: frozenset[str]
     stack: LocalStack
     state: ReviewState
 

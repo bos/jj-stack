@@ -22,6 +22,7 @@ from .submit_command_helpers import run_main
         ("doctor", ()),
         ("land", ()),
         ("close", ()),
+        ("restart", ("@",)),
         ("unlink", ("@",)),
     ],
 )

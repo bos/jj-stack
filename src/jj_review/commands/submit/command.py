@@ -22,7 +22,7 @@ import asyncio
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from jj_review import console
+from jj_review import console, ui
 from jj_review.bootstrap import bootstrap_context
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_review.config import RepoConfig
@@ -82,6 +82,7 @@ def submit(
     publish: bool,
     re_request: bool,
     repository: Path | None,
+    restart: bool,
     reviewers: Sequence[str] | None,
     revset: str | None,
     team_reviewers: Sequence[str] | None,
@@ -135,6 +136,7 @@ def submit(
             labels=label_list,
             on_prepared=emit_prepared,
             re_request=re_request,
+            restart=restart,
             revset=selected_revset,
             reviewers=reviewer_list,
             state_store=state_store,
@@ -266,6 +268,44 @@ def _pending_pull_request_syncs(
     )
 
 
+def _reject_restart_pull_request_collisions(
+    *,
+    discovered_pull_requests: dict[str, GithubPullRequest | None],
+    prepared_revisions: tuple[PreparedSubmitRevision, ...],
+    restarted_change_ids: frozenset[str],
+) -> None:
+    """Fail before push if a restart-selected branch already has an open PR."""
+
+    if not restarted_change_ids:
+        return
+    collisions: list[tuple[PreparedSubmitRevision, GithubPullRequest]] = []
+    for prepared_revision in prepared_revisions:
+        if prepared_revision.change_id not in restarted_change_ids:
+            continue
+        pull_request = discovered_pull_requests.get(prepared_revision.bookmark)
+        if pull_request is not None:
+            collisions.append((prepared_revision, pull_request))
+    if not collisions:
+        return
+    if len(collisions) == 1:
+        prepared_revision, pull_request = collisions[0]
+        raise CliError(
+            t"Cannot restart {ui.change_id(prepared_revision.change_id)} with "
+            t"{ui.bookmark(prepared_revision.bookmark)} because GitHub already reports "
+            t"PR #{pull_request.number} for that branch.",
+            hint=t"Run {ui.cmd('jj-review status --fetch')} and retry with current state.",
+        )
+    details = ui.join(
+        lambda item: t"{ui.change_id(item[0].change_id)} -> PR #{item[1].number}",
+        collisions,
+    )
+    raise CliError(
+        t"Cannot restart with fresh PRs because GitHub already reports PRs for "
+        t"the selected replacement branches: {details}.",
+        hint=t"Run {ui.cmd('jj-review status --fetch')} and retry with current state.",
+    )
+
+
 async def _run_submit_async(
     *,
     config: RepoConfig,
@@ -278,6 +318,7 @@ async def _run_submit_async(
     re_request: bool,
     revset: str | None,
     reviewers: list[str] | None,
+    restart: bool,
     state_store: ReviewStateStore,
     team_reviewers: list[str] | None,
     use_bookmarks: list[str] | None,
@@ -290,6 +331,7 @@ async def _run_submit_async(
             dry_run=dry_run,
             jj_client=jj_client,
             on_prepared=on_prepared,
+            restart=restart,
             revset=revset,
             state_store=state_store,
             use_bookmarks=tuple(resolved_use_bookmarks),
@@ -343,17 +385,18 @@ async def _run_submit_async(
         state_store=state_store,
     )
     if dry_run:
-        local_only_dry_run = _build_local_only_dry_run_result(
-            client=client,
-            bookmark_result=bookmark_result,
-            bookmark_states=bookmark_states,
-            prepared_revisions=prepared_revisions,
-            remote=remote,
-            remote_name=remote.name,
-            stack=stack,
-        )
-        if local_only_dry_run is not None:
-            return local_only_dry_run
+        if not prepared_inputs.restarted_change_ids:
+            local_only_dry_run = _build_local_only_dry_run_result(
+                client=client,
+                bookmark_result=bookmark_result,
+                bookmark_states=bookmark_states,
+                prepared_revisions=prepared_revisions,
+                remote=remote,
+                remote_name=remote.name,
+                stack=stack,
+            )
+            if local_only_dry_run is not None:
+                return local_only_dry_run
 
     succeeded = False
     submitted_revisions: tuple[SubmittedRevision, ...] = ()
@@ -391,6 +434,11 @@ async def _run_submit_async(
                 generated_descriptions=prepared_inputs.generated_pull_request_descriptions,
                 prepared_revisions=prepared_revisions,
                 trunk_branch=trunk_branch,
+            )
+            _reject_restart_pull_request_collisions(
+                discovered_pull_requests=discovered_pull_requests,
+                prepared_revisions=prepared_revisions,
+                restarted_change_ids=prepared_inputs.restarted_change_ids,
             )
             if not dry_run and any(
                 revision.remote_action == "pushed" for revision in prepared_revisions
