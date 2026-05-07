@@ -18,6 +18,24 @@ The remaining follow-up in this area is extending abort to cover partial land
 retraction and `close` reversal (reopening closed PRs), both of which require
 GitHub access and careful ordering of retraction steps.
 
+## Start-Fresh Review Repair
+
+_Benefit: medium — important when a previous jj-review bug, manual GitHub
+operation, or branch cleanup leaves local changes attached to closed or unusable
+PRs._
+
+`status` can now preserve and show remembered PR identity even when the saved
+review branch no longer has a matching PR, and `restart` gives users an explicit
+local repair command that clears stale PR identity, avoids reusing the old review
+branches, and leaves the next `submit` to create fresh PRs.
+The normal user-facing flow is `submit --restart`, which computes that reset in
+memory and persists only the replacement PR identity after submit succeeds.
+
+Possible follow-up work:
+
+- consider whether status advisories should suggest a narrower per-change restart when
+  only one change in a selected stack has stale PR tracking
+
 ## Ancestor Merged on GitHub
 
 _Benefit: small — remaining edge cases are narrow and infrequent._

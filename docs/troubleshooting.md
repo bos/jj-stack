@@ -65,6 +65,27 @@ jj-review status --fetch
 it is the safer read-only refresh when a PR link, branch state, or merged-base
 relationship may have changed elsewhere.
 
+If a change shows `submitted, no PR found for branch`, `jj-review` has tracking
+for a previous submit, but GitHub did not report a PR for the current review
+branch. Run `jj-review status --fetch <change>` first. If the PR is still open
+under a different branch or tracking record, use `jj-review relink <pr> <change>`.
+If no open PR exists and you want fresh PRs, run:
+
+```bash
+jj-review submit --restart <stack-head>
+```
+
+If GitHub reports a remembered PR as closed or merged, decide what outcome you
+want before choosing a command:
+
+- To keep reviewing the same PR, reopen it on GitHub and rerun `jj-review
+  status --fetch <change>`.
+- To attach a different open PR to the change, use `jj-review relink <pr>
+  <change>`.
+- To abandon the old review and make fresh PRs, run `jj-review submit
+  --restart <stack-head>`. `relink` is not the right command for that case
+  because it attaches an existing open PR.
+
 ## Lower changes merged elsewhere and the rest of your stack needs rebasing
 
 Possible causes:

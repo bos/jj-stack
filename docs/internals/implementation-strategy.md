@@ -229,6 +229,13 @@ Unknown saved PR state is treated as open only when the record has a saved PR nu
 Records without a PR number are not actionable orphan PRs and can be pruned by cleanup.
 Remote branch cleanup still requires a saved PR number, because without one the tool
 cannot prove whether an open PR still uses the branch.
+When `status` cannot find a PR by the remembered review branch, it falls back to
+the saved PR number before rendering the result. A missing branch lookup does not
+clear the saved PR identity; read-only status preserves that recovery evidence so
+the user can choose between reopening, relinking, or running `submit --restart` to
+create fresh PRs. The standalone `restart` command and `submit --restart` share the
+same state-reset planner, but `submit --restart` keeps the reset in memory until submit
+successfully creates replacement PR identity.
 Repo-scoped discovered stacks carry both their immediate base parent and the resolved
 `trunk()` revision, plus whether the base parent is on the trunk lineage. Topology-pointer
 checks compare the bottom tracked change against that actual DAG parent when the parent
@@ -496,6 +503,8 @@ We distinguish between:
 When possible, diagnostics point to the exact recovery action:
 
 - `jj review status --fetch`
+- `jj review submit --restart`
+- `jj review restart`
 - `jj review relink`
 - `jj review close`
 - `jj rebase`

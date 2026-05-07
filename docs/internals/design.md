@@ -411,11 +411,18 @@ The recovery surface is explicit and narrow:
   existing PR (and its same-repo head branch) to a specific `jj` change. It pins the
   branch locally and saves the PR identity so a later `submit` updates the relinked
   review rather than opening a replacement.
+- `jj review restart <revset>` is a repair command for abandoning stale or unusable
+  PR tracking on a selected stack. It keeps the `jj` changes, clears their previous PR
+  identity, assigns fresh managed review bookmark names, and leaves the next `submit`
+  to create replacement PRs explicitly.
+- `jj review submit --restart <revset>` is the user-facing one-step version of that
+  repair. It computes the same fresh tracking state in memory, creates replacement
+  PRs, and only persists the new PR identity as part of the successful submit path.
 
 Selector defaults are listed once under "CLI shape" below. The principle: lifecycle
-commands default to the stack headed by `@-`; repair commands (`relink`, `unlink`)
-require an explicit `<revset>`; `@` is always explicit user intent and is never selected
-by an omitted argument.
+commands default to the stack headed by `@-`; repair commands (`restart`, `relink`,
+`unlink`) require an explicit `<revset>`; `@` is always explicit user intent and is
+never selected by an omitted argument.
 
 ### `status`
 
@@ -477,16 +484,20 @@ When GitHub data is available, `status`:
   PR is absent. Because the output is incomplete, `status` exits non-zero
 - if it finds an ambiguous PR match, surfaces that inline and exits non-zero rather
   than silently calling the stack healthy
-- if a saved PR link existed but GitHub reports no PR for that branch, surfaces that
-  stale link inline and exits non-zero before clearing it
-- when the link is stale or ambiguous, prints a short repair advisory pointing at
-  `status --fetch` and `relink`
+- if a saved PR link existed but GitHub reports no PR for that branch, looks up the
+  saved PR number before rendering the result; if GitHub still cannot find a PR, it
+  surfaces the stale link inline and exits non-zero without clearing the saved PR
+  identity
+- when the link is stale, closed, or ambiguous, prints a short repair advisory that
+  distinguishes reopening the same PR, relinking an open replacement, and running
+  `submit --restart` to create fresh PRs
 - when a saved PR link includes a last-known PR state, surfaces that as saved data
   rather than implying it is live
 - does not inspect managed stack-summary comments. Those comments are derived review
   artifacts, and the commands that create or delete them own their validation.
-- on a successful live run, refreshes the saved link bidirectionally — including
-  clearing it when GitHub reports the branch has no PR
+- on a successful live run, refreshes the saved link bidirectionally when GitHub
+  reports a concrete PR; missing branch lookups preserve saved PR identity as recovery
+  evidence
 
 When `status` reports `cleanup needed`, it explains why in plain language:
 
@@ -691,6 +702,43 @@ Broader cleanup remains with `cleanup`. Unlinked records do not expire just beca
 remote PR disappeared, but `cleanup` prunes unlinked markers whose `change_id` no longer
 resolves anywhere in visible history.
 
+### `restart`
+
+`jj review restart <revset>` prepares the selected stack to be submitted as fresh PRs.
+It is for cases where the local changes should continue, but the old PR tracking should
+not: closed PRs that should not be reopened, deleted PRs, or broken branch/PR links
+left by a tool bug or manual GitHub repair.
+
+Most users should reach this behavior through `jj review submit --restart <revset>`.
+The standalone `restart` command remains the local repair primitive when the operator
+wants to inspect or stage the tracking reset separately.
+
+`restart` clears active PR identity fields for every selected stack change that has
+previous PR tracking:
+
+- `last_submitted_commit_id`
+- `last_submitted_parent_change_id`
+- `last_submitted_stack_head_change_id`
+- `pr_is_draft`
+- `pr_number`
+- `pr_url`
+- `pr_state`
+- `pr_review_decision`
+- `navigation_comment_id`
+- `overview_comment_id`
+
+It does not mark the changes as unlinked. Instead it writes fresh managed review
+bookmark names that still end with each change's short change ID, so the next
+`submit <revset>` can create replacement PRs without reusing the stale PR branches.
+`restart` is local-only: it does not close PRs, reopen PRs, delete branches, push
+bookmarks, or create replacement PRs by itself. Use `restart --dry-run <revset>` to
+inspect the planned reset first.
+
+`submit --restart` does not save that reset before GitHub work begins. If submit cannot
+create or verify the replacement PRs, the old tracking state remains available for
+inspection and recovery. It also fails before pushing if a planned replacement branch
+already has an open PR on GitHub, rather than accidentally updating that PR.
+
 ## Rewrite behavior
 
 This design behaves well under normal `jj` rewrite-heavy workflows:
@@ -778,11 +826,12 @@ The full command surface:
 
 - `jj review submit [--draft[=new|all] | --publish]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
-  [--re-request] [<revset>]`
+  [--re-request] [--restart] [<revset>]`
 - `jj review status [--fetch] [{--pull-request <pr>} | {<revset>}] ...`
 - `jj review st [--fetch] [--pull-request <pr> | <revset>]`
 - `jj review list [--fetch]`
 - `jj review ls [--fetch]`
+- `jj review restart [--dry-run] <revset>`
 - `jj review relink <pr> <revset>`
 - `jj review unlink <revset>`
 - `jj review close [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
@@ -801,9 +850,10 @@ current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `status`, `land`, `close`) plus support commands
-(`cleanup`, `import`). Repair commands (`relink`, `unlink`) and shell-integration glue
-(`completion`) stay hidden by default and only appear in `jj review help --all`. The
-`help` command itself is hidden parser glue: `jj review help` is the same as
+(`cleanup`, `import`). Repair commands (`restart`, `relink`, `unlink`) and
+shell-integration glue (`completion`) stay hidden by default and only appear in
+`jj review help --all`. The `help` command itself is hidden parser glue: `jj review help`
+is the same as
 `jj review --help`, and `jj review help <command>` is the same as
 `jj review <command> --help`. The default top-level help also keeps advanced global
 options (`--repository`, `--config`, `--config-file`, `--debug`, `--time-output`) out
@@ -821,7 +871,7 @@ Target selection is conservative:
   defaults for the current invocation only
 - `submit --re-request` re-requests users whose latest review is `APPROVED` or
   `CHANGES_REQUESTED`; pending review requests stay in place
-- `relink` and `unlink` require one explicit `<revset>`
+- `restart`, `relink`, and `unlink` require one explicit `<revset>`
 - `import` accepts at most one explicit selector flag and otherwise defaults to the
   current stack headed by `@-`
 - `status` may omit `<revset>` and inspects the current stack
