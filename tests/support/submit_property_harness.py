@@ -23,6 +23,7 @@ from .submit_property_scenarios import (
     StackEditScenario,
     StackMergeScenario,
     StackMoveScenario,
+    SubmitInvariants,
     SubmitRetryScenario,
     filename_for_label,
     initial_label,
@@ -71,10 +72,10 @@ def replay_successful_stack_edit_scenario(
         )
 
     assert tuple(live_labels) == scenario.final_live_labels
-    stack = _discover_expected_stack(
+    stack = _discover_stack_for_labels(
         repo=repo,
+        labels=scenario.final_live_labels,
         labels_to_change_ids=labels_to_change_ids,
-        scenario=scenario,
     )
     assert submit(stack.head.change_id) == 0
     discard_output()
@@ -82,9 +83,9 @@ def replay_successful_stack_edit_scenario(
     _assert_successful_submit_invariants(
         baseline=baseline,
         fake_repo=fake_repo,
+        invariants=scenario.invariants,
         labels_to_change_ids=labels_to_change_ids,
         repo=repo,
-        scenario=scenario,
         stack=stack,
         strict_base_events=False,
     )
@@ -138,22 +139,82 @@ def replay_interrupted_submit_retry_scenario(
 ) -> None:
     """Replay one failed submit and assert rerunning converges the selected stack."""
 
-    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
-    baseline: dict[str, SubmittedBaseline] | None = None
-    submit_revset: str | None = None
-
-    if scenario.failure_point == "update_pull_request":
-        assert submit(None) == 0
-        discard_output()
-        baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
-        _approve_initial_pull_requests(fake_repo, baseline)
-        _rewrite_pull_request_body(
+    if scenario.needs_initial_submit:
+        _replay_failed_resubmit(
+            discard_output=discard_output,
+            fake_repo=fake_repo,
             repo=repo,
-            label=scenario.failure_label,
-            labels_to_change_ids=labels_to_change_ids,
+            scenario=scenario,
+            submit=submit,
         )
-        submit_revset = labels_to_change_ids[initial_label(scenario.initial_size)]
-        fake_repo.pull_request_events.clear()
+    else:
+        _replay_failed_first_submit(
+            discard_output=discard_output,
+            fake_repo=fake_repo,
+            repo=repo,
+            scenario=scenario,
+            submit=submit,
+        )
+
+
+def _replay_failed_first_submit(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: SubmitRetryScenario,
+    submit: SubmitRunner,
+) -> None:
+    """The first submit failed mid-mutation; the rerun must build state from scratch."""
+
+    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
+
+    assert submit(None) != 0
+    discard_output()
+    _mark_submit_intents_dead(repo)
+
+    assert submit(None) == 0
+    discard_output()
+    assert list(_submit_intent_paths(repo)) == []
+
+    stack = _discover_stack_for_labels(
+        repo=repo,
+        labels=scenario.final_live_labels,
+        labels_to_change_ids=labels_to_change_ids,
+    )
+    _assert_new_submit_invariants(
+        fake_repo=fake_repo,
+        labels_to_change_ids=labels_to_change_ids,
+        repo=repo,
+        scenario=scenario,
+        stack=stack,
+    )
+    _assert_retry_metadata(fake_repo)
+
+
+def _replay_failed_resubmit(
+    *,
+    discard_output: OutputDiscarder,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: SubmitRetryScenario,
+    submit: SubmitRunner,
+) -> None:
+    """A previously-submitted stack rebuilds review identity on a faulted resubmit."""
+
+    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
+
+    assert submit(None) == 0
+    discard_output()
+    baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+    _approve_initial_pull_requests(fake_repo, baseline)
+    _rewrite_pull_request_body(
+        repo=repo,
+        label=scenario.failure_label,
+        labels_to_change_ids=labels_to_change_ids,
+    )
+    submit_revset = labels_to_change_ids[initial_label(scenario.initial_size)]
+    fake_repo.pull_request_events.clear()
 
     assert submit(submit_revset) != 0
     discard_output()
@@ -168,33 +229,15 @@ def replay_interrupted_submit_retry_scenario(
         labels=scenario.final_live_labels,
         labels_to_change_ids=labels_to_change_ids,
     )
-    if baseline is None:
-        _assert_new_submit_invariants(
-            fake_repo=fake_repo,
-            labels_to_change_ids=labels_to_change_ids,
-            repo=repo,
-            scenario=scenario,
-            stack=stack,
-        )
-    else:
-        selected_scenario = StackEditScenario(
-            final_live_labels=scenario.final_live_labels,
-            hazard_class=scenario.failure_point,
-            initial_size=scenario.initial_size,
-            name=scenario.name,
-            operations=(),
-            orphaned_labels=(),
-            rewritten_initial_labels=(scenario.failure_label,),
-        )
-        _assert_successful_submit_invariants(
-            baseline=baseline,
-            fake_repo=fake_repo,
-            labels_to_change_ids=labels_to_change_ids,
-            repo=repo,
-            scenario=selected_scenario,
-            stack=stack,
-            strict_base_events=False,
-        )
+    _assert_successful_submit_invariants(
+        baseline=baseline,
+        fake_repo=fake_repo,
+        invariants=scenario.invariants,
+        labels_to_change_ids=labels_to_change_ids,
+        repo=repo,
+        stack=stack,
+        strict_base_events=False,
+    )
     _assert_retry_metadata(fake_repo)
 
 
@@ -241,21 +284,12 @@ def replay_cross_stack_split_scenario(
     assert submit(selected_stack.head.change_id) == 0
     discard_output()
 
-    selected_scenario = StackEditScenario(
-        final_live_labels=scenario.selected_labels,
-        hazard_class=scenario.hazard_class,
-        initial_size=scenario.initial_size,
-        name=scenario.name,
-        operations=(),
-        orphaned_labels=(),
-        rewritten_initial_labels=scenario.rewritten_initial_labels,
-    )
     _assert_successful_submit_invariants(
         baseline=baseline,
         fake_repo=fake_repo,
+        invariants=scenario.invariants,
         labels_to_change_ids=labels_to_change_ids,
         repo=repo,
-        scenario=selected_scenario,
         stack=selected_stack,
         strict_base_events=False,
     )
@@ -311,21 +345,12 @@ def replay_stack_merge_scenario(
     assert submit(merged_stack.head.change_id) == 0
     discard_output()
 
-    selected_scenario = StackEditScenario(
-        final_live_labels=scenario.selected_labels,
-        hazard_class=scenario.hazard_class,
-        initial_size=scenario.initial_size,
-        name=scenario.name,
-        operations=(),
-        orphaned_labels=(),
-        rewritten_initial_labels=scenario.rewritten_initial_labels,
-    )
     _assert_successful_submit_invariants(
         baseline=baseline,
         fake_repo=fake_repo,
+        invariants=scenario.invariants,
         labels_to_change_ids=labels_to_change_ids,
         repo=repo,
-        scenario=selected_scenario,
         stack=merged_stack,
         strict_base_events=True,
     )
@@ -381,21 +406,12 @@ def replay_stack_move_scenario(
     assert submit(selected_stack.head.change_id) == 0
     discard_output()
 
-    selected_scenario = StackEditScenario(
-        final_live_labels=scenario.selected_labels,
-        hazard_class=scenario.hazard_class,
-        initial_size=scenario.initial_size,
-        name=scenario.name,
-        operations=(),
-        orphaned_labels=(),
-        rewritten_initial_labels=scenario.rewritten_initial_labels,
-    )
     _assert_successful_submit_invariants(
         baseline=baseline,
         fake_repo=fake_repo,
+        invariants=scenario.invariants,
         labels_to_change_ids=labels_to_change_ids,
         repo=repo,
-        scenario=selected_scenario,
         stack=selected_stack,
         strict_base_events=True,
     )
@@ -642,19 +658,6 @@ def _rewrite_pull_request_body(
     )
 
 
-def _discover_expected_stack(
-    *,
-    repo: Path,
-    labels_to_change_ids: dict[str, str],
-    scenario: StackEditScenario,
-):
-    return _discover_stack_for_labels(
-        repo=repo,
-        labels=scenario.final_live_labels,
-        labels_to_change_ids=labels_to_change_ids,
-    )
-
-
 def _discover_stack_for_labels(
     *,
     repo: Path,
@@ -717,41 +720,41 @@ def _assert_successful_submit_invariants(
     *,
     baseline: dict[str, SubmittedBaseline],
     fake_repo: FakeGithubRepository,
+    invariants: SubmitInvariants,
     labels_to_change_ids: dict[str, str],
     repo: Path,
-    scenario: StackEditScenario,
     stack,
     strict_base_events: bool,
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
-    revisions_by_label = dict(zip(scenario.final_live_labels, stack.revisions, strict=True))
+    revisions_by_label = dict(zip(invariants.final_live_labels, stack.revisions, strict=True))
     expected_base_by_pr_number: dict[int, str] = {}
     live_pr_numbers: set[int] = set()
     bookmarks_by_label: dict[str, str] = {}
-    stack_head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
+    stack_head_change_id = labels_to_change_ids[invariants.final_live_labels[-1]]
 
-    for index, label in enumerate(scenario.final_live_labels):
+    for index, label in enumerate(invariants.final_live_labels):
         revision = revisions_by_label[label]
         cached_change = state.changes[revision.change_id]
         bookmark = cached_change.bookmark
         pr_number = cached_change.pr_number
-        assert bookmark is not None, scenario.trace
-        assert pr_number is not None, scenario.trace
+        assert bookmark is not None, invariants.trace
+        assert pr_number is not None, invariants.trace
         bookmarks_by_label[label] = bookmark
         live_pr_numbers.add(pr_number)
         if label in baseline:
-            assert bookmark == baseline[label].bookmark, scenario.trace
-            assert pr_number == baseline[label].pr_number, scenario.trace
+            assert bookmark == baseline[label].bookmark, invariants.trace
+            assert pr_number == baseline[label].pr_number, invariants.trace
             _assert_approval_review_preserved(fake_repo, pr_number, label)
         else:
             assert pr_number not in {submitted.pr_number for submitted in baseline.values()}
 
         pull_request = fake_repo.pull_requests[pr_number]
         expected_parent_change_id = (
-            labels_to_change_ids[scenario.final_live_labels[index - 1]] if index > 0 else None
+            labels_to_change_ids[invariants.final_live_labels[index - 1]] if index > 0 else None
         )
         expected_base_ref = (
-            bookmarks_by_label[scenario.final_live_labels[index - 1]] if index > 0 else "main"
+            bookmarks_by_label[invariants.final_live_labels[index - 1]] if index > 0 else "main"
         )
         expected_base_by_pr_number[pr_number] = expected_base_ref
         assert _read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
@@ -764,7 +767,7 @@ def _assert_successful_submit_invariants(
         assert cached_change.last_submitted_parent_change_id == expected_parent_change_id
         assert cached_change.last_submitted_stack_head_change_id == stack_head_change_id
 
-    for label in scenario.orphaned_labels:
+    for label in invariants.orphaned_labels:
         submitted = baseline[label]
         cached_change = state.changes[submitted.change_id]
         pull_request = fake_repo.pull_requests[submitted.pr_number]
@@ -778,15 +781,15 @@ def _assert_successful_submit_invariants(
         assert pull_request.state == "open"
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
 
-    expected_pr_count = scenario.initial_size + sum(
-        1 for label in scenario.final_live_labels if label.startswith("i")
+    expected_pr_count = invariants.initial_size + sum(
+        1 for label in invariants.final_live_labels if label.startswith("i")
     )
     assert len(fake_repo.pull_requests) == expected_pr_count
     _assert_no_transient_damage_events(
         baseline=baseline,
         expected_base_by_pr_number=expected_base_by_pr_number,
         fake_repo=fake_repo,
-        scenario=scenario,
+        invariants=invariants,
         strict_base_events=strict_base_events,
     )
 
@@ -807,11 +810,11 @@ def _assert_no_transient_damage_events(
     baseline: dict[str, SubmittedBaseline],
     expected_base_by_pr_number: dict[int, str],
     fake_repo: FakeGithubRepository,
-    scenario: StackEditScenario,
+    invariants: SubmitInvariants,
     strict_base_events: bool,
 ) -> None:
     original_pr_numbers = {submitted.pr_number for submitted in baseline.values()}
-    orphan_pr_numbers = {baseline[label].pr_number for label in scenario.orphaned_labels}
+    orphan_pr_numbers = {baseline[label].pr_number for label in invariants.orphaned_labels}
     expected_changed_base_pr_numbers = {
         submitted.pr_number
         for submitted in baseline.values()

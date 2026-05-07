@@ -41,6 +41,22 @@ MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
 
 
 @dataclass(frozen=True, slots=True)
+class SubmitInvariants:
+    """The shared post-submit contract every replay shape asserts against.
+
+    Scenario types differ in how the final state is reached, but the success
+    invariants always read the same fields: the live labels in the selected
+    stack, the abandoned-but-orphan labels, the size of the original submitted
+    stack, and a trace string used in failure diagnostics.
+    """
+
+    final_live_labels: tuple[str, ...]
+    initial_size: int
+    orphaned_labels: tuple[str, ...]
+    trace: str
+
+
+@dataclass(frozen=True, slots=True)
 class StackEditOperation:
     """One supported local stack edit in a generated scenario."""
 
@@ -77,6 +93,15 @@ class StackEditScenario:
     @property
     def trace(self) -> str:
         return ",".join(operation.trace for operation in self.operations)
+
+    @property
+    def invariants(self) -> SubmitInvariants:
+        return SubmitInvariants(
+            final_live_labels=self.final_live_labels,
+            initial_size=self.initial_size,
+            orphaned_labels=self.orphaned_labels,
+            trace=self.trace,
+        )
 
     @property
     def canonical_key(
@@ -126,6 +151,21 @@ class SubmitRetryScenario:
         return tuple(initial_label(index) for index in range(1, self.initial_size + 1))
 
     @property
+    def needs_initial_submit(self) -> bool:
+        """Whether the fault fires on a resubmit instead of the first submit."""
+
+        return self.failure_point == "update_pull_request"
+
+    @property
+    def invariants(self) -> SubmitInvariants:
+        return SubmitInvariants(
+            final_live_labels=self.final_live_labels,
+            initial_size=self.initial_size,
+            orphaned_labels=(),
+            trace=self.trace,
+        )
+
+    @property
     def canonical_key(self) -> tuple[str, int, str]:
         return (self.failure_point, self.initial_size, self.failure_label)
 
@@ -147,6 +187,15 @@ class CrossStackSplitScenario:
     @property
     def trace(self) -> str:
         return f"move_suffix_onto:{self.source_label}:{self.target_label}"
+
+    @property
+    def invariants(self) -> SubmitInvariants:
+        return SubmitInvariants(
+            final_live_labels=self.selected_labels,
+            initial_size=self.initial_size,
+            orphaned_labels=(),
+            trace=self.trace,
+        )
 
     @property
     def canonical_key(
@@ -187,6 +236,15 @@ class StackMergeScenario:
         return f"merge_stack_onto:{self.source_label}:{self.target_label}"
 
     @property
+    def invariants(self) -> SubmitInvariants:
+        return SubmitInvariants(
+            final_live_labels=self.selected_labels,
+            initial_size=self.initial_size,
+            orphaned_labels=(),
+            trace=self.trace,
+        )
+
+    @property
     def canonical_key(
         self,
     ) -> tuple[
@@ -224,6 +282,15 @@ class StackMoveScenario:
     @property
     def trace(self) -> str:
         return f"move_change_{self.placement}:{self.source_label}:{self.target_label}"
+
+    @property
+    def invariants(self) -> SubmitInvariants:
+        return SubmitInvariants(
+            final_live_labels=self.selected_labels,
+            initial_size=self.initial_size,
+            orphaned_labels=(),
+            trace=self.trace,
+        )
 
     @property
     def canonical_key(
