@@ -48,12 +48,16 @@ from jj_review.github.stack_comments import (
 )
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.jj.client import UnsupportedStackError
-from jj_review.models.bookmarks import BookmarkState, GitRemote
+from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubIssueComment
 from jj_review.models.intent import CleanupIntent, CleanupRebaseIntent, LoadedIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
-from jj_review.review.change_status import classify_review_status_revision
+from jj_review.review.change_status import (
+    ReviewChangeStatus,
+    classify_review_change,
+    classify_review_status_revision,
+)
 from jj_review.review.intents import (
     describe_intent,
     match_cleanup_rebase_intent,
@@ -1573,6 +1577,34 @@ def _stale_change_reasons(
     return reasons
 
 
+def _classify_cleanup_change(
+    *,
+    cached_change: CachedChange,
+    remote_state: RemoteBookmarkState | None,
+) -> ReviewChangeStatus:
+    return classify_review_change(
+        cached_change=cached_change,
+        commit_id=None,
+        local="orphaned",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
+
+
+def _remote_cleanup_target(
+    remote_state: RemoteBookmarkState | None,
+    review_status: ReviewChangeStatus,
+) -> str:
+    if review_status.remote_branch in {"absent", "conflicted"}:
+        raise AssertionError("Cleanup target requires one remote bookmark target.")
+    if remote_state is None:
+        raise AssertionError("Cleanup target requires remote bookmark state.")
+    target = remote_state.target
+    if target is None:
+        raise AssertionError("Cleanup target requires an unambiguous remote target.")
+    return target
+
+
 def _plan_remote_branch_cleanup(
     *,
     cleanup_user_bookmarks: bool,
@@ -1596,7 +1628,11 @@ def _plan_remote_branch_cleanup(
         return None
 
     remote_state = bookmark_state.remote_target(remote.name)
-    if remote_state is None or not remote_state.targets:
+    review_status = _classify_cleanup_change(
+        cached_change=cached_change,
+        remote_state=remote_state,
+    )
+    if review_status.remote_branch == "absent":
         return None
 
     branch_label = f"{bookmark}@{remote.name}"
@@ -1611,7 +1647,7 @@ def _plan_remote_branch_cleanup(
                 ),
             ),
         )
-    if len(remote_state.targets) > 1:
+    if review_status.remote_branch == "conflicted":
         return RemoteBranchCleanupPlan(
             action=CleanupAction(
                 kind="remote branch",
@@ -1629,7 +1665,7 @@ def _plan_remote_branch_cleanup(
             status="planned",
             body=t"delete {ui.bookmark(branch_label)}",
         ),
-        expected_remote_target=remote_state.target,
+        expected_remote_target=_remote_cleanup_target(remote_state, review_status),
     )
 
 
@@ -1744,7 +1780,11 @@ def _should_inspect_stack_comment_cleanup(
         return False
 
     remote_state = bookmark_state.remote_target(remote.name)
-    return remote_state is None or not remote_state.targets
+    review_status = _classify_cleanup_change(
+        cached_change=cached_change,
+        remote_state=remote_state,
+    )
+    return review_status.remote_branch == "absent"
 
 
 async def _plan_stack_comment_cleanup(
