@@ -90,6 +90,7 @@ class ReviewChangeStatus:
     baseline: frozenset[BaselineFlag] = frozenset()
     pr_lookup_error: bool = False
     pr_review_decision_error: str | None = None
+    saved_review_identity: bool = False
     saved_pull_request_identity: bool = False
 
     @property
@@ -187,7 +188,24 @@ def classify_review_change(
             if pull_request_lookup is None
             else getattr(pull_request_lookup, "review_decision_error", None)
         ),
+        saved_review_identity=_has_saved_review_identity(cached_change),
         saved_pull_request_identity=_has_saved_pull_request_identity(cached_change),
+    )
+
+
+def classify_saved_review_change(
+    cached_change: CachedChange | None,
+    *,
+    local: LocalReviewState = "missing",
+) -> ReviewChangeStatus:
+    """Classify saved-only review state when live remote or PR data is not loaded."""
+
+    return classify_review_change(
+        cached_change=cached_change,
+        commit_id=None,
+        local=local,
+        pull_request_lookup=None,
+        remote_state=None,
     )
 
 
@@ -391,6 +409,10 @@ def _has_saved_pull_request_identity(cached_change: CachedChange | None) -> bool
     return cached_change is not None and (
         cached_change.pr_number is not None or cached_change.pr_url is not None
     )
+
+
+def _has_saved_review_identity(cached_change: CachedChange | None) -> bool:
+    return cached_change is not None and cached_change.has_review_identity
 
 
 def _submitted_commit_disagrees(

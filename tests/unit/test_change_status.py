@@ -63,6 +63,19 @@ def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() 
     assert status.has_stale_pull_request_link is True
 
 
+def test_classifier_keeps_saved_review_identity_broader_than_pr_identity() -> None:
+    status = classify_review_change(
+        cached_change=CachedChange(last_submitted_commit_id="commit-1"),
+        commit_id="commit-1",
+        local="present",
+        pull_request_lookup=None,
+        remote_state=None,
+    )
+
+    assert status.saved_review_identity is True
+    assert status.saved_pull_request_identity is False
+
+
 def test_classifier_keeps_untracked_remote_branch_distinct_from_current() -> None:
     untracked_status = classify_review_change(
         cached_change=CachedChange(bookmark="review/change"),

@@ -23,9 +23,13 @@ from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo, select_submit_remote
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
-from jj_review.models.review_state import ReviewState
+from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
-from jj_review.review.change_status import ReviewChangeStatus, classify_review_status_revision
+from jj_review.review.change_status import (
+    ReviewChangeStatus,
+    classify_review_status_revision,
+    classify_saved_review_change,
+)
 from jj_review.review.discovery import discover_tracked_stacks
 from jj_review.review.status import (
     PreparedRevision,
@@ -396,7 +400,7 @@ def _state_from_status(
             joined.append(fragment)
         return tuple(joined)
     if any(
-        revision.cached_change is not None and revision.cached_change.has_review_identity
+        classify_review_status_revision(revision).saved_review_identity
         for revision in revisions
     ):
         return "tracked"
@@ -569,7 +573,10 @@ def _tracked_prepared_revisions_by_bookmark(
     for item in prepared_discovered:
         for prepared_revision in item.prepared.status_revisions:
             cached_change = prepared_revision.cached_change
-            if cached_change is None or not cached_change.has_review_identity:
+            if not classify_saved_review_change(
+                cached_change,
+                local="present",
+            ).saved_review_identity:
                 continue
             prepared_revisions_by_bookmark[prepared_revision.bookmark] = prepared_revision
     return prepared_revisions_by_bookmark
@@ -595,12 +602,17 @@ def _tracked_pinned_bookmarks_for_repo_inspection(
         revision
         for revision in revisions
         if (cached := state.changes.get(revision.change_id)) is not None
-        and (cached.has_review_identity or cached.is_unlinked)
+        and _saved_change_requires_bookmark_inspection(cached)
     )
     return pinned_bookmarks_for_revisions(
         revisions=tracked_revisions,
         state=state,
     )
+
+
+def _saved_change_requires_bookmark_inspection(cached_change: CachedChange) -> bool:
+    review_status = classify_saved_review_change(cached_change, local="present")
+    return review_status.saved_review_identity or review_status.link == "unlinked"
 
 
 def _ensure_unique_repo_bookmarks(

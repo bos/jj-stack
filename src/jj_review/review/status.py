@@ -45,7 +45,10 @@ from jj_review.review.bookmarks import (
     ensure_unique_bookmarks,
     match_bookmarks_for_revisions,
 )
-from jj_review.review.change_status import classify_review_status_revision
+from jj_review.review.change_status import (
+    classify_review_status_revision,
+    classify_saved_review_change,
+)
 from jj_review.review.intents import intent_is_stale
 from jj_review.review.topology import (
     SubmittedStateDisagreement,
@@ -254,8 +257,10 @@ def prepare_status(
         )
         if remote is not None and fetch_remote_state:
             should_fetch = not fetch_only_when_tracked or any(
-                (cached := state.changes.get(revision.change_id)) is not None
-                and cached.has_review_identity
+                classify_saved_review_change(
+                    state.changes.get(revision.change_id),
+                    local="present",
+                ).saved_review_identity
                 for revision in stack.revisions
             )
             if should_fetch:
@@ -662,8 +667,10 @@ def _needs_github_inspection(
 ) -> bool:
     if discover_remote_review:
         return True
-    cached_change = prepared_revision.cached_change
-    return cached_change is not None and cached_change.has_review_identity
+    return classify_saved_review_change(
+        prepared_revision.cached_change,
+        local="present",
+    ).saved_review_identity
 
 
 def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:

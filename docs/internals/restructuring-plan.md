@@ -105,6 +105,9 @@ the diagonal cases are where bugs hide:
   `review/topology.py:SubmittedStateDisagreement` reports `commit_changed`,
   `parent_changed`, `stack_head_changed` independently. `stack_head_changed` is a
   stack-level fact and migrates to a stack view.
+- `saved_review_identity`: `bool`. The broad saved-cache predicate used by read-side
+  no-op shortcuts; it is distinct from the narrower saved PR identity used to diagnose
+  stale PR links.
 
 Rules:
 

@@ -40,10 +40,13 @@ from jj_review.models.intent import (
     RelinkIntent,
     SubmitIntent,
 )
-from jj_review.models.review_state import ReviewState
+from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
-from jj_review.review.change_status import classify_review_status_revision
+from jj_review.review.change_status import (
+    classify_review_status_revision,
+    classify_saved_review_change,
+)
 from jj_review.review.discovery import discover_connected_tracked_stacks
 from jj_review.review.intents import (
     SubmitIntentMatch,
@@ -276,7 +279,8 @@ def _stack_has_tracked_change_outside_selection(
         cached_change = state.changes.get(revision.change_id)
         if cached_change is None:
             continue
-        if cached_change.has_review_identity or cached_change.is_unlinked:
+        change_status = classify_saved_review_change(cached_change, local="present")
+        if change_status.saved_review_identity or change_status.link == "unlinked":
             return True
     return False
 
@@ -1493,8 +1497,11 @@ def _classify_revision_for_summary(
     return "unsubmitted"
 
 
-def _has_cached_review_identity(cached_change) -> bool:
-    return cached_change is not None and cached_change.has_review_identity
+def _has_cached_review_identity(cached_change: CachedChange | None) -> bool:
+    return classify_saved_review_change(
+        cached_change,
+        local="present",
+    ).saved_review_identity
 
 
 def _format_status_summary(revision, *, github_available: bool) -> str:

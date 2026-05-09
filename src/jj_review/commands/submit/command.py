@@ -38,6 +38,7 @@ from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult
+from jj_review.review.change_status import classify_saved_review_change
 from jj_review.review.intents import retire_superseded_intents
 from jj_review.review.selection import (
     parse_comma_separated_flag_values,
@@ -205,7 +206,10 @@ def _build_local_only_dry_run_result(
     revisions: list[SubmittedRevision] = []
     for prepared_revision in prepared_revisions:
         cached_change = bookmark_result.state.changes.get(prepared_revision.change_id)
-        if cached_change is not None and cached_change.has_review_identity:
+        if classify_saved_review_change(
+            cached_change,
+            local="present",
+        ).saved_review_identity:
             return None
         if prepared_revision.bookmark_source in {"discovered", "saved"}:
             return None

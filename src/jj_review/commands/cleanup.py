@@ -57,6 +57,7 @@ from jj_review.review.change_status import (
     ReviewChangeStatus,
     classify_review_change,
     classify_review_status_revision,
+    classify_saved_review_change,
 )
 from jj_review.review.intents import (
     describe_intent,
@@ -520,7 +521,7 @@ def _prepared_rebase_has_potential_work(*, prepared_status: PreparedStatus) -> b
 
     for prepared_revision in prepared_status.prepared.status_revisions:
         cached = prepared_revision.cached_change
-        if cached is not None and cached.has_review_identity:
+        if classify_saved_review_change(cached, local="present").saved_review_identity:
             return True
     return False
 

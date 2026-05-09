@@ -56,7 +56,10 @@ from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import (
     bookmark_ownership_for_source,
 )
-from jj_review.review.change_status import classify_review_status_revision
+from jj_review.review.change_status import (
+    classify_review_status_revision,
+    classify_saved_review_change,
+)
 from jj_review.review.intents import (
     close_intent_mode_relation,
     describe_intent,
@@ -366,7 +369,10 @@ def _prepare_untracked_close_fast_path(
     status_revisions: list[PreparedRevision] = []
     for revision in stack.revisions:
         cached_change = state.changes.get(revision.change_id)
-        if cached_change is not None and cached_change.has_review_identity:
+        if classify_saved_review_change(
+            cached_change,
+            local="present",
+        ).saved_review_identity:
             return None
         status_revisions.append(
             PreparedRevision(
@@ -630,7 +636,7 @@ def _inspected_close_has_no_work(
     del prepared_close  # unused; same predicate for plain and cleanup
     for revision in revisions:
         cached = revision.cached_change
-        if cached is not None and cached.has_review_identity:
+        if classify_saved_review_change(cached, local="present").saved_review_identity:
             return False
     return True
 
