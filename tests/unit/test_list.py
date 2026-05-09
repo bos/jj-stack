@@ -27,7 +27,6 @@ def _open_revision(
         SimpleNamespace(
             cached_change=CachedChange(pr_number=7, pr_state="open"),
             commit_id="commit-open",
-            has_merged_pull_request=lambda: False,
             link_state="active",
             local_divergent=False,
             pull_request_lookup=SimpleNamespace(
@@ -52,7 +51,6 @@ def _missing_revision() -> ReviewStatusRevision:
                 pr_url="https://example.test/pr/7",
             ),
             commit_id="commit-missing",
-            has_merged_pull_request=lambda: False,
             link_state="active",
             local_divergent=False,
             pull_request_lookup=SimpleNamespace(

@@ -122,12 +122,6 @@ class ReviewStatusRevision:
             return None
         return pull_request.base.ref
 
-    def has_merged_pull_request(self) -> bool:
-        return classify_review_status_revision(self).pr_lifecycle == "merged"
-
-    def has_closed_unmerged_pull_request(self) -> bool:
-        return classify_review_status_revision(self).pr_lifecycle == "closed"
-
 
 @dataclass(frozen=True, slots=True)
 class StatusResult:

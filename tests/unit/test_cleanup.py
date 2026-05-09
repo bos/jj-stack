@@ -142,8 +142,6 @@ def _status_revision(
     return SimpleNamespace(
         cached_change=None,
         change_id=change_id,
-        has_closed_unmerged_pull_request=lambda: pull_request_state == "closed",
-        has_merged_pull_request=lambda: pull_request_state == "merged",
         link_state="active",
         local_divergent=False,
         pull_request_lookup=SimpleNamespace(

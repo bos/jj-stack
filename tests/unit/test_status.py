@@ -29,7 +29,6 @@ def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> 
     merged_revision = SimpleNamespace(
         cached_change=None,
         change_id="abcdefghijkl",
-        has_merged_pull_request=lambda: True,
         link_state="active",
         local_divergent=False,
         pull_request_lookup=SimpleNamespace(
@@ -105,7 +104,6 @@ def test_status_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
     revision = SimpleNamespace(
         cached_change=None,
         change_id="loqvlqrqabcdefghijkl",
-        has_merged_pull_request=lambda: False,
         link_state="active",
         local_divergent=False,
         pull_request_lookup=SimpleNamespace(
@@ -146,7 +144,6 @@ def test_status_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
             pr_number=42,
         ),
         change_id="abcdefgh1234",
-        has_merged_pull_request=lambda: False,
         link_state="active",
         local_divergent=False,
         pull_request_lookup=SimpleNamespace(
