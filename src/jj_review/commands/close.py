@@ -56,6 +56,7 @@ from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import (
     bookmark_ownership_for_source,
 )
+from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.intents import (
     close_intent_mode_relation,
     describe_intent,
@@ -861,9 +862,10 @@ async def _process_close_revision(
     revision,
 ) -> bool:
     lookup = revision.pull_request_lookup
-    if lookup is None:
+    change_status = classify_review_status_revision(revision)
+    if lookup is None and not change_status.has_pull_request_lookup_failure:
         return False
-    if lookup.state in {"ambiguous", "error"}:
+    if change_status.pr_lifecycle == "ambiguous" or change_status.has_pull_request_lookup_failure:
         record_action(
             CloseAction(
                 kind="close",
@@ -875,7 +877,7 @@ async def _process_close_revision(
 
     cached_change = revision.cached_change or current_state.changes.get(revision.change_id)
     revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
-    if lookup.state == "missing":
+    if change_status.pr_lifecycle == "missing":
         return await _process_missing_close_revision(
             cached_change=cached_change,
             commit_id=commit_id,
@@ -887,6 +889,9 @@ async def _process_close_revision(
             revision=revision,
             revision_label=revision_label,
         )
+
+    if lookup is None:
+        return False
 
     if cached_change is None:
         if lookup.pull_request is None:
@@ -912,7 +917,7 @@ async def _process_close_revision(
                 else None
             ),
         )
-    if lookup.state == "open" and lookup.pull_request is not None:
+    if change_status.pr_lifecycle == "open" and lookup.pull_request is not None:
         await _process_open_close_revision(
             cached_change=cached_change,
             commit_id=commit_id,
@@ -926,7 +931,7 @@ async def _process_close_revision(
             revision_label=revision_label,
         )
         return False
-    if lookup.state != "closed":
+    if change_status.pr_lifecycle not in {"closed", "merged"}:
         return False
 
     await _process_closed_close_revision(
@@ -1065,7 +1070,7 @@ async def _process_closed_close_revision(
         if (
             lookup is not None
             and lookup.pull_request is not None
-            and lookup.pull_request.merged_at is not None
+            and classify_review_status_revision(revision).pr_lifecycle == "merged"
         )
         else "closed"
     )
