@@ -91,6 +91,10 @@ the diagonal cases are where bugs hide:
   (`models/review_state.py:LinkState`). PR-lookup ambiguity is independent and lives
   on the PR axes.
 - `remote_branch`: `absent` / `current` / `drifted` / `conflicted` / `untracked`.
+- `remote_branch_matches_commit`: `bool | None`. Only meaningful for a single observed
+  remote target; lets submit preserve the distinction between an untracked branch that
+  is already at the desired commit and one that must be updated through the fallback
+  Git remote path.
 - `pr_lifecycle`: `none` / `open` / `closed` / `merged` / `missing` / `ambiguous`.
 - `pr_draft`: `bool | None`. Only meaningful when `pr_lifecycle == open`.
 - `pr_review_decision`: `none` / `approved` / `changes_requested` / `commented` /

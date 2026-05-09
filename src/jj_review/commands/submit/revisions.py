@@ -9,6 +9,7 @@ from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkS
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult, BookmarkSource
+from jj_review.review.change_status import ReviewChangeStatus, classify_review_change
 
 from .models import (
     LocalBookmarkAction,
@@ -62,7 +63,13 @@ def prepare_submit_revisions(
             bookmark_state.local_targets,
             revision.commit_id,
         )
+        cached_change = bookmark_result.state.changes.get(revision.change_id)
         remote_state = bookmark_state.remote_target(remote.name)
+        review_status = _classify_submit_change(
+            cached_change=cached_change,
+            desired_target=revision.commit_id,
+            remote_state=remote_state,
+        )
         _ensure_remote_can_be_updated(
             bookmark=resolution.bookmark,
             bookmark_source=resolution.source,
@@ -71,29 +78,14 @@ def prepare_submit_revisions(
             desired_target=revision.commit_id,
             remote=remote.name,
             remote_state=remote_state,
+            review_status=review_status,
             state=bookmark_result.state,
         )
 
-        expected_remote_target: str | None = None
-        if remote_state is not None and remote_state.target == revision.commit_id:
-            push_operation: PushOperation = "up_to_date"
-            remote_action: RemoteBookmarkAction = "up to date"
-        elif (
-            remote_state is not None
-            and not remote_state.is_tracked
-            and len(remote_state.targets) == 1
-            and remote_state.target != revision.commit_id
-        ):
-            if remote_state is None:
-                raise AssertionError("Checked remote bookmark state must exist.")
-            expected_remote_target = remote_state.target
-            if expected_remote_target is None:
-                raise AssertionError("Checked remote target must be unambiguous.")
-            push_operation = "git_update"
-            remote_action = "pushed"
-        else:
-            push_operation = "batch"
-            remote_action = "pushed"
+        push_operation, remote_action, expected_remote_target = _remote_push_plan(
+            remote_state=remote_state,
+            review_status=review_status,
+        )
 
         prepared_revision = PreparedSubmitRevision(
             bookmark=resolution.bookmark,
@@ -131,6 +123,42 @@ def prepare_submit_revisions(
             )
 
     return prepared
+
+
+def _classify_submit_change(
+    *,
+    cached_change: CachedChange | None,
+    desired_target: str | None,
+    remote_state: RemoteBookmarkState | None,
+) -> ReviewChangeStatus:
+    return classify_review_change(
+        cached_change=cached_change,
+        commit_id=desired_target,
+        local="present",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
+
+
+def _remote_push_plan(
+    *,
+    remote_state: RemoteBookmarkState | None,
+    review_status: ReviewChangeStatus,
+) -> tuple[PushOperation, RemoteBookmarkAction, str | None]:
+    if review_status.remote_branch_matches_commit is True:
+        return "up_to_date", "up to date", None
+    if review_status.remote_branch == "untracked":
+        return "git_update", "pushed", _single_remote_target(remote_state)
+    return "batch", "pushed", None
+
+
+def _single_remote_target(remote_state: RemoteBookmarkState | None) -> str:
+    if remote_state is None or len(remote_state.targets) != 1:
+        raise AssertionError("Checked remote target must be unambiguous.")
+    target = remote_state.target
+    if target is None:
+        raise AssertionError("Checked remote target must exist.")
+    return target
 
 
 def _preflight_atomic_remote_push_plan(
@@ -227,9 +255,15 @@ def _cached_change_has_saved_remote_target(
     cached_change: CachedChange | None,
     bookmark: str,
 ) -> bool:
+    if cached_change is None:
+        return False
+    review_status = _classify_submit_change(
+        cached_change=cached_change,
+        desired_target=None,
+        remote_state=None,
+    )
     return (
-        cached_change is not None
-        and not cached_change.is_unlinked
+        review_status.link == "active"
         and cached_change.bookmark == bookmark
         and cached_change.last_submitted_commit_id is not None
     )
@@ -339,15 +373,22 @@ def _ensure_remote_can_be_updated(
     remote: str,
     remote_state: RemoteBookmarkState | None,
     state: ReviewState,
+    review_status: ReviewChangeStatus | None = None,
 ) -> None:
-    if remote_state is None or not remote_state.targets:
+    if review_status is None:
+        review_status = _classify_submit_change(
+            cached_change=state.changes.get(change_id),
+            desired_target=desired_target,
+            remote_state=remote_state,
+        )
+    if review_status.remote_branch == "absent":
         return
-    if len(remote_state.targets) > 1:
+    if review_status.remote_branch == "conflicted":
         raise CliError(
             t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} is conflicted. "
             t"Resolve it with {ui.cmd('jj git fetch')} and retry."
         )
-    if remote_state.target == desired_target:
+    if review_status.remote_branch_matches_commit is True:
         return
     if _bookmark_link_is_proven(
         bookmark=bookmark,
@@ -380,9 +421,15 @@ def _bookmark_link_is_proven(
     if bookmark_source != "saved":
         return False
     cached_change = state.changes.get(change_id)
+    if cached_change is None:
+        return False
+    review_status = _classify_submit_change(
+        cached_change=cached_change,
+        desired_target=None,
+        remote_state=None,
+    )
     return (
-        cached_change is not None
-        and not cached_change.is_unlinked
+        review_status.link == "active"
         and cached_change.bookmark == bookmark
     )
 
@@ -425,7 +472,12 @@ def ensure_change_is_not_unlinked(
     cached_change: CachedChange | None,
     change_id: str,
 ) -> None:
-    if cached_change is None or not cached_change.is_unlinked:
+    review_status = _classify_submit_change(
+        cached_change=cached_change,
+        desired_target=None,
+        remote_state=None,
+    )
+    if review_status.link != "unlinked":
         return
     raise CliError(
         t"Change {ui.change_id(change_id)} is unlinked from review tracking.",

@@ -83,6 +83,7 @@ class ReviewChangeStatus:
     local: LocalReviewState
     link: ReviewLinkState
     remote_branch: RemoteBranchReviewState
+    remote_branch_matches_commit: bool | None
     pr_lifecycle: PullRequestLifecycle
     pr_draft: bool | None
     pr_review_decision: PullRequestReviewDecision
@@ -163,6 +164,10 @@ def classify_review_change(
         local=local,
         link=_link_state(cached_change, fallback=link_state),
         remote_branch=_remote_branch_state(
+            commit_id=commit_id,
+            remote_state=remote_state,
+        ),
+        remote_branch_matches_commit=_remote_branch_matches_commit(
             commit_id=commit_id,
             remote_state=remote_state,
         ),
@@ -303,6 +308,16 @@ def _remote_branch_state(
     if commit_id is not None and remote_state.target == commit_id:
         return "current"
     return "drifted"
+
+
+def _remote_branch_matches_commit(
+    *,
+    commit_id: str | None,
+    remote_state: RemoteBookmarkState | None,
+) -> bool | None:
+    if commit_id is None or remote_state is None or len(remote_state.targets) != 1:
+        return None
+    return remote_state.target == commit_id
 
 
 def _pull_request_lifecycle(

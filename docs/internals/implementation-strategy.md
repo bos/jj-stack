@@ -158,9 +158,10 @@ semantics.
 
 Derived per-change review state lives in `review/change_status.py`. The
 `ReviewChangeStatus` classifier is observational only: it names the local, saved-link,
-remote-branch, PR-lifecycle, draft, review-decision, and submitted-baseline axes from
-data the caller already loaded. Commands can build policy helpers on top of those axes,
-but mutation code still writes the underlying tracking fields directly.
+remote-branch, remote-target match, PR-lifecycle, draft, review-decision, and
+submitted-baseline axes from data the caller already loaded. Commands can build policy
+helpers on top of those axes, but mutation code still writes the underlying tracking
+fields directly.
 
 This is where most correctness lives.
 

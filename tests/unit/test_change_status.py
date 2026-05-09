@@ -88,7 +88,26 @@ def test_classifier_keeps_untracked_remote_branch_distinct_from_current() -> Non
     )
 
     assert untracked_status.remote_branch == "untracked"
+    assert untracked_status.remote_branch_matches_commit is True
     assert current_status.remote_branch == "current"
+    assert current_status.remote_branch_matches_commit is True
+
+
+def test_classifier_marks_single_remote_target_that_does_not_match_commit() -> None:
+    status = classify_review_change(
+        cached_change=CachedChange(bookmark="review/change"),
+        commit_id="commit-2",
+        local="present",
+        pull_request_lookup=None,
+        remote_state=RemoteBookmarkState(
+            remote="origin",
+            targets=("commit-1",),
+            tracking_targets=(),
+        ),
+    )
+
+    assert status.remote_branch == "untracked"
+    assert status.remote_branch_matches_commit is False
 
 
 def test_classifier_preserves_independent_baseline_flags() -> None:
