@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Literal
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._close_actions import comment_matches_kind as _comment_matches_kind
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.config import RepoConfig
@@ -83,6 +83,14 @@ CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
 type StackCommentCleanupEligibility = Literal["inspect", "needs-remote-check", "skip"]
 type CleanupBody = Message
 _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupOptions:
+    """Parsed cleanup options after CLI normalization."""
+
+    dry_run: bool
+    rebase_revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,46 +273,44 @@ def cleanup(
         cli_args=cli_args,
         debug=debug,
     )
-    if rebase_revset is not None:
+    options = CleanupOptions(dry_run=dry_run, rebase_revset=rebase_revset)
+    if options.rebase_revset is not None:
         return _run_cleanup_rebase_command(
-            dry_run=dry_run,
-            config=context.config,
-            jj_client=context.jj_client,
-            revset=rebase_revset,
+            context=context,
+            options=options,
         )
 
     return _run_cleanup_command(
-        config=context.config,
-        dry_run=dry_run,
-        jj_client=context.jj_client,
+        context=context,
+        options=options,
     )
 
 
 def _run_cleanup_rebase_command(
     *,
-    dry_run: bool,
-    config: RepoConfig,
-    jj_client: JjClient,
-    revset: str | None,
+    context: CommandContext,
+    options: CleanupOptions,
 ) -> int:
     """Render and run the `cleanup --rebase` command path."""
 
     selected_revset = resolve_selected_revset(
-        command_label="cleanup --rebase --dry-run" if dry_run else "cleanup --rebase",
+        command_label=(
+            "cleanup --rebase --dry-run" if options.dry_run else "cleanup --rebase"
+        ),
         default_revset="@-",
         require_explicit=False,
-        revset=revset,
+        revset=options.rebase_revset,
     )
     try:
         with console.spinner(description="Inspecting jj stack"):
             prepared_rebase = PreparedRebase(
-                config=config,
-                dry_run=dry_run,
+                config=context.config,
+                dry_run=options.dry_run,
                 prepared_status=prepare_status(
-                    config=config,
+                    config=context.config,
                     fetch_remote_state=True,
                     fetch_only_when_tracked=True,
-                    jj_client=jj_client,
+                    jj_client=context.jj_client,
                     revset=selected_revset,
                 ),
             )
@@ -333,17 +339,16 @@ def _run_cleanup_rebase_command(
 
 def _run_cleanup_command(
     *,
-    config: RepoConfig,
-    dry_run: bool,
-    jj_client: JjClient,
+    context: CommandContext,
+    options: CleanupOptions,
 ) -> int:
     """Render and run the stale cleanup command path."""
 
     with console.spinner(description="Loading bookmark state"):
         prepared_cleanup = _prepare_cleanup(
-            config=config,
-            dry_run=dry_run,
-            jj_client=jj_client,
+            config=context.config,
+            dry_run=options.dry_run,
+            jj_client=context.jj_client,
         )
     stale_reasons = _stale_change_reasons(
         change_ids=tuple(prepared_cleanup.state.changes),
