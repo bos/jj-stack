@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from jj_review.models.review_state import CachedChange, LinkState, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
-from jj_review.review.topology import (
+from jj_review.review.change_status import (
     enumerate_orphaned_records,
     submitted_state_disagreement,
 )

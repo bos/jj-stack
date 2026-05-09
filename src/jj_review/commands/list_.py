@@ -29,6 +29,8 @@ from jj_review.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
     classify_saved_review_change,
+    enumerate_orphaned_records,
+    submitted_state_disagreement,
 )
 from jj_review.review.discovery import discover_tracked_stacks
 from jj_review.review.status import (
@@ -42,7 +44,6 @@ from jj_review.review.status import (
     prepare_stack_for_status,
     refresh_remote_state_for_status,
 )
-from jj_review.review.topology import enumerate_orphaned_records, submitted_state_disagreement
 from jj_review.state.store import ReviewStateStore
 
 HELP = "List review stacks in this repo"

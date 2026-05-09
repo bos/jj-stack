@@ -58,6 +58,7 @@ from jj_review.review.change_status import (
     classify_review_change,
     classify_review_status_revision,
     classify_saved_review_change,
+    is_open_pr_record,
 )
 from jj_review.review.intents import (
     describe_intent,
@@ -72,7 +73,6 @@ from jj_review.review.status import (
     status_preparation_cli_error,
     stream_status,
 )
-from jj_review.review.topology import is_open_pr_record
 from jj_review.state.intents import check_same_kind_intent, write_new_intent
 from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message, plain_text

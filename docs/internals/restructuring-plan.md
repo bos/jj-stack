@@ -26,10 +26,10 @@ Three patterns have grown organically and are now load-bearing:
   replay script", but the code now leans on them for partial-progress accounting and
   cross-command retraction.
 - The change lifecycle is implicit. `commands/status.py`, `commands/cleanup.py`,
-  `commands/close.py`, `commands/land/plan.py`, and `review/topology.py` each derive a
-  different slice from the same fields on `CachedChange`, `PullRequestLookup`, and
-  `LocalStack`. The 130-line landability cascade in `commands/land/plan.py` is the
-  largest single example.
+  `commands/close.py`, and `commands/land/plan.py` each derive a different slice from
+  the same fields on `CachedChange`, `PullRequestLookup`, and `LocalStack`. The
+  130-line landability cascade in `commands/land/plan.py` is the largest single
+  example.
 - Parameter signatures have widened. `bootstrap.AppContext` is constructed once and
   immediately destructured at the async boundary; orchestrators re-thread `(config,
   jj_client, state_store, dry_run, ...)` through long call chains by hand.
@@ -102,7 +102,7 @@ the diagonal cases are where bugs hide:
   by `commands/land/plan.py`, which switches on lifecycle, draft, and review decision
   independently — a draft PR can be approved.
 - `baseline`: a flag set, not a single value.
-  `review/topology.py:SubmittedStateDisagreement` reports `commit_changed`,
+  `review/change_status.py:SubmittedStateDisagreement` reports `commit_changed`,
   `parent_changed`, `stack_head_changed` independently. `stack_head_changed` is a
   stack-level fact and migrates to a stack view.
 - `saved_review_identity`: `bool`. The broad saved-cache predicate used by read-side
@@ -122,8 +122,8 @@ Rules:
   "landability" or "cleanup eligibility"; classification itself does not decide what
   to do.
 
-`review/topology.py` is a proto-version of the baseline axis; the new module absorbs
-it.
+The old topology helper module was a proto-version of the baseline axis; the new
+module absorbs it.
 
 Migration order, by risk:
 

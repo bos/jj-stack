@@ -13,8 +13,8 @@ from jj_review.commands import status as status_module
 from jj_review.config import RepoConfig
 from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange
+from jj_review.review.change_status import SubmittedStateDisagreement
 from jj_review.review.status import StatusResult
-from jj_review.review.topology import SubmittedStateDisagreement
 
 
 def _render_lines(*lines: object) -> tuple[str, ...]:

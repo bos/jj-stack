@@ -46,14 +46,12 @@ from jj_review.review.bookmarks import (
     match_bookmarks_for_revisions,
 )
 from jj_review.review.change_status import (
+    SubmittedStateDisagreement,
     classify_review_status_revision,
     classify_saved_review_change,
-)
-from jj_review.review.intents import intent_is_stale
-from jj_review.review.topology import (
-    SubmittedStateDisagreement,
     submitted_state_disagreements,
 )
+from jj_review.review.intents import intent_is_stale
 from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message
 

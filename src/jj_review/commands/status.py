@@ -44,8 +44,10 @@ from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_review.review.change_status import (
+    SubmittedStateDisagreement,
     classify_review_status_revision,
     classify_saved_review_change,
+    submitted_state_disagreement,
 )
 from jj_review.review.discovery import discover_connected_tracked_stacks
 from jj_review.review.intents import (
@@ -69,10 +71,6 @@ from jj_review.review.submit_recovery import (
     SubmitRecoveryIdentity,
     SubmitStatusDecision,
     submit_status_decision,
-)
-from jj_review.review.topology import (
-    SubmittedStateDisagreement,
-    submitted_state_disagreement,
 )
 from jj_review.system import pid_is_alive
 
