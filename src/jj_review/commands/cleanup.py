@@ -53,6 +53,7 @@ from jj_review.models.github import GithubIssueComment
 from jj_review.models.intent import CleanupIntent, CleanupRebaseIntent, LoadedIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
+from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.intents import (
     describe_intent,
     match_cleanup_rebase_intent,
@@ -826,10 +827,14 @@ def _plan_rebase_operations(
     prepared_status: PreparedStatus,
 ) -> _RebaseOperationPlan:
     merged_revisions = tuple(
-        revision for revision in path_revisions if revision.has_merged_pull_request()
+        revision
+        for revision in path_revisions
+        if classify_review_status_revision(revision).pr_lifecycle == "merged"
     )
     closed_unmerged_revisions = tuple(
-        revision for revision in path_revisions if revision.has_closed_unmerged_pull_request()
+        revision
+        for revision in path_revisions
+        if classify_review_status_revision(revision).pr_lifecycle == "closed"
     )
     revisions_by_change_id = {revision.change_id: revision for revision in path_revisions}
     current_commit_id_by_change_id = {
@@ -920,11 +925,12 @@ def _plan_rebase_rebases(
         revision = revisions_by_change_id.get(prepared_revision.revision.change_id)
         if revision is None:
             continue
-        if revision.has_merged_pull_request():
+        change_status = classify_review_status_revision(revision)
+        if change_status.pr_lifecycle == "merged":
             continue
-        if revision.has_closed_unmerged_pull_request():
+        if change_status.pr_lifecycle == "closed":
             continue
-        if revision.local_divergent:
+        if change_status.local == "divergent":
             blocked = True
             actions.append(
                 CleanupAction(
@@ -960,7 +966,10 @@ def _rebase_parent_is_merged(
         if candidate.revision.commit_id != parent_commit_id:
             continue
         revision = revisions_by_change_id.get(candidate.revision.change_id)
-        return revision is not None and revision.has_merged_pull_request()
+        return (
+            revision is not None
+            and classify_review_status_revision(revision).pr_lifecycle == "merged"
+        )
     return False
 
 

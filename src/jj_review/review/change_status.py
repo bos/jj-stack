@@ -315,7 +315,7 @@ def _pull_request_lifecycle(
         return "open", False
     if lookup_state == "closed":
         pull_request = getattr(pull_request_lookup, "pull_request", None)
-        if pull_request is not None and pull_request.state == "merged":
+        if pull_request is not None and getattr(pull_request, "state", None) == "merged":
             return "merged", False
         return "closed", False
     if lookup_state == "missing":
@@ -337,7 +337,7 @@ def _pull_request_draft(
     pull_request = getattr(pull_request_lookup, "pull_request", None)
     if pull_request is None:
         return None
-    return bool(pull_request.is_draft)
+    return bool(getattr(pull_request, "is_draft", False))
 
 
 def _pull_request_review_decision(
