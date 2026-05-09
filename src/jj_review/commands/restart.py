@@ -10,15 +10,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
-from jj_review.config import RepoConfig
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj import JjCliArgs
 from jj_review.review.restart import RestartedChange, restart_state_for_stack
 from jj_review.review.selection import resolve_selected_revset
-from jj_review.state.store import ReviewStateStore
 
 HELP = "Start a fresh review for local changes that should get new pull requests"
+
+
+@dataclass(frozen=True, slots=True)
+class RestartOptions:
+    """Parsed command options for `restart`."""
+
+    dry_run: bool
+    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,12 +52,9 @@ def restart(
         debug=debug,
     )
     result = _run_restart(
-        config=context.config,
-        dry_run=dry_run,
-        jj_client=context.jj_client,
-        revset=resolve_selected_revset(
-            command_label="restart",
-            require_explicit=True,
+        context=context,
+        options=RestartOptions(
+            dry_run=dry_run,
             revset=revset,
         ),
     )
@@ -61,32 +64,35 @@ def restart(
 
 def _run_restart(
     *,
-    config: RepoConfig,
-    dry_run: bool,
-    jj_client: JjClient,
-    revset: str | None,
+    context: CommandContext,
+    options: RestartOptions,
 ) -> RestartResult:
+    revset = resolve_selected_revset(
+        command_label="restart",
+        require_explicit=True,
+        revset=options.revset,
+    )
     with console.spinner(description="Inspecting jj stack"):
-        stack = jj_client.discover_review_stack(revset)
+        stack = context.jj_client.discover_review_stack(revset)
     if not stack.revisions:
         raise CliError("The selected stack has no changes to review.")
 
-    state_store = ReviewStateStore.for_repo(jj_client.repo_root)
-    if not dry_run:
+    state_store = context.state_store
+    if not options.dry_run:
         state_store.require_writable()
     state = state_store.load()
-    bookmark_states = jj_client.list_bookmark_states()
+    bookmark_states = context.jj_client.list_bookmark_states()
     restart_result = restart_state_for_stack(
         bookmark_states=bookmark_states,
-        config=config,
+        config=context.config,
         stack=stack,
         state=state,
     )
-    if restart_result.changed and not dry_run:
+    if restart_result.changed and not options.dry_run:
         state_store.save(restart_result.state)
     return RestartResult(
         changed=restart_result.changed,
-        dry_run=dry_run,
+        dry_run=options.dry_run,
         selected_revset=stack.selected_revset,
     )
 

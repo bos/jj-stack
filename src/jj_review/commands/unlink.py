@@ -11,10 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
-from jj_review.config import RepoConfig
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj import JjCliArgs
 from jj_review.models.review_state import CachedChange
 from jj_review.review.bookmarks import bookmark_ownership_for_source
 from jj_review.review.selection import resolve_selected_revset
@@ -24,6 +23,13 @@ from jj_review.review.status import (
 )
 
 HELP = "Stop managing one local change as part of review"
+
+
+@dataclass(frozen=True, slots=True)
+class UnlinkOptions:
+    """Parsed command options for `unlink`."""
+
+    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,13 +59,8 @@ def unlink(
     )
     result = asyncio.run(
         _run_unlink_async(
-            config=context.config,
-            jj_client=context.jj_client,
-            revset=resolve_selected_revset(
-                command_label="unlink",
-                require_explicit=True,
-                revset=revset,
-            ),
+            context=context,
+            options=UnlinkOptions(revset=revset),
         )
     )
     revision_label = t"{result.subject} ({ui.change_id(result.change_id)})"
@@ -78,15 +79,19 @@ def unlink(
 
 async def _run_unlink_async(
     *,
-    config: RepoConfig,
-    jj_client: JjClient,
-    revset: str | None,
+    context: CommandContext,
+    options: UnlinkOptions,
 ) -> UnlinkResult:
+    revset = resolve_selected_revset(
+        command_label="unlink",
+        require_explicit=True,
+        revset=options.revset,
+    )
     with console.spinner(description="Inspecting jj stack"):
         prepared_status = prepare_status(
-            config=config,
+            config=context.config,
             fetch_remote_state=True,
-            jj_client=jj_client,
+            jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=revset,
         )

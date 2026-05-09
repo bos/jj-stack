@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClientError, build_github_client
@@ -22,14 +22,21 @@ from jj_review.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj import JjCliArgs
 from jj_review.models.intent import RelinkIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.state.intents import check_same_kind_intent, write_new_intent
-from jj_review.state.store import ReviewStateStore
 
 HELP = "Reconnect an existing pull request to a local change"
+
+
+@dataclass(frozen=True, slots=True)
+class RelinkOptions:
+    """Parsed command options for `relink`."""
+
+    pull_request_reference: str
+    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +69,9 @@ def relink(
     )
     result = asyncio.run(
         _run_relink_async(
-            jj_client=context.jj_client,
-            pull_request_reference=pull_request,
-            revset=resolve_selected_revset(
-                command_label="relink",
-                require_explicit=True,
+            context=context,
+            options=RelinkOptions(
+                pull_request_reference=pull_request,
                 revset=revset,
             ),
         )
@@ -80,13 +85,17 @@ def relink(
 
 async def _run_relink_async(
     *,
-    jj_client: JjClient,
-    pull_request_reference: str,
-    revset: str | None,
+    context: CommandContext,
+    options: RelinkOptions,
 ) -> RelinkResult:
-    client = jj_client
-    state_store = ReviewStateStore.for_repo(jj_client.repo_root)
+    client = context.jj_client
+    state_store = context.state_store
     state_dir = state_store.require_writable()
+    revset = resolve_selected_revset(
+        command_label="relink",
+        require_explicit=True,
+        revset=options.revset,
+    )
 
     with console.spinner(description="Inspecting jj stack"):
         stack = client.discover_review_stack(revset)
@@ -102,18 +111,19 @@ async def _run_relink_async(
         client.fetch_remote(remote=remote.name)
     github_repository = require_github_repo(remote)
     pull_request_number = parse_repository_pull_request_reference(
-        reference=pull_request_reference,
+        reference=options.pull_request_reference,
         github_repository=github_repository,
         invalid_reference_message=(
-            f"{pull_request_reference} is not a pull request number or URL for "
+            f"{options.pull_request_reference} is not a pull request number or URL for "
             f"{github_repository.full_name}."
         ),
         wrong_host_message=(
-            f"{pull_request_reference} is not a pull request number or URL for "
+            f"{options.pull_request_reference} is not a pull request number or URL for "
             f"{github_repository.full_name}."
         ),
         wrong_repository_message=(
-            f"{pull_request_reference} does not belong to {github_repository.full_name}."
+            f"{options.pull_request_reference} does not belong to "
+            f"{github_repository.full_name}."
         ),
     )
 
