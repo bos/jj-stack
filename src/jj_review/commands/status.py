@@ -654,12 +654,15 @@ def render_status_advisory_lines(
     """Render any advisories that follow the status stack output."""
 
     cleanup_revisions = [
-        revision for revision in result.revisions if revision.has_merged_pull_request()
+        revision
+        for revision in result.revisions
+        if classify_review_status_revision(revision).pr_lifecycle == "merged"
     ]
     divergent_revisions = [
         revision
         for revision in result.revisions
-        if revision.local_divergent and not revision.has_merged_pull_request()
+        if classify_review_status_revision(revision).local == "divergent"
+        and classify_review_status_revision(revision).pr_lifecycle != "merged"
     ]
     link_revisions = [
         revision for revision in result.revisions if _revision_has_link_advisory(revision)
@@ -954,11 +957,12 @@ def _link_advisory_kind(revision) -> str:
     lookup = revision.pull_request_lookup
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
+    change_status = classify_review_status_revision(revision)
     if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
         return "remembered"
-    if lookup.state in {"ambiguous", "closed", "missing"}:
-        return lookup.state
-    raise AssertionError(f"Unexpected link advisory state: {lookup.state}")
+    if change_status.pr_lifecycle in {"ambiguous", "closed", "missing"}:
+        return change_status.pr_lifecycle
+    raise AssertionError(f"Unexpected link advisory state: {change_status.pr_lifecycle}")
 
 
 def render_status_intent_lines(*, prepared_status) -> tuple[object, ...]:
@@ -1669,11 +1673,12 @@ def _describe_link_advisory(revision) -> object:
     lookup = revision.pull_request_lookup
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
+    change_status = classify_review_status_revision(revision)
     if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
         return lookup.message
-    if lookup.state == "ambiguous":
+    if change_status.pr_lifecycle == "ambiguous":
         return lookup.message or "GitHub reports more than one matching pull request"
-    if lookup.state == "missing":
+    if change_status.pr_lifecycle == "missing":
         cached_change = revision.cached_change
         if cached_change is not None and cached_change.pr_number is not None:
             return (
@@ -1684,7 +1689,7 @@ def _describe_link_advisory(revision) -> object:
         if cached_label is None:
             return "GitHub did not report a pull request for this branch"
         return f"GitHub did not report {cached_label} for this branch"
-    if lookup.state == "closed":
+    if change_status.pr_lifecycle == "closed":
         pull_request = lookup.pull_request
         if pull_request is None:
             raise AssertionError("Closed pull request advisory requires a pull request.")
@@ -1692,4 +1697,4 @@ def _describe_link_advisory(revision) -> object:
             f"PR #{pull_request.number} is {pull_request.state}; submit will not reuse a "
             "closed review automatically"
         )
-    raise AssertionError(f"Unexpected link advisory state: {lookup.state}")
+    raise AssertionError(f"Unexpected link advisory state: {change_status.pr_lifecycle}")
