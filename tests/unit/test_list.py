@@ -25,15 +25,18 @@ def _open_revision(
     return cast(
         Any,
         SimpleNamespace(
-            cached_change=SimpleNamespace(has_review_identity=True),
+            cached_change=CachedChange(pr_number=7, pr_state="open"),
+            commit_id="commit-open",
             has_merged_pull_request=lambda: False,
             link_state="active",
+            local_divergent=False,
             pull_request_lookup=SimpleNamespace(
                 pull_request=SimpleNamespace(is_draft=is_draft, state="open"),
                 review_decision=review_decision,
                 review_decision_error=None,
                 state="open",
             ),
+            remote_state=None,
         ),
     )
 
@@ -42,19 +45,23 @@ def _missing_revision() -> ReviewStatusRevision:
     return cast(
         Any,
         SimpleNamespace(
-            cached_change=SimpleNamespace(
-                has_review_identity=True,
+            cached_change=CachedChange(
+                bookmark="review/example",
                 pr_number=7,
+                pr_state="open",
                 pr_url="https://example.test/pr/7",
             ),
+            commit_id="commit-missing",
             has_merged_pull_request=lambda: False,
             link_state="active",
+            local_divergent=False,
             pull_request_lookup=SimpleNamespace(
                 pull_request=None,
                 review_decision=None,
                 review_decision_error=None,
                 state="missing",
             ),
+            remote_state=None,
         ),
     )
 

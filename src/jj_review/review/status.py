@@ -45,6 +45,7 @@ from jj_review.review.bookmarks import (
     ensure_unique_bookmarks,
     match_bookmarks_for_revisions,
 )
+from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.intents import intent_is_stale
 from jj_review.review.topology import (
     SubmittedStateDisagreement,
@@ -121,24 +122,10 @@ class ReviewStatusRevision:
         return pull_request.base.ref
 
     def has_merged_pull_request(self) -> bool:
-        lookup = self.pull_request_lookup
-        pull_request = self.pull_request()
-        return (
-            lookup is not None
-            and lookup.state == "closed"
-            and pull_request is not None
-            and pull_request.state == "merged"
-        )
+        return classify_review_status_revision(self).pr_lifecycle == "merged"
 
     def has_closed_unmerged_pull_request(self) -> bool:
-        lookup = self.pull_request_lookup
-        pull_request = self.pull_request()
-        return (
-            lookup is not None
-            and lookup.state == "closed"
-            and pull_request is not None
-            and pull_request.state != "merged"
-        )
+        return classify_review_status_revision(self).pr_lifecycle == "closed"
 
 
 @dataclass(frozen=True, slots=True)

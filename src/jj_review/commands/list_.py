@@ -25,6 +25,7 @@ from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.review_state import ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
+from jj_review.review.change_status import ReviewChangeStatus, classify_review_status_revision
 from jj_review.review.discovery import discover_tracked_stacks
 from jj_review.review.status import (
     PreparedRevision,
@@ -409,10 +410,11 @@ def _status_fragments(
     revisions: tuple[ReviewStatusRevision, ...],
 ) -> tuple[ui.Message, ...]:
     fragments: list[ui.Message] = []
+    statuses = tuple(classify_review_status_revision(revision) for revision in revisions)
     if github_error is not None or remote_error is not None:
         fragments.append(ui.semantic_text("GitHub unavailable", "warning", "heading"))
 
-    merged_ancestors = sum(1 for revision in revisions if revision.has_merged_pull_request())
+    merged_ancestors = sum(1 for status in statuses if status.pr_lifecycle == "merged")
     if merged_ancestors:
         label = (
             "cleanup needed"
@@ -421,39 +423,29 @@ def _status_fragments(
         )
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    unlinked = sum(1 for revision in revisions if revision.link_state == "unlinked")
+    unlinked = sum(1 for status in statuses if status.link == "unlinked")
     if unlinked:
         label = "unlinked" if unlinked == 1 else f"{unlinked} unlinked"
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    closed = sum(
-        1
-        for revision in revisions
-        if revision.pull_request_lookup is not None
-        and revision.pull_request_lookup.state == "closed"
-        and revision.pull_request_lookup.pull_request is not None
-        and revision.pull_request_lookup.pull_request.state != "merged"
-    )
+    closed = sum(1 for status in statuses if status.pr_lifecycle == "closed")
     if closed:
         label = "closed" if closed == 1 else f"{closed} closed"
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    stale_links = sum(1 for revision in revisions if _has_stale_link(revision))
+    stale_links = sum(1 for status in statuses if status.has_stale_pull_request_link)
     if stale_links:
         label = "stale link" if stale_links == 1 else f"{stale_links} stale links"
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    ambiguous = sum(
-        1
-        for revision in revisions
-        if revision.pull_request_lookup is not None
-        and revision.pull_request_lookup.state == "ambiguous"
-    )
+    ambiguous = sum(1 for status in statuses if status.pr_lifecycle == "ambiguous")
     if ambiguous:
         label = "ambiguous PR" if ambiguous == 1 else f"{ambiguous} ambiguous PRs"
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    lookup_failures = sum(1 for revision in revisions if _has_lookup_failure(revision))
+    lookup_failures = sum(
+        1 for status in statuses if status.has_pull_request_lookup_failure
+    )
     if lookup_failures:
         label = (
             "GitHub lookup failed"
@@ -462,15 +454,15 @@ def _status_fragments(
         )
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    drafts = sum(1 for revision in revisions if _is_open_draft(revision))
+    drafts = sum(1 for status in statuses if status.pr_draft is True)
     if drafts:
         label = "draft" if drafts == 1 else f"{drafts} drafts"
         fragments.append(ui.semantic_text(label, "hint", "heading"))
 
     open_non_draft_decisions = tuple(
-        lookup.review_decision
-        for revision in revisions
-        if (lookup := _open_non_draft_lookup(revision)) is not None
+        status.pr_review_decision
+        for status in statuses
+        if _is_open_published(status)
     )
     changes_requested = sum(
         1 for decision in open_non_draft_decisions if decision == "changes_requested"
@@ -508,52 +500,21 @@ def _status_is_incomplete(
     if github_error is not None or remote_error is not None:
         return True
     return any(
-        _has_stale_link(revision)
-        or _has_lookup_failure(revision)
-        or (
-            revision.pull_request_lookup is not None
-            and revision.pull_request_lookup.state == "ambiguous"
-        )
+        _status_is_incomplete_change(classify_review_status_revision(revision))
         for revision in revisions
     )
 
 
-def _has_stale_link(revision: ReviewStatusRevision) -> bool:
-    lookup = revision.pull_request_lookup
-    cached_change = revision.cached_change
+def _status_is_incomplete_change(status: ReviewChangeStatus) -> bool:
     return (
-        lookup is not None
-        and lookup.state == "missing"
-        and cached_change is not None
-        and cached_change.has_review_identity
-        and (cached_change.pr_number is not None or cached_change.pr_url is not None)
+        status.has_stale_pull_request_link
+        or status.has_pull_request_lookup_failure
+        or status.pr_lifecycle == "ambiguous"
     )
 
 
-def _has_lookup_failure(revision: ReviewStatusRevision) -> bool:
-    lookup = revision.pull_request_lookup
-    return lookup is not None and (
-        lookup.state == "error" or lookup.review_decision_error is not None
-    )
-
-
-def _is_open_draft(revision: ReviewStatusRevision) -> bool:
-    lookup = revision.pull_request_lookup
-    return (
-        lookup is not None
-        and lookup.state == "open"
-        and lookup.pull_request is not None
-        and lookup.pull_request.is_draft
-    )
-
-
-def _open_non_draft_lookup(revision: ReviewStatusRevision) -> PullRequestLookup | None:
-    lookup = revision.pull_request_lookup
-    if lookup is None or lookup.state != "open":
-        return None
-    if lookup.pull_request is not None and lookup.pull_request.is_draft:
-        return None
-    return lookup
+def _is_open_published(status: ReviewChangeStatus) -> bool:
+    return status.pr_lifecycle == "open" and status.pr_draft is False
 
 
 def _pull_request_range_from_revisions(revisions: tuple[ReviewStatusRevision, ...]) -> str:

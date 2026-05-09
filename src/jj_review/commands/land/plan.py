@@ -10,6 +10,7 @@ from jj_review import ui
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.review.bookmarks import is_review_bookmark
+from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.status import (
     PreparedRevision,
     PreparedStatus,
@@ -173,6 +174,7 @@ def _landability_decision(
     prepared_revision: PreparedRevision,
     revision: ReviewStatusRevision,
 ) -> _LandabilityDecision:
+    change_status = classify_review_status_revision(revision)
     if prepared_revision.revision.conflict:
         return _LandabilityDecision(
             boundary_message=(
@@ -180,14 +182,14 @@ def _landability_decision(
                 t"this change still has unresolved conflicts"
             )
         )
-    if revision.link_state == "unlinked":
+    if change_status.link == "unlinked":
         return _LandabilityDecision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
                 t"this change is unlinked from review tracking; run {ui.cmd('relink')} first"
             )
         )
-    if revision.local_divergent:
+    if change_status.local == "divergent":
         return _LandabilityDecision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
@@ -202,12 +204,12 @@ def _landability_decision(
                 t"GitHub pull request state is unavailable"
             )
         )
-    if pull_request_lookup.state == "open":
+    if change_status.pr_lifecycle == "open":
         pull_request = pull_request_lookup.pull_request
         if pull_request is None:
             raise AssertionError("Open land boundary requires a pull request payload.")
-        if pull_request_lookup.review_decision_error is not None:
-            detail = pull_request_lookup.review_decision_error
+        if change_status.pr_review_decision_error is not None:
+            detail = change_status.pr_review_decision_error
             return _LandabilityDecision(
                 boundary_message=(
                     t"before {revision.subject} {ui.change_id(revision.change_id)} "
@@ -226,7 +228,7 @@ def _landability_decision(
                     t"{ui.cmd('submit')} to update the PR and request re-review"
                 )
             )
-        if pull_request.is_draft:
+        if change_status.pr_draft is True:
             if bypass_readiness:
                 return _LandabilityDecision(
                     boundary_message=None,
@@ -238,7 +240,7 @@ def _landability_decision(
                     t"because PR #{pull_request.number} is still a draft"
                 )
             )
-        if pull_request_lookup.review_decision == "changes_requested":
+        if change_status.pr_review_decision == "changes_requested":
             if bypass_readiness:
                 return _LandabilityDecision(
                     boundary_message=None,
@@ -250,7 +252,7 @@ def _landability_decision(
                     t"because PR #{pull_request.number} has changes requested"
                 )
             )
-        if pull_request_lookup.review_decision != "approved":
+        if change_status.pr_review_decision != "approved":
             if bypass_readiness:
                 return _LandabilityDecision(
                     boundary_message=None,
@@ -266,7 +268,7 @@ def _landability_decision(
             boundary_message=None,
             needs_resubmit=divergence == "diff_equivalent",
         )
-    if pull_request_lookup.state == "missing":
+    if change_status.pr_lifecycle == "missing":
         return _LandabilityDecision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
@@ -274,7 +276,7 @@ def _landability_decision(
                 t"{ui.cmd('status --fetch')} or {ui.cmd('relink')} first"
             )
         )
-    if pull_request_lookup.state == "ambiguous":
+    if change_status.pr_lifecycle == "ambiguous":
         detail = pull_request_lookup.message or "GitHub reports an ambiguous PR link"
         return _LandabilityDecision(
             boundary_message=(
@@ -283,7 +285,7 @@ def _landability_decision(
                 t"{ui.cmd('relink')}."
             )
         )
-    if pull_request_lookup.state == "error":
+    if change_status.has_pull_request_lookup_failure:
         detail = pull_request_lookup.message or "GitHub lookup failed"
         return _LandabilityDecision(
             boundary_message=(
