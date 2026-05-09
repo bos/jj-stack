@@ -22,6 +22,22 @@ PushOperation = Literal["batch", "git_update", "up_to_date"]
 
 
 @dataclass(frozen=True, slots=True)
+class SubmitOptions:
+    """Parsed submit options after CLI normalization."""
+
+    describe_with: str | None
+    draft_mode: SubmitDraftMode
+    dry_run: bool
+    labels: list[str] | None
+    re_request: bool
+    restart: bool
+    reviewers: list[str] | None
+    revset: str | None
+    team_reviewers: list[str] | None
+    use_bookmarks: list[str] | None
+
+
+@dataclass(frozen=True, slots=True)
 class SubmittedRevision:
     """Remote bookmark and GitHub result for one revision in the submitted stack."""
 

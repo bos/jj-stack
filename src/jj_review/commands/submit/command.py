@@ -23,9 +23,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
-from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.resolution import (
@@ -44,7 +43,6 @@ from jj_review.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
 )
-from jj_review.state.store import ReviewStateStore
 
 from .auto_close import (
     retarget_review_bases_before_branch_push,
@@ -56,7 +54,7 @@ from .models import (
     GeneratedDescription,
     PendingPullRequestSync,
     PreparedSubmitRevision,
-    SubmitDraftMode,
+    SubmitOptions,
     SubmitResult,
     SubmittedRevision,
 )
@@ -124,24 +122,24 @@ def submit(
 
     result = asyncio.run(
         _run_submit_async(
-            config=context.config,
-            describe_with=describe_with,
-            draft_mode=(
-                "draft_all"
-                if draft_all
-                else "draft" if draft else "publish" if publish else "default"
-            ),
-            dry_run=dry_run,
-            jj_client=context.jj_client,
-            labels=label_list,
+            context=context,
             on_prepared=emit_prepared,
-            re_request=re_request,
-            restart=restart,
-            revset=selected_revset,
-            reviewers=reviewer_list,
-            state_store=context.state_store,
-            team_reviewers=team_reviewer_list,
-            use_bookmarks=use_bookmark_list,
+            options=SubmitOptions(
+                describe_with=describe_with,
+                draft_mode=(
+                    "draft_all"
+                    if draft_all
+                    else "draft" if draft else "publish" if publish else "default"
+                ),
+                dry_run=dry_run,
+                labels=label_list,
+                re_request=re_request,
+                restart=restart,
+                reviewers=reviewer_list,
+                revset=selected_revset,
+                team_reviewers=team_reviewer_list,
+                use_bookmarks=use_bookmark_list,
+            ),
         )
     )
     if not emitted_prepared:
@@ -311,31 +309,27 @@ def _reject_restart_pull_request_collisions(
 
 async def _run_submit_async(
     *,
-    config: RepoConfig,
-    describe_with: str | None,
-    draft_mode: SubmitDraftMode,
-    dry_run: bool,
-    jj_client: JjClient,
-    labels: list[str] | None,
+    context: CommandContext,
     on_prepared: Callable[[str, str], None] | None,
-    re_request: bool,
-    revset: str | None,
-    reviewers: list[str] | None,
-    restart: bool,
-    state_store: ReviewStateStore,
-    team_reviewers: list[str] | None,
-    use_bookmarks: list[str] | None,
+    options: SubmitOptions,
 ) -> SubmitResult:
-    resolved_use_bookmarks = config.use_bookmarks if use_bookmarks is None else use_bookmarks
+    config = context.config
+    dry_run = options.dry_run
+    state_store = context.state_store
+    resolved_use_bookmarks = (
+        config.use_bookmarks
+        if options.use_bookmarks is None
+        else options.use_bookmarks
+    )
     with console.spinner(description="Preparing submit"):
         prepared_inputs = prepare_submit_inputs(
             config=config,
-            describe_with=describe_with,
+            describe_with=options.describe_with,
             dry_run=dry_run,
-            jj_client=jj_client,
+            jj_client=context.jj_client,
             on_prepared=on_prepared,
-            restart=restart,
-            revset=revset,
+            restart=options.restart,
+            revset=options.revset,
             state_store=state_store,
             use_bookmarks=tuple(resolved_use_bookmarks),
         )
@@ -367,9 +361,13 @@ async def _run_submit_async(
         )
 
     github_repository = require_github_repo(remote)
-    resolved_labels = config.labels if labels is None else labels
-    resolved_reviewers = config.reviewers if reviewers is None else reviewers
-    resolved_team_reviewers = config.team_reviewers if team_reviewers is None else team_reviewers
+    resolved_labels = config.labels if options.labels is None else options.labels
+    resolved_reviewers = config.reviewers if options.reviewers is None else options.reviewers
+    resolved_team_reviewers = (
+        config.team_reviewers
+        if options.team_reviewers is None
+        else options.team_reviewers
+    )
     prepared_revisions = prepare_submit_revisions(
         bookmark_result=bookmark_result,
         bookmark_states=bookmark_states,
@@ -475,14 +473,14 @@ async def _run_submit_async(
                 total=len(prepared_revisions),
             ) as progress:
                 submitted_revisions = await sync_pull_requests(
-                    draft_mode=draft_mode,
+                    draft_mode=options.draft_mode,
                     dry_run=dry_run,
                     github_client=github_client,
                     github_repository=github_repository,
                     labels=resolved_labels,
                     on_progress=progress.advance,
                     pending_syncs=pending_syncs,
-                    re_request=re_request,
+                    re_request=options.re_request,
                     reviewers=resolved_reviewers,
                     state=bookmark_result.state,
                     state_changes=state_changes,

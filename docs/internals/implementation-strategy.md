@@ -89,6 +89,10 @@ repo root, runtime options, and the repo state store. CLI boundary code should p
 that context until it builds command-specific options or resolved target data, instead
 of reconstructing shared dependencies from the repo root.
 
+Command-specific options should hold normalized CLI values after argparse-specific
+parsing is complete. `submit` uses `SubmitOptions` for its async orchestration boundary,
+with `CommandContext` carrying shared runtime dependencies.
+
 ## Repository layout
 
 ```text
