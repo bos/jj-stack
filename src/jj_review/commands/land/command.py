@@ -30,18 +30,18 @@ pull requests on GitHub.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
-from jj_review.config import RepoConfig
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.resolution import (
     resolve_trunk_branch,
 )
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj import JjCliArgs
 from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -71,6 +71,17 @@ from .render import print_land_result
 HELP = "Land the ready changes at the bottom of a stack"
 
 
+@dataclass(frozen=True, slots=True)
+class LandOptions:
+    """Parsed command options for `land`."""
+
+    bypass_readiness: bool
+    cleanup_bookmarks: bool
+    dry_run: bool
+    pull_request: str | None
+    revset: str | None
+
+
 def land(
     *,
     bypass_readiness: bool,
@@ -89,12 +100,29 @@ def land(
         cli_args=cli_args,
         debug=debug,
     )
-    if pull_request is not None:
+    return _run_land(
+        context=context,
+        options=LandOptions(
+            bypass_readiness=bypass_readiness,
+            cleanup_bookmarks=not skip_cleanup,
+            dry_run=dry_run,
+            pull_request=pull_request,
+            revset=revset,
+        ),
+    )
+
+
+def _run_land(
+    *,
+    context: CommandContext,
+    options: LandOptions,
+) -> int:
+    if options.pull_request is not None:
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="land",
             jj_client=context.jj_client,
-            pull_request_reference=pull_request,
-            revset=revset,
+            pull_request_reference=options.pull_request,
+            revset=options.revset,
         )
         console.note(
             t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
@@ -105,15 +133,12 @@ def land(
             command_label="land",
             default_revset="@-",
             require_explicit=False,
-            revset=revset,
+            revset=options.revset,
         )
     with console.spinner(description="Inspecting jj stack"):
         prepared_land = _prepare_land(
-            cleanup_bookmarks=not skip_cleanup,
-            dry_run=dry_run,
-            bypass_readiness=bypass_readiness,
-            config=context.config,
-            jj_client=context.jj_client,
+            context=context,
+            options=options,
             revset=resolved_revset,
             selected_pr_number=pull_request_number,
         )
@@ -124,20 +149,17 @@ def land(
 
 def _prepare_land(
     *,
-    cleanup_bookmarks: bool,
-    dry_run: bool,
-    bypass_readiness: bool,
-    config: RepoConfig,
-    jj_client: JjClient,
+    context: CommandContext,
+    options: LandOptions,
     revset: str | None,
     selected_pr_number: int | None,
 ) -> PreparedLand:
     """Resolve local landing inputs before GitHub planning and execution."""
 
     prepared_status = prepare_status(
-        config=config,
+        config=context.config,
         fetch_remote_state=True,
-        jj_client=jj_client,
+        jj_client=context.jj_client,
         re_resolve_after_remote_refresh=True,
         revset=revset,
     )
@@ -149,13 +171,13 @@ def _prepare_land(
         message = prepared_status.github_repository_error or t"Could not resolve GitHub target."
         raise CliError(message)
 
-    if not dry_run:
+    if not options.dry_run:
         prepared.state_store.require_writable()
     return PreparedLand(
-        cleanup_bookmarks=cleanup_bookmarks,
-        dry_run=dry_run,
-        bypass_readiness=bypass_readiness,
-        config=config,
+        cleanup_bookmarks=options.cleanup_bookmarks,
+        dry_run=options.dry_run,
+        bypass_readiness=options.bypass_readiness,
+        config=context.config,
         prepared_status=prepared_status,
         selected_pr_number=selected_pr_number,
     )
@@ -270,6 +292,7 @@ async def _stream_land_async(
             trunk_branch=trunk_branch,
             trunk_subject=prepared.stack.trunk.subject,
         )
+
 
 def _stack_not_on_trunk_error(
     *,
