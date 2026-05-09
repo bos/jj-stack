@@ -43,6 +43,7 @@ from jj_review.models.intent import (
 from jj_review.models.review_state import ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
+from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.discovery import discover_connected_tracked_stacks
 from jj_review.review.intents import (
     SubmitIntentMatch,
@@ -1466,22 +1467,22 @@ def _classify_revision_for_summary(
 ) -> str:
     """Classify a revision into submitted, unsubmitted, or other."""
 
-    if revision.link_state == "unlinked":
+    change_status = classify_review_status_revision(revision)
+    if change_status.link == "unlinked":
         return "submitted"
 
-    lookup = revision.pull_request_lookup
-    if lookup is None:
+    if change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
         if _has_cached_review_identity(revision.cached_change):
             return "submitted"
         return "unsubmitted"
 
-    if lookup.state in {"open", "closed"}:
+    if change_status.pr_lifecycle in {"open", "closed", "merged"}:
         return "submitted"
-    if lookup.state == "missing":
+    if change_status.pr_lifecycle == "missing":
         if _has_cached_review_identity(revision.cached_change):
             return "submitted"
         return "unsubmitted"
-    if lookup.state in {"ambiguous", "error"}:
+    if change_status.pr_lifecycle == "ambiguous" or change_status.pr_lookup_error:
         if _has_cached_review_identity(revision.cached_change):
             return "submitted"
         return "unsubmitted"
@@ -1496,8 +1497,9 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
     lookup = revision.pull_request_lookup
     cached_change = revision.cached_change
     cached_label = _format_cached_pull_request_label(cached_change)
+    change_status = classify_review_status_revision(revision)
     summary: str
-    if revision.link_state == "unlinked":
+    if change_status.link == "unlinked":
         if lookup is not None and lookup.pull_request is not None:
             pull_request = lookup.pull_request
             if pull_request.state == "open":
@@ -1508,11 +1510,11 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
                 )
             else:
                 summary = f"unlinked PR #{pull_request.number} {pull_request.state}"
-        elif revision.remote_state is not None and revision.remote_state.targets:
+        elif change_status.remote_branch != "absent":
             summary = "unlinked branch"
         else:
             summary = "unlinked"
-    elif lookup is None:
+    elif change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
         if cached_label is not None:
             summary = cached_label
         elif _has_cached_review_identity(cached_change):
@@ -1521,7 +1523,9 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
             summary = "not submitted"
         else:
             summary = "GitHub status unknown"
-    elif lookup.state == "open":
+    elif change_status.pr_lifecycle == "open":
+        if lookup is None:
+            raise AssertionError("Open pull request status requires a pull request lookup.")
         if lookup.pull_request is None:
             raise AssertionError("Open pull request lookup must include a pull request.")
         summary = _format_live_pull_request_label(
@@ -1529,26 +1533,27 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
             pull_request_number=lookup.pull_request.number,
             is_draft=lookup.pull_request.is_draft,
         )
-        review_decision = lookup.review_decision
-        if review_decision is None:
-            if lookup.review_decision_error is None or cached_change is None:
-                review_decision = None
-            else:
-                review_decision = cached_change.pr_review_decision
-        if lookup.pull_request.is_draft:
+        review_decision = change_status.pr_review_decision
+        if review_decision == "none" and lookup.review_decision_error is not None:
+            review_decision = (
+                "none" if cached_change is None else cached_change.pr_review_decision or "none"
+            )
+        if change_status.pr_draft is True:
             pass
         elif review_decision == "approved":
             summary = f"{summary} approved"
         elif review_decision == "changes_requested":
             summary = f"{summary} changes requested"
-    elif lookup.state == "missing":
+    elif change_status.pr_lifecycle == "missing":
         if cached_label is not None:
             summary = f"{cached_label}, no PR found for branch"
         elif _has_cached_review_identity(cached_change):
             summary = "submitted, no PR found for branch"
         else:
             summary = "not submitted"
-    elif lookup.state == "closed":
+    elif change_status.pr_lifecycle in {"closed", "merged"}:
+        if lookup is None:
+            raise AssertionError("Closed pull request status requires a pull request lookup.")
         if lookup.pull_request is None:
             raise AssertionError("Closed pull request lookup must include a pull request.")
         pr_label = _format_live_pull_request_label(
@@ -1556,20 +1561,24 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
             pull_request_number=lookup.pull_request.number,
             is_draft=False,
         )
-        if lookup.pull_request.state == "merged":
+        if change_status.pr_lifecycle == "merged":
             summary = (
                 f"{pr_label} merged into {lookup.pull_request.base.ref}, cleanup needed"
             )
         else:
             summary = f"{pr_label} closed"
     else:
-        message = lookup.message or "GitHub lookup failed"
+        message = (
+            lookup.message
+            if lookup is not None and lookup.message is not None
+            else "GitHub lookup failed"
+        )
         if cached_label is not None:
             summary = f"{cached_label}, {message}"
         else:
             summary = message
 
-    if revision.local_divergent and not revision.has_merged_pull_request():
+    if change_status.local == "divergent" and change_status.pr_lifecycle != "merged":
         summary = f"{summary}, multiple visible revisions"
 
     managed_comments_lookup = revision.managed_comments_lookup
@@ -1639,23 +1648,20 @@ def _render_intent_description(intent) -> object:
 
 
 def _revision_has_link_advisory(revision) -> bool:
-    if revision.link_state == "unlinked":
+    change_status = classify_review_status_revision(revision)
+    if change_status.link == "unlinked":
         return False
     lookup = revision.pull_request_lookup
     if lookup is None:
         return False
     if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
         return True
-    if lookup.state == "ambiguous":
+    if change_status.pr_lifecycle == "ambiguous":
         return True
-    if lookup.state == "missing":
-        cached_change = revision.cached_change
-        return cached_change is not None and (
-            cached_change.pr_number is not None or cached_change.pr_url is not None
-        )
-    if lookup.state == "closed":
-        pull_request = lookup.pull_request
-        return pull_request is not None and pull_request.state != "merged"
+    if change_status.pr_lifecycle == "missing":
+        return change_status.has_stale_pull_request_link
+    if change_status.pr_lifecycle == "closed":
+        return lookup.pull_request is not None
     return False
 
 

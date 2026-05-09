@@ -132,15 +132,17 @@ def classify_review_status_revision(
 ) -> ReviewChangeStatus:
     """Classify a rendered status revision without performing I/O."""
 
-    local: LocalReviewState = "divergent" if revision.local_divergent else "present"
+    local: LocalReviewState = (
+        "divergent" if getattr(revision, "local_divergent", False) else "present"
+    )
     return classify_review_change(
         baseline_disagreement=baseline_disagreement,
-        cached_change=revision.cached_change,
-        commit_id=revision.commit_id,
-        link_state=revision.link_state,
+        cached_change=getattr(revision, "cached_change", None),
+        commit_id=getattr(revision, "commit_id", None),
+        link_state=getattr(revision, "link_state", None),
         local=local,
-        pull_request_lookup=revision.pull_request_lookup,
-        remote_state=revision.remote_state,
+        pull_request_lookup=getattr(revision, "pull_request_lookup", None),
+        remote_state=getattr(revision, "remote_state", None),
     )
 
 
@@ -176,7 +178,9 @@ def classify_review_change(
         baseline=_baseline_flags(baseline_disagreement),
         pr_lookup_error=pr_lookup_error,
         pr_review_decision_error=(
-            None if pull_request_lookup is None else pull_request_lookup.review_decision_error
+            None
+            if pull_request_lookup is None
+            else getattr(pull_request_lookup, "review_decision_error", None)
         ),
         saved_pull_request_identity=_has_saved_pull_request_identity(cached_change),
     )
@@ -306,18 +310,19 @@ def _pull_request_lifecycle(
 ) -> tuple[PullRequestLifecycle, bool]:
     if pull_request_lookup is None:
         return "none", False
-    if pull_request_lookup.state == "open":
+    lookup_state = getattr(pull_request_lookup, "state", "error")
+    if lookup_state == "open":
         return "open", False
-    if pull_request_lookup.state == "closed":
-        pull_request = pull_request_lookup.pull_request
+    if lookup_state == "closed":
+        pull_request = getattr(pull_request_lookup, "pull_request", None)
         if pull_request is not None and pull_request.state == "merged":
             return "merged", False
         return "closed", False
-    if pull_request_lookup.state == "missing":
+    if lookup_state == "missing":
         return "missing", False
-    if pull_request_lookup.state == "ambiguous":
+    if lookup_state == "ambiguous":
         return "ambiguous", False
-    if pull_request_lookup.state == "error":
+    if lookup_state == "error":
         return "none", True
     return "none", True
 
@@ -329,7 +334,7 @@ def _pull_request_draft(
 ) -> bool | None:
     if lifecycle != "open" or pull_request_lookup is None:
         return None
-    pull_request = pull_request_lookup.pull_request
+    pull_request = getattr(pull_request_lookup, "pull_request", None)
     if pull_request is None:
         return None
     return bool(pull_request.is_draft)
@@ -342,9 +347,9 @@ def _pull_request_review_decision(
 ) -> PullRequestReviewDecision:
     if lifecycle != "open" or pull_request_lookup is None:
         return "none"
-    if pull_request_lookup.review_decision_error is not None:
+    if getattr(pull_request_lookup, "review_decision_error", None) is not None:
         return "unknown"
-    decision = pull_request_lookup.review_decision
+    decision = getattr(pull_request_lookup, "review_decision", None)
     if decision is None:
         return "none"
     if decision in {"approved", "changes_requested", "commented"}:
