@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.formatting import (
@@ -91,6 +91,15 @@ class StatusSelector:
 
 
 @dataclass(frozen=True, slots=True)
+class StatusOptions:
+    """Parsed command options for `status` after CLI normalization."""
+
+    fetch: bool
+    selectors: tuple[StatusSelector, ...]
+    verbose: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _ResolvedStatusSelector:
     note: object | None
     revset: str | None
@@ -114,15 +123,29 @@ def status(
         cli_args=cli_args,
         debug=debug,
     )
-    ordered_selectors = _normalize_status_selectors(
-        pull_request=pull_request,
-        revset=revset,
-        selectors=selectors,
+    return _run_status(
+        context=context,
+        options=StatusOptions(
+            fetch=fetch,
+            selectors=_normalize_status_selectors(
+                pull_request=pull_request,
+                revset=revset,
+                selectors=selectors,
+            ),
+            verbose=verbose,
+        ),
     )
-    if fetch:
+
+
+def _run_status(
+    *,
+    context: CommandContext,
+    options: StatusOptions,
+) -> int:
+    if options.fetch:
         refresh_remote_state_for_status(jj_client=context.jj_client)
 
-    if not ordered_selectors:
+    if not options.selectors:
         prepared_status = _prepare_status_with_spinner(
             config=context.config,
             jj_client=context.jj_client,
@@ -131,7 +154,7 @@ def status(
         exit_code = _render_prepared_status(
             config=context.config,
             prepared_status=prepared_status,
-            verbose=verbose,
+            verbose=options.verbose,
         )
         _emit_connected_stale_stacks_advisory(
             jj_client=context.jj_client,
@@ -141,12 +164,12 @@ def status(
         return exit_code
 
     exit_code = 0
-    multi_selector = len(ordered_selectors) > 1
+    multi_selector = len(options.selectors) > 1
     rendered_stack_keys: set[tuple[object, ...]] = set()
     rendered_stacks: list[LocalStack] = []
     state: ReviewState | None = None
     printed_blocks = 0
-    for selector in ordered_selectors:
+    for selector in options.selectors:
         try:
             resolved_selector = _resolve_status_selector(
                 jj_client=context.jj_client,
@@ -188,7 +211,7 @@ def status(
             _render_prepared_status(
                 config=context.config,
                 prepared_status=prepared_status,
-                verbose=verbose,
+                verbose=options.verbose,
             ),
         )
         printed_blocks += 1
