@@ -90,8 +90,9 @@ that context until it builds command-specific options or resolved target data, i
 of reconstructing shared dependencies from the repo root.
 
 Command-specific options should hold normalized CLI values after argparse-specific
-parsing is complete. `submit` uses `SubmitOptions` for its async orchestration boundary,
-with `CommandContext` carrying shared runtime dependencies.
+parsing is complete. `submit`, `cleanup`, and `close` use command-specific option
+values at their orchestration boundaries, with `CommandContext` carrying shared runtime
+dependencies.
 
 ## Repository layout
 

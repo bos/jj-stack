@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._close_actions import (
     BookmarkCleanupPlan as _BookmarkCleanupPlan,
     CloseAction,
@@ -92,6 +92,16 @@ from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 
 HELP = "Stop reviewing a jj stack on GitHub"
+
+
+@dataclass(frozen=True, slots=True)
+class CloseOptions:
+    """Parsed close options after CLI normalization."""
+
+    cleanup: bool
+    dry_run: bool
+    pull_request: str | None
+    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,23 +201,45 @@ def close(
         cli_args=cli_args,
         debug=debug,
     )
+    return _run_close(
+        context=context,
+        options=CloseOptions(
+            cleanup=cleanup,
+            dry_run=dry_run,
+            pull_request=pull_request,
+            revset=revset,
+        ),
+    )
+
+
+def _run_close(
+    *,
+    context: CommandContext,
+    options: CloseOptions,
+) -> int:
+    """Run close after CLI arguments have been normalized into options."""
+
     command_label = (
         "close --cleanup --dry-run"
-        if dry_run and cleanup
-        else ("close --cleanup" if cleanup else "close" if not dry_run else "close --dry-run")
+        if options.dry_run and options.cleanup
+        else (
+            "close --cleanup"
+            if options.cleanup
+            else "close" if not options.dry_run else "close --dry-run"
+        )
     )
-    if pull_request is not None:
-        if cleanup and revset is None:
-            if not dry_run:
+    if options.pull_request is not None:
+        if options.cleanup and options.revset is None:
+            if not options.dry_run:
                 context.state_store.require_writable()
             state = context.state_store.load()
             pull_request_number = resolve_pull_request_number(
                 jj_client=context.jj_client,
-                pull_request_reference=pull_request,
+                pull_request_reference=options.pull_request,
             )
             orphan_target = resolve_orphaned_pull_request(
                 jj_client=context.jj_client,
-                pull_request_reference=pull_request,
+                pull_request_reference=options.pull_request,
                 state=state,
             )
             if orphan_target is not None:
@@ -216,7 +248,7 @@ def close(
                     run_orphan_close(
                         change_id=change_id,
                         config=context.config,
-                        dry_run=dry_run,
+                        dry_run=options.dry_run,
                         github_client_builder=build_github_client,
                         github_repo_parser=parse_github_repo,
                         jj_client=context.jj_client,
@@ -235,7 +267,7 @@ def close(
             ):
                 return asyncio.run(
                     run_untracked_cleanup_pull_request(
-                        dry_run=dry_run,
+                        dry_run=options.dry_run,
                         github_client_builder=build_github_client,
                         github_repo_parser=parse_github_repo,
                         jj_client=context.jj_client,
@@ -250,8 +282,8 @@ def close(
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="close",
             jj_client=context.jj_client,
-            pull_request_reference=pull_request,
-            revset=revset,
+            pull_request_reference=options.pull_request,
+            revset=options.revset,
         )
         console.note(
             t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
@@ -261,13 +293,13 @@ def close(
             command_label=command_label,
             default_revset="@-",
             require_explicit=False,
-            revset=revset,
+            revset=options.revset,
         )
 
     with console.spinner(description="Inspecting jj stack"):
         prepared_close = prepare_close(
-            dry_run=dry_run,
-            cleanup=cleanup,
+            dry_run=options.dry_run,
+            cleanup=options.cleanup,
             config=context.config,
             jj_client=context.jj_client,
             revset=resolved_revset,
