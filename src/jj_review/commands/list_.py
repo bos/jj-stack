@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.console import requested_color_mode
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo, select_submit_remote
@@ -46,6 +46,13 @@ from jj_review.review.status import (
 )
 
 HELP = "List review stacks in this repo"
+
+
+@dataclass(frozen=True, slots=True)
+class ListOptions:
+    """Parsed command options for `list`."""
+
+    fetch: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +106,18 @@ def list_(
         cli_args=cli_args,
         debug=debug,
     )
-    if fetch:
+    return _run_list(
+        context=context,
+        options=ListOptions(fetch=fetch),
+    )
+
+
+def _run_list(
+    *,
+    context: CommandContext,
+    options: ListOptions,
+) -> int:
+    if options.fetch:
         refresh_remote_state_for_status(jj_client=context.jj_client)
 
     state = context.state_store.load()
