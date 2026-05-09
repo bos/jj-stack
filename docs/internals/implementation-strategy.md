@@ -90,9 +90,10 @@ that context until it builds command-specific options or resolved target data, i
 of reconstructing shared dependencies from the repo root.
 
 Command-specific options should hold normalized CLI values after argparse-specific
-parsing is complete. `submit`, `cleanup`, and `close` use command-specific option
-values at their orchestration boundaries, with `CommandContext` carrying shared runtime
-dependencies.
+parsing is complete. Commands with their own behavior flags or selectors use
+command-specific option values at their orchestration boundaries, with `CommandContext`
+carrying shared runtime dependencies. Command code should use the context's state store
+rather than reconstructing one from the repo root.
 
 ## Repository layout
 

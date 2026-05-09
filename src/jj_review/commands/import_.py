@@ -20,8 +20,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
-from jj_review.config import RepoConfig
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError, ErrorMessage
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.error_messages import (
@@ -56,6 +55,15 @@ HELP = "Connect jj-review to an existing stack of pull requests"
 _DISPLAY_CHANGE_ID_LENGTH = 8
 ImportActionStatus = Literal["applied"]
 type ImportActionBody = Message
+
+
+@dataclass(frozen=True, slots=True)
+class ImportOptions:
+    """Parsed command options for `import`."""
+
+    fetch: bool
+    pull_request_reference: str | None
+    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,11 +136,12 @@ def import_(
     )
     result = asyncio.run(
         _run_import_async(
-            config=context.config,
-            fetch=fetch,
-            jj_client=context.jj_client,
-            pull_request_reference=pull_request,
-            revset=revset,
+            context=context,
+            options=ImportOptions(
+                fetch=fetch,
+                pull_request_reference=pull_request,
+                revset=revset,
+            ),
         )
     )
     _print_import_result(result)
@@ -170,22 +179,19 @@ def _print_import_result(result: ImportResult) -> None:
 
 async def _run_import_async(
     *,
-    config: RepoConfig,
-    fetch: bool,
-    jj_client: JjClient,
-    pull_request_reference: str | None,
-    revset: str | None,
+    context: CommandContext,
+    options: ImportOptions,
 ) -> ImportResult:
-    client = jj_client
+    client = context.jj_client
     with console.spinner(description="Resolving import selection"):
         selection = await _resolve_selection(
             client=client,
-            fetch=fetch,
-            pull_request_reference=pull_request_reference,
-            revset=revset,
+            fetch=options.fetch,
+            pull_request_reference=options.pull_request_reference,
+            revset=options.revset,
         )
     if (
-        not fetch
+        not options.fetch
         and selection.head_bookmark is not None
         and selection.selected_revset is not None
         and not client.query_revisions(selection.selected_revset, limit=1)
@@ -198,9 +204,9 @@ async def _run_import_async(
         )
     with console.spinner(description="Inspecting jj stack"):
         prepared_status = prepare_status(
-            config=config,
-            fetch_remote_state=fetch and selection.head_bookmark is None,
-            jj_client=jj_client,
+            config=context.config,
+            fetch_remote_state=options.fetch and selection.head_bookmark is None,
+            jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=selection.selected_revset,
         )
@@ -232,10 +238,10 @@ async def _run_import_async(
     with console.spinner(description="Loading bookmark state"):
         bookmark_states = prepared.client.list_bookmark_states()
     authoritative_remote_targets: dict[str, str] = {}
-    if fetch and selection.head_bookmark is not None and prepared.remote is not None:
+    if options.fetch and selection.head_bookmark is not None and prepared.remote is not None:
         with console.spinner(description="Fetching jj remote"):
             authoritative_remote_targets = _fetch_selected_stack_bookmarks(
-                prefix=config.bookmark_prefix,
+                prefix=context.config.bookmark_prefix,
                 client=prepared.client,
                 explicit_head_bookmark=selection.head_bookmark,
                 remote=prepared.remote,
@@ -254,7 +260,7 @@ async def _run_import_async(
         bookmark_by_change_id.update(
             discover_bookmarks_for_revisions(
                 bookmark_states=bookmark_states,
-                prefix=config.bookmark_prefix,
+                prefix=context.config.bookmark_prefix,
                 remote_name=prepared.remote.name,
                 revisions=prepared.stack.revisions,
             )

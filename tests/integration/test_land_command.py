@@ -493,7 +493,7 @@ def test_land_blocks_dismissed_approval_after_resubmit(
             review.state = "DISMISSED"
 
     monkeypatch.setattr(
-        "jj_review.commands.land.command.JjClient.push_bookmarks",
+        "jj_review.jj.JjClient.push_bookmarks",
         dismissing_push,
     )
 

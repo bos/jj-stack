@@ -346,9 +346,8 @@ def _run_cleanup_command(
 
     with console.spinner(description="Loading bookmark state"):
         prepared_cleanup = _prepare_cleanup(
-            config=context.config,
-            dry_run=options.dry_run,
-            jj_client=context.jj_client,
+            context=context,
+            options=options,
         )
     stale_reasons = _stale_change_reasons(
         change_ids=tuple(prepared_cleanup.state.changes),
@@ -482,30 +481,29 @@ def _rebase_destination_template(destination_change_id: str | None):
 
 def _prepare_cleanup(
     *,
-    config: RepoConfig,
-    dry_run: bool,
-    jj_client: JjClient,
+    context: CommandContext,
+    options: CleanupOptions,
 ) -> PreparedCleanup:
     """Resolve local cleanup inputs before any GitHub network inspection."""
 
-    state_store = ReviewStateStore.for_repo(jj_client.repo_root)
+    state_store = context.state_store
     state = state_store.load()
-    if not dry_run:
+    if not options.dry_run:
         state_store.require_writable()
 
     bookmark_states = _load_bookmark_states(
-        prefix=config.bookmark_prefix,
-        jj_client=jj_client,
+        prefix=context.config.bookmark_prefix,
+        jj_client=context.jj_client,
         state=state,
     )
 
     return PreparedCleanup(
-        config=config,
-        dry_run=dry_run,
+        config=context.config,
+        dry_run=options.dry_run,
         bookmark_states=bookmark_states,
         github_repository=None,
         github_repository_error=None,
-        jj_client=jj_client,
+        jj_client=context.jj_client,
         remote=None,
         remote_error=None,
         remote_context_loaded=False,

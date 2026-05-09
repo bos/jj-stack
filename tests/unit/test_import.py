@@ -6,7 +6,8 @@ from typing import cast
 
 import pytest
 
-from jj_review.commands.import_ import _run_import_async
+from jj_review.bootstrap import CommandContext
+from jj_review.commands.import_ import ImportOptions, _run_import_async
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.jj import JjClient
@@ -50,15 +51,23 @@ def test_run_import_current_rejects_before_github_inspection(
     )
 
     jj_client = SimpleNamespace(repo_root=tmp_path, query_revisions=lambda *args, **kwargs: ())
+    context = cast(
+        CommandContext,
+        SimpleNamespace(
+            config=RepoConfig(),
+            jj_client=cast(JjClient, jj_client),
+        ),
+    )
 
     with pytest.raises(CliError) as exc_info:
         asyncio.run(
             _run_import_async(
-                config=RepoConfig(),
-                fetch=False,
-                jj_client=cast(JjClient, jj_client),
-                pull_request_reference=None,
-                revset=None,
+                context=context,
+                options=ImportOptions(
+                    fetch=False,
+                    pull_request_reference=None,
+                    revset=None,
+                ),
             )
         )
 

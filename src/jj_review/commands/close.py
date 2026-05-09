@@ -298,10 +298,8 @@ def _run_close(
 
     with console.spinner(description="Inspecting jj stack"):
         prepared_close = prepare_close(
-            dry_run=options.dry_run,
-            cleanup=options.cleanup,
-            config=context.config,
-            jj_client=context.jj_client,
+            context=context,
+            options=options,
             revset=resolved_revset,
         )
     result = stream_close(prepared_close=prepared_close)
@@ -341,34 +339,36 @@ def _run_close(
 
 def prepare_close(
     *,
-    dry_run: bool,
-    cleanup: bool,
-    config: RepoConfig,
-    jj_client: JjClient,
+    context: CommandContext,
+    options: CloseOptions,
     revset: str | None,
 ) -> PreparedClose:
     """Resolve local close inputs before any GitHub inspection."""
 
-    state_store = ReviewStateStore.for_repo(jj_client.repo_root)
-    if not dry_run:
+    state_store = context.state_store
+    if not options.dry_run:
         state_store.require_writable()
-    fast_path = _prepare_untracked_close_fast_path(jj_client=jj_client, revset=revset)
+    fast_path = _prepare_untracked_close_fast_path(
+        jj_client=context.jj_client,
+        revset=revset,
+        state_store=state_store,
+    )
     if fast_path is not None:
         return PreparedClose(
-            config=config,
-            dry_run=dry_run,
-            cleanup=cleanup,
+            config=context.config,
+            dry_run=options.dry_run,
+            cleanup=options.cleanup,
             prepared_status=fast_path,
         )
     return PreparedClose(
-        config=config,
-        dry_run=dry_run,
-        cleanup=cleanup,
+        config=context.config,
+        dry_run=options.dry_run,
+        cleanup=options.cleanup,
         prepared_status=prepare_status(
-            config=config,
-            fetch_remote_state=cleanup,
+            config=context.config,
+            fetch_remote_state=options.cleanup,
             fetch_only_when_tracked=True,
-            jj_client=jj_client,
+            jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=revset,
         ),
@@ -379,6 +379,7 @@ def _prepare_untracked_close_fast_path(
     *,
     jj_client: JjClient,
     revset: str | None,
+    state_store: ReviewStateStore,
 ) -> PreparedStatus | None:
     """Build the no-op close path without bookmark discovery.
 
@@ -394,7 +395,6 @@ def _prepare_untracked_close_fast_path(
         allow_divergent=True,
         allow_immutable=True,
     )
-    state_store = ReviewStateStore.for_repo(jj_client.repo_root)
     state = state_store.load()
 
     status_revisions: list[PreparedRevision] = []

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError, error_message
 from jj_review.github.client import (
     GithubClient,
@@ -64,30 +64,24 @@ def doctor(
         debug=debug,
     )
     with console.spinner(description="Running checks"):
-        results = asyncio.run(
-            _run_checks(
-                jj_client=context.jj_client,
-                state_store=context.state_store,
-            )
-        )
+        results = asyncio.run(_run_checks(context=context))
     console.output(_results_table(results))
     return 1 if any(r.status == "fail" for r in results) else 0
 
 
 async def _run_checks(
     *,
-    jj_client: JjClient,
-    state_store: ReviewStateStore,
+    context: CommandContext,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
 
     # Check 1: Git remote selection
-    remote_result, selected_remote = _check_git_remote(jj_client)
+    remote_result, selected_remote = _check_git_remote(context.jj_client)
     results.append(remote_result)
 
     if selected_remote is None:
         results.extend(_skipped("GitHub remote", "GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(state_store))
+        results.append(_check_interruptions(context.state_store))
         return results
 
     # Check 2: GitHub remote parsing
@@ -96,7 +90,7 @@ async def _run_checks(
 
     if parsed_repo is None:
         results.extend(_skipped("GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(state_store))
+        results.append(_check_interruptions(context.state_store))
         return results
 
     # Check 3: GitHub auth
@@ -105,7 +99,7 @@ async def _run_checks(
 
     if token is None:
         results.extend(_skipped("connectivity", "trunk branch"))
-        results.append(_check_interruptions(state_store))
+        results.append(_check_interruptions(context.state_store))
         return results
 
     # Checks 4 & 5: Connectivity and trunk branch
@@ -121,7 +115,7 @@ async def _run_checks(
         results.append(CheckResult("trunk branch", "skip", "connectivity failed"))
 
     # Check 6: Interrupted operations
-    results.append(_check_interruptions(state_store))
+    results.append(_check_interruptions(context.state_store))
     return results
 
 

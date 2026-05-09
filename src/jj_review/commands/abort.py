@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from jj_review import console, ui
-from jj_review.bootstrap import bootstrap_context
+from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import error_message
 from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
@@ -51,6 +51,13 @@ logger = logging.getLogger(__name__)
 
 AbortActionStatus = Literal["applied", "blocked", "planned", "skipped"]
 type AbortActionBody = Message
+
+
+@dataclass(frozen=True, slots=True)
+class AbortOptions:
+    """Parsed command options for `abort`."""
+
+    dry_run: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +101,17 @@ def abort(
         cli_args=cli_args,
         debug=debug,
     )
+    return _run_abort(
+        context=context,
+        options=AbortOptions(dry_run=dry_run),
+    )
 
+
+def _run_abort(
+    *,
+    context: CommandContext,
+    options: AbortOptions,
+) -> int:
     state_store = context.state_store
     jj_client = context.jj_client
     loaded_intents = state_store.list_intents()
@@ -176,10 +193,9 @@ def abort(
         for loaded in outstanding:
             result = asyncio.run(
                 _abort_intent_async(
-                    dry_run=dry_run,
-                    jj_client=jj_client,
+                    context=context,
                     loaded=loaded,
-                    state_store=state_store,
+                    options=options,
                 )
             )
             _print_abort_result(result)
@@ -198,20 +214,20 @@ def abort(
 
 async def _abort_intent_async(
     *,
-    dry_run: bool,
-    jj_client: JjClient,
+    context: CommandContext,
     loaded: LoadedIntent,
-    state_store: ReviewStateStore,
+    options: AbortOptions,
 ) -> AbortResult:
     intent = loaded.intent
+    dry_run = options.dry_run
 
     if isinstance(intent, SubmitIntent):
         return await _abort_submit(
             dry_run=dry_run,
             intent=intent,
             intent_path=loaded.path,
-            jj_client=jj_client,
-            state_store=state_store,
+            jj_client=context.jj_client,
+            state_store=context.state_store,
         )
 
     # For all other intent types, only the intent file can be removed.  The
