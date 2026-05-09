@@ -198,10 +198,9 @@ def close(
     )
     if pull_request is not None:
         if cleanup and revset is None:
-            state_store = ReviewStateStore.for_repo(context.jj_client.repo_root)
             if not dry_run:
-                state_store.require_writable()
-            state = state_store.load()
+                context.state_store.require_writable()
+            state = context.state_store.load()
             pull_request_number = resolve_pull_request_number(
                 jj_client=context.jj_client,
                 pull_request_reference=pull_request,
@@ -227,7 +226,7 @@ def close(
                             _retire_submit_intents_cleared_by_cleanup
                         ),
                         state=state,
-                        state_store=state_store,
+                        state_store=context.state_store,
                     )
                 )
             if not state_has_pull_request_record(
@@ -245,7 +244,7 @@ def close(
                             _retire_submit_intents_cleared_by_cleanup
                         ),
                         state=state,
-                        state_store=state_store,
+                        state_store=context.state_store,
                     )
                 )
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(

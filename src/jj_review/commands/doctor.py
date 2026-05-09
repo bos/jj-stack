@@ -64,14 +64,22 @@ def doctor(
         debug=debug,
     )
     with console.spinner(description="Running checks"):
-        results = asyncio.run(_run_checks(jj_client=context.jj_client))
+        results = asyncio.run(
+            _run_checks(
+                jj_client=context.jj_client,
+                state_store=context.state_store,
+            )
+        )
     console.output(_results_table(results))
     return 1 if any(r.status == "fail" for r in results) else 0
 
 
-async def _run_checks(*, jj_client: JjClient) -> list[CheckResult]:
+async def _run_checks(
+    *,
+    jj_client: JjClient,
+    state_store: ReviewStateStore,
+) -> list[CheckResult]:
     results: list[CheckResult] = []
-    repo_root = jj_client.repo_root
 
     # Check 1: Git remote selection
     remote_result, selected_remote = _check_git_remote(jj_client)
@@ -79,7 +87,7 @@ async def _run_checks(*, jj_client: JjClient) -> list[CheckResult]:
 
     if selected_remote is None:
         results.extend(_skipped("GitHub remote", "GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(ReviewStateStore.for_repo(repo_root)))
+        results.append(_check_interruptions(state_store))
         return results
 
     # Check 2: GitHub remote parsing
@@ -88,7 +96,7 @@ async def _run_checks(*, jj_client: JjClient) -> list[CheckResult]:
 
     if parsed_repo is None:
         results.extend(_skipped("GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(ReviewStateStore.for_repo(repo_root)))
+        results.append(_check_interruptions(state_store))
         return results
 
     # Check 3: GitHub auth
@@ -97,7 +105,7 @@ async def _run_checks(*, jj_client: JjClient) -> list[CheckResult]:
 
     if token is None:
         results.extend(_skipped("connectivity", "trunk branch"))
-        results.append(_check_interruptions(ReviewStateStore.for_repo(repo_root)))
+        results.append(_check_interruptions(state_store))
         return results
 
     # Checks 4 & 5: Connectivity and trunk branch
@@ -113,7 +121,7 @@ async def _run_checks(*, jj_client: JjClient) -> list[CheckResult]:
         results.append(CheckResult("trunk branch", "skip", "connectivity failed"))
 
     # Check 6: Interrupted operations
-    results.append(_check_interruptions(ReviewStateStore.for_repo(repo_root)))
+    results.append(_check_interruptions(state_store))
     return results
 
 

@@ -84,6 +84,11 @@ Current short aliases include `st` for `status`, `ls` for `list`, and `sub` for 
 Commands that select one linked pull request also accept `-p` as a short form for
 `--pull-request`.
 
+Command entrypoints bootstrap a `CommandContext` containing config, the `jj` client,
+repo root, runtime options, and the repo state store. CLI boundary code should preserve
+that context until it builds command-specific options or resolved target data, instead
+of reconstructing shared dependencies from the repo root.
+
 ## Repository layout
 
 ```text

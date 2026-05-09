@@ -12,6 +12,7 @@ from jj_review import ui
 from jj_review.config import AppConfig, load_config
 from jj_review.errors import CliError
 from jj_review.jj import JjCliArgs, JjClient
+from jj_review.state.store import ReviewStateStore
 
 _MINIMUM_JJ_VERSION = (0, 39, 0)
 _MINIMUM_JJ_VERSION_STRING = "0.39.0"
@@ -44,13 +45,14 @@ class RuntimeOptions:
 
 
 @dataclass(slots=True, frozen=True)
-class AppContext:
+class CommandContext:
     """Typed runtime state shared by command handlers."""
 
     config: AppConfig
     jj_client: JjClient
     options: RuntimeOptions
     repo_root: Path
+    state_store: ReviewStateStore
 
 
 def bootstrap_context(
@@ -58,7 +60,7 @@ def bootstrap_context(
     repository: Path | None,
     cli_args: JjCliArgs,
     debug: bool,
-) -> AppContext:
+) -> CommandContext:
     """Resolve the repository, load config, and initialize logging."""
 
     repository = _resolve_optional_path(repository)
@@ -69,7 +71,7 @@ def bootstrap_context(
     config = load_config(jj_client=jj_client)
     configure_logging(debug=debug, configured_level=config.logging.level)
 
-    return AppContext(
+    return CommandContext(
         config=config,
         jj_client=jj_client,
         options=RuntimeOptions(
@@ -78,6 +80,7 @@ def bootstrap_context(
             repository=repository,
         ),
         repo_root=repo_root,
+        state_store=ReviewStateStore.for_repo(repo_root),
     )
 
 

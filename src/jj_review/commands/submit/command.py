@@ -122,7 +122,6 @@ def submit(
             )
         emitted_prepared = True
 
-    state_store = ReviewStateStore.for_repo(context.repo_root)
     result = asyncio.run(
         _run_submit_async(
             config=context.config,
@@ -140,7 +139,7 @@ def submit(
             restart=restart,
             revset=selected_revset,
             reviewers=reviewer_list,
-            state_store=state_store,
+            state_store=context.state_store,
             team_reviewers=team_reviewer_list,
             use_bookmarks=use_bookmark_list,
         )

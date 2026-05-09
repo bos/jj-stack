@@ -30,7 +30,7 @@ Three patterns have grown organically and are now load-bearing:
   the same fields on `CachedChange`, `PullRequestLookup`, and `LocalStack`. The
   130-line landability cascade in `commands/land/plan.py` is the largest single
   example.
-- Parameter signatures have widened. `bootstrap.AppContext` is constructed once and
+- Parameter signatures have widened. `bootstrap.CommandContext` is constructed once and
   immediately destructured at the async boundary; orchestrators re-thread `(config,
   jj_client, state_store, dry_run, ...)` through long call chains by hand.
 

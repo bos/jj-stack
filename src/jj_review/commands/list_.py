@@ -44,7 +44,6 @@ from jj_review.review.status import (
     prepare_stack_for_status,
     refresh_remote_state_for_status,
 )
-from jj_review.state.store import ReviewStateStore
 
 HELP = "List review stacks in this repo"
 
@@ -103,8 +102,7 @@ def list_(
     if fetch:
         refresh_remote_state_for_status(jj_client=context.jj_client)
 
-    state_store = ReviewStateStore.for_repo(context.repo_root)
-    state = state_store.load()
+    state = context.state_store.load()
     with console.spinner(description="Inspecting local stacks"):
         discovered = discover_tracked_stacks(jj_client=context.jj_client, state=state)
 
@@ -161,7 +159,7 @@ def list_(
                 remote_error=repo_inspection.remote_error,
                 stack=stack,
                 state=state,
-                state_store=state_store,
+                state_store=context.state_store,
             ),
         )
         for stack in ordered

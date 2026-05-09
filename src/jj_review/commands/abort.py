@@ -95,7 +95,7 @@ def abort(
         debug=debug,
     )
 
-    state_store = ReviewStateStore.for_repo(context.repo_root)
+    state_store = context.state_store
     jj_client = context.jj_client
     loaded_intents = state_store.list_intents()
 
