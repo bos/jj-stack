@@ -42,6 +42,7 @@ from jj_review.github.resolution import (
     resolve_trunk_branch,
 )
 from jj_review.jj import JjCliArgs, JjClient
+from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_selected_revset,
@@ -276,7 +277,10 @@ def _stack_not_on_trunk_error(
     status_result: StatusResult,
 ) -> CliError:
     message = t"Selected stack is not based on the current {ui.revset('trunk()')}."
-    if any(revision.has_merged_pull_request() for revision in status_result.revisions):
+    if any(
+        classify_review_status_revision(revision).pr_lifecycle == "merged"
+        for revision in status_result.revisions
+    ):
         return CliError(
             message,
             hint=(
