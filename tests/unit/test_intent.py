@@ -144,7 +144,6 @@ def _make_land_intent(
             "aaaa": "feature 1",
             "bbbb": "feature 2",
         },
-        completed_change_ids=("aaaa",),
         trunk_branch="main",
         landed_commit_id="landed-commit",
         selected_pr_number=2,

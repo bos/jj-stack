@@ -434,27 +434,6 @@ def test_remote_trunk_matches_commit_requires_matching_remote_and_local_state() 
     )
 
 
-def test_resume_land_plan_skips_completed_change_ids() -> None:
-    intent = cast(
-        LandIntent,
-        _loaded_land_intent(
-            ordered_change_ids=("change-1", "change-2"),
-            ordered_commit_ids=("commit-1", "commit-2"),
-            landed_change_ids=("change-1", "change-2"),
-            completed_change_ids=("change-1",),
-        ).intent,
-    )
-    plan = _resume_land_plan(
-        intent=intent,
-        trunk_branch="main",
-    )
-
-    assert plan.blocked is False
-    assert plan.push_trunk is False
-    assert [revision.change_id for revision in plan.planned_revisions] == ["change-2"]
-    assert [revision.pull_request_number for revision in plan.planned_revisions] == [2]
-
-
 def test_resume_land_plan_reads_completed_change_ids_from_journal(tmp_path: Path) -> None:
     journal = OperationJournal.begin(
         tmp_path,
@@ -770,7 +749,6 @@ def _loaded_land_intent(
     ordered_change_ids: tuple[str, ...],
     ordered_commit_ids: tuple[str, ...],
     landed_change_ids: tuple[str, ...],
-    completed_change_ids: tuple[str, ...] = (),
     selected_pr_number: int | None = None,
     trunk_branch: str = "main",
 ) -> LoadedIntent:
@@ -807,7 +785,6 @@ def _loaded_land_intent(
                 change_id: f"feature {index + 1}"
                 for index, change_id in enumerate(ordered_change_ids)
             },
-            completed_change_ids=completed_change_ids,
             trunk_branch=trunk_branch,
             landed_commit_id=ordered_commit_ids[len(landed_change_ids) - 1]
             if landed_change_ids

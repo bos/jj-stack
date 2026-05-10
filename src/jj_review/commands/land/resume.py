@@ -286,7 +286,7 @@ def _completed_land_change_ids(intent: LandIntent) -> tuple[str, ...]:
     """Return the landed prefix whose saved-state updates are durably recorded."""
 
     if intent.journal_path is None:
-        return intent.completed_change_ids
+        return ()
     try:
         events = read_journal(Path(intent.journal_path))
     except (OSError, ValueError, KeyError) as error:
@@ -354,7 +354,6 @@ def build_land_intent(
         landed_subjects={
             revision.change_id: revision.subject for revision in planned_revisions
         },
-        completed_change_ids=(),
         trunk_branch=trunk_branch,
         landed_commit_id=landed_commit_id,
         selected_pr_number=selected_pr_number,

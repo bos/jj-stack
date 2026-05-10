@@ -80,7 +80,6 @@ class LandIntent(OrderedChangeIdsIntent):
     landed_commit_ids: dict[str, str]
     landed_pull_request_numbers: dict[str, int]
     landed_subjects: dict[str, str]
-    completed_change_ids: tuple[str, ...]
     trunk_branch: str
     landed_commit_id: str
     selected_pr_number: int | None = None
