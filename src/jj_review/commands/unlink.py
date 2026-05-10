@@ -14,7 +14,7 @@ from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj import JjCliArgs
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import bookmark_ownership_for_source
 from jj_review.review.change_status import (
@@ -30,7 +30,6 @@ from jj_review.review.status import (
     prepare_status,
     stream_status_async,
 )
-from jj_review.state.store import ReviewStateStore
 
 HELP = "Stop managing one local change as part of review"
 
@@ -59,12 +58,11 @@ class _PreparedUnlink:
 
     bookmark: str | None
     cached_change: CachedChange | None
-    prepared_client: JjClient
+    context: CommandContext
     prepared_revision: PreparedRevision
     review_status: ReviewChangeStatus
     selected_revset: str
     state: ReviewState
-    state_store: ReviewStateStore
     status_revision: ReviewStatusRevision
 
 
@@ -126,7 +124,7 @@ async def _run_unlink_async(
     if not _revision_has_active_review_link(
         bookmark=prepared_unlink.bookmark,
         cached_change=prepared_unlink.cached_change,
-        prepared_client=prepared_unlink.prepared_client,
+        context=prepared_unlink.context,
         prepared_revision=prepared_unlink.prepared_revision,
         review_status=prepared_unlink.review_status,
     ):
@@ -179,8 +177,7 @@ async def _prepare_unlink(
         status_result=status_result,
         change_id=prepared_revision.revision.change_id,
     )
-    state_store = prepared.state_store
-    state = state_store.load()
+    state = context.state_store.load()
     cached_change = state.changes.get(prepared_revision.revision.change_id)
     bookmark = _resolved_unlink_bookmark(
         cached_change=cached_change,
@@ -190,12 +187,11 @@ async def _prepare_unlink(
     return _PreparedUnlink(
         bookmark=bookmark,
         cached_change=cached_change,
-        prepared_client=prepared.client,
+        context=context,
         prepared_revision=prepared_revision,
         review_status=classify_review_status_revision(status_revision),
         selected_revset=prepared_status.selected_revset,
         state=state,
-        state_store=state_store,
         status_revision=status_revision,
     )
 
@@ -231,7 +227,7 @@ def _apply_unlink(*, prepared_unlink: _PreparedUnlink) -> None:
             }
         }
     )
-    prepared_unlink.state_store.save(next_state)
+    prepared_unlink.context.state_store.save(next_state)
 
 
 def _unlink_result(
@@ -269,7 +265,7 @@ def _revision_has_active_review_link(
     *,
     bookmark: str | None,
     cached_change: CachedChange | None,
-    prepared_client: JjClient,
+    context: CommandContext,
     prepared_revision: PreparedRevision,
     review_status: ReviewChangeStatus,
 ) -> bool:
@@ -277,7 +273,7 @@ def _revision_has_active_review_link(
     if cached_status.link == "active" and cached_status.saved_review_identity:
         return True
     if bookmark is not None:
-        bookmark_state = prepared_client.get_bookmark_state(bookmark)
+        bookmark_state = context.jj_client.get_bookmark_state(bookmark)
         if bookmark_state.local_target == prepared_revision.revision.commit_id:
             return True
     if review_status.remote_branch != "absent":
