@@ -100,7 +100,8 @@ resolved/prepared target value before mutation. `submit`, `close`, `land`, `reli
 `unlink` use this shape to keep PR/revset selection, GitHub inspection, and saved-state
 mutation from sharing long-lived local variable bundles. `submit` preparation takes the
 bootstrapped `CommandContext` plus parsed/resolved submit option objects rather than a
-hand-threaded config/client/state-store bundle.
+hand-threaded config/client/state-store bundle, and pull-request synchronization uses the
+same submit option objects instead of separate draft/reviewer/label parameters.
 
 ## Repository layout
 
