@@ -104,10 +104,11 @@ hand-threaded config/client/state-store bundle, and pull-request synchronization
 same submit option objects instead of separate draft/reviewer/label parameters. Submit
 mutation phases share a `SubmitMutationRun` for dry-run mode and incremental state-save
 data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
-instead of separate config/client/state-store parameters. Plain cleanup's prepared target
-also carries `CommandContext` rather than duplicating those shared dependencies, and
-cleanup and cleanup rebase prepared targets retain parsed `CleanupOptions` for mode
-state. Cleanup local discovery helpers read config and jj access through `CommandContext`.
+instead of separate config/client/state-store parameters, and orphan close journal setup
+receives `_OrphanCloseRun` for live execution state. Plain cleanup's prepared target also
+carries `CommandContext` rather than duplicating those shared dependencies, and cleanup
+and cleanup rebase prepared targets retain parsed `CleanupOptions` for mode state.
+Cleanup local discovery helpers read config and jj access through `CommandContext`.
 Cleanup remote resolution and orphan bookmark planning also read shared dependencies
 through the context, and stale cleanup mutation application reads jj and remote data from
 the prepared cleanup target.
