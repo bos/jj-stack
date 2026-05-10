@@ -76,7 +76,6 @@ from jj_review.state.journal import (
     append_abandoned_event,
 )
 from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
-from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message, plain_text
 
 HELP = "Remove stale tracking data and review branches; optionally rebase one stack"
@@ -121,18 +120,16 @@ class CleanupResult:
 class PreparedCleanup:
     """Locally prepared cleanup inputs before any GitHub inspection."""
 
-    config: RepoConfig
+    context: CommandContext
     dry_run: bool
     bookmark_states: dict[str, BookmarkState]
     github_repository: ParsedGithubRepo | None
     github_repository_error: ErrorMessage | None
-    jj_client: JjClient
     remote: GitRemote | None
     remote_error: ErrorMessage | None
     remote_context_loaded: bool
     operation_lock: OperationLock
     state: ReviewState
-    state_store: ReviewStateStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,7 +382,7 @@ def _run_cleanup_command(
         )
     stale_reasons = _stale_change_reasons(
         change_ids=tuple(prepared_cleanup.state.changes),
-        jj_client=prepared_cleanup.jj_client,
+        jj_client=prepared_cleanup.context.jj_client,
     )
     if _cleanup_needs_remote_context(
         prepared_cleanup=prepared_cleanup,
@@ -573,18 +570,16 @@ def _prepare_cleanup(
     )
 
     return PreparedCleanup(
-        config=context.config,
+        context=context,
         dry_run=options.dry_run,
         bookmark_states=bookmark_states,
         github_repository=None,
         github_repository_error=None,
-        jj_client=context.jj_client,
         remote=None,
         remote_error=None,
         remote_context_loaded=False,
         operation_lock=operation_lock,
         state=state,
-        state_store=state_store,
     )
 
 
@@ -1098,10 +1093,10 @@ async def _run_cleanup_async(
     _cleanup_succeeded = False
     stale_operations = []
     if not dry_run:
-        state_dir = prepared_cleanup.state_store.require_writable()
+        state_dir = prepared_cleanup.context.state_store.require_writable()
         stale_operations = [
             loaded
-            for loaded in prepared_cleanup.state_store.list_operations()
+            for loaded in prepared_cleanup.context.state_store.list_operations()
             if loaded.operation.kind == "cleanup"
         ]
         for loaded in stale_operations:
@@ -1123,7 +1118,7 @@ async def _run_cleanup_async(
         if stale_reasons is None:
             stale_reasons = _stale_change_reasons(
                 change_ids=tuple(prepared_cleanup.state.changes),
-                jj_client=prepared_cleanup.jj_client,
+                jj_client=prepared_cleanup.context.jj_client,
             )
         if _cleanup_needs_remote_context(
             prepared_cleanup=prepared_cleanup,
@@ -1246,13 +1241,13 @@ def _run_local_cleanup_pass(
     for bookmark, bookmark_state in sorted(prepared_cleanup.bookmark_states.items()):
         if bookmark in tracked_bookmarks or not is_review_bookmark(
             bookmark,
-            prefix=prepared_cleanup.config.bookmark_prefix,
+            prefix=prepared_cleanup.context.config.bookmark_prefix,
         ):
             continue
         orphan_plan = _plan_orphan_local_bookmark_cleanup(
-            prefix=prepared_cleanup.config.bookmark_prefix,
+            prefix=prepared_cleanup.context.config.bookmark_prefix,
             bookmark_state=bookmark_state,
-            jj_client=prepared_cleanup.jj_client,
+            jj_client=prepared_cleanup.context.jj_client,
         )
         if orphan_plan is None:
             continue
@@ -1266,7 +1261,7 @@ def _run_local_cleanup_pass(
 
     if not prepared_cleanup.dry_run:
         _apply_stale_cleanup_mutation_plans(
-            jj_client=prepared_cleanup.jj_client,
+            jj_client=prepared_cleanup.context.jj_client,
             mutation_plans=tuple(mutation_plans),
             orphan_local_bookmark_plans=tuple(orphan_local_bookmark_plans),
             record_action=record_action,
@@ -1320,16 +1315,16 @@ def _process_stale_cleanup_change(
         next_changes.pop(prepared_change.change_id, None)
 
     local_bookmark_plan = _plan_local_bookmark_cleanup(
-        cleanup_user_bookmarks=prepared_cleanup.config.cleanup_user_bookmarks,
+        cleanup_user_bookmarks=prepared_cleanup.context.config.cleanup_user_bookmarks,
         bookmark_state=prepared_change.bookmark_state,
-        prefix=prepared_cleanup.config.bookmark_prefix,
+        prefix=prepared_cleanup.context.config.bookmark_prefix,
         cached_change=prepared_change.cached_change,
         stale_reason=stale_reason,
     )
     remote_plan = _plan_remote_branch_cleanup(
-        cleanup_user_bookmarks=prepared_cleanup.config.cleanup_user_bookmarks,
+        cleanup_user_bookmarks=prepared_cleanup.context.config.cleanup_user_bookmarks,
         bookmark_state=prepared_change.bookmark_state,
-        prefix=prepared_cleanup.config.bookmark_prefix,
+        prefix=prepared_cleanup.context.config.bookmark_prefix,
         cached_change=prepared_change.cached_change,
         local_bookmark_forget_planned=(
             local_bookmark_plan is not None and local_bookmark_plan.status == "planned"
@@ -1430,7 +1425,7 @@ def _save_cleanup_state_if_changed(
     prepared_cleanup: PreparedCleanup,
 ) -> None:
     if not prepared_cleanup.dry_run and next_changes != prepared_cleanup.state.changes:
-        prepared_cleanup.state_store.save(
+        prepared_cleanup.context.state_store.save(
             prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
         )
 
@@ -1523,7 +1518,7 @@ async def _apply_stack_comment_cleanup_action(
             }
         )
     if not prepared_cleanup.dry_run:
-        prepared_cleanup.state_store.save(
+        prepared_cleanup.context.state_store.save(
             prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
         )
 
@@ -1541,7 +1536,7 @@ def _load_cleanup_remote_context(*, prepared_cleanup: PreparedCleanup) -> Prepar
     if prepared_cleanup.remote_context_loaded:
         return prepared_cleanup
 
-    remote, remote_error = _resolve_remote(jj_client=prepared_cleanup.jj_client)
+    remote, remote_error = _resolve_remote(jj_client=prepared_cleanup.context.jj_client)
     github_repository = None
     github_error = None
     if remote is not None:
@@ -1583,9 +1578,9 @@ def _cleanup_needs_remote_context(
             and (
                 is_review_bookmark(
                     bookmark,
-                    prefix=prepared_cleanup.config.bookmark_prefix,
+                    prefix=prepared_cleanup.context.config.bookmark_prefix,
                 )
-                or prepared_cleanup.config.cleanup_user_bookmarks
+                or prepared_cleanup.context.config.cleanup_user_bookmarks
             )
         ):
             return True

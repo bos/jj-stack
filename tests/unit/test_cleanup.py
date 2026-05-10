@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+from jj_review.bootstrap import CommandContext
 from jj_review.commands import cleanup as cleanup_module
 from jj_review.commands.cleanup import (
     CleanupAction,
@@ -63,8 +64,16 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
             save=saved_states.append,
         ),
     )
+    context = cast(
+        CommandContext,
+        SimpleNamespace(
+            config=RepoConfig(),
+            jj_client=cast(JjClient, SimpleNamespace()),
+            state_store=state_store,
+        ),
+    )
     prepared_cleanup = PreparedCleanup(
-        config=RepoConfig(),
+        context=context,
         dry_run=False,
         bookmark_states={},
         github_repository=ParsedGithubRepo(
@@ -73,13 +82,11 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
             repo="stacked-review",
         ),
         github_repository_error=None,
-        jj_client=cast(JjClient, SimpleNamespace()),
         remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
         remote_error=None,
         remote_context_loaded=True,
         operation_lock=_fake_operation_lock(recorded_journal_paths),
         state=state,
-        state_store=state_store,
     )
 
     class FakeGithubClientContext:
