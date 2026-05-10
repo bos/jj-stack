@@ -263,11 +263,11 @@ async def _abort_submit(
     """Retract a partial submit: close PRs, delete remote branches, clear state."""
 
     dry_run = run.dry_run
-    jj_client = run.context.jj_client
+    jj_client: JjClient = run.context.jj_client
     state_store = run.context.state_store
     actions: list[AbortAction] = []
-    if not _submit_operation_matches_recorded_stack(operation=operation, jj_client=jj_client):
-        if not _submit_operation_head_visible(operation=operation, jj_client=jj_client):
+    if not _submit_operation_matches_recorded_stack(operation=operation, run=run):
+        if not _submit_operation_head_visible(operation=operation, run=run):
             selector = _submit_operation_selector(operation)
             changed = "would be changed" if dry_run else "were changed"
             actions.append(
@@ -414,10 +414,11 @@ async def _abort_submit(
 def _submit_operation_matches_recorded_stack(
     *,
     operation: SubmitOperationRecord,
-    jj_client: JjClient,
+    run: AbortRun,
 ) -> bool:
     """Return True when the recorded submit stack still exists exactly."""
 
+    jj_client = run.context.jj_client
     revisions_by_change_id = jj_client.query_revisions_by_change_ids(operation.ordered_change_ids)
     commit_ids_by_change_id: dict[str, str] = {}
     for change_id in operation.ordered_change_ids:
@@ -435,13 +436,14 @@ def _submit_operation_matches_recorded_stack(
 def _submit_operation_head_visible(
     *,
     operation: SubmitOperationRecord,
-    jj_client: JjClient,
+    run: AbortRun,
 ) -> bool:
     """Return True when the interrupted submit's top change still resolves."""
 
     if not operation.ordered_change_ids:
         return False
     head_change_id = operation.ordered_change_ids[-1]
+    jj_client = run.context.jj_client
     return bool(
         jj_client.query_revisions_by_change_ids((head_change_id,)).get(head_change_id, ())
     )
