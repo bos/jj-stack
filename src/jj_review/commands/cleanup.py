@@ -1265,11 +1265,10 @@ def _run_local_cleanup_pass(
 
     if not prepared_cleanup.dry_run:
         _apply_stale_cleanup_mutation_plans(
-            jj_client=prepared_cleanup.context.jj_client,
             mutation_plans=tuple(mutation_plans),
             orphan_local_bookmark_plans=tuple(orphan_local_bookmark_plans),
+            prepared_cleanup=prepared_cleanup,
             record_action=record_action,
-            remote=prepared_cleanup.remote,
         )
         _save_cleanup_state_if_changed(
             next_changes=next_changes,
@@ -1363,12 +1362,13 @@ def _process_stale_cleanup_change(
 
 def _apply_stale_cleanup_mutation_plans(
     *,
-    jj_client: JjClient,
     mutation_plans: tuple[_StaleCleanupMutationPlan, ...],
     orphan_local_bookmark_plans: tuple[OrphanLocalBookmarkCleanupPlan, ...] = (),
+    prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
-    remote: GitRemote | None,
 ) -> None:
+    jj_client = prepared_cleanup.context.jj_client
+    remote = prepared_cleanup.remote
     remote_deletions: list[tuple[str, str]] = []
     remote_actions: list[CleanupAction] = []
     local_bookmarks: list[str] = []
