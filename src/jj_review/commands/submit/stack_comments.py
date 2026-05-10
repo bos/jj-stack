@@ -109,11 +109,11 @@ async def sync_stack_comments(
             concurrency=concurrency,
             items=tuple(pending),
             run_item=lambda pending_sync: _sync_stack_comment_task(
-                dry_run=run.dry_run,
                 github_client=github_client,
                 github_repository=github_repository,
                 comments=comments_by_pull_request_number[pending_sync.pull_request_number],
                 pending_sync=pending_sync,
+                run=run,
             ),
             on_success=handle_success,
         )
@@ -122,30 +122,30 @@ async def sync_stack_comments(
 async def _sync_stack_comment_task(
     *,
     comments: tuple[GithubIssueComment, ...],
-    dry_run: bool,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     pending_sync: PendingStackCommentSync,
+    run: SubmitMutationRun,
 ) -> tuple[str, CachedChange]:
     navigation_comment = await _sync_managed_comment(
         cached_comment_id=pending_sync.cached_change.navigation_comment_id,
         comment_body=pending_sync.navigation_comment_body,
         comments=comments,
-        dry_run=dry_run,
         github_client=github_client,
         github_repository=github_repository,
         kind="navigation",
         pull_request_number=pending_sync.pull_request_number,
+        run=run,
     )
     overview_comment = await _sync_managed_comment(
         cached_comment_id=pending_sync.cached_change.overview_comment_id,
         comment_body=pending_sync.overview_comment_body,
         comments=comments,
-        dry_run=dry_run,
         github_client=github_client,
         github_repository=github_repository,
         kind="overview",
         pull_request_number=pending_sync.pull_request_number,
+        run=run,
     )
     updated_change = pending_sync.cached_change.model_copy(
         update={
@@ -163,12 +163,13 @@ async def _sync_managed_comment(
     cached_comment_id: int | None,
     comment_body: str | None,
     comments: tuple[GithubIssueComment, ...],
-    dry_run: bool,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     kind: StackCommentKind,
     pull_request_number: int,
+    run: SubmitMutationRun,
 ) -> GithubIssueComment | None:
+    dry_run = run.dry_run
     existing_comment = _resolve_saved_managed_comment(
         cached_comment_id=cached_comment_id,
         comments=comments,
