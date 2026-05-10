@@ -110,9 +110,10 @@ data. Close's orphan and already-cleaned cleanup paths also receive `CommandCont
 instead of separate config/client/state-store parameters, and orphan close journal setup
 receives `_OrphanCloseRun` for live execution state. Orphan close also threads that run
 through blocked-tracking retirement, managed-comment cleanup, bookmark cleanup preflight,
-and action rendering. Unlink's prepared target carries `CommandContext` for state
-persistence and bookmark inspection. Relink's prepared target carries the same context
-for state-store access and bookmark mutation. Restart applies saved-state changes from a
+action rendering, and shared bookmark cleanup application. Unlink's prepared target carries
+`CommandContext` for state persistence and bookmark inspection. Relink's prepared target
+carries the same context for state-store access and bookmark mutation. Restart applies
+saved-state changes from a
 prepared target that carries the context, options, selected stack, loaded state, and
 bookmark observations. Plain cleanup's prepared target also carries `CommandContext`
 rather than duplicating those shared dependencies, and cleanup and cleanup rebase
