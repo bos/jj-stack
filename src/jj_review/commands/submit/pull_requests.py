@@ -118,6 +118,7 @@ async def _sync_pull_request(
     change_id = prepared_revision.change_id
     discovered_pull_request = pending_sync.discovered_pull_request
     cached_change = state.changes.get(change_id)
+    saved_status = classify_saved_review_change(cached_change, local="present")
     _ensure_pull_request_link_is_consistent(
         bookmark=bookmark,
         cached_change=cached_change,
@@ -183,8 +184,7 @@ async def _sync_pull_request(
         and pull_request is not None
         and (
             action != "unchanged"
-            or cached_change is None
-            or (cached_change.pr_number is None and cached_change.pr_url is None)
+            or not saved_status.saved_pull_request_identity
         )
     ):
         await _sync_pull_request_metadata(
