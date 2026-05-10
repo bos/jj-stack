@@ -27,6 +27,7 @@ from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
+from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.resolution import (
@@ -164,6 +165,16 @@ class _SubmitSelectionEmitter:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedSubmitOptions:
+    """Submit options after CLI values have been combined with config defaults."""
+
+    labels: list[str]
+    reviewers: list[str]
+    team_reviewers: list[str]
+    use_bookmarks: tuple[str, ...]
+
+
 def _submit_options_from_cli(
     *,
     describe_with: str | None,
@@ -216,6 +227,27 @@ def _submit_draft_mode(
     if publish:
         return "publish"
     return "default"
+
+
+def _resolve_submit_options(
+    *,
+    config: RepoConfig,
+    options: SubmitOptions,
+) -> _ResolvedSubmitOptions:
+    return _ResolvedSubmitOptions(
+        labels=config.labels if options.labels is None else options.labels,
+        reviewers=config.reviewers if options.reviewers is None else options.reviewers,
+        team_reviewers=(
+            config.team_reviewers
+            if options.team_reviewers is None
+            else options.team_reviewers
+        ),
+        use_bookmarks=tuple(
+            config.use_bookmarks
+            if options.use_bookmarks is None
+            else options.use_bookmarks
+        ),
+    )
 
 
 def _build_submit_result(
@@ -381,10 +413,9 @@ async def _run_submit_async(
     config = context.config
     dry_run = options.dry_run
     state_store = context.state_store
-    resolved_use_bookmarks = (
-        config.use_bookmarks
-        if options.use_bookmarks is None
-        else options.use_bookmarks
+    resolved_options = _resolve_submit_options(
+        config=config,
+        options=options,
     )
     with console.spinner(description="Preparing submit"):
         prepared_inputs = prepare_submit_inputs(
@@ -396,7 +427,7 @@ async def _run_submit_async(
             restart=options.restart,
             revset=options.revset,
             state_store=state_store,
-            use_bookmarks=tuple(resolved_use_bookmarks),
+            use_bookmarks=resolved_options.use_bookmarks,
         )
     client = prepared_inputs.client
     remote = prepared_inputs.remote
@@ -426,13 +457,6 @@ async def _run_submit_async(
         )
 
     github_repository = require_github_repo(remote)
-    resolved_labels = config.labels if options.labels is None else options.labels
-    resolved_reviewers = config.reviewers if options.reviewers is None else options.reviewers
-    resolved_team_reviewers = (
-        config.team_reviewers
-        if options.team_reviewers is None
-        else options.team_reviewers
-    )
     prepared_revisions = prepare_submit_revisions(
         bookmark_result=bookmark_result,
         bookmark_states=bookmark_states,
@@ -543,15 +567,15 @@ async def _run_submit_async(
                     dry_run=dry_run,
                     github_client=github_client,
                     github_repository=github_repository,
-                    labels=resolved_labels,
+                    labels=resolved_options.labels,
                     on_progress=progress.advance,
                     pending_syncs=pending_syncs,
                     re_request=options.re_request,
-                    reviewers=resolved_reviewers,
+                    reviewers=resolved_options.reviewers,
                     state=bookmark_result.state,
                     state_changes=state_changes,
                     state_store=state_store,
-                    team_reviewers=resolved_team_reviewers,
+                    team_reviewers=resolved_options.team_reviewers,
                 )
 
             if not dry_run:
