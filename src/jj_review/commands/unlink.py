@@ -21,6 +21,7 @@ from jj_review.review.selection import resolve_selected_revset
 from jj_review.review.status import (
     PreparedRevision,
     ReviewStatusRevision,
+    StatusResult,
     prepare_status,
     stream_status_async,
 )
@@ -245,7 +246,12 @@ def _unlink_result(
     )
 
 
-def _resolved_unlink_bookmark(*, cached_change, prepared_revision, status_revision) -> str | None:
+def _resolved_unlink_bookmark(
+    *,
+    cached_change: CachedChange | None,
+    prepared_revision: PreparedRevision,
+    status_revision: ReviewStatusRevision,
+) -> str | None:
     if cached_change is not None and cached_change.bookmark is not None:
         return cached_change.bookmark
     pull_request_lookup = status_revision.pull_request_lookup
@@ -259,10 +265,10 @@ def _resolved_unlink_bookmark(*, cached_change, prepared_revision, status_revisi
 def _revision_has_active_review_link(
     *,
     bookmark: str | None,
-    cached_change,
-    prepared_client,
-    prepared_revision,
-    status_revision,
+    cached_change: CachedChange | None,
+    prepared_client: JjClient,
+    prepared_revision: PreparedRevision,
+    status_revision: ReviewStatusRevision,
 ) -> bool:
     if (
         cached_change is not None
@@ -288,7 +294,11 @@ def _revision_has_active_review_link(
     return pull_request_lookup is not None and pull_request_lookup.pull_request is not None
 
 
-def _status_revision_for_change(*, status_result, change_id: str):
+def _status_revision_for_change(
+    *,
+    status_result: StatusResult,
+    change_id: str,
+) -> ReviewStatusRevision:
     for revision in status_result.revisions:
         if revision.change_id == change_id:
             return revision
