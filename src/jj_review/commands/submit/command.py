@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from jj_review import console, ui
@@ -60,6 +61,7 @@ from .models import (
     GeneratedDescription,
     PendingPullRequestSync,
     PreparedSubmitRevision,
+    SubmitDraftMode,
     SubmitOptions,
     SubmitResult,
     SubmittedRevision,
@@ -101,66 +103,119 @@ def submit(
         cli_args=cli_args,
         debug=debug,
     )
-    selected_revset = resolve_selected_revset(
-        command_label="submit",
-        default_revset="@-",
-        require_explicit=False,
+    options = _submit_options_from_cli(
+        describe_with=describe_with,
+        draft=draft,
+        draft_all=draft_all,
+        dry_run=dry_run,
+        labels=labels,
+        publish=publish,
+        re_request=re_request,
+        restart=restart,
+        reviewers=reviewers,
         revset=revset,
+        team_reviewers=team_reviewers,
+        use_bookmarks=use_bookmarks,
     )
-    label_list = parse_comma_separated_flag_values(labels)
-    reviewer_list = parse_comma_separated_flag_values(reviewers)
-    team_reviewer_list = parse_comma_separated_flag_values(team_reviewers)
-    use_bookmark_list = parse_comma_separated_flag_values(use_bookmarks)
-    emitted_prepared = False
+    selection_emitter = _SubmitSelectionEmitter(enabled=revset is None)
+
+    with mutating_command_lock(command="submit", context=context) as operation_lock:
+        result = asyncio.run(
+            _run_submit_async(
+                context=context,
+                on_prepared=selection_emitter.emit_prepared,
+                operation_lock=operation_lock,
+                options=options,
+            ),
+        )
+    selection_emitter.emit_fallback(result)
+    print_submit_result(result)
+    return 0
+
+
+@dataclass(slots=True)
+class _SubmitSelectionEmitter:
+    """Render the default selected line exactly once."""
+
+    enabled: bool
+    emitted: bool = False
 
     def emit_prepared(
+        self,
         selected_change_id: str,
         selected_subject: str,
     ) -> None:
-        nonlocal emitted_prepared
-        if revset is None:
+        if self.enabled:
             console.output(
                 render_selected_line(
                     selected_change_id=selected_change_id,
                     selected_subject=selected_subject,
                 )
             )
-        emitted_prepared = True
+        self.emitted = True
 
-    with mutating_command_lock(command="submit", context=context) as operation_lock:
-        result = asyncio.run(
-            _run_submit_async(
-                context=context,
-                on_prepared=emit_prepared,
-                operation_lock=operation_lock,
-                options=SubmitOptions(
-                    describe_with=describe_with,
-                    draft_mode=(
-                        "draft_all"
-                        if draft_all
-                        else "draft" if draft else "publish" if publish else "default"
-                    ),
-                    dry_run=dry_run,
-                    labels=label_list,
-                    re_request=re_request,
-                    restart=restart,
-                    reviewers=reviewer_list,
-                    revset=selected_revset,
-                    team_reviewers=team_reviewer_list,
-                    use_bookmarks=use_bookmark_list,
-                ),
-            ),
-        )
-    if not emitted_prepared:
-        if revset is None:
+    def emit_fallback(self, result: SubmitResult) -> None:
+        if self.enabled and not self.emitted:
             console.output(
                 render_selected_line(
                     selected_change_id=result.selected_change_id,
                     selected_subject=result.selected_subject,
                 )
             )
-    print_submit_result(result)
-    return 0
+
+
+def _submit_options_from_cli(
+    *,
+    describe_with: str | None,
+    draft: bool,
+    draft_all: bool,
+    dry_run: bool,
+    labels: Sequence[str] | None,
+    publish: bool,
+    re_request: bool,
+    restart: bool,
+    reviewers: Sequence[str] | None,
+    revset: str | None,
+    team_reviewers: Sequence[str] | None,
+    use_bookmarks: Sequence[str] | None,
+) -> SubmitOptions:
+    selected_revset = resolve_selected_revset(
+        command_label="submit",
+        default_revset="@-",
+        require_explicit=False,
+        revset=revset,
+    )
+    return SubmitOptions(
+        describe_with=describe_with,
+        draft_mode=_submit_draft_mode(
+            draft=draft,
+            draft_all=draft_all,
+            publish=publish,
+        ),
+        dry_run=dry_run,
+        labels=parse_comma_separated_flag_values(labels),
+        re_request=re_request,
+        restart=restart,
+        reviewers=parse_comma_separated_flag_values(reviewers),
+        revset=selected_revset,
+        team_reviewers=parse_comma_separated_flag_values(team_reviewers),
+        use_bookmarks=parse_comma_separated_flag_values(use_bookmarks),
+    )
+
+
+def _submit_draft_mode(
+    *,
+    draft: bool,
+    draft_all: bool,
+    publish: bool,
+) -> SubmitDraftMode:
+    if draft_all:
+        return "draft_all"
+    if draft:
+        return "draft"
+    if publish:
+        return "publish"
+    return "default"
 
 
 def _build_submit_result(
