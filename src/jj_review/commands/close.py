@@ -1441,14 +1441,7 @@ def _plan_review_bookmark_cleanup(
 def _has_retirable_cached_review_identity(cached_change: CachedChange) -> bool:
     """Return True when saved state proves this change previously had review identity."""
 
-    return any(
-        value is not None
-        for value in (
-            cached_change.last_submitted_commit_id,
-            cached_change.pr_number,
-            cached_change.pr_state,
-            cached_change.pr_url,
-            cached_change.navigation_comment_id,
-            cached_change.overview_comment_id,
-        )
-    )
+    return classify_saved_review_change(
+        cached_change,
+        local="present",
+    ).saved_review_identity
