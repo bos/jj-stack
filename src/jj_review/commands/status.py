@@ -31,7 +31,7 @@ from jj_review.github.error_messages import (
     remote_unavailable_message,
 )
 from jj_review.jj import JjCliArgs, JjClient, UnsupportedStackError
-from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.models.review_state import ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_review.review.change_status import (
@@ -545,16 +545,23 @@ def render_status_summary_lines(
 ) -> tuple[str, ...]:
     """Render capped submitted and unsubmitted summaries before the trunk row."""
 
-    unsubmitted_revisions = tuple(
-        revision
+    classified_revisions = tuple(
+        _ClassifiedStatusRevision(
+            revision=revision,
+            status=classify_review_status_revision(revision),
+        )
         for revision in result.revisions
-        if _classify_revision_for_summary(revision, github_available=github_available)
+    )
+    unsubmitted_revisions = tuple(
+        classified
+        for classified in classified_revisions
+        if _classify_revision_for_summary(classified, github_available=github_available)
         == "unsubmitted"
     )
     submitted_revisions = tuple(
-        revision
-        for revision in result.revisions
-        if _classify_revision_for_summary(revision, github_available=github_available)
+        classified
+        for classified in classified_revisions
+        if _classify_revision_for_summary(classified, github_available=github_available)
         == "submitted"
     )
 
@@ -564,9 +571,9 @@ def render_status_summary_lines(
         include_leading_separator=leading_separator,
         revisions=unsubmitted_revisions,
         verbose=verbose,
-        renderer=lambda revision: _render_summary_revision_lines(
+        renderer=lambda classified: _render_summary_revision_lines(
+            classified=classified,
             client=client,
-            revision=revision,
             github_available=github_available,
             show_status=False,
             verbose=verbose,
@@ -577,13 +584,15 @@ def render_status_summary_lines(
         lines.extend(unsubmitted_lines)
 
     submitted_lines = _render_summary_section(
-        _render_submitted_section_title(submitted_revisions),
+        _render_submitted_section_title(
+            tuple(classified.revision for classified in submitted_revisions)
+        ),
         include_leading_separator=False,
         revisions=submitted_revisions,
         verbose=verbose,
-        renderer=lambda revision: _render_summary_revision_lines(
+        renderer=lambda classified: _render_summary_revision_lines(
+            classified=classified,
             client=client,
-            revision=revision,
             github_available=github_available,
             show_status=True,
             verbose=verbose,
@@ -1534,8 +1543,8 @@ def _now_utc() -> datetime:
 
 def _render_summary_revision_lines(
     *,
+    classified: _ClassifiedStatusRevision,
     client,
-    revision,
     github_available: bool,
     show_status: bool,
     verbose: bool,
@@ -1543,7 +1552,8 @@ def _render_summary_revision_lines(
 ) -> tuple[str, ...]:
     """Render one revision inside a submitted or unsubmitted summary section."""
 
-    summary = _format_status_summary(revision, github_available=github_available)
+    revision = classified.revision
+    summary = _format_status_summary(classified, github_available=github_available)
     if not show_status and summary == "not submitted":
         summary = None
     return render_revision_lines(
@@ -1558,46 +1568,44 @@ def _render_summary_revision_lines(
 
 
 def _classify_revision_for_summary(
-    revision,
+    classified: _ClassifiedStatusRevision,
     *,
     github_available: bool,
 ) -> str:
     """Classify a revision into submitted, unsubmitted, or other."""
 
-    change_status = classify_review_status_revision(revision)
+    change_status = classified.status
     if change_status.link == "unlinked":
         return "submitted"
 
     if change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
-        if _has_cached_review_identity(revision.cached_change):
+        if change_status.saved_review_identity:
             return "submitted"
         return "unsubmitted"
 
     if change_status.pr_lifecycle in {"open", "closed", "merged"}:
         return "submitted"
     if change_status.pr_lifecycle == "missing":
-        if _has_cached_review_identity(revision.cached_change):
+        if change_status.saved_review_identity:
             return "submitted"
         return "unsubmitted"
     if change_status.pr_lifecycle == "ambiguous" or change_status.pr_lookup_error:
-        if _has_cached_review_identity(revision.cached_change):
+        if change_status.saved_review_identity:
             return "submitted"
         return "unsubmitted"
     return "unsubmitted"
 
 
-def _has_cached_review_identity(cached_change: CachedChange | None) -> bool:
-    return classify_saved_review_change(
-        cached_change,
-        local="present",
-    ).saved_review_identity
-
-
-def _format_status_summary(revision, *, github_available: bool) -> str:
+def _format_status_summary(
+    classified: _ClassifiedStatusRevision,
+    *,
+    github_available: bool,
+) -> str:
+    revision = classified.revision
     lookup = revision.pull_request_lookup
     cached_change = revision.cached_change
     cached_label = _format_cached_pull_request_label(cached_change)
-    change_status = classify_review_status_revision(revision)
+    change_status = classified.status
     summary: str
     if change_status.link == "unlinked":
         if lookup is not None and lookup.pull_request is not None:
@@ -1617,7 +1625,7 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
     elif change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
         if cached_label is not None:
             summary = cached_label
-        elif _has_cached_review_identity(cached_change):
+        elif change_status.saved_review_identity:
             summary = "submitted, GitHub status unknown"
         elif github_available:
             summary = "not submitted"
@@ -1647,7 +1655,7 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
     elif change_status.pr_lifecycle == "missing":
         if cached_label is not None:
             summary = f"{cached_label}, no PR found for branch"
-        elif _has_cached_review_identity(cached_change):
+        elif change_status.saved_review_identity:
             summary = "submitted, no PR found for branch"
         else:
             summary = "not submitted"
@@ -1669,7 +1677,7 @@ def _format_status_summary(revision, *, github_available: bool) -> str:
             summary = f"{pr_label} closed"
     else:
         message = (
-            lookup.message
+            ui.plain_text(lookup.message)
             if lookup is not None and lookup.message is not None
             else "GitHub lookup failed"
         )
