@@ -389,7 +389,7 @@ def _run_cleanup_command(
         )
     stale_reasons = _stale_change_reasons(
         change_ids=tuple(prepared_cleanup.state.changes),
-        jj_client=prepared_cleanup.context.jj_client,
+        context=prepared_cleanup.context,
     )
     if _cleanup_needs_remote_context(
         prepared_cleanup=prepared_cleanup,
@@ -570,8 +570,7 @@ def _prepare_cleanup(
         state_store.require_writable()
 
     bookmark_states = _load_bookmark_states(
-        prefix=context.config.bookmark_prefix,
-        jj_client=context.jj_client,
+        context=context,
         state=state,
     )
 
@@ -1124,7 +1123,7 @@ async def _run_cleanup_async(
         if stale_reasons is None:
             stale_reasons = _stale_change_reasons(
                 change_ids=tuple(prepared_cleanup.state.changes),
-                jj_client=prepared_cleanup.context.jj_client,
+                context=prepared_cleanup.context,
             )
         if _cleanup_needs_remote_context(
             prepared_cleanup=prepared_cleanup,
@@ -1633,10 +1632,11 @@ def _stack_comment_cleanup_eligibility(
 
 def _load_bookmark_states(
     *,
-    prefix: str,
-    jj_client: JjClient,
+    context: CommandContext,
     state: ReviewState,
 ) -> dict[str, BookmarkState]:
+    prefix = context.config.bookmark_prefix
+    jj_client = context.jj_client
     bookmark_states = jj_client.list_bookmark_states()
     tracked_bookmarks = {
         cached_change.bookmark
@@ -1667,8 +1667,9 @@ def _load_bookmark_states(
 def _stale_change_reasons(
     *,
     change_ids: tuple[str, ...],
-    jj_client: JjClient,
+    context: CommandContext,
 ) -> dict[str, str | None]:
+    jj_client = context.jj_client
     matched_revisions = jj_client.query_revisions_by_change_ids(change_ids)
     reasons: dict[str, str | None] = {}
 
