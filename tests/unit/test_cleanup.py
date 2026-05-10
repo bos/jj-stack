@@ -37,6 +37,26 @@ def _fake_operation_lock(recorded_paths: list[Path] | None = None) -> OperationL
     )
 
 
+def _fake_context(
+    *,
+    config: RepoConfig | None = None,
+    jj_client: JjClient | None = None,
+    state_store: ReviewStateStore | None = None,
+) -> CommandContext:
+    return cast(
+        CommandContext,
+        SimpleNamespace(
+            config=RepoConfig() if config is None else config,
+            jj_client=cast(JjClient, SimpleNamespace()) if jj_client is None else jj_client,
+            state_store=(
+                cast(ReviewStateStore, SimpleNamespace())
+                if state_store is None
+                else state_store
+            ),
+        ),
+    )
+
+
 def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     monkeypatch,
     tmp_path: Path,
@@ -64,16 +84,8 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
             save=saved_states.append,
         ),
     )
-    context = cast(
-        CommandContext,
-        SimpleNamespace(
-            config=RepoConfig(),
-            jj_client=cast(JjClient, SimpleNamespace()),
-            state_store=state_store,
-        ),
-    )
     prepared_cleanup = PreparedCleanup(
-        context=context,
+        context=_fake_context(state_store=state_store),
         dry_run=False,
         bookmark_states={},
         github_repository=ParsedGithubRepo(
@@ -189,7 +201,7 @@ def test_stream_rebase_plans_rebase_for_survivor_above_merged_path_revision(
         subject="survivor feature",
     )
     prepared_rebase = PreparedRebase(
-        config=RepoConfig(),
+        context=_fake_context(),
         dry_run=True,
         operation_lock=_fake_operation_lock(),
         prepared_status=cast(
@@ -274,7 +286,7 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
         subject="survivor feature",
     )
     prepared_rebase = PreparedRebase(
-        config=RepoConfig(),
+        context=_fake_context(),
         dry_run=False,
         operation_lock=_fake_operation_lock(),
         prepared_status=cast(

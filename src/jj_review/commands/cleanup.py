@@ -28,7 +28,6 @@ from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._close_actions import comment_matches_kind as _comment_matches_kind
 from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
-from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.error_messages import (
@@ -190,7 +189,7 @@ class RebaseResult:
 class PreparedRebase:
     """Locally prepared rebase inputs before any rewrite."""
 
-    config: RepoConfig
+    context: CommandContext
     dry_run: bool
     operation_lock: OperationLock
     prepared_status: PreparedStatus
@@ -429,7 +428,7 @@ def _prepare_cleanup_rebase(
         revset=options.rebase_revset,
     )
     return PreparedRebase(
-        config=context.config,
+        context=context,
         dry_run=options.dry_run,
         operation_lock=operation_lock,
         prepared_status=prepare_status(
@@ -679,7 +678,7 @@ def _stream_rebase(
         )
 
         _record_rebase_policy_actions(
-            prefix=prepared_rebase.config.bookmark_prefix,
+            prefix=prepared_rebase.context.config.bookmark_prefix,
             merged_revisions=merged_revisions,
             record_action=recorder.record,
         )
