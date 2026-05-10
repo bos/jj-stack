@@ -76,6 +76,12 @@ For each step:
 
 Step 1 is the keystone.
 
+Current implementation status: the operation lock, retained operation journals, and
+journal-backed recovery records have landed for the mutating commands that previously
+used intent files. `models/intent.py` and `state/intents.py` have been removed. The
+remaining work is the classifier migration from raw cached/GitHub state branching and
+the phase-context pass that keeps command orchestration from widening again.
+
 ### Step 1 — Derived `ReviewChangeStatus` with orthogonal axes
 
 Today every command re-derives state from `CachedChange`, `PullRequestLookup`,
