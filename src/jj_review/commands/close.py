@@ -187,6 +187,35 @@ class _CloseCleanupContext:
     revision_label: CloseActionBody
 
 
+@dataclass(frozen=True, slots=True)
+class _CloseSelectedStack:
+    """Normal close target selected by revset."""
+
+    revset: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CloseOrphanPullRequestTarget:
+    """Orphaned saved PR record selected for explicit cleanup."""
+
+    change_id: str
+    pull_request_number: int
+    state: ReviewState
+
+
+@dataclass(frozen=True, slots=True)
+class _CloseUntrackedPullRequestTarget:
+    """Untracked PR selected for explicit cleanup."""
+
+    pull_request_number: int
+    state: ReviewState
+
+
+type _CloseTarget = (
+    _CloseSelectedStack | _CloseOrphanPullRequestTarget | _CloseUntrackedPullRequestTarget
+)
+
+
 def close(
     *,
     cleanup: bool,
@@ -204,7 +233,7 @@ def close(
         cli_args=cli_args,
         debug=debug,
     )
-    options = CloseOptions(
+    options = _close_options_from_cli(
         cleanup=cleanup,
         dry_run=dry_run,
         pull_request=pull_request,
@@ -227,15 +256,74 @@ def _run_close(
 ) -> int:
     """Run close after CLI arguments have been normalized into options."""
 
-    command_label = (
-        "close --cleanup --dry-run"
-        if options.dry_run and options.cleanup
-        else (
-            "close --cleanup"
-            if options.cleanup
-            else "close" if not options.dry_run else "close --dry-run"
+    target = _resolve_close_target(context=context, options=options)
+    if isinstance(target, _CloseOrphanPullRequestTarget):
+        return asyncio.run(
+            run_orphan_close(
+                change_id=target.change_id,
+                config=context.config,
+                dry_run=options.dry_run,
+                github_client_builder=build_github_client,
+                github_repo_parser=parse_github_repo,
+                jj_client=context.jj_client,
+                operation_lock=operation_lock,
+                pull_request_number=target.pull_request_number,
+                report_stale_close_operations=_report_stale_close_operations,
+                retire_submit_operations_cleared_by_cleanup=(
+                    _retire_submit_operations_cleared_by_cleanup
+                ),
+                state=target.state,
+                state_store=context.state_store,
+            )
         )
+    if isinstance(target, _CloseUntrackedPullRequestTarget):
+        return asyncio.run(
+            run_untracked_cleanup_pull_request(
+                dry_run=options.dry_run,
+                github_client_builder=build_github_client,
+                github_repo_parser=parse_github_repo,
+                jj_client=context.jj_client,
+                pull_request_number=target.pull_request_number,
+                retire_submit_operations_cleared_by_cleanup=(
+                    _retire_submit_operations_cleared_by_cleanup
+                ),
+                state=target.state,
+                state_store=context.state_store,
+            )
+        )
+
+    with console.spinner(description="Inspecting jj stack"):
+        prepared_close = prepare_close(
+            context=context,
+            operation_lock=operation_lock,
+            options=options,
+            revset=target.revset,
+        )
+    result = stream_close(prepared_close=prepared_close)
+    print_close_result(result)
+    return 1 if result.blocked else 0
+
+
+def _close_options_from_cli(
+    *,
+    cleanup: bool,
+    dry_run: bool,
+    pull_request: str | None,
+    revset: str | None,
+) -> CloseOptions:
+    return CloseOptions(
+        cleanup=cleanup,
+        dry_run=dry_run,
+        pull_request=pull_request,
+        revset=revset,
     )
+
+
+def _resolve_close_target(
+    *,
+    context: CommandContext,
+    options: CloseOptions,
+) -> _CloseTarget:
     if options.pull_request is not None:
         if options.cleanup and options.revset is None:
             if not options.dry_run:
@@ -252,41 +340,18 @@ def _run_close(
             )
             if orphan_target is not None:
                 pull_request_number, change_id = orphan_target
-                return asyncio.run(
-                    run_orphan_close(
-                        change_id=change_id,
-                        config=context.config,
-                        dry_run=options.dry_run,
-                        github_client_builder=build_github_client,
-                        github_repo_parser=parse_github_repo,
-                        jj_client=context.jj_client,
-                        operation_lock=operation_lock,
-                        pull_request_number=pull_request_number,
-                        report_stale_close_operations=_report_stale_close_operations,
-                        retire_submit_operations_cleared_by_cleanup=(
-                            _retire_submit_operations_cleared_by_cleanup
-                        ),
-                        state=state,
-                        state_store=context.state_store,
-                    )
+                return _CloseOrphanPullRequestTarget(
+                    change_id=change_id,
+                    pull_request_number=pull_request_number,
+                    state=state,
                 )
             if not state_has_pull_request_record(
                 pull_request_number=pull_request_number,
                 state=state,
             ):
-                return asyncio.run(
-                    run_untracked_cleanup_pull_request(
-                        dry_run=options.dry_run,
-                        github_client_builder=build_github_client,
-                        github_repo_parser=parse_github_repo,
-                        jj_client=context.jj_client,
-                        pull_request_number=pull_request_number,
-                        retire_submit_operations_cleared_by_cleanup=(
-                            _retire_submit_operations_cleared_by_cleanup
-                        ),
-                        state=state,
-                        state_store=context.state_store,
-                    )
+                return _CloseUntrackedPullRequestTarget(
+                    pull_request_number=pull_request_number,
+                    state=state,
                 )
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="close",
@@ -297,22 +362,29 @@ def _run_close(
         console.note(
             t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
         )
-    else:
-        resolved_revset = resolve_selected_revset(
-            command_label=command_label,
+        return _CloseSelectedStack(revset=resolved_revset)
+
+    return _CloseSelectedStack(
+        revset=resolve_selected_revset(
+            command_label=_close_command_label(options),
             default_revset="@-",
             require_explicit=False,
             revset=options.revset,
         )
+    )
 
-    with console.spinner(description="Inspecting jj stack"):
-        prepared_close = prepare_close(
-            context=context,
-            operation_lock=operation_lock,
-            options=options,
-            revset=resolved_revset,
-        )
-    result = stream_close(prepared_close=prepared_close)
+
+def _close_command_label(options: CloseOptions) -> str:
+    if options.cleanup and options.dry_run:
+        return "close --cleanup --dry-run"
+    if options.cleanup:
+        return "close --cleanup"
+    if options.dry_run:
+        return "close --dry-run"
+    return "close"
+
+
+def print_close_result(result: CloseResult) -> None:
     if result.remote is None:
         console.warning(remote_unavailable_message(remote_error=result.remote_error))
     github_message = github_unavailable_message(
@@ -344,7 +416,6 @@ def _run_close(
             console.note("No close actions were needed for the selected stack.")
         else:
             console.output("Nothing to close on the selected stack.")
-    return 1 if result.blocked else 0
 
 
 def prepare_close(
