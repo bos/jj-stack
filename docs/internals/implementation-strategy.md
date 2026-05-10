@@ -103,8 +103,9 @@ bootstrapped `CommandContext` plus parsed/resolved submit option objects rather 
 hand-threaded config/client/state-store bundle, resolved submit options read defaults from
 that context, and pull-request synchronization uses the same submit option objects instead
 of separate draft/reviewer/label parameters. Submit
-mutation phases share a `SubmitMutationRun` for dry-run mode and incremental state-save
-data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
+mutation phases share a `SubmitMutationRun` for dry-run mode, remote bookmark
+synchronization, and incremental state-save data. Close's orphan and already-cleaned
+cleanup paths also receive `CommandContext`
 instead of separate config/client/state-store parameters, and orphan close journal setup
 receives `_OrphanCloseRun` for live execution state. Orphan close also threads that run
 through blocked-tracking retirement, managed-comment cleanup, bookmark cleanup preflight,
