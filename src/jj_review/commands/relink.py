@@ -17,11 +17,15 @@ from jj_review.errors import CliError
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.pull_request_refs import parse_repository_pull_request_reference
 from jj_review.github.resolution import (
+    ParsedGithubRepo,
     require_github_repo,
     select_submit_remote,
 )
-from jj_review.jj import JjCliArgs
+from jj_review.jj import JjCliArgs, JjClient
+from jj_review.models.bookmarks import GitRemote
+from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.models.stack import LocalRevision
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.state.journal import OperationJournal
 from jj_review.state.operation_lock import read_operation_lock_holder
@@ -50,6 +54,20 @@ class RelinkResult:
     subject: str
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedRelink:
+    """Resolved relink target after local and GitHub validation."""
+
+    bookmark: str
+    github_repository: ParsedGithubRepo
+    pull_request: GithubPullRequest
+    remote: GitRemote
+    revision: LocalRevision
+    selected_revset: str
+    state: ReviewState
+    state_dir: Path
+
+
 def relink(
     *,
     cli_args: JjCliArgs,
@@ -69,17 +87,25 @@ def relink(
         result = asyncio.run(
             _run_relink_async(
                 context=context,
-                options=RelinkOptions(
-                    pull_request_reference=pull_request,
+                options=_relink_options_from_cli(
+                    pull_request=pull_request,
                     revset=revset,
                 ),
             )
         )
-    console.output(
-        t"Relinked PR #{result.pull_request_number} for {result.subject} "
-        t"({ui.change_id(result.change_id)}) -> {ui.bookmark(result.bookmark)}"
-    )
+    _print_relink_result(result)
     return 0
+
+
+def _relink_options_from_cli(
+    *,
+    pull_request: str,
+    revset: str | None,
+) -> RelinkOptions:
+    return RelinkOptions(
+        pull_request_reference=pull_request,
+        revset=revset,
+    )
 
 
 async def _run_relink_async(
@@ -87,6 +113,15 @@ async def _run_relink_async(
     context: CommandContext,
     options: RelinkOptions,
 ) -> RelinkResult:
+    prepared = await _prepare_relink(context=context, options=options)
+    return _apply_relink(context=context, prepared=prepared)
+
+
+async def _prepare_relink(
+    *,
+    context: CommandContext,
+    options: RelinkOptions,
+) -> _PreparedRelink:
     client = context.jj_client
     state_store = context.state_store
     state_dir = state_store.require_writable()
@@ -109,21 +144,9 @@ async def _run_relink_async(
     with console.spinner(description="Fetching jj remote"):
         client.fetch_remote(remote=remote.name)
     github_repository = require_github_repo(remote)
-    pull_request_number = parse_repository_pull_request_reference(
-        reference=options.pull_request_reference,
+    pull_request_number = _parse_relink_pull_request_number(
         github_repository=github_repository,
-        invalid_reference_message=(
-            f"{options.pull_request_reference} is not a pull request number or URL for "
-            f"{github_repository.full_name}."
-        ),
-        wrong_host_message=(
-            f"{options.pull_request_reference} is not a pull request number or URL for "
-            f"{github_repository.full_name}."
-        ),
-        wrong_repository_message=(
-            f"{options.pull_request_reference} does not belong to "
-            f"{github_repository.full_name}."
-        ),
+        pull_request_reference=options.pull_request_reference,
     )
 
     with console.spinner(description="Loading pull request"):
@@ -139,6 +162,63 @@ async def _run_relink_async(
                     f"Could not load pull request #{pull_request_number}"
                 ) from error
 
+    bookmark = _validated_relink_bookmark(
+        client=client,
+        github_repository=github_repository,
+        pull_request=pull_request,
+        remote=remote,
+        revision=revision,
+    )
+
+    state = state_store.load()
+    _ensure_relinkable_cached_link(
+        bookmark=bookmark,
+        change_id=revision.change_id,
+        pull_request_number=pull_request.number,
+        state=state,
+    )
+    return _PreparedRelink(
+        bookmark=bookmark,
+        github_repository=github_repository,
+        pull_request=pull_request,
+        remote=remote,
+        revision=revision,
+        selected_revset=selected_revset,
+        state=state,
+        state_dir=state_dir,
+    )
+
+
+def _parse_relink_pull_request_number(
+    *,
+    github_repository: ParsedGithubRepo,
+    pull_request_reference: str,
+) -> int:
+    return parse_repository_pull_request_reference(
+        reference=pull_request_reference,
+        github_repository=github_repository,
+        invalid_reference_message=(
+            f"{pull_request_reference} is not a pull request number or URL for "
+            f"{github_repository.full_name}."
+        ),
+        wrong_host_message=(
+            f"{pull_request_reference} is not a pull request number or URL for "
+            f"{github_repository.full_name}."
+        ),
+        wrong_repository_message=(
+            f"{pull_request_reference} does not belong to {github_repository.full_name}."
+        ),
+    )
+
+
+def _validated_relink_bookmark(
+    *,
+    client: JjClient,
+    github_repository: ParsedGithubRepo,
+    pull_request: GithubPullRequest,
+    remote: GitRemote,
+    revision: LocalRevision,
+) -> str:
     if pull_request.state != "open":
         raise CliError(
             f"Pull request #{pull_request.number} is not open; cannot relink "
@@ -181,30 +261,31 @@ async def _run_relink_async(
             t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote.name}')} is conflicted.",
             hint="Resolve it before relinking.",
         )
+    return bookmark
 
-    state = state_store.load()
-    _ensure_relinkable_cached_link(
-        bookmark=bookmark,
-        change_id=revision.change_id,
-        pull_request_number=pull_request.number,
-        state=state,
-    )
 
+def _apply_relink(
+    *,
+    context: CommandContext,
+    prepared: _PreparedRelink,
+) -> RelinkResult:
+    client = context.jj_client
+    state_store = context.state_store
     for loaded in state_store.list_operations():
         if loaded.operation.kind == "relink":
             console.warning(f"A previous relink was interrupted ({loaded.operation.label})")
 
     journal = OperationJournal.begin(
-        state_dir,
+        prepared.state_dir,
         operation="relink",
-        lock_holder=read_operation_lock_holder(state_dir),
-        options={"pull_request_number": pull_request.number},
+        lock_holder=read_operation_lock_holder(prepared.state_dir),
+        options={"pull_request_number": prepared.pull_request.number},
         resolved_scope={
-            "bookmark": bookmark,
-            "change_id": revision.change_id,
-            "commit_id": revision.commit_id,
-            "pull_request_number": pull_request.number,
-            "selected_revset": selected_revset,
+            "bookmark": prepared.bookmark,
+            "change_id": prepared.revision.change_id,
+            "commit_id": prepared.revision.commit_id,
+            "pull_request_number": prepared.pull_request.number,
+            "selected_revset": prepared.selected_revset,
         },
     )
 
@@ -213,31 +294,31 @@ async def _run_relink_async(
         journal.append(
             "planned_mutation",
             {
-                "bookmark": bookmark,
-                "change_id": revision.change_id,
+                "bookmark": prepared.bookmark,
+                "change_id": prepared.revision.change_id,
                 "mutation": "set_local_bookmark",
             },
         )
-        client.set_bookmark(bookmark, revision.change_id)
+        client.set_bookmark(prepared.bookmark, prepared.revision.change_id)
         journal.append(
             "mutation_applied",
             {
-                "bookmark": bookmark,
-                "change_id": revision.change_id,
+                "bookmark": prepared.bookmark,
+                "change_id": prepared.revision.change_id,
                 "mutation": "set_local_bookmark",
             },
         )
 
-        cached_change = state.changes.get(revision.change_id)
+        cached_change = prepared.state.changes.get(prepared.revision.change_id)
         updated_change = (cached_change or CachedChange()).model_copy(
             update={
-                "bookmark": bookmark,
+                "bookmark": prepared.bookmark,
                 "bookmark_ownership": "external",
                 "link_state": "active",
-                "pr_number": pull_request.number,
+                "pr_number": prepared.pull_request.number,
                 "pr_review_decision": None,
-                "pr_state": pull_request.state,
-                "pr_url": pull_request.html_url,
+                "pr_state": prepared.pull_request.state,
+                "pr_url": prepared.pull_request.html_url,
                 "navigation_comment_id": None,
                 "overview_comment_id": None,
             }
@@ -245,16 +326,16 @@ async def _run_relink_async(
         journal.append(
             "planned_mutation",
             {
-                "change_id": revision.change_id,
+                "change_id": prepared.revision.change_id,
                 "mutation": "saved_state_update",
             },
         )
         state_store.save(
-            state.model_copy(
+            prepared.state.model_copy(
                 update={
                     "changes": {
-                        **state.changes,
-                        revision.change_id: updated_change,
+                        **prepared.state.changes,
+                        prepared.revision.change_id: updated_change,
                     }
                 }
             )
@@ -264,23 +345,30 @@ async def _run_relink_async(
             {
                 "after": updated_change,
                 "before": cached_change,
-                "change_id": revision.change_id,
+                "change_id": prepared.revision.change_id,
             },
         )
-        journal.append("completed", {"change_id": revision.change_id})
+        journal.append("completed", {"change_id": prepared.revision.change_id})
         relink_succeeded = True
         return RelinkResult(
-            bookmark=bookmark,
-            change_id=revision.change_id,
-            github_repository=github_repository.full_name,
-            pull_request_number=pull_request.number,
-            remote_name=remote.name,
-            selected_revset=selected_revset,
-            subject=revision.description,
+            bookmark=prepared.bookmark,
+            change_id=prepared.revision.change_id,
+            github_repository=prepared.github_repository.full_name,
+            pull_request_number=prepared.pull_request.number,
+            remote_name=prepared.remote.name,
+            selected_revset=prepared.selected_revset,
+            subject=prepared.revision.description,
         )
     finally:
         if not relink_succeeded:
             console.warning("Relink was interrupted; rerun relink or abort to clear it.")
+
+
+def _print_relink_result(result: RelinkResult) -> None:
+    console.output(
+        t"Relinked PR #{result.pull_request_number} for {result.subject} "
+        t"({ui.change_id(result.change_id)}) -> {ui.bookmark(result.bookmark)}"
+    )
 
 
 def _ensure_relinkable_cached_link(
