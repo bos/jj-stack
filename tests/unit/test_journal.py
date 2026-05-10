@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from jj_review.models.review_state import CachedChange
-from jj_review.state.journal import OperationJournal, read_journal
+from jj_review.state.journal import (
+    JOURNAL_DIRNAME,
+    MIN_RETAINED_JOURNALS,
+    OperationJournal,
+    prune_operation_journals,
+    read_journal,
+)
 from jj_review.state.operation_lock import OperationLockHolder
 
 
@@ -39,3 +47,29 @@ def test_operation_journal_appends_jsonl_events(tmp_path: Path) -> None:
     assert events[0].data["lock_holder"]["command"] == "land"
     assert events[1].data["after"]["pr_number"] == 1
     assert events[2].data["completed_change_ids"] == ["change-1"]
+
+
+def test_prune_operation_journals_keeps_recent_files_and_minimum_count(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 5, 1, tzinfo=UTC)
+    journal_dir = tmp_path / JOURNAL_DIRNAME
+    journal_dir.mkdir()
+    old_paths = []
+    for index in range(MIN_RETAINED_JOURNALS + 5):
+        path = journal_dir / f"old-{index:02d}.jsonl"
+        path.write_text("{}\n", encoding="utf-8")
+        timestamp = (now - timedelta(days=45, seconds=index)).timestamp()
+        os.utime(path, (timestamp, timestamp))
+        old_paths.append(path)
+    recent_path = journal_dir / "recent.jsonl"
+    recent_path.write_text("{}\n", encoding="utf-8")
+    recent_timestamp = (now - timedelta(days=2)).timestamp()
+    os.utime(recent_path, (recent_timestamp, recent_timestamp))
+
+    prune_operation_journals(tmp_path, now=now)
+
+    retained = set(journal_dir.glob("*.jsonl"))
+    assert recent_path in retained
+    assert len(retained) == MIN_RETAINED_JOURNALS
+    assert not set(old_paths[-5:]) & retained

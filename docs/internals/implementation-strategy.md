@@ -248,6 +248,8 @@ mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal
 the pilot, but per-change completion is now folded from journaled saved-state updates
 instead of mutating the intent after each finalized PR. `LandIntent` can be removed
 after status and abort consume the journal-backed operation record directly.
+Journal pruning runs when a new journal begins and keeps every journal newer than 30
+days plus at least the newest 50 files.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.

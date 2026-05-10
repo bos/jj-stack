@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -21,6 +21,8 @@ JournalEventKind = Literal[
 ]
 
 JOURNAL_DIRNAME = "journals"
+MIN_RETAINED_JOURNALS = 50
+MIN_RETAINED_JOURNAL_AGE = timedelta(days=30)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +62,7 @@ class OperationJournal:
     ) -> OperationJournal:
         """Create a new operation journal and append its begin event."""
 
+        prune_operation_journals(state_dir)
         operation_id = uuid4().hex
         path = _journal_path(state_dir, operation=operation, operation_id=operation_id)
         journal = cls(operation=operation, operation_id=operation_id, path=path)
@@ -121,6 +124,35 @@ def read_journal(path: Path) -> tuple[JournalEvent, ...]:
             )
         )
     return tuple(events)
+
+
+def prune_operation_journals(
+    state_dir: Path,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Prune retained journals while keeping recent files and a minimum count."""
+
+    journal_dir = state_dir / JOURNAL_DIRNAME
+    if not journal_dir.exists():
+        return
+    current_time = now or datetime.now(UTC)
+    cutoff = current_time - MIN_RETAINED_JOURNAL_AGE
+    journal_paths = sorted(
+        (path for path in journal_dir.glob("*.jsonl") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    newest = set(journal_paths[:MIN_RETAINED_JOURNALS])
+    recent = {
+        path
+        for path in journal_paths
+        if datetime.fromtimestamp(path.stat().st_mtime, UTC) >= cutoff
+    }
+    keep = newest | recent
+    for path in journal_paths:
+        if path not in keep:
+            path.unlink(missing_ok=True)
 
 
 def _journal_path(state_dir: Path, *, operation: str, operation_id: str) -> Path:
