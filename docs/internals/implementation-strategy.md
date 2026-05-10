@@ -106,7 +106,8 @@ mutation phases share a `SubmitMutationRun` for dry-run mode and incremental sta
 data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
 instead of separate config/client/state-store parameters. Plain cleanup's prepared target
 also carries `CommandContext` rather than duplicating those shared dependencies, and
-cleanup rebase reads shared configuration through its prepared context. Status preparation
+cleanup and cleanup rebase prepared targets retain parsed `CleanupOptions` for mode
+state. Cleanup rebase reads shared configuration through its prepared context. Status preparation
 receives the bootstrapped `CommandContext` instead of separate config/client/state-store
 parameters, including the helper that prepares an already-resolved stack, and status
 command helpers keep the context for selection and stale-stack advisory work. Land's
