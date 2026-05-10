@@ -96,9 +96,11 @@ carrying shared runtime dependencies. Command code should use the context's stat
 rather than reconstructing one from the repo root.
 
 Commands that need nontrivial selection or validation carry that result as an explicit
-resolved/prepared target value before mutation. `close`, `land`, `relink`, and `unlink`
-use this shape to keep PR/revset selection, GitHub inspection, and saved-state mutation
-from sharing long-lived local variable bundles.
+resolved/prepared target value before mutation. `submit`, `close`, `land`, `relink`, and
+`unlink` use this shape to keep PR/revset selection, GitHub inspection, and saved-state
+mutation from sharing long-lived local variable bundles. `submit` preparation takes the
+bootstrapped `CommandContext` plus parsed/resolved submit option objects rather than a
+hand-threaded config/client/state-store bundle.
 
 ## Repository layout
 
