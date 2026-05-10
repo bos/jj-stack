@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from jj_review.models.bookmarks import BookmarkState
+from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_review.models.review_state import CachedChange
+from jj_review.review.change_status import classify_review_change
 from jj_review.state.journal import SubmitOperationRecord
 
 
@@ -264,6 +265,17 @@ def _observe_remote_submit_bookmarks(
 
     for bookmark in operation_bookmarks:
         remote_state = bookmark_states[bookmark].remote_target(operation.remote_name)
-        if remote_state is not None and remote_state.targets:
+        if _remote_submit_bookmark_present(remote_state):
             return ArtifactPresence.PRESENT
     return ArtifactPresence.ABSENT
+
+
+def _remote_submit_bookmark_present(remote_state: RemoteBookmarkState | None) -> bool:
+    review_status = classify_review_change(
+        cached_change=None,
+        commit_id=None,
+        local="present",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
+    return review_status.remote_branch != "absent"
