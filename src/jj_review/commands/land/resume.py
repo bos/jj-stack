@@ -7,8 +7,8 @@ from collections.abc import Sequence
 from jj_review import console, ui
 from jj_review.errors import CliError
 from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.review.intents import (
-    describe_intent,
+from jj_review.review.operations import (
+    describe_operation,
     match_ordered_change_ids,
 )
 from jj_review.review.status import PreparedStatus
@@ -152,11 +152,11 @@ def _report_stale_land_operations(
         if resume_operation is not None and loaded.path == resume_operation.path:
             if resume_operation.mode == "tail-after-landed-prefix":
                 console.note(
-                    t"Resuming interrupted {describe_intent(loaded.operation)} after the "
+                    t"Resuming interrupted {describe_operation(loaded.operation)} after the "
                     t"trunk transition already succeeded"
                 )
             else:
-                console.note(t"Resuming interrupted {describe_intent(loaded.operation)}")
+                console.note(t"Resuming interrupted {describe_operation(loaded.operation)}")
             continue
         match = match_ordered_change_ids(
             loaded.operation.ordered_change_ids,
@@ -168,11 +168,11 @@ def _report_stale_land_operations(
         if match == "overlap":
             console.warning(
                 t"this land overlaps an incomplete earlier operation "
-                t"({describe_intent(loaded.operation)})"
+                t"({describe_operation(loaded.operation)})"
             )
         else:
             console.note(
-                t"incomplete operation outstanding: {describe_intent(loaded.operation)}"
+                t"incomplete operation outstanding: {describe_operation(loaded.operation)}"
             )
 
 

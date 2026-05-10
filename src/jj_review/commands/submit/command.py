@@ -56,7 +56,6 @@ from .auto_close import (
     verify_no_unexpected_pull_request_closures,
 )
 from .inputs import prepare_submit_inputs
-from .intents import start_submit_intent
 from .models import (
     GeneratedDescription,
     PendingPullRequestSync,
@@ -65,6 +64,7 @@ from .models import (
     SubmitResult,
     SubmittedRevision,
 )
+from .operations import start_submit_operation
 from .pull_requests import discover_pull_requests_by_bookmark, sync_pull_requests
 from .render import print_submit_result, render_selected_line
 from .revisions import prepare_submit_revisions, sync_remote_bookmarks
@@ -387,7 +387,7 @@ async def _run_submit_async(
         stack=stack,
     )
     state_changes = dict(bookmark_result.state.changes)
-    intent_state = start_submit_intent(
+    operation_state = start_submit_operation(
         bookmark_result=bookmark_result,
         dry_run=dry_run,
         github_repository=github_repository,
@@ -533,15 +533,15 @@ async def _run_submit_async(
             trunk_branch=trunk_branch,
         )
     finally:
-        if succeeded and intent_state.journal is not None:
+        if succeeded and operation_state.journal is not None:
             completed_change_ids = tuple(revision.change_id for revision in stack.revisions)
-            intent_state.journal.append(
+            operation_state.journal.append(
                 "completed",
                 {"ordered_change_ids": completed_change_ids},
             )
             _retire_superseded_submit_operations(
-                current_operation=intent_state.operation,
-                stale_operations=intent_state.stale_operations,
+                current_operation=operation_state.operation,
+                stale_operations=operation_state.stale_operations,
             )
 
 
@@ -557,7 +557,7 @@ def _retire_superseded_submit_operations(
         if not isinstance(operation, SubmitOperationRecord):
             continue
         if should_retire_submit_after_submit(
-            old_intent=operation,
-            new_intent=current_operation,
+            old_operation=operation,
+            new_operation=current_operation,
         ):
             append_abandoned_event(loaded.path, reason="superseded_by_submit")

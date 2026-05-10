@@ -57,10 +57,10 @@ from jj_review.review.change_status import (
     classify_review_status_revision,
     classify_saved_review_change,
 )
-from jj_review.review.intents import (
-    close_intent_mode_relation,
-    describe_intent,
-    match_close_intent,
+from jj_review.review.operations import (
+    close_operation_mode_relation,
+    describe_operation,
+    match_close_operation,
 )
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -399,7 +399,7 @@ def _prepare_untracked_close_fast_path(
     Both plain `close` and `close --cleanup` are true no-ops when the selected
     stack has no saved review identity at all. In that case we can skip
     bookmark-state discovery and GitHub preparation while still preserving the
-    normal remote diagnostics and stale-intent retirement behavior.
+    normal remote diagnostics and stale-operation retirement behavior.
     """
 
     client = jj_client
@@ -461,10 +461,10 @@ def _prepare_untracked_close_fast_path(
     return PreparedStatus(
         github_repository=github_repository,
         github_repository_error=github_repository_error,
-        outstanding_intents=(),
+        outstanding_operations=(),
         prepared=prepared,
         selected_revset=stack.selected_revset,
-        stale_intents=(),
+        stale_operations=(),
         base_parent_subject=stack.base_parent.subject,
     )
 
@@ -651,7 +651,7 @@ def _retire_superseded_close_operations(
         operation = loaded.operation
         if not isinstance(operation, CloseOperationRecord):
             continue
-        mode_relation = close_intent_mode_relation(
+        mode_relation = close_operation_mode_relation(
             recorded_cleanup=operation.cleanup,
             current_cleanup=current_cleanup,
         )
@@ -780,7 +780,7 @@ def _start_close_operation(
         current_change_ids=ordered_change_ids,
         current_commit_ids=ordered_commit_ids,
         current_cleanup=prepared_close.cleanup,
-        stale_intents=stale_close_operations,
+        stale_operations=stale_close_operations,
     )
     stale_submit_operations = (
         [
@@ -816,33 +816,33 @@ def _report_stale_close_operations(
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
     current_cleanup: bool,
-    stale_intents: list[LoadedOperationRecord],
+    stale_operations: list[LoadedOperationRecord],
 ) -> None:
     """Render interrupted close diagnostics for live execution."""
 
-    for loaded in stale_intents:
+    for loaded in stale_operations:
         if not isinstance(loaded.operation, CloseOperationRecord):
             continue
         operation = loaded.operation
-        mode_relation = close_intent_mode_relation(
+        mode_relation = close_operation_mode_relation(
             recorded_cleanup=operation.cleanup,
             current_cleanup=current_cleanup,
         )
         # mode-aware match: a recorded cleanup run is "disjoint" from a plain close
-        match = match_close_intent(
-            intent=operation,
+        match = match_close_operation(
+            operation=operation,
             current_change_ids=current_change_ids,
             current_commit_ids=current_commit_ids,
             current_cleanup=current_cleanup,
         )
-        # mode-blind stack match: used below to detect an incompatible-mode intent
+        # mode-blind stack match: used below to detect an incompatible-mode operation
         # whose stack still matches, so we can warn "plain close does not finish cleanup"
-        stack_match = match_close_intent(
-            intent=operation,
+        stack_match = match_close_operation(
+            operation=operation,
             current_change_ids=current_change_ids,
             current_commit_ids=current_commit_ids,
         )
-        description = describe_intent(operation)
+        description = describe_operation(operation)
         if mode_relation == "same" and match == "exact":
             console.note(f"Continuing interrupted {description}")
         elif mode_relation == "expanded" and match == "exact":

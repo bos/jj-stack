@@ -240,7 +240,7 @@ def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None
     )
 
 
-def test_render_status_intent_lines_reports_stale_and_interrupted_operations(
+def test_render_status_operation_lines_reports_stale_and_interrupted_operations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_pid_is_alive(pid: int) -> bool:
@@ -248,15 +248,15 @@ def test_render_status_intent_lines_reports_stale_and_interrupted_operations(
 
     monkeypatch.setattr(status_module, "pid_is_alive", fake_pid_is_alive)
     prepared_status = SimpleNamespace(
-        stale_intents=(
+        stale_operations=(
             SimpleNamespace(
-                intent=SimpleNamespace(label="submit on @", pid=101),
+                operation=SimpleNamespace(label="submit on @", pid=101),
                 path=Path("/tmp/stale-submit.json"),
             ),
         ),
-        outstanding_intents=(
+        outstanding_operations=(
             SimpleNamespace(
-                intent=SimpleNamespace(label="land on @", pid=202),
+                operation=SimpleNamespace(label="land on @", pid=202),
                 path=Path("/tmp/outstanding-land.json"),
             ),
         ),
@@ -264,7 +264,7 @@ def test_render_status_intent_lines_reports_stale_and_interrupted_operations(
     )
 
     lines = _render_lines(
-        *status_module.render_status_intent_lines(prepared_status=prepared_status)
+        *status_module.render_status_operation_lines(prepared_status=prepared_status)
     )
 
     assert "Stale incomplete operations (change IDs no longer in repo):" in lines
@@ -273,7 +273,7 @@ def test_render_status_intent_lines_reports_stale_and_interrupted_operations(
     assert any("inspect with jj-review status" in line for line in lines)
 
 
-def test_render_status_intent_lines_guides_submit_for_different_stack(
+def test_render_status_operation_lines_guides_submit_for_different_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(status_module, "pid_is_alive", lambda _pid: False)
@@ -282,13 +282,13 @@ def test_render_status_intent_lines_guides_submit_for_different_stack(
         "_now_utc",
         lambda: datetime(2026, 4, 29, 12, tzinfo=UTC),
     )
-    intent = _submit_operation_record(
+    operation = _submit_operation_record(
         ordered_change_ids=("nnszmtlxaaaaaaaa",),
         ordered_commit_ids=("recordedcommit",),
     )
     prepared_status = SimpleNamespace(
-        stale_intents=(),
-        outstanding_intents=(SimpleNamespace(intent=intent),),
+        stale_operations=(),
+        outstanding_operations=(SimpleNamespace(operation=operation),),
         prepared=SimpleNamespace(
             status_revisions=(
                 SimpleNamespace(
@@ -304,7 +304,7 @@ def test_render_status_intent_lines_guides_submit_for_different_stack(
     )
 
     lines = _render_lines(
-        *status_module.render_status_intent_lines(prepared_status=prepared_status)
+        *status_module.render_status_operation_lines(prepared_status=prepared_status)
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 
@@ -316,7 +316,7 @@ def test_render_status_intent_lines_guides_submit_for_different_stack(
     assert "recorded stack differs from the current selection" not in normalized_lines
 
 
-def test_render_status_intent_lines_avoids_missing_recorded_submit_head(
+def test_render_status_operation_lines_avoids_missing_recorded_submit_head(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(status_module, "pid_is_alive", lambda _pid: False)
@@ -330,13 +330,13 @@ def test_render_status_intent_lines_avoids_missing_recorded_submit_head(
         def query_revisions_by_change_ids(self, change_ids):
             return {change_id: () for change_id in change_ids}
 
-    intent = _submit_operation_record(
+    operation = _submit_operation_record(
         ordered_change_ids=("aaaaaaaabbbbbbbb", "nnszmtlxaaaaaaaa"),
         ordered_commit_ids=("bottomcommit", "headcommit"),
     )
     prepared_status = SimpleNamespace(
-        stale_intents=(),
-        outstanding_intents=(SimpleNamespace(intent=intent),),
+        stale_operations=(),
+        outstanding_operations=(SimpleNamespace(operation=operation),),
         prepared=SimpleNamespace(
             client=MissingHeadClient(),
             status_revisions=(
@@ -353,7 +353,7 @@ def test_render_status_intent_lines_avoids_missing_recorded_submit_head(
     )
 
     lines = _render_lines(
-        *status_module.render_status_intent_lines(prepared_status=prepared_status)
+        *status_module.render_status_operation_lines(prepared_status=prepared_status)
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 

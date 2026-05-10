@@ -1,4 +1,4 @@
-"""Submit intent records and the bookmark repairs they imply for stale runs."""
+"""Submit operation records and the bookmark repairs they imply for stale runs."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from jj_review.github.resolution import parse_github_repo
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult
-from jj_review.review.intents import describe_intent
+from jj_review.review.operations import describe_operation
 from jj_review.review.submit_recovery import (
     SubmitRecoveryIdentity,
     SubmitStatusDecision,
@@ -32,7 +32,7 @@ from jj_review.system import pid_is_alive
 from .models import InterruptedRemoteBookmarkRepairer, SubmitOperationState
 
 
-def start_submit_intent(
+def start_submit_operation(
     *,
     bookmark_result: BookmarkResolutionResult,
     dry_run: bool,
@@ -144,7 +144,7 @@ def _report_stale_submit_operations(
             current_commit_ids=ordered_commit_ids,
             current_identity=SubmitRecoveryIdentity.from_operation(current_operation),
         )
-        description = describe_intent(operation)
+        description = describe_operation(operation)
         if decision is SubmitStatusDecision.CONTINUE:
             console.note(t"Continuing interrupted {description}", soft_wrap=True)
         elif decision is SubmitStatusDecision.CURRENT_STACK:

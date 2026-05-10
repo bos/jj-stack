@@ -259,6 +259,9 @@ deleting intent files.
 GitHub repository in a retained submit journal. Retry, status, doctor, abort, and
 cleanup-close retirement all consume that journal-backed submit record, so the old
 `models/intent.py` and `state/intents.py` file-persistence path has been removed.
+Interrupted-operation matching and display policy lives in `review/operations.py`; command
+code should pass journal-backed operation records through that layer rather than reintroducing
+file-kind-specific branching.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal

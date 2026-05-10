@@ -1,4 +1,4 @@
-"""Review-layer intent matching, display, and retirement policy."""
+"""Review-layer operation matching, display, and retirement policy."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from jj_review.state.journal import (
 from jj_review.ui import Message
 
 MatchResult = Literal["exact", "superset", "overlap", "disjoint"]
-SubmitIntentMatch = Literal[
+OrderedOperationMatch = Literal[
     "exact",
     "same-logical",
     "covered",
@@ -25,7 +25,7 @@ SubmitIntentMatch = Literal[
     "overlap",
     "disjoint",
 ]
-CloseIntentModeRelation = Literal["same", "expanded", "incompatible"]
+CloseOperationModeRelation = Literal["same", "expanded", "incompatible"]
 
 
 def match_ordered_change_ids(
@@ -43,107 +43,107 @@ def match_ordered_change_ids(
     return "disjoint"
 
 
-def describe_intent(
-    intent: OperationRecord,
+def describe_operation(
+    operation: OperationRecord,
 ) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
-    if isinstance(intent, SubmitOperationRecord):
+    if isinstance(operation, SubmitOperationRecord):
         return (
-            t"{ui.cmd('submit')} for {_render_recorded_stack_head(intent)} "
-            t"(from {ui.revset(intent.display_revset)})"
+            t"{ui.cmd('submit')} for {_render_recorded_stack_head(operation)} "
+            t"(from {ui.revset(operation.display_revset)})"
         )
-    if isinstance(intent, CleanupRebaseOperationRecord):
+    if isinstance(operation, CleanupRebaseOperationRecord):
         return (
-            t"{ui.cmd('cleanup --rebase')} for {_render_recorded_stack_head(intent)} "
-            t"(from {ui.revset(intent.display_revset)})"
+            t"{ui.cmd('cleanup --rebase')} for {_render_recorded_stack_head(operation)} "
+            t"(from {ui.revset(operation.display_revset)})"
         )
-    if isinstance(intent, CloseOperationRecord):
-        verb = ui.cmd("close --cleanup" if intent.cleanup else "close")
+    if isinstance(operation, CloseOperationRecord):
+        verb = ui.cmd("close --cleanup" if operation.cleanup else "close")
         return (
-            t"{verb} for {_render_recorded_stack_head(intent)} "
-            t"(from {ui.revset(intent.display_revset)})"
+            t"{verb} for {_render_recorded_stack_head(operation)} "
+            t"(from {ui.revset(operation.display_revset)})"
         )
-    if isinstance(intent, LandOperationRecord):
+    if isinstance(operation, LandOperationRecord):
         return (
-            t"{ui.cmd('land')} for {_render_recorded_stack_head(intent)} "
-            t"(from {ui.revset(intent.display_revset)})"
+            t"{ui.cmd('land')} for {_render_recorded_stack_head(operation)} "
+            t"(from {ui.revset(operation.display_revset)})"
         )
-    if isinstance(intent, RelinkOperationRecord):
-        return t"{ui.cmd('relink')} for {ui.change_id(intent.change_id)}"
-    if isinstance(intent, CleanupOperationRecord):
+    if isinstance(operation, RelinkOperationRecord):
+        return t"{ui.cmd('relink')} for {ui.change_id(operation.change_id)}"
+    if isinstance(operation, CleanupOperationRecord):
         return ui.cmd("cleanup")
-    return intent.label
+    return operation.label
 
 
 def _render_recorded_stack_head(
-    intent: (
+    operation: (
         LandOperationRecord
         | CleanupRebaseOperationRecord
         | CloseOperationRecord
         | SubmitOperationRecord
     ),
 ) -> Message:
-    if not intent.ordered_change_ids:
+    if not operation.ordered_change_ids:
         return "stack"
-    return ui.change_id(intent.ordered_change_ids[-1])
+    return ui.change_id(operation.ordered_change_ids[-1])
 
 
-def match_cleanup_rebase_intent(
+def match_cleanup_rebase_operation(
     *,
-    intent: CleanupRebaseOperationRecord,
+    operation: CleanupRebaseOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
-) -> SubmitIntentMatch:
-    """Classify how a recorded cleanup rebase intent relates to the current stack."""
+) -> OrderedOperationMatch:
+    """Classify how a recorded cleanup rebase operation relates to the current stack."""
 
-    if intent.ordered_change_ids == current_change_ids:
-        if intent.ordered_commit_ids and intent.ordered_commit_ids == current_commit_ids:
+    if operation.ordered_change_ids == current_change_ids:
+        if operation.ordered_commit_ids and operation.ordered_commit_ids == current_commit_ids:
             return "exact"
         return "same-logical"
-    if set(intent.ordered_change_ids) == set(current_change_ids):
+    if set(operation.ordered_change_ids) == set(current_change_ids):
         return "same-logical"
-    if set(current_change_ids).issubset(intent.ordered_change_ids):
+    if set(current_change_ids).issubset(operation.ordered_change_ids):
         return "trimmed"
     return _match_recorded_ordered_stack(
-        recorded_change_ids=intent.ordered_change_ids,
-        recorded_commit_ids=intent.ordered_commit_ids,
+        recorded_change_ids=operation.ordered_change_ids,
+        recorded_commit_ids=operation.ordered_commit_ids,
         current_change_ids=current_change_ids,
         current_commit_ids=current_commit_ids,
     )
 
 
-def match_close_intent(
+def match_close_operation(
     *,
-    intent: CloseOperationRecord,
+    operation: CloseOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
     current_cleanup: bool | None = None,
-) -> SubmitIntentMatch:
+) -> OrderedOperationMatch:
     """Classify how a recorded close operation relates to the current stack."""
 
     if (
         current_cleanup is not None
-        and close_intent_mode_relation(
-            recorded_cleanup=intent.cleanup,
+        and close_operation_mode_relation(
+            recorded_cleanup=operation.cleanup,
             current_cleanup=current_cleanup,
         )
         == "incompatible"
     ):
         return "disjoint"
     return _match_recorded_ordered_stack(
-        recorded_change_ids=intent.ordered_change_ids,
-        recorded_commit_ids=intent.ordered_commit_ids,
+        recorded_change_ids=operation.ordered_change_ids,
+        recorded_commit_ids=operation.ordered_commit_ids,
         current_change_ids=current_change_ids,
         current_commit_ids=current_commit_ids,
     )
 
 
-def close_intent_mode_relation(
+def close_operation_mode_relation(
     *,
     recorded_cleanup: bool,
     current_cleanup: bool,
-) -> CloseIntentModeRelation:
+) -> CloseOperationModeRelation:
     """Classify whether a close mode can resume or supersede a recorded close."""
 
     if recorded_cleanup == current_cleanup:
@@ -159,7 +159,7 @@ def _match_recorded_ordered_stack(
     recorded_commit_ids: tuple[str, ...],
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
-) -> SubmitIntentMatch:
+) -> OrderedOperationMatch:
     """Classify how a recorded ordered stack relates to the current stack."""
 
     if recorded_change_ids == current_change_ids:

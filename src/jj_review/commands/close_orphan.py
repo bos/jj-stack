@@ -35,7 +35,7 @@ from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import find_changes_by_bookmark, is_review_bookmark
-from jj_review.review.intents import close_intent_mode_relation
+from jj_review.review.operations import close_operation_mode_relation
 from jj_review.state.journal import (
     CloseOperationRecord,
     LoadedOperationRecord,
@@ -166,7 +166,7 @@ async def run_untracked_cleanup_pull_request(
         )
 
     if not dry_run:
-        _retire_pull_request_close_intents(
+        _retire_pull_request_close_operations(
             pull_request_number=pull_request_number,
             state_store=state_store,
         )
@@ -198,7 +198,7 @@ def _untracked_cleanup_verification_error(
     )
 
 
-def _retire_pull_request_close_intents(
+def _retire_pull_request_close_operations(
     *,
     pull_request_number: int,
     state_store: ReviewStateStore,
@@ -228,7 +228,7 @@ def _retire_pull_request_close_intents(
         covered_by_pr_selector = (
             bool(recorded_change_ids)
             and recorded_change_ids.issubset(covered_change_ids)
-            and close_intent_mode_relation(
+            and close_operation_mode_relation(
                 recorded_cleanup=operation.cleanup,
                 current_cleanup=True,
             )
@@ -487,7 +487,7 @@ def _retire_superseded_orphan_close_operations(
         if not isinstance(operation, CloseOperationRecord):
             continue
         if (
-            close_intent_mode_relation(
+            close_operation_mode_relation(
                 recorded_cleanup=operation.cleanup,
                 current_cleanup=True,
             )
@@ -848,7 +848,7 @@ def _start_orphan_close_operation(
         current_change_ids=ordered_change_ids,
         current_commit_ids=ordered_commit_ids,
         current_cleanup=True,
-        stale_intents=stale_close_operations,
+        stale_operations=stale_close_operations,
     )
     stale_submit_operations = [
         loaded

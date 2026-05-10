@@ -130,18 +130,18 @@ def test_should_retire_submit_after_submit_requires_matching_identity_and_bookma
         },
     )
 
-    assert should_retire_submit_after_submit(old_intent=old, new_intent=new)
+    assert should_retire_submit_after_submit(old_operation=old, new_operation=new)
     assert not should_retire_submit_after_submit(
-        old_intent=old,
-        new_intent=replace(new, remote_name="upstream"),
+        old_operation=old,
+        new_operation=replace(new, remote_name="upstream"),
     )
     assert not should_retire_submit_after_submit(
-        old_intent=old,
-        new_intent=replace(new, github_repo="other-review"),
+        old_operation=old,
+        new_operation=replace(new, github_repo="other-review"),
     )
     assert not should_retire_submit_after_submit(
-        old_intent=old,
-        new_intent=replace(new, bookmarks={"aaaa": "review/a"}),
+        old_operation=old,
+        new_operation=replace(new, bookmarks={"aaaa": "review/a"}),
     )
 
 

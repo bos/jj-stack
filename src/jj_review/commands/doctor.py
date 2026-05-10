@@ -34,7 +34,7 @@ from jj_review.github.resolution import (
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubRepository
-from jj_review.review.intents import describe_intent
+from jj_review.review.operations import describe_operation
 from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message
@@ -238,13 +238,13 @@ def _check_interruptions(state_store: ReviewStateStore) -> CheckResult:
     if not state_store.state_dir.exists():
         return CheckResult("interruptions", "ok", "none")
     try:
-        all_intents = state_store.list_operations()
+        all_operations = state_store.list_operations()
     except Exception as error:
         return CheckResult("interruptions", "warn", f"could not check: {error}")
 
-    # Ignore intents whose process is still alive — those are active operations,
-    # not interrupted ones. Only dead-PID intents need recovery.
-    interrupted = [loaded for loaded in all_intents if not pid_is_alive(loaded.intent.pid)]
+    # Ignore operations whose process is still alive — those are active operations,
+    # not interrupted ones. Only dead-PID operations need recovery.
+    interrupted = [loaded for loaded in all_operations if not pid_is_alive(loaded.operation.pid)]
 
     if not interrupted:
         return CheckResult("interruptions", "ok", "none")
@@ -255,7 +255,7 @@ def _check_interruptions(state_store: ReviewStateStore) -> CheckResult:
         "interruptions",
         "warn",
         t"{count} {noun}: "
-        t"{ui.join(describe_intent, (loaded.intent for loaded in interrupted))}; "
+        t"{ui.join(describe_operation, (loaded.operation for loaded in interrupted))}; "
         t"run "
         t"{ui.cmd('jj-review abort --dry-run')} to preview recovery",
     )

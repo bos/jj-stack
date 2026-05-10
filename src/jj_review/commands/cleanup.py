@@ -57,9 +57,9 @@ from jj_review.review.change_status import (
     classify_saved_review_change,
     is_open_pr_record,
 )
-from jj_review.review.intents import (
-    describe_intent,
-    match_cleanup_rebase_intent,
+from jj_review.review.operations import (
+    describe_operation,
+    match_cleanup_rebase_operation,
 )
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.review.status import (
@@ -699,12 +699,12 @@ def _start_rebase_operation(
         operation = loaded.operation
         if not isinstance(operation, CleanupRebaseOperationRecord):
             continue
-        match = match_cleanup_rebase_intent(
-            intent=operation,
+        match = match_cleanup_rebase_operation(
+            operation=operation,
             current_change_ids=ordered_change_ids,
             current_commit_ids=ordered_commit_ids,
         )
-        description = describe_intent(operation)
+        description = describe_operation(operation)
         if match == "exact":
             console.note(t"Continuing interrupted {description}")
         elif match == "same-logical":

@@ -27,7 +27,7 @@ from jj_review.github.client import GithubClient, GithubClientError, build_githu
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo
 from jj_review.jj import JjCliArgs, JjClient, JjCommandError
 from jj_review.models.review_state import CachedChange
-from jj_review.review.intents import describe_intent
+from jj_review.review.operations import describe_operation
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
 from jj_review.state.journal import (
     CleanupOperationRecord,
@@ -75,14 +75,14 @@ class AbortAction:
 
 @dataclass(frozen=True, slots=True)
 class AbortResult:
-    """Outcome of aborting one intent."""
+    """Outcome of aborting one operation."""
 
     actions: tuple[AbortAction, ...]
     applied: bool
     dry_run: bool
-    intent_kind: str
-    intent_label: Message
-    intent_started_at: str
+    operation_kind: str
+    operation_label: Message
+    operation_started_at: str
 
 
 def abort(
@@ -113,9 +113,9 @@ def _run_abort(
 ) -> int:
     state_store = context.state_store
     jj_client = context.jj_client
-    loaded_intents = state_store.list_operations()
+    loaded_operations = state_store.list_operations()
 
-    if not loaded_intents:
+    if not loaded_operations:
         console.output("Nothing to abort.")
         return 0
 
@@ -128,12 +128,12 @@ def _run_abort(
 
     outstanding = [
         loaded
-        for loaded in loaded_intents
+        for loaded in loaded_operations
         if not _operation_notice_is_stale(loaded, _resolve_change_id)
     ]
 
     if not outstanding:
-        count = len(loaded_intents)
+        count = len(loaded_operations)
         noun = "operation" if count == 1 else "operations"
         console.output(
             t"{count} stale incomplete {noun} found (changes no longer exist in this repo). "
@@ -141,15 +141,15 @@ def _run_abort(
         )
         return 1
 
-    # Refuse to retract intents whose process is still running — aborting a
+    # Refuse to retract operations whose process is still running — aborting a
     # live operation would race against it and corrupt shared state.
-    live = [loaded for loaded in outstanding if pid_is_alive(loaded.intent.pid)]
-    outstanding = [loaded for loaded in outstanding if not pid_is_alive(loaded.intent.pid)]
+    live = [loaded for loaded in outstanding if pid_is_alive(loaded.operation.pid)]
+    outstanding = [loaded for loaded in outstanding if not pid_is_alive(loaded.operation.pid)]
 
     for loaded in live:
         console.output(
-            f"{loaded.intent.label} is still in progress "
-            f"(PID {loaded.intent.pid}) — wait for it to finish, then run abort again."
+            f"{loaded.operation.label} is still in progress "
+            f"(PID {loaded.operation.pid}) — wait for it to finish, then run abort again."
         )
 
     if not outstanding:
@@ -158,7 +158,7 @@ def _run_abort(
     exit_code = 1 if live else 0
     for loaded in outstanding:
         result = asyncio.run(
-            _abort_intent_async(
+            _abort_operation_async(
                 context=context,
                 loaded=loaded,
                 options=options,
@@ -172,17 +172,17 @@ def _run_abort(
 
 
 # ---------------------------------------------------------------------------
-# Per-intent dispatch
+# Per-operation dispatch
 # ---------------------------------------------------------------------------
 
 
-async def _abort_intent_async(
+async def _abort_operation_async(
     *,
     context: CommandContext,
     loaded: LoadedOperationRecord,
     options: AbortOptions,
 ) -> AbortResult:
-    intent = loaded.intent
+    intent = loaded.operation
     dry_run = options.dry_run
 
     if isinstance(intent, SubmitOperationRecord):
@@ -202,7 +202,7 @@ async def _abort_intent_async(
     actions: list[AbortAction] = []
     if note:
         actions.append(AbortAction(kind="note", body=note, status="skipped"))
-    _plan_intent_file_removal(actions=actions, dry_run=dry_run)
+    _plan_operation_notice_removal(actions=actions, dry_run=dry_run)
     if not dry_run:
         _clear_operation_notice(loaded, reason="abort")
 
@@ -210,9 +210,9 @@ async def _abort_intent_async(
         actions=tuple(actions),
         applied=not dry_run,
         dry_run=dry_run,
-        intent_kind=intent.kind,
-        intent_label=describe_intent(intent),
-        intent_started_at=intent.started_at,
+        operation_kind=intent.kind,
+        operation_label=describe_operation(intent),
+        operation_started_at=intent.started_at,
     )
 
 
@@ -253,9 +253,9 @@ async def _abort_submit(
     """Retract a partial submit: close PRs, delete remote branches, clear state."""
 
     actions: list[AbortAction] = []
-    if not _submit_intent_matches_recorded_stack(intent=intent, jj_client=jj_client):
-        if not _submit_intent_head_visible(intent=intent, jj_client=jj_client):
-            selector = _submit_intent_selector(intent)
+    if not _submit_operation_matches_recorded_stack(intent=intent, jj_client=jj_client):
+        if not _submit_operation_head_visible(intent=intent, jj_client=jj_client):
+            selector = _submit_operation_selector(intent)
             changed = "would be changed" if dry_run else "were changed"
             actions.append(
                 AbortAction(
@@ -267,7 +267,7 @@ async def _abort_submit(
                     status="skipped",
                 )
             )
-            _plan_intent_file_removal(
+            _plan_operation_notice_removal(
                 actions=actions,
                 dry_run=dry_run,
             )
@@ -277,14 +277,14 @@ async def _abort_submit(
                 actions=tuple(actions),
                 applied=not dry_run,
                 dry_run=dry_run,
-                intent_kind=intent.kind,
-                intent_label=describe_intent(intent),
-                intent_started_at=intent.started_at,
+                operation_kind=intent.kind,
+                operation_label=describe_operation(intent),
+                operation_started_at=intent.started_at,
             )
 
         actions.append(
             AbortAction(
-                kind="submit intent",
+                kind="submit operation",
                 body=(
                     "current stack has changed since this submit was interrupted; "
                     "abort will not guess which pull requests or review branches to retract"
@@ -296,9 +296,9 @@ async def _abort_submit(
             AbortAction(
                 kind="notice",
                 body=t"kept — to continue, run "
-                t"{ui.cmd(f'jj-review submit {_submit_intent_selector(intent)}')}; "
+                t"{ui.cmd(f'jj-review submit {_submit_operation_selector(intent)}')}; "
                 t"to retract the partial work, run "
-                t"{ui.cmd(f'jj-review close --cleanup {_submit_intent_selector(intent)}')}",
+                t"{ui.cmd(f'jj-review close --cleanup {_submit_operation_selector(intent)}')}",
                 status="skipped",
             )
         )
@@ -306,9 +306,9 @@ async def _abort_submit(
             actions=tuple(actions),
             applied=False,
             dry_run=dry_run,
-            intent_kind=intent.kind,
-            intent_label=describe_intent(intent),
-            intent_started_at=intent.started_at,
+            operation_kind=intent.kind,
+            operation_label=describe_operation(intent),
+            operation_started_at=intent.started_at,
         )
 
     state = state_store.load()
@@ -374,7 +374,7 @@ async def _abort_submit(
         state_store.save(state.model_copy(update={"changes": next_changes}))
 
     if all_retracted or dry_run:
-        _plan_intent_file_removal(actions=actions, dry_run=dry_run)
+        _plan_operation_notice_removal(actions=actions, dry_run=dry_run)
         if not dry_run:
             _clear_operation_notice(loaded, reason="abort")
     else:
@@ -393,13 +393,13 @@ async def _abort_submit(
         actions=tuple(actions),
         applied=all_retracted and not dry_run,
         dry_run=dry_run,
-        intent_kind=intent.kind,
-        intent_label=describe_intent(intent),
-        intent_started_at=intent.started_at,
+        operation_kind=intent.kind,
+        operation_label=describe_operation(intent),
+        operation_started_at=intent.started_at,
     )
 
 
-def _submit_intent_matches_recorded_stack(
+def _submit_operation_matches_recorded_stack(
     *,
     intent: SubmitOperationRecord,
     jj_client: JjClient,
@@ -420,7 +420,7 @@ def _submit_intent_matches_recorded_stack(
     )
 
 
-def _submit_intent_head_visible(
+def _submit_operation_head_visible(
     *,
     intent: SubmitOperationRecord,
     jj_client: JjClient,
@@ -435,7 +435,7 @@ def _submit_intent_head_visible(
     )
 
 
-def _submit_intent_selector(intent: SubmitOperationRecord) -> str:
+def _submit_operation_selector(intent: SubmitOperationRecord) -> str:
     if intent.ordered_change_ids:
         return short_change_id(intent.ordered_change_ids[-1])
     return intent.display_revset
@@ -652,7 +652,7 @@ def _clear_operation_notice(
     append_abandoned_event(loaded.path, reason=reason)
 
 
-def _plan_intent_file_removal(
+def _plan_operation_notice_removal(
     *,
     actions: list[AbortAction],
     dry_run: bool,
@@ -678,11 +678,11 @@ def _plan_intent_file_removal(
 
 def _print_abort_result(result: AbortResult) -> None:
     if result.dry_run:
-        header = t"Planned abort actions for {result.intent_label}:"
+        header = t"Planned abort actions for {result.operation_label}:"
     elif result.applied:
-        header = t"Applied abort actions for {result.intent_label}:"
+        header = t"Applied abort actions for {result.operation_label}:"
     else:
-        header = t"Abort incomplete for {result.intent_label}:"
+        header = t"Abort incomplete for {result.operation_label}:"
 
     console.output(header)
     for action in result.actions:

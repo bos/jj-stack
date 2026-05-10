@@ -152,17 +152,17 @@ def recorded_submit_still_exists_exactly(
 
 def should_retire_submit_after_submit(
     *,
-    old_intent: SubmitOperationRecord,
-    new_intent: SubmitOperationRecord,
+    old_operation: SubmitOperationRecord,
+    new_operation: SubmitOperationRecord,
 ) -> bool:
     """Return whether a later successful submit clearly supersedes an older one."""
 
     if SubmitRecoveryIdentity.from_operation(
-        old_intent
-    ) != SubmitRecoveryIdentity.from_operation(new_intent):
+        old_operation
+    ) != SubmitRecoveryIdentity.from_operation(new_operation):
         return False
-    return bool(old_intent.bookmarks) and set(old_intent.bookmarks.values()).issubset(
-        new_intent.bookmarks.values()
+    return bool(old_operation.bookmarks) and set(old_operation.bookmarks.values()).issubset(
+        new_operation.bookmarks.values()
     )
 
 

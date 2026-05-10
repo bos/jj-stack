@@ -41,7 +41,7 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
             repo="stacked-review",
         ),
         github_repository_error=None,
-        outstanding_intents=(),
+        outstanding_operations=(),
         prepared=cast(
             PreparedStack,
             SimpleNamespace(
@@ -58,7 +58,7 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
             ),
         ),
         selected_revset="@",
-        stale_intents=(),
+        stale_operations=(),
         base_parent_subject="base",
     )
     local_only_revisions = (
@@ -145,7 +145,7 @@ def test_stream_status_reports_github_target_without_error_for_empty_stack() -> 
             repo="stacked-review",
         ),
         github_repository_error=None,
-        outstanding_intents=(),
+        outstanding_operations=(),
         prepared=cast(
             PreparedStack,
             SimpleNamespace(
@@ -157,7 +157,7 @@ def test_stream_status_reports_github_target_without_error_for_empty_stack() -> 
             ),
         ),
         selected_revset="main",
-        stale_intents=(),
+        stale_operations=(),
         base_parent_subject="base",
     )
     github_status_calls: list[tuple[str | None, ErrorMessage | None]] = []
@@ -203,7 +203,7 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
             repo="stacked-review",
         ),
         github_repository_error=None,
-        outstanding_intents=(),
+        outstanding_operations=(),
         prepared=cast(
             PreparedStack,
             SimpleNamespace(
@@ -226,7 +226,7 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
             ),
         ),
         selected_revset="@",
-        stale_intents=(),
+        stale_operations=(),
         base_parent_subject="base",
     )
     monkeypatch.setattr(
@@ -284,7 +284,7 @@ def test_stream_status_skips_cache_update_when_operation_lock_is_busy(
             repo="stacked-review",
         ),
         github_repository_error=None,
-        outstanding_intents=(),
+        outstanding_operations=(),
         prepared=cast(
             PreparedStack,
             SimpleNamespace(
@@ -311,7 +311,7 @@ def test_stream_status_skips_cache_update_when_operation_lock_is_busy(
             ),
         ),
         selected_revset="@",
-        stale_intents=(),
+        stale_operations=(),
         base_parent_subject="base",
     )
     monkeypatch.setattr(

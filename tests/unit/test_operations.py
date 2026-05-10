@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.review.intents import (
-    match_cleanup_rebase_intent,
-    match_close_intent,
+from jj_review.review.operations import (
+    match_cleanup_rebase_operation,
+    match_close_operation,
     match_ordered_change_ids,
 )
 from jj_review.state.journal import CleanupRebaseOperationRecord, CloseOperationRecord
@@ -87,10 +87,10 @@ def test_match_ordered_change_ids_requires_prefix_order_for_superset() -> None:
     assert match_ordered_change_ids(("a", "b"), ("b", "a", "c")) == "overlap"
 
 
-def test_match_cleanup_rebase_intent_returns_same_logical_for_rewritten_stack() -> None:
+def test_match_cleanup_rebase_operation_returns_same_logical_for_rewritten_stack() -> None:
     assert (
-        match_cleanup_rebase_intent(
-            intent=_make_cleanup_rebase_operation(),
+        match_cleanup_rebase_operation(
+            operation=_make_cleanup_rebase_operation(),
             current_change_ids=("aaaa", "bbbb"),
             current_commit_ids=("new-aaaa", "new-bbbb"),
         )
@@ -98,10 +98,10 @@ def test_match_cleanup_rebase_intent_returns_same_logical_for_rewritten_stack() 
     )
 
 
-def test_match_cleanup_rebase_intent_returns_same_logical_for_reordered_stack() -> None:
+def test_match_cleanup_rebase_operation_returns_same_logical_for_reordered_stack() -> None:
     assert (
-        match_cleanup_rebase_intent(
-            intent=_make_cleanup_rebase_operation(("aaaa", "bbbb")),
+        match_cleanup_rebase_operation(
+            operation=_make_cleanup_rebase_operation(("aaaa", "bbbb")),
             current_change_ids=("bbbb", "aaaa"),
             current_commit_ids=("commit-bbbb", "commit-aaaa"),
         )
@@ -109,10 +109,10 @@ def test_match_cleanup_rebase_intent_returns_same_logical_for_reordered_stack() 
     )
 
 
-def test_match_cleanup_rebase_intent_returns_trimmed_for_shrunk_current_stack() -> None:
+def test_match_cleanup_rebase_operation_returns_trimmed_for_shrunk_current_stack() -> None:
     assert (
-        match_cleanup_rebase_intent(
-            intent=_make_cleanup_rebase_operation(("aaaa", "bbbb", "cccc")),
+        match_cleanup_rebase_operation(
+            operation=_make_cleanup_rebase_operation(("aaaa", "bbbb", "cccc")),
             current_change_ids=("bbbb", "cccc"),
             current_commit_ids=("commit-bbbb", "commit-cccc"),
         )
@@ -120,10 +120,10 @@ def test_match_cleanup_rebase_intent_returns_trimmed_for_shrunk_current_stack() 
     )
 
 
-def test_match_close_intent_returns_disjoint_when_cleanup_mode_differs() -> None:
+def test_match_close_operation_returns_disjoint_when_cleanup_mode_differs() -> None:
     assert (
-        match_close_intent(
-            intent=_make_close_operation(cleanup=True),
+        match_close_operation(
+            operation=_make_close_operation(cleanup=True),
             current_change_ids=("aaaa", "bbbb"),
             current_commit_ids=("commit-aaaa", "commit-bbbb"),
             current_cleanup=False,

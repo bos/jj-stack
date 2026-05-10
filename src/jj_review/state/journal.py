@@ -182,12 +182,6 @@ class LoadedOperationRecord:
     path: Path
     operation: OperationRecord
 
-    @property
-    def intent(self) -> OperationRecord:
-        """Compatibility alias for older status/abort rendering paths."""
-
-        return self.operation
-
 
 class OperationJournal:
     """Append-only JSONL journal for one operation."""

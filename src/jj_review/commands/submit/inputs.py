@@ -20,8 +20,8 @@ from jj_review.review.restart import restart_state_for_stack
 from jj_review.state.store import ReviewStateStore
 
 from .descriptions import resolve_generated_descriptions
-from .intents import repair_interrupted_untracked_remote_bookmarks
 from .models import PreparedSubmitInputs, PrivateCommitFinder
+from .operations import repair_interrupted_untracked_remote_bookmarks
 
 
 def prepare_submit_inputs(

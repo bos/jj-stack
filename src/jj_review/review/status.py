@@ -150,10 +150,10 @@ class PreparedStatus:
 
     github_repository: ParsedGithubRepo | None
     github_repository_error: ErrorMessage | None
-    outstanding_intents: tuple[LoadedOperationRecord, ...]
+    outstanding_operations: tuple[LoadedOperationRecord, ...]
     prepared: PreparedStack
     selected_revset: str
-    stale_intents: tuple[LoadedOperationRecord, ...]
+    stale_operations: tuple[LoadedOperationRecord, ...]
     base_parent_subject: str
 
     def github_inspection_count(self, *, discover_remote_review: bool = False) -> int:
@@ -295,15 +295,15 @@ def prepare_status(
                 t"Could not determine the GitHub repository for remote "
                 t"{ui.bookmark(prepared.remote.name)}. Use a GitHub remote URL."
             )
-    outstanding_intents, stale_intents = _classify_status_intents(prepared)
+    outstanding_operations, stale_operations = _classify_status_operations(prepared)
 
     return PreparedStatus(
         github_repository=github_repository,
         github_repository_error=github_repository_error,
-        outstanding_intents=outstanding_intents,
+        outstanding_operations=outstanding_operations,
         prepared=prepared,
         selected_revset=prepared.stack.selected_revset,
-        stale_intents=stale_intents,
+        stale_operations=stale_operations,
         base_parent_subject=prepared.stack.base_parent.subject,
     )
 
@@ -321,14 +321,14 @@ def refresh_remote_state_for_status(*, jj_client: JjClient) -> None:
     jj_client.fetch_remote(remote=remote.name)
 
 
-def _classify_status_intents(
+def _classify_status_operations(
     prepared: PreparedStack,
 ) -> tuple[
     tuple[LoadedOperationRecord, ...],
     tuple[LoadedOperationRecord, ...],
 ]:
-    outstanding_intents: list[LoadedOperationRecord] = []
-    stale_intents: list[LoadedOperationRecord] = []
+    outstanding_operations: list[LoadedOperationRecord] = []
+    stale_operations: list[LoadedOperationRecord] = []
     now = datetime.now(UTC)
 
     for loaded in prepared.state_store.list_operations():
@@ -337,10 +337,10 @@ def _classify_status_intents(
             lambda change_id: _change_id_resolves(prepared.client, change_id),
             now=now,
         ):
-            stale_intents.append(loaded)
+            stale_operations.append(loaded)
         else:
-            outstanding_intents.append(loaded)
-    return tuple(outstanding_intents), tuple(stale_intents)
+            outstanding_operations.append(loaded)
+    return tuple(outstanding_operations), tuple(stale_operations)
 
 
 def _operation_is_stale(
