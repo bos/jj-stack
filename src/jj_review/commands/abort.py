@@ -26,12 +26,8 @@ from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo
 from jj_review.jj import JjCliArgs, JjClient, JjCommandError
-from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange
-from jj_review.review.intents import (
-    describe_intent,
-    intent_is_stale,
-)
+from jj_review.review.intents import describe_intent
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
 from jj_review.state.journal import (
     CleanupOperationRecord,
@@ -40,6 +36,7 @@ from jj_review.state.journal import (
     LandOperationRecord,
     LoadedOperationRecord,
     RelinkOperationRecord,
+    SubmitOperationRecord,
     append_abandoned_event,
 )
 from jj_review.state.store import ReviewStateStore
@@ -116,7 +113,7 @@ def _run_abort(
 ) -> int:
     state_store = context.state_store
     jj_client = context.jj_client
-    loaded_intents = [*state_store.list_intents(), *state_store.list_operations()]
+    loaded_intents = state_store.list_operations()
 
     if not loaded_intents:
         console.output("Nothing to abort.")
@@ -182,17 +179,17 @@ def _run_abort(
 async def _abort_intent_async(
     *,
     context: CommandContext,
-    loaded: LoadedIntent | LoadedOperationRecord,
+    loaded: LoadedOperationRecord,
     options: AbortOptions,
 ) -> AbortResult:
     intent = loaded.intent
     dry_run = options.dry_run
 
-    if isinstance(intent, SubmitIntent):
+    if isinstance(intent, SubmitOperationRecord):
         return await _abort_submit(
             dry_run=dry_run,
             intent=intent,
-            intent_path=loaded.path,
+            loaded=loaded,
             jj_client=context.jj_client,
             state_store=context.state_store,
         )
@@ -248,8 +245,8 @@ def _non_submit_note(intent) -> Message | None:
 async def _abort_submit(
     *,
     dry_run: bool,
-    intent: SubmitIntent,
-    intent_path: Path,
+    intent: SubmitOperationRecord,
+    loaded: LoadedOperationRecord,
     jj_client: JjClient,
     state_store: ReviewStateStore,
 ) -> AbortResult:
@@ -275,7 +272,7 @@ async def _abort_submit(
                 dry_run=dry_run,
             )
             if not dry_run:
-                intent_path.unlink(missing_ok=True)
+                _clear_operation_notice(loaded, reason="abort")
             return AbortResult(
                 actions=tuple(actions),
                 applied=not dry_run,
@@ -379,7 +376,7 @@ async def _abort_submit(
     if all_retracted or dry_run:
         _plan_intent_file_removal(actions=actions, dry_run=dry_run)
         if not dry_run:
-            intent_path.unlink(missing_ok=True)
+            _clear_operation_notice(loaded, reason="abort")
     else:
         actions.append(
             AbortAction(
@@ -404,7 +401,7 @@ async def _abort_submit(
 
 def _submit_intent_matches_recorded_stack(
     *,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     jj_client: JjClient,
 ) -> bool:
     """Return True when the recorded submit stack still exists exactly."""
@@ -425,7 +422,7 @@ def _submit_intent_matches_recorded_stack(
 
 def _submit_intent_head_visible(
     *,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     jj_client: JjClient,
 ) -> bool:
     """Return True when the interrupted submit's top change still resolves."""
@@ -438,7 +435,7 @@ def _submit_intent_head_visible(
     )
 
 
-def _submit_intent_selector(intent: SubmitIntent) -> str:
+def _submit_intent_selector(intent: SubmitOperationRecord) -> str:
     if intent.ordered_change_ids:
         return short_change_id(intent.ordered_change_ids[-1])
     return intent.display_revset
@@ -628,36 +625,31 @@ def _retract_one_change_local(
 
 
 def _operation_notice_is_stale(
-    loaded: LoadedIntent | LoadedOperationRecord,
+    loaded: LoadedOperationRecord,
     resolve_change_id: Callable[[str], bool],
 ) -> bool:
-    if isinstance(loaded, LoadedOperationRecord):
-        if isinstance(loaded.operation, RelinkOperationRecord | CleanupOperationRecord):
-            if pid_is_alive(loaded.operation.pid):
-                return False
-            try:
-                started = datetime.fromisoformat(loaded.operation.started_at)
-                if started.tzinfo is None:
-                    started = started.replace(tzinfo=UTC)
-            except ValueError:
-                return True
-            return (datetime.now(UTC) - started).days >= 7
-        ids = loaded.operation.change_ids()
-        if not ids:
+    if isinstance(loaded.operation, RelinkOperationRecord | CleanupOperationRecord):
+        if pid_is_alive(loaded.operation.pid):
             return False
-        return not any(resolve_change_id(change_id) for change_id in ids)
-    return intent_is_stale(loaded.intent, resolve_change_id)
+        try:
+            started = datetime.fromisoformat(loaded.operation.started_at)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+        except ValueError:
+            return True
+        return (datetime.now(UTC) - started).days >= 7
+    ids = loaded.operation.change_ids()
+    if not ids:
+        return False
+    return not any(resolve_change_id(change_id) for change_id in ids)
 
 
 def _clear_operation_notice(
-    loaded: LoadedIntent | LoadedOperationRecord,
+    loaded: LoadedOperationRecord,
     *,
     reason: str,
 ) -> None:
-    if isinstance(loaded, LoadedOperationRecord):
-        append_abandoned_event(loaded.path, reason=reason)
-        return
-    loaded.path.unlink(missing_ok=True)
+    append_abandoned_event(loaded.path, reason=reason)
 
 
 def _plan_intent_file_removal(

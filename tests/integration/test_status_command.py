@@ -4,8 +4,6 @@ from pathlib import Path
 
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.jj import JjClient
-from jj_review.models.intent import SubmitIntent
-from jj_review.state.intents import write_new_intent
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -15,6 +13,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
 )
+from ..support.operation_journal_helpers import write_submit_operation
 from .submit_command_helpers import (
     configure_submit_environment,
     patch_github_client_builders,
@@ -690,22 +689,14 @@ def test_status_shows_outstanding_submit_intent(
     change_id = stack.revisions[0].change_id
     state_dir = resolve_state_path(repo).parent
 
-    # Write an outstanding intent with dead PID
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label="submit on @",
+    # Write an outstanding operation record.
+    write_submit_operation(
+        state_dir,
         display_revset="@",
-        ordered_commit_ids=(stack.revisions[0].commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(stack.revisions[0].commit_id,),
         bookmarks={},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_dir, intent)
 
     run_main(repo, config_path, "status")
     captured = capsys.readouterr()

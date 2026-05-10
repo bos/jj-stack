@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from jj_review.models.intent import SubmitIntent
+from dataclasses import replace
+from pathlib import Path
+
 from jj_review.review.submit_recovery import (
     ArtifactPresence,
     SubmitArtifactObservation,
@@ -13,18 +15,20 @@ from jj_review.review.submit_recovery import (
     submit_artifacts_still_live,
     submit_status_decision,
 )
+from jj_review.state.journal import SubmitOperationRecord
 
 
-def _make_submit_intent(
+def _make_submit_operation(
     *,
     ordered_change_ids: tuple[str, ...] = ("aaaa", "bbbb"),
     ordered_commit_ids: tuple[str, ...] = ("commit-aaaa", "commit-bbbb"),
     remote_name: str = "origin",
     github_repo: str = "stacked-review",
     bookmarks: dict[str, str] | None = None,
-) -> SubmitIntent:
-    return SubmitIntent(
+) -> SubmitOperationRecord:
+    return SubmitOperationRecord(
         kind="submit",
+        path=Path("submit.jsonl"),
         pid=12345,
         label="submit on @",
         display_revset="@",
@@ -42,8 +46,8 @@ def _make_submit_intent(
 
 
 def test_submit_status_decision_is_continue_only_for_exact_matching_target() -> None:
-    intent = _make_submit_intent()
-    identity = SubmitRecoveryIdentity.from_intent(intent)
+    intent = _make_submit_operation()
+    identity = SubmitRecoveryIdentity.from_operation(intent)
 
     assert (
         submit_status_decision(
@@ -98,7 +102,7 @@ def test_submit_status_decision_is_continue_only_for_exact_matching_target() -> 
 
 
 def test_recorded_submit_still_exists_exactly_requires_full_exact_snapshot() -> None:
-    intent = _make_submit_intent()
+    intent = _make_submit_operation()
 
     assert recorded_submit_still_exists_exactly(
         intent=intent,
@@ -115,8 +119,8 @@ def test_recorded_submit_still_exists_exactly_requires_full_exact_snapshot() -> 
 
 
 def test_should_retire_submit_after_submit_requires_matching_identity_and_bookmarks() -> None:
-    old = _make_submit_intent(bookmarks={"aaaa": "review/a", "bbbb": "review/b"})
-    new = _make_submit_intent(
+    old = _make_submit_operation(bookmarks={"aaaa": "review/a", "bbbb": "review/b"})
+    new = _make_submit_operation(
         ordered_change_ids=("aaaa", "bbbb", "cccc"),
         ordered_commit_ids=("commit-aaaa", "commit-bbbb", "commit-cccc"),
         bookmarks={
@@ -129,15 +133,15 @@ def test_should_retire_submit_after_submit_requires_matching_identity_and_bookma
     assert should_retire_submit_after_submit(old_intent=old, new_intent=new)
     assert not should_retire_submit_after_submit(
         old_intent=old,
-        new_intent=new.model_copy(update={"remote_name": "upstream"}),
+        new_intent=replace(new, remote_name="upstream"),
     )
     assert not should_retire_submit_after_submit(
         old_intent=old,
-        new_intent=new.model_copy(update={"github_repo": "other-review"}),
+        new_intent=replace(new, github_repo="other-review"),
     )
     assert not should_retire_submit_after_submit(
         old_intent=old,
-        new_intent=new.model_copy(update={"bookmarks": {"aaaa": "review/a"}}),
+        new_intent=replace(new, bookmarks={"aaaa": "review/a"}),
     )
 
 

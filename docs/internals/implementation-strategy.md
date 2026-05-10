@@ -241,10 +241,9 @@ The repo state directory also contains the operation lock files:
 Mutating commands acquire the lock through `state.operation_lock` for their full command
 lifetime. `status` uses the non-blocking path only around its cache write, so live
 inspection still renders while another mutation is running.
-Same-kind intent scans no longer wait for live PIDs; the operation lock is the
-concurrency primitive, and live legacy intent records are reported without polling.
-`abort` no longer writes a separate abort-intent sentinel; the repo operation lock is
-the only abort concurrency guard.
+Same-kind interrupted-operation scans no longer wait for live PIDs; the operation lock is
+the concurrency primitive. `abort` no longer writes a separate abort sentinel; the repo
+operation lock is the only abort concurrency guard.
 `relink` also writes a retained journal record instead of an intent file; interrupted
 relink notices are read from the journal and can be cleared by `abort`.
 Plain repo-wide `cleanup` uses the same retained journal path; successful cleanup
@@ -255,8 +254,11 @@ reruns append terminal events to overlapping stale rebase-cleanup journals while
 the previous exact/same-logical/overlap recovery policy.
 Regular `close` and orphaned `close --cleanup --pull-request` write retained close
 journals too. Successful runs mark matching stale close journals terminal instead of
-deleting intent files, while cleanup closes can still retire superseded submit intents
-until submit itself moves to the journal.
+deleting intent files.
+`submit` records its selected stack, predicted bookmarks, selected remote, and resolved
+GitHub repository in a retained submit journal. Retry, status, doctor, abort, and
+cleanup-close retirement all consume that journal-backed submit record, so the old
+`models/intent.py` and `state/intents.py` file-persistence path has been removed.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal

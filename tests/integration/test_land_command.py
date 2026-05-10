@@ -348,7 +348,7 @@ def test_land_pull_request_selects_the_landed_prefix(
     assert fake_repo.pull_requests[2].merged_at is not None
     assert fake_repo.pull_requests[3].state == "open"
     assert JjClient(repo).get_bookmark_state(bookmark_3).local_target is not None
-    assert list(resolve_state_path(repo).parent.glob("incomplete-*.json")) == []
+    assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
 def test_land_bypass_readiness_previews_and_finalizes_unapproved_change(
@@ -748,4 +748,4 @@ def test_land_resumes_after_trunk_push_interruption(
     assert fake_repo.pull_requests[2].merged_at is not None
     assert state.changes[first_change_id].pr_state == "merged"
     assert state.changes[second_change_id].pr_state == "merged"
-    assert list(resolve_state_path(repo).parent.glob("incomplete-*.json")) == []
+    assert ReviewStateStore.for_repo(repo).list_operations() == []

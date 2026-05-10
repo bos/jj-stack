@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,10 +10,11 @@ from typing import Any
 
 from jj_review.jj import JjClient
 from jj_review.models.review_state import CachedChange
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_review.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
+from .operation_journal_helpers import incomplete_submit_operations
 from .submit_property_scenarios import (
     BoundaryDriftKind,
     BoundaryDriftScenario,
@@ -954,17 +954,12 @@ def _apply_boundary_drift(
 
 
 def _submit_intent_paths(repo: Path) -> tuple[Path, ...]:
-    state_dir = resolve_state_path(repo).parent
-    return tuple(sorted(state_dir.glob("incomplete-*.json")))
+    return tuple(sorted(operation.path for operation in incomplete_submit_operations(repo)))
 
 
 def _mark_submit_intents_dead(repo: Path) -> None:
     intent_paths = _submit_intent_paths(repo)
     assert intent_paths
-    for intent_path in intent_paths:
-        data = json.loads(intent_path.read_text(encoding="utf-8"))
-        data["pid"] = 999_999_999
-        intent_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def _pull_request_snapshots(fake_repo: FakeGithubRepository) -> dict[int, tuple[str, ...]]:

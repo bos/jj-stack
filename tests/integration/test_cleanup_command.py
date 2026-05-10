@@ -882,8 +882,7 @@ def test_cleanup_completes_journal_after_successful_apply(
 
     assert exit_code == 0
     state_dir = resolve_state_path(repo).parent
-    intent_files = list(state_dir.glob("incomplete-*.json"))
-    assert intent_files == [], f"Expected no intent files after success, found: {intent_files}"
+    assert ReviewStateStore.for_repo(repo).list_operations() == []
     [journal_path] = (state_dir / "journals").glob("*-cleanup-*.jsonl")
     assert read_journal(journal_path)[-1].event == "completed"
 
@@ -919,8 +918,7 @@ def test_cleanup_retains_journal_after_failed_apply(
     capsys.readouterr()
 
     state_dir = resolve_state_path(repo).parent
-    intent_files = list(state_dir.glob("incomplete-*.json"))
-    assert intent_files == []
+    assert ReviewStateStore.for_repo(repo).list_operations()
     [journal_path] = (state_dir / "journals").glob("*-cleanup-*.jsonl")
     assert read_journal(journal_path)[-1].event == "begin"
 
@@ -949,4 +947,4 @@ def test_cleanup_retires_prior_interrupted_journal_after_success(
     assert "Note: a previous cleanup was interrupted (cleanup)" in captured.out
     assert "No cleanup actions needed." in captured.out
     assert read_journal(stale_journal.path)[-1].event == "abandoned"
-    assert list(state_dir.glob("incomplete-*.json")) == []
+    assert ReviewStateStore.for_repo(repo).list_operations() == []

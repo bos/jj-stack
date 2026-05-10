@@ -39,11 +39,17 @@ from jj_review.models.github import GithubPullRequest
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult
 from jj_review.review.change_status import classify_saved_review_change
-from jj_review.review.intents import retire_superseded_intents
 from jj_review.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
 )
+from jj_review.review.submit_recovery import should_retire_submit_after_submit
+from jj_review.state.journal import (
+    LoadedOperationRecord,
+    SubmitOperationRecord,
+    append_abandoned_event,
+)
+from jj_review.state.operation_lock import OperationLock
 
 from .auto_close import (
     retarget_review_bases_before_branch_push,
@@ -121,11 +127,12 @@ def submit(
             )
         emitted_prepared = True
 
-    with mutating_command_lock(command="submit", context=context):
+    with mutating_command_lock(command="submit", context=context) as operation_lock:
         result = asyncio.run(
             _run_submit_async(
                 context=context,
                 on_prepared=emit_prepared,
+                operation_lock=operation_lock,
                 options=SubmitOptions(
                     describe_with=describe_with,
                     draft_mode=(
@@ -313,6 +320,7 @@ async def _run_submit_async(
     *,
     context: CommandContext,
     on_prepared: Callable[[str, str], None] | None,
+    operation_lock: OperationLock,
     options: SubmitOptions,
 ) -> SubmitResult:
     config = context.config
@@ -383,6 +391,7 @@ async def _run_submit_async(
         bookmark_result=bookmark_result,
         dry_run=dry_run,
         github_repository=github_repository,
+        operation_lock=operation_lock,
         remote_name=remote.name,
         stack=stack,
         state_store=state_store,
@@ -524,6 +533,31 @@ async def _run_submit_async(
             trunk_branch=trunk_branch,
         )
     finally:
-        if succeeded and intent_state.intent_path is not None:
-            retire_superseded_intents(intent_state.stale_intents, intent_state.intent)
-            intent_state.intent_path.unlink(missing_ok=True)
+        if succeeded and intent_state.journal is not None:
+            completed_change_ids = tuple(revision.change_id for revision in stack.revisions)
+            intent_state.journal.append(
+                "completed",
+                {"ordered_change_ids": completed_change_ids},
+            )
+            _retire_superseded_submit_operations(
+                current_operation=intent_state.operation,
+                stale_operations=intent_state.stale_operations,
+            )
+
+
+def _retire_superseded_submit_operations(
+    *,
+    current_operation: SubmitOperationRecord,
+    stale_operations: list[LoadedOperationRecord],
+) -> None:
+    """Mark interrupted submit journals terminal after a later submit supersedes them."""
+
+    for loaded in stale_operations:
+        operation = loaded.operation
+        if not isinstance(operation, SubmitOperationRecord):
+            continue
+        if should_retire_submit_after_submit(
+            old_intent=operation,
+            new_intent=current_operation,
+        ):
+            append_abandoned_event(loaded.path, reason="superseded_by_submit")

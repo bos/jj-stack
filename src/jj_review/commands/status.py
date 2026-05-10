@@ -31,7 +31,6 @@ from jj_review.github.error_messages import (
     remote_unavailable_message,
 )
 from jj_review.jj import JjCliArgs, JjClient, UnsupportedStackError
-from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
@@ -70,6 +69,7 @@ from jj_review.state.journal import (
     CloseOperationRecord,
     LandOperationRecord,
     RelinkOperationRecord,
+    SubmitOperationRecord,
 )
 from jj_review.system import pid_is_alive
 
@@ -1035,7 +1035,7 @@ def _interrupted_intent_blocks_status(*, loaded, prepared_status) -> bool:
         for prepared_revision in prepared_status.prepared.status_revisions
     )
 
-    if isinstance(loaded.intent, SubmitIntent):
+    if isinstance(loaded.intent, SubmitOperationRecord):
         decision = submit_status_decision(
             intent=loaded.intent,
             current_change_ids=current_change_ids,
@@ -1087,7 +1087,7 @@ def _render_interrupted_intent_block(
         )
         return tuple(lines)
 
-    if isinstance(intent, SubmitIntent):
+    if isinstance(intent, SubmitOperationRecord):
         detail_lines = _interrupted_submit_detail_lines(
             intent=intent,
             prepared_status=prepared_status,
@@ -1133,7 +1133,7 @@ def _render_interrupted_intent_block(
 
 def _interrupted_submit_detail_lines(
     *,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     prepared_status,
 ) -> tuple[object, ...]:
     if _recorded_stack_head_visible(intent=intent, prepared_status=prepared_status) is False:
@@ -1205,7 +1205,11 @@ def _current_submit_identity(*, prepared_status) -> SubmitRecoveryIdentity | Non
     )
 
 
-def _recorded_stack_head_visible(*, intent: SubmitIntent, prepared_status) -> bool | None:
+def _recorded_stack_head_visible(
+    *,
+    intent: SubmitOperationRecord,
+    prepared_status,
+) -> bool | None:
     """Return whether the recorded submit head still resolves, when status can tell."""
 
     if not intent.ordered_change_ids:
@@ -1220,10 +1224,13 @@ def _recorded_stack_head_visible(*, intent: SubmitIntent, prepared_status) -> bo
 
 def _intent_rerun_command(
     intent: (
-        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord
+        SubmitOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+        | LandOperationRecord
     ),
 ) -> str:
-    if isinstance(intent, SubmitIntent):
+    if isinstance(intent, SubmitOperationRecord):
         return "submit"
     if isinstance(intent, CleanupRebaseOperationRecord):
         return "cleanup --rebase"
@@ -1342,7 +1349,10 @@ def _interrupted_ordered_detail_lines(
 
 def _render_resume_command(
     intent: (
-        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord
+        SubmitOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+        | LandOperationRecord
     ),
 ) -> ui.SemanticText:
     selector = _intent_selector(intent)
@@ -1363,7 +1373,10 @@ def _render_status_command(intent) -> ui.SemanticText:
 def _intent_selector(intent) -> str | None:
     if isinstance(
         intent,
-        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
+        SubmitOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+        | LandOperationRecord,
     ):
         if intent.ordered_change_ids:
             return short_change_id(intent.ordered_change_ids[-1])
@@ -1376,7 +1389,10 @@ def _render_interrupted_intent_header(intent) -> object:
     started = _render_started_at(intent)
     if isinstance(
         intent,
-        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
+        SubmitOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+        | LandOperationRecord,
     ):
         return (
             _render_intent_command(intent),
@@ -1399,7 +1415,7 @@ def _render_interrupted_intent_header(intent) -> object:
 
 
 def _render_intent_command(intent) -> object:
-    if isinstance(intent, SubmitIntent):
+    if isinstance(intent, SubmitOperationRecord):
         return ui.cmd("submit")
     if isinstance(intent, CleanupRebaseOperationRecord):
         return ui.cmd("cleanup --rebase")
@@ -1416,7 +1432,10 @@ def _render_intent_command(intent) -> object:
 
 def _render_recorded_stack_head(
     intent: (
-        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord
+        SubmitOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+        | LandOperationRecord
     ),
 ) -> object:
     if not intent.ordered_change_ids:

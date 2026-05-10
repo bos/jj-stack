@@ -13,6 +13,7 @@ from jj_review.state.journal import (
     CloseOperationRecord,
     LandOperationRecord,
     OperationJournal,
+    SubmitOperationRecord,
     append_abandoned_event,
     prune_operation_journals,
     read_journal,
@@ -97,6 +98,35 @@ def test_scan_incomplete_operation_records_loads_land_scope(tmp_path: Path) -> N
     assert loaded.operation.selected_pr_number == 2
     assert loaded.operation.ordered_change_ids == ("change-1", "change-2")
     assert loaded.operation.landed_bookmarks == {"change-1": "review/feature-1"}
+
+
+def test_scan_incomplete_operation_records_loads_submit_scope(tmp_path: Path) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="submit",
+        lock_holder=None,
+        options={
+            "github_host": "github.test",
+            "github_owner": "octo-org",
+            "github_repo": "stacked-review",
+            "remote_name": "origin",
+        },
+        resolved_scope={
+            "bookmarks": {"change-1": "review/feature-1"},
+            "ordered_change_ids": ("change-1",),
+            "ordered_commit_ids": ("commit-1",),
+            "selected_revset": "@-",
+        },
+    )
+
+    [loaded] = scan_incomplete_operation_records(tmp_path)
+
+    assert loaded.path == journal.path
+    assert isinstance(loaded.operation, SubmitOperationRecord)
+    assert loaded.operation.display_revset == "@-"
+    assert loaded.operation.remote_name == "origin"
+    assert loaded.operation.bookmarks == {"change-1": "review/feature-1"}
+    assert loaded.operation.change_ids() == frozenset({"change-1"})
 
 
 def test_scan_incomplete_operation_records_excludes_terminal_journals(

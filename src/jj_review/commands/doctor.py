@@ -238,7 +238,7 @@ def _check_interruptions(state_store: ReviewStateStore) -> CheckResult:
     if not state_store.state_dir.exists():
         return CheckResult("interruptions", "ok", "none")
     try:
-        all_intents = [*state_store.list_intents(), *state_store.list_operations()]
+        all_intents = state_store.list_operations()
     except Exception as error:
         return CheckResult("interruptions", "warn", f"could not check: {error}")
 

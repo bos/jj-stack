@@ -49,7 +49,6 @@ from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo, sel
 from jj_review.github.stack_comments import stack_comment_label
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
-from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import (
     bookmark_ownership_for_source,
@@ -88,6 +87,7 @@ from jj_review.state.journal import (
     CloseOperationRecord,
     LoadedOperationRecord,
     OperationJournal,
+    SubmitOperationRecord,
     append_abandoned_event,
 )
 from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
@@ -167,7 +167,7 @@ class _CloseOperationState:
 
     journal: OperationJournal | None
     stale_close_operations: list[LoadedOperationRecord]
-    stale_submit_intents: list[LoadedIntent]
+    stale_submit_operations: list[LoadedOperationRecord]
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,8 +263,8 @@ def _run_close(
                         operation_lock=operation_lock,
                         pull_request_number=pull_request_number,
                         report_stale_close_operations=_report_stale_close_operations,
-                        retire_submit_intents_cleared_by_cleanup=(
-                            _retire_submit_intents_cleared_by_cleanup
+                        retire_submit_operations_cleared_by_cleanup=(
+                            _retire_submit_operations_cleared_by_cleanup
                         ),
                         state=state,
                         state_store=context.state_store,
@@ -281,8 +281,8 @@ def _run_close(
                         github_repo_parser=parse_github_repo,
                         jj_client=context.jj_client,
                         pull_request_number=pull_request_number,
-                        retire_submit_intents_cleared_by_cleanup=(
-                            _retire_submit_intents_cleared_by_cleanup
+                        retire_submit_operations_cleared_by_cleanup=(
+                            _retire_submit_operations_cleared_by_cleanup
                         ),
                         state=state,
                         state_store=context.state_store,
@@ -544,7 +544,7 @@ async def _stream_close_async(
     operation_state = _CloseOperationState(
         journal=None,
         stale_close_operations=[],
-        stale_submit_intents=[],
+        stale_submit_operations=[],
     )
     try:
         operation_state = _start_close_operation(
@@ -607,34 +607,35 @@ async def _stream_close_async(
                 stale_operations=operation_state.stale_close_operations,
             )
             if prepared_close.cleanup and not recorder.blocked:
-                _retire_submit_intents_cleared_by_cleanup(
+                _retire_submit_operations_cleared_by_cleanup(
                     current_state=execution_state.current_state.model_copy(
                         update={"changes": execution_state.next_changes}
                     ),
                     jj_client=prepared_status.prepared.client,
-                    stale_submit_intents=operation_state.stale_submit_intents,
+                    stale_submit_operations=operation_state.stale_submit_operations,
                 )
 
 
-def _retire_submit_intents_cleared_by_cleanup(
+def _retire_submit_operations_cleared_by_cleanup(
     *,
     current_state: ReviewState,
     jj_client: JjClient,
-    stale_submit_intents: list[LoadedIntent],
+    stale_submit_operations: list[LoadedOperationRecord],
 ) -> None:
-    """Retire interrupted submits whose review artifacts were fully cleared."""
+    """Mark interrupted submit journals terminal once cleanup clears their artifacts."""
 
-    for loaded in stale_submit_intents:
-        if not isinstance(loaded.intent, SubmitIntent):
+    for loaded in stale_submit_operations:
+        operation = loaded.operation
+        if not isinstance(operation, SubmitOperationRecord):
             continue
         if should_retire_submit_after_cleanup(
             observation=_observe_submit_artifacts(
                 current_state=current_state,
-                intent=loaded.intent,
+                intent=operation,
                 jj_client=jj_client,
             )
         ):
-            loaded.path.unlink(missing_ok=True)
+            append_abandoned_event(loaded.path, reason="superseded_by_cleanup")
 
 
 def _retire_superseded_close_operations(
@@ -663,10 +664,10 @@ def _retire_superseded_close_operations(
 def _observe_submit_artifacts(
     *,
     current_state: ReviewState,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     jj_client: JjClient,
 ) -> SubmitArtifactObservation:
-    """Collect the live artifact state for a recorded submit intent."""
+    """Collect the live artifact state for a recorded submit operation."""
 
     remotes_by_name = {remote.name: remote for remote in jj_client.list_git_remotes()}
     recorded_remote = remotes_by_name.get(intent.remote_name)
@@ -676,7 +677,7 @@ def _observe_submit_artifacts(
         current_github_repository = parse_github_repo(recorded_remote)
         target_relation = (
             SubmitTargetRelation.MATCH
-            if SubmitRecoveryIdentity.from_intent(intent)
+            if SubmitRecoveryIdentity.from_operation(intent)
             == SubmitRecoveryIdentity.from_github_repository(
                 remote_name=intent.remote_name,
                 github_repository=current_github_repository,
@@ -759,7 +760,7 @@ def _start_close_operation(
         return _CloseOperationState(
             journal=None,
             stale_close_operations=[],
-            stale_submit_intents=[],
+            stale_submit_operations=[],
         )
 
     prepared_status = prepared_close.prepared_status
@@ -781,11 +782,12 @@ def _start_close_operation(
         current_cleanup=prepared_close.cleanup,
         stale_intents=stale_close_operations,
     )
-    stale_submit_intents = (
+    stale_submit_operations = (
         [
             loaded
-            for loaded in prepared_status.prepared.state_store.list_intents()
-            if isinstance(loaded.intent, SubmitIntent) and not pid_is_alive(loaded.intent.pid)
+            for loaded in prepared_status.prepared.state_store.list_operations()
+            if isinstance(loaded.operation, SubmitOperationRecord)
+            and not pid_is_alive(loaded.operation.pid)
         ]
         if prepared_close.cleanup
         else []
@@ -805,7 +807,7 @@ def _start_close_operation(
     return _CloseOperationState(
         journal=journal,
         stale_close_operations=stale_close_operations,
-        stale_submit_intents=stale_submit_intents,
+        stale_submit_operations=stale_submit_operations,
     )
 
 

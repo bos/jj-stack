@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -17,10 +16,9 @@ from jj_review.github.stack_comments import (
 )
 from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
-from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import ReviewState
 from jj_review.review.bookmarks import BookmarkResolver
-from jj_review.state.intents import write_new_intent
+from jj_review.state.journal import append_abandoned_event, read_journal
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
@@ -34,6 +32,10 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
     write_file,
+)
+from ..support.operation_journal_helpers import (
+    incomplete_submit_operations,
+    write_submit_operation,
 )
 from .submit_command_helpers import (
     approve_pull_requests,
@@ -1245,7 +1247,7 @@ def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
     assert fake_repo.pull_requests[1].title == "feature 1"
     assert remote_refs(fake_repo.git_dir) == remote_refs_before
     assert ReviewStateStore.for_repo(repo).load() == state_before
-    assert list(resolve_state_path(repo).parent.glob("incomplete-*.json")) == []
+    assert incomplete_submit_operations(repo) == ()
 
 
 def test_submit_dry_run_skips_stack_comment_github_reads(
@@ -1841,11 +1843,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
     assert remote_state is not None
     assert remote_state.is_tracked is True
 
-    state_dir = resolve_state_path(repo).parent
-    [intent_path] = state_dir.glob("incomplete-*.json")
-    intent_data = json.loads(intent_path.read_text(encoding="utf-8"))
-    intent_data["pid"] = 99999999
-    intent_path.write_text(json.dumps(intent_data, indent=2) + "\n", encoding="utf-8")
+    assert len(incomplete_submit_operations(repo)) == 1
 
     monkeypatch.setattr(
         "jj_review.commands.submit.command.JjClient.update_untracked_remote_bookmark",
@@ -2368,8 +2366,8 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
     assert fake_repo.pull_requests[1].requested_reviewers == ["alice"]
     assert fake_repo.pull_requests[1].requested_team_reviewers == ["platform"]
     assert fake_repo.pull_requests[1].labels == []
-    for intent_path in resolve_state_path(repo).parent.glob("incomplete-*.json"):
-        intent_path.unlink()
+    for loaded in ReviewStateStore.for_repo(repo).list_operations():
+        append_abandoned_event(loaded.path, reason="test_reset")
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
@@ -2688,7 +2686,7 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
     assert len(issue_comments(fake_repo, issue_number_3)) == 1
 
 
-def test_submit_deletes_intent_file_after_successful_submit(
+def test_submit_completes_operation_journal_after_successful_submit(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -2701,12 +2699,10 @@ def test_submit_deletes_intent_file_after_successful_submit(
     capsys.readouterr()
 
     assert exit_code == 0
-    state_dir = resolve_state_path(repo).parent
-    intent_files = list(state_dir.glob("incomplete-*.json"))
-    assert intent_files == [], f"Expected no intent files, found: {intent_files}"
+    assert incomplete_submit_operations(repo) == ()
 
 
-def test_submit_retains_intent_file_after_failed_submit(
+def test_submit_retains_operation_journal_after_failed_submit(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -2769,24 +2765,22 @@ def test_submit_retains_intent_file_after_failed_submit(
     assert set(pushed_review_refs.values()) == {
         revision.commit_id for revision in stack.revisions
     }
-    state_dir = resolve_state_path(repo).parent
-    intent_files = list(state_dir.glob("incomplete-*.json"))
-    assert len(intent_files) == 1
-
-    data = json.loads(intent_files[0].read_text(encoding="utf-8"))
-    assert data["kind"] == "submit"
-    assert data["remote_name"] == "origin"
-    assert data["github_host"] == "github.test"
-    assert data["github_owner"] == "octo-org"
-    assert data["github_repo"] == "stacked-review"
-    stored_ids = data.get("ordered_change_ids", [])
-    stored_commit_ids = data.get("ordered_commit_ids", [])
+    submit_operations = incomplete_submit_operations(repo)
+    assert len(submit_operations) == 1
+    operation = submit_operations[0]
+    assert operation.kind == "submit"
+    assert operation.remote_name == "origin"
+    assert operation.github_host == "github.test"
+    assert operation.github_owner == "octo-org"
+    assert operation.github_repo == "stacked-review"
+    stored_ids = operation.ordered_change_ids
+    stored_commit_ids = operation.ordered_commit_ids
     assert change_id_1 in stored_ids
     assert change_id_2 in stored_ids
-    assert stored_commit_ids == [revision.commit_id for revision in stack.revisions]
+    assert stored_commit_ids == tuple(revision.commit_id for revision in stack.revisions)
 
 
-def test_submit_resumes_and_retires_stale_intent(
+def test_submit_resumes_and_retires_stale_operation(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -2802,35 +2796,23 @@ def test_submit_resumes_and_retires_stale_intent(
     bookmarks = _predicted_bookmarks(repo, stack)
     state_dir = resolve_state_path(repo).parent
 
-    # Write a stale intent with dead PID (99999999 is almost certainly dead)
-    old_intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label="submit on @",
+    old_journal = write_submit_operation(
+        state_dir,
         display_revset="@",
-        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id_1, change_id_2),
+        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
         bookmarks=bookmarks,
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    old_intent_path = write_new_intent(state_dir, old_intent)
 
     exit_code = run_main(repo, config_path, "submit")
     capsys.readouterr()
 
     assert exit_code == 0
-    # Old intent file should be gone after success
-    assert not old_intent_path.exists()
-    # No intent files remain
-    intent_files = list(state_dir.glob("incomplete-*.json"))
-    assert intent_files == []
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    assert incomplete_submit_operations(repo) == ()
 
 
-def test_submit_does_not_retire_stale_intent_from_other_remote(
+def test_submit_does_not_retire_stale_operation_from_other_remote(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -2849,44 +2831,31 @@ def test_submit_does_not_retire_stale_intent_from_other_remote(
     stack = JjClient(repo).discover_review_stack()
     bookmarks = _predicted_bookmarks(repo, stack)
     state_dir = resolve_state_path(repo).parent
-    old_intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label="submit on upstream",
+    old_journal = write_submit_operation(
+        state_dir,
         display_revset="upstream",
-        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
         remote_name="upstream",
-        github_host="github.test",
-        github_owner="octo-org",
         github_repo="other-review",
         ordered_change_ids=tuple(revision.change_id for revision in stack.revisions),
-        bookmarks=bookmarks,
-        started_at="2026-01-01T00:00:00+00:00",
-    )
-    old_intent_path = write_new_intent(state_dir, old_intent)
-    matching_intent = SubmitIntent(
-        kind="submit",
-        pid=99999998,
-        label="submit on @",
-        display_revset="@",
         ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
-        ordered_change_ids=tuple(revision.change_id for revision in stack.revisions),
         bookmarks=bookmarks,
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    matching_intent_path = write_new_intent(state_dir, matching_intent)
+    matching_journal = write_submit_operation(
+        state_dir,
+        display_revset="@",
+        ordered_change_ids=tuple(revision.change_id for revision in stack.revisions),
+        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
+        bookmarks=bookmarks,
+    )
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
 
-    assert old_intent_path.exists()
-    assert not matching_intent_path.exists()
-    intent_files = list(state_dir.glob("incomplete-*.json"))
-    assert intent_files == [old_intent_path]
+    assert read_journal(old_journal.path)[-1].event == "begin"
+    assert read_journal(matching_journal.path)[-1].event == "abandoned"
+    assert tuple(operation.path for operation in incomplete_submit_operations(repo)) == (
+        old_journal.path,
+    )
 
 
 def test_submit_treats_rewritten_matching_change_ids_as_new_submit(
@@ -2904,21 +2873,13 @@ def test_submit_treats_rewritten_matching_change_ids_as_new_submit(
     change_id_2 = stack.revisions[1].change_id
     bookmarks = _predicted_bookmarks(repo, stack)
     state_dir = resolve_state_path(repo).parent
-    old_intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label="submit on @",
+    old_journal = write_submit_operation(
+        state_dir,
         display_revset="@",
-        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id_1, change_id_2),
+        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
         bookmarks=bookmarks,
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    old_intent_path = write_new_intent(state_dir, old_intent)
 
     run_command(["jj", "describe", "-r", change_id_2, "-m", "feature 2 rewritten"], repo)
 
@@ -2926,5 +2887,5 @@ def test_submit_treats_rewritten_matching_change_ids_as_new_submit(
     capsys.readouterr()
 
     assert exit_code == 0
-    assert old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "begin"
     assert fake_repo.pull_requests == {}

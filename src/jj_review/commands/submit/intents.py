@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,7 +11,6 @@ from jj_review import console
 from jj_review.formatting import short_change_id
 from jj_review.github.resolution import parse_github_repo
 from jj_review.models.bookmarks import GitRemote
-from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult
 from jj_review.review.intents import describe_intent
@@ -19,15 +19,17 @@ from jj_review.review.submit_recovery import (
     SubmitStatusDecision,
     submit_status_decision,
 )
-from jj_review.state.intents import (
-    check_same_kind_intent,
-    scan_intents,
-    write_new_intent,
+from jj_review.state.journal import (
+    LoadedOperationRecord,
+    OperationJournal,
+    SubmitOperationRecord,
+    scan_incomplete_operation_records,
 )
+from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
 from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 
-from .models import InterruptedRemoteBookmarkRepairer, SubmitIntentState
+from .models import InterruptedRemoteBookmarkRepairer, SubmitOperationState
 
 
 def start_submit_intent(
@@ -35,16 +37,18 @@ def start_submit_intent(
     bookmark_result: BookmarkResolutionResult,
     dry_run: bool,
     github_repository,
+    operation_lock: OperationLock,
     remote_name: str,
     stack: LocalStack,
     state_store: ReviewStateStore,
-) -> SubmitIntentState:
-    """Prepare submit intent state before any remote mutation begins."""
+) -> SubmitOperationState:
+    """Prepare submit operation state before any remote mutation begins."""
 
     ordered_change_ids = tuple(revision.change_id for revision in stack.revisions)
     ordered_commit_ids = tuple(revision.commit_id for revision in stack.revisions)
-    intent = SubmitIntent(
+    operation = SubmitOperationRecord(
         kind="submit",
+        path=Path(),
         pid=os.getpid(),
         label=(
             f"submit for {short_change_id(stack.head.change_id)} (from {stack.selected_revset})"
@@ -67,52 +71,80 @@ def start_submit_intent(
         started_at=datetime.now(UTC).isoformat(),
     )
     if dry_run:
-        stale_intents = _list_stale_submit_intents_without_waiting(
+        stale_operations = _list_stale_submit_operations_without_waiting(
             state_store=state_store,
-            intent=intent,
+            operation=operation,
         )
-        _report_stale_submit_intents(
-            current_intent=intent,
+        _report_stale_submit_operations(
+            current_operation=operation,
             ordered_change_ids=ordered_change_ids,
             ordered_commit_ids=ordered_commit_ids,
-            stale_intents=stale_intents,
+            stale_operations=stale_operations,
         )
-        return SubmitIntentState(intent=intent, intent_path=None, stale_intents=stale_intents)
+        return SubmitOperationState(
+            journal=None,
+            operation=operation,
+            stale_operations=stale_operations,
+        )
 
     state_dir = state_store.require_writable()
-    stale_intents = check_same_kind_intent(state_dir, intent)
-    _report_stale_submit_intents(
-        current_intent=intent,
+    stale_operations = [
+        loaded
+        for loaded in state_store.list_operations()
+        if isinstance(loaded.operation, SubmitOperationRecord)
+    ]
+    _report_stale_submit_operations(
+        current_operation=operation,
         ordered_change_ids=ordered_change_ids,
         ordered_commit_ids=ordered_commit_ids,
-        stale_intents=stale_intents,
+        stale_operations=stale_operations,
     )
-    return SubmitIntentState(
-        intent=intent,
-        intent_path=write_new_intent(state_dir, intent),
-        stale_intents=stale_intents,
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="submit",
+        lock_holder=read_operation_lock_holder(state_dir),
+        options={
+            "remote_name": remote_name,
+            "github_host": github_repository.host,
+            "github_owner": github_repository.owner,
+            "github_repo": github_repository.repo,
+        },
+        resolved_scope={
+            "bookmarks": operation.bookmarks,
+            "ordered_change_ids": ordered_change_ids,
+            "ordered_commit_ids": ordered_commit_ids,
+            "selected_revset": stack.selected_revset,
+        },
+    )
+    operation_lock.record_journal_path(journal.path)
+    operation = replace(operation, path=journal.path)
+    return SubmitOperationState(
+        journal=journal,
+        operation=operation,
+        stale_operations=stale_operations,
     )
 
 
-def _report_stale_submit_intents(
+def _report_stale_submit_operations(
     *,
-    current_intent: SubmitIntent,
+    current_operation: SubmitOperationRecord,
     ordered_change_ids: tuple[str, ...],
     ordered_commit_ids: tuple[str, ...],
-    stale_intents: list[LoadedIntent],
+    stale_operations: list[LoadedOperationRecord],
 ) -> None:
-    """Render resumable submit intent diagnostics for the operator."""
+    """Render resumable submit operation diagnostics for the operator."""
 
-    for loaded in stale_intents:
-        if not isinstance(loaded.intent, SubmitIntent):
+    for loaded in stale_operations:
+        if not isinstance(loaded.operation, SubmitOperationRecord):
             continue
+        operation = loaded.operation
         decision = submit_status_decision(
-            intent=loaded.intent,
+            intent=operation,
             current_change_ids=ordered_change_ids,
             current_commit_ids=ordered_commit_ids,
-            current_identity=SubmitRecoveryIdentity.from_intent(current_intent),
+            current_identity=SubmitRecoveryIdentity.from_operation(current_operation),
         )
-        description = describe_intent(loaded.intent)
+        description = describe_intent(operation)
         if decision is SubmitStatusDecision.CONTINUE:
             console.note(t"Continuing interrupted {description}", soft_wrap=True)
         elif decision is SubmitStatusDecision.CURRENT_STACK:
@@ -135,15 +167,15 @@ def _report_stale_submit_intents(
             )
 
 
-def _list_stale_submit_intents_without_waiting(
+def _list_stale_submit_operations_without_waiting(
     *,
     state_store: ReviewStateStore,
-    intent: SubmitIntent,
-) -> list[LoadedIntent]:
+    operation: SubmitOperationRecord,
+) -> list[LoadedOperationRecord]:
     return [
         loaded
-        for loaded in state_store.list_intents()
-        if loaded.intent.kind == intent.kind and not pid_is_alive(loaded.intent.pid)
+        for loaded in state_store.list_operations()
+        if loaded.operation.kind == operation.kind and not pid_is_alive(loaded.operation.pid)
     ]
 
 
@@ -157,10 +189,10 @@ def repair_interrupted_untracked_remote_bookmarks(
     if current_github_repository is None:
         return
 
-    stale_submit_intents: list[SubmitIntent] = []
-    for loaded in scan_intents(state_dir):
-        intent = loaded.intent
-        if not isinstance(intent, SubmitIntent):
+    stale_submit_operations: list[SubmitOperationRecord] = []
+    for loaded in scan_incomplete_operation_records(state_dir):
+        intent = loaded.operation
+        if not isinstance(intent, SubmitOperationRecord):
             continue
         if pid_is_alive(intent.pid):
             continue
@@ -176,16 +208,16 @@ def repair_interrupted_untracked_remote_bookmarks(
             current_github_repository.repo,
         ):
             continue
-        stale_submit_intents.append(intent)
+        stale_submit_operations.append(intent)
 
-    if not stale_submit_intents:
+    if not stale_submit_operations:
         return
 
     bookmarks = tuple(
         sorted(
             {
                 bookmark
-                for loaded in stale_submit_intents
+                for loaded in stale_submit_operations
                 for bookmark in loaded.bookmarks.values()
             }
         )

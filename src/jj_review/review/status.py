@@ -34,7 +34,6 @@ from jj_review.github.stack_comments import (
 from jj_review.jj import JjClient, UnsupportedStackError
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
-from jj_review.models.intent import LoadedIntent
 from jj_review.models.review_state import CachedChange, LinkState, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
 from jj_review.review.bookmarks import (
@@ -51,7 +50,6 @@ from jj_review.review.change_status import (
     classify_saved_review_change,
     submitted_state_disagreements,
 )
-from jj_review.review.intents import intent_is_stale
 from jj_review.state.journal import (
     CleanupOperationRecord,
     LoadedOperationRecord,
@@ -152,10 +150,10 @@ class PreparedStatus:
 
     github_repository: ParsedGithubRepo | None
     github_repository_error: ErrorMessage | None
-    outstanding_intents: tuple[LoadedIntent | LoadedOperationRecord, ...]
+    outstanding_intents: tuple[LoadedOperationRecord, ...]
     prepared: PreparedStack
     selected_revset: str
-    stale_intents: tuple[LoadedIntent | LoadedOperationRecord, ...]
+    stale_intents: tuple[LoadedOperationRecord, ...]
     base_parent_subject: str
 
     def github_inspection_count(self, *, discover_remote_review: bool = False) -> int:
@@ -326,22 +324,13 @@ def refresh_remote_state_for_status(*, jj_client: JjClient) -> None:
 def _classify_status_intents(
     prepared: PreparedStack,
 ) -> tuple[
-    tuple[LoadedIntent | LoadedOperationRecord, ...],
-    tuple[LoadedIntent | LoadedOperationRecord, ...],
+    tuple[LoadedOperationRecord, ...],
+    tuple[LoadedOperationRecord, ...],
 ]:
-    outstanding_intents: list[LoadedIntent | LoadedOperationRecord] = []
-    stale_intents: list[LoadedIntent | LoadedOperationRecord] = []
+    outstanding_intents: list[LoadedOperationRecord] = []
+    stale_intents: list[LoadedOperationRecord] = []
     now = datetime.now(UTC)
 
-    for loaded in prepared.state_store.list_intents():
-        if intent_is_stale(
-            loaded.intent,
-            lambda change_id: _change_id_resolves(prepared.client, change_id),
-            now=now,
-        ):
-            stale_intents.append(loaded)
-        else:
-            outstanding_intents.append(loaded)
     for loaded in prepared.state_store.list_operations():
         if _operation_is_stale(
             loaded.operation,

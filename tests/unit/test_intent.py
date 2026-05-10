@@ -1,4 +1,4 @@
-"""Unit tests for the intent file module."""
+"""Unit tests for interrupted-operation matching helpers."""
 
 from __future__ import annotations
 
@@ -7,17 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.models.intent import SubmitIntent
 from jj_review.review.intents import (
-    intent_is_stale,
     match_cleanup_rebase_intent,
     match_close_intent,
     match_ordered_change_ids,
-)
-from jj_review.state.intents import (
-    check_same_kind_intent,
-    scan_intents,
-    write_new_intent,
 )
 from jj_review.state.journal import CleanupRebaseOperationRecord, CloseOperationRecord
 from jj_review.system import pid_is_alive
@@ -25,26 +18,6 @@ from jj_review.system import pid_is_alive
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_submit_intent(
-    ordered_change_ids: tuple[str, ...] = ("aaaa", "bbbb"),
-    pid: int = 12345,
-) -> SubmitIntent:
-    return SubmitIntent(
-        kind="submit",
-        pid=pid,
-        label="submit on @",
-        display_revset="@",
-        ordered_commit_ids=("commit-aaaa", "commit-bbbb"),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
-        ordered_change_ids=ordered_change_ids,
-        bookmarks={"aaaa": "review/feat-1-aaaa", "bbbb": "review/feat-2-bbbb"},
-        started_at="2026-01-01T00:00:00+00:00",
-    )
 
 
 def _make_cleanup_rebase_operation(
@@ -79,39 +52,6 @@ def _make_close_operation(
         cleanup=cleanup,
         started_at="2026-01-01T00:00:00+00:00",
     )
-
-
-# ---------------------------------------------------------------------------
-# Naming
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("intent_factory", "test_id"),
-    [
-        (_make_submit_intent, "submit"),
-    ],
-    ids=lambda value: value if isinstance(value, str) else None,
-)
-def test_write_intent_round_trips_supported_intent_kinds(
-    tmp_path: Path,
-    intent_factory,
-    test_id: str,
-) -> None:
-    del test_id
-    intent = intent_factory()
-    path = write_new_intent(tmp_path, intent)
-    results = scan_intents(tmp_path)
-    assert len(results) == 1
-    assert results[0].path == path
-    assert results[0].intent == intent
-
-
-def test_scan_intents_ignores_unparseable_files(tmp_path: Path) -> None:
-    bad = tmp_path / "incomplete-2026-01-15-10-30.01.json"
-    bad.write_text('{"not valid json"', encoding="utf-8")
-    results = scan_intents(tmp_path)
-    assert results == []
 
 
 # ---------------------------------------------------------------------------
@@ -210,58 +150,3 @@ def test_pid_is_alive_returns_false_for_missing_process(
     monkeypatch.setattr(os, "kill", fake_kill)
     assert pid_is_alive(99999999) is False
 
-
-# ---------------------------------------------------------------------------
-# Retirement
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Stale detection
-# ---------------------------------------------------------------------------
-
-
-def test_stack_intent_is_stale_when_no_change_ids_still_resolve(tmp_path: Path) -> None:
-    intent = _make_submit_intent(("aaaa", "bbbb"))
-    assert intent_is_stale(intent, lambda cid: False) is True
-
-
-def test_stack_intent_stays_live_when_any_change_id_still_resolves(tmp_path: Path) -> None:
-    intent = _make_submit_intent(("aaaa", "bbbb"))
-    assert intent_is_stale(intent, lambda cid: cid == "aaaa") is False
-
-
-# ---------------------------------------------------------------------------
-# check_same_kind_intent
-# ---------------------------------------------------------------------------
-
-
-def test_check_same_kind_intent_returns_stale_dead_pid_intents(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("jj_review.state.intents.pid_is_alive", lambda pid: False)
-    old_intent = _make_submit_intent(("aaaa", "bbbb"), pid=99999999)
-    write_new_intent(tmp_path, old_intent)
-
-    new_intent = _make_submit_intent(("aaaa", "bbbb"))
-    result = check_same_kind_intent(tmp_path, new_intent)
-
-    assert len(result) == 1
-    assert result[0].intent == old_intent
-
-
-def test_check_same_kind_intent_reports_live_same_kind_intent_without_waiting(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    messages: list[str] = []
-    monkeypatch.setattr("jj_review.state.intents.pid_is_alive", lambda pid: True)
-    old_intent = _make_submit_intent(("aaaa", "bbbb"), pid=99999999)
-    write_new_intent(tmp_path, old_intent)
-
-    new_intent = _make_submit_intent(("cccc", "dddd"))
-    result = check_same_kind_intent(tmp_path, new_intent, print_fn=messages.append)
-
-    assert result == []
-    assert messages == ["Another submit on @ is in progress (PID 99999999)."]

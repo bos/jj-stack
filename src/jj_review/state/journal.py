@@ -70,6 +70,30 @@ class LandOperationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmitOperationRecord:
+    """Journal-backed recovery record for one incomplete `submit` operation."""
+
+    kind: Literal["submit"]
+    path: Path
+    pid: int
+    label: str
+    started_at: str
+    display_revset: str
+    ordered_change_ids: tuple[str, ...]
+    ordered_commit_ids: tuple[str, ...]
+    remote_name: str
+    github_host: str
+    github_owner: str
+    github_repo: str
+    bookmarks: dict[str, str]
+
+    def change_ids(self) -> frozenset[str]:
+        """Return the change IDs mentioned by this operation."""
+
+        return frozenset(self.ordered_change_ids)
+
+
+@dataclass(frozen=True, slots=True)
 class RelinkOperationRecord:
     """Journal-backed recovery record for one incomplete `relink` operation."""
 
@@ -143,6 +167,7 @@ class CloseOperationRecord:
 
 type OperationRecord = (
     LandOperationRecord
+    | SubmitOperationRecord
     | RelinkOperationRecord
     | CleanupOperationRecord
     | CleanupRebaseOperationRecord
@@ -295,6 +320,8 @@ def operation_record_from_journal(
         return None
     if first.operation == "land":
         return land_operation_record_from_events(path, events, active_pid=active_pid)
+    if first.operation == "submit":
+        return submit_operation_record_from_events(path, events, active_pid=active_pid)
     if first.operation == "relink":
         return relink_operation_record_from_events(path, events, active_pid=active_pid)
     if first.operation == "cleanup":
@@ -424,6 +451,56 @@ def relink_operation_record_from_events(
         label=f"relink for {change_id[:8]}",
         started_at=first.timestamp,
         change_id=change_id,
+    )
+
+
+def submit_operation_record_from_events(
+    path: Path,
+    events: tuple[JournalEvent, ...],
+    *,
+    active_pid: int = 0,
+) -> SubmitOperationRecord:
+    """Parse one submit operation record from journal events."""
+
+    if not events:
+        raise ValueError(f"Journal is empty: {path}")
+    first = events[0]
+    if first.operation != "submit":
+        raise ValueError(f"Journal is not a submit operation: {path}")
+    if first.event != "begin":
+        raise ValueError(f"Journal does not start with begin: {path}")
+
+    options = _require_mapping(first.data.get("options"), "options")
+    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
+    display_revset = str(resolved_scope["selected_revset"])
+    ordered_change_ids = _string_tuple(
+        resolved_scope.get("ordered_change_ids"),
+        "ordered_change_ids",
+    )
+    ordered_commit_ids = _string_tuple(
+        resolved_scope.get("ordered_commit_ids"),
+        "ordered_commit_ids",
+    )
+    bookmarks = _require_mapping(resolved_scope.get("bookmarks"), "bookmarks")
+    label = (
+        f"submit for {ordered_change_ids[-1][:8]} (from {display_revset})"
+        if ordered_change_ids
+        else f"submit (from {display_revset})"
+    )
+    return SubmitOperationRecord(
+        kind="submit",
+        path=path,
+        pid=active_pid,
+        label=label,
+        started_at=first.timestamp,
+        display_revset=display_revset,
+        ordered_change_ids=ordered_change_ids,
+        ordered_commit_ids=ordered_commit_ids,
+        remote_name=str(options["remote_name"]),
+        github_host=str(options["github_host"]),
+        github_owner=str(options["github_owner"]),
+        github_repo=str(options["github_repo"]),
+        bookmarks={str(change_id): str(bookmark) for change_id, bookmark in bookmarks.items()},
     )
 
 

@@ -7,9 +7,7 @@ from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
 from jj_review.jj import JjClient
-from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.intents import write_new_intent
 from jj_review.state.journal import OperationJournal, read_journal
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
@@ -24,6 +22,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
 )
+from ..support.operation_journal_helpers import write_submit_operation
 from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     configure_submit_environment,
@@ -218,7 +217,7 @@ def test_close_noop_short_circuit_retires_covered_interrupted_close_intent(
         in captured.out
     )
     assert read_journal(old_journal.path)[-1].event == "abandoned"
-    assert list(state_dir.glob("incomplete-*.json")) == []
+    assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
 def test_close_and_cleanup_match_dry_run_on_fully_untracked_stack(
@@ -553,7 +552,7 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     assert "not linked" not in _combined_output(rerun_captured)
     assert read_journal(stale_journal.path)[-1].event == "abandoned"
     assert read_journal(stale_plain_journal.path)[-1].event == "abandoned"
-    assert list(state_dir.glob("incomplete-*.json")) == []
+    assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
 def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
@@ -617,7 +616,7 @@ def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
     assert read_journal(cleanup_journal.path)[-1].event == "abandoned"
     assert read_journal(plain_journal.path)[-1].event == "abandoned"
-    assert list(state_dir.glob("incomplete-*.json")) == []
+    assert state_store.list_operations() == []
 
 
 def test_close_cleanup_pull_request_blocks_when_saved_pr_head_is_from_fork(
@@ -1451,7 +1450,6 @@ def test_close_apply_checkpoints_prior_progress_before_later_block(
     first_change_id = stack.revisions[0].change_id
     head_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    state_dir = resolve_state_path(repo).parent
     initial_state = state_store.load()
     first_bookmark = initial_state.changes[first_change_id].bookmark
     head_pr_number = initial_state.changes[head_change_id].pr_number
@@ -1479,7 +1477,7 @@ def test_close_apply_checkpoints_prior_progress_before_later_block(
     assert checkpointed_state.changes[head_change_id].pr_state == "closed"
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
-    assert list(state_dir.glob("incomplete-*.json")) == []
+    assert ReviewStateStore.for_repo(repo).list_operations() == []
     assert "previous close was interrupted" not in second_run.out
     assert f"close PR #{head_pr_number}" not in second_run.out
 
@@ -1650,7 +1648,7 @@ def test_close_retires_covered_interrupted_close_intent(
 
     assert exit_code == 0
     assert read_journal(old_journal.path)[-1].event == "abandoned"
-    assert list(state_dir.glob("incomplete-*.json")) == []
+    assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
 def test_close_continues_exact_interrupted_close_on_multi_revision_stack(
@@ -1750,30 +1748,20 @@ def test_cleanup_close_retires_covered_interrupted_submit(
     state_dir = resolve_state_path(repo).parent
     bookmark = ReviewStateStore.for_repo(repo).load().changes[revision.change_id].bookmark
     assert bookmark is not None
-    old_intent_path = write_new_intent(
+    old_journal = write_submit_operation(
         state_dir,
-        SubmitIntent(
-            kind="submit",
-            pid=99999999,
-            label="submit on @",
-            display_revset="@",
-            ordered_change_ids=(revision.change_id,),
-            ordered_commit_ids=(revision.commit_id,),
-            remote_name="origin",
-            github_host="github.test",
-            github_owner="octo-org",
-            github_repo="stacked-review",
-            bookmarks={revision.change_id: bookmark},
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset="@",
+        ordered_change_ids=(revision.change_id,),
+        ordered_commit_ids=(revision.commit_id,),
+        bookmarks={revision.change_id: bookmark},
     )
 
     exit_code = run_main(repo, config_path, "close", "--cleanup")
     capsys.readouterr()
 
     assert exit_code == 0
-    assert not old_intent_path.exists()
-    assert list(state_dir.glob("incomplete-*.json")) == []
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    assert not ReviewStateStore.for_repo(repo).list_operations()
 
 
 def test_cleanup_close_keeps_interrupted_submit_when_only_local_bookmark_remains(
@@ -1790,22 +1778,12 @@ def test_cleanup_close_keeps_interrupted_submit_when_only_local_bookmark_remains
     bookmark = state_store.load().changes[submitted.change_id].bookmark
     assert bookmark is not None
 
-    old_intent_path = write_new_intent(
+    old_journal = write_submit_operation(
         resolve_state_path(repo).parent,
-        SubmitIntent(
-            kind="submit",
-            pid=99999999,
-            label="submit on @",
-            display_revset="@",
-            ordered_change_ids=(submitted.change_id,),
-            ordered_commit_ids=(submitted.commit_id,),
-            remote_name="origin",
-            github_host="github.test",
-            github_owner="octo-org",
-            github_repo="stacked-review",
-            bookmarks={submitted.change_id: bookmark},
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset="@",
+        ordered_change_ids=(submitted.change_id,),
+        ordered_commit_ids=(submitted.commit_id,),
+        bookmarks={submitted.change_id: bookmark},
     )
 
     JjClient(repo).delete_remote_bookmarks(
@@ -1826,7 +1804,7 @@ def test_cleanup_close_keeps_interrupted_submit_when_only_local_bookmark_remains
         "Nothing to close on the selected stack."
         in captured.out
     )
-    assert old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "begin"
 
 
 def test_cleanup_close_does_not_retire_interrupted_submit_after_relink_to_new_bookmark(
@@ -1843,22 +1821,12 @@ def test_cleanup_close_does_not_retire_interrupted_submit_after_relink_to_new_bo
     original_bookmark = state_store.load().changes[revision.change_id].bookmark
     assert original_bookmark is not None
 
-    old_intent_path = write_new_intent(
+    old_journal = write_submit_operation(
         resolve_state_path(repo).parent,
-        SubmitIntent(
-            kind="submit",
-            pid=99999999,
-            label="submit on @",
-            display_revset="@",
-            ordered_change_ids=(revision.change_id,),
-            ordered_commit_ids=(revision.commit_id,),
-            remote_name="origin",
-            github_host="github.test",
-            github_owner="octo-org",
-            github_repo="stacked-review",
-            bookmarks={revision.change_id: original_bookmark},
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset="@",
+        ordered_change_ids=(revision.change_id,),
+        ordered_commit_ids=(revision.commit_id,),
+        bookmarks={revision.change_id: original_bookmark},
     )
 
     run_command(
@@ -1896,7 +1864,7 @@ def test_cleanup_close_does_not_retire_interrupted_submit_after_relink_to_new_bo
     assert run_main(repo, config_path, "close", "--cleanup", rewritten.change_id) == 0
     capsys.readouterr()
 
-    assert old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "begin"
     assert read_remote_ref(fake_repo.git_dir, original_bookmark) == revision.commit_id
 
 
@@ -1914,22 +1882,12 @@ def test_cleanup_close_retires_interrupted_submit_when_only_closed_cached_metada
     bookmark = state_store.load().changes[submitted.change_id].bookmark
     assert bookmark is not None
 
-    old_intent_path = write_new_intent(
+    old_journal = write_submit_operation(
         resolve_state_path(repo).parent,
-        SubmitIntent(
-            kind="submit",
-            pid=99999999,
-            label="submit on @",
-            display_revset="@",
-            ordered_change_ids=(submitted.change_id,),
-            ordered_commit_ids=(submitted.commit_id,),
-            remote_name="origin",
-            github_host="github.test",
-            github_owner="octo-org",
-            github_repo="stacked-review",
-            bookmarks={submitted.change_id: bookmark},
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset="@",
+        ordered_change_ids=(submitted.change_id,),
+        ordered_commit_ids=(submitted.commit_id,),
+        bookmarks={submitted.change_id: bookmark},
     )
 
     JjClient(repo).delete_remote_bookmarks(
@@ -1956,7 +1914,7 @@ def test_cleanup_close_retires_interrupted_submit_when_only_closed_cached_metada
     assert run_main(repo, config_path, "close", "--cleanup") == 0
     capsys.readouterr()
 
-    assert not old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
 
 
 def test_cleanup_close_keeps_interrupted_submit_when_remote_name_is_reused_for_other_repo(
@@ -1982,22 +1940,12 @@ def test_cleanup_close_keeps_interrupted_submit_when_remote_name_is_reused_for_o
     bookmark = state_store.load().changes[submitted.change_id].bookmark
     assert bookmark is not None
 
-    old_intent_path = write_new_intent(
+    old_journal = write_submit_operation(
         resolve_state_path(repo).parent,
-        SubmitIntent(
-            kind="submit",
-            pid=99999999,
-            label="submit on @",
-            display_revset="@",
-            ordered_change_ids=(submitted.change_id,),
-            ordered_commit_ids=(submitted.commit_id,),
-            remote_name="origin",
-            github_host="github.test",
-            github_owner="octo-org",
-            github_repo="stacked-review",
-            bookmarks={submitted.change_id: bookmark},
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset="@",
+        ordered_change_ids=(submitted.change_id,),
+        ordered_commit_ids=(submitted.commit_id,),
+        bookmarks={submitted.change_id: bookmark},
     )
 
     JjClient(repo).delete_remote_bookmarks(
@@ -2029,7 +1977,7 @@ def test_cleanup_close_keeps_interrupted_submit_when_remote_name_is_reused_for_o
     assert run_main(repo, config_path, "close", "--cleanup") == 0
     capsys.readouterr()
 
-    assert old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "begin"
     assert run_main(repo, config_path, "status") == 0
     status_after = capsys.readouterr()
     assert f"submit for {submitted.change_id[:8]}" in status_after.out

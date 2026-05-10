@@ -11,10 +11,10 @@ import pytest
 from jj_review import console as console_module
 from jj_review.commands import status as status_module
 from jj_review.config import RepoConfig
-from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange
 from jj_review.review.change_status import SubmittedStateDisagreement
 from jj_review.review.status import StatusResult
+from jj_review.state.journal import SubmitOperationRecord
 
 
 def _render_lines(*lines: object) -> tuple[str, ...]:
@@ -23,6 +23,28 @@ def _render_lines(*lines: object) -> tuple[str, ...]:
         for line in lines:
             console_module.output(line)
     return tuple(stdout.getvalue().splitlines())
+
+
+def _submit_operation_record(
+    *,
+    ordered_change_ids: tuple[str, ...],
+    ordered_commit_ids: tuple[str, ...],
+) -> SubmitOperationRecord:
+    return SubmitOperationRecord(
+        kind="submit",
+        path=Path("/tmp/submit.jsonl"),
+        pid=99999999,
+        label="submit for nnszmtlx (from @-)",
+        display_revset="@-",
+        ordered_change_ids=ordered_change_ids,
+        ordered_commit_ids=ordered_commit_ids,
+        remote_name="origin",
+        github_host="github.test",
+        github_owner="octo-org",
+        github_repo="stacked-review",
+        bookmarks={},
+        started_at="2026-04-25T11:00:00+00:00",
+    )
 
 
 def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> None:
@@ -260,19 +282,9 @@ def test_render_status_intent_lines_guides_submit_for_different_stack(
         "_now_utc",
         lambda: datetime(2026, 4, 29, 12, tzinfo=UTC),
     )
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label="submit for nnszmtlx (from @-)",
-        display_revset="@-",
+    intent = _submit_operation_record(
         ordered_change_ids=("nnszmtlxaaaaaaaa",),
         ordered_commit_ids=("recordedcommit",),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
-        bookmarks={},
-        started_at="2026-04-25T11:00:00+00:00",
     )
     prepared_status = SimpleNamespace(
         stale_intents=(),
@@ -318,19 +330,9 @@ def test_render_status_intent_lines_avoids_missing_recorded_submit_head(
         def query_revisions_by_change_ids(self, change_ids):
             return {change_id: () for change_id in change_ids}
 
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label="submit for nnszmtlx (from @-)",
-        display_revset="@-",
+    intent = _submit_operation_record(
         ordered_change_ids=("aaaaaaaabbbbbbbb", "nnszmtlxaaaaaaaa"),
         ordered_commit_ids=("bottomcommit", "headcommit"),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
-        bookmarks={},
-        started_at="2026-04-25T11:00:00+00:00",
     )
     prepared_status = SimpleNamespace(
         stale_intents=(),

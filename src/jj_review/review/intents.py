@@ -2,31 +2,21 @@
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Callable
-from datetime import datetime
 from typing import Literal
 
 from jj_review import ui
-from jj_review.models.intent import (
-    IntentFile,
-    LoadedIntent,
-    MatchResult,
-    OrderedChangeIdsIntent,
-    SubmitIntent,
-)
-from jj_review.review.submit_recovery import should_retire_submit_after_submit
 from jj_review.state.journal import (
     CleanupOperationRecord,
     CleanupRebaseOperationRecord,
     CloseOperationRecord,
     LandOperationRecord,
+    OperationRecord,
     RelinkOperationRecord,
+    SubmitOperationRecord,
 )
 from jj_review.ui import Message
 
-logger = logging.getLogger(__name__)
-
+MatchResult = Literal["exact", "superset", "overlap", "disjoint"]
 SubmitIntentMatch = Literal[
     "exact",
     "same-logical",
@@ -54,16 +44,11 @@ def match_ordered_change_ids(
 
 
 def describe_intent(
-    intent: IntentFile
-    | LandOperationRecord
-    | RelinkOperationRecord
-    | CleanupOperationRecord
-    | CleanupRebaseOperationRecord
-    | CloseOperationRecord,
+    intent: OperationRecord,
 ) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
-    if isinstance(intent, SubmitIntent):
+    if isinstance(intent, SubmitOperationRecord):
         return (
             t"{ui.cmd('submit')} for {_render_recorded_stack_head(intent)} "
             t"(from {ui.revset(intent.display_revset)})"
@@ -93,10 +78,10 @@ def describe_intent(
 
 def _render_recorded_stack_head(
     intent: (
-        OrderedChangeIdsIntent
-        | LandOperationRecord
+        LandOperationRecord
         | CleanupRebaseOperationRecord
         | CloseOperationRecord
+        | SubmitOperationRecord
     ),
 ) -> Message:
     if not intent.ordered_change_ids:
@@ -166,42 +151,6 @@ def close_intent_mode_relation(
     if current_cleanup and not recorded_cleanup:
         return "expanded"
     return "incompatible"
-
-
-def intent_is_stale(
-    intent: IntentFile,
-    resolve_change_id: Callable[[str], bool],
-    *,
-    now: datetime | None = None,
-) -> bool:
-    """Return whether an interrupted intent is now stale."""
-
-    ids = intent.change_ids()
-    if not ids:
-        return False
-    return not any(resolve_change_id(cid) for cid in ids)
-
-
-def retire_superseded_intents(
-    stale_intents: list[LoadedIntent],
-    new_intent: IntentFile,
-) -> None:
-    """Auto-retire stale intents that a later successful run has superseded."""
-
-    if not isinstance(new_intent, SubmitIntent):
-        return
-
-    for loaded in stale_intents:
-        old = loaded.intent
-        if not isinstance(old, SubmitIntent):
-            continue
-        should_retire = should_retire_submit_after_submit(
-            old_intent=old,
-            new_intent=new_intent,
-        )
-        if should_retire:
-            loaded.path.unlink(missing_ok=True)
-            logger.debug("Retired superseded intent %s", loaded.path.name)
 
 
 def _match_recorded_ordered_stack(

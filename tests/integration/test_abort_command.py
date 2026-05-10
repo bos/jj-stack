@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
-from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.intents import write_new_intent
 from jj_review.state.journal import OperationJournal, read_journal
 from jj_review.state.store import ReviewStateStore
 
@@ -18,6 +15,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
 )
+from ..support.operation_journal_helpers import write_submit_operation
 from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     configure_submit_environment,
@@ -27,7 +25,7 @@ from .submit_command_helpers import (
 )
 
 
-def test_abort_reports_nothing_when_no_intent_file_exists(
+def test_abort_reports_nothing_when_no_operation_record_exists(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -58,24 +56,14 @@ def test_abort_dry_run_shows_planned_actions_without_mutating(
     assert bookmark is not None
     initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
 
-    # Inject a stale submit intent to simulate an interrupted submit.
-    from jj_review.models.intent import SubmitIntent
-
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,  # dead PID — simulates an interrupted operation
-        label=f"submit on {change_id[:8]}",
+    # Inject an incomplete submit operation to simulate an interrupted submit.
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        ordered_commit_ids=(stack.revisions[-1].commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(stack.revisions[-1].commit_id,),
         bookmarks={change_id: bookmark},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     exit_code = run_main(repo, config_path, "abort", "--dry-run")
     captured = capsys.readouterr()
@@ -89,8 +77,8 @@ def test_abort_dry_run_shows_planned_actions_without_mutating(
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
     assert fake_repo.pull_requests[1].state == "open"
-    # Intent file still present after dry-run.
-    assert state_store.list_intents()
+    # Operation journal still present after dry-run.
+    assert state_store.list_operations()
 
 
 def test_abort_retracts_submitted_change_and_clears_state(
@@ -107,24 +95,14 @@ def test_abort_retracts_submitted_change_and_clears_state(
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    # Inject a submit intent referencing the live change.
-    from jj_review.models.intent import SubmitIntent
-
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,  # dead PID — simulates an interrupted operation
-        label=f"submit on {change_id[:8]}",
+    # Inject a submit operation referencing the live change.
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        ordered_commit_ids=(stack.revisions[-1].commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(stack.revisions[-1].commit_id,),
         bookmarks={change_id: bookmark},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     exit_code = run_main(repo, config_path, "abort")
     captured = capsys.readouterr()
@@ -145,8 +123,8 @@ def test_abort_retracts_submitted_change_and_clears_state(
     refreshed = state_store.load()
     assert change_id not in refreshed.changes
 
-    # Intent file was removed.
-    assert not state_store.list_intents()
+    # Operation journal was cleared from incomplete-operation listings.
+    assert not state_store.list_operations()
 
 
 def test_abort_refuses_submit_retraction_after_stack_rewrite(
@@ -166,21 +144,13 @@ def test_abort_refuses_submit_retraction_after_stack_rewrite(
     assert bookmark is not None
     initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
 
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label=f"submit on {change_id[:8]}",
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        ordered_commit_ids=(revision.commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(revision.commit_id,),
         bookmarks={change_id: bookmark},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 rewritten"], repo)
 
@@ -198,7 +168,7 @@ def test_abort_refuses_submit_retraction_after_stack_rewrite(
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
     assert fake_repo.pull_requests[1].state == "open"
-    assert state_store.list_intents()
+    assert state_store.list_operations()
 
 
 def test_abort_clears_submit_record_when_recorded_head_was_abandoned(
@@ -213,24 +183,16 @@ def test_abort_clears_submit_record_when_recorded_head_was_abandoned(
     commit_file(repo, "feature 2", "feature-2.txt")
     bottom, head = JjClient(repo).discover_review_stack().revisions
     state_store = ReviewStateStore.for_repo(repo)
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label=f"submit on {head.change_id[:8]}",
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=head.change_id[:8],
-        ordered_commit_ids=(bottom.commit_id, head.commit_id),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(bottom.change_id, head.change_id),
+        ordered_commit_ids=(bottom.commit_id, head.commit_id),
         bookmarks={
             bottom.change_id: f"review/change-{bottom.change_id[:8]}",
             head.change_id: f"review/change-{head.change_id[:8]}",
         },
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     run_command(["jj", "abandon", head.change_id], repo)
 
@@ -245,7 +207,7 @@ def test_abort_clears_submit_record_when_recorded_head_was_abandoned(
     assert "cannot safely" not in normalized_output
     assert "jj-review cleanup" not in captured.out
     assert f"close --cleanup {head.change_id[:8]}" not in normalized_output
-    assert not state_store.list_intents()
+    assert not state_store.list_operations()
 
 
 def test_abort_keeps_local_bookmark_when_remote_bookmark_is_conflicted(
@@ -267,22 +229,12 @@ def test_abort_keeps_local_bookmark_when_remote_bookmark_is_conflicted(
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    write_new_intent(
+    write_submit_operation(
         state_store.state_dir,
-        SubmitIntent(
-            kind="submit",
-            pid=99999999,
-            label=f"submit on {change_id[:8]}",
-            display_revset=change_id[:8],
-            ordered_commit_ids=(commit_id,),
-            remote_name="origin",
-            github_host="github.test",
-            github_owner="octo-org",
-            github_repo="stacked-review",
-            ordered_change_ids=(change_id,),
-            bookmarks={change_id: bookmark},
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset=change_id[:8],
+        ordered_change_ids=(change_id,),
+        ordered_commit_ids=(commit_id,),
+        bookmarks={change_id: bookmark},
     )
 
     real_get_bookmark_state = abort_module.JjClient.get_bookmark_state
@@ -318,7 +270,7 @@ def test_abort_keeps_local_bookmark_when_remote_bookmark_is_conflicted(
     bookmark_state = JjClient(repo).get_bookmark_state(bookmark)
     assert bookmark_state.local_target == commit_id
     assert change_id in state_store.load().changes
-    assert state_store.list_intents()
+    assert state_store.list_operations()
 
 
 def test_abort_clears_cleanup_rebase_journal_with_note(
@@ -472,7 +424,7 @@ def test_abort_clears_cleanup_journal(
     assert read_journal(journal.path)[-1].event == "abandoned"
 
 
-def test_abort_reports_stale_when_all_intents_have_gone_change_ids(
+def test_abort_reports_stale_when_all_operations_have_gone_change_ids(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -483,22 +435,12 @@ def test_abort_reports_stale_when_all_intents_have_gone_change_ids(
     state_store = ReviewStateStore.for_repo(repo)
     state_store.require_writable()
     # Use a change_id that doesn't exist in this repo.
-    from jj_review.models.intent import SubmitIntent
-
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,  # dead PID
-        label="submit on @-",
+    write_submit_operation(
+        state_store.state_dir,
         display_revset="@-",
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",),
         bookmarks={"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "review/feat-aaaa"},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     exit_code = run_main(repo, config_path, "abort")
     captured = capsys.readouterr()
@@ -508,7 +450,7 @@ def test_abort_reports_stale_when_all_intents_have_gone_change_ids(
     assert "cleanup" in captured.out
 
 
-def test_abort_skips_live_pid_intent_and_warns(
+def test_abort_skips_live_locked_operation_and_warns(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -522,35 +464,37 @@ def test_abort_skips_live_pid_intent_and_warns(
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    # Inject an intent with the current (live) PID to simulate a still-running submit.
-    intent = SubmitIntent(
-        kind="submit",
-        pid=os.getpid(),
-        label=f"submit on {change_id[:8]}",
+    # Hold the operation lock to simulate a still-running submit.
+    journal = write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        ordered_commit_ids=(stack.revisions[-1].commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(stack.revisions[-1].commit_id,),
         bookmarks={change_id: bookmark},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
+    from jj_review.state.operation_lock import acquire_operation_lock
 
-    exit_code = run_main(repo, config_path, "abort")
-    captured = capsys.readouterr()
+    lock = acquire_operation_lock(
+        state_store.state_dir,
+        command="submit",
+        journal_path=journal.path,
+    )
+
+    try:
+        exit_code = run_main(repo, config_path, "abort")
+        captured = capsys.readouterr()
+    finally:
+        lock.release()
 
     # Should warn and exit 1 without retracting anything.
     assert exit_code == 1
-    assert "still in progress" in captured.out
-    # PR untouched, intent file still present.
+    assert "Another jj-review submit operation is already running" in captured.err
+    # PR untouched, operation journal still present.
     assert fake_repo.pull_requests[1].state == "open"
-    assert state_store.list_intents()
+    assert state_store.list_operations()
 
 
-def test_abort_preserves_state_and_intent_when_step_is_blocked(
+def test_abort_preserves_state_and_operation_when_step_is_blocked(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -558,7 +502,7 @@ def test_abort_preserves_state_and_intent_when_step_is_blocked(
     # When remote branch deletion fails (e.g. network outage), abort should:
     # - still close the PR (PR close runs before local steps)
     # - preserve the state cache entry so the user retains PR tracking data
-    # - keep the intent file so the user can re-run abort once the block clears
+    # - keep the operation journal so the user can re-run abort once the block clears
     from jj_review.jj import JjCommandError
 
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
@@ -570,21 +514,13 @@ def test_abort_preserves_state_and_intent_when_step_is_blocked(
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,  # dead PID — simulates an interrupted operation
-        label=f"submit on {change_id[:8]}",
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        ordered_commit_ids=(stack.revisions[-1].commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(stack.revisions[-1].commit_id,),
         bookmarks={change_id: bookmark},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     # Make remote branch deletion fail to exercise the partial-retraction path.
     from jj_review import bootstrap as bootstrap_module
@@ -605,11 +541,11 @@ def test_abort_preserves_state_and_intent_when_step_is_blocked(
     assert fake_repo.pull_requests[1].state == "closed"
     # State cache preserved — PR number and bookmark name survive for diagnosis.
     assert change_id in state_store.load().changes
-    # Intent file preserved — user can re-run abort once the block clears.
-    assert state_store.list_intents()
+    # Operation journal preserved — user can re-run abort once the block clears.
+    assert state_store.list_operations()
 
 
-def test_abort_keeps_intent_when_recorded_remote_now_points_elsewhere(
+def test_abort_keeps_operation_when_recorded_remote_now_points_elsewhere(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -634,21 +570,13 @@ def test_abort_keeps_intent_when_recorded_remote_now_points_elsewhere(
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label=f"submit on {change_id[:8]}",
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        ordered_commit_ids=(stack.revisions[-1].commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(stack.revisions[-1].commit_id,),
         bookmarks={change_id: bookmark},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     run_command(["jj", "git", "remote", "remove", "origin"], repo)
     run_command(["jj", "git", "remote", "add", "origin", str(upstream_repo.git_dir)], repo)
@@ -675,10 +603,10 @@ def test_abort_keeps_intent_when_recorded_remote_now_points_elsewhere(
     assert fake_repo.pull_requests[1].state == "closed"
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
     assert change_id in state_store.load().changes
-    assert state_store.list_intents()
+    assert state_store.list_operations()
 
 
-def test_abort_keeps_intent_when_recorded_remote_is_missing(
+def test_abort_keeps_operation_when_recorded_remote_is_missing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -692,21 +620,13 @@ def test_abort_keeps_intent_when_recorded_remote_is_missing(
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,
-        label=f"submit on {change_id[:8]}",
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        ordered_commit_ids=(stack.revisions[-1].commit_id,),
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
+        ordered_commit_ids=(stack.revisions[-1].commit_id,),
         bookmarks={change_id: bookmark},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     run_command(["jj", "git", "remote", "remove", "origin"], repo)
 
@@ -717,7 +637,7 @@ def test_abort_keeps_intent_when_recorded_remote_is_missing(
     assert fake_repo.pull_requests[1].state == "closed"
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
     assert change_id in state_store.load().changes
-    assert state_store.list_intents()
+    assert state_store.list_operations()
 
 
 def test_abort_retracts_using_recorded_remote_not_current_selection(
@@ -768,22 +688,13 @@ def test_abort_retracts_using_recorded_remote_not_current_selection(
             }
         )
     )
-    write_new_intent(
+    write_submit_operation(
         state_store.state_dir,
-        SubmitIntent(
-            kind="submit",
-            pid=99999999,
-            label=f"submit on {change_id[:8]}",
-            display_revset=change_id[:8],
-            ordered_commit_ids=(revision.commit_id,),
-            remote_name="upstream",
-            github_host="github.test",
-            github_owner="octo-org",
-            github_repo="stacked-review",
-            ordered_change_ids=(change_id,),
-            bookmarks={change_id: bookmark},
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset=change_id[:8],
+        ordered_change_ids=(change_id,),
+        ordered_commit_ids=(revision.commit_id,),
+        remote_name="upstream",
+        bookmarks={change_id: bookmark},
     )
 
     def _parse_repo_by_remote(remote):
@@ -808,4 +719,4 @@ def test_abort_retracts_using_recorded_remote_not_current_selection(
     assert fake_repo.pull_requests[fake_pull_request.number].state == "closed"
     assert f"refs/heads/{bookmark}" not in remote_refs(fake_repo.git_dir)
     assert change_id not in state_store.load().changes
-    assert not state_store.list_intents()
+    assert not state_store.list_operations()

@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal, Protocol
 
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubPullRequest
-from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult, BookmarkSource
+from jj_review.state.journal import LoadedOperationRecord, OperationJournal, SubmitOperationRecord
 
 LocalBookmarkAction = Literal["created", "moved", "unchanged"]
 PullRequestAction = Literal["created", "unchanged", "updated"]
@@ -134,12 +133,12 @@ class PreparedSubmitInputs:
 
 
 @dataclass(frozen=True, slots=True)
-class SubmitIntentState:
-    """Prepared submit intent bookkeeping for resumable runs."""
+class SubmitOperationState:
+    """Prepared submit operation bookkeeping for resumable runs."""
 
-    intent: SubmitIntent
-    intent_path: Path | None
-    stale_intents: list[LoadedIntent]
+    journal: OperationJournal | None
+    operation: SubmitOperationRecord
+    stale_operations: list[LoadedOperationRecord]
 
 
 class PrivateCommitFinder(Protocol):

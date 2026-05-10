@@ -498,9 +498,6 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
         def save(self, state: ReviewState) -> None:
             self.state = state
 
-        def list_intents(self) -> list[object]:
-            return []
-
         def list_operations(self) -> list[object]:
             return []
 

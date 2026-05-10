@@ -13,6 +13,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo,
     write_fake_github_config,
 )
+from ..support.operation_journal_helpers import write_submit_operation
 from .submit_command_helpers import run_main
 
 
@@ -89,8 +90,6 @@ def test_doctor_warns_for_interrupted_operation(
     capsys,
 ) -> None:
     from jj_review.jj import JjClient
-    from jj_review.models.intent import SubmitIntent
-    from jj_review.state.intents import write_new_intent
     from jj_review.state.store import ReviewStateStore
 
     repo, fake_repo = init_fake_github_repo(tmp_path)
@@ -100,20 +99,12 @@ def test_doctor_warns_for_interrupted_operation(
     change_id = stack.revisions[-1].change_id if stack.revisions else "aabbccddeeff00112233"
     state_store = ReviewStateStore.for_repo(repo)
     state_store.require_writable()
-    intent = SubmitIntent(
-        kind="submit",
-        pid=99999999,  # No process has this PID; pid_is_alive returns False
-        label=f"submit on {change_id[:8]}",
+    write_submit_operation(
+        state_store.state_dir,
         display_revset=change_id[:8],
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
         ordered_change_ids=(change_id,),
         bookmarks={},
-        started_at="2026-01-01T00:00:00+00:00",
     )
-    write_new_intent(state_store.state_dir, intent)
 
     exit_code = run_main(repo, config_path, "doctor")
     captured = capsys.readouterr()

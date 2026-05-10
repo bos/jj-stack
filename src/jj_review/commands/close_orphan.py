@@ -33,7 +33,6 @@ from jj_review.github.stack_comments import StackCommentKind, stack_comment_labe
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
-from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import find_changes_by_bookmark, is_review_bookmark
 from jj_review.review.intents import close_intent_mode_relation
@@ -41,6 +40,7 @@ from jj_review.state.journal import (
     CloseOperationRecord,
     LoadedOperationRecord,
     OperationJournal,
+    SubmitOperationRecord,
     append_abandoned_event,
 )
 from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
@@ -52,7 +52,7 @@ OrphanedPullRequestState = Literal["closed", "open"]
 GithubClientBuilder = Callable[..., Any]
 GithubRepoParser = Callable[[GitRemote], ParsedGithubRepo | None]
 ReportStaleCloseOperations = Callable[..., None]
-RetireSubmitIntentsClearedByCleanup = Callable[..., None]
+RetireSubmitOperationsClearedByCleanup = Callable[..., None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +93,7 @@ class _OrphanCloseOperationState:
 
     journal: OperationJournal | None
     stale_close_operations: list[LoadedOperationRecord]
-    stale_submit_intents: list[LoadedIntent]
+    stale_submit_operations: list[LoadedOperationRecord]
 
 
 
@@ -116,7 +116,7 @@ async def run_untracked_cleanup_pull_request(
     github_repo_parser: GithubRepoParser,
     jj_client: JjClient,
     pull_request_number: int,
-    retire_submit_intents_cleared_by_cleanup: RetireSubmitIntentsClearedByCleanup,
+    retire_submit_operations_cleared_by_cleanup: RetireSubmitOperationsClearedByCleanup,
     state: ReviewState,
     state_store: ReviewStateStore,
 ) -> int:
@@ -170,14 +170,14 @@ async def run_untracked_cleanup_pull_request(
             pull_request_number=pull_request_number,
             state_store=state_store,
         )
-        retire_submit_intents_cleared_by_cleanup(
+        retire_submit_operations_cleared_by_cleanup(
             current_state=state,
             jj_client=jj_client,
-            stale_submit_intents=[
+            stale_submit_operations=[
                 loaded
-                for loaded in state_store.list_intents()
-                if isinstance(loaded.intent, SubmitIntent)
-                and not pid_is_alive(loaded.intent.pid)
+                for loaded in state_store.list_operations()
+                if isinstance(loaded.operation, SubmitOperationRecord)
+                and not pid_is_alive(loaded.operation.pid)
             ],
         )
     console.output(t"Nothing to close for PR #{pull_request_number}.")
@@ -250,7 +250,7 @@ async def run_orphan_close(
     operation_lock: OperationLock,
     pull_request_number: int,
     report_stale_close_operations: ReportStaleCloseOperations,
-    retire_submit_intents_cleared_by_cleanup: RetireSubmitIntentsClearedByCleanup,
+    retire_submit_operations_cleared_by_cleanup: RetireSubmitOperationsClearedByCleanup,
     state: ReviewState,
     state_store: ReviewStateStore,
 ) -> int:
@@ -318,7 +318,7 @@ async def run_orphan_close(
     operation_state = _OrphanCloseOperationState(
         journal=None,
         stale_close_operations=[],
-        stale_submit_intents=[],
+        stale_submit_operations=[],
     )
     try:
         operation_state = _start_orphan_close_operation(
@@ -455,10 +455,10 @@ async def run_orphan_close(
                 stale_operations=operation_state.stale_close_operations,
             )
             if not recorder.blocked and final_state is not None:
-                retire_submit_intents_cleared_by_cleanup(
+                retire_submit_operations_cleared_by_cleanup(
                     current_state=final_state,
                     jj_client=jj_client,
-                    stale_submit_intents=operation_state.stale_submit_intents,
+                    stale_submit_operations=operation_state.stale_submit_operations,
                 )
 
 
@@ -829,7 +829,7 @@ def _start_orphan_close_operation(
         return _OrphanCloseOperationState(
             journal=None,
             stale_close_operations=[],
-            stale_submit_intents=[],
+            stale_submit_operations=[],
         )
 
     state_dir = state_store.require_writable()
@@ -850,10 +850,11 @@ def _start_orphan_close_operation(
         current_cleanup=True,
         stale_intents=stale_close_operations,
     )
-    stale_submit_intents = [
+    stale_submit_operations = [
         loaded
-        for loaded in state_store.list_intents()
-        if isinstance(loaded.intent, SubmitIntent) and not pid_is_alive(loaded.intent.pid)
+        for loaded in state_store.list_operations()
+        if isinstance(loaded.operation, SubmitOperationRecord)
+        and not pid_is_alive(loaded.operation.pid)
     ]
     journal = OperationJournal.begin(
         state_dir,
@@ -873,5 +874,5 @@ def _start_orphan_close_operation(
     return _OrphanCloseOperationState(
         journal=journal,
         stale_close_operations=stale_close_operations,
-        stale_submit_intents=stale_submit_intents,
+        stale_submit_operations=stale_submit_operations,
     )

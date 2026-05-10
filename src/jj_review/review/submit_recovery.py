@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from jj_review.models.bookmarks import BookmarkState
-from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange
+from jj_review.state.journal import SubmitOperationRecord
 
 
 class SubmitStackRelation(StrEnum):
@@ -43,12 +43,12 @@ class SubmitRecoveryIdentity:
     github_repo: str
 
     @classmethod
-    def from_intent(cls, intent: SubmitIntent) -> SubmitRecoveryIdentity:
+    def from_operation(cls, operation: SubmitOperationRecord) -> SubmitRecoveryIdentity:
         return cls(
-            remote_name=intent.remote_name,
-            github_host=intent.github_host,
-            github_owner=intent.github_owner,
-            github_repo=intent.github_repo,
+            remote_name=operation.remote_name,
+            github_host=operation.github_host,
+            github_owner=operation.github_owner,
+            github_repo=operation.github_repo,
         )
 
     @classmethod
@@ -76,7 +76,7 @@ class SubmitArtifactObservation:
 
 def submit_stack_relation(
     *,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
 ) -> SubmitStackRelation:
@@ -91,21 +91,21 @@ def submit_stack_relation(
 
 def submit_target_relation(
     *,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     current_identity: SubmitRecoveryIdentity | None,
 ) -> SubmitTargetRelation:
     """Classify whether the current submit target matches the recorded one."""
 
     if current_identity is None:
         return SubmitTargetRelation.UNKNOWN
-    if SubmitRecoveryIdentity.from_intent(intent) == current_identity:
+    if SubmitRecoveryIdentity.from_operation(intent) == current_identity:
         return SubmitTargetRelation.MATCH
     return SubmitTargetRelation.MISMATCH
 
 
 def submit_status_decision(
     *,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
     current_identity: SubmitRecoveryIdentity | None,
@@ -132,7 +132,7 @@ def submit_status_decision(
 
 def recorded_submit_still_exists_exactly(
     *,
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     commit_ids_by_change_id: dict[str, str],
 ) -> bool:
     """Return whether a recorded submit stack still exists exactly in the repo."""
@@ -152,14 +152,14 @@ def recorded_submit_still_exists_exactly(
 
 def should_retire_submit_after_submit(
     *,
-    old_intent: SubmitIntent,
-    new_intent: SubmitIntent,
+    old_intent: SubmitOperationRecord,
+    new_intent: SubmitOperationRecord,
 ) -> bool:
     """Return whether a later successful submit clearly supersedes an older one."""
 
-    if SubmitRecoveryIdentity.from_intent(old_intent) != SubmitRecoveryIdentity.from_intent(
-        new_intent
-    ):
+    if SubmitRecoveryIdentity.from_operation(
+        old_intent
+    ) != SubmitRecoveryIdentity.from_operation(new_intent):
         return False
     return bool(old_intent.bookmarks) and set(old_intent.bookmarks.values()).issubset(
         new_intent.bookmarks.values()
@@ -169,7 +169,7 @@ def should_retire_submit_after_submit(
 def observe_submit_artifacts(
     *,
     current_changes: dict[str, CachedChange],
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     bookmark_states: dict[str, BookmarkState],
     target_relation: SubmitTargetRelation,
 ) -> SubmitArtifactObservation:
@@ -253,7 +253,7 @@ def _cached_change_has_live_review_artifacts(cached_change: CachedChange) -> boo
 def _observe_remote_submit_bookmarks(
     *,
     bookmark_states: dict[str, BookmarkState],
-    intent: SubmitIntent,
+    intent: SubmitOperationRecord,
     intent_bookmarks: frozenset[str],
     target_relation: SubmitTargetRelation,
 ) -> ArtifactPresence:
