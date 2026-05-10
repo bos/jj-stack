@@ -106,10 +106,12 @@ mutation phases share a `SubmitMutationRun` for dry-run mode and incremental sta
 data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
 instead of separate config/client/state-store parameters, and orphan close journal setup
 receives `_OrphanCloseRun` for live execution state. Orphan close also threads that run
-through blocked-tracking retirement and managed-comment cleanup. Plain cleanup's prepared
-target also carries `CommandContext` rather than duplicating those shared dependencies,
-and cleanup and cleanup rebase prepared targets retain parsed `CleanupOptions` for mode
-state. Cleanup local discovery helpers read config and jj access through `CommandContext`.
+through blocked-tracking retirement and managed-comment cleanup. Unlink's prepared target
+carries `CommandContext` for state persistence and bookmark inspection. Plain cleanup's
+prepared target also carries `CommandContext` rather than duplicating those shared
+dependencies, and cleanup and cleanup rebase prepared targets retain parsed
+`CleanupOptions` for mode state. Cleanup local discovery helpers read config and jj access
+through `CommandContext`.
 Cleanup remote resolution and orphan bookmark planning also read shared dependencies
 through the context, and stale cleanup mutation application reads jj and remote data from
 the prepared cleanup target.
