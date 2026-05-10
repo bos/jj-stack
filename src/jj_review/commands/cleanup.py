@@ -276,9 +276,14 @@ def cleanup(
         cli_args=cli_args,
         debug=debug,
     )
-    options = CleanupOptions(dry_run=dry_run, rebase_revset=rebase_revset)
-    command = "cleanup --rebase" if options.rebase_revset is not None else "cleanup"
-    with mutating_command_lock(command=command, context=context) as operation_lock:
+    options = _cleanup_options_from_cli(
+        dry_run=dry_run,
+        rebase_revset=rebase_revset,
+    )
+    with mutating_command_lock(
+        command=_cleanup_lock_command(options),
+        context=context,
+    ) as operation_lock:
         if options.rebase_revset is not None:
             return _run_cleanup_rebase_command(
                 context=context,
@@ -293,6 +298,18 @@ def cleanup(
         )
 
 
+def _cleanup_options_from_cli(
+    *,
+    dry_run: bool,
+    rebase_revset: str | None,
+) -> CleanupOptions:
+    return CleanupOptions(dry_run=dry_run, rebase_revset=rebase_revset)
+
+
+def _cleanup_lock_command(options: CleanupOptions) -> str:
+    return "cleanup --rebase" if options.rebase_revset is not None else "cleanup"
+
+
 def _run_cleanup_rebase_command(
     *,
     context: CommandContext,
@@ -301,35 +318,16 @@ def _run_cleanup_rebase_command(
 ) -> int:
     """Render and run the `cleanup --rebase` command path."""
 
-    selected_revset = resolve_selected_revset(
-        command_label=(
-            "cleanup --rebase --dry-run" if options.dry_run else "cleanup --rebase"
-        ),
-        default_revset="@-",
-        require_explicit=False,
-        revset=options.rebase_revset,
-    )
     try:
         with console.spinner(description="Inspecting jj stack"):
-            prepared_rebase = PreparedRebase(
-                config=context.config,
-                dry_run=options.dry_run,
+            prepared_rebase = _prepare_cleanup_rebase(
+                context=context,
                 operation_lock=operation_lock,
-                prepared_status=prepare_status(
-                    config=context.config,
-                    fetch_remote_state=True,
-                    fetch_only_when_tracked=True,
-                    jj_client=context.jj_client,
-                    revset=selected_revset,
-                ),
+                options=options,
             )
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
-    for severity, line in _render_rebase_preamble(prepared_rebase=prepared_rebase):
-        if severity == "warning":
-            console.warning(line)
-        else:
-            console.output(line)
+    _emit_severity_lines(_render_rebase_preamble(prepared_rebase=prepared_rebase))
 
     try:
         result = _stream_rebase(
@@ -341,8 +339,7 @@ def _run_cleanup_rebase_command(
         )
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
-    for line in _render_rebase_postamble(result=result):
-        console.output(line)
+    _emit_output_lines(_render_rebase_postamble(result=result))
     return 1 if result.blocked else 0
 
 
@@ -369,20 +366,18 @@ def _run_cleanup_command(
         stale_reasons=stale_reasons,
     ):
         prepared_cleanup = _load_cleanup_remote_context(prepared_cleanup=prepared_cleanup)
-        for severity, line in _render_remote_and_github_lines(
-            remote=prepared_cleanup.remote,
-            remote_error=prepared_cleanup.remote_error,
-            github_repository=(
-                prepared_cleanup.github_repository.full_name
-                if prepared_cleanup.github_repository is not None
-                else None
-            ),
-            github_error=prepared_cleanup.github_repository_error,
-        ):
-            if severity == "warning":
-                console.warning(line)
-            else:
-                console.output(line)
+        _emit_severity_lines(
+            _render_remote_and_github_lines(
+                remote=prepared_cleanup.remote,
+                remote_error=prepared_cleanup.remote_error,
+                github_repository=(
+                    prepared_cleanup.github_repository.full_name
+                    if prepared_cleanup.github_repository is not None
+                    else None
+                ),
+                github_error=prepared_cleanup.github_repository_error,
+            )
+        )
 
     result = asyncio.run(
         _run_cleanup_async(
@@ -394,9 +389,51 @@ def _run_cleanup_command(
             stale_reasons=stale_reasons,
         )
     )
-    for line in _render_cleanup_postamble(result=result):
-        console.output(line)
+    _emit_output_lines(_render_cleanup_postamble(result=result))
     return 0
+
+
+def _prepare_cleanup_rebase(
+    *,
+    context: CommandContext,
+    operation_lock: OperationLock,
+    options: CleanupOptions,
+) -> PreparedRebase:
+    selected_revset = resolve_selected_revset(
+        command_label=_cleanup_rebase_command_label(options),
+        default_revset="@-",
+        require_explicit=False,
+        revset=options.rebase_revset,
+    )
+    return PreparedRebase(
+        config=context.config,
+        dry_run=options.dry_run,
+        operation_lock=operation_lock,
+        prepared_status=prepare_status(
+            config=context.config,
+            fetch_remote_state=True,
+            fetch_only_when_tracked=True,
+            jj_client=context.jj_client,
+            revset=selected_revset,
+        ),
+    )
+
+
+def _cleanup_rebase_command_label(options: CleanupOptions) -> str:
+    return "cleanup --rebase --dry-run" if options.dry_run else "cleanup --rebase"
+
+
+def _emit_severity_lines(lines: tuple[tuple[str, str], ...]) -> None:
+    for severity, line in lines:
+        if severity == "warning":
+            console.warning(line)
+        else:
+            console.output(line)
+
+
+def _emit_output_lines(lines: tuple[str, ...]) -> None:
+    for line in lines:
+        console.output(line)
 
 
 def _build_action_streamer(
