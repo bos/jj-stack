@@ -270,11 +270,10 @@ def _run_close(
         return asyncio.run(
             run_orphan_close(
                 change_id=target.change_id,
-                config=context.config,
+                context=context,
                 dry_run=options.dry_run,
                 github_client_builder=build_github_client,
                 github_repo_parser=parse_github_repo,
-                jj_client=context.jj_client,
                 operation_lock=operation_lock,
                 pull_request_number=target.pull_request_number,
                 report_stale_close_operations=_report_stale_close_operations,
@@ -282,22 +281,20 @@ def _run_close(
                     _retire_submit_operations_cleared_by_cleanup
                 ),
                 state=target.state,
-                state_store=context.state_store,
             )
         )
     if isinstance(target, _CloseUntrackedPullRequestTarget):
         return asyncio.run(
             run_untracked_cleanup_pull_request(
+                context=context,
                 dry_run=options.dry_run,
                 github_client_builder=build_github_client,
                 github_repo_parser=parse_github_repo,
-                jj_client=context.jj_client,
                 pull_request_number=target.pull_request_number,
                 retire_submit_operations_cleared_by_cleanup=(
                     _retire_submit_operations_cleared_by_cleanup
                 ),
                 state=target.state,
-                state_store=context.state_store,
             )
         )
 

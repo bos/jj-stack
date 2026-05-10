@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from jj_review import console, ui
+from jj_review.bootstrap import CommandContext
 from jj_review.commands._close_actions import (
     BookmarkCleanupPlan as _OrphanBookmarkCleanupPlan,
     CloseAction,
@@ -17,7 +18,6 @@ from jj_review.commands._close_actions import (
     render_close_action_message,
     retire_cached_change as _retire_cached_change,
 )
-from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.error_messages import (
@@ -30,7 +30,6 @@ from jj_review.github.resolution import (
     select_submit_remote,
 )
 from jj_review.github.stack_comments import StackCommentKind, stack_comment_label
-from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
@@ -115,17 +114,18 @@ def state_has_pull_request_record(
 
 async def run_untracked_cleanup_pull_request(
     *,
+    context: CommandContext,
     dry_run: bool,
     github_client_builder: GithubClientBuilder,
     github_repo_parser: GithubRepoParser,
-    jj_client: JjClient,
     pull_request_number: int,
     retire_submit_operations_cleared_by_cleanup: RetireSubmitOperationsClearedByCleanup,
     state: ReviewState,
-    state_store: ReviewStateStore,
 ) -> int:
     """Handle cleanup by PR number after saved tracking was already retired."""
 
+    jj_client = context.jj_client
+    state_store = context.state_store
     remotes = jj_client.list_git_remotes()
     if not remotes:
         raise _untracked_cleanup_verification_error(
@@ -246,20 +246,21 @@ def _retire_pull_request_close_operations(
 async def run_orphan_close(
     *,
     change_id: str,
-    config: RepoConfig,
+    context: CommandContext,
     dry_run: bool,
     github_client_builder: GithubClientBuilder,
     github_repo_parser: GithubRepoParser,
-    jj_client: JjClient,
     operation_lock: OperationLock,
     pull_request_number: int,
     report_stale_close_operations: ReportStaleCloseOperations,
     retire_submit_operations_cleared_by_cleanup: RetireSubmitOperationsClearedByCleanup,
     state: ReviewState,
-    state_store: ReviewStateStore,
 ) -> int:
     """Close an orphaned PR, deleting its review artifacts via saved data."""
 
+    config = context.config
+    jj_client = context.jj_client
+    state_store = context.state_store
     cached_change = state.changes.get(change_id)
     if cached_change is None:
         raise CliError(t"PR #{pull_request_number} is no longer tracked locally.")
