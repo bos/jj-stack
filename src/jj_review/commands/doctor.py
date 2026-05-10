@@ -31,11 +31,10 @@ from jj_review.github.resolution import (
     parse_github_repo,
     select_submit_remote,
 )
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj import JjCliArgs
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubRepository
 from jj_review.review.operations import describe_operation
-from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message
 
@@ -76,12 +75,12 @@ async def _run_checks(
     results: list[CheckResult] = []
 
     # Check 1: Git remote selection
-    remote_result, selected_remote = _check_git_remote(context.jj_client)
+    remote_result, selected_remote = _check_git_remote(context=context)
     results.append(remote_result)
 
     if selected_remote is None:
         results.extend(_skipped("GitHub remote", "GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(context.state_store))
+        results.append(_check_interruptions(context=context))
         return results
 
     # Check 2: GitHub remote parsing
@@ -90,7 +89,7 @@ async def _run_checks(
 
     if parsed_repo is None:
         results.extend(_skipped("GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(context.state_store))
+        results.append(_check_interruptions(context=context))
         return results
 
     # Check 3: GitHub auth
@@ -99,7 +98,7 @@ async def _run_checks(
 
     if token is None:
         results.extend(_skipped("connectivity", "trunk branch"))
-        results.append(_check_interruptions(context.state_store))
+        results.append(_check_interruptions(context=context))
         return results
 
     # Checks 4 & 5: Connectivity and trunk branch
@@ -115,7 +114,7 @@ async def _run_checks(
         results.append(CheckResult("trunk branch", "skip", "connectivity failed"))
 
     # Check 6: Interrupted operations
-    results.append(_check_interruptions(context.state_store))
+    results.append(_check_interruptions(context=context))
     return results
 
 
@@ -123,7 +122,8 @@ def _skipped(*labels: str) -> list[CheckResult]:
     return [CheckResult(label, "skip", "prior check failed") for label in labels]
 
 
-def _check_git_remote(jj_client: JjClient) -> tuple[CheckResult, GitRemote | None]:
+def _check_git_remote(*, context: CommandContext) -> tuple[CheckResult, GitRemote | None]:
+    jj_client = context.jj_client
     try:
         remotes = jj_client.list_git_remotes()
     except Exception as error:
@@ -234,7 +234,8 @@ def _check_trunk_branch(github_repo: GithubRepository) -> CheckResult:
     )
 
 
-def _check_interruptions(state_store: ReviewStateStore) -> CheckResult:
+def _check_interruptions(*, context: CommandContext) -> CheckResult:
+    state_store = context.state_store
     if not state_store.state_dir.exists():
         return CheckResult("interruptions", "ok", "none")
     try:
