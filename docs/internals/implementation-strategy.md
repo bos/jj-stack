@@ -113,8 +113,8 @@ for state-store access and bookmark mutation. Restart applies saved-state change
 prepared target that carries the context, options, selected stack, loaded state, and
 bookmark observations. Plain cleanup's prepared target also carries `CommandContext`
 rather than duplicating those shared dependencies, and cleanup and cleanup rebase
-prepared targets retain parsed `CleanupOptions` for mode state. Cleanup local discovery
-helpers read config and jj access through `CommandContext`.
+prepared targets retain parsed `CleanupOptions` for mode state and action rendering.
+Cleanup local discovery helpers read config and jj access through `CommandContext`.
 Cleanup remote resolution and orphan bookmark planning also read shared dependencies
 through the context, and stale cleanup mutation application reads jj and remote data from
 the prepared cleanup target.
