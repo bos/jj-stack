@@ -108,6 +108,8 @@ instead of separate config/client/state-store parameters. Plain cleanup's prepar
 also carries `CommandContext` rather than duplicating those shared dependencies, and
 cleanup and cleanup rebase prepared targets retain parsed `CleanupOptions` for mode
 state. Cleanup local discovery helpers read config and jj access through `CommandContext`.
+Cleanup remote resolution and orphan bookmark planning also read shared dependencies
+through the context.
 Cleanup rebase reads shared configuration through its prepared context. Status preparation
 receives the bootstrapped `CommandContext` instead of separate config/client/state-store
 parameters, including the helper that prepares an already-resolved stack, and status
