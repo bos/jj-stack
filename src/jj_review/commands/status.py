@@ -35,6 +35,7 @@ from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_review.review.change_status import (
+    ReviewChangeStatus,
     SubmittedStateDisagreement,
     classify_review_status_revision,
     classify_saved_review_change,
@@ -52,6 +53,7 @@ from jj_review.review.selection import (
     resolve_selected_revset,
 )
 from jj_review.review.status import (
+    ReviewStatusRevision,
     StatusResult,
     prepare_status,
     refresh_remote_state_for_status,
@@ -102,6 +104,14 @@ class StatusOptions:
 class _ResolvedStatusSelector:
     note: object | None
     revset: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ClassifiedStatusRevision:
+    """Rendered status revision paired with its derived review status."""
+
+    revision: ReviewStatusRevision
+    status: ReviewChangeStatus
 
 
 def status(
@@ -697,23 +707,33 @@ def render_status_advisory_lines(
 ) -> tuple[object, ...]:
     """Render any advisories that follow the status stack output."""
 
-    cleanup_revisions = [
-        revision
+    classified_revisions = tuple(
+        _ClassifiedStatusRevision(
+            revision=revision,
+            status=classify_review_status_revision(revision),
+        )
         for revision in result.revisions
-        if classify_review_status_revision(revision).pr_lifecycle == "merged"
+    )
+    cleanup_revisions = [
+        classified
+        for classified in classified_revisions
+        if classified.status.pr_lifecycle == "merged"
     ]
     divergent_revisions = [
-        revision
-        for revision in result.revisions
-        if classify_review_status_revision(revision).local == "divergent"
-        and classify_review_status_revision(revision).pr_lifecycle != "merged"
+        classified
+        for classified in classified_revisions
+        if classified.status.local == "divergent"
+        and classified.status.pr_lifecycle != "merged"
     ]
     link_revisions = [
-        revision for revision in result.revisions if _revision_has_link_advisory(revision)
+        classified
+        for classified in classified_revisions
+        if _classified_revision_has_link_advisory(classified)
     ]
     submitted_disagreements = result.submitted_state_disagreements
     policy_warning_rows: list[tuple[object, object]] = []
-    for revision in cleanup_revisions:
+    for classified in cleanup_revisions:
+        revision = classified.revision
         lookup = revision.pull_request_lookup
         pull_request = lookup.pull_request if lookup is not None else None
         if pull_request is None:
@@ -799,13 +819,13 @@ def render_status_advisory_lines(
             )
         )
         for revision in cleanup_revisions:
-            pull_request_number = revision.pull_request_number()
+            pull_request_number = revision.revision.pull_request_number()
             pull_request_label = (
                 f"PR #{pull_request_number}" if pull_request_number is not None else "merged PR"
             )
             rows.append(
                 (
-                    ui.change_id(revision.change_id),
+                    ui.change_id(revision.revision.change_id),
                     (
                         pull_request_label,
                         " is merged, and later local changes are still based on it",
@@ -823,7 +843,7 @@ def render_status_advisory_lines(
         for revision in link_revisions:
             rows.append(
                 (
-                    ui.change_id(revision.change_id),
+                    ui.change_id(revision.revision.change_id),
                     _describe_link_advisory(revision),
                 )
             )
@@ -833,9 +853,10 @@ def render_status_advisory_lines(
     for revision in divergent_revisions:
         rows.append(
             (
-                ui.change_id(revision.change_id),
+                ui.change_id(revision.revision.change_id),
                 t"Resolve the multiple visible revisions for this change before retrying "
-                t"({ui.cmd('jj log -r')} {ui.revset(f'change_id({revision.change_id})')})",
+                t"({ui.cmd('jj log -r')} "
+                t"{ui.revset(f'change_id({revision.revision.change_id})')})",
             )
         )
     return ("", "Advisories:", _advisory_table(tuple(rows)))
@@ -926,7 +947,7 @@ def _advisory_table(rows: tuple[tuple[object, object], ...]) -> ui.DataTable:
 
 def _link_advisory_summary_row(
     *,
-    link_revisions: tuple[object, ...],
+    link_revisions: tuple[_ClassifiedStatusRevision, ...],
     selected_revset: str,
 ) -> tuple[object, object]:
     states = {_link_advisory_kind(revision) for revision in link_revisions}
@@ -997,11 +1018,12 @@ def _link_advisory_change_phrase(link_revisions: tuple[object, ...]) -> str:
     return "one or more changes shown above"
 
 
-def _link_advisory_kind(revision) -> str:
+def _link_advisory_kind(classified: _ClassifiedStatusRevision) -> str:
+    revision = classified.revision
     lookup = revision.pull_request_lookup
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
-    change_status = classify_review_status_revision(revision)
+    change_status = classified.status
     if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
         return "remembered"
     if change_status.pr_lifecycle in {"ambiguous", "closed", "missing"}:
@@ -1723,10 +1745,13 @@ def _render_operation_description(operation) -> object:
     return describe_operation(operation)
 
 
-def _revision_has_link_advisory(revision) -> bool:
-    change_status = classify_review_status_revision(revision)
+def _classified_revision_has_link_advisory(
+    classified: _ClassifiedStatusRevision,
+) -> bool:
+    change_status = classified.status
     if change_status.link == "unlinked":
         return False
+    revision = classified.revision
     lookup = revision.pull_request_lookup
     if lookup is None:
         return False
@@ -1741,11 +1766,12 @@ def _revision_has_link_advisory(revision) -> bool:
     return False
 
 
-def _describe_link_advisory(revision) -> object:
+def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> object:
+    revision = classified.revision
     lookup = revision.pull_request_lookup
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
-    change_status = classify_review_status_revision(revision)
+    change_status = classified.status
     if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
         return lookup.message
     if change_status.pr_lifecycle == "ambiguous":
