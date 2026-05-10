@@ -129,7 +129,8 @@ Land's prepared target carries `CommandContext` for shared configuration used by
 cleanup planning, and land finalization shares a `LandMutationRun` for live review state,
 pending state changes, and interim state saves. Close's prepared target carries
 `CommandContext` and parsed close options instead of duplicating shared configuration and
-mode flags, and its untracked fast path reads shared dependencies from that context.
+mode flags, cleanup helpers derive shared values from that prepared target, and its
+untracked fast path reads shared dependencies from that context.
 Abort submit retraction receives `AbortRun` so its command context and parsed options
 move together through the live execution path, including per-change local and GitHub
 retraction helpers and recorded-stack visibility predicates.
