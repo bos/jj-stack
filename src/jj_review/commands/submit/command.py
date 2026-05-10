@@ -549,19 +549,16 @@ async def _run_submit_async(
                 total=len(prepared_revisions),
             ) as progress:
                 submitted_revisions = await sync_pull_requests(
-                    draft_mode=options.draft_mode,
                     dry_run=dry_run,
                     github_client=github_client,
                     github_repository=github_repository,
-                    labels=resolved_options.labels,
                     on_progress=progress.advance,
+                    options=options,
                     pending_syncs=pending_syncs,
-                    re_request=options.re_request,
-                    reviewers=resolved_options.reviewers,
+                    resolved_options=resolved_options,
                     state=bookmark_result.state,
                     state_changes=state_changes,
                     state_store=state_store,
-                    team_reviewers=resolved_options.team_reviewers,
                 )
 
             if not dry_run:

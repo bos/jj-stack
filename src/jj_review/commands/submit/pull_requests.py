@@ -18,7 +18,8 @@ from jj_review.state.store import ReviewStateStore
 from .models import (
     PendingPullRequestSync,
     PullRequestAction,
-    SubmitDraftMode,
+    ResolvedSubmitOptions,
+    SubmitOptions,
     SubmittedRevision,
 )
 from .revisions import ensure_change_is_not_unlinked
@@ -53,18 +54,15 @@ async def discover_pull_requests_by_bookmark(
 
 async def sync_pull_requests(
     *,
-    draft_mode: SubmitDraftMode,
     dry_run: bool,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
-    labels: list[str],
+    options: SubmitOptions,
     pending_syncs: tuple[PendingPullRequestSync, ...],
-    re_request: bool,
-    reviewers: list[str],
+    resolved_options: ResolvedSubmitOptions,
     state: ReviewState,
     state_changes: dict[str, CachedChange],
     state_store: ReviewStateStore,
-    team_reviewers: list[str],
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[SubmittedRevision, ...]:
     def handle_success(
@@ -84,16 +82,13 @@ async def sync_pull_requests(
         concurrency=DEFAULT_BOUNDED_CONCURRENCY,
         items=pending_syncs,
         run_item=lambda pending_sync: _sync_pull_request(
-            draft_mode=draft_mode,
             dry_run=dry_run,
             github_client=github_client,
             github_repository=github_repository,
-            labels=labels,
+            options=options,
             pending_sync=pending_sync,
-            re_request=re_request,
-            reviewers=reviewers,
+            resolved_options=resolved_options,
             state=state,
-            team_reviewers=team_reviewers,
         ),
         on_success=handle_success,
     )
@@ -102,16 +97,13 @@ async def sync_pull_requests(
 
 async def _sync_pull_request(
     *,
-    draft_mode: SubmitDraftMode,
     dry_run: bool,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
-    labels: list[str],
+    options: SubmitOptions,
     pending_sync: PendingPullRequestSync,
-    re_request: bool,
-    reviewers: list[str],
+    resolved_options: ResolvedSubmitOptions,
     state: ReviewState,
-    team_reviewers: list[str],
 ) -> tuple[SubmittedRevision, CachedChange | None]:
     prepared_revision = pending_sync.prepared_revision
     bookmark = prepared_revision.bookmark
@@ -134,7 +126,7 @@ async def _sync_pull_request(
             pull_request = await _create_pull_request(
                 base_branch=pending_sync.base_branch,
                 body=body,
-                draft=(draft_mode in ("draft", "draft_all")),
+                draft=(options.draft_mode in ("draft", "draft_all")),
                 github_client=github_client,
                 github_repository=github_repository,
                 head_branch=bookmark,
@@ -162,7 +154,7 @@ async def _sync_pull_request(
         action = "updated"
 
     if pull_request is not None and pull_request.state == "open":
-        if draft_mode == "publish" and pull_request.is_draft:
+        if options.draft_mode == "publish" and pull_request.is_draft:
             if not dry_run:
                 pull_request = await _mark_pull_request_ready_for_review(
                     github_client=github_client,
@@ -170,7 +162,7 @@ async def _sync_pull_request(
                     pull_request=pull_request,
                 )
             action = "updated"
-        elif draft_mode == "draft_all" and not pull_request.is_draft:
+        elif options.draft_mode == "draft_all" and not pull_request.is_draft:
             if not dry_run:
                 pull_request = await _convert_pull_request_to_draft(
                     github_client=github_client,
@@ -190,23 +182,23 @@ async def _sync_pull_request(
         await _sync_pull_request_metadata(
             github_client=github_client,
             github_repository=github_repository,
-            labels=labels,
+            labels=resolved_options.labels,
             pull_request_number=pull_request.number,
-            reviewers=reviewers,
-            team_reviewers=team_reviewers,
+            reviewers=resolved_options.reviewers,
+            team_reviewers=resolved_options.team_reviewers,
         )
 
-    if not dry_run and re_request and pull_request is not None:
+    if not dry_run and options.re_request and pull_request is not None:
         re_request_reviewers = await _load_re_request_reviewers(
             github_client=github_client,
             github_repository=github_repository,
             pull_request_number=pull_request.number,
         )
         merged_reviewers = _merge_re_request_reviewers(
-            reviewers=reviewers,
+            reviewers=resolved_options.reviewers,
             re_request_reviewers=re_request_reviewers,
         )
-        if merged_reviewers != reviewers:
+        if merged_reviewers != resolved_options.reviewers:
             await _sync_pull_request_metadata(
                 github_client=github_client,
                 github_repository=github_repository,
