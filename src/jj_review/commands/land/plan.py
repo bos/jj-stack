@@ -9,8 +9,12 @@ from typing import Literal
 from jj_review import ui
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState
+from jj_review.models.github import GithubPullRequest
 from jj_review.review.bookmarks import is_review_bookmark
-from jj_review.review.change_status import classify_review_status_revision
+from jj_review.review.change_status import (
+    ReviewChangeStatus,
+    classify_review_status_revision,
+)
 from jj_review.review.status import (
     PreparedRevision,
     PreparedStatus,
@@ -34,6 +38,40 @@ _DivergenceKind = Literal["in_sync", "diff_equivalent", "content_divergent"]
 class _LandabilityDecision:
     boundary_message: Message | None
     needs_resubmit: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _LandPathRevision:
+    """One prepared land revision with its derived review status."""
+
+    prepared_revision: PreparedRevision
+    revision: ReviewStatusRevision
+    status: ReviewChangeStatus
+
+    @property
+    def bookmark_managed(self) -> bool:
+        cached_change = self.revision.cached_change
+        if cached_change is not None:
+            return cached_change.manages_bookmark
+        return self.revision.bookmark_source != "matched"
+
+    @property
+    def local_commit_id(self) -> str:
+        return self.prepared_revision.revision.commit_id
+
+    @property
+    def pull_request(self) -> GithubPullRequest | None:
+        lookup = self.revision.pull_request_lookup
+        if lookup is None:
+            return None
+        return lookup.pull_request
+
+    @property
+    def remote_target(self) -> str | None:
+        remote_state = self.revision.remote_state
+        if remote_state is None:
+            return None
+        return remote_state.target
 
 
 def build_land_plan(
@@ -118,11 +156,14 @@ def _collect_landable_prefix(
 ) -> tuple[tuple[LandRevision, ...], LandAction | None]:
     planned_revisions: list[LandRevision] = []
     for prepared_revision, revision in path_revisions:
+        land_revision = _land_path_revision(
+            prepared_revision=prepared_revision,
+            revision=revision,
+        )
         decision = _landability_decision(
             bypass_readiness=bypass_readiness,
             classify_divergence=classify_divergence,
-            prepared_revision=prepared_revision,
-            revision=revision,
+            land_revision=land_revision,
         )
         if decision.boundary_message is not None:
             return tuple(planned_revisions), LandAction(
@@ -130,22 +171,17 @@ def _collect_landable_prefix(
                 body=decision.boundary_message,
                 status="blocked" if not planned_revisions else "planned",
             )
-        pull_request_lookup = revision.pull_request_lookup
-        if pull_request_lookup is None or pull_request_lookup.pull_request is None:
+        pull_request = land_revision.pull_request
+        if pull_request is None:
             raise AssertionError("Landable revisions require resolved pull requests.")
-        local_commit_id = prepared_revision.revision.commit_id
         planned_revisions.append(
             LandRevision(
                 bookmark=revision.bookmark,
-                bookmark_managed=(
-                    revision.cached_change.manages_bookmark
-                    if revision.cached_change is not None
-                    else revision.bookmark_source != "matched"
-                ),
+                bookmark_managed=land_revision.bookmark_managed,
                 change_id=revision.change_id,
-                commit_id=local_commit_id,
+                commit_id=land_revision.local_commit_id,
                 needs_resubmit=decision.needs_resubmit,
-                pull_request_number=pull_request_lookup.pull_request.number,
+                pull_request_number=pull_request.number,
                 subject=revision.subject,
             )
         )
@@ -162,20 +198,34 @@ def _land_boundary_message(
     return _landability_decision(
         bypass_readiness=bypass_readiness,
         classify_divergence=classify_divergence,
+        land_revision=_land_path_revision(
+            prepared_revision=prepared_revision,
+            revision=revision,
+        ),
+    ).boundary_message
+
+
+def _land_path_revision(
+    *,
+    prepared_revision: PreparedRevision,
+    revision: ReviewStatusRevision,
+) -> _LandPathRevision:
+    return _LandPathRevision(
         prepared_revision=prepared_revision,
         revision=revision,
-    ).boundary_message
+        status=classify_review_status_revision(revision),
+    )
 
 
 def _landability_decision(
     *,
     bypass_readiness: bool,
     classify_divergence: Callable[[str, str | None], _DivergenceKind],
-    prepared_revision: PreparedRevision,
-    revision: ReviewStatusRevision,
+    land_revision: _LandPathRevision,
 ) -> _LandabilityDecision:
-    change_status = classify_review_status_revision(revision)
-    if prepared_revision.revision.conflict:
+    revision = land_revision.revision
+    change_status = land_revision.status
+    if land_revision.prepared_revision.revision.conflict:
         return _LandabilityDecision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
@@ -205,7 +255,7 @@ def _landability_decision(
             )
         )
     if change_status.pr_lifecycle == "open":
-        pull_request = pull_request_lookup.pull_request
+        pull_request = land_revision.pull_request
         if pull_request is None:
             raise AssertionError("Open land boundary requires a pull request payload.")
         if change_status.pr_review_decision_error is not None:
@@ -216,10 +266,10 @@ def _landability_decision(
                     t"because {detail}"
                 )
             )
-        remote_target = (
-            revision.remote_state.target if revision.remote_state is not None else None
+        divergence = classify_divergence(
+            land_revision.local_commit_id,
+            land_revision.remote_target,
         )
-        divergence = classify_divergence(prepared_revision.revision.commit_id, remote_target)
         if divergence == "content_divergent":
             return _LandabilityDecision(
                 boundary_message=(
@@ -292,7 +342,7 @@ def _landability_decision(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because {detail}"
             )
         )
-    pull_request = pull_request_lookup.pull_request
+    pull_request = land_revision.pull_request
     if pull_request is None:
         raise AssertionError("Closed land boundary requires a pull request payload.")
     if pull_request.state == "merged":
