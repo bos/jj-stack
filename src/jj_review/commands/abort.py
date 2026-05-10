@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -28,7 +26,6 @@ from jj_review.github.client import GithubClient, GithubClientError, build_githu
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo
 from jj_review.jj import JjCliArgs, JjClient, JjCommandError
 from jj_review.models.intent import (
-    AbortIntent,
     CleanupRebaseIntent,
     CloseIntent,
     LoadedIntent,
@@ -41,7 +38,6 @@ from jj_review.review.intents import (
     intent_is_stale,
 )
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
-from jj_review.state.intents import write_new_intent
 from jj_review.state.journal import (
     LandOperationRecord,
     LoadedOperationRecord,
@@ -121,27 +117,7 @@ def _run_abort(
 ) -> int:
     state_store = context.state_store
     jj_client = context.jj_client
-    loaded_intents = state_store.list_intents()
-
-    # Separate any AbortIntent lock files from the real operation intents.
-    # A live-PID AbortIntent means another abort is already running; bail.
-    # A dead-PID AbortIntent is a stale lock from a previous crash; clean it up.
-    abort_locks = [loaded for loaded in loaded_intents if isinstance(loaded.intent, AbortIntent)]
-    operation_intents = [
-        loaded for loaded in loaded_intents if not isinstance(loaded.intent, AbortIntent)
-    ]
-
-    for loaded in abort_locks:
-        if pid_is_alive(loaded.intent.pid):
-            console.output(
-                f"Another abort operation is already in progress "
-                f"(PID {loaded.intent.pid}). "
-                "Wait for it to finish, then run abort again."
-            )
-            return 1
-        loaded.path.unlink(missing_ok=True)
-
-    loaded_intents = [*operation_intents, *state_store.list_operations()]
+    loaded_intents = [*state_store.list_intents(), *state_store.list_operations()]
 
     if not loaded_intents:
         console.output("Nothing to abort.")
@@ -183,33 +159,18 @@ def _run_abort(
     if not outstanding:
         return 1
 
-    # Write an abort lock so concurrent abort processes bail rather than
-    # racing. The lock is removed in the finally block regardless of outcome.
-    abort_lock_path = write_new_intent(
-        state_store.state_dir,
-        AbortIntent(
-            kind="abort",
-            pid=os.getpid(),
-            label="abort",
-            started_at=datetime.now(UTC).isoformat(),
-        ),
-    )
-
     exit_code = 1 if live else 0
-    try:
-        for loaded in outstanding:
-            result = asyncio.run(
-                _abort_intent_async(
-                    context=context,
-                    loaded=loaded,
-                    options=options,
-                )
+    for loaded in outstanding:
+        result = asyncio.run(
+            _abort_intent_async(
+                context=context,
+                loaded=loaded,
+                options=options,
             )
-            _print_abort_result(result)
-            if not result.applied and not result.dry_run:
-                exit_code = 1
-    finally:
-        abort_lock_path.unlink(missing_ok=True)
+        )
+        _print_abort_result(result)
+        if not result.applied and not result.dry_run:
+            exit_code = 1
 
     return exit_code
 

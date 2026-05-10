@@ -5,7 +5,7 @@ from pathlib import Path
 
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
-from jj_review.models.intent import AbortIntent, CleanupRebaseIntent, SubmitIntent
+from jj_review.models.intent import CleanupRebaseIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.intents import write_new_intent
 from jj_review.state.journal import OperationJournal, read_journal
@@ -484,61 +484,6 @@ def test_abort_skips_live_pid_intent_and_warns(
     # PR untouched, intent file still present.
     assert fake_repo.pull_requests[1].state == "open"
     assert state_store.list_intents()
-
-
-def test_abort_bails_when_another_abort_is_running(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.require_writable()
-
-    # Simulate a concurrent abort by writing an AbortIntent with a live PID.
-    abort_lock = AbortIntent(
-        kind="abort",
-        pid=os.getpid(),
-        label="abort",
-        started_at="2026-01-01T00:00:00+00:00",
-    )
-    write_new_intent(state_store.state_dir, abort_lock)
-
-    exit_code = run_main(repo, config_path, "abort")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "already in progress" in captured.out
-
-
-def test_abort_silently_cleans_up_stale_abort_lock(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    # The unique behavior: a dead-PID AbortIntent left by a previous crash does
-    # not block the next abort from running. Full retraction is already covered
-    # by test_abort_retracts_submitted_change_and_clears_state.
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.require_writable()
-    stale_lock = AbortIntent(
-        kind="abort",
-        pid=99999999,
-        label="abort",
-        started_at="2026-01-01T00:00:00+00:00",
-    )
-    write_new_intent(state_store.state_dir, stale_lock)
-
-    # No other intent files — abort exits cleanly and removes the stale lock.
-    exit_code = run_main(repo, config_path, "abort")
-
-    assert exit_code == 0
-    assert not state_store.list_intents()
 
 
 def test_abort_preserves_state_and_intent_when_step_is_blocked(

@@ -64,17 +64,12 @@ class RelinkIntent(OperationIntent):
         return frozenset([self.change_id])
 
 
-class AbortIntent(OperationIntent):
-    kind: Literal["abort"]
-
-
 type IntentFile = Annotated[
     SubmitIntent
     | CleanupIntent
     | CleanupRebaseIntent
     | CloseIntent
-    | RelinkIntent
-    | AbortIntent,
+    | RelinkIntent,
     Field(discriminator="kind"),
 ]
 

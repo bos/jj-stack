@@ -243,6 +243,8 @@ lifetime. `status` uses the non-blocking path only around its cache write, so li
 inspection still renders while another mutation is running.
 Same-kind intent scans no longer wait for live PIDs; the operation lock is the
 concurrency primitive, and live legacy intent records are reported without polling.
+`abort` no longer writes a separate abort-intent sentinel; the repo operation lock is
+the only abort concurrency guard.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal

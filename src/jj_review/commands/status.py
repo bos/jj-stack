@@ -32,7 +32,6 @@ from jj_review.github.error_messages import (
 )
 from jj_review.jj import JjCliArgs, JjClient, UnsupportedStackError
 from jj_review.models.intent import (
-    AbortIntent,
     CleanupIntent,
     CleanupRebaseIntent,
     CloseIntent,
@@ -1125,14 +1124,6 @@ def _render_interrupted_intent_block(
                 " if still needed",
             ),
         )
-    elif isinstance(intent, AbortIntent):
-        detail_lines = (
-            (
-                "previous abort was interrupted; rerun ",
-                ui.cmd("jj-review abort"),
-                " if cleanup is still needed",
-            ),
-        )
     else:
         detail_lines = (("inspect with ", ui.cmd("jj-review status")),)
 
@@ -1416,8 +1407,6 @@ def _render_intent_command(intent) -> object:
         return ui.cmd("relink")
     if isinstance(intent, CleanupIntent):
         return ui.cmd("cleanup")
-    if isinstance(intent, AbortIntent):
-        return ui.cmd("abort")
     return intent.label
 
 
@@ -1683,8 +1672,6 @@ def _prefixed_intent_line(description: object, status: object) -> object:
 def _render_intent_description(intent) -> object:
     if isinstance(intent, CleanupIntent):
         return ui.cmd("cleanup")
-    if isinstance(intent, AbortIntent):
-        return ui.cmd("abort")
     return describe_intent(intent)
 
 
