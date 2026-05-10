@@ -224,7 +224,7 @@ def _prepare_land(
         cleanup_bookmarks=options.cleanup_bookmarks,
         dry_run=options.dry_run,
         bypass_readiness=options.bypass_readiness,
-        config=context.config,
+        context=context,
         operation_lock=operation_lock,
         prepared_status=prepared_status,
         selected_pr_number=selected_pr_number,
@@ -309,9 +309,9 @@ async def _stream_land_async(
         )
         bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
             client=prepared.client,
-            prefix=prepared_land.config.bookmark_prefix,
+            prefix=prepared_land.context.config.bookmark_prefix,
             cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-            cleanup_user_bookmarks=prepared_land.config.cleanup_user_bookmarks,
+            cleanup_user_bookmarks=prepared_land.context.config.cleanup_user_bookmarks,
             planned_revisions=plan.planned_revisions,
         )
         if prepared_land.dry_run:

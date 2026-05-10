@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 from jj_review import console
+from jj_review.bootstrap import CommandContext
 from jj_review.commands.land import (
     LandAction,
     LandResult,
@@ -59,13 +60,20 @@ def _assume_content_divergent(local_commit_id: str, remote_target: str | None) -
     return "content_divergent"
 
 
+def _fake_context() -> CommandContext:
+    return cast(
+        CommandContext,
+        SimpleNamespace(config=RepoConfig()),
+    )
+
+
 def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
     prepared_status = _prepared_status(("change-1",))
     prepared_land = PreparedLand(
         cleanup_bookmarks=True,
         dry_run=True,
         bypass_readiness=False,
-        config=RepoConfig(),
+        context=_fake_context(),
         operation_lock=None,
         prepared_status=prepared_status,
         selected_pr_number=None,

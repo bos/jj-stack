@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from jj_review import ui
-from jj_review.config import RepoConfig
+from jj_review.bootstrap import CommandContext
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.review.status import PreparedStatus
 from jj_review.state.journal import LandOperationRecord, LoadedOperationRecord
@@ -52,7 +52,7 @@ class PreparedLand:
     cleanup_bookmarks: bool
     dry_run: bool
     bypass_readiness: bool
-    config: RepoConfig
+    context: CommandContext
     operation_lock: OperationLock | None
     prepared_status: PreparedStatus
     selected_pr_number: int | None
