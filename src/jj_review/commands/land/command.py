@@ -208,6 +208,7 @@ def _prepare_land(
         jj_client=context.jj_client,
         re_resolve_after_remote_refresh=True,
         revset=revset,
+        state_store=context.state_store,
     )
     prepared = prepared_status.prepared
     if prepared.remote is None:

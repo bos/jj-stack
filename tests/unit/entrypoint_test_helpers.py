@@ -14,6 +14,7 @@ def app_context(
     return SimpleNamespace(
         repo_root=tmp_path,
         jj_client=JjClient(tmp_path),
+        state_store=SimpleNamespace(),
         config=SimpleNamespace(
             change={},
             logging=SimpleNamespace(level="WARNING"),

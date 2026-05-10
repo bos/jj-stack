@@ -56,6 +56,7 @@ def test_run_import_current_rejects_before_github_inspection(
         SimpleNamespace(
             config=RepoConfig(),
             jj_client=cast(JjClient, jj_client),
+            state_store=SimpleNamespace(),
         ),
     )
 

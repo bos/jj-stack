@@ -426,7 +426,6 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
 
 def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
     tmp_path,
-    monkeypatch,
 ) -> None:
     first = LocalRevision(
         change_id="aaaaaaaa1234",
@@ -501,13 +500,10 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
         def list_operations(self) -> list[object]:
             return []
 
-    def build_client(saved_state: ReviewState) -> FakeClient:
+    def build_client(saved_state: ReviewState) -> tuple[FakeClient, FakeStateStore]:
         client = FakeClient(tmp_path)
-        monkeypatch.setattr(
-            "jj_review.review.status.ReviewStateStore.for_repo",
-            lambda _: FakeStateStore(saved_state),
-        )
-        return client
+        state_store = FakeStateStore(saved_state)
+        return client, state_store
 
     pinned_state = ReviewState(
         changes={
@@ -515,18 +511,28 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
             "bbbbbbbb5678": CachedChange(bookmark="review/feature-2-bbbbbbbb"),
         }
     )
-    client = build_client(pinned_state)
-    _prepare_status_for_test(config=RepoConfig(), fetch_remote_state=False, jj_client=client)
+    client, state_store = build_client(pinned_state)
+    _prepare_status_for_test(
+        config=RepoConfig(),
+        fetch_remote_state=False,
+        jj_client=client,
+        state_store=state_store,
+    )
     assert client.list_calls == [
         ("review/feature-1-aaaaaaaa", "review/feature-2-bbbbbbbb"),
     ]
 
-    client = build_client(
+    client, state_store = build_client(
         ReviewState(
             changes={"aaaaaaaa1234": CachedChange(bookmark="review/feature-1-aaaaaaaa")}
         )
     )
-    _prepare_status_for_test(config=RepoConfig(), fetch_remote_state=False, jj_client=client)
+    _prepare_status_for_test(
+        config=RepoConfig(),
+        fetch_remote_state=False,
+        jj_client=client,
+        state_store=state_store,
+    )
     assert client.list_calls == [None]
 
 
@@ -632,6 +638,7 @@ def _prepare_status_for_test(
     config: RepoConfig,
     fetch_remote_state: bool,
     jj_client,
+    state_store,
 ) -> PreparedStatus:
     from jj_review.jj import JjClient
     from jj_review.review.status import prepare_status
@@ -641,4 +648,5 @@ def _prepare_status_for_test(
         fetch_remote_state=fetch_remote_state,
         jj_client=cast(JjClient, jj_client),
         revset=None,
+        state_store=cast(ReviewStateStore, state_store),
     )

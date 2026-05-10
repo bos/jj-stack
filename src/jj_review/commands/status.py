@@ -173,8 +173,7 @@ def _run_status(
 
     if not options.selectors:
         prepared_status = _prepare_status_with_spinner(
-            config=context.config,
-            jj_client=context.jj_client,
+            context=context,
             revset=None,
         )
         exit_code = _render_prepared_status(
@@ -202,8 +201,7 @@ def _run_status(
                 selector=selector,
             )
             prepared_status = _prepare_status_with_spinner(
-                config=context.config,
-                jj_client=context.jj_client,
+                context=context,
                 revset=resolved_selector.revset,
             )
         except CliError as error:
@@ -386,17 +384,17 @@ def _resolve_status_selector(
 
 def _prepare_status_for_revset(
     *,
-    config: RepoConfig,
-    jj_client: JjClient,
+    context: CommandContext,
     revset: str | None,
 ):
     try:
         return prepare_status(
-            config=config,
+            config=context.config,
             fetch_remote_state=False,
-            jj_client=jj_client,
+            jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=revset,
+            state_store=context.state_store,
         )
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
@@ -404,14 +402,12 @@ def _prepare_status_for_revset(
 
 def _prepare_status_with_spinner(
     *,
-    config: RepoConfig,
-    jj_client: JjClient,
+    context: CommandContext,
     revset: str | None,
 ):
     with console.spinner(description="Inspecting jj stack"):
         return _prepare_status_for_revset(
-            config=config,
-            jj_client=jj_client,
+            context=context,
             revset=revset,
         )
 

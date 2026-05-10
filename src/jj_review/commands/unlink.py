@@ -162,6 +162,7 @@ async def _prepare_unlink(
             jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=revset,
+            state_store=context.state_store,
         )
     prepared = prepared_status.prepared
     if not prepared.status_revisions:

@@ -461,6 +461,7 @@ def prepare_close(
             jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=revset,
+            state_store=context.state_store,
         ),
     )
 

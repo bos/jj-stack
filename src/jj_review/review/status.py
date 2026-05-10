@@ -227,10 +227,10 @@ def prepare_status(
     persist_bookmarks: bool = False,
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
+    state_store: ReviewStateStore,
 ) -> PreparedStatus:
     """Resolve local status inputs before any GitHub network inspection."""
 
-    state_store = ReviewStateStore.for_repo(jj_client.repo_root)
     state = state_store.load()
     remotes = jj_client.list_git_remotes()
     remote: GitRemote | None = None

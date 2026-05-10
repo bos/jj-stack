@@ -255,6 +255,7 @@ async def _prepare_import(
             jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=selection.selected_revset,
+            state_store=context.state_store,
         )
     if (
         selection.default_current_stack
