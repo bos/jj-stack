@@ -246,10 +246,10 @@ class _CleanupActionRecorder:
         return tuple(self.actions)
 
 
-def _render_cleanup_action_header(*, dry_run: bool) -> str:
+def _render_cleanup_action_header(*, options: CleanupOptions) -> str:
     """Render the cleanup action section header."""
 
-    return "Planned cleanup actions:" if dry_run else "Applied cleanup actions:"
+    return "Planned cleanup actions:" if options.dry_run else "Applied cleanup actions:"
 
 
 def _render_cleanup_postamble(*, result: CleanupResult) -> tuple[str, ...]:
@@ -277,10 +277,10 @@ def _render_rebase_preamble(*, prepared_rebase: PreparedRebase) -> tuple[tuple[s
     )
 
 
-def _render_rebase_action_header(*, dry_run: bool) -> str:
+def _render_rebase_action_header(*, options: CleanupOptions) -> str:
     """Render the rebase action section header."""
 
-    return "Planned rebase actions:" if dry_run else "Applied rebase actions:"
+    return "Planned rebase actions:" if options.dry_run else "Applied rebase actions:"
 
 
 def _render_rebase_postamble(*, result: RebaseResult) -> tuple[str, ...]:
@@ -362,7 +362,7 @@ def _run_cleanup_rebase_command(
     try:
         result = _stream_rebase(
             on_action=_build_action_streamer(
-                dry_run=prepared_rebase.dry_run,
+                options=prepared_rebase.options,
                 render_header=_render_rebase_action_header,
             ),
             prepared_rebase=prepared_rebase,
@@ -412,7 +412,7 @@ def _run_cleanup_command(
     result = asyncio.run(
         _run_cleanup_async(
             on_action=_build_action_streamer(
-                dry_run=prepared_cleanup.dry_run,
+                options=prepared_cleanup.options,
                 render_header=_render_cleanup_action_header,
             ),
             prepared_cleanup=prepared_cleanup,
@@ -467,7 +467,7 @@ def _emit_output_lines(lines: tuple[str, ...]) -> None:
 
 def _build_action_streamer(
     *,
-    dry_run: bool,
+    options: CleanupOptions,
     render_header: Callable[..., str],
 ) -> Callable[[CleanupAction], None]:
     """Print the action header once, then stream actions as they arrive."""
@@ -477,7 +477,7 @@ def _build_action_streamer(
     def emit_action(action: CleanupAction) -> None:
         nonlocal header_printed
         if not header_printed:
-            console.output(render_header(dry_run=dry_run))
+            console.output(render_header(options=options))
             header_printed = True
         prefix, prefix_style, body_style = _action_presentation(action.status)
         body = action.body
