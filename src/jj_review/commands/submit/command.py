@@ -27,7 +27,6 @@ from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
-from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.resolution import (
@@ -223,9 +222,10 @@ def _submit_draft_mode(
 
 def _resolve_submit_options(
     *,
-    config: RepoConfig,
+    context: CommandContext,
     options: SubmitOptions,
 ) -> ResolvedSubmitOptions:
+    config = context.config
     return ResolvedSubmitOptions(
         labels=config.labels if options.labels is None else options.labels,
         reviewers=config.reviewers if options.reviewers is None else options.reviewers,
@@ -402,11 +402,10 @@ async def _run_submit_async(
     operation_lock: OperationLock,
     options: SubmitOptions,
 ) -> SubmitResult:
-    config = context.config
     dry_run = options.dry_run
     state_store = context.state_store
     resolved_options = _resolve_submit_options(
-        config=config,
+        context=context,
         options=options,
     )
     with console.spinner(description="Preparing submit"):
