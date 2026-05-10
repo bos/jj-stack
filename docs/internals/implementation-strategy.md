@@ -136,7 +136,7 @@ mode flags, cleanup helpers derive shared values from that prepared target, and 
 untracked fast path reads shared dependencies from that context.
 Abort submit retraction receives `AbortRun` so its command context and parsed options
 move together through the live execution path, including per-change local and GitHub
-retraction helpers and recorded-stack visibility predicates.
+retraction helpers, recorded-stack visibility predicates, and operation-notice planning.
 
 ## Repository layout
 
