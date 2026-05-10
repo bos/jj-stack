@@ -196,36 +196,39 @@ def _find_resume_land_operation(
     )
     tail_match: ResumeLandOperation | None = None
     for loaded in stale_operations:
-        intent = loaded.operation
-        if not isinstance(intent, LandOperationRecord):
+        operation = loaded.operation
+        if not isinstance(operation, LandOperationRecord):
             continue
-        if intent.display_revset != prepared_status.selected_revset:
+        if operation.display_revset != prepared_status.selected_revset:
             continue
-        if intent.bypass_readiness != bypass_readiness:
+        if operation.bypass_readiness != bypass_readiness:
             continue
-        if intent.cleanup_bookmarks != cleanup_bookmarks:
-            continue
-        if intent.selected_pr_number != selected_pr_number or intent.trunk_branch != trunk_branch:
+        if operation.cleanup_bookmarks != cleanup_bookmarks:
             continue
         if (
-            intent.ordered_change_ids == current_change_ids
-            and intent.ordered_commit_ids == current_commit_ids
-            and intent.landed_change_ids == current_planned_change_ids
+            operation.selected_pr_number != selected_pr_number
+            or operation.trunk_branch != trunk_branch
+        ):
+            continue
+        if (
+            operation.ordered_change_ids == current_change_ids
+            and operation.ordered_commit_ids == current_commit_ids
+            and operation.landed_change_ids == current_planned_change_ids
         ):
             return ResumeLandOperation(
-                operation=intent,
+                operation=operation,
                 path=loaded.path,
                 mode="exact-path",
             )
-        prefix_length = len(intent.landed_change_ids)
-        if intent.ordered_change_ids[:prefix_length] != intent.landed_change_ids:
+        prefix_length = len(operation.landed_change_ids)
+        if operation.ordered_change_ids[:prefix_length] != operation.landed_change_ids:
             continue
         if (
-            intent.ordered_change_ids[prefix_length:] == current_change_ids
-            and intent.ordered_commit_ids[prefix_length:] == current_commit_ids
+            operation.ordered_change_ids[prefix_length:] == current_change_ids
+            and operation.ordered_commit_ids[prefix_length:] == current_commit_ids
         ):
             tail_match = ResumeLandOperation(
-                operation=intent,
+                operation=operation,
                 path=loaded.path,
                 mode="tail-after-landed-prefix",
             )

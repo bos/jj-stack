@@ -1037,7 +1037,7 @@ def _interrupted_operation_blocks_status(*, loaded, prepared_status) -> bool:
 
     if isinstance(loaded.operation, SubmitOperationRecord):
         decision = submit_status_decision(
-            intent=loaded.operation,
+            operation=loaded.operation,
             current_change_ids=current_change_ids,
             current_commit_ids=current_commit_ids,
             current_identity=_current_submit_identity(prepared_status=prepared_status),
@@ -1073,52 +1073,52 @@ def _render_interrupted_operation_block(
     loaded,
     prepared_status,
 ) -> tuple[object, ...]:
-    intent = loaded.operation
-    header = _render_interrupted_operation_header(intent)
+    operation = loaded.operation
+    header = _render_interrupted_operation_header(operation)
     lines: list[object] = [("  ", header)]
 
-    if pid_is_alive(intent.pid):
+    if pid_is_alive(operation.pid):
         lines.append(
             (
                 "    ",
-                t"still in progress (PID {intent.pid}); run "
+                t"still in progress (PID {operation.pid}); run "
                 t"{ui.cmd('jj-review status')} again after it finishes",
             )
         )
         return tuple(lines)
 
-    if isinstance(intent, SubmitOperationRecord):
+    if isinstance(operation, SubmitOperationRecord):
         detail_lines = _interrupted_submit_detail_lines(
-            intent=intent,
+            operation=operation,
             prepared_status=prepared_status,
         )
-    elif isinstance(intent, CleanupRebaseOperationRecord | CloseOperationRecord):
+    elif isinstance(operation, CleanupRebaseOperationRecord | CloseOperationRecord):
         detail_lines = _interrupted_ordered_detail_lines(
-            intent=intent,
+            operation=operation,
             match=_match_ordered_operation(
-                intent=intent,
+                operation=operation,
                 prepared_status=prepared_status,
             ),
         )
-    elif isinstance(intent, LandOperationRecord):
+    elif isinstance(operation, LandOperationRecord):
         detail_lines = _interrupted_ordered_detail_lines(
-            intent=intent,
-            match=_match_land_operation(intent=intent, prepared_status=prepared_status),
+            operation=operation,
+            match=_match_land_operation(operation=operation, prepared_status=prepared_status),
         )
-    elif isinstance(intent, RelinkOperationRecord):
+    elif isinstance(operation, RelinkOperationRecord):
         detail_lines = (
             (
                 "inspect with ",
-                _render_status_command(intent),
+                _render_status_command(operation),
                 " before rerunning ",
                 ui.cmd("jj-review relink"),
             ),
         )
-    elif isinstance(intent, CleanupOperationRecord):
+    elif isinstance(operation, CleanupOperationRecord):
         detail_lines = (
             (
                 "inspect with ",
-                _render_status_command(intent),
+                _render_status_command(operation),
                 "; rerun ",
                 ui.cmd("jj-review cleanup"),
                 " if still needed",
@@ -1133,14 +1133,20 @@ def _render_interrupted_operation_block(
 
 def _interrupted_submit_detail_lines(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     prepared_status,
 ) -> tuple[object, ...]:
-    if _recorded_stack_head_visible(intent=intent, prepared_status=prepared_status) is False:
+    if (
+        _recorded_stack_head_visible(
+            operation=operation,
+            prepared_status=prepared_status,
+        )
+        is False
+    ):
         return (
             (
                 "change ",
-                ui.change_id(_operation_selector(intent) or intent.display_revset),
+                ui.change_id(_operation_selector(operation) or operation.display_revset),
                 " from this interrupted submit is no longer visible in jj",
             ),
             (
@@ -1160,12 +1166,12 @@ def _interrupted_submit_detail_lines(
         for prepared_revision in prepared_status.prepared.status_revisions
     )
     decision = submit_status_decision(
-        intent=intent,
+        operation=operation,
         current_change_ids=current_change_ids,
         current_commit_ids=current_commit_ids,
         current_identity=_current_submit_identity(prepared_status=prepared_status),
     )
-    resume_command = _render_resume_command(intent)
+    resume_command = _render_resume_command(operation)
     abort_command = ui.cmd("jj-review abort --dry-run")
     if decision is SubmitStatusDecision.CONTINUE:
         return (
@@ -1189,7 +1195,7 @@ def _interrupted_submit_detail_lines(
         )
     return (
         "this is not the stack shown above",
-        ("inspect with ", _render_status_command(intent)),
+        ("inspect with ", _render_status_command(operation)),
         ("finish with ", resume_command, ", or preview backout with ", abort_command),
     )
 
@@ -1207,41 +1213,41 @@ def _current_submit_identity(*, prepared_status) -> SubmitRecoveryIdentity | Non
 
 def _recorded_stack_head_visible(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     prepared_status,
 ) -> bool | None:
     """Return whether the recorded submit head still resolves, when status can tell."""
 
-    if not intent.ordered_change_ids:
+    if not operation.ordered_change_ids:
         return None
     client = getattr(prepared_status.prepared, "client", None)
     if client is None:
         return None
-    head_change_id = intent.ordered_change_ids[-1]
+    head_change_id = operation.ordered_change_ids[-1]
     revisions = client.query_revisions_by_change_ids((head_change_id,)).get(head_change_id, ())
     return bool(revisions)
 
 
 def _operation_rerun_command(
-    intent: (
+    operation: (
         SubmitOperationRecord
         | CleanupRebaseOperationRecord
         | CloseOperationRecord
         | LandOperationRecord
     ),
 ) -> str:
-    if isinstance(intent, SubmitOperationRecord):
+    if isinstance(operation, SubmitOperationRecord):
         return "submit"
-    if isinstance(intent, CleanupRebaseOperationRecord):
+    if isinstance(operation, CleanupRebaseOperationRecord):
         return "cleanup --rebase"
-    if isinstance(intent, LandOperationRecord):
+    if isinstance(operation, LandOperationRecord):
         return "land"
-    return "close --cleanup" if intent.cleanup else "close"
+    return "close --cleanup" if operation.cleanup else "close"
 
 
 def _match_ordered_operation(
     *,
-    intent: CleanupRebaseOperationRecord | CloseOperationRecord,
+    operation: CleanupRebaseOperationRecord | CloseOperationRecord,
     prepared_status,
 ) -> OrderedOperationMatch:
     current_change_ids = tuple(
@@ -1252,14 +1258,14 @@ def _match_ordered_operation(
         prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
     )
-    if isinstance(intent, CleanupRebaseOperationRecord):
+    if isinstance(operation, CleanupRebaseOperationRecord):
         return match_cleanup_rebase_operation(
-            operation=intent,
+            operation=operation,
             current_change_ids=current_change_ids,
             current_commit_ids=current_commit_ids,
         )
     return match_close_operation(
-        operation=intent,
+        operation=operation,
         current_change_ids=current_change_ids,
         current_commit_ids=current_commit_ids,
     )
@@ -1267,7 +1273,7 @@ def _match_ordered_operation(
 
 def _match_land_operation(
     *,
-    intent: LandOperationRecord,
+    operation: LandOperationRecord,
     prepared_status,
 ) -> OrderedOperationMatch:
     current_change_ids = tuple(
@@ -1278,17 +1284,17 @@ def _match_land_operation(
         prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
     )
-    if intent.ordered_change_ids == current_change_ids:
-        if intent.ordered_commit_ids and intent.ordered_commit_ids == current_commit_ids:
+    if operation.ordered_change_ids == current_change_ids:
+        if operation.ordered_commit_ids and operation.ordered_commit_ids == current_commit_ids:
             return "exact"
         return "same-logical"
-    if set(intent.ordered_change_ids) == set(current_change_ids):
+    if set(operation.ordered_change_ids) == set(current_change_ids):
         return "same-logical"
-    if set(intent.ordered_change_ids).issubset(current_change_ids):
+    if set(operation.ordered_change_ids).issubset(current_change_ids):
         return "covered"
-    if set(current_change_ids).issubset(intent.ordered_change_ids):
+    if set(current_change_ids).issubset(operation.ordered_change_ids):
         return "trimmed"
-    if set(intent.ordered_change_ids) & set(current_change_ids):
+    if set(operation.ordered_change_ids) & set(current_change_ids):
         return "overlap"
     return "disjoint"
 
@@ -1296,9 +1302,9 @@ def _match_land_operation(
 def _interrupted_ordered_detail_lines(
     *,
     match: OrderedOperationMatch,
-    intent: CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
+    operation: CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
 ) -> tuple[object, ...]:
-    resume_command = _render_resume_command(intent)
+    resume_command = _render_resume_command(operation)
 
     if match == "exact":
         return (
@@ -1306,7 +1312,7 @@ def _interrupted_ordered_detail_lines(
             ("continue with ", resume_command),
         )
     if match == "same-logical":
-        command = _operation_rerun_command(intent)
+        command = _operation_rerun_command(operation)
         return (
             (
                 "the recorded stack was rewritten; rerunning ",
@@ -1325,7 +1331,7 @@ def _interrupted_ordered_detail_lines(
             "the recorded stack includes changes that are no longer in the stack shown above",
             (
                 "inspect with ",
-                _render_status_command(intent),
+                _render_status_command(operation),
                 " before continuing with ",
                 resume_command,
             ),
@@ -1335,116 +1341,116 @@ def _interrupted_ordered_detail_lines(
             "the recorded stack partly overlaps the stack shown above",
             (
                 "inspect with ",
-                _render_status_command(intent),
+                _render_status_command(operation),
                 " before continuing with ",
                 resume_command,
             ),
         )
     return (
         "this is not the stack shown above",
-        ("inspect with ", _render_status_command(intent)),
+        ("inspect with ", _render_status_command(operation)),
         ("finish with ", resume_command),
     )
 
 
 def _render_resume_command(
-    intent: (
+    operation: (
         SubmitOperationRecord
         | CleanupRebaseOperationRecord
         | CloseOperationRecord
         | LandOperationRecord
     ),
 ) -> ui.SemanticText:
-    selector = _operation_selector(intent)
-    command = f"jj-review {_operation_rerun_command(intent)}"
+    selector = _operation_selector(operation)
+    command = f"jj-review {_operation_rerun_command(operation)}"
     if selector is not None:
         command = f"{command} {selector}"
     return ui.cmd(command)
 
 
-def _render_status_command(intent) -> ui.SemanticText:
-    selector = _operation_selector(intent)
+def _render_status_command(operation) -> ui.SemanticText:
+    selector = _operation_selector(operation)
     command = "jj-review status"
     if selector is not None:
         command = f"{command} {selector}"
     return ui.cmd(command)
 
 
-def _operation_selector(intent) -> str | None:
+def _operation_selector(operation) -> str | None:
     if isinstance(
-        intent,
+        operation,
         SubmitOperationRecord
         | CleanupRebaseOperationRecord
         | CloseOperationRecord
         | LandOperationRecord,
     ):
-        if intent.ordered_change_ids:
-            return short_change_id(intent.ordered_change_ids[-1])
-    if isinstance(intent, RelinkOperationRecord):
-        return short_change_id(intent.change_id)
+        if operation.ordered_change_ids:
+            return short_change_id(operation.ordered_change_ids[-1])
+    if isinstance(operation, RelinkOperationRecord):
+        return short_change_id(operation.change_id)
     return None
 
 
-def _render_interrupted_operation_header(intent) -> object:
-    started = _render_started_at(intent)
+def _render_interrupted_operation_header(operation) -> object:
+    started = _render_started_at(operation)
     if isinstance(
-        intent,
+        operation,
         SubmitOperationRecord
         | CleanupRebaseOperationRecord
         | CloseOperationRecord
         | LandOperationRecord,
     ):
         return (
-            _render_operation_command(intent),
+            _render_operation_command(operation),
             " for ",
-            _render_recorded_stack_head(intent),
+            _render_recorded_stack_head(operation),
             ", ",
             started,
             " from ",
-            ui.revset(intent.display_revset),
+            ui.revset(operation.display_revset),
         )
-    if isinstance(intent, RelinkOperationRecord):
+    if isinstance(operation, RelinkOperationRecord):
         return (
-            _render_operation_command(intent),
+            _render_operation_command(operation),
             " for ",
-            ui.change_id(intent.change_id),
+            ui.change_id(operation.change_id),
             ", ",
             started,
         )
-    return (_render_operation_command(intent), ", ", started)
+    return (_render_operation_command(operation), ", ", started)
 
 
-def _render_operation_command(intent) -> object:
-    if isinstance(intent, SubmitOperationRecord):
+def _render_operation_command(operation) -> object:
+    if isinstance(operation, SubmitOperationRecord):
         return ui.cmd("submit")
-    if isinstance(intent, CleanupRebaseOperationRecord):
+    if isinstance(operation, CleanupRebaseOperationRecord):
         return ui.cmd("cleanup --rebase")
-    if isinstance(intent, CloseOperationRecord):
-        return ui.cmd("close --cleanup" if intent.cleanup else "close")
-    if isinstance(intent, LandOperationRecord):
+    if isinstance(operation, CloseOperationRecord):
+        return ui.cmd("close --cleanup" if operation.cleanup else "close")
+    if isinstance(operation, LandOperationRecord):
         return ui.cmd("land")
-    if isinstance(intent, RelinkOperationRecord):
+    if isinstance(operation, RelinkOperationRecord):
         return ui.cmd("relink")
-    if isinstance(intent, CleanupOperationRecord):
+    if isinstance(operation, CleanupOperationRecord):
         return ui.cmd("cleanup")
-    return intent.label
+    return operation.label
 
 
 def _render_recorded_stack_head(
-    intent: (
+    operation: (
         SubmitOperationRecord
         | CleanupRebaseOperationRecord
         | CloseOperationRecord
         | LandOperationRecord
     ),
 ) -> object:
-    if not intent.ordered_change_ids:
+    if not operation.ordered_change_ids:
         return "stack"
-    return ui.change_id(intent.ordered_change_ids[-1])
+    return ui.change_id(operation.ordered_change_ids[-1])
 
 
-def _render_started_at(intent) -> str:
-    started_at = getattr(intent, "started_at", None)
+def _render_started_at(operation) -> str:
+    started_at = getattr(operation, "started_at", None)
     if not isinstance(started_at, str):
         return "started at unknown time"
     return f"started {_format_operation_age(started_at)}"
@@ -1694,10 +1700,10 @@ def _prefixed_operation_line(description: object, status: object) -> object:
     return ui.prefixed_line("  ", (description, "  ", status))
 
 
-def _render_operation_description(intent) -> object:
-    if isinstance(intent, CleanupOperationRecord):
+def _render_operation_description(operation) -> object:
+    if isinstance(operation, CleanupOperationRecord):
         return ui.cmd("cleanup")
-    return describe_operation(intent)
+    return describe_operation(operation)
 
 
 def _revision_has_link_advisory(revision) -> bool:

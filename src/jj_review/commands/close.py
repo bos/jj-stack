@@ -702,7 +702,7 @@ def _retire_submit_operations_cleared_by_cleanup(
         if should_retire_submit_after_cleanup(
             observation=_observe_submit_artifacts(
                 current_state=current_state,
-                intent=operation,
+                operation=operation,
                 jj_client=jj_client,
             )
         ):
@@ -735,22 +735,22 @@ def _retire_superseded_close_operations(
 def _observe_submit_artifacts(
     *,
     current_state: ReviewState,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     jj_client: JjClient,
 ) -> SubmitArtifactObservation:
     """Collect the live artifact state for a recorded submit operation."""
 
     remotes_by_name = {remote.name: remote for remote in jj_client.list_git_remotes()}
-    recorded_remote = remotes_by_name.get(intent.remote_name)
+    recorded_remote = remotes_by_name.get(operation.remote_name)
     if recorded_remote is None:
         target_relation = SubmitTargetRelation.UNKNOWN
     else:
         current_github_repository = parse_github_repo(recorded_remote)
         target_relation = (
             SubmitTargetRelation.MATCH
-            if SubmitRecoveryIdentity.from_operation(intent)
+            if SubmitRecoveryIdentity.from_operation(operation)
             == SubmitRecoveryIdentity.from_github_repository(
-                remote_name=intent.remote_name,
+                remote_name=operation.remote_name,
                 github_repository=current_github_repository,
             )
             else SubmitTargetRelation.MISMATCH
@@ -758,10 +758,10 @@ def _observe_submit_artifacts(
 
     return observe_submit_artifacts(
         current_changes=current_state.changes,
-        intent=intent,
+        operation=operation,
         bookmark_states={
             bookmark: jj_client.get_bookmark_state(bookmark)
-            for bookmark in intent.bookmarks.values()
+            for bookmark in operation.bookmarks.values()
         },
         target_relation=target_relation,
     )

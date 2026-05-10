@@ -76,36 +76,36 @@ class SubmitArtifactObservation:
 
 def submit_stack_relation(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
 ) -> SubmitStackRelation:
     """Classify how the current stack relates to a recorded submit snapshot."""
 
-    if intent.ordered_commit_ids and intent.ordered_commit_ids == current_commit_ids:
+    if operation.ordered_commit_ids and operation.ordered_commit_ids == current_commit_ids:
         return SubmitStackRelation.EXACT
-    if set(intent.ordered_change_ids) & set(current_change_ids):
+    if set(operation.ordered_change_ids) & set(current_change_ids):
         return SubmitStackRelation.REWRITTEN
     return SubmitStackRelation.DISJOINT
 
 
 def submit_target_relation(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     current_identity: SubmitRecoveryIdentity | None,
 ) -> SubmitTargetRelation:
     """Classify whether the current submit target matches the recorded one."""
 
     if current_identity is None:
         return SubmitTargetRelation.UNKNOWN
-    if SubmitRecoveryIdentity.from_operation(intent) == current_identity:
+    if SubmitRecoveryIdentity.from_operation(operation) == current_identity:
         return SubmitTargetRelation.MATCH
     return SubmitTargetRelation.MISMATCH
 
 
 def submit_status_decision(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
     current_identity: SubmitRecoveryIdentity | None,
@@ -113,13 +113,13 @@ def submit_status_decision(
     """Return the user-facing recovery decision for an interrupted submit."""
 
     stack_relation = submit_stack_relation(
-        intent=intent,
+        operation=operation,
         current_change_ids=current_change_ids,
         current_commit_ids=current_commit_ids,
     )
     if stack_relation is SubmitStackRelation.EXACT:
         target_relation = submit_target_relation(
-            intent=intent,
+            operation=operation,
             current_identity=current_identity,
         )
         if target_relation is SubmitTargetRelation.MATCH:
@@ -132,22 +132,22 @@ def submit_status_decision(
 
 def recorded_submit_still_exists_exactly(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     commit_ids_by_change_id: dict[str, str],
 ) -> bool:
     """Return whether a recorded submit stack still exists exactly in the repo."""
 
-    if not intent.ordered_commit_ids:
+    if not operation.ordered_commit_ids:
         return False
-    if len(intent.ordered_commit_ids) != len(intent.ordered_change_ids):
+    if len(operation.ordered_commit_ids) != len(operation.ordered_change_ids):
         return False
     current_commit_ids = []
-    for change_id in intent.ordered_change_ids:
+    for change_id in operation.ordered_change_ids:
         commit_id = commit_ids_by_change_id.get(change_id)
         if commit_id is None:
             return False
         current_commit_ids.append(commit_id)
-    return tuple(current_commit_ids) == intent.ordered_commit_ids
+    return tuple(current_commit_ids) == operation.ordered_commit_ids
 
 
 def should_retire_submit_after_submit(
@@ -169,24 +169,24 @@ def should_retire_submit_after_submit(
 def observe_submit_artifacts(
     *,
     current_changes: dict[str, CachedChange],
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     bookmark_states: dict[str, BookmarkState],
     target_relation: SubmitTargetRelation,
 ) -> SubmitArtifactObservation:
     """Summarize whether a recorded submit still has live review artifacts."""
 
-    intent_bookmarks = frozenset(intent.bookmarks.values())
+    operation_bookmarks = frozenset(operation.bookmarks.values())
     saved_state_live = any(
         _cached_change_has_live_review_artifacts(cached_change)
-        for change_id in intent.ordered_change_ids
+        for change_id in operation.ordered_change_ids
         if (cached_change := current_changes.get(change_id)) is not None
     ) or any(
-        cached_change.bookmark in intent_bookmarks
+        cached_change.bookmark in operation_bookmarks
         and _cached_change_has_live_review_artifacts(cached_change)
         for cached_change in current_changes.values()
     )
     local_bookmark_live = any(
-        bookmark_states[bookmark].local_target is not None for bookmark in intent_bookmarks
+        bookmark_states[bookmark].local_target is not None for bookmark in operation_bookmarks
     )
 
     return SubmitArtifactObservation(
@@ -197,8 +197,8 @@ def observe_submit_artifacts(
         ),
         remote_bookmarks=_observe_remote_submit_bookmarks(
             bookmark_states=bookmark_states,
-            intent=intent,
-            intent_bookmarks=intent_bookmarks,
+            operation=operation,
+            operation_bookmarks=operation_bookmarks,
             target_relation=target_relation,
         ),
     )
@@ -253,8 +253,8 @@ def _cached_change_has_live_review_artifacts(cached_change: CachedChange) -> boo
 def _observe_remote_submit_bookmarks(
     *,
     bookmark_states: dict[str, BookmarkState],
-    intent: SubmitOperationRecord,
-    intent_bookmarks: frozenset[str],
+    operation: SubmitOperationRecord,
+    operation_bookmarks: frozenset[str],
     target_relation: SubmitTargetRelation,
 ) -> ArtifactPresence:
     """Return whether the recorded remote bookmarks can still be observed."""
@@ -262,8 +262,8 @@ def _observe_remote_submit_bookmarks(
     if target_relation is not SubmitTargetRelation.MATCH:
         return ArtifactPresence.UNKNOWN
 
-    for bookmark in intent_bookmarks:
-        remote_state = bookmark_states[bookmark].remote_target(intent.remote_name)
+    for bookmark in operation_bookmarks:
+        remote_state = bookmark_states[bookmark].remote_target(operation.remote_name)
         if remote_state is not None and remote_state.targets:
             return ArtifactPresence.PRESENT
     return ArtifactPresence.ABSENT

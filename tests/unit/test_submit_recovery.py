@@ -46,23 +46,23 @@ def _make_submit_operation(
 
 
 def test_submit_status_decision_is_continue_only_for_exact_matching_target() -> None:
-    intent = _make_submit_operation()
-    identity = SubmitRecoveryIdentity.from_operation(intent)
+    operation = _make_submit_operation()
+    identity = SubmitRecoveryIdentity.from_operation(operation)
 
     assert (
         submit_status_decision(
-            intent=intent,
-            current_change_ids=intent.ordered_change_ids,
-            current_commit_ids=intent.ordered_commit_ids,
+            operation=operation,
+            current_change_ids=operation.ordered_change_ids,
+            current_commit_ids=operation.ordered_commit_ids,
             current_identity=identity,
         )
         is SubmitStatusDecision.CONTINUE
     )
     assert (
         submit_status_decision(
-            intent=intent,
-            current_change_ids=intent.ordered_change_ids,
-            current_commit_ids=intent.ordered_commit_ids,
+            operation=operation,
+            current_change_ids=operation.ordered_change_ids,
+            current_commit_ids=operation.ordered_commit_ids,
             current_identity=SubmitRecoveryIdentity(
                 remote_name="origin",
                 github_host="github.test",
@@ -74,17 +74,17 @@ def test_submit_status_decision_is_continue_only_for_exact_matching_target() -> 
     )
     assert (
         submit_status_decision(
-            intent=intent,
-            current_change_ids=intent.ordered_change_ids,
-            current_commit_ids=intent.ordered_commit_ids,
+            operation=operation,
+            current_change_ids=operation.ordered_change_ids,
+            current_commit_ids=operation.ordered_commit_ids,
             current_identity=None,
         )
         is SubmitStatusDecision.INSPECT
     )
     assert (
         submit_status_decision(
-            intent=intent,
-            current_change_ids=intent.ordered_change_ids,
+            operation=operation,
+            current_change_ids=operation.ordered_change_ids,
             current_commit_ids=("new-aaaa", "new-bbbb"),
             current_identity=identity,
         )
@@ -92,7 +92,7 @@ def test_submit_status_decision_is_continue_only_for_exact_matching_target() -> 
     )
     assert (
         submit_status_decision(
-            intent=intent,
+            operation=operation,
             current_change_ids=("cccc",),
             current_commit_ids=("commit-cccc",),
             current_identity=identity,
@@ -102,18 +102,18 @@ def test_submit_status_decision_is_continue_only_for_exact_matching_target() -> 
 
 
 def test_recorded_submit_still_exists_exactly_requires_full_exact_snapshot() -> None:
-    intent = _make_submit_operation()
+    operation = _make_submit_operation()
 
     assert recorded_submit_still_exists_exactly(
-        intent=intent,
+        operation=operation,
         commit_ids_by_change_id={"aaaa": "commit-aaaa", "bbbb": "commit-bbbb"},
     )
     assert not recorded_submit_still_exists_exactly(
-        intent=intent,
+        operation=operation,
         commit_ids_by_change_id={"aaaa": "commit-aaaa", "bbbb": "new-bbbb"},
     )
     assert not recorded_submit_still_exists_exactly(
-        intent=intent,
+        operation=operation,
         commit_ids_by_change_id={"aaaa": "commit-aaaa"},
     )
 

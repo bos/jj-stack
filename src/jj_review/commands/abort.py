@@ -182,13 +182,13 @@ async def _abort_operation_async(
     loaded: LoadedOperationRecord,
     options: AbortOptions,
 ) -> AbortResult:
-    intent = loaded.operation
+    operation = loaded.operation
     dry_run = options.dry_run
 
-    if isinstance(intent, SubmitOperationRecord):
+    if isinstance(operation, SubmitOperationRecord):
         return await _abort_submit(
             dry_run=dry_run,
-            intent=intent,
+            operation=operation,
             loaded=loaded,
             jj_client=context.jj_client,
             state_store=context.state_store,
@@ -198,7 +198,7 @@ async def _abort_operation_async(
     # operations themselves either mutate local jj history in ways that aren't
     # straightforwardly reversible (cleanup rebase, land) or have no reversible
     # per-change state tracked in the record (cleanup, relink, close).
-    note = _non_submit_note(intent)
+    note = _non_submit_note(operation)
     actions: list[AbortAction] = []
     if note:
         actions.append(AbortAction(kind="note", body=note, status="skipped"))
@@ -210,27 +210,27 @@ async def _abort_operation_async(
         actions=tuple(actions),
         applied=not dry_run,
         dry_run=dry_run,
-        operation_kind=intent.kind,
-        operation_label=describe_operation(intent),
-        operation_started_at=intent.started_at,
+        operation_kind=operation.kind,
+        operation_label=describe_operation(operation),
+        operation_started_at=operation.started_at,
     )
 
 
-def _non_submit_note(intent) -> Message | None:
-    if isinstance(intent, LandOperationRecord):
+def _non_submit_note(operation) -> Message | None:
+    if isinstance(operation, LandOperationRecord):
         return t"Landing cannot be retracted; changes already merged to trunk are " \
             t"permanent. The interrupted-operation notice will be cleared so future " \
             t"commands can proceed. Run {ui.cmd('status')} to inspect the current state."
-    if isinstance(intent, CleanupRebaseOperationRecord):
+    if isinstance(operation, CleanupRebaseOperationRecord):
         return t"Rebase changes to local jj history cannot be automatically reversed. " \
             t"The interrupted-operation notice will be cleared. Inspect with " \
             t"{ui.cmd('jj log')} and repair manually if needed."
-    if isinstance(intent, CloseOperationRecord):
+    if isinstance(operation, CloseOperationRecord):
         return t"Close operations cannot be automatically reversed here. " \
             t"The interrupted-operation notice will be cleared. Run {ui.cmd('status')} " \
             t"to inspect which pull requests were closed, and reopen them on GitHub " \
             t"if needed."
-    if isinstance(intent, RelinkOperationRecord):
+    if isinstance(operation, RelinkOperationRecord):
         return t"Relink changes which PR a change tracks in local data. " \
             t"The interrupted-operation notice will be cleared. Run {ui.cmd('status')} " \
             t"to confirm the current link state looks correct."
@@ -245,7 +245,7 @@ def _non_submit_note(intent) -> Message | None:
 async def _abort_submit(
     *,
     dry_run: bool,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     loaded: LoadedOperationRecord,
     jj_client: JjClient,
     state_store: ReviewStateStore,
@@ -253,9 +253,9 @@ async def _abort_submit(
     """Retract a partial submit: close PRs, delete remote branches, clear state."""
 
     actions: list[AbortAction] = []
-    if not _submit_operation_matches_recorded_stack(intent=intent, jj_client=jj_client):
-        if not _submit_operation_head_visible(intent=intent, jj_client=jj_client):
-            selector = _submit_operation_selector(intent)
+    if not _submit_operation_matches_recorded_stack(operation=operation, jj_client=jj_client):
+        if not _submit_operation_head_visible(operation=operation, jj_client=jj_client):
+            selector = _submit_operation_selector(operation)
             changed = "would be changed" if dry_run else "were changed"
             actions.append(
                 AbortAction(
@@ -277,9 +277,9 @@ async def _abort_submit(
                 actions=tuple(actions),
                 applied=not dry_run,
                 dry_run=dry_run,
-                operation_kind=intent.kind,
-                operation_label=describe_operation(intent),
-                operation_started_at=intent.started_at,
+                operation_kind=operation.kind,
+                operation_label=describe_operation(operation),
+                operation_started_at=operation.started_at,
             )
 
         actions.append(
@@ -296,9 +296,9 @@ async def _abort_submit(
             AbortAction(
                 kind="notice",
                 body=t"kept — to continue, run "
-                t"{ui.cmd(f'jj-review submit {_submit_operation_selector(intent)}')}; "
+                t"{ui.cmd(f'jj-review submit {_submit_operation_selector(operation)}')}; "
                 t"to retract the partial work, run "
-                t"{ui.cmd(f'jj-review close --cleanup {_submit_operation_selector(intent)}')}",
+                t"{ui.cmd(f'jj-review close --cleanup {_submit_operation_selector(operation)}')}",
                 status="skipped",
             )
         )
@@ -306,18 +306,18 @@ async def _abort_submit(
             actions=tuple(actions),
             applied=False,
             dry_run=dry_run,
-            operation_kind=intent.kind,
-            operation_label=describe_operation(intent),
-            operation_started_at=intent.started_at,
+            operation_kind=operation.kind,
+            operation_label=describe_operation(operation),
+            operation_started_at=operation.started_at,
         )
 
     state = state_store.load()
     next_changes = dict(state.changes)
-    remote_name = intent.remote_name
+    remote_name = operation.remote_name
     recorded_github_repository = ParsedGithubRepo(
-        host=intent.github_host,
-        owner=intent.github_owner,
-        repo=intent.github_repo,
+        host=operation.github_host,
+        owner=operation.github_owner,
+        repo=operation.github_repo,
     )
     remotes_by_name = {remote.name: remote for remote in jj_client.list_git_remotes()}
     remote_branch_cleanup_block: Message | None = None
@@ -340,12 +340,12 @@ async def _abort_submit(
     ) as github_client:
         with console.progress(
             description="Retracting submitted changes",
-            total=len(intent.ordered_change_ids),
+            total=len(operation.ordered_change_ids),
         ) as progress:
-            for change_id in intent.ordered_change_ids:
+            for change_id in operation.ordered_change_ids:
                 ok = await _retract_one_change(
                     actions=actions,
-                    bookmark=intent.bookmarks.get(change_id),
+                    bookmark=operation.bookmarks.get(change_id),
                     cached=state.changes.get(change_id),
                     change_id=change_id,
                     dry_run=dry_run,
@@ -393,52 +393,52 @@ async def _abort_submit(
         actions=tuple(actions),
         applied=all_retracted and not dry_run,
         dry_run=dry_run,
-        operation_kind=intent.kind,
-        operation_label=describe_operation(intent),
-        operation_started_at=intent.started_at,
+        operation_kind=operation.kind,
+        operation_label=describe_operation(operation),
+        operation_started_at=operation.started_at,
     )
 
 
 def _submit_operation_matches_recorded_stack(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     jj_client: JjClient,
 ) -> bool:
     """Return True when the recorded submit stack still exists exactly."""
 
-    revisions_by_change_id = jj_client.query_revisions_by_change_ids(intent.ordered_change_ids)
+    revisions_by_change_id = jj_client.query_revisions_by_change_ids(operation.ordered_change_ids)
     commit_ids_by_change_id: dict[str, str] = {}
-    for change_id in intent.ordered_change_ids:
+    for change_id in operation.ordered_change_ids:
         revisions = revisions_by_change_id.get(change_id, ())
         if len(revisions) != 1:
             return False
         commit_ids_by_change_id[change_id] = revisions[0].commit_id
 
     return recorded_submit_still_exists_exactly(
-        intent=intent,
+        operation=operation,
         commit_ids_by_change_id=commit_ids_by_change_id,
     )
 
 
 def _submit_operation_head_visible(
     *,
-    intent: SubmitOperationRecord,
+    operation: SubmitOperationRecord,
     jj_client: JjClient,
 ) -> bool:
     """Return True when the interrupted submit's top change still resolves."""
 
-    if not intent.ordered_change_ids:
+    if not operation.ordered_change_ids:
         return False
-    head_change_id = intent.ordered_change_ids[-1]
+    head_change_id = operation.ordered_change_ids[-1]
     return bool(
         jj_client.query_revisions_by_change_ids((head_change_id,)).get(head_change_id, ())
     )
 
 
-def _submit_operation_selector(intent: SubmitOperationRecord) -> str:
-    if intent.ordered_change_ids:
-        return short_change_id(intent.ordered_change_ids[-1])
-    return intent.display_revset
+def _submit_operation_selector(operation: SubmitOperationRecord) -> str:
+    if operation.ordered_change_ids:
+        return short_change_id(operation.ordered_change_ids[-1])
+    return operation.display_revset
 
 
 async def _retract_one_change(

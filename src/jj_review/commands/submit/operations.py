@@ -139,7 +139,7 @@ def _report_stale_submit_operations(
             continue
         operation = loaded.operation
         decision = submit_status_decision(
-            intent=operation,
+            operation=operation,
             current_change_ids=ordered_change_ids,
             current_commit_ids=ordered_commit_ids,
             current_identity=SubmitRecoveryIdentity.from_operation(current_operation),
@@ -191,24 +191,24 @@ def repair_interrupted_untracked_remote_bookmarks(
 
     stale_submit_operations: list[SubmitOperationRecord] = []
     for loaded in scan_incomplete_operation_records(state_dir):
-        intent = loaded.operation
-        if not isinstance(intent, SubmitOperationRecord):
+        operation = loaded.operation
+        if not isinstance(operation, SubmitOperationRecord):
             continue
-        if pid_is_alive(intent.pid):
+        if pid_is_alive(operation.pid):
             continue
-        if intent.remote_name != remote.name:
+        if operation.remote_name != remote.name:
             continue
         if (
-            intent.github_host,
-            intent.github_owner,
-            intent.github_repo,
+            operation.github_host,
+            operation.github_owner,
+            operation.github_repo,
         ) != (
             current_github_repository.host,
             current_github_repository.owner,
             current_github_repository.repo,
         ):
             continue
-        stale_submit_operations.append(intent)
+        stale_submit_operations.append(operation)
 
     if not stale_submit_operations:
         return
