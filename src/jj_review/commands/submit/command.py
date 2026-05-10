@@ -460,12 +460,11 @@ async def _run_submit_async(
     )
     operation_state = start_submit_operation(
         bookmark_result=bookmark_result,
-        dry_run=dry_run,
         github_repository=github_repository,
         operation_lock=operation_lock,
         remote_name=remote.name,
+        run=mutation_run,
         stack=stack,
-        state_store=state_store,
     )
     if dry_run:
         if not prepared_inputs.restarted_change_ids:

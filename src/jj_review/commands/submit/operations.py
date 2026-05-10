@@ -27,24 +27,23 @@ from jj_review.state.journal import (
     scan_incomplete_operation_records,
 )
 from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
-from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 
-from .models import InterruptedRemoteBookmarkRepairer, SubmitOperationState
+from .models import InterruptedRemoteBookmarkRepairer, SubmitMutationRun, SubmitOperationState
 
 
 def start_submit_operation(
     *,
     bookmark_result: BookmarkResolutionResult,
-    dry_run: bool,
     github_repository,
     operation_lock: OperationLock,
     remote_name: str,
+    run: SubmitMutationRun,
     stack: LocalStack,
-    state_store: ReviewStateStore,
 ) -> SubmitOperationState:
     """Prepare submit operation state before any remote mutation begins."""
 
+    state_store = run.state_store
     ordered_change_ids = tuple(revision.change_id for revision in stack.revisions)
     ordered_commit_ids = tuple(revision.commit_id for revision in stack.revisions)
     operation = SubmitOperationRecord(
@@ -71,10 +70,10 @@ def start_submit_operation(
         },
         started_at=datetime.now(UTC).isoformat(),
     )
-    if dry_run:
+    if run.dry_run:
         stale_operations = _list_stale_submit_operations_without_waiting(
-            state_store=state_store,
             operation=operation,
+            run=run,
         )
         _report_stale_submit_operations(
             current_operation=operation,
@@ -170,12 +169,12 @@ def _report_stale_submit_operations(
 
 def _list_stale_submit_operations_without_waiting(
     *,
-    state_store: ReviewStateStore,
     operation: SubmitOperationRecord,
+    run: SubmitMutationRun,
 ) -> list[LoadedOperationRecord]:
     return [
         loaded
-        for loaded in state_store.list_operations()
+        for loaded in run.state_store.list_operations()
         if loaded.operation.kind == operation.kind and not pid_is_alive(loaded.operation.pid)
     ]
 
