@@ -10,15 +10,15 @@ from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.models.github import GithubPullRequest, GithubPullRequestReview
-from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.models.review_state import CachedChange
 from jj_review.review.bookmarks import BookmarkSource, bookmark_ownership_for_source
 from jj_review.review.change_status import classify_saved_review_change
-from jj_review.state.store import ReviewStateStore
 
 from .models import (
     PendingPullRequestSync,
     PullRequestAction,
     ResolvedSubmitOptions,
+    SubmitMutationRun,
     SubmitOptions,
     SubmittedRevision,
 )
@@ -54,15 +54,12 @@ async def discover_pull_requests_by_bookmark(
 
 async def sync_pull_requests(
     *,
-    dry_run: bool,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     options: SubmitOptions,
     pending_syncs: tuple[PendingPullRequestSync, ...],
     resolved_options: ResolvedSubmitOptions,
-    state: ReviewState,
-    state_changes: dict[str, CachedChange],
-    state_store: ReviewStateStore,
+    run: SubmitMutationRun,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[SubmittedRevision, ...]:
     def handle_success(
@@ -71,10 +68,8 @@ async def sync_pull_requests(
     ) -> None:
         submitted_revision, cached_change = submitted
         if cached_change is not None:
-            state_changes[submitted_revision.change_id] = cached_change
-        if not dry_run:
-            interim_state = state.model_copy(update={"changes": dict(state_changes)})
-            state_store.save(interim_state)
+            run.state_changes[submitted_revision.change_id] = cached_change
+        run.save_interim_state()
         if on_progress is not None:
             on_progress()
 
@@ -82,13 +77,12 @@ async def sync_pull_requests(
         concurrency=DEFAULT_BOUNDED_CONCURRENCY,
         items=pending_syncs,
         run_item=lambda pending_sync: _sync_pull_request(
-            dry_run=dry_run,
             github_client=github_client,
             github_repository=github_repository,
             options=options,
             pending_sync=pending_sync,
             resolved_options=resolved_options,
-            state=state,
+            run=run,
         ),
         on_success=handle_success,
     )
@@ -97,19 +91,18 @@ async def sync_pull_requests(
 
 async def _sync_pull_request(
     *,
-    dry_run: bool,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     options: SubmitOptions,
     pending_sync: PendingPullRequestSync,
     resolved_options: ResolvedSubmitOptions,
-    state: ReviewState,
+    run: SubmitMutationRun,
 ) -> tuple[SubmittedRevision, CachedChange | None]:
     prepared_revision = pending_sync.prepared_revision
     bookmark = prepared_revision.bookmark
     change_id = prepared_revision.change_id
     discovered_pull_request = pending_sync.discovered_pull_request
-    cached_change = state.changes.get(change_id)
+    cached_change = run.state.changes.get(change_id)
     saved_status = classify_saved_review_change(cached_change, local="present")
     _ensure_pull_request_link_is_consistent(
         bookmark=bookmark,
@@ -122,7 +115,7 @@ async def _sync_pull_request(
     body = pending_sync.generated_description.body
     if discovered_pull_request is None:
         pull_request = None
-        if not dry_run:
+        if not run.dry_run:
             pull_request = await _create_pull_request(
                 base_branch=pending_sync.base_branch,
                 body=body,
@@ -142,7 +135,7 @@ async def _sync_pull_request(
         action = "unchanged"
     else:
         pull_request = discovered_pull_request
-        if not dry_run:
+        if not run.dry_run:
             pull_request = await _update_pull_request(
                 base_branch=pending_sync.base_branch,
                 body=body,
@@ -155,7 +148,7 @@ async def _sync_pull_request(
 
     if pull_request is not None and pull_request.state == "open":
         if options.draft_mode == "publish" and pull_request.is_draft:
-            if not dry_run:
+            if not run.dry_run:
                 pull_request = await _mark_pull_request_ready_for_review(
                     github_client=github_client,
                     github_repository=github_repository,
@@ -163,7 +156,7 @@ async def _sync_pull_request(
                 )
             action = "updated"
         elif options.draft_mode == "draft_all" and not pull_request.is_draft:
-            if not dry_run:
+            if not run.dry_run:
                 pull_request = await _convert_pull_request_to_draft(
                     github_client=github_client,
                     github_repository=github_repository,
@@ -172,7 +165,7 @@ async def _sync_pull_request(
             action = "updated"
 
     if (
-        not dry_run
+        not run.dry_run
         and pull_request is not None
         and (
             action != "unchanged"
@@ -188,7 +181,7 @@ async def _sync_pull_request(
             team_reviewers=resolved_options.team_reviewers,
         )
 
-    if not dry_run and options.re_request and pull_request is not None:
+    if not run.dry_run and options.re_request and pull_request is not None:
         re_request_reviewers = await _load_re_request_reviewers(
             github_client=github_client,
             github_repository=github_repository,

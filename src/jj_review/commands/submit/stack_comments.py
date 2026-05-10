@@ -16,23 +16,24 @@ from jj_review.github.stack_comments import (
     stack_comment_marker,
 )
 from jj_review.models.github import GithubIssueComment
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.store import ReviewStateStore
+from jj_review.models.review_state import CachedChange
 
-from .models import GeneratedDescription, PendingStackCommentSync, SubmittedRevision
+from .models import (
+    GeneratedDescription,
+    PendingStackCommentSync,
+    SubmitMutationRun,
+    SubmittedRevision,
+)
 
 
 async def sync_stack_comments(
     *,
     concurrency: int,
-    dry_run: bool,
     generated_stack_description: GeneratedDescription | None,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     revisions: tuple[SubmittedRevision, ...],
-    state: ReviewState,
-    state_changes: dict[str, CachedChange],
-    state_store: ReviewStateStore,
+    run: SubmitMutationRun,
     trunk_branch: str,
 ) -> None:
     """Synchronize navigation and overview comments for a submitted stack."""
@@ -50,11 +51,12 @@ async def sync_stack_comments(
     for revision in revisions:
         if revision.pull_request_number is None:
             continue
-        cached_change = state_changes.get(revision.change_id) or state.changes.get(
-            revision.change_id
+        cached_change = (
+            run.state_changes.get(revision.change_id)
+            or run.state.changes.get(revision.change_id)
         )
         if cached_change is None:
-            if dry_run:
+            if run.dry_run:
                 continue
             raise AssertionError("Stack summary comments require a saved pull request link.")
         navigation_comment_body = None
@@ -98,20 +100,16 @@ async def sync_stack_comments(
 
         def handle_success(_index: int, result: tuple[str, CachedChange]) -> None:
             change_id, updated_change = result
-            if state_changes.get(change_id) != updated_change:
-                state_changes[change_id] = updated_change
-                if not dry_run:
-                    interim_state = state.model_copy(
-                        update={"changes": dict(state_changes)}
-                    )
-                    state_store.save(interim_state)
+            if run.state_changes.get(change_id) != updated_change:
+                run.state_changes[change_id] = updated_change
+                run.save_interim_state()
             progress.advance()
 
         await run_bounded_tasks(
             concurrency=concurrency,
             items=tuple(pending),
             run_item=lambda pending_sync: _sync_stack_comment_task(
-                dry_run=dry_run,
+                dry_run=run.dry_run,
                 github_client=github_client,
                 github_repository=github_repository,
                 comments=comments_by_pull_request_number[pending_sync.pull_request_number],

@@ -64,6 +64,7 @@ from .models import (
     PreparedSubmitRevision,
     ResolvedSubmitOptions,
     SubmitDraftMode,
+    SubmitMutationRun,
     SubmitOptions,
     SubmitResult,
     SubmittedRevision,
@@ -452,6 +453,12 @@ async def _run_submit_async(
         stack=stack,
     )
     state_changes = dict(bookmark_result.state.changes)
+    mutation_run = SubmitMutationRun(
+        dry_run=dry_run,
+        state=bookmark_result.state,
+        state_changes=state_changes,
+        state_store=state_store,
+    )
     operation_state = start_submit_operation(
         bookmark_result=bookmark_result,
         dry_run=dry_run,
@@ -549,29 +556,23 @@ async def _run_submit_async(
                 total=len(prepared_revisions),
             ) as progress:
                 submitted_revisions = await sync_pull_requests(
-                    dry_run=dry_run,
                     github_client=github_client,
                     github_repository=github_repository,
                     on_progress=progress.advance,
                     options=options,
                     pending_syncs=pending_syncs,
                     resolved_options=resolved_options,
-                    state=bookmark_result.state,
-                    state_changes=state_changes,
-                    state_store=state_store,
+                    run=mutation_run,
                 )
 
             if not dry_run:
                 await sync_stack_comments(
                     concurrency=_GITHUB_INSPECTION_CONCURRENCY,
-                    dry_run=dry_run,
                     generated_stack_description=prepared_inputs.generated_stack_description,
                     github_client=github_client,
                     github_repository=github_repository,
                     revisions=submitted_revisions,
-                    state=bookmark_result.state,
-                    state_changes=state_changes,
-                    state_store=state_store,
+                    run=mutation_run,
                     trunk_branch=trunk_branch,
                 )
                 await verify_no_unexpected_pull_request_closures(

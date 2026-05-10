@@ -11,7 +11,12 @@ from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult, BookmarkSource
-from jj_review.state.journal import LoadedOperationRecord, OperationJournal, SubmitOperationRecord
+from jj_review.state.journal import (
+    LoadedOperationRecord,
+    OperationJournal,
+    SubmitOperationRecord,
+)
+from jj_review.state.store import ReviewStateStore
 
 LocalBookmarkAction = Literal["created", "moved", "unchanged"]
 PullRequestAction = Literal["created", "unchanged", "updated"]
@@ -140,6 +145,22 @@ class PreparedSubmitInputs:
     restarted_change_ids: frozenset[str]
     stack: LocalStack
     state: ReviewState
+
+
+@dataclass(slots=True)
+class SubmitMutationRun:
+    """Mutable submit state shared by mutation phases."""
+
+    dry_run: bool
+    state: ReviewState
+    state_changes: dict[str, CachedChange]
+    state_store: ReviewStateStore
+
+    def save_interim_state(self) -> None:
+        if self.dry_run:
+            return
+        interim_state = self.state.model_copy(update={"changes": dict(self.state_changes)})
+        self.state_store.save(interim_state)
 
 
 @dataclass(frozen=True, slots=True)
