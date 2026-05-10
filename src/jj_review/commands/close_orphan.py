@@ -99,6 +99,14 @@ class _OrphanCloseOperationState:
     stale_submit_operations: list[LoadedOperationRecord]
 
 
+@dataclass(frozen=True, slots=True)
+class _OrphanCloseRun:
+    """Shared execution context for one orphan close cleanup run."""
+
+    context: CommandContext
+    dry_run: bool
+    operation_lock: OperationLock
+
 
 def state_has_pull_request_record(
     *,
@@ -318,6 +326,11 @@ async def run_orphan_close(
         jj_client.fetch_remote(remote=remote.name, branches=(bookmark,))
     bookmark_state = jj_client.get_bookmark_state(bookmark)
     recorder = _OrphanActionRecorder(actions=[])
+    run = _OrphanCloseRun(
+        context=context,
+        dry_run=dry_run,
+        operation_lock=operation_lock,
+    )
     completed = False
     final_state: ReviewState | None = None
     operation_state = _OrphanCloseOperationState(
@@ -329,11 +342,9 @@ async def run_orphan_close(
         operation_state = _start_orphan_close_operation(
             cached_change=cached_change,
             change_id=change_id,
-            dry_run=dry_run,
-            operation_lock=operation_lock,
             pull_request_number=pull_request_number,
             report_stale_close_operations=report_stale_close_operations,
-            state_store=state_store,
+            run=run,
         )
 
         async with github_client_builder(
@@ -829,21 +840,20 @@ def _start_orphan_close_operation(
     *,
     cached_change: CachedChange,
     change_id: str,
-    dry_run: bool,
-    operation_lock: OperationLock,
     pull_request_number: int,
     report_stale_close_operations: ReportStaleCloseOperations,
-    state_store: ReviewStateStore,
+    run: _OrphanCloseRun,
 ) -> _OrphanCloseOperationState:
     """Write close operation journal metadata for resumable orphan cleanup runs."""
 
-    if dry_run:
+    if run.dry_run:
         return _OrphanCloseOperationState(
             journal=None,
             stale_close_operations=[],
             stale_submit_operations=[],
         )
 
+    state_store = run.context.state_store
     state_dir = state_store.require_writable()
     ordered_change_ids = (change_id,)
     ordered_commit_ids = (
@@ -882,7 +892,7 @@ def _start_orphan_close_operation(
             "selected_revset": f"--pull-request {pull_request_number}",
         },
     )
-    operation_lock.record_journal_path(journal.path)
+    run.operation_lock.record_journal_path(journal.path)
     return _OrphanCloseOperationState(
         journal=journal,
         stale_close_operations=stale_close_operations,
