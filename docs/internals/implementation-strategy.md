@@ -179,6 +179,14 @@ submitted-baseline, and saved-identity axes from data the caller already loaded.
 Commands can build policy helpers on top of those axes, but mutation code still writes
 the underlying tracking fields directly.
 
+The classifier migration is intentionally incremental. Read-side status summaries and
+advisories, status cache persistence decisions, cleanup stale-change and rebase planning,
+close cleanup planning, unlink active-link checks, relink remote validation, submit
+untracked-remote repair, and land trunk/revision readiness checks consume these axes.
+Direct reads of `CachedChange`, `PullRequestLookup`, and bookmark target fields remain
+where code is copying underlying data into saved state, rendering concrete GitHub
+payload details, or applying mutations that need the exact target value.
+
 This is where most correctness lives.
 
 ### GitHub client
