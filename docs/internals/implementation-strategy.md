@@ -103,7 +103,8 @@ bootstrapped `CommandContext` plus parsed/resolved submit option objects rather 
 hand-threaded config/client/state-store bundle, and pull-request synchronization uses the
 same submit option objects instead of separate draft/reviewer/label parameters. Submit
 mutation phases share a `SubmitMutationRun` for dry-run mode and incremental state-save
-data.
+data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
+instead of separate config/client/state-store parameters.
 
 ## Repository layout
 
