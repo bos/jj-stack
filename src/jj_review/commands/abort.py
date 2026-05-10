@@ -214,7 +214,7 @@ async def _abort_operation_async(
     actions: list[AbortAction] = []
     if note:
         actions.append(AbortAction(kind="note", body=note, status="skipped"))
-    _plan_operation_notice_removal(actions=actions, dry_run=dry_run)
+    _plan_operation_notice_removal(actions=actions, run=run)
     if not dry_run:
         _clear_operation_notice(loaded, reason="abort")
 
@@ -280,10 +280,7 @@ async def _abort_submit(
                     status="skipped",
                 )
             )
-            _plan_operation_notice_removal(
-                actions=actions,
-                dry_run=dry_run,
-            )
+            _plan_operation_notice_removal(actions=actions, run=run)
             if not dry_run:
                 _clear_operation_notice(loaded, reason="abort")
             return AbortResult(
@@ -386,7 +383,7 @@ async def _abort_submit(
         state_store.save(state.model_copy(update={"changes": next_changes}))
 
     if all_retracted or dry_run:
-        _plan_operation_notice_removal(actions=actions, dry_run=dry_run)
+        _plan_operation_notice_removal(actions=actions, run=run)
         if not dry_run:
             _clear_operation_notice(loaded, reason="abort")
     else:
@@ -669,8 +666,9 @@ def _clear_operation_notice(
 def _plan_operation_notice_removal(
     *,
     actions: list[AbortAction],
-    dry_run: bool,
+    run: AbortRun,
 ) -> None:
+    dry_run = run.dry_run
     body = (
         "would clear it from future status output"
         if dry_run
