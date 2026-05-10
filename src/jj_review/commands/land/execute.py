@@ -11,7 +11,7 @@ from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
-from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.models.review_state import CachedChange
 from jj_review.review.change_status import classify_review_change
 from jj_review.state.journal import (
     LandOperationRecord,
@@ -20,11 +20,11 @@ from jj_review.state.journal import (
     append_abandoned_event,
 )
 from jj_review.state.operation_lock import read_operation_lock_holder
-from jj_review.state.store import ReviewStateStore
 
 from .models import (
     BookmarkStateReader,
     LandAction,
+    LandMutationRun,
     LandPlan,
     LandResult,
     LandRevision,
@@ -217,7 +217,11 @@ async def execute_land_plan(
         prepared_land.operation_lock.record_journal_path(journal.path)
 
     state = prepared.state_store.load()
-    state_changes = dict(state.changes)
+    mutation_run = LandMutationRun(
+        state=state,
+        state_changes=dict(state.changes),
+        state_store=prepared.state_store,
+    )
 
     actions: list[LandAction] = []
     succeeded = False
@@ -247,9 +251,7 @@ async def execute_land_plan(
             github_client=github_client,
             github_repository=github_repository,
             journal=journal,
-            state=state,
-            state_changes=state_changes,
-            state_store=prepared.state_store,
+            mutation_run=mutation_run,
             trunk_branch=trunk_branch,
         )
         journal.append(
@@ -459,9 +461,7 @@ async def _finalize_planned_revisions(
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     journal: OperationJournal,
-    state: ReviewState,
-    state_changes: dict[str, CachedChange],
-    state_store: ReviewStateStore,
+    mutation_run: LandMutationRun,
     trunk_branch: str,
 ) -> None:
     landed_head_change_id = (
@@ -484,7 +484,7 @@ async def _finalize_planned_revisions(
             },
         )
         final_pull_request = await _finalize_landed_pull_request(
-            cached_change=state_changes.get(landed_revision.change_id),
+            cached_change=mutation_run.state_changes.get(landed_revision.change_id),
             github_client=github_client,
             github_repository=github_repository,
             landed_revision=landed_revision,
@@ -513,7 +513,7 @@ async def _finalize_planned_revisions(
             if landed_index > 0
             else None
         )
-        previous_change = state_changes.get(landed_revision.change_id)
+        previous_change = mutation_run.state_changes.get(landed_revision.change_id)
         updated_change = _updated_landed_change(
             bookmark=landed_revision.bookmark,
             bookmark_managed=landed_revision.bookmark_managed,
@@ -523,8 +523,8 @@ async def _finalize_planned_revisions(
             pull_request=final_pull_request,
             stack_head_change_id=landed_head_change_id,
         )
-        state_changes[landed_revision.change_id] = updated_change
-        state_store.save(state.model_copy(update={"changes": dict(state_changes)}))
+        mutation_run.state_changes[landed_revision.change_id] = updated_change
+        mutation_run.save_interim_state()
         journal.append(
             "saved_state_update",
             {

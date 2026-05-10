@@ -9,9 +9,11 @@ from typing import Literal, Protocol
 from jj_review import ui
 from jj_review.bootstrap import CommandContext
 from jj_review.models.bookmarks import BookmarkState
+from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.status import PreparedStatus
 from jj_review.state.journal import LandOperationRecord, LoadedOperationRecord
 from jj_review.state.operation_lock import OperationLock
+from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message, plain_text
 
 
@@ -56,6 +58,20 @@ class PreparedLand:
     operation_lock: OperationLock | None
     prepared_status: PreparedStatus
     selected_pr_number: int | None
+
+
+@dataclass(slots=True)
+class LandMutationRun:
+    """Mutable land state shared by live execution phases."""
+
+    state: ReviewState
+    state_changes: dict[str, CachedChange]
+    state_store: ReviewStateStore
+
+    def save_interim_state(self) -> None:
+        self.state_store.save(
+            self.state.model_copy(update={"changes": dict(self.state_changes)})
+        )
 
 
 @dataclass(frozen=True, slots=True)
