@@ -52,9 +52,10 @@ from jj_review.review.change_status import (
     submitted_state_disagreements,
 )
 from jj_review.review.intents import intent_is_stale
-from jj_review.state.journal import LoadedOperationRecord
+from jj_review.state.journal import LoadedOperationRecord, RelinkOperationRecord
 from jj_review.state.operation_lock import try_acquire_operation_lock
 from jj_review.state.store import ReviewStateStore
+from jj_review.system import pid_is_alive
 from jj_review.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -341,6 +342,7 @@ def _classify_status_intents(
         if _operation_is_stale(
             loaded.operation,
             lambda change_id: _change_id_resolves(prepared.client, change_id),
+            now=now,
         ):
             stale_intents.append(loaded)
         else:
@@ -351,7 +353,20 @@ def _classify_status_intents(
 def _operation_is_stale(
     operation,
     resolve_change_id: Callable[[str], bool],
+    *,
+    now: datetime | None = None,
 ) -> bool:
+    if isinstance(operation, RelinkOperationRecord):
+        if pid_is_alive(operation.pid):
+            return False
+        current_time = datetime.now(UTC) if now is None else now
+        try:
+            started = datetime.fromisoformat(operation.started_at)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+        except ValueError:
+            return True
+        return (current_time - started).days >= 7
     ids = operation.change_ids()
     if not ids:
         return False

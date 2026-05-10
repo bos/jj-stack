@@ -13,7 +13,6 @@ from jj_review.models.intent import (
     CleanupRebaseIntent,
     CloseIntent,
     LoadedIntent,
-    RelinkIntent,
     SubmitIntent,
 )
 from jj_review.review.intents import (
@@ -98,16 +97,6 @@ def _make_close_intent(
     )
 
 
-def _make_relink_intent(change_id: str = "cccc", pid: int = 12345) -> RelinkIntent:
-    return RelinkIntent(
-        kind="relink",
-        pid=pid,
-        label="relink for cccccccc",
-        change_id=change_id,
-        started_at="2026-01-01T00:00:00+00:00",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Naming
 # ---------------------------------------------------------------------------
@@ -120,7 +109,6 @@ def _make_relink_intent(change_id: str = "cccc", pid: int = 12345) -> RelinkInte
         (_make_cleanup_intent, "cleanup"),
         (_make_cleanup_restack_intent, "cleanup-rebase"),
         (lambda: _make_close_intent(cleanup=True), "close"),
-        (_make_relink_intent, "relink"),
     ],
     ids=lambda value: value if isinstance(value, str) else None,
 )
@@ -377,30 +365,6 @@ def test_stack_intent_stays_live_when_any_change_id_still_resolves(tmp_path: Pat
             datetime(2026, 1, 9, tzinfo=UTC),
             True,
             "cleanup-old-dead-pid",
-        ),
-        (
-            _make_relink_intent,
-            12345,
-            True,
-            datetime(2030, 1, 1, tzinfo=UTC),
-            False,
-            "relink-live-pid",
-        ),
-        (
-            _make_relink_intent,
-            99999999,
-            False,
-            datetime(2026, 1, 2, tzinfo=UTC),
-            False,
-            "relink-recent-dead-pid",
-        ),
-        (
-            _make_relink_intent,
-            99999999,
-            False,
-            datetime(2026, 1, 9, tzinfo=UTC),
-            True,
-            "relink-old-dead-pid",
         ),
     ],
     ids=lambda value: value if isinstance(value, str) else None,

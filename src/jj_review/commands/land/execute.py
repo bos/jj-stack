@@ -13,6 +13,7 @@ from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.journal import (
+    LandOperationRecord,
     LoadedOperationRecord,
     OperationJournal,
     append_abandoned_event,
@@ -566,6 +567,8 @@ def _retire_superseded_land_operations(
 ) -> None:
     for loaded in stale_operations:
         if loaded.path == current_journal_path:
+            continue
+        if not isinstance(loaded.operation, LandOperationRecord):
             continue
         if match_ordered_land_operation(loaded.operation.ordered_change_ids, current_change_ids):
             append_abandoned_event(

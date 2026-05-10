@@ -245,6 +245,8 @@ Same-kind intent scans no longer wait for live PIDs; the operation lock is the
 concurrency primitive, and live legacy intent records are reported without polling.
 `abort` no longer writes a separate abort-intent sentinel; the repo operation lock is
 the only abort concurrency guard.
+`relink` also writes a retained journal record instead of an intent file; interrupted
+relink notices are read from the journal and can be cleared by `abort`.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal

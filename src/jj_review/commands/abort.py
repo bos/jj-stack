@@ -14,6 +14,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -29,7 +30,6 @@ from jj_review.models.intent import (
     CleanupRebaseIntent,
     CloseIntent,
     LoadedIntent,
-    RelinkIntent,
     SubmitIntent,
 )
 from jj_review.models.review_state import CachedChange
@@ -41,6 +41,7 @@ from jj_review.review.submit_recovery import recorded_submit_still_exists_exactl
 from jj_review.state.journal import (
     LandOperationRecord,
     LoadedOperationRecord,
+    RelinkOperationRecord,
     append_abandoned_event,
 )
 from jj_review.state.store import ReviewStateStore
@@ -234,7 +235,7 @@ def _non_submit_note(intent) -> Message | None:
             t"The interrupted-operation notice will be cleared. Run {ui.cmd('status')} " \
             t"to inspect which pull requests were closed, and reopen them on GitHub " \
             t"if needed."
-    if isinstance(intent, RelinkIntent):
+    if isinstance(intent, RelinkOperationRecord):
         return t"Relink changes which PR a change tracks in local data. " \
             t"The interrupted-operation notice will be cleared. Run {ui.cmd('status')} " \
             t"to confirm the current link state looks correct."
@@ -633,6 +634,16 @@ def _operation_notice_is_stale(
     resolve_change_id: Callable[[str], bool],
 ) -> bool:
     if isinstance(loaded, LoadedOperationRecord):
+        if isinstance(loaded.operation, RelinkOperationRecord):
+            if pid_is_alive(loaded.operation.pid):
+                return False
+            try:
+                started = datetime.fromisoformat(loaded.operation.started_at)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=UTC)
+            except ValueError:
+                return True
+            return (datetime.now(UTC) - started).days >= 7
         ids = loaded.operation.change_ids()
         if not ids:
             return False

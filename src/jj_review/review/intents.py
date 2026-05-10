@@ -16,11 +16,10 @@ from jj_review.models.intent import (
     LoadedIntent,
     MatchResult,
     OrderedChangeIdsIntent,
-    RelinkIntent,
     SubmitIntent,
 )
 from jj_review.review.submit_recovery import should_retire_submit_after_submit
-from jj_review.state.journal import LandOperationRecord
+from jj_review.state.journal import LandOperationRecord, RelinkOperationRecord
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message
 
@@ -52,7 +51,9 @@ def match_ordered_change_ids(
     return "disjoint"
 
 
-def describe_intent(intent: IntentFile | LandOperationRecord) -> Message:
+def describe_intent(
+    intent: IntentFile | LandOperationRecord | RelinkOperationRecord,
+) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
     if isinstance(intent, SubmitIntent):
@@ -76,7 +77,7 @@ def describe_intent(intent: IntentFile | LandOperationRecord) -> Message:
             t"{ui.cmd('land')} for {_render_recorded_stack_head(intent)} "
             t"(from {ui.revset(intent.display_revset)})"
         )
-    if isinstance(intent, RelinkIntent):
+    if isinstance(intent, RelinkOperationRecord):
         return t"{ui.cmd('relink')} for {ui.change_id(intent.change_id)}"
     return intent.label
 
@@ -161,7 +162,7 @@ def intent_is_stale(
 ) -> bool:
     """Return whether an interrupted intent is now stale."""
 
-    if isinstance(intent, CleanupIntent | RelinkIntent):
+    if isinstance(intent, CleanupIntent):
         if pid_is_alive(intent.pid):
             return False
         if now is None:

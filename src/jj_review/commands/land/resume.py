@@ -50,7 +50,7 @@ def prepare_land_execution_state(
     stale_operations = [
         loaded
         for loaded in prepared_status.prepared.state_store.list_operations()
-        if loaded.operation.kind == "land"
+        if isinstance(loaded.operation, LandOperationRecord)
     ]
     resume_operation = _find_resume_land_operation(
         bypass_readiness=prepared_land.bypass_readiness,
@@ -147,6 +147,8 @@ def _report_stale_land_operations(
     """Print resumable land operation diagnostics for live execution."""
 
     for loaded in stale_operations:
+        if not isinstance(loaded.operation, LandOperationRecord):
+            continue
         if resume_operation is not None and loaded.path == resume_operation.path:
             if resume_operation.mode == "tail-after-landed-prefix":
                 console.note(
@@ -195,6 +197,8 @@ def _find_resume_land_operation(
     tail_match: ResumeLandOperation | None = None
     for loaded in stale_operations:
         intent = loaded.operation
+        if not isinstance(intent, LandOperationRecord):
+            continue
         if intent.display_revset != prepared_status.selected_revset:
             continue
         if intent.bypass_readiness != bypass_readiness:

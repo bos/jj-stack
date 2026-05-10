@@ -35,7 +35,6 @@ from jj_review.models.intent import (
     CleanupIntent,
     CleanupRebaseIntent,
     CloseIntent,
-    RelinkIntent,
     SubmitIntent,
 )
 from jj_review.models.review_state import CachedChange, ReviewState
@@ -70,7 +69,7 @@ from jj_review.review.submit_recovery import (
     SubmitStatusDecision,
     submit_status_decision,
 )
-from jj_review.state.journal import LandOperationRecord
+from jj_review.state.journal import LandOperationRecord, RelinkOperationRecord
 from jj_review.system import pid_is_alive
 
 _SUMMARY_SECTION_HEAD_COUNT = 3
@@ -1105,7 +1104,7 @@ def _render_interrupted_intent_block(
             intent=intent,
             match=_match_land_intent(intent=intent, prepared_status=prepared_status),
         )
-    elif isinstance(intent, RelinkIntent):
+    elif isinstance(intent, RelinkOperationRecord):
         detail_lines = (
             (
                 "inspect with ",
@@ -1363,7 +1362,7 @@ def _intent_selector(intent) -> str | None:
     ):
         if intent.ordered_change_ids:
             return short_change_id(intent.ordered_change_ids[-1])
-    if isinstance(intent, RelinkIntent):
+    if isinstance(intent, RelinkOperationRecord):
         return short_change_id(intent.change_id)
     return None
 
@@ -1383,7 +1382,7 @@ def _render_interrupted_intent_header(intent) -> object:
             " from ",
             ui.revset(intent.display_revset),
         )
-    if isinstance(intent, RelinkIntent):
+    if isinstance(intent, RelinkOperationRecord):
         return (
             _render_intent_command(intent),
             " for ",
@@ -1403,7 +1402,7 @@ def _render_intent_command(intent) -> object:
         return ui.cmd("close --cleanup" if intent.cleanup else "close")
     if isinstance(intent, LandOperationRecord):
         return ui.cmd("land")
-    if isinstance(intent, RelinkIntent):
+    if isinstance(intent, RelinkOperationRecord):
         return ui.cmd("relink")
     if isinstance(intent, CleanupIntent):
         return ui.cmd("cleanup")

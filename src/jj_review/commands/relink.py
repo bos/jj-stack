@@ -7,16 +7,13 @@ request.
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
-from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.pull_request_refs import parse_repository_pull_request_reference
 from jj_review.github.resolution import (
@@ -24,10 +21,10 @@ from jj_review.github.resolution import (
     select_submit_remote,
 )
 from jj_review.jj import JjCliArgs
-from jj_review.models.intent import RelinkIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.selection import resolve_selected_revset
-from jj_review.state.intents import check_same_kind_intent, write_new_intent
+from jj_review.state.journal import OperationJournal
+from jj_review.state.operation_lock import read_operation_lock_holder
 
 HELP = "Reconnect an existing pull request to a local change"
 
@@ -193,21 +190,43 @@ async def _run_relink_async(
         state=state,
     )
 
-    intent = RelinkIntent(
-        kind="relink",
-        pid=os.getpid(),
-        label=f"relink for {short_change_id(revision.change_id)}",
-        change_id=revision.change_id,
-        started_at=datetime.now(UTC).isoformat(),
+    for loaded in state_store.list_operations():
+        if loaded.operation.kind == "relink":
+            console.warning(f"A previous relink was interrupted ({loaded.operation.label})")
+
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="relink",
+        lock_holder=read_operation_lock_holder(state_dir),
+        options={"pull_request_number": pull_request.number},
+        resolved_scope={
+            "bookmark": bookmark,
+            "change_id": revision.change_id,
+            "commit_id": revision.commit_id,
+            "pull_request_number": pull_request.number,
+            "selected_revset": selected_revset,
+        },
     )
-    stale_intents = check_same_kind_intent(state_dir, intent)
-    for loaded in stale_intents:
-        console.warning(f"A previous relink was interrupted ({loaded.intent.label})")
-    intent_path = write_new_intent(state_dir, intent)
 
     relink_succeeded = False
     try:
+        journal.append(
+            "planned_mutation",
+            {
+                "bookmark": bookmark,
+                "change_id": revision.change_id,
+                "mutation": "set_local_bookmark",
+            },
+        )
         client.set_bookmark(bookmark, revision.change_id)
+        journal.append(
+            "mutation_applied",
+            {
+                "bookmark": bookmark,
+                "change_id": revision.change_id,
+                "mutation": "set_local_bookmark",
+            },
+        )
 
         cached_change = state.changes.get(revision.change_id)
         updated_change = (cached_change or CachedChange()).model_copy(
@@ -223,6 +242,13 @@ async def _run_relink_async(
                 "overview_comment_id": None,
             }
         )
+        journal.append(
+            "planned_mutation",
+            {
+                "change_id": revision.change_id,
+                "mutation": "saved_state_update",
+            },
+        )
         state_store.save(
             state.model_copy(
                 update={
@@ -233,6 +259,15 @@ async def _run_relink_async(
                 }
             )
         )
+        journal.append(
+            "saved_state_update",
+            {
+                "after": updated_change,
+                "before": cached_change,
+                "change_id": revision.change_id,
+            },
+        )
+        journal.append("completed", {"change_id": revision.change_id})
         relink_succeeded = True
         return RelinkResult(
             bookmark=bookmark,
@@ -244,8 +279,8 @@ async def _run_relink_async(
             subject=revision.description,
         )
     finally:
-        if relink_succeeded:
-            intent_path.unlink(missing_ok=True)
+        if not relink_succeeded:
+            console.warning("Relink was interrupted; rerun relink or abort to clear it.")
 
 
 def _ensure_relinkable_cached_link(

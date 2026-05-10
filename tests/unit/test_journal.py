@@ -8,6 +8,7 @@ from jj_review.models.review_state import CachedChange
 from jj_review.state.journal import (
     JOURNAL_DIRNAME,
     MIN_RETAINED_JOURNALS,
+    LandOperationRecord,
     OperationJournal,
     append_abandoned_event,
     prune_operation_journals,
@@ -88,6 +89,7 @@ def test_scan_incomplete_operation_records_loads_land_scope(tmp_path: Path) -> N
     [loaded] = scan_incomplete_operation_records(tmp_path)
 
     assert loaded.path == journal.path
+    assert isinstance(loaded.operation, LandOperationRecord)
     assert loaded.operation.display_revset == "@-"
     assert loaded.operation.selected_pr_number == 2
     assert loaded.operation.ordered_change_ids == ("change-1", "change-2")
@@ -132,6 +134,28 @@ def test_scan_incomplete_operation_records_excludes_terminal_journals(
     append_abandoned_event(journal.path, reason="test")
 
     assert scan_incomplete_operation_records(tmp_path) == []
+
+
+def test_scan_incomplete_operation_records_loads_relink_scope(tmp_path: Path) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="relink",
+        lock_holder=None,
+        options={"pull_request_number": 1},
+        resolved_scope={
+            "bookmark": "review/feature-1",
+            "change_id": "change-1",
+            "commit_id": "commit-1",
+            "pull_request_number": 1,
+            "selected_revset": "@-",
+        },
+    )
+
+    [loaded] = scan_incomplete_operation_records(tmp_path)
+
+    assert loaded.path == journal.path
+    assert loaded.operation.kind == "relink"
+    assert loaded.operation.change_ids() == frozenset({"change-1"})
 
 
 def test_prune_operation_journals_keeps_recent_files_and_minimum_count(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_review.jj import JjClient
+from jj_review.state.journal import read_journal
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
@@ -298,12 +299,11 @@ def test_relink_clears_unlinked_state(
     assert relinked_change.pr_state == "open"
 
 
-def test_relink_deletes_intent_file_after_successful_relink(
+def test_relink_completes_journal_after_successful_relink(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    """relink deletes its intent file on success."""
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
@@ -332,3 +332,5 @@ def test_relink_deletes_intent_file_after_successful_relink(
     state_dir = resolve_state_path(repo).parent
     intent_files = list(state_dir.glob("incomplete-*.json"))
     assert intent_files == [], f"Expected no intent files after success, found: {intent_files}"
+    [journal_path] = (state_dir / "journals").glob("*-relink-*.jsonl")
+    assert read_journal(journal_path)[-1].event == "completed"

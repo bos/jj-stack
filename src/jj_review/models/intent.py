@@ -56,20 +56,8 @@ class CloseIntent(OrderedChangeIdsIntent):
     cleanup: bool
 
 
-class RelinkIntent(OperationIntent):
-    kind: Literal["relink"]
-    change_id: str
-
-    def change_ids(self) -> frozenset[str]:
-        return frozenset([self.change_id])
-
-
 type IntentFile = Annotated[
-    SubmitIntent
-    | CleanupIntent
-    | CleanupRebaseIntent
-    | CloseIntent
-    | RelinkIntent,
+    SubmitIntent | CleanupIntent | CleanupRebaseIntent | CloseIntent,
     Field(discriminator="kind"),
 ]
 

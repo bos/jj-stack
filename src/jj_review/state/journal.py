@@ -70,14 +70,34 @@ class LandOperationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RelinkOperationRecord:
+    """Journal-backed recovery record for one incomplete `relink` operation."""
+
+    kind: Literal["relink"]
+    path: Path
+    pid: int
+    label: str
+    started_at: str
+    change_id: str
+
+    def change_ids(self) -> frozenset[str]:
+        """Return the change IDs mentioned by this operation."""
+
+        return frozenset([self.change_id])
+
+
+type OperationRecord = LandOperationRecord | RelinkOperationRecord
+
+
+@dataclass(frozen=True, slots=True)
 class LoadedOperationRecord:
     """An incomplete journal-backed operation loaded from disk."""
 
     path: Path
-    operation: LandOperationRecord
+    operation: OperationRecord
 
     @property
-    def intent(self) -> LandOperationRecord:
+    def intent(self) -> OperationRecord:
         """Compatibility alias for older status/abort rendering paths."""
 
         return self.operation
@@ -190,16 +210,33 @@ def scan_incomplete_operation_records(state_dir: Path) -> list[LoadedOperationRe
             if holder is not None:
                 active_pid = holder.pid
         try:
-            record = land_operation_record_from_journal(
-                path,
-                active_pid=active_pid,
-            )
+            record = operation_record_from_journal(path, active_pid=active_pid)
         except (OSError, ValueError, KeyError, TypeError) as error:
             logger.error("Could not parse operation journal %s: %s", path, error)
             continue
         if record is not None:
             records.append(LoadedOperationRecord(path=path, operation=record))
     return records
+
+
+def operation_record_from_journal(
+    path: Path,
+    *,
+    active_pid: int = 0,
+) -> OperationRecord | None:
+    """Parse one incomplete operation record from a journal, if present."""
+
+    events = read_journal(path)
+    if not events:
+        raise ValueError(f"Journal is empty: {path}")
+    first = events[0]
+    if any(event.event in {"completed", "abandoned"} for event in events):
+        return None
+    if first.operation == "land":
+        return land_operation_record_from_events(path, events, active_pid=active_pid)
+    if first.operation == "relink":
+        return relink_operation_record_from_events(path, events, active_pid=active_pid)
+    return None
 
 
 def land_operation_record_from_journal(
@@ -210,13 +247,24 @@ def land_operation_record_from_journal(
     """Parse one incomplete land operation record from a journal, if present."""
 
     events = read_journal(path)
+    if any(event.event in {"completed", "abandoned"} for event in events):
+        return None
+    return land_operation_record_from_events(path, events, active_pid=active_pid)
+
+
+def land_operation_record_from_events(
+    path: Path,
+    events: tuple[JournalEvent, ...],
+    *,
+    active_pid: int = 0,
+) -> LandOperationRecord:
+    """Parse one land operation record from journal events."""
+
     if not events:
         raise ValueError(f"Journal is empty: {path}")
     first = events[0]
     if first.operation != "land":
-        return None
-    if any(event.event in {"completed", "abandoned"} for event in events):
-        return None
+        raise ValueError(f"Journal is not a land operation: {path}")
     if first.event != "begin":
         raise ValueError(f"Journal does not start with begin: {path}")
 
@@ -277,6 +325,34 @@ def land_operation_record_from_journal(
         trunk_branch=str(resolved_scope["trunk_branch"]),
         landed_commit_id=str(resolved_scope["landed_commit_id"]),
         selected_pr_number=selected_pr_number,
+    )
+
+
+def relink_operation_record_from_events(
+    path: Path,
+    events: tuple[JournalEvent, ...],
+    *,
+    active_pid: int = 0,
+) -> RelinkOperationRecord:
+    """Parse one relink operation record from journal events."""
+
+    if not events:
+        raise ValueError(f"Journal is empty: {path}")
+    first = events[0]
+    if first.operation != "relink":
+        raise ValueError(f"Journal is not a relink operation: {path}")
+    if first.event != "begin":
+        raise ValueError(f"Journal does not start with begin: {path}")
+
+    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
+    change_id = str(resolved_scope["change_id"])
+    return RelinkOperationRecord(
+        kind="relink",
+        path=path,
+        pid=active_pid,
+        label=f"relink for {change_id[:8]}",
+        started_at=first.timestamp,
+        change_id=change_id,
     )
 
 
