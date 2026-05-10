@@ -768,6 +768,7 @@ def _persist_status_cache_updates(
 ) -> None:
     state_changes = dict(prepared.state_changes)
     for revision in revisions:
+        change_status = classify_review_status_revision(revision)
         cached_change = state_changes.get(revision.change_id) or prepared.state.changes.get(
             revision.change_id
         )
@@ -778,14 +779,14 @@ def _persist_status_cache_updates(
             continue
         pull_request_lookup = revision.pull_request_lookup
         if pull_request_lookup is not None:
-            if updated_change is None and pull_request_lookup.state != "missing":
+            if updated_change is None and change_status.pr_lifecycle != "missing":
                 updated_change = CachedChange(
                     bookmark=revision.bookmark,
                     bookmark_ownership=bookmark_ownership_for_source(
                         revision.bookmark_source
                     ),
                 )
-            if pull_request_lookup.state == "missing":
+            if change_status.pr_lifecycle == "missing":
                 if updated_change is not None:
                     updated_change = updated_change.model_copy(
                         update={
@@ -815,7 +816,7 @@ def _persist_status_cache_updates(
                         "pr_url": pull_request.html_url,
                     }
                 )
-                if pull_request_lookup.state != "open":
+                if change_status.pr_lifecycle != "open":
                     updated_change = updated_change.model_copy(
                         update={
                             "navigation_comment_id": None,
