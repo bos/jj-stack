@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -214,6 +214,22 @@ class _RebaseOperationState:
 
     journal: OperationJournal | None
     stale_operations: list[LoadedOperationRecord]
+
+
+@dataclass(slots=True)
+class _CleanupActionRecorder:
+    """Collect cleanup actions and optionally stream them as they are recorded."""
+
+    on_action: Callable[[CleanupAction], None] | None
+    actions: list[CleanupAction] = field(default_factory=list)
+
+    def record(self, action: CleanupAction) -> None:
+        self.actions.append(action)
+        if self.on_action is not None:
+            self.on_action(action)
+
+    def as_tuple(self) -> tuple[CleanupAction, ...]:
+        return tuple(self.actions)
 
 
 def _render_cleanup_action_header(*, dry_run: bool) -> str:
@@ -602,16 +618,10 @@ def _stream_rebase(
         prepared_status=prepared_status,
         status_result=status_result,
     )
-
-    actions: list[CleanupAction] = []
-
-    def record_action(action: CleanupAction) -> None:
-        actions.append(action)
-        if on_action is not None:
-            on_action(action)
+    recorder = _CleanupActionRecorder(on_action=on_action)
 
     if status_result.github_error is not None or status_result.github_repository is None:
-        record_action(
+        recorder.record(
             CleanupAction(
                 kind="rebase",
                 status="blocked",
@@ -622,7 +632,7 @@ def _stream_rebase(
             )
         )
         return RebaseResult(
-            actions=tuple(actions),
+            actions=recorder.as_tuple(),
             blocked=True,
         )
 
@@ -640,7 +650,7 @@ def _stream_rebase(
 
     closed_unmerged_revisions = operation_plan.closed_unmerged_revisions
     for action in operation_plan.pre_actions:
-        record_action(action)
+        recorder.record(action)
     rebase_plans = list(operation_plan.rebase_plans)
 
     rebase_operation_state = _start_rebase_operation(
@@ -659,18 +669,18 @@ def _stream_rebase(
             closed_unmerged_revisions=closed_unmerged_revisions,
             prepared_rebase=prepared_rebase,
             rebase_plans=tuple(rebase_plans),
-            record_action=record_action,
+            record_action=recorder.record,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
 
         _record_rebase_policy_actions(
             prefix=prepared_rebase.config.bookmark_prefix,
             merged_revisions=merged_revisions,
-            record_action=record_action,
+            record_action=recorder.record,
         )
 
-        if not actions and merged_revisions:
-            record_action(
+        if not recorder.actions and merged_revisions:
+            recorder.record(
                 CleanupAction(
                     kind="rebase",
                     status="planned" if prepared_rebase.dry_run else "applied",
@@ -682,7 +692,7 @@ def _stream_rebase(
 
         _rebase_succeeded = True
         return RebaseResult(
-            actions=tuple(actions),
+            actions=recorder.as_tuple(),
             blocked=blocked,
         )
     finally:
@@ -1050,13 +1060,8 @@ async def _run_cleanup_async(
     stale_reasons: dict[str, str | None] | None = None,
 ) -> CleanupResult:
     next_changes = dict(prepared_cleanup.state.changes)
-    actions: list[CleanupAction] = []
+    recorder = _CleanupActionRecorder(on_action=on_action)
     dry_run = prepared_cleanup.dry_run
-
-    def record_action(action: CleanupAction) -> None:
-        actions.append(action)
-        if on_action is not None:
-            on_action(action)
 
     # Write an operation journal before the first mutation on live runs only.
     journal: OperationJournal | None = None
@@ -1098,7 +1103,7 @@ async def _run_cleanup_async(
         prepared_changes = _run_local_cleanup_pass(
             next_changes=next_changes,
             prepared_cleanup=prepared_cleanup,
-            record_action=record_action,
+            record_action=recorder.record,
             stale_reasons=stale_reasons,
         )
         if prepared_cleanup.github_repository is None:
@@ -1109,7 +1114,7 @@ async def _run_cleanup_async(
 
             _cleanup_succeeded = True
             return CleanupResult(
-                actions=tuple(actions),
+                actions=recorder.as_tuple(),
             )
 
         if not any(
@@ -1122,7 +1127,7 @@ async def _run_cleanup_async(
 
             _cleanup_succeeded = True
             return CleanupResult(
-                actions=tuple(actions),
+                actions=recorder.as_tuple(),
             )
 
         github_repository = prepared_cleanup.github_repository
@@ -1133,7 +1138,7 @@ async def _run_cleanup_async(
                 next_changes=next_changes,
                 prepared_changes=prepared_changes,
                 prepared_cleanup=prepared_cleanup,
-                record_action=record_action,
+                record_action=recorder.record,
             )
 
         _save_cleanup_state_if_changed(
@@ -1143,7 +1148,7 @@ async def _run_cleanup_async(
 
         _cleanup_succeeded = True
         return CleanupResult(
-            actions=tuple(actions),
+            actions=recorder.as_tuple(),
         )
     finally:
         if _cleanup_succeeded and journal is not None:
