@@ -12,9 +12,10 @@ from jj_review import ui
 from jj_review.config import DEFAULT_BOOKMARK_PREFIX
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id
-from jj_review.models.bookmarks import BookmarkState
+from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_review.models.review_state import BookmarkOwnership, CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision
+from jj_review.review.change_status import ReviewChangeStatus, classify_review_change
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _DEFAULT_SLUG = "change"
@@ -300,7 +301,11 @@ def _bookmark_state_is_discoverable(bookmark_state: BookmarkState, remote_name: 
     if bookmark_state.local_targets:
         return True
     remote_state = bookmark_state.remote_target(remote_name)
-    return remote_state is not None and bool(remote_state.targets)
+    remote_status = _classify_bookmark_remote_state(
+        commit_id=None,
+        remote_state=remote_state,
+    )
+    return remote_status.remote_branch != "absent"
 
 
 def _bookmark_state_matches_revision(
@@ -314,7 +319,25 @@ def _bookmark_state_matches_revision(
     if remote_name is None:
         return False
     remote_state = bookmark_state.remote_target(remote_name)
-    return remote_state is not None and remote_state.target == commit_id
+    remote_status = _classify_bookmark_remote_state(
+        commit_id=commit_id,
+        remote_state=remote_state,
+    )
+    return remote_status.remote_branch_matches_commit is True
+
+
+def _classify_bookmark_remote_state(
+    *,
+    commit_id: str | None,
+    remote_state: RemoteBookmarkState | None,
+) -> ReviewChangeStatus:
+    return classify_review_change(
+        cached_change=None,
+        commit_id=commit_id,
+        local="present",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
 
 
 def _updated_cached_change(
