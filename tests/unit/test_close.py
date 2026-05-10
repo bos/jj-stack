@@ -9,9 +9,11 @@ import pytest
 from jj_review import ui
 from jj_review.commands.close import (
     CloseAction,
+    PreparedClose,
     _cleanup_revision,
     _CloseCleanupContext,
 )
+from jj_review.config import RepoConfig
 from jj_review.github.client import GithubClient
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
@@ -141,6 +143,28 @@ class _JjClientStub:
         self.forget_calls.extend(bookmarks)
 
 
+def _prepared_close(
+    *,
+    cleanup_user_bookmarks: bool = False,
+    jj_client: _JjClientStub,
+) -> PreparedClose:
+    return cast(
+        PreparedClose,
+        SimpleNamespace(
+            context=SimpleNamespace(
+                config=RepoConfig(
+                    bookmark_prefix="review",
+                    cleanup_user_bookmarks=cleanup_user_bookmarks,
+                )
+            ),
+            dry_run=False,
+            prepared_status=SimpleNamespace(
+                prepared=SimpleNamespace(client=cast(JjClient, jj_client))
+            ),
+        ),
+    )
+
+
 async def _run_cleanup_revision(*, bookmark_state: BookmarkState) -> _CleanupResult:
     actions: list[CloseAction] = []
     jj_client = _JjClientStub()
@@ -149,13 +173,10 @@ async def _run_cleanup_revision(*, bookmark_state: BookmarkState) -> _CleanupRes
         cached_change=CachedChange(bookmark="review/feature-aaaaaaaa"),
         commit_id="commit-1",
         context=_CloseCleanupContext(
-            bookmark_prefix="review",
-            cleanup_user_bookmarks=False,
-            dry_run=False,
             github_client=cast(GithubClient, SimpleNamespace()),
             github_repository=_GITHUB_REPO,
-            jj_client=cast(JjClient, jj_client),
             next_changes={},
+            prepared_close=_prepared_close(jj_client=jj_client),
             record_action=actions.append,
             remote_name="origin",
             revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
@@ -182,13 +203,10 @@ def test_cleanup_revision_keeps_external_bookmark() -> None:
             ),
             commit_id="commit-1",
             context=_CloseCleanupContext(
-                bookmark_prefix="review",
-                cleanup_user_bookmarks=False,
-                dry_run=False,
                 github_client=cast(GithubClient, SimpleNamespace()),
                 github_repository=_GITHUB_REPO,
-                jj_client=cast(JjClient, jj_client),
                 next_changes={},
+                prepared_close=_prepared_close(jj_client=jj_client),
                 record_action=actions.append,
                 remote_name="origin",
                 revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
@@ -219,13 +237,13 @@ def test_cleanup_revision_deletes_external_bookmark_when_configured() -> None:
             ),
             commit_id="commit-1",
             context=_CloseCleanupContext(
-                bookmark_prefix="review",
-                cleanup_user_bookmarks=True,
-                dry_run=False,
                 github_client=cast(GithubClient, SimpleNamespace()),
                 github_repository=_GITHUB_REPO,
-                jj_client=cast(JjClient, jj_client),
                 next_changes={},
+                prepared_close=_prepared_close(
+                    cleanup_user_bookmarks=True,
+                    jj_client=jj_client,
+                ),
                 record_action=actions.append,
                 remote_name="origin",
                 revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),

@@ -188,17 +188,30 @@ class _CloseOperationState:
 class _CloseCleanupContext:
     """Shared dependencies for bookmark and stack-comment cleanup."""
 
-    bookmark_prefix: str
-    cleanup_user_bookmarks: bool
-    dry_run: bool
     github_client: GithubClient
     github_repository: ParsedGithubRepo
-    jj_client: JjClient
     next_changes: dict[str, CachedChange]
+    prepared_close: PreparedClose
     record_action: Callable[[CloseAction], None]
     remote_name: str | None
     revision: ReviewStatusRevision
     revision_label: CloseActionBody
+
+    @property
+    def bookmark_prefix(self) -> str:
+        return self.prepared_close.context.config.bookmark_prefix
+
+    @property
+    def cleanup_user_bookmarks(self) -> bool:
+        return self.prepared_close.context.config.cleanup_user_bookmarks
+
+    @property
+    def dry_run(self) -> bool:
+        return self.prepared_close.dry_run
+
+    @property
+    def jj_client(self) -> JjClient:
+        return self.prepared_close.prepared_status.prepared.client
 
 
 @dataclass(frozen=True, slots=True)
@@ -1315,13 +1328,10 @@ async def _cleanup_if_requested(
     prepared = prepared_close.prepared_status.prepared
     remote = prepared.remote
     cleanup_context = _CloseCleanupContext(
-        bookmark_prefix=prepared_close.context.config.bookmark_prefix,
-        cleanup_user_bookmarks=prepared_close.context.config.cleanup_user_bookmarks,
-        dry_run=prepared_close.dry_run,
         github_client=github_client,
         github_repository=github_repository,
-        jj_client=prepared.client,
         next_changes=next_changes,
+        prepared_close=prepared_close,
         record_action=record_action,
         remote_name=remote.name if remote is not None else None,
         revision=revision,
@@ -1346,7 +1356,6 @@ async def _cleanup_revision(
     cleanup_plan = _plan_review_bookmark_cleanup(
         bookmark=bookmark,
         cached_change=cached_change,
-        cleanup_user_bookmarks=context.cleanup_user_bookmarks,
         bookmark_state=bookmark_state,
         commit_id=commit_id,
         context=context,
@@ -1417,7 +1426,6 @@ def _plan_review_bookmark_cleanup(
     *,
     bookmark: str | None,
     cached_change: CachedChange,
-    cleanup_user_bookmarks: bool,
     bookmark_state: BookmarkState,
     commit_id: str | None,
     context: _CloseCleanupContext,
@@ -1428,7 +1436,7 @@ def _plan_review_bookmark_cleanup(
         bookmark=bookmark,
         bookmark_state=bookmark_state,
         cached_change=cached_change,
-        cleanup_user_bookmarks=cleanup_user_bookmarks,
+        cleanup_user_bookmarks=context.cleanup_user_bookmarks,
         commit_id=commit_id,
         prefix=context.bookmark_prefix,
         record_action=context.record_action,
