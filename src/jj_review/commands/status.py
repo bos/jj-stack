@@ -177,7 +177,7 @@ def _run_status(
             revset=None,
         )
         exit_code = _render_prepared_status(
-            config=context.config,
+            context=context,
             prepared_status=prepared_status,
             verbose=options.verbose,
         )
@@ -233,7 +233,7 @@ def _run_status(
         exit_code = max(
             exit_code,
             _render_prepared_status(
-                config=context.config,
+                context=context,
                 prepared_status=prepared_status,
                 verbose=options.verbose,
             ),
@@ -428,7 +428,7 @@ def _status_heading(selector: StatusSelector) -> object:
 
 def _render_prepared_status(
     *,
-    config: RepoConfig,
+    context: CommandContext,
     prepared_status,
     verbose: bool,
 ) -> int:
@@ -486,7 +486,7 @@ def _render_prepared_status(
             prerendered_blocks=prerendered_blocks,
         )
     )
-    _emit_lines(render_status_advisory_lines(config=config, result=result))
+    _emit_lines(render_status_advisory_lines(config=context.config, result=result))
     _emit_lines(render_status_operation_lines(prepared_status=prepared_status))
 
     exit_code = 1 if result.incomplete else 0
