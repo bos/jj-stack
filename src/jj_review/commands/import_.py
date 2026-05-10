@@ -43,6 +43,7 @@ from jj_review.review.bookmarks import (
     bookmark_ownership_for_source,
     discover_bookmarks_for_revisions,
 )
+from jj_review.review.change_status import ReviewChangeStatus, classify_review_change
 from jj_review.review.status import (
     PreparedStatus,
     StatusResult,
@@ -715,11 +716,14 @@ def _import_local_state(
             if prepared.remote is not None
             else None
         )
+        remote_status = _classify_import_remote_branch(
+            desired_commit_id=prepared_revision.revision.commit_id,
+            remote_state=remote_state,
+        )
         track_remote = (
             prepared.remote is not None
-            and remote_state is not None
-            and remote_state.target == prepared_revision.revision.commit_id
-            and not remote_state.is_tracked
+            and remote_status.remote_branch == "untracked"
+            and remote_status.remote_branch_matches_commit is True
         )
 
         existing_change = next_changes.get(
@@ -809,16 +813,20 @@ def _validate_bookmark_state(
     if selected_remote_name is None:
         return
     remote_state = bookmark_state.remote_target(selected_remote_name)
-    if remote_state is None:
+    remote_status = _classify_import_remote_branch(
+        desired_commit_id=desired_commit_id,
+        remote_state=remote_state,
+    )
+    if remote_status.remote_branch == "absent":
         return
-    if len(remote_state.targets) > 1:
+    if remote_status.remote_branch == "conflicted":
         remote_bookmark = ui.bookmark(bookmark)
         remote_bookmark_location = f"'{remote_bookmark}'@{selected_remote_name}"
         raise CliError(
             f"Remote bookmark {remote_bookmark_location} is conflicted.",
             hint="Resolve it before importing.",
         )
-    if remote_state.target is not None and remote_state.target != desired_commit_id:
+    if remote_status.remote_branch_matches_commit is not True:
         remote_bookmark = ui.bookmark(bookmark)
         remote_bookmark_location = f"'{remote_bookmark}'@{selected_remote_name}"
         raise CliError(
@@ -921,9 +929,28 @@ def _prepared_status_has_discoverable_remote_link(
             revision.bookmark,
             BookmarkState(name=revision.bookmark),
         ).remote_target(remote.name)
-        if remote_state is not None and remote_state.targets:
+        revision_value = getattr(revision, "revision", None)
+        remote_status = _classify_import_remote_branch(
+            desired_commit_id=getattr(revision_value, "commit_id", None),
+            remote_state=remote_state,
+        )
+        if remote_status.remote_branch != "absent":
             return True
     return False
+
+
+def _classify_import_remote_branch(
+    *,
+    desired_commit_id: str | None,
+    remote_state: RemoteBookmarkState | None,
+) -> ReviewChangeStatus:
+    return classify_review_change(
+        cached_change=None,
+        commit_id=desired_commit_id,
+        local="present",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
 
 
 def _ensure_selected_head_has_pull_request(
