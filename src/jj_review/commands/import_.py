@@ -518,22 +518,19 @@ def _fetch_selected_stack_bookmarks(
             selected_branch_targets[candidates[0]] = remote_branches[candidates[0]]
 
     bookmark_states = client.list_bookmark_states(tuple(sorted(selected_branch_targets)))
-    branches_to_fetch = tuple(
-        bookmark
-        for bookmark, target in sorted(selected_branch_targets.items())
-        if (
-            (
-                remote_state := bookmark_states.get(
-                    bookmark,
-                    BookmarkState(name=bookmark),
-                ).remote_target(remote.name)
-            )
-            is None
-            or remote_state.target != target
+    branches_to_fetch: list[str] = []
+    for bookmark, target in sorted(selected_branch_targets.items()):
+        remote_status = _classify_import_remote_branch(
+            desired_commit_id=target,
+            remote_state=bookmark_states.get(
+                bookmark,
+                BookmarkState(name=bookmark),
+            ).remote_target(remote.name),
         )
-    )
+        if remote_status.remote_branch_matches_commit is not True:
+            branches_to_fetch.append(bookmark)
     if branches_to_fetch:
-        client.fetch_remote(remote=remote.name, branches=branches_to_fetch)
+        client.fetch_remote(remote=remote.name, branches=tuple(branches_to_fetch))
     return selected_branch_targets
 
 
@@ -647,7 +644,11 @@ def _remote_bookmark_commit_id(
 ) -> str:
     bookmark_token = ui.bookmark(head)
     remote_token = ui.bookmark(remote.name)
-    if remote_state is None or not remote_state.targets:
+    remote_status = _classify_import_remote_branch(
+        desired_commit_id=None,
+        remote_state=remote_state,
+    )
+    if remote_status.remote_branch == "absent":
         if not fetch:
             raise CliError(
                 t"Remote bookmark {bookmark_token}@{remote_token} is not available in "
@@ -658,11 +659,13 @@ def _remote_bookmark_commit_id(
             t"Remote bookmark {bookmark_token}@{remote_token} does not exist.",
             hint="Fetch and retry once that branch is visible on the selected remote.",
         )
-    if len(remote_state.targets) > 1:
+    if remote_status.remote_branch == "conflicted":
         raise CliError(
             t"Remote bookmark {bookmark_token}@{remote_token} is conflicted.",
             hint="Resolve it before importing.",
         )
+    if remote_state is None:
+        raise AssertionError("Classified remote bookmark must have an observed state.")
     commit_id = remote_state.target
     if commit_id is None:
         raise CliError(
@@ -1010,7 +1013,11 @@ def _resolve_import_bookmark(
         return bookmark
     bookmark_state = bookmark_states.get(bookmark, BookmarkState(name=bookmark))
     remote_state = bookmark_state.remote_target(selected_remote_name)
-    if remote_state is None or remote_state.target is None:
+    remote_status = _classify_import_remote_branch(
+        desired_commit_id=prepared_revision.revision.commit_id,
+        remote_state=remote_state,
+    )
+    if remote_status.remote_branch in {"absent", "conflicted"}:
         bookmark_token = ui.bookmark(bookmark)
         status_fetch_cmd = ui.cmd("status --fetch")
         raise CliError(
@@ -1019,7 +1026,7 @@ def _resolve_import_bookmark(
             t"is not present on the selected remote.",
             hint=t"Refresh with {status_fetch_cmd} or select an exact pull request.",
         )
-    if remote_state.target != prepared_revision.revision.commit_id:
+    if remote_status.remote_branch_matches_commit is not True:
         bookmark_token = ui.bookmark(bookmark)
         status_fetch_cmd = ui.cmd("status --fetch")
         raise CliError(
