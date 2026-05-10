@@ -12,7 +12,8 @@ from jj_review.github.pull_request_refs import (
 )
 from jj_review.github.resolution import parse_github_repo, select_submit_remote
 from jj_review.jj import JjClient
-from jj_review.models.review_state import ReviewState
+from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.review.change_status import classify_saved_review_change
 from jj_review.review.discovery import discover_tracked_stacks
 from jj_review.state.store import ReviewStateStore
 
@@ -87,11 +88,10 @@ def resolve_orphaned_pull_request(
         jj_client=jj_client,
         pull_request_reference=pull_request_reference,
     )
-    matching_change_ids = [
-        change_id
-        for change_id, cached_change in state.changes.items()
-        if cached_change.link_state == "active" and cached_change.pr_number == pull_request_number
-    ]
+    matching_change_ids = _active_change_ids_for_pull_request(
+        pull_request_number=pull_request_number,
+        state=state,
+    )
     if not matching_change_ids:
         return None
     if len(matching_change_ids) > 1:
@@ -148,11 +148,10 @@ def resolve_linked_change_for_pull_request(
         pull_request_reference=pull_request_reference,
     )
     state = ReviewStateStore.for_repo(jj_client.repo_root).load()
-    matching_change_ids = [
-        change_id
-        for change_id, cached_change in state.changes.items()
-        if cached_change.link_state == "active" and cached_change.pr_number == pull_request_number
-    ]
+    matching_change_ids = _active_change_ids_for_pull_request(
+        pull_request_number=pull_request_number,
+        state=state,
+    )
     if not matching_change_ids:
         raise CliError(
             t"PR #{pull_request_number} is not linked to any local change.",
@@ -185,6 +184,33 @@ def resolve_linked_change_for_pull_request(
             hint=t"{action_label} by explicit revision after resolving it.",
         )
     return pull_request_number, change_id
+
+
+def _active_change_ids_for_pull_request(
+    *,
+    pull_request_number: int,
+    state: ReviewState,
+) -> list[str]:
+    return [
+        change_id
+        for change_id, cached_change in state.changes.items()
+        if _saved_change_links_pull_request(
+            cached_change,
+            pull_request_number=pull_request_number,
+        )
+    ]
+
+
+def _saved_change_links_pull_request(
+    cached_change: CachedChange,
+    *,
+    pull_request_number: int,
+) -> bool:
+    review_status = classify_saved_review_change(cached_change, local="present")
+    return (
+        review_status.link == "active"
+        and cached_change.pr_number == pull_request_number
+    )
 
 
 def _parse_repo_pull_request_number(
