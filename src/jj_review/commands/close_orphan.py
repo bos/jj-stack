@@ -47,7 +47,6 @@ from jj_review.state.journal import (
     append_abandoned_event,
 )
 from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
-from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message, plain_text
 
@@ -179,8 +178,8 @@ async def run_untracked_cleanup_pull_request(
 
     if not dry_run:
         _retire_pull_request_close_operations(
+            context=context,
             pull_request_number=pull_request_number,
-            state_store=state_store,
         )
         retire_submit_operations_cleared_by_cleanup(
             current_state=state,
@@ -212,11 +211,12 @@ def _untracked_cleanup_verification_error(
 
 def _retire_pull_request_close_operations(
     *,
+    context: CommandContext,
     pull_request_number: int,
-    state_store: ReviewStateStore,
 ) -> None:
     """Retire stale close journals recorded for a now-closed PR selector."""
 
+    state_store = context.state_store
     display_revset = f"--pull-request {pull_request_number}"
     state_store.require_writable()
     stale_close_operations: list[tuple[LoadedOperationRecord, CloseOperationRecord]] = []
@@ -369,11 +369,9 @@ async def run_orphan_close(
                     bookmark=bookmark,
                     bookmark_state=bookmark_state,
                     cached_change=cached_change,
-                    cleanup_user_bookmarks=config.cleanup_user_bookmarks,
-                    dry_run=dry_run,
-                    prefix=config.bookmark_prefix,
                     recorder=recorder,
                     remote_name=remote.name,
+                    run=run,
                     saved_commit_id=last_target,
                 )
             if not recorder.blocked:
@@ -398,7 +396,7 @@ async def run_orphan_close(
                 return _render_orphan_close_actions(
                     actions=recorder.as_tuple(),
                     blocked=True,
-                    dry_run=dry_run,
+                    run=run,
                 )
 
             if inspection is None:
@@ -457,7 +455,7 @@ async def run_orphan_close(
         return _render_orphan_close_actions(
             actions=recorder.as_tuple(),
             blocked=recorder.blocked,
-            dry_run=dry_run,
+            run=run,
         )
     finally:
         if completed and operation_state.journal is not None:
@@ -517,8 +515,9 @@ def _render_orphan_close_actions(
     *,
     actions: tuple[CloseAction, ...],
     blocked: bool,
-    dry_run: bool,
+    run: _OrphanCloseRun,
 ) -> int:
+    dry_run = run.dry_run
     header = (
         "Close blocked:"
         if blocked
@@ -577,13 +576,12 @@ def _preflight_orphan_bookmark_cleanup(
     bookmark: str,
     bookmark_state: BookmarkState,
     cached_change: CachedChange,
-    cleanup_user_bookmarks: bool,
-    dry_run: bool,
-    prefix: str,
     recorder: _OrphanActionRecorder,
     remote_name: str,
+    run: _OrphanCloseRun,
     saved_commit_id: str | None,
 ) -> _OrphanBookmarkCleanupPlan:
+    dry_run = run.dry_run
     remote_state = bookmark_state.remote_target(remote_name)
     review_status = classify_review_change(
         cached_change=cached_change,
@@ -620,11 +618,10 @@ def _preflight_orphan_bookmark_cleanup(
         bookmark=bookmark,
         bookmark_state=bookmark_state,
         cached_change=cached_change,
-        cleanup_user_bookmarks=cleanup_user_bookmarks,
         commit_id=saved_commit_id,
-        prefix=prefix,
         recorder=recorder,
         remote_name=remote_name,
+        run=run,
     )
 
 
@@ -633,19 +630,19 @@ def _plan_orphan_bookmark_cleanup(
     bookmark: str,
     bookmark_state: BookmarkState,
     cached_change: CachedChange,
-    cleanup_user_bookmarks: bool,
     commit_id: str,
-    prefix: str,
     recorder: _OrphanActionRecorder,
     remote_name: str,
+    run: _OrphanCloseRun,
 ) -> _OrphanBookmarkCleanupPlan:
+    config = run.context.config
     return plan_bookmark_cleanup(
         bookmark=bookmark,
         bookmark_state=bookmark_state,
         cached_change=cached_change,
-        cleanup_user_bookmarks=cleanup_user_bookmarks,
+        cleanup_user_bookmarks=config.cleanup_user_bookmarks,
         commit_id=commit_id,
-        prefix=prefix,
+        prefix=config.bookmark_prefix,
         record_action=recorder.record,
         remote_name=remote_name,
     )
