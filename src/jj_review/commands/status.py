@@ -124,15 +124,32 @@ def status(
     )
     return _run_status(
         context=context,
-        options=StatusOptions(
+        options=_status_options_from_cli(
             fetch=fetch,
-            selectors=_normalize_status_selectors(
-                pull_request=pull_request,
-                revset=revset,
-                selectors=selectors,
-            ),
+            pull_request=pull_request,
+            revset=revset,
+            selectors=selectors,
             verbose=verbose,
         ),
+    )
+
+
+def _status_options_from_cli(
+    *,
+    fetch: bool,
+    pull_request: str | Sequence[str] | None,
+    revset: str | Sequence[str] | None,
+    selectors: Sequence[StatusSelector] | None,
+    verbose: bool,
+) -> StatusOptions:
+    return StatusOptions(
+        fetch=fetch,
+        selectors=_normalize_status_selectors(
+            pull_request=pull_request,
+            revset=revset,
+            selectors=selectors,
+        ),
+        verbose=verbose,
     )
 
 

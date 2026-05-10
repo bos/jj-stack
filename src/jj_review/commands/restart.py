@@ -52,7 +52,7 @@ def restart(
         cli_args=cli_args,
         debug=debug,
     )
-    options = RestartOptions(
+    options = _restart_options_from_cli(
         dry_run=dry_run,
         revset=revset,
     )
@@ -63,6 +63,17 @@ def restart(
         )
     _render_restart_result(result)
     return 0
+
+
+def _restart_options_from_cli(
+    *,
+    dry_run: bool,
+    revset: str | None,
+) -> RestartOptions:
+    return RestartOptions(
+        dry_run=dry_run,
+        revset=revset,
+    )
 
 
 def _run_restart(

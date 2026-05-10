@@ -108,8 +108,12 @@ def list_(
     )
     return _run_list(
         context=context,
-        options=ListOptions(fetch=fetch),
+        options=_list_options_from_cli(fetch=fetch),
     )
+
+
+def _list_options_from_cli(*, fetch: bool) -> ListOptions:
+    return ListOptions(fetch=fetch)
 
 
 def _run_list(

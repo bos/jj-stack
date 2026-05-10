@@ -102,8 +102,12 @@ def abort(
     with mutating_command_lock(command="abort", context=context):
         return _run_abort(
             context=context,
-            options=AbortOptions(dry_run=dry_run),
+            options=_abort_options_from_cli(dry_run=dry_run),
         )
+
+
+def _abort_options_from_cli(*, dry_run: bool) -> AbortOptions:
+    return AbortOptions(dry_run=dry_run)
 
 
 def _run_abort(
