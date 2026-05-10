@@ -120,7 +120,6 @@ class PreparedCleanup:
     """Locally prepared cleanup inputs before any GitHub inspection."""
 
     context: CommandContext
-    dry_run: bool
     bookmark_states: dict[str, BookmarkState]
     github_repository: ParsedGithubRepo | None
     github_repository_error: ErrorMessage | None
@@ -128,7 +127,12 @@ class PreparedCleanup:
     remote_error: ErrorMessage | None
     remote_context_loaded: bool
     operation_lock: OperationLock
+    options: CleanupOptions
     state: ReviewState
+
+    @property
+    def dry_run(self) -> bool:
+        return self.options.dry_run
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,9 +194,13 @@ class PreparedRebase:
     """Locally prepared rebase inputs before any rewrite."""
 
     context: CommandContext
-    dry_run: bool
     operation_lock: OperationLock
+    options: CleanupOptions
     prepared_status: PreparedStatus
+
+    @property
+    def dry_run(self) -> bool:
+        return self.options.dry_run
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,8 +437,8 @@ def _prepare_cleanup_rebase(
     )
     return PreparedRebase(
         context=context,
-        dry_run=options.dry_run,
         operation_lock=operation_lock,
+        options=options,
         prepared_status=prepare_status(
             context=context,
             fetch_remote_state=True,
@@ -569,7 +577,6 @@ def _prepare_cleanup(
 
     return PreparedCleanup(
         context=context,
-        dry_run=options.dry_run,
         bookmark_states=bookmark_states,
         github_repository=None,
         github_repository_error=None,
@@ -577,6 +584,7 @@ def _prepare_cleanup(
         remote_error=None,
         remote_context_loaded=False,
         operation_lock=operation_lock,
+        options=options,
         state=state,
     )
 

@@ -9,6 +9,7 @@ from jj_review.bootstrap import CommandContext
 from jj_review.commands import cleanup as cleanup_module
 from jj_review.commands.cleanup import (
     CleanupAction,
+    CleanupOptions,
     PreparedCleanup,
     PreparedRebase,
     StackCommentCleanupPlan,
@@ -86,7 +87,6 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     )
     prepared_cleanup = PreparedCleanup(
         context=_fake_context(state_store=state_store),
-        dry_run=False,
         bookmark_states={},
         github_repository=ParsedGithubRepo(
             host="github.com",
@@ -98,6 +98,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
         remote_error=None,
         remote_context_loaded=True,
         operation_lock=_fake_operation_lock(recorded_journal_paths),
+        options=CleanupOptions(dry_run=False, rebase_revset=None),
         state=state,
     )
 
@@ -202,8 +203,8 @@ def test_stream_rebase_plans_rebase_for_survivor_above_merged_path_revision(
     )
     prepared_rebase = PreparedRebase(
         context=_fake_context(),
-        dry_run=True,
         operation_lock=_fake_operation_lock(),
+        options=CleanupOptions(dry_run=True, rebase_revset=None),
         prepared_status=cast(
             PreparedStatus,
             SimpleNamespace(
@@ -287,8 +288,8 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
     )
     prepared_rebase = PreparedRebase(
         context=_fake_context(),
-        dry_run=False,
         operation_lock=_fake_operation_lock(),
+        options=CleanupOptions(dry_run=False, rebase_revset=None),
         prepared_status=cast(
             PreparedStatus,
             SimpleNamespace(
