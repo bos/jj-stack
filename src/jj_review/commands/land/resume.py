@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.errors import CliError
@@ -17,6 +18,7 @@ from jj_review.review.intents import (
 )
 from jj_review.review.status import PreparedStatus
 from jj_review.state.intents import check_same_kind_intent
+from jj_review.state.journal import read_journal
 
 from .models import (
     BookmarkStateReader,
@@ -249,7 +251,7 @@ def _remote_trunk_matches_commit(
 
 
 def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
-    completed_change_ids = set(intent.completed_change_ids)
+    completed_change_ids = set(_completed_land_change_ids(intent))
     planned_revisions: list[LandRevision] = []
     for change_id in intent.landed_change_ids:
         if change_id in completed_change_ids:
@@ -280,10 +282,33 @@ def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
     )
 
 
+def _completed_land_change_ids(intent: LandIntent) -> tuple[str, ...]:
+    """Return the landed prefix whose saved-state updates are durably recorded."""
+
+    if intent.journal_path is None:
+        return intent.completed_change_ids
+    try:
+        events = read_journal(Path(intent.journal_path))
+    except (OSError, ValueError, KeyError) as error:
+        raise CliError(
+            t"Interrupted land journal for {intent.label} is unreadable. "
+            t"Re-run {ui.cmd('land')} to refresh the plan."
+        ) from error
+    completed: list[str] = []
+    for event in events:
+        if event.event != "saved_state_update":
+            continue
+        change_id = event.data.get("change_id")
+        if isinstance(change_id, str):
+            completed.append(change_id)
+    return tuple(dict.fromkeys(completed))
+
+
 def build_land_intent(
     *,
     bypass_readiness: bool,
     cleanup_bookmarks: bool,
+    journal_path: str | None = None,
     planned_revisions: tuple[LandRevision, ...],
     prepared_status: PreparedStatus,
     selected_pr_number: int | None,
@@ -309,6 +334,7 @@ def build_land_intent(
         label=f"land on {prepared_status.selected_revset}",
         bypass_readiness=bypass_readiness,
         cleanup_bookmarks=cleanup_bookmarks,
+        journal_path=journal_path,
         display_revset=prepared_status.selected_revset,
         ordered_change_ids=ordered_change_ids,
         ordered_commit_ids=ordered_commit_ids,

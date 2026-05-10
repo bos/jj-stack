@@ -72,6 +72,7 @@ class LandIntent(OrderedChangeIdsIntent):
     kind: Literal["land"]
     bypass_readiness: bool
     cleanup_bookmarks: bool
+    journal_path: str | None = None
     ordered_commit_ids: tuple[str, ...]
     landed_change_ids: tuple[str, ...]
     landed_bookmarks: dict[str, str]

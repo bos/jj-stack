@@ -14,7 +14,9 @@ from jj_review.models.github import GithubPullRequest
 from jj_review.models.intent import LandIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.intents import retire_superseded_intents
-from jj_review.state.intents import save_intent, write_new_intent
+from jj_review.state.intents import write_new_intent
+from jj_review.state.journal import OperationJournal
+from jj_review.state.operation_lock import read_operation_lock_holder
 from jj_review.state.store import ReviewStateStore
 
 from .models import (
@@ -155,15 +157,52 @@ async def execute_land_plan(
             applied=False,
             blocked=True,
         )
+    resume_intent = execution_state.resume_intent
+    journal = (
+        OperationJournal.open(Path(resume_intent.intent.journal_path))
+        if resume_intent is not None and resume_intent.intent.journal_path is not None
+        else OperationJournal.begin(
+            execution_state.state_dir,
+            operation="land",
+            options={
+                "bypass_readiness": prepared_land.bypass_readiness,
+                "cleanup_bookmarks": prepared_land.cleanup_bookmarks,
+                "selected_pr_number": prepared_land.selected_pr_number,
+            },
+            resolved_scope={
+                "github_repository": github_repository.full_name,
+                "planned_change_ids": tuple(
+                    revision.change_id for revision in execution_plan.planned_revisions
+                ),
+                "planned_revisions": tuple(
+                    {
+                        "bookmark": revision.bookmark,
+                        "bookmark_managed": revision.bookmark_managed,
+                        "change_id": revision.change_id,
+                        "commit_id": revision.commit_id,
+                        "pull_request_number": revision.pull_request_number,
+                        "subject": revision.subject,
+                    }
+                    for revision in execution_plan.planned_revisions
+                ),
+                "push_trunk": execution_plan.push_trunk,
+                "remote_name": remote_name,
+                "selected_revset": selected_revset,
+                "trunk_branch": trunk_branch,
+            },
+            lock_holder=read_operation_lock_holder(execution_state.state_dir),
+        )
+    )
 
     state = prepared.state_store.load()
     state_changes = dict(state.changes)
     land_intent = (
-        execution_state.resume_intent.intent
-        if execution_state.resume_intent is not None
+        resume_intent.intent
+        if resume_intent is not None
         else build_land_intent(
             bypass_readiness=prepared_land.bypass_readiness,
             cleanup_bookmarks=prepared_land.cleanup_bookmarks,
+            journal_path=str(journal.path),
             planned_revisions=execution_plan.planned_revisions,
             prepared_status=prepared_status,
             selected_pr_number=prepared_land.selected_pr_number,
@@ -171,8 +210,8 @@ async def execute_land_plan(
         )
     )
     intent_path = (
-        execution_state.resume_intent.path
-        if execution_state.resume_intent is not None
+        resume_intent.path
+        if resume_intent is not None
         else write_new_intent(execution_state.state_dir, land_intent)
     )
 
@@ -188,6 +227,7 @@ async def execute_land_plan(
             execution_plan=execution_plan,
             github_client=github_client,
             github_repository=github_repository,
+            journal=journal,
             prepared_land=prepared_land,
             remote_name=remote_name,
             result_context=result_context,
@@ -202,12 +242,20 @@ async def execute_land_plan(
             execution_plan=execution_plan,
             github_client=github_client,
             github_repository=github_repository,
-            intent_path=intent_path,
+            journal=journal,
             land_intent=land_intent,
             state=state,
             state_changes=state_changes,
             state_store=prepared.state_store,
             trunk_branch=trunk_branch,
+        )
+        journal.append(
+            "completed",
+            {
+                "completed_change_ids": tuple(
+                    revision.change_id for revision in execution_plan.planned_revisions
+                )
+            },
         )
         succeeded = True
         return result_context.result(
@@ -228,6 +276,7 @@ async def _apply_trunk_transition(
     execution_plan: LandPlan,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
+    journal: OperationJournal,
     prepared_land: PreparedLand,
     remote_name: str,
     result_context: _LandResultContext,
@@ -236,6 +285,16 @@ async def _apply_trunk_transition(
     if not execution_plan.push_trunk:
         return None
 
+    if execution_plan.resubmit_revisions:
+        journal.append(
+            "planned_mutation",
+            {
+                "change_ids": tuple(
+                    revision.change_id for revision in execution_plan.resubmit_revisions
+                ),
+                "mutation": "refresh_review_branches",
+            },
+        )
     refresh_actions, dismissed_action = await _refresh_rebased_review_branches(
         bypass_readiness=prepared_land.bypass_readiness,
         client=client,
@@ -246,6 +305,14 @@ async def _apply_trunk_transition(
         trunk_branch=trunk_branch,
     )
     actions.extend(refresh_actions)
+    if refresh_actions:
+        journal.append(
+            "mutation_applied",
+            {
+                "actions": tuple(action.message for action in refresh_actions),
+                "mutation": "refresh_review_branches",
+            },
+        )
     if dismissed_action is not None:
         actions.append(dismissed_action)
         return result_context.result(
@@ -254,14 +321,33 @@ async def _apply_trunk_transition(
             blocked=True,
         )
 
-    actions.append(
-        _push_trunk_bookmark(
-            client=client,
-            remote_name=remote_name,
-            trunk_branch=trunk_branch,
-            trunk_revision=execution_plan.planned_revisions[-1],
-        )
+    trunk_revision = execution_plan.planned_revisions[-1]
+    journal.append(
+        "planned_mutation",
+        {
+            "change_id": trunk_revision.change_id,
+            "commit_id": trunk_revision.commit_id,
+            "mutation": "push_trunk",
+            "trunk_branch": trunk_branch,
+        },
     )
+    trunk_action = _push_trunk_bookmark(
+        client=client,
+        remote_name=remote_name,
+        trunk_branch=trunk_branch,
+        trunk_revision=trunk_revision,
+    )
+    journal.append(
+        "mutation_applied",
+        {
+            "action": trunk_action.message,
+            "change_id": trunk_revision.change_id,
+            "commit_id": trunk_revision.commit_id,
+            "mutation": "push_trunk",
+            "trunk_branch": trunk_branch,
+        },
+    )
+    actions.append(trunk_action)
     return None
 
 
@@ -363,7 +449,7 @@ async def _finalize_planned_revisions(
     execution_plan: LandPlan,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
-    intent_path: Path,
+    journal: OperationJournal,
     land_intent: LandIntent,
     state: ReviewState,
     state_changes: dict[str, CachedChange],
@@ -381,12 +467,29 @@ async def _finalize_planned_revisions(
             t"{landed_revision.subject} "
             t"{ui.change_id(landed_revision.change_id)}..."
         )
+        journal.append(
+            "planned_mutation",
+            {
+                "change_id": landed_revision.change_id,
+                "mutation": "finalize_pull_request",
+                "pull_request_number": landed_revision.pull_request_number,
+            },
+        )
         final_pull_request = await _finalize_landed_pull_request(
             cached_change=state_changes.get(landed_revision.change_id),
             github_client=github_client,
             github_repository=github_repository,
             landed_revision=landed_revision,
             trunk_branch=trunk_branch,
+        )
+        journal.append(
+            "mutation_applied",
+            {
+                "change_id": landed_revision.change_id,
+                "mutation": "finalize_pull_request",
+                "pull_request": final_pull_request,
+                "pull_request_number": landed_revision.pull_request_number,
+            },
         )
         actions.append(
             LandAction(
@@ -402,24 +505,51 @@ async def _finalize_planned_revisions(
             if landed_index > 0
             else None
         )
-        state_changes[landed_revision.change_id] = _updated_landed_change(
+        previous_change = state_changes.get(landed_revision.change_id)
+        updated_change = _updated_landed_change(
             bookmark=landed_revision.bookmark,
             bookmark_managed=landed_revision.bookmark_managed,
-            cached_change=state_changes.get(landed_revision.change_id),
+            cached_change=previous_change,
             commit_id=landed_revision.commit_id,
             parent_change_id=landed_parent_change_id,
             pull_request=final_pull_request,
             stack_head_change_id=landed_head_change_id,
         )
+        state_changes[landed_revision.change_id] = updated_change
         state_store.save(state.model_copy(update={"changes": dict(state_changes)}))
+        journal.append(
+            "saved_state_update",
+            {
+                "after": updated_change,
+                "before": previous_change,
+                "change_id": landed_revision.change_id,
+            },
+        )
         cleanup_plan = bookmark_cleanup_by_change_id.get(landed_revision.change_id)
         if cleanup_plan is not None:
-            actions.extend(_apply_review_bookmark_cleanup(client, cleanup_plan, landed_revision))
-        land_intent = _mark_land_intent_completed(
-            intent=land_intent,
-            landed_revision=landed_revision,
-        )
-        save_intent(intent_path, land_intent)
+            if cleanup_plan.can_forget:
+                journal.append(
+                    "planned_mutation",
+                    {
+                        "bookmark": cleanup_plan.bookmark,
+                        "change_id": landed_revision.change_id,
+                        "mutation": "cleanup_local_bookmark",
+                    },
+                )
+            cleanup_actions = _apply_review_bookmark_cleanup(
+                client, cleanup_plan, landed_revision
+            )
+            actions.extend(cleanup_actions)
+            if cleanup_plan.can_forget:
+                journal.append(
+                    "mutation_applied",
+                    {
+                        "actions": tuple(action.message for action in cleanup_actions),
+                        "bookmark": cleanup_plan.bookmark,
+                        "change_id": landed_revision.change_id,
+                        "mutation": "cleanup_local_bookmark",
+                    },
+                )
     return land_intent
 
 
@@ -438,20 +568,6 @@ def _apply_review_bookmark_cleanup(
             t"for {ui.change_id(landed_revision.change_id)}",
             status="applied",
         ),
-    )
-
-
-def _mark_land_intent_completed(
-    *,
-    intent: LandIntent,
-    landed_revision: LandRevision,
-) -> LandIntent:
-    return intent.model_copy(
-        update={
-            "completed_change_ids": tuple(
-                dict.fromkeys((*intent.completed_change_ids, landed_revision.change_id))
-            )
-        }
     )
 
 

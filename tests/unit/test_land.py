@@ -43,6 +43,7 @@ from jj_review.review.status import (
     ReviewStatusRevision,
     StatusResult,
 )
+from jj_review.state.journal import OperationJournal
 from jj_review.ui import plain_text
 
 
@@ -452,6 +453,39 @@ def test_resume_land_plan_skips_completed_change_ids() -> None:
     assert plan.push_trunk is False
     assert [revision.change_id for revision in plan.planned_revisions] == ["change-2"]
     assert [revision.pull_request_number for revision in plan.planned_revisions] == [2]
+
+
+def test_resume_land_plan_reads_completed_change_ids_from_journal(tmp_path: Path) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="land",
+        lock_holder=None,
+        options={},
+        resolved_scope={},
+    )
+    journal.append(
+        "saved_state_update",
+        {
+            "after": CachedChange(pr_state="merged"),
+            "before": None,
+            "change_id": "change-1",
+        },
+    )
+    intent = cast(
+        LandIntent,
+        _loaded_land_intent(
+            ordered_change_ids=("change-1", "change-2"),
+            ordered_commit_ids=("commit-1", "commit-2"),
+            landed_change_ids=("change-1", "change-2"),
+        ).intent,
+    ).model_copy(update={"journal_path": str(journal.path)})
+
+    plan = _resume_land_plan(
+        intent=intent,
+        trunk_branch="main",
+    )
+
+    assert [revision.change_id for revision in plan.planned_revisions] == ["change-2"]
 
 
 def test_resume_land_plan_rejects_incomplete_intent_data() -> None:

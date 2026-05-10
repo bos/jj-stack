@@ -276,6 +276,11 @@ operation-record path for diagnostics. `list` and `doctor` do not take the lock.
 `status` does not lock for live inspection, but it tries the lock around its best-effort
 cache write and skips that write with a diagnostic if another operation is running.
 
+Completed operation journals are retained under the repo state directory. They are
+append-only JSONL records of resolved scope, planned mutations, applied mutations, and
+saved-state updates. The journal is not a topology source of truth; it is durable
+evidence for recovery and post-hoc debugging.
+
 ## Submission algorithm
 
 Given a chosen head revision:
