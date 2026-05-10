@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from jj_review import ui
 from jj_review.errors import CliError
 from jj_review.jj import JjClient
-from jj_review.models.review_state import ReviewState
+from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
+from jj_review.review.change_status import classify_saved_review_change
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +41,7 @@ def discover_tracked_stacks(
     tracked_change_ids = tuple(
         change_id
         for change_id, cached_change in state.changes.items()
-        if cached_change.has_review_identity or cached_change.is_unlinked
+        if _saved_change_is_discoverable(cached_change)
     )
     revisions_by_change_id = jj_client.query_revisions_by_change_ids(tracked_change_ids)
     tracked_revisions = tuple(
@@ -87,7 +88,7 @@ def discover_connected_tracked_stacks(
     tracked_change_ids = {
         change_id
         for change_id, cached_change in state.changes.items()
-        if cached_change.has_review_identity or cached_change.is_unlinked
+        if _saved_change_is_discoverable(cached_change)
     }
     if not tracked_change_ids:
         return ()
@@ -103,7 +104,7 @@ def discover_connected_tracked_stacks(
         change_id
         for change_id, cached_change in state.changes.items()
         if change_id not in selected_change_ids
-        and (cached_change.has_review_identity or cached_change.is_unlinked)
+        and _saved_change_is_discoverable(cached_change)
     )
     if not outside_tracked_change_ids:
         return ()
@@ -130,6 +131,11 @@ def discover_connected_tracked_stacks(
         trunk=trunk,
         known_base_parents=tuple(stack.base_parent for stack in selected_stacks),
     )
+
+
+def _saved_change_is_discoverable(cached_change: CachedChange) -> bool:
+    review_status = classify_saved_review_change(cached_change, local="present")
+    return review_status.saved_review_identity or review_status.link == "unlinked"
 
 
 def _discover_stacks_from_revisions(
