@@ -616,14 +616,19 @@ def test_prepare_stack_for_status_does_not_persist_generated_bookmarks() -> None
 
     state_store = FakeStateStore()
     prepared = prepare_stack_for_status(
-        config=RepoConfig(),
-        jj_client=cast(JjClient, SimpleNamespace(list_bookmark_states=lambda _: {})),
+        context=cast(
+            CommandContext,
+            SimpleNamespace(
+                config=RepoConfig(),
+                jj_client=cast(JjClient, SimpleNamespace(list_bookmark_states=lambda _: {})),
+                state_store=cast(ReviewStateStore, state_store),
+            ),
+        ),
         persist_bookmarks=False,
         remote=None,
         remote_error=None,
         stack=stack,
         state=ReviewState(),
-        state_store=cast(ReviewStateStore, state_store),
     )
 
     assert state_store.saved_states == []

@@ -12,7 +12,6 @@ from typing import Literal
 from jj_review import ui
 from jj_review.bootstrap import CommandContext
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
-from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.formatting import short_change_id
 from jj_review.github.client import (
@@ -230,7 +229,6 @@ def prepare_status(
 ) -> PreparedStatus:
     """Resolve local status inputs before any GitHub network inspection."""
 
-    config = context.config
     jj_client = context.jj_client
     state_store = context.state_store
     state = state_store.load()
@@ -273,14 +271,12 @@ def prepare_status(
         )
 
     prepared = prepare_stack_for_status(
-        config=config,
-        jj_client=jj_client,
+        context=context,
         persist_bookmarks=persist_bookmarks,
         remote=remote,
         remote_error=remote_error,
         stack=stack,
         state=state,
-        state_store=state_store,
     )
     logger.debug(
         "status prepared: selected_revset=%s revisions=%d remote=%s",
@@ -585,18 +581,19 @@ def _persist_status_cache_updates_with_optional_lock(
 
 def prepare_stack_for_status(
     *,
-    config: RepoConfig,
-    jj_client: JjClient,
+    context: CommandContext,
     persist_bookmarks: bool,
     remote: GitRemote | None,
     remote_error: ErrorMessage | None,
     stack: LocalStack,
     state: ReviewState,
-    state_store: ReviewStateStore,
     bookmark_states: dict[str, BookmarkState] | None = None,
 ) -> PreparedStack:
     """Build prepared status inputs for one already-resolved local stack."""
 
+    config = context.config
+    jj_client = context.jj_client
+    state_store = context.state_store
     pinned_bookmarks = pinned_bookmarks_for_revisions(revisions=stack.revisions, state=state)
     if bookmark_states is None:
         bookmark_states = {}

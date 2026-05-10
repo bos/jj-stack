@@ -174,14 +174,12 @@ def _run_list(
             ),
             prepared=prepare_stack_for_status(
                 bookmark_states=repo_inspection.bookmark_states,
-                config=context.config,
-                jj_client=context.jj_client,
+                context=context,
                 persist_bookmarks=False,
                 remote=repo_inspection.remote,
                 remote_error=repo_inspection.remote_error,
                 stack=stack,
                 state=state,
-                state_store=context.state_store,
             ),
         )
         for stack in ordered
