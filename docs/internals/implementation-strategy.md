@@ -101,7 +101,9 @@ resolved/prepared target value before mutation. `submit`, `close`, `land`, `reli
 mutation from sharing long-lived local variable bundles. `submit` preparation takes the
 bootstrapped `CommandContext` plus parsed/resolved submit option objects rather than a
 hand-threaded config/client/state-store bundle, and pull-request synchronization uses the
-same submit option objects instead of separate draft/reviewer/label parameters.
+same submit option objects instead of separate draft/reviewer/label parameters. Submit
+mutation phases share a `SubmitMutationRun` for dry-run mode and incremental state-save
+data.
 
 ## Repository layout
 
