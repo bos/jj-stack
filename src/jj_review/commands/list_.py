@@ -161,9 +161,8 @@ def _run_list(
         return 0
     with console.spinner(description="Loading bookmark state"):
         repo_inspection = _prepare_repo_inspection_context(
-            config=context.config,
+            context=context,
             discovered=ordered,
-            jj_client=context.jj_client,
             state=state,
         )
     prepared_discovered = tuple(
@@ -287,11 +286,12 @@ def _emit_stale_stacks_advisory(
 
 def _prepare_repo_inspection_context(
     *,
-    config,
+    context: CommandContext,
     discovered: tuple[LocalStack, ...],
-    jj_client: JjClient,
     state: ReviewState,
 ) -> _RepoInspectionContext:
+    config = context.config
+    jj_client = context.jj_client
     remotes = jj_client.list_git_remotes()
     remote: GitRemote | None = None
     remote_error: ErrorMessage | None = None
