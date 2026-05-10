@@ -388,12 +388,11 @@ async def run_orphan_close(
                 _retire_blocked_orphan_close_tracking(
                     cached_change=cached_change,
                     change_id=change_id,
-                    dry_run=dry_run,
                     inspection=inspection,
                     recorder=recorder,
                     revision_label=revision_label,
+                    run=run,
                     state=state,
-                    state_store=state_store,
                 )
                 completed = True
                 return _render_orphan_close_actions(
@@ -423,12 +422,12 @@ async def run_orphan_close(
                         raise CliError(t"Could not close PR #{pull_request_number}.") from error
 
             await _apply_orphaned_comment_cleanup(
-                dry_run=dry_run,
                 github_client=github_client,
                 github_repository=github_repository,
                 pull_request_number=pull_request_number,
                 recorder=recorder,
                 resolved_comments=resolved_comments,
+                run=run,
             )
             if cleanup_bookmark:
                 apply_bookmark_cleanup(
@@ -543,12 +542,11 @@ def _retire_blocked_orphan_close_tracking(
     *,
     cached_change: CachedChange,
     change_id: str,
-    dry_run: bool,
     inspection: _OrphanedPullRequestInspection | None,
     recorder: _OrphanActionRecorder,
     revision_label: Message,
+    run: _OrphanCloseRun,
     state: ReviewState,
-    state_store: ReviewStateStore,
 ) -> None:
     if inspection is None or inspection.state != "closed":
         return
@@ -560,6 +558,7 @@ def _retire_blocked_orphan_close_tracking(
     if updated_change == cached_change:
         return
 
+    dry_run = run.dry_run
     recorder.record(
         CloseAction(
             kind="tracking",
@@ -570,7 +569,7 @@ def _retire_blocked_orphan_close_tracking(
     if not dry_run:
         next_changes = dict(state.changes)
         next_changes[change_id] = updated_change
-        state_store.save(state.model_copy(update={"changes": next_changes}))
+        run.context.state_store.save(state.model_copy(update={"changes": next_changes}))
 
 
 def _preflight_orphan_bookmark_cleanup(
@@ -682,13 +681,14 @@ async def _preflight_orphaned_comment_cleanup(
 
 async def _apply_orphaned_comment_cleanup(
     *,
-    dry_run: bool,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     pull_request_number: int,
     recorder: _OrphanActionRecorder,
     resolved_comments: tuple[_ResolvedOrphanedComment, ...],
+    run: _OrphanCloseRun,
 ) -> None:
+    dry_run = run.dry_run
     for resolved in resolved_comments:
         recorder.record(
             CloseAction(
