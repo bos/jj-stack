@@ -54,6 +54,7 @@ from jj_review.review.bookmarks import (
     bookmark_ownership_for_source,
 )
 from jj_review.review.change_status import (
+    ReviewChangeStatus,
     classify_review_status_revision,
     classify_saved_review_change,
 )
@@ -131,6 +132,14 @@ class PreparedClose:
     cleanup: bool
     operation_lock: OperationLock
     prepared_status: PreparedStatus
+
+
+@dataclass(frozen=True, slots=True)
+class _ClassifiedCloseRevision:
+    """A close target revision with its derived review status."""
+
+    revision: ReviewStatusRevision
+    status: ReviewChangeStatus
 
 
 @dataclass(slots=True)
@@ -967,7 +976,12 @@ async def _process_close_revisions(
     """Process each revision in order, stopping on the first fail-closed block."""
 
     for revision in revisions:
+        classified_revision = _ClassifiedCloseRevision(
+            revision=revision,
+            status=classify_review_status_revision(revision),
+        )
         should_stop = await _process_close_revision(
+            classified_revision=classified_revision,
             commit_id=execution_state.commit_ids_by_change_id.get(revision.change_id),
             current_state=execution_state.current_state,
             github_client=github_client,
@@ -975,7 +989,6 @@ async def _process_close_revisions(
             next_changes=execution_state.next_changes,
             prepared_close=prepared_close,
             record_action=recorder.record,
-            revision=revision,
         )
         if on_revision_complete is not None:
             on_revision_complete()
@@ -1009,6 +1022,7 @@ def _close_result(
 
 async def _process_close_revision(
     *,
+    classified_revision: _ClassifiedCloseRevision,
     commit_id: str | None,
     current_state,
     github_client: GithubClient,
@@ -1016,17 +1030,22 @@ async def _process_close_revision(
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
-    revision,
 ) -> bool:
+    revision = classified_revision.revision
     lookup = revision.pull_request_lookup
-    change_status = classify_review_status_revision(revision)
+    change_status = classified_revision.status
     if lookup is None and not change_status.has_pull_request_lookup_failure:
         return False
     if change_status.pr_lifecycle == "ambiguous" or change_status.has_pull_request_lookup_failure:
+        body = (
+            lookup.message
+            if lookup is not None and lookup.message is not None
+            else "cannot safely determine the pull request for this path"
+        )
         record_action(
             CloseAction(
                 kind="close",
-                body=(lookup.message or "cannot safely determine the pull request for this path"),
+                body=body,
                 status="blocked",
             )
         )
@@ -1093,6 +1112,7 @@ async def _process_close_revision(
 
     await _process_closed_close_revision(
         cached_change=cached_change,
+        change_status=change_status,
         commit_id=commit_id,
         github_client=github_client,
         github_repository=github_repository,
@@ -1212,6 +1232,7 @@ async def _process_open_close_revision(
 async def _process_closed_close_revision(
     *,
     cached_change: CachedChange,
+    change_status: ReviewChangeStatus,
     commit_id: str | None,
     github_client: GithubClient,
     github_repository,
@@ -1227,7 +1248,7 @@ async def _process_closed_close_revision(
         if (
             lookup is not None
             and lookup.pull_request is not None
-            and classify_review_status_revision(revision).pr_lifecycle == "merged"
+            and change_status.pr_lifecycle == "merged"
         )
         else "closed"
     )
