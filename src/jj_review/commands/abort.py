@@ -361,13 +361,12 @@ async def _abort_submit(
                     bookmark=operation.bookmarks.get(change_id),
                     cached=state.changes.get(change_id),
                     change_id=change_id,
-                    dry_run=dry_run,
                     github_client=github_client,
                     github_repository=recorded_github_repository,
-                    jj_client=jj_client,
                     next_changes=next_changes,
                     remote_branch_cleanup_block=remote_branch_cleanup_block,
                     remote_name=remote_name,
+                    run=run,
                 )
                 per_change_ok.append(ok)
                 progress.advance()
@@ -460,16 +459,16 @@ async def _retract_one_change(
     bookmark: str | None,
     cached: CachedChange | None,
     change_id: str,
-    dry_run: bool,
     github_client: GithubClient,
     github_repository,
-    jj_client: JjClient,
     next_changes: dict[str, CachedChange],
     remote_branch_cleanup_block: Message | None,
     remote_name: str | None,
+    run: AbortRun,
 ) -> bool:
     """Retract one change. Returns True if all steps succeeded (nothing blocked)."""
 
+    dry_run = run.dry_run
     pr_ok = True
 
     pr_number = cached.pr_number if cached is not None else None
@@ -514,11 +513,10 @@ async def _retract_one_change(
         bookmark=bookmark,
         cached=cached,
         change_id=change_id,
-        dry_run=dry_run,
-        jj_client=jj_client,
         next_changes=next_changes,
         remote_branch_cleanup_block=remote_branch_cleanup_block,
         remote_name=remote_name,
+        run=run,
     )
     return pr_ok and local_ok
 
@@ -529,14 +527,15 @@ def _retract_one_change_local(
     bookmark: str | None,
     cached: CachedChange | None,
     change_id: str,
-    dry_run: bool,
-    jj_client: JjClient,
     next_changes: dict[str, CachedChange],
     remote_branch_cleanup_block: Message | None,
     remote_name: str | None,
+    run: AbortRun,
 ) -> bool:
     """Retract local state for one change. Returns True if no steps were blocked."""
 
+    dry_run = run.dry_run
+    jj_client = run.context.jj_client
     any_blocked = False
 
     if bookmark is not None:
