@@ -108,7 +108,8 @@ instead of separate config/client/state-store parameters. Plain cleanup's prepar
 also carries `CommandContext` rather than duplicating those shared dependencies, and
 cleanup rebase reads shared configuration through its prepared context. Status preparation
 receives the bootstrapped `CommandContext` instead of separate config/client/state-store
-parameters, including the helper that prepares an already-resolved stack. Land's
+parameters, including the helper that prepares an already-resolved stack, and status
+command helpers keep the context for selection and stale-stack advisory work. Land's
 prepared target carries `CommandContext` for shared configuration used by bookmark
 cleanup planning, and land finalization shares a `LandMutationRun` for live review
 state, pending state changes, and interim state saves. Close's prepared target carries
