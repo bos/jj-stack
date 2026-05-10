@@ -111,6 +111,8 @@ receives the bootstrapped state store explicitly instead of reconstructing it fr
 `jj` client repo root. Land's prepared target carries `CommandContext` for shared
 configuration used by bookmark cleanup planning, and land finalization shares a
 `LandMutationRun` for live review state, pending state changes, and interim state saves.
+Close's prepared target carries `CommandContext` and parsed close options instead of
+duplicating shared configuration and mode flags.
 
 ## Repository layout
 
