@@ -167,6 +167,8 @@ class PreparedCleanupChange:
     cached_change: CachedChange
     change_id: str
     inspect_stack_comment: bool
+    remote_state: RemoteBookmarkState | None
+    review_status: ReviewChangeStatus
     stale_reason: str | None
 
 
@@ -1175,16 +1177,27 @@ def _run_local_cleanup_pass(
             cached_change.bookmark or "",
             BookmarkState(name=cached_change.bookmark or ""),
         )
+        remote_state = (
+            None
+            if prepared_cleanup.remote is None
+            else bookmark_state.remote_target(prepared_cleanup.remote.name)
+        )
+        review_status = _classify_cleanup_change(
+            cached_change=cached_change,
+            remote_state=remote_state,
+        )
         prepared_change = PreparedCleanupChange(
             bookmark_state=bookmark_state,
             cached_change=cached_change,
             change_id=change_id,
             inspect_stack_comment=_should_inspect_stack_comment_cleanup(
-                bookmark_state=bookmark_state,
                 cached_change=cached_change,
                 remote=prepared_cleanup.remote,
+                review_status=review_status,
                 stale_reason=stale_reason,
             ),
+            remote_state=remote_state,
+            review_status=review_status,
             stale_reason=stale_reason,
         )
         prepared_changes.append(prepared_change)
@@ -1294,6 +1307,8 @@ def _process_stale_cleanup_change(
             local_bookmark_plan is not None and local_bookmark_plan.status == "planned"
         ),
         remote=prepared_cleanup.remote,
+        remote_state=prepared_change.remote_state,
+        review_status=prepared_change.review_status,
     )
     if prepared_cleanup.dry_run:
         if local_bookmark_plan is not None:
@@ -1696,6 +1711,8 @@ def _plan_remote_branch_cleanup(
     cached_change: CachedChange,
     local_bookmark_forget_planned: bool,
     remote: GitRemote | None,
+    remote_state: RemoteBookmarkState | None,
+    review_status: ReviewChangeStatus,
 ) -> RemoteBranchCleanupPlan | None:
     bookmark = cached_change.bookmark
     if bookmark is None:
@@ -1710,11 +1727,6 @@ def _plan_remote_branch_cleanup(
     if remote is None:
         return None
 
-    remote_state = bookmark_state.remote_target(remote.name)
-    review_status = _classify_cleanup_change(
-        cached_change=cached_change,
-        remote_state=remote_state,
-    )
     if review_status.remote_branch == "absent":
         return None
 
@@ -1846,9 +1858,9 @@ def _plan_orphan_local_bookmark_cleanup(
 
 def _should_inspect_stack_comment_cleanup(
     *,
-    bookmark_state: BookmarkState,
     cached_change: CachedChange,
     remote: GitRemote | None,
+    review_status: ReviewChangeStatus,
     stale_reason: str | None,
 ) -> bool:
     eligibility = _stack_comment_cleanup_eligibility(
@@ -1861,12 +1873,6 @@ def _should_inspect_stack_comment_cleanup(
         return False
     if remote is None:
         return False
-
-    remote_state = bookmark_state.remote_target(remote.name)
-    review_status = _classify_cleanup_change(
-        cached_change=cached_change,
-        remote_state=remote_state,
-    )
     return review_status.remote_branch == "absent"
 
 

@@ -331,20 +331,27 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
 
 
 def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned() -> None:
+    remote_state = RemoteBookmarkState(remote="origin", targets=("commit-1",))
+    cached_change = CachedChange(
+        bookmark="bosullivan/feature-aaaaaaaa",
+        pr_number=1,
+    )
     plan = _plan_remote_branch_cleanup(
         cleanup_user_bookmarks=False,
         bookmark_state=BookmarkState(
             name="bosullivan/feature-aaaaaaaa",
             local_targets=("commit-1",),
-            remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
+            remote_targets=(remote_state,),
         ),
         prefix="bosullivan",
-        cached_change=CachedChange(
-            bookmark="bosullivan/feature-aaaaaaaa",
-            pr_number=1,
-        ),
+        cached_change=cached_change,
         local_bookmark_forget_planned=True,
         remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+        remote_state=remote_state,
+        review_status=cleanup_module._classify_cleanup_change(
+            cached_change=cached_change,
+            remote_state=remote_state,
+        ),
     )
 
     assert plan is not None
@@ -353,17 +360,24 @@ def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned()
 
 
 def test_plan_remote_branch_cleanup_skips_records_without_saved_pr_number() -> None:
+    remote_state = RemoteBookmarkState(remote="origin", targets=("commit-1",))
+    cached_change = CachedChange(bookmark="bosullivan/feature-aaaaaaaa")
     plan = _plan_remote_branch_cleanup(
         cleanup_user_bookmarks=False,
         bookmark_state=BookmarkState(
             name="bosullivan/feature-aaaaaaaa",
             local_targets=(),
-            remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
+            remote_targets=(remote_state,),
         ),
         prefix="bosullivan",
-        cached_change=CachedChange(bookmark="bosullivan/feature-aaaaaaaa"),
+        cached_change=cached_change,
         local_bookmark_forget_planned=True,
         remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+        remote_state=remote_state,
+        review_status=cleanup_module._classify_cleanup_change(
+            cached_change=cached_change,
+            remote_state=remote_state,
+        ),
     )
 
     assert plan is None
