@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 from jj_review import ui
 from jj_review.github.client import GithubClient, GithubClientError
@@ -34,6 +34,18 @@ class BookmarkCleanupPlan:
 
     local_forget: bool
     remote_delete: bool
+
+
+class BookmarkCleanupRun(Protocol):
+    """Execution state needed to apply bookmark cleanup mutations."""
+
+    @property
+    def dry_run(self) -> bool:
+        ...
+
+    @property
+    def jj_client(self) -> JjClient:
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,13 +324,13 @@ def apply_bookmark_cleanup(
     bookmark: str,
     cleanup_plan: BookmarkCleanupPlan,
     commit_id: str | None,
-    dry_run: bool,
-    jj_client: JjClient,
     record_action: Callable[[CloseAction], None],
     remote_name: str | None,
+    run: BookmarkCleanupRun,
 ) -> None:
     """Record and optionally execute validated bookmark cleanup mutations."""
 
+    dry_run = run.dry_run
     if cleanup_plan.remote_delete:
         branch_label = f"{bookmark}@{remote_name}" if remote_name is not None else bookmark
         record_action(
@@ -331,7 +343,7 @@ def apply_bookmark_cleanup(
         if not dry_run:
             if remote_name is None or commit_id is None:
                 raise AssertionError("Planned remote branch deletion requires a target.")
-            jj_client.delete_remote_bookmarks(
+            run.jj_client.delete_remote_bookmarks(
                 remote=remote_name,
                 deletions=((bookmark, commit_id),),
             )
@@ -344,4 +356,4 @@ def apply_bookmark_cleanup(
             )
         )
         if not dry_run:
-            jj_client.forget_bookmarks((bookmark,))
+            run.jj_client.forget_bookmarks((bookmark,))

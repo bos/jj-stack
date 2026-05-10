@@ -1365,10 +1365,9 @@ async def _cleanup_revision(
             bookmark=bookmark,
             cleanup_plan=cleanup_plan,
             commit_id=commit_id,
-            dry_run=context.dry_run,
-            jj_client=context.jj_client,
             record_action=context.record_action,
             remote_name=context.remote_name,
+            run=context,
         )
 
     if cached_change.pr_number is None:

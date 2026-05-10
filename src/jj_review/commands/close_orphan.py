@@ -30,6 +30,7 @@ from jj_review.github.resolution import (
     select_submit_remote,
 )
 from jj_review.github.stack_comments import StackCommentKind, stack_comment_label
+from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
@@ -105,6 +106,10 @@ class _OrphanCloseRun:
     context: CommandContext
     dry_run: bool
     operation_lock: OperationLock
+
+    @property
+    def jj_client(self) -> JjClient:
+        return self.context.jj_client
 
 
 def state_has_pull_request_record(
@@ -432,10 +437,9 @@ async def run_orphan_close(
                     bookmark=bookmark,
                     cleanup_plan=cleanup_plan,
                     commit_id=last_target,
-                    dry_run=dry_run,
-                    jj_client=jj_client,
                     record_action=recorder.record,
                     remote_name=remote.name,
+                    run=run,
                 )
 
         recorder.record(
