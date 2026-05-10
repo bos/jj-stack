@@ -106,7 +106,9 @@ mutation phases share a `SubmitMutationRun` for dry-run mode and incremental sta
 data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
 instead of separate config/client/state-store parameters. Plain cleanup's prepared target
 also carries `CommandContext` rather than duplicating those shared dependencies, and
-cleanup rebase reads shared configuration through its prepared context.
+cleanup rebase reads shared configuration through its prepared context. Status preparation
+receives the bootstrapped state store explicitly instead of reconstructing it from the
+`jj` client repo root.
 
 ## Repository layout
 
