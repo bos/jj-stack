@@ -114,6 +114,17 @@ class _PlannedImport:
     update_local_target: str
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedImport:
+    """Resolved import inputs before local tracking state is updated."""
+
+    bookmark_by_change_id: dict[str, str]
+    bookmark_states: dict[str, BookmarkState]
+    prepared_status: PreparedStatus
+    selection: _Selection
+    status_result: StatusResult
+
+
 class _RevisionWithChangeId(Protocol):
     @property
     def change_id(self) -> str: ...
@@ -139,15 +150,28 @@ def import_(
         result = asyncio.run(
             _run_import_async(
                 context=context,
-                options=ImportOptions(
+                options=_import_options_from_cli(
                     fetch=fetch,
-                    pull_request_reference=pull_request,
+                    pull_request=pull_request,
                     revset=revset,
                 ),
             )
         )
     _print_import_result(result)
     return 0
+
+
+def _import_options_from_cli(
+    *,
+    fetch: bool,
+    pull_request: str | None,
+    revset: str | None,
+) -> ImportOptions:
+    return ImportOptions(
+        fetch=fetch,
+        pull_request_reference=pull_request,
+        revset=revset,
+    )
 
 
 def _print_import_result(result: ImportResult) -> None:
@@ -184,6 +208,25 @@ async def _run_import_async(
     context: CommandContext,
     options: ImportOptions,
 ) -> ImportResult:
+    prepared_import = await _prepare_import(context=context, options=options)
+    actions = _import_local_state(
+        client=prepared_import.prepared_status.prepared.client,
+        prepared_status=prepared_import.prepared_status,
+        status_result=prepared_import.status_result,
+        bookmark_by_change_id=prepared_import.bookmark_by_change_id,
+        bookmark_states=prepared_import.bookmark_states,
+    )
+    return _import_result(
+        actions=actions,
+        prepared_import=prepared_import,
+    )
+
+
+async def _prepare_import(
+    *,
+    context: CommandContext,
+    options: ImportOptions,
+) -> _PreparedImport:
     client = context.jj_client
     with console.spinner(description="Resolving import selection"):
         selection = await _resolve_selection(
@@ -271,13 +314,23 @@ async def _run_import_async(
         head_revision = prepared_status.prepared.status_revisions[-1]
         bookmark_by_change_id[head_revision.revision.change_id] = selection.head_bookmark
 
-    actions = _import_local_state(
-        client=prepared_status.prepared.client,
-        prepared_status=prepared_status,
-        status_result=status_result,
+    return _PreparedImport(
         bookmark_by_change_id=bookmark_by_change_id,
         bookmark_states=bookmark_states,
+        prepared_status=prepared_status,
+        status_result=status_result,
+        selection=selection,
     )
+
+
+def _import_result(
+    *,
+    actions: tuple[ImportAction, ...],
+    prepared_import: _PreparedImport,
+) -> ImportResult:
+    prepared_status = prepared_import.prepared_status
+    selection = prepared_import.selection
+    status_result = prepared_import.status_result
     return ImportResult(
         actions=actions,
         fetched_tip_commit=selection.fetched_tip_commit,
