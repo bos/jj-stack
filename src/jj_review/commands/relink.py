@@ -26,7 +26,7 @@ from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision
-from jj_review.review.change_status import classify_review_change
+from jj_review.review.change_status import classify_review_change, classify_saved_review_change
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.state.journal import OperationJournal
 from jj_review.state.operation_lock import read_operation_lock_holder
@@ -389,14 +389,15 @@ def _ensure_relinkable_cached_link(
     for cached_change_id, cached_change in state.changes.items():
         if cached_change_id == change_id:
             continue
-        if cached_change.bookmark == bookmark and cached_change.link_state != "unlinked":
+        review_status = classify_saved_review_change(cached_change, local="present")
+        if cached_change.bookmark == bookmark and review_status.link != "unlinked":
             raise CliError(
                 t"Bookmark {ui.bookmark(bookmark)} is already linked to "
                 t"{ui.change_id(cached_change_id)} in local state."
             )
         if (
             cached_change.pr_number == pull_request_number
-            and cached_change.link_state != "unlinked"
+            and review_status.link != "unlinked"
         ):
             raise CliError(
                 t"PR #{pull_request_number} is already linked to "
