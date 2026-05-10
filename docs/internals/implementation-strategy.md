@@ -109,10 +109,12 @@ receives `_OrphanCloseRun` for live execution state. Orphan close also threads t
 through blocked-tracking retirement, managed-comment cleanup, bookmark cleanup preflight,
 and action rendering. Unlink's prepared target carries `CommandContext` for state
 persistence and bookmark inspection. Relink's prepared target carries the same context
-for state-store access and bookmark mutation. Plain cleanup's prepared target also
-carries `CommandContext` rather than duplicating those shared dependencies, and cleanup
-and cleanup rebase prepared targets retain parsed `CleanupOptions` for mode state.
-Cleanup local discovery helpers read config and jj access through `CommandContext`.
+for state-store access and bookmark mutation. Restart applies saved-state changes from a
+prepared target that carries the context, options, selected stack, loaded state, and
+bookmark observations. Plain cleanup's prepared target also carries `CommandContext`
+rather than duplicating those shared dependencies, and cleanup and cleanup rebase
+prepared targets retain parsed `CleanupOptions` for mode state. Cleanup local discovery
+helpers read config and jj access through `CommandContext`.
 Cleanup remote resolution and orphan bookmark planning also read shared dependencies
 through the context, and stale cleanup mutation application reads jj and remote data from
 the prepared cleanup target.
