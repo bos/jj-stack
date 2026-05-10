@@ -35,6 +35,10 @@ from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import find_changes_by_bookmark, is_review_bookmark
+from jj_review.review.change_status import (
+    classify_review_change,
+    classify_saved_review_change,
+)
 from jj_review.review.operations import close_operation_mode_relation
 from jj_review.state.journal import (
     CloseOperationRecord,
@@ -103,7 +107,7 @@ def state_has_pull_request_record(
     state: ReviewState,
 ) -> bool:
     return any(
-        cached_change.link_state == "active"
+        classify_saved_review_change(cached_change, local="present").link == "active"
         and cached_change.pr_number == pull_request_number
         for cached_change in state.changes.values()
     )
@@ -570,7 +574,14 @@ def _preflight_orphan_bookmark_cleanup(
     saved_commit_id: str | None,
 ) -> _OrphanBookmarkCleanupPlan:
     remote_state = bookmark_state.remote_target(remote_name)
-    if remote_state is None or not remote_state.targets:
+    review_status = classify_review_change(
+        cached_change=cached_change,
+        commit_id=saved_commit_id,
+        local="orphaned",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
+    if review_status.remote_branch == "absent":
         branch_label = f"{bookmark}@{remote_name}"
         recorder.record(
             CloseAction(
@@ -581,7 +592,7 @@ def _preflight_orphan_bookmark_cleanup(
         )
     if saved_commit_id is None:
         if bookmark_state.local_target is not None or bookmark_state.local_targets or (
-            remote_state is not None and remote_state.targets
+            review_status.remote_branch != "absent"
         ):
             recorder.record(
                 CloseAction(
