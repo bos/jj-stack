@@ -17,6 +17,7 @@ from .models import (
     PushOperation,
     RemoteBookmarkAction,
     RemoteBookmarkSyncer,
+    SubmitMutationRun,
 )
 
 
@@ -437,9 +438,9 @@ def _bookmark_link_is_proven(
 def sync_remote_bookmarks(
     *,
     client: RemoteBookmarkSyncer,
-    dry_run: bool,
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
     remote: GitRemote,
+    run: SubmitMutationRun,
 ) -> None:
     batch_push_bookmarks = tuple(
         prepared_revision.bookmark
@@ -447,7 +448,7 @@ def sync_remote_bookmarks(
         if prepared_revision.push_operation == "batch"
     )
     if batch_push_bookmarks:
-        if not dry_run:
+        if not run.dry_run:
             client.push_bookmarks(
                 remote=remote.name,
                 bookmarks=batch_push_bookmarks,
@@ -456,7 +457,7 @@ def sync_remote_bookmarks(
     for prepared_revision in prepared_revisions:
         if prepared_revision.push_operation != "git_update":
             continue
-        if not dry_run:
+        if not run.dry_run:
             if prepared_revision.expected_remote_target is None:
                 raise AssertionError("Git remote update requires an expected target.")
             client.update_untracked_remote_bookmark(

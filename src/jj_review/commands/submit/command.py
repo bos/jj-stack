@@ -539,16 +539,16 @@ async def _run_submit_async(
                 with console.spinner(description="Pushing review branches"):
                     sync_remote_bookmarks(
                         client=client,
-                        dry_run=dry_run,
                         prepared_revisions=prepared_revisions,
                         remote=remote,
+                        run=mutation_run,
                     )
             else:
                 sync_remote_bookmarks(
                     client=client,
-                    dry_run=dry_run,
                     prepared_revisions=prepared_revisions,
                     remote=remote,
+                    run=mutation_run,
                 )
             with console.progress(
                 description="Syncing pull requests",
