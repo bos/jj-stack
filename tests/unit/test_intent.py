@@ -472,8 +472,7 @@ def test_check_same_kind_intent_returns_stale_dead_pid_intents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("jj_review.system.pid_is_alive", lambda pid: False)
-    monkeypatch.setattr("jj_review.state.intents.time.sleep", lambda s: None)
+    monkeypatch.setattr("jj_review.state.intents.pid_is_alive", lambda pid: False)
     old_intent = _make_submit_intent(("aaaa", "bbbb"), pid=99999999)
     write_new_intent(tmp_path, old_intent)
 
@@ -500,30 +499,17 @@ def test_check_same_kind_intent_ignores_different_kind(
     assert result == []
 
 
-def test_check_same_kind_intent_waits_for_live_same_kind_intent_to_finish(
+def test_check_same_kind_intent_reports_live_same_kind_intent_without_waiting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    call_count = [0]
-
-    def fake_pid_is_alive(pid: int) -> bool:
-        call_count[0] += 1
-        # Return True twice (initial check + first poll), then False
-        return call_count[0] <= 2
-
-    sleep_calls: list[float] = []
-
-    monkeypatch.setattr("jj_review.state.intents.pid_is_alive", fake_pid_is_alive)
-    monkeypatch.setattr("jj_review.state.intents.time.sleep", lambda s: sleep_calls.append(s))
-
+    messages: list[str] = []
+    monkeypatch.setattr("jj_review.state.intents.pid_is_alive", lambda pid: True)
     old_intent = _make_submit_intent(("aaaa", "bbbb"), pid=99999999)
     write_new_intent(tmp_path, old_intent)
 
     new_intent = _make_submit_intent(("cccc", "dddd"))
-    result = check_same_kind_intent(tmp_path, new_intent)
+    result = check_same_kind_intent(tmp_path, new_intent, print_fn=messages.append)
 
-    # sleep was called while waiting for the PID to die
-    assert len(sleep_calls) > 0
-    # After the PID died, the intent is not returned as stale —
-    # the caller just proceeds (the other process finished cleanly)
     assert result == []
+    assert messages == ["Another submit on @ is in progress (PID 99999999)."]

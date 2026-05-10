@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -89,11 +88,8 @@ def check_same_kind_intent(
     *,
     print_fn: Callable[[str], None] = print,
 ) -> list[LoadedIntent]:
-    """
-    Scan for existing intents of the same kind.
-    - If any PID is alive: poll every 0.5s until dead (max 5 minutes then notice).
-    - Returns list of stale (dead-PID) same-kind intents.
-    """
+    """Return stale same-kind intents and report live legacy intents without waiting."""
+
     existing = [
         loaded for loaded in scan_intents(state_dir) if loaded.intent.kind == new_intent.kind
     ]
@@ -102,19 +98,8 @@ def check_same_kind_intent(
         if pid_is_alive(loaded.intent.pid):
             print_fn(
                 f"Another {loaded.intent.label} is in progress "
-                f"(PID {loaded.intent.pid}). Waiting..."
+                f"(PID {loaded.intent.pid})."
             )
-            elapsed = 0.0
-            warned = False
-            while pid_is_alive(loaded.intent.pid):
-                time.sleep(0.5)
-                elapsed += 0.5
-                if not warned and elapsed >= 300:
-                    print_fn(
-                        f"Still waiting for PID {loaded.intent.pid} after 5 minutes. "
-                        "Press Ctrl-C to abort."
-                    )
-                    warned = True
         else:
             stale.append(loaded)
     return stale

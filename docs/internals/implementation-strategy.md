@@ -241,6 +241,8 @@ The repo state directory also contains the operation lock files:
 Mutating commands acquire the lock through `state.operation_lock` for their full command
 lifetime. `status` uses the non-blocking path only around its cache write, so live
 inspection still renders while another mutation is running.
+Same-kind intent scans no longer wait for live PIDs; the operation lock is the
+concurrency primitive, and live legacy intent records are reported without polling.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal
