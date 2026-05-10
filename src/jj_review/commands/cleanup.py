@@ -1250,9 +1250,8 @@ def _run_local_cleanup_pass(
         ):
             continue
         orphan_plan = _plan_orphan_local_bookmark_cleanup(
-            prefix=prepared_cleanup.context.config.bookmark_prefix,
             bookmark_state=bookmark_state,
-            jj_client=prepared_cleanup.context.jj_client,
+            context=prepared_cleanup.context,
         )
         if orphan_plan is None:
             continue
@@ -1528,9 +1527,9 @@ async def _apply_stack_comment_cleanup_action(
         )
 
 
-def _resolve_remote(*, jj_client: JjClient) -> tuple[GitRemote | None, ErrorMessage | None]:
+def _resolve_remote(*, context: CommandContext) -> tuple[GitRemote | None, ErrorMessage | None]:
     try:
-        return select_submit_remote(jj_client.list_git_remotes()), None
+        return select_submit_remote(context.jj_client.list_git_remotes()), None
     except CliError as error:
         return None, error_message(error)
 
@@ -1541,7 +1540,7 @@ def _load_cleanup_remote_context(*, prepared_cleanup: PreparedCleanup) -> Prepar
     if prepared_cleanup.remote_context_loaded:
         return prepared_cleanup
 
-    remote, remote_error = _resolve_remote(jj_client=prepared_cleanup.context.jj_client)
+    remote, remote_error = _resolve_remote(context=prepared_cleanup.context)
     github_repository = None
     github_error = None
     if remote is not None:
@@ -1843,11 +1842,12 @@ def _plan_local_bookmark_cleanup(
 
 def _plan_orphan_local_bookmark_cleanup(
     *,
-    prefix: str,
     bookmark_state: BookmarkState,
-    jj_client: JjClient,
+    context: CommandContext,
 ) -> OrphanLocalBookmarkCleanupPlan | None:
     bookmark = bookmark_state.name
+    prefix = context.config.bookmark_prefix
+    jj_client = context.jj_client
     if not is_review_bookmark(bookmark, prefix=prefix) or not bookmark_state.local_targets:
         return None
     if len(bookmark_state.local_targets) > 1:
