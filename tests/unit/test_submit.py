@@ -8,7 +8,11 @@ from jj_review.commands.submit.inputs import (
     preflight_conflicted_revisions as _preflight_conflicted_revisions,
     preflight_private_commits as _preflight_private_commits,
 )
-from jj_review.commands.submit.models import PreparedSubmitRevision, PushOperation
+from jj_review.commands.submit.models import (
+    PreparedSubmitRevision,
+    PushOperation,
+    SubmitOptions,
+)
 from jj_review.commands.submit.pull_requests import (
     _ensure_pull_request_link_is_consistent,
 )
@@ -26,6 +30,21 @@ from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult, ResolvedBookmark
 from tests.support.revision_helpers import make_revision
+
+
+def _submit_options(*, dry_run: bool = False) -> SubmitOptions:
+    return SubmitOptions(
+        describe_with=None,
+        draft_mode="default",
+        dry_run=dry_run,
+        labels=None,
+        re_request=False,
+        restart=False,
+        reviewers=None,
+        revset="@",
+        team_reviewers=None,
+        use_bookmarks=None,
+    )
 
 
 def test_resolve_local_action_rejects_conflicted_bookmark() -> None:
@@ -158,7 +177,7 @@ def test_prepare_submit_revisions_preflights_remote_drift_before_local_bookmark_
                 ),
             },
             client=cast(JjClient, client),
-            dry_run=False,
+            options=_submit_options(),
             remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
             stack=_local_stack(first_revision, second_revision),
         )
@@ -216,7 +235,7 @@ def test_prepare_submit_revisions_rejects_non_atomic_push_before_bookmark_moves(
                 ),
             },
             client=cast(JjClient, client),
-            dry_run=False,
+            options=_submit_options(),
             remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
             stack=_local_stack(first_revision, second_revision),
         )

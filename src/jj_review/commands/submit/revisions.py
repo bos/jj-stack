@@ -18,6 +18,7 @@ from .models import (
     RemoteBookmarkAction,
     RemoteBookmarkSyncer,
     SubmitMutationRun,
+    SubmitOptions,
 )
 
 
@@ -26,7 +27,7 @@ def prepare_submit_revisions(
     bookmark_result: BookmarkResolutionResult,
     bookmark_states: dict[str, BookmarkState],
     client: JjClient,
-    dry_run: bool,
+    options: SubmitOptions,
     remote: GitRemote,
     stack: LocalStack,
 ) -> tuple[PreparedSubmitRevision, ...]:
@@ -104,7 +105,7 @@ def prepare_submit_revisions(
     prepared = tuple(prepared_revisions)
     _preflight_atomic_remote_push_plan(prepared_revisions=prepared, remote=remote)
 
-    if not dry_run:
+    if not options.dry_run:
         for prepared_revision, bookmark_state in local_bookmark_updates:
             if prepared_revision.local_action == "unchanged":
                 continue

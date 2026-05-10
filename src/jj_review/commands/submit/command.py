@@ -447,7 +447,7 @@ async def _run_submit_async(
         bookmark_result=bookmark_result,
         bookmark_states=bookmark_states,
         client=client,
-        dry_run=dry_run,
+        options=options,
         remote=remote,
         stack=stack,
     )
