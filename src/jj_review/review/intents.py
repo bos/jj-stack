@@ -13,7 +13,6 @@ from jj_review.models.intent import (
     CleanupRebaseIntent,
     CloseIntent,
     IntentFile,
-    LandIntent,
     LoadedIntent,
     MatchResult,
     OrderedChangeIdsIntent,
@@ -21,6 +20,7 @@ from jj_review.models.intent import (
     SubmitIntent,
 )
 from jj_review.review.submit_recovery import should_retire_submit_after_submit
+from jj_review.state.journal import LandOperationRecord
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message
 
@@ -52,8 +52,8 @@ def match_ordered_change_ids(
     return "disjoint"
 
 
-def describe_intent(intent: IntentFile) -> Message:
-    """Return a user-facing description for an intent."""
+def describe_intent(intent: IntentFile | LandOperationRecord) -> Message:
+    """Return a user-facing description for an interrupted operation."""
 
     if isinstance(intent, SubmitIntent):
         return (
@@ -71,7 +71,7 @@ def describe_intent(intent: IntentFile) -> Message:
             t"{verb} for {_render_recorded_stack_head(intent)} "
             t"(from {ui.revset(intent.display_revset)})"
         )
-    if isinstance(intent, LandIntent):
+    if isinstance(intent, LandOperationRecord):
         return (
             t"{ui.cmd('land')} for {_render_recorded_stack_head(intent)} "
             t"(from {ui.revset(intent.display_revset)})"
@@ -81,7 +81,9 @@ def describe_intent(intent: IntentFile) -> Message:
     return intent.label
 
 
-def _render_recorded_stack_head(intent: OrderedChangeIdsIntent) -> Message:
+def _render_recorded_stack_head(
+    intent: OrderedChangeIdsIntent | LandOperationRecord,
+) -> Message:
     if not intent.ordered_change_ids:
         return "stack"
     return ui.change_id(intent.ordered_change_ids[-1])
@@ -184,7 +186,7 @@ def retire_superseded_intents(
 ) -> None:
     """Auto-retire stale intents that a later successful run has superseded."""
 
-    if not isinstance(new_intent, SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent):
+    if not isinstance(new_intent, SubmitIntent | CleanupRebaseIntent | CloseIntent):
         return
 
     new_ids = new_intent.ordered_change_ids
@@ -209,13 +211,6 @@ def retire_superseded_intents(
             if not isinstance(old, CleanupRebaseIntent):
                 continue
             should_retire = bool(set(old.ordered_change_ids) & set(new_ids))
-        else:
-            if not isinstance(old, LandIntent):
-                continue
-            should_retire = match_ordered_change_ids(old.ordered_change_ids, new_ids) in (
-                "exact",
-                "superset",
-            )
         if should_retire:
             loaded.path.unlink(missing_ok=True)
             logger.debug("Retired superseded intent %s", loaded.path.name)

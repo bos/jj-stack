@@ -246,10 +246,10 @@ concurrency primitive, and live legacy intent records are reported without polli
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal
-`completed` event. Existing land intent files still provide the recovery pointer during
-the pilot, but per-change completion is now folded from journaled saved-state updates
-instead of mutating the intent after each finalized PR. `LandIntent` can be removed
-after status and abort consume the journal-backed operation record directly.
+`completed` event. `land` no longer writes an intent file; interrupted land recovery,
+status notices, doctor checks, and abort clearing all consume the journal-backed
+operation record directly. Per-change completion is folded from journaled
+saved-state updates instead of mutating in-flight state after each finalized PR.
 Journal pruning runs when a new journal begins and keeps every journal newer than 30
 days plus at least the newest 50 files.
 

@@ -13,6 +13,7 @@ from jj_review.errors import CliError
 from jj_review.models.intent import LoadedIntent
 from jj_review.models.review_state import ReviewState
 from jj_review.state.intents import scan_intents
+from jj_review.state.journal import LoadedOperationRecord, scan_incomplete_operation_records
 
 STATE_DIRNAME = "jj-review"
 STATE_FILENAME = "state.json"
@@ -53,6 +54,11 @@ class ReviewStateStore:
         """Return incomplete intent files for the repo."""
 
         return scan_intents(self._path.parent)
+
+    def list_operations(self) -> list[LoadedOperationRecord]:
+        """Return incomplete journal-backed operation records for the repo."""
+
+        return scan_incomplete_operation_records(self._path.parent)
 
     def load(self) -> ReviewState:
         """Load the saved data, or defaults when the file is missing."""

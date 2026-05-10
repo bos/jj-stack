@@ -9,8 +9,10 @@ from jj_review.state.journal import (
     JOURNAL_DIRNAME,
     MIN_RETAINED_JOURNALS,
     OperationJournal,
+    append_abandoned_event,
     prune_operation_journals,
     read_journal,
+    scan_incomplete_operation_records,
 )
 from jj_review.state.operation_lock import OperationLockHolder
 
@@ -47,6 +49,89 @@ def test_operation_journal_appends_jsonl_events(tmp_path: Path) -> None:
     assert events[0].data["lock_holder"]["command"] == "land"
     assert events[1].data["after"]["pr_number"] == 1
     assert events[2].data["completed_change_ids"] == ["change-1"]
+
+
+def test_scan_incomplete_operation_records_loads_land_scope(tmp_path: Path) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="land",
+        lock_holder=None,
+        options={
+            "bypass_readiness": False,
+            "cleanup_bookmarks": True,
+            "selected_pr_number": 2,
+        },
+        resolved_scope={
+            "github_repository": "octo-org/stacked-review",
+            "landed_change_ids": ("change-1",),
+            "landed_commit_id": "commit-1",
+            "ordered_change_ids": ("change-1", "change-2"),
+            "ordered_commit_ids": ("commit-1", "commit-2"),
+            "planned_change_ids": ("change-1",),
+            "planned_revisions": (
+                {
+                    "bookmark": "review/feature-1",
+                    "bookmark_managed": True,
+                    "change_id": "change-1",
+                    "commit_id": "commit-1",
+                    "pull_request_number": 1,
+                    "subject": "feature 1",
+                },
+            ),
+            "push_trunk": True,
+            "remote_name": "origin",
+            "selected_revset": "@-",
+            "trunk_branch": "main",
+        },
+    )
+
+    [loaded] = scan_incomplete_operation_records(tmp_path)
+
+    assert loaded.path == journal.path
+    assert loaded.operation.display_revset == "@-"
+    assert loaded.operation.selected_pr_number == 2
+    assert loaded.operation.ordered_change_ids == ("change-1", "change-2")
+    assert loaded.operation.landed_bookmarks == {"change-1": "review/feature-1"}
+
+
+def test_scan_incomplete_operation_records_excludes_terminal_journals(
+    tmp_path: Path,
+) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="land",
+        lock_holder=None,
+        options={
+            "bypass_readiness": False,
+            "cleanup_bookmarks": True,
+            "selected_pr_number": None,
+        },
+        resolved_scope={
+            "github_repository": "octo-org/stacked-review",
+            "landed_change_ids": ("change-1",),
+            "landed_commit_id": "commit-1",
+            "ordered_change_ids": ("change-1",),
+            "ordered_commit_ids": ("commit-1",),
+            "planned_change_ids": ("change-1",),
+            "planned_revisions": (
+                {
+                    "bookmark": "review/feature-1",
+                    "bookmark_managed": True,
+                    "change_id": "change-1",
+                    "commit_id": "commit-1",
+                    "pull_request_number": 1,
+                    "subject": "feature 1",
+                },
+            ),
+            "push_trunk": True,
+            "remote_name": "origin",
+            "selected_revset": "@-",
+            "trunk_branch": "main",
+        },
+    )
+    append_abandoned_event(journal.path, reason="test")
+
+    assert scan_incomplete_operation_records(tmp_path) == []
 
 
 def test_prune_operation_journals_keeps_recent_files_and_minimum_count(

@@ -52,6 +52,7 @@ from jj_review.review.change_status import (
     submitted_state_disagreements,
 )
 from jj_review.review.intents import intent_is_stale
+from jj_review.state.journal import LoadedOperationRecord
 from jj_review.state.operation_lock import try_acquire_operation_lock
 from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message
@@ -146,10 +147,10 @@ class PreparedStatus:
 
     github_repository: ParsedGithubRepo | None
     github_repository_error: ErrorMessage | None
-    outstanding_intents: tuple[LoadedIntent, ...]
+    outstanding_intents: tuple[LoadedIntent | LoadedOperationRecord, ...]
     prepared: PreparedStack
     selected_revset: str
-    stale_intents: tuple[LoadedIntent, ...]
+    stale_intents: tuple[LoadedIntent | LoadedOperationRecord, ...]
     base_parent_subject: str
 
     def github_inspection_count(self, *, discover_remote_review: bool = False) -> int:
@@ -319,9 +320,12 @@ def refresh_remote_state_for_status(*, jj_client: JjClient) -> None:
 
 def _classify_status_intents(
     prepared: PreparedStack,
-) -> tuple[tuple[LoadedIntent, ...], tuple[LoadedIntent, ...]]:
-    outstanding_intents: list[LoadedIntent] = []
-    stale_intents: list[LoadedIntent] = []
+) -> tuple[
+    tuple[LoadedIntent | LoadedOperationRecord, ...],
+    tuple[LoadedIntent | LoadedOperationRecord, ...],
+]:
+    outstanding_intents: list[LoadedIntent | LoadedOperationRecord] = []
+    stale_intents: list[LoadedIntent | LoadedOperationRecord] = []
     now = datetime.now(UTC)
 
     for loaded in prepared.state_store.list_intents():
@@ -333,7 +337,25 @@ def _classify_status_intents(
             stale_intents.append(loaded)
         else:
             outstanding_intents.append(loaded)
+    for loaded in prepared.state_store.list_operations():
+        if _operation_is_stale(
+            loaded.operation,
+            lambda change_id: _change_id_resolves(prepared.client, change_id),
+        ):
+            stale_intents.append(loaded)
+        else:
+            outstanding_intents.append(loaded)
     return tuple(outstanding_intents), tuple(stale_intents)
+
+
+def _operation_is_stale(
+    operation,
+    resolve_change_id: Callable[[str], bool],
+) -> bool:
+    ids = operation.change_ids()
+    if not ids:
+        return False
+    return not any(resolve_change_id(change_id) for change_id in ids)
 
 
 def stream_status(

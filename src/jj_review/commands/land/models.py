@@ -9,8 +9,9 @@ from typing import Literal, Protocol
 from jj_review import ui
 from jj_review.config import RepoConfig
 from jj_review.models.bookmarks import BookmarkState
-from jj_review.models.intent import LandIntent, LoadedIntent
 from jj_review.review.status import PreparedStatus
+from jj_review.state.journal import LandOperationRecord, LoadedOperationRecord
+from jj_review.state.operation_lock import OperationLock
 from jj_review.ui import Message, plain_text
 
 
@@ -52,6 +53,7 @@ class PreparedLand:
     dry_run: bool
     bypass_readiness: bool
     config: RepoConfig
+    operation_lock: OperationLock | None
     prepared_status: PreparedStatus
     selected_pr_number: int | None
 
@@ -151,10 +153,10 @@ class ReviewBookmarkCleanupPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class ResumeLandIntent:
-    """A stale land intent that still matches the current selected stack."""
+class ResumeLandOperation:
+    """An incomplete land operation that still matches the current selected stack."""
 
-    intent: LandIntent
+    operation: LandOperationRecord
     path: Path
     mode: Literal["exact-path", "tail-after-landed-prefix"]
 
@@ -164,8 +166,8 @@ class LandExecutionState:
     """Resolved live-run land state after resume checks."""
 
     execution_plan: LandPlan
-    resume_intent: ResumeLandIntent | None
-    stale_intents: list[LoadedIntent]
+    resume_operation: ResumeLandOperation | None
+    stale_operations: list[LoadedOperationRecord]
     state_dir: Path
 
 

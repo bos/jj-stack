@@ -36,7 +36,6 @@ from jj_review.models.intent import (
     CleanupIntent,
     CleanupRebaseIntent,
     CloseIntent,
-    LandIntent,
     RelinkIntent,
     SubmitIntent,
 )
@@ -72,6 +71,7 @@ from jj_review.review.submit_recovery import (
     SubmitStatusDecision,
     submit_status_decision,
 )
+from jj_review.state.journal import LandOperationRecord
 from jj_review.system import pid_is_alive
 
 _SUMMARY_SECTION_HEAD_COUNT = 3
@@ -1101,7 +1101,7 @@ def _render_interrupted_intent_block(
                 prepared_status=prepared_status,
             ),
         )
-    elif isinstance(intent, LandIntent):
+    elif isinstance(intent, LandOperationRecord):
         detail_lines = _interrupted_ordered_detail_lines(
             intent=intent,
             match=_match_land_intent(intent=intent, prepared_status=prepared_status),
@@ -1228,13 +1228,13 @@ def _recorded_stack_head_visible(*, intent: SubmitIntent, prepared_status) -> bo
 
 
 def _intent_rerun_command(
-    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent,
+    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandOperationRecord,
 ) -> str:
     if isinstance(intent, SubmitIntent):
         return "submit"
     if isinstance(intent, CleanupRebaseIntent):
         return "cleanup --rebase"
-    if isinstance(intent, LandIntent):
+    if isinstance(intent, LandOperationRecord):
         return "land"
     return "close --cleanup" if intent.cleanup else "close"
 
@@ -1267,7 +1267,7 @@ def _match_ordered_intent(
 
 def _match_land_intent(
     *,
-    intent: LandIntent,
+    intent: LandOperationRecord,
     prepared_status,
 ) -> SubmitIntentMatch:
     current_change_ids = tuple(
@@ -1296,7 +1296,7 @@ def _match_land_intent(
 def _interrupted_ordered_detail_lines(
     *,
     match: SubmitIntentMatch,
-    intent: CleanupRebaseIntent | CloseIntent | LandIntent,
+    intent: CleanupRebaseIntent | CloseIntent | LandOperationRecord,
 ) -> tuple[object, ...]:
     resume_command = _render_resume_command(intent)
 
@@ -1348,7 +1348,7 @@ def _interrupted_ordered_detail_lines(
 
 
 def _render_resume_command(
-    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent,
+    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandOperationRecord,
 ) -> ui.SemanticText:
     selector = _intent_selector(intent)
     command = f"jj-review {_intent_rerun_command(intent)}"
@@ -1366,7 +1366,10 @@ def _render_status_command(intent) -> ui.SemanticText:
 
 
 def _intent_selector(intent) -> str | None:
-    if isinstance(intent, SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent):
+    if isinstance(
+        intent,
+        SubmitIntent | CleanupRebaseIntent | CloseIntent | LandOperationRecord,
+    ):
         if intent.ordered_change_ids:
             return short_change_id(intent.ordered_change_ids[-1])
     if isinstance(intent, RelinkIntent):
@@ -1376,7 +1379,10 @@ def _intent_selector(intent) -> str | None:
 
 def _render_interrupted_intent_header(intent) -> object:
     started = _render_started_at(intent)
-    if isinstance(intent, SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent):
+    if isinstance(
+        intent,
+        SubmitIntent | CleanupRebaseIntent | CloseIntent | LandOperationRecord,
+    ):
         return (
             _render_intent_command(intent),
             " for ",
@@ -1404,7 +1410,7 @@ def _render_intent_command(intent) -> object:
         return ui.cmd("cleanup --rebase")
     if isinstance(intent, CloseIntent):
         return ui.cmd("close --cleanup" if intent.cleanup else "close")
-    if isinstance(intent, LandIntent):
+    if isinstance(intent, LandOperationRecord):
         return ui.cmd("land")
     if isinstance(intent, RelinkIntent):
         return ui.cmd("relink")
@@ -1416,7 +1422,7 @@ def _render_intent_command(intent) -> object:
 
 
 def _render_recorded_stack_head(
-    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandIntent,
+    intent: SubmitIntent | CleanupRebaseIntent | CloseIntent | LandOperationRecord,
 ) -> object:
     if not intent.ordered_change_ids:
         return "stack"

@@ -11,11 +11,12 @@ from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
-from jj_review.models.intent import LandIntent
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.review.intents import retire_superseded_intents
-from jj_review.state.intents import write_new_intent
-from jj_review.state.journal import OperationJournal
+from jj_review.state.journal import (
+    LoadedOperationRecord,
+    OperationJournal,
+    append_abandoned_event,
+)
 from jj_review.state.operation_lock import read_operation_lock_holder
 from jj_review.state.store import ReviewStateStore
 
@@ -28,7 +29,7 @@ from .models import (
     PreparedLand,
     ReviewBookmarkCleanupPlan,
 )
-from .resume import CompletedLandResume, build_land_intent, prepare_land_execution_state
+from .resume import CompletedLandResume, prepare_land_execution_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,10 +158,10 @@ async def execute_land_plan(
             applied=False,
             blocked=True,
         )
-    resume_intent = execution_state.resume_intent
+    resume_operation = execution_state.resume_operation
     journal = (
-        OperationJournal.open(Path(resume_intent.intent.journal_path))
-        if resume_intent is not None and resume_intent.intent.journal_path is not None
+        OperationJournal.open(resume_operation.path)
+        if resume_operation is not None
         else OperationJournal.begin(
             execution_state.state_dir,
             operation="land",
@@ -171,6 +172,22 @@ async def execute_land_plan(
             },
             resolved_scope={
                 "github_repository": github_repository.full_name,
+                "landed_change_ids": tuple(
+                    revision.change_id for revision in execution_plan.planned_revisions
+                ),
+                "landed_commit_id": (
+                    execution_plan.planned_revisions[-1].commit_id
+                    if execution_plan.planned_revisions
+                    else prepared.stack.trunk.commit_id
+                ),
+                "ordered_change_ids": tuple(
+                    prepared_revision.revision.change_id
+                    for prepared_revision in prepared_status.prepared.status_revisions
+                ),
+                "ordered_commit_ids": tuple(
+                    prepared_revision.revision.commit_id
+                    for prepared_revision in prepared_status.prepared.status_revisions
+                ),
                 "planned_change_ids": tuple(
                     revision.change_id for revision in execution_plan.planned_revisions
                 ),
@@ -193,27 +210,11 @@ async def execute_land_plan(
             lock_holder=read_operation_lock_holder(execution_state.state_dir),
         )
     )
+    if resume_operation is None and prepared_land.operation_lock is not None:
+        prepared_land.operation_lock.record_journal_path(journal.path)
 
     state = prepared.state_store.load()
     state_changes = dict(state.changes)
-    land_intent = (
-        resume_intent.intent
-        if resume_intent is not None
-        else build_land_intent(
-            bypass_readiness=prepared_land.bypass_readiness,
-            cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-            journal_path=str(journal.path),
-            planned_revisions=execution_plan.planned_revisions,
-            prepared_status=prepared_status,
-            selected_pr_number=prepared_land.selected_pr_number,
-            trunk_branch=trunk_branch,
-        )
-    )
-    intent_path = (
-        resume_intent.path
-        if resume_intent is not None
-        else write_new_intent(execution_state.state_dir, land_intent)
-    )
 
     actions: list[LandAction] = []
     succeeded = False
@@ -235,7 +236,7 @@ async def execute_land_plan(
         )
         if blocked_result is not None:
             return blocked_result
-        land_intent = await _finalize_planned_revisions(
+        await _finalize_planned_revisions(
             actions=actions,
             bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
             client=prepared.client,
@@ -243,7 +244,6 @@ async def execute_land_plan(
             github_client=github_client,
             github_repository=github_repository,
             journal=journal,
-            land_intent=land_intent,
             state=state,
             state_changes=state_changes,
             state_store=prepared.state_store,
@@ -265,8 +265,14 @@ async def execute_land_plan(
         )
     finally:
         if succeeded:
-            retire_superseded_intents(execution_state.stale_intents, land_intent)
-            intent_path.unlink(missing_ok=True)
+            _retire_superseded_land_operations(
+                execution_state.stale_operations,
+                current_journal_path=journal.path,
+                current_change_ids=tuple(
+                    prepared_revision.revision.change_id
+                    for prepared_revision in prepared_status.prepared.status_revisions
+                ),
+            )
 
 
 async def _apply_trunk_transition(
@@ -450,12 +456,11 @@ async def _finalize_planned_revisions(
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     journal: OperationJournal,
-    land_intent: LandIntent,
     state: ReviewState,
     state_changes: dict[str, CachedChange],
     state_store: ReviewStateStore,
     trunk_branch: str,
-) -> LandIntent:
+) -> None:
     landed_head_change_id = (
         execution_plan.planned_revisions[-1].change_id
         if execution_plan.planned_revisions
@@ -550,7 +555,32 @@ async def _finalize_planned_revisions(
                         "mutation": "cleanup_local_bookmark",
                     },
                 )
-    return land_intent
+    return None
+
+
+def _retire_superseded_land_operations(
+    stale_operations: list[LoadedOperationRecord],
+    *,
+    current_journal_path: Path,
+    current_change_ids: tuple[str, ...],
+) -> None:
+    for loaded in stale_operations:
+        if loaded.path == current_journal_path:
+            continue
+        if match_ordered_land_operation(loaded.operation.ordered_change_ids, current_change_ids):
+            append_abandoned_event(
+                loaded.path,
+                reason="superseded_by_successful_land",
+            )
+
+
+def match_ordered_land_operation(
+    existing: tuple[str, ...],
+    new: tuple[str, ...],
+) -> bool:
+    if existing == new:
+        return True
+    return len(new) > len(existing) and new[: len(existing)] == existing
 
 
 def _apply_review_bookmark_cleanup(

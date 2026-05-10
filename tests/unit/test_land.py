@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,14 +28,13 @@ from jj_review.commands.land.plan import (
 )
 from jj_review.commands.land.resume import (
     _remote_trunk_matches_commit,
-    _report_stale_land_intents,
+    _report_stale_land_operations,
     _resume_land_plan,
 )
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_review.models.github import GithubBranchRef, GithubPullRequest
-from jj_review.models.intent import LandIntent, LoadedIntent
 from jj_review.models.review_state import CachedChange, LinkState
 from jj_review.review.status import (
     PreparedStatus,
@@ -43,7 +43,7 @@ from jj_review.review.status import (
     ReviewStatusRevision,
     StatusResult,
 )
-from jj_review.state.journal import OperationJournal
+from jj_review.state.journal import LandOperationRecord, LoadedOperationRecord, OperationJournal
 from jj_review.ui import plain_text
 
 
@@ -66,6 +66,7 @@ def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
         dry_run=True,
         bypass_readiness=False,
         config=RepoConfig(),
+        operation_lock=None,
         prepared_status=prepared_status,
         selected_pr_number=None,
     )
@@ -382,9 +383,9 @@ def test_landed_revision_updates_cached_change_after_merge() -> None:
     assert updated.overview_comment_id is None
 
 
-def test_report_stale_land_intents_does_not_claim_resume_without_resume_match() -> None:
+def test_report_stale_land_operations_does_not_claim_resume_without_resume_match() -> None:
     prepared_status = _prepared_status(("change-1", "change-2"))
-    loaded_intent = _loaded_land_intent(
+    loaded_operation = _loaded_land_operation(
         cleanup_bookmarks=False,
         ordered_change_ids=("change-1", "change-2"),
         ordered_commit_ids=("commit-1", "commit-2"),
@@ -394,10 +395,10 @@ def test_report_stale_land_intents_does_not_claim_resume_without_resume_match() 
     stdout = StringIO()
     stderr = StringIO()
     with console.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
-        _report_stale_land_intents(
+        _report_stale_land_operations(
             prepared_status=prepared_status,
-            resume_intent=None,
-            stale_intents=[loaded_intent],
+            resume_operation=None,
+            stale_operations=[loaded_operation],
         )
 
     rendered = stdout.getvalue()
@@ -450,17 +451,15 @@ def test_resume_land_plan_reads_completed_change_ids_from_journal(tmp_path: Path
             "change_id": "change-1",
         },
     )
-    intent = cast(
-        LandIntent,
-        _loaded_land_intent(
-            ordered_change_ids=("change-1", "change-2"),
-            ordered_commit_ids=("commit-1", "commit-2"),
-            landed_change_ids=("change-1", "change-2"),
-        ).intent,
-    ).model_copy(update={"journal_path": str(journal.path)})
+    operation = _land_operation_record(
+        path=journal.path,
+        ordered_change_ids=("change-1", "change-2"),
+        ordered_commit_ids=("commit-1", "commit-2"),
+        landed_change_ids=("change-1", "change-2"),
+    )
 
     plan = _resume_land_plan(
-        intent=intent,
+        operation=operation,
         trunk_branch="main",
     )
 
@@ -468,18 +467,15 @@ def test_resume_land_plan_reads_completed_change_ids_from_journal(tmp_path: Path
 
 
 def test_resume_land_plan_rejects_incomplete_intent_data() -> None:
-    intent = cast(
-        LandIntent,
-        _loaded_land_intent(
-            ordered_change_ids=("change-1", "change-2"),
-            ordered_commit_ids=("commit-1", "commit-2"),
-            landed_change_ids=("change-1", "change-2"),
-        ).intent,
+    operation = _land_operation_record(
+        ordered_change_ids=("change-1", "change-2"),
+        ordered_commit_ids=("commit-1", "commit-2"),
+        landed_change_ids=("change-1", "change-2"),
     )
-    broken_intent = intent.model_copy(update={"landed_subjects": {"change-1": "feature 1"}})
+    broken_operation = replace(operation, landed_subjects={"change-1": "feature 1"})
 
-    with pytest.raises(CliError, match="Interrupted land intent"):
-        _resume_land_plan(intent=broken_intent, trunk_branch="main")
+    with pytest.raises(CliError, match="Interrupted land journal"):
+        _resume_land_plan(operation=broken_operation, trunk_branch="main")
 
 
 def test_plan_review_bookmark_cleanup_forgets_owned_bookmark() -> None:
@@ -742,7 +738,7 @@ def _prepared_status(
     )
 
 
-def _loaded_land_intent(
+def _loaded_land_operation(
     *,
     bypass_readiness: bool = False,
     cleanup_bookmarks: bool = True,
@@ -751,47 +747,72 @@ def _loaded_land_intent(
     landed_change_ids: tuple[str, ...],
     selected_pr_number: int | None = None,
     trunk_branch: str = "main",
-) -> LoadedIntent:
-    return LoadedIntent(
-        path=Path("/tmp/incomplete-land.json"),
-        intent=LandIntent(
-            kind="land",
-            pid=123,
-            label="land on @-",
+) -> LoadedOperationRecord:
+    path = Path("/tmp/incomplete-land.jsonl")
+    return LoadedOperationRecord(
+        path=path,
+        operation=_land_operation_record(
+            path=path,
             bypass_readiness=bypass_readiness,
             cleanup_bookmarks=cleanup_bookmarks,
-            display_revset="@-",
             ordered_change_ids=ordered_change_ids,
             ordered_commit_ids=ordered_commit_ids,
             landed_change_ids=landed_change_ids,
-            landed_bookmarks={
-                change_id: f"review/{change_id}" for change_id in ordered_change_ids
-            },
-            landed_bookmark_managed={
-                change_id: True for change_id in ordered_change_ids
-            },
-            landed_commit_ids={
-                change_id: commit_id
-                for change_id, commit_id in zip(
-                    ordered_change_ids,
-                    ordered_commit_ids,
-                    strict=True,
-                )
-            },
-            landed_pull_request_numbers={
-                change_id: index + 1 for index, change_id in enumerate(ordered_change_ids)
-            },
-            landed_subjects={
-                change_id: f"feature {index + 1}"
-                for index, change_id in enumerate(ordered_change_ids)
-            },
-            trunk_branch=trunk_branch,
-            landed_commit_id=ordered_commit_ids[len(landed_change_ids) - 1]
-            if landed_change_ids
-            else "trunk-commit",
             selected_pr_number=selected_pr_number,
-            started_at="2026-03-22T12:00:00Z",
+            trunk_branch=trunk_branch,
         ),
+    )
+
+
+def _land_operation_record(
+    *,
+    path: Path = Path("/tmp/incomplete-land.jsonl"),
+    bypass_readiness: bool = False,
+    cleanup_bookmarks: bool = True,
+    ordered_change_ids: tuple[str, ...],
+    ordered_commit_ids: tuple[str, ...],
+    landed_change_ids: tuple[str, ...],
+    selected_pr_number: int | None = None,
+    trunk_branch: str = "main",
+) -> LandOperationRecord:
+    return LandOperationRecord(
+        kind="land",
+        path=path,
+        pid=123,
+        label="land on @-",
+        bypass_readiness=bypass_readiness,
+        cleanup_bookmarks=cleanup_bookmarks,
+        display_revset="@-",
+        ordered_change_ids=ordered_change_ids,
+        ordered_commit_ids=ordered_commit_ids,
+        landed_change_ids=landed_change_ids,
+        landed_bookmarks={
+            change_id: f"review/{change_id}" for change_id in ordered_change_ids
+        },
+        landed_bookmark_managed={change_id: True for change_id in ordered_change_ids},
+        landed_commit_ids={
+            change_id: commit_id
+            for change_id, commit_id in zip(
+                ordered_change_ids,
+                ordered_commit_ids,
+                strict=True,
+            )
+        },
+        landed_pull_request_numbers={
+            change_id: index + 1 for index, change_id in enumerate(ordered_change_ids)
+        },
+        landed_subjects={
+            change_id: f"feature {index + 1}"
+            for index, change_id in enumerate(ordered_change_ids)
+        },
+        trunk_branch=trunk_branch,
+        landed_commit_id=(
+            ordered_commit_ids[len(landed_change_ids) - 1]
+            if landed_change_ids
+            else "trunk-commit"
+        ),
+        selected_pr_number=selected_pr_number,
+        started_at="2026-03-22T12:00:00Z",
     )
 
 

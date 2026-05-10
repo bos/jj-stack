@@ -68,30 +68,12 @@ class AbortIntent(OperationIntent):
     kind: Literal["abort"]
 
 
-class LandIntent(OrderedChangeIdsIntent):
-    kind: Literal["land"]
-    bypass_readiness: bool
-    cleanup_bookmarks: bool
-    journal_path: str | None = None
-    ordered_commit_ids: tuple[str, ...]
-    landed_change_ids: tuple[str, ...]
-    landed_bookmarks: dict[str, str]
-    landed_bookmark_managed: dict[str, bool]
-    landed_commit_ids: dict[str, str]
-    landed_pull_request_numbers: dict[str, int]
-    landed_subjects: dict[str, str]
-    trunk_branch: str
-    landed_commit_id: str
-    selected_pr_number: int | None = None
-
-
 type IntentFile = Annotated[
     SubmitIntent
     | CleanupIntent
     | CleanupRebaseIntent
     | CloseIntent
     | RelinkIntent
-    | LandIntent
     | AbortIntent,
     Field(discriminator="kind"),
 ]

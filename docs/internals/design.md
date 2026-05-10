@@ -279,7 +279,8 @@ cache write and skips that write with a diagnostic if another operation is runni
 Completed operation journals are retained under the repo state directory. They are
 append-only JSONL records of resolved scope, planned mutations, applied mutations, and
 saved-state updates. The journal is not a topology source of truth; it is durable
-evidence for recovery and post-hoc debugging.
+evidence for recovery and post-hoc debugging. `land` uses the journal itself as its
+interrupted-operation record; it does not write a separate intent file.
 
 ## Submission algorithm
 

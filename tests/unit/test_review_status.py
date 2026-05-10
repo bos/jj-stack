@@ -501,6 +501,9 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
         def list_intents(self) -> list[object]:
             return []
 
+        def list_operations(self) -> list[object]:
+            return []
+
     def build_client(saved_state: ReviewState) -> FakeClient:
         client = FakeClient(tmp_path)
         monkeypatch.setattr(

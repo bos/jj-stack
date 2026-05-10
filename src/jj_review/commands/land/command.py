@@ -54,6 +54,7 @@ from jj_review.review.status import (
     prepare_status,
     stream_status,
 )
+from jj_review.state.operation_lock import OperationLock
 
 from .execute import (
     ensure_trunk_branch_matches_selected_trunk,
@@ -108,9 +109,10 @@ def land(
         pull_request=pull_request,
         revset=revset,
     )
-    with mutating_command_lock(command="land", context=context):
+    with mutating_command_lock(command="land", context=context) as operation_lock:
         return _run_land(
             context=context,
+            operation_lock=operation_lock,
             options=options,
         )
 
@@ -118,6 +120,7 @@ def land(
 def _run_land(
     *,
     context: CommandContext,
+    operation_lock: OperationLock,
     options: LandOptions,
 ) -> int:
     if options.pull_request is not None:
@@ -141,6 +144,7 @@ def _run_land(
     with console.spinner(description="Inspecting jj stack"):
         prepared_land = _prepare_land(
             context=context,
+            operation_lock=operation_lock,
             options=options,
             revset=resolved_revset,
             selected_pr_number=pull_request_number,
@@ -153,6 +157,7 @@ def _run_land(
 def _prepare_land(
     *,
     context: CommandContext,
+    operation_lock: OperationLock,
     options: LandOptions,
     revset: str | None,
     selected_pr_number: int | None,
@@ -181,6 +186,7 @@ def _prepare_land(
         dry_run=options.dry_run,
         bypass_readiness=options.bypass_readiness,
         config=context.config,
+        operation_lock=operation_lock,
         prepared_status=prepared_status,
         selected_pr_number=selected_pr_number,
     )

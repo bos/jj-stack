@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
-from datetime import UTC, datetime
-from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.errors import CliError
 from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.models.intent import LandIntent, LoadedIntent
 from jj_review.review.intents import (
     describe_intent,
     match_ordered_change_ids,
-    retire_superseded_intents,
 )
 from jj_review.review.status import PreparedStatus
-from jj_review.state.intents import check_same_kind_intent
-from jj_review.state.journal import read_journal
+from jj_review.state.journal import (
+    LandOperationRecord,
+    LoadedOperationRecord,
+    OperationJournal,
+    read_journal,
+)
 
 from .models import (
     BookmarkStateReader,
@@ -28,7 +27,7 @@ from .models import (
     LandResult,
     LandRevision,
     PreparedLand,
-    ResumeLandIntent,
+    ResumeLandOperation,
 )
 
 
@@ -48,61 +47,57 @@ def prepare_land_execution_state(
     state_dir = prepared_status.prepared.state_store.require_writable()
 
     current_planned_change_ids = tuple(revision.change_id for revision in plan.planned_revisions)
-    stale_intents = check_same_kind_intent(
-        state_dir,
-        build_land_intent(
-            bypass_readiness=prepared_land.bypass_readiness,
-            cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-            planned_revisions=plan.planned_revisions,
-            prepared_status=prepared_status,
-            selected_pr_number=prepared_land.selected_pr_number,
-            trunk_branch=trunk_branch,
-        ),
-    )
-    resume_intent = _find_resume_land_intent(
+    stale_operations = [
+        loaded
+        for loaded in prepared_status.prepared.state_store.list_operations()
+        if loaded.operation.kind == "land"
+    ]
+    resume_operation = _find_resume_land_operation(
         bypass_readiness=prepared_land.bypass_readiness,
         cleanup_bookmarks=prepared_land.cleanup_bookmarks,
         current_planned_change_ids=current_planned_change_ids,
         prepared_status=prepared_status,
         selected_pr_number=prepared_land.selected_pr_number,
-        stale_intents=stale_intents,
+        stale_operations=stale_operations,
         trunk_branch=trunk_branch,
     )
-    _report_stale_land_intents(
+    _report_stale_land_operations(
         prepared_status=prepared_status,
-        resume_intent=resume_intent,
-        stale_intents=stale_intents,
+        resume_operation=resume_operation,
+        stale_operations=stale_operations,
     )
 
     execution_plan = plan
     trunk_transition_already_succeeded = (
-        resume_intent is not None
+        resume_operation is not None
         and _remote_trunk_matches_commit(
             client=prepared_status.prepared.client,
             remote_name=remote_name,
             trunk_branch=trunk_branch,
-            commit_id=resume_intent.intent.landed_commit_id,
+            commit_id=resume_operation.operation.landed_commit_id,
         )
     )
-    if trunk_transition_already_succeeded and resume_intent is not None:
+    if trunk_transition_already_succeeded and resume_operation is not None:
         execution_plan = _resume_land_plan(
-            intent=resume_intent.intent,
+            operation=resume_operation.operation,
             trunk_branch=trunk_branch,
         )
 
     if (
-        resume_intent is not None
+        resume_operation is not None
         and not execution_plan.planned_revisions
         and not execution_plan.push_trunk
     ):
-        retire_superseded_intents(stale_intents, resume_intent.intent)
-        resume_intent.path.unlink(missing_ok=True)
+        OperationJournal.open(resume_operation.path).append(
+            "completed",
+            {"completed_change_ids": resume_operation.operation.landed_change_ids},
+        )
         raise CompletedLandResume(
             LandResult(
                 actions=(
                     LandAction(
                         kind="resume",
-                        body="previous landing already completed; cleared stale intent",
+                        body="previous landing already completed; cleared operation record",
                         status="applied",
                     ),
                 ),
@@ -121,16 +116,16 @@ def prepare_land_execution_state(
         if execution_plan.blocked:
             return LandExecutionState(
                 execution_plan=execution_plan,
-                resume_intent=resume_intent,
-                stale_intents=stale_intents,
+                resume_operation=resume_operation,
+                stale_operations=stale_operations,
                 state_dir=state_dir,
             )
         raise AssertionError("Resume execution without remaining work must be handled above.")
 
     return LandExecutionState(
         execution_plan=execution_plan,
-        resume_intent=resume_intent,
-        stale_intents=stale_intents,
+        resume_operation=resume_operation,
+        stale_operations=stale_operations,
         state_dir=state_dir,
     )
 
@@ -143,28 +138,26 @@ class CompletedLandResume(Exception):
         self.result = result
 
 
-def _report_stale_land_intents(
+def _report_stale_land_operations(
     *,
     prepared_status: PreparedStatus,
-    resume_intent: ResumeLandIntent | None,
-    stale_intents: list[LoadedIntent],
+    resume_operation: ResumeLandOperation | None,
+    stale_operations: list[LoadedOperationRecord],
 ) -> None:
-    """Print resumable land intent diagnostics for live execution."""
+    """Print resumable land operation diagnostics for live execution."""
 
-    for loaded in stale_intents:
-        if not isinstance(loaded.intent, LandIntent):
-            continue
-        if resume_intent is not None and loaded.path == resume_intent.path:
-            if resume_intent.mode == "tail-after-landed-prefix":
+    for loaded in stale_operations:
+        if resume_operation is not None and loaded.path == resume_operation.path:
+            if resume_operation.mode == "tail-after-landed-prefix":
                 console.note(
-                    t"Resuming interrupted {describe_intent(loaded.intent)} after the "
+                    t"Resuming interrupted {describe_intent(loaded.operation)} after the "
                     t"trunk transition already succeeded"
                 )
             else:
-                console.note(t"Resuming interrupted {describe_intent(loaded.intent)}")
+                console.note(t"Resuming interrupted {describe_intent(loaded.operation)}")
             continue
         match = match_ordered_change_ids(
-            loaded.intent.ordered_change_ids,
+            loaded.operation.ordered_change_ids,
             tuple(
                 prepared_revision.revision.change_id
                 for prepared_revision in prepared_status.prepared.status_revisions
@@ -173,22 +166,24 @@ def _report_stale_land_intents(
         if match == "overlap":
             console.warning(
                 t"this land overlaps an incomplete earlier operation "
-                t"({describe_intent(loaded.intent)})"
+                t"({describe_intent(loaded.operation)})"
             )
         else:
-            console.note(t"incomplete operation outstanding: {describe_intent(loaded.intent)}")
+            console.note(
+                t"incomplete operation outstanding: {describe_intent(loaded.operation)}"
+            )
 
 
-def _find_resume_land_intent(
+def _find_resume_land_operation(
     *,
     bypass_readiness: bool,
     cleanup_bookmarks: bool,
     current_planned_change_ids: tuple[str, ...],
     prepared_status: PreparedStatus,
     selected_pr_number: int | None,
-    stale_intents: Sequence[LoadedIntent],
+    stale_operations: Sequence[LoadedOperationRecord],
     trunk_branch: str,
-) -> ResumeLandIntent | None:
+) -> ResumeLandOperation | None:
     current_change_ids = tuple(
         prepared_revision.revision.change_id
         for prepared_revision in prepared_status.prepared.status_revisions
@@ -197,11 +192,9 @@ def _find_resume_land_intent(
         prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
     )
-    tail_match: ResumeLandIntent | None = None
-    for loaded in stale_intents:
-        if not isinstance(loaded.intent, LandIntent):
-            continue
-        intent = loaded.intent
+    tail_match: ResumeLandOperation | None = None
+    for loaded in stale_operations:
+        intent = loaded.operation
         if intent.display_revset != prepared_status.selected_revset:
             continue
         if intent.bypass_readiness != bypass_readiness:
@@ -215,8 +208,8 @@ def _find_resume_land_intent(
             and intent.ordered_commit_ids == current_commit_ids
             and intent.landed_change_ids == current_planned_change_ids
         ):
-            return ResumeLandIntent(
-                intent=intent,
+            return ResumeLandOperation(
+                operation=intent,
                 path=loaded.path,
                 mode="exact-path",
             )
@@ -227,8 +220,8 @@ def _find_resume_land_intent(
             intent.ordered_change_ids[prefix_length:] == current_change_ids
             and intent.ordered_commit_ids[prefix_length:] == current_commit_ids
         ):
-            tail_match = ResumeLandIntent(
-                intent=intent,
+            tail_match = ResumeLandOperation(
+                operation=intent,
                 path=loaded.path,
                 mode="tail-after-landed-prefix",
             )
@@ -250,27 +243,27 @@ def _remote_trunk_matches_commit(
     return remote_state is not None and remote_state.target == commit_id
 
 
-def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
-    completed_change_ids = set(_completed_land_change_ids(intent))
+def _resume_land_plan(*, operation: LandOperationRecord, trunk_branch: str) -> LandPlan:
+    completed_change_ids = set(_completed_land_change_ids(operation))
     planned_revisions: list[LandRevision] = []
-    for change_id in intent.landed_change_ids:
+    for change_id in operation.landed_change_ids:
         if change_id in completed_change_ids:
             continue
         try:
             planned_revisions.append(
                 LandRevision(
-                    bookmark=intent.landed_bookmarks[change_id],
-                    bookmark_managed=intent.landed_bookmark_managed[change_id],
+                    bookmark=operation.landed_bookmarks[change_id],
+                    bookmark_managed=operation.landed_bookmark_managed[change_id],
                     change_id=change_id,
-                    commit_id=intent.landed_commit_ids[change_id],
+                    commit_id=operation.landed_commit_ids[change_id],
                     needs_resubmit=False,
-                    pull_request_number=intent.landed_pull_request_numbers[change_id],
-                    subject=intent.landed_subjects[change_id],
+                    pull_request_number=operation.landed_pull_request_numbers[change_id],
+                    subject=operation.landed_subjects[change_id],
                 )
             )
         except KeyError as error:
             raise CliError(
-                t"Interrupted land intent for {intent.label} is incomplete. "
+                t"Interrupted land journal for {operation.label} is incomplete. "
                 t"Re-run {ui.cmd('land')} to refresh the plan."
             ) from error
     return LandPlan(
@@ -282,16 +275,14 @@ def _resume_land_plan(*, intent: LandIntent, trunk_branch: str) -> LandPlan:
     )
 
 
-def _completed_land_change_ids(intent: LandIntent) -> tuple[str, ...]:
+def _completed_land_change_ids(operation: LandOperationRecord) -> tuple[str, ...]:
     """Return the landed prefix whose saved-state updates are durably recorded."""
 
-    if intent.journal_path is None:
-        return ()
     try:
-        events = read_journal(Path(intent.journal_path))
+        events = read_journal(operation.path)
     except (OSError, ValueError, KeyError) as error:
         raise CliError(
-            t"Interrupted land journal for {intent.label} is unreadable. "
+            t"Interrupted land journal for {operation.label} is unreadable. "
             t"Re-run {ui.cmd('land')} to refresh the plan."
         ) from error
     completed: list[str] = []
@@ -302,60 +293,3 @@ def _completed_land_change_ids(intent: LandIntent) -> tuple[str, ...]:
         if isinstance(change_id, str):
             completed.append(change_id)
     return tuple(dict.fromkeys(completed))
-
-
-def build_land_intent(
-    *,
-    bypass_readiness: bool,
-    cleanup_bookmarks: bool,
-    journal_path: str | None = None,
-    planned_revisions: tuple[LandRevision, ...],
-    prepared_status: PreparedStatus,
-    selected_pr_number: int | None,
-    trunk_branch: str,
-) -> LandIntent:
-    ordered_change_ids = tuple(
-        prepared_revision.revision.change_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    ordered_commit_ids = tuple(
-        prepared_revision.revision.commit_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    landed_change_ids = tuple(revision.change_id for revision in planned_revisions)
-    landed_commit_id = (
-        planned_revisions[-1].commit_id
-        if planned_revisions
-        else prepared_status.prepared.stack.trunk.commit_id
-    )
-    return LandIntent(
-        kind="land",
-        pid=os.getpid(),
-        label=f"land on {prepared_status.selected_revset}",
-        bypass_readiness=bypass_readiness,
-        cleanup_bookmarks=cleanup_bookmarks,
-        journal_path=journal_path,
-        display_revset=prepared_status.selected_revset,
-        ordered_change_ids=ordered_change_ids,
-        ordered_commit_ids=ordered_commit_ids,
-        landed_change_ids=landed_change_ids,
-        landed_bookmarks={
-            revision.change_id: revision.bookmark for revision in planned_revisions
-        },
-        landed_bookmark_managed={
-            revision.change_id: revision.bookmark_managed for revision in planned_revisions
-        },
-        landed_commit_ids={
-            revision.change_id: revision.commit_id for revision in planned_revisions
-        },
-        landed_pull_request_numbers={
-            revision.change_id: revision.pull_request_number for revision in planned_revisions
-        },
-        landed_subjects={
-            revision.change_id: revision.subject for revision in planned_revisions
-        },
-        trunk_branch=trunk_branch,
-        landed_commit_id=landed_commit_id,
-        selected_pr_number=selected_pr_number,
-        started_at=datetime.now(UTC).isoformat(),
-    )

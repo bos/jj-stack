@@ -72,6 +72,17 @@ class OperationLock:
         _unlock_file(self._file)
         self._file.close()
 
+    def record_journal_path(self, journal_path: Path) -> None:
+        """Update holder diagnostics with the operation journal path."""
+
+        self.holder = OperationLockHolder(
+            command=self.holder.command,
+            pid=self.holder.pid,
+            started_at=self.holder.started_at,
+            journal_path=str(journal_path),
+        )
+        _write_holder(self._holder_path, self.holder)
+
 
 def acquire_operation_lock(
     state_dir: Path,
@@ -217,6 +228,11 @@ def _write_holder(holder_path: Path, holder: OperationLockHolder) -> None:
 def _cleanup_dead_holder(holder_path: Path) -> None:
     holder = read_operation_lock_holder(holder_path.parent)
     if holder is not None and not pid_is_alive(holder.pid):
+        if holder.journal_path is not None:
+            _append_dead_holder_abandoned_event(
+                Path(holder.journal_path),
+                holder=holder,
+            )
         holder_path.unlink(missing_ok=True)
 
 
@@ -236,3 +252,32 @@ def _operation_lock_busy_message(holder: OperationLockHolder | None) -> str:
     if holder.journal_path is not None:
         message += f" Operation record: {holder.journal_path}."
     return message
+
+
+def _append_dead_holder_abandoned_event(
+    journal_path: Path,
+    *,
+    holder: OperationLockHolder,
+) -> None:
+    try:
+        first_line = next(
+            line
+            for line in journal_path.read_text(encoding="utf-8").splitlines()
+            if line
+        )
+        first = json.loads(first_line)
+        entry = {
+            "data": {
+                "lock_holder": asdict(holder),
+                "reason": "dead_lock_holder",
+            },
+            "event": "abandoned",
+            "operation": str(first["operation"]),
+            "operation_id": str(first["operation_id"]),
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        with journal_path.open("a", encoding="utf-8") as journal:
+            journal.write(json.dumps(entry, sort_keys=True))
+            journal.write("\n")
+    except (OSError, StopIteration, KeyError, TypeError, ValueError):
+        return

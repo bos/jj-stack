@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,7 +31,6 @@ from jj_review.models.intent import (
     AbortIntent,
     CleanupRebaseIntent,
     CloseIntent,
-    LandIntent,
     LoadedIntent,
     RelinkIntent,
     SubmitIntent,
@@ -42,6 +42,11 @@ from jj_review.review.intents import (
 )
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
 from jj_review.state.intents import write_new_intent
+from jj_review.state.journal import (
+    LandOperationRecord,
+    LoadedOperationRecord,
+    append_abandoned_event,
+)
 from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message, plain_text
@@ -136,7 +141,7 @@ def _run_abort(
             return 1
         loaded.path.unlink(missing_ok=True)
 
-    loaded_intents = operation_intents
+    loaded_intents = [*operation_intents, *state_store.list_operations()]
 
     if not loaded_intents:
         console.output("Nothing to abort.")
@@ -152,7 +157,7 @@ def _run_abort(
     outstanding = [
         loaded
         for loaded in loaded_intents
-        if not intent_is_stale(loaded.intent, _resolve_change_id)
+        if not _operation_notice_is_stale(loaded, _resolve_change_id)
     ]
 
     if not outstanding:
@@ -217,7 +222,7 @@ def _run_abort(
 async def _abort_intent_async(
     *,
     context: CommandContext,
-    loaded: LoadedIntent,
+    loaded: LoadedIntent | LoadedOperationRecord,
     options: AbortOptions,
 ) -> AbortResult:
     intent = loaded.intent
@@ -242,7 +247,7 @@ async def _abort_intent_async(
         actions.append(AbortAction(kind="note", body=note, status="skipped"))
     _plan_intent_file_removal(actions=actions, dry_run=dry_run)
     if not dry_run:
-        loaded.path.unlink(missing_ok=True)
+        _clear_operation_notice(loaded, reason="abort")
 
     return AbortResult(
         actions=tuple(actions),
@@ -255,7 +260,7 @@ async def _abort_intent_async(
 
 
 def _non_submit_note(intent) -> Message | None:
-    if isinstance(intent, LandIntent):
+    if isinstance(intent, LandOperationRecord):
         return t"Landing cannot be retracted; changes already merged to trunk are " \
             t"permanent. The interrupted-operation notice will be cleared so future " \
             t"commands can proceed. Run {ui.cmd('status')} to inspect the current state."
@@ -660,6 +665,29 @@ def _retract_one_change_local(
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+def _operation_notice_is_stale(
+    loaded: LoadedIntent | LoadedOperationRecord,
+    resolve_change_id: Callable[[str], bool],
+) -> bool:
+    if isinstance(loaded, LoadedOperationRecord):
+        ids = loaded.operation.change_ids()
+        if not ids:
+            return False
+        return not any(resolve_change_id(change_id) for change_id in ids)
+    return intent_is_stale(loaded.intent, resolve_change_id)
+
+
+def _clear_operation_notice(
+    loaded: LoadedIntent | LoadedOperationRecord,
+    *,
+    reason: str,
+) -> None:
+    if isinstance(loaded, LoadedOperationRecord):
+        append_abandoned_event(loaded.path, reason=reason)
+        return
+    loaded.path.unlink(missing_ok=True)
 
 
 def _plan_intent_file_removal(

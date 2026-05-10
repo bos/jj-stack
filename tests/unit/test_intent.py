@@ -12,7 +12,6 @@ from jj_review.models.intent import (
     CleanupIntent,
     CleanupRebaseIntent,
     CloseIntent,
-    LandIntent,
     LoadedIntent,
     RelinkIntent,
     SubmitIntent,
@@ -109,47 +108,6 @@ def _make_relink_intent(change_id: str = "cccc", pid: int = 12345) -> RelinkInte
     )
 
 
-def _make_land_intent(
-    ordered_change_ids: tuple[str, ...] = ("aaaa", "bbbb", "cccc"),
-    landed_change_ids: tuple[str, ...] = ("aaaa", "bbbb"),
-    pid: int = 12345,
-) -> LandIntent:
-    return LandIntent(
-        kind="land",
-        pid=pid,
-        label="land on @",
-        bypass_readiness=False,
-        cleanup_bookmarks=True,
-        display_revset="@",
-        ordered_change_ids=ordered_change_ids,
-        ordered_commit_ids=("commit-aaaa", "commit-bbbb", "commit-cccc"),
-        landed_change_ids=landed_change_ids,
-        landed_bookmarks={
-            "aaaa": "review/feature-1-aaaa",
-            "bbbb": "review/feature-2-bbbb",
-        },
-        landed_bookmark_managed={
-            "aaaa": True,
-            "bbbb": True,
-        },
-        landed_commit_ids={
-            "aaaa": "commit-aaaa",
-            "bbbb": "commit-bbbb",
-        },
-        landed_pull_request_numbers={
-            "aaaa": 1,
-            "bbbb": 2,
-        },
-        landed_subjects={
-            "aaaa": "feature 1",
-            "bbbb": "feature 2",
-        },
-        trunk_branch="main",
-        landed_commit_id="landed-commit",
-        selected_pr_number=2,
-        started_at="2026-01-01T00:00:00+00:00",
-    )
-
 # ---------------------------------------------------------------------------
 # Naming
 # ---------------------------------------------------------------------------
@@ -163,7 +121,6 @@ def _make_land_intent(
         (_make_cleanup_restack_intent, "cleanup-rebase"),
         (lambda: _make_close_intent(cleanup=True), "close"),
         (_make_relink_intent, "relink"),
-        (_make_land_intent, "land"),
     ],
     ids=lambda value: value if isinstance(value, str) else None,
 )

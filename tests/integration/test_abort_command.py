@@ -8,6 +8,7 @@ from jj_review.jj import JjClient
 from jj_review.models.intent import AbortIntent, CleanupRebaseIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.intents import write_new_intent
+from jj_review.state.journal import OperationJournal, read_journal
 from jj_review.state.store import ReviewStateStore
 
 from ..support.fake_github import initialize_bare_repository
@@ -351,6 +352,60 @@ def test_abort_removes_cleanup_restack_intent_with_note(
     assert "cleared it from future status output" in captured.out
     assert "rebase" in captured.out  # note about manual inspection
     assert not state_store.list_intents()
+
+
+def test_abort_clears_land_journal_with_note(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    stack = JjClient(repo).discover_review_stack()
+    revision = stack.revisions[0]
+    state_store = ReviewStateStore.for_repo(repo)
+    journal = OperationJournal.begin(
+        state_store.require_writable(),
+        operation="land",
+        lock_holder=None,
+        options={
+            "bypass_readiness": False,
+            "cleanup_bookmarks": True,
+            "selected_pr_number": None,
+        },
+        resolved_scope={
+            "github_repository": "octo-org/stacked-review",
+            "landed_change_ids": (revision.change_id,),
+            "landed_commit_id": revision.commit_id,
+            "ordered_change_ids": (revision.change_id,),
+            "ordered_commit_ids": (revision.commit_id,),
+            "planned_change_ids": (revision.change_id,),
+            "planned_revisions": (
+                {
+                    "bookmark": "review/feature",
+                    "bookmark_managed": True,
+                    "change_id": revision.change_id,
+                    "commit_id": revision.commit_id,
+                    "pull_request_number": 1,
+                    "subject": revision.subject,
+                },
+            ),
+            "push_trunk": True,
+            "remote_name": "origin",
+            "selected_revset": "@-",
+            "trunk_branch": "main",
+        },
+    )
+
+    exit_code = run_main(repo, config_path, "abort")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Applied abort actions" in captured.out
+    assert "Landing cannot be retracted" in captured.out
+    assert not state_store.list_operations()
+    assert read_journal(journal.path)[-1].event == "abandoned"
 
 
 def test_abort_reports_stale_when_all_intents_have_gone_change_ids(

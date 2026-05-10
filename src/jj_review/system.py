@@ -9,6 +9,9 @@ import sys
 def pid_is_alive(pid: int) -> bool:
     """Return whether a process with the given PID appears to exist."""
 
+    if pid <= 0:
+        return False
+
     if sys.platform == "win32":
         import ctypes
 
