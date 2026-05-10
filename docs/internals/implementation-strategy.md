@@ -126,7 +126,7 @@ receives the bootstrapped `CommandContext` instead of separate config/client/sta
 parameters, including the helper that prepares an already-resolved stack, and status
 command helpers keep the context for selection, rendering, and stale-stack advisory work.
 Doctor checks also receive the command context for remote selection and interruption
-reporting.
+reporting. List repo inspection reads shared config and jj access from `CommandContext`.
 Land's prepared target carries `CommandContext` for shared configuration used by bookmark
 cleanup planning, and land finalization shares a `LandMutationRun` for live review state,
 pending state changes, and interim state saves. Close's prepared target carries
