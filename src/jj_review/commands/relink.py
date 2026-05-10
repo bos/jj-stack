@@ -60,6 +60,7 @@ class _PreparedRelink:
     """Resolved relink target after local and GitHub validation."""
 
     bookmark: str
+    context: CommandContext
     github_repository: ParsedGithubRepo
     pull_request: GithubPullRequest
     remote: GitRemote
@@ -115,7 +116,7 @@ async def _run_relink_async(
     options: RelinkOptions,
 ) -> RelinkResult:
     prepared = await _prepare_relink(context=context, options=options)
-    return _apply_relink(context=context, prepared=prepared)
+    return _apply_relink(prepared=prepared)
 
 
 async def _prepare_relink(
@@ -180,6 +181,7 @@ async def _prepare_relink(
     )
     return _PreparedRelink(
         bookmark=bookmark,
+        context=context,
         github_repository=github_repository,
         pull_request=pull_request,
         remote=remote,
@@ -274,9 +276,9 @@ def _validated_relink_bookmark(
 
 def _apply_relink(
     *,
-    context: CommandContext,
     prepared: _PreparedRelink,
 ) -> RelinkResult:
+    context = prepared.context
     client = context.jj_client
     state_store = context.state_store
     for loaded in state_store.list_operations():
