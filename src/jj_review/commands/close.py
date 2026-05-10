@@ -38,7 +38,6 @@ from jj_review.commands.close_orphan import (
     run_untracked_cleanup_pull_request,
     state_has_pull_request_record,
 )
-from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.github.client import GithubClient, build_github_client
 from jj_review.github.error_messages import (
@@ -127,11 +126,18 @@ class CloseResult:
 class PreparedClose:
     """Locally prepared close inputs before any GitHub mutation."""
 
-    config: RepoConfig
-    dry_run: bool
-    cleanup: bool
+    context: CommandContext
     operation_lock: OperationLock
+    options: CloseOptions
     prepared_status: PreparedStatus
+
+    @property
+    def cleanup(self) -> bool:
+        return self.options.cleanup
+
+    @property
+    def dry_run(self) -> bool:
+        return self.options.dry_run
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,17 +449,15 @@ def prepare_close(
     )
     if fast_path is not None:
         return PreparedClose(
-            config=context.config,
-            dry_run=options.dry_run,
-            cleanup=options.cleanup,
+            context=context,
             operation_lock=operation_lock,
+            options=options,
             prepared_status=fast_path,
         )
     return PreparedClose(
-        config=context.config,
-        dry_run=options.dry_run,
-        cleanup=options.cleanup,
+        context=context,
         operation_lock=operation_lock,
+        options=options,
         prepared_status=prepare_status(
             config=context.config,
             fetch_remote_state=options.cleanup,
@@ -1315,8 +1319,8 @@ async def _cleanup_if_requested(
     prepared = prepared_close.prepared_status.prepared
     remote = prepared.remote
     cleanup_context = _CloseCleanupContext(
-        bookmark_prefix=prepared_close.config.bookmark_prefix,
-        cleanup_user_bookmarks=prepared_close.config.cleanup_user_bookmarks,
+        bookmark_prefix=prepared_close.context.config.bookmark_prefix,
+        cleanup_user_bookmarks=prepared_close.context.config.cleanup_user_bookmarks,
         dry_run=prepared_close.dry_run,
         github_client=github_client,
         github_repository=github_repository,
