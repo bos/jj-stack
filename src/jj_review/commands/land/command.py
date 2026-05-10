@@ -84,6 +84,14 @@ class LandOptions:
     revset: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _LandTarget:
+    """Selected landing target after CLI selection has been resolved."""
+
+    pull_request_number: int | None
+    revset: str | None
+
+
 def land(
     *,
     bypass_readiness: bool,
@@ -102,12 +110,12 @@ def land(
         cli_args=cli_args,
         debug=debug,
     )
-    options = LandOptions(
+    options = _land_options_from_cli(
         bypass_readiness=bypass_readiness,
-        cleanup_bookmarks=not skip_cleanup,
         dry_run=dry_run,
         pull_request=pull_request,
         revset=revset,
+        skip_cleanup=skip_cleanup,
     )
     with mutating_command_lock(command="land", context=context) as operation_lock:
         return _run_land(
@@ -117,12 +125,48 @@ def land(
         )
 
 
+def _land_options_from_cli(
+    *,
+    bypass_readiness: bool,
+    dry_run: bool,
+    pull_request: str | None,
+    revset: str | None,
+    skip_cleanup: bool,
+) -> LandOptions:
+    return LandOptions(
+        bypass_readiness=bypass_readiness,
+        cleanup_bookmarks=not skip_cleanup,
+        dry_run=dry_run,
+        pull_request=pull_request,
+        revset=revset,
+    )
+
+
 def _run_land(
     *,
     context: CommandContext,
     operation_lock: OperationLock,
     options: LandOptions,
 ) -> int:
+    target = _resolve_land_target(context=context, options=options)
+    with console.spinner(description="Inspecting jj stack"):
+        prepared_land = _prepare_land(
+            context=context,
+            operation_lock=operation_lock,
+            options=options,
+            revset=target.revset,
+            selected_pr_number=target.pull_request_number,
+        )
+    result = _stream_land(prepared_land=prepared_land)
+    print_land_result(result)
+    return 1 if result.blocked else 0
+
+
+def _resolve_land_target(
+    *,
+    context: CommandContext,
+    options: LandOptions,
+) -> _LandTarget:
     if options.pull_request is not None:
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="land",
@@ -133,25 +177,19 @@ def _run_land(
         console.note(
             t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
         )
-    else:
-        pull_request_number = None
-        resolved_revset = resolve_selected_revset(
+        return _LandTarget(
+            pull_request_number=pull_request_number,
+            revset=resolved_revset,
+        )
+    return _LandTarget(
+        pull_request_number=None,
+        revset=resolve_selected_revset(
             command_label="land",
             default_revset="@-",
             require_explicit=False,
             revset=options.revset,
-        )
-    with console.spinner(description="Inspecting jj stack"):
-        prepared_land = _prepare_land(
-            context=context,
-            operation_lock=operation_lock,
-            options=options,
-            revset=resolved_revset,
-            selected_pr_number=pull_request_number,
-        )
-    result = _stream_land(prepared_land=prepared_land)
-    print_land_result(result)
-    return 1 if result.blocked else 0
+        ),
+    )
 
 
 def _prepare_land(
