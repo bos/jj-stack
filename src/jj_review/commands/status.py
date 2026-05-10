@@ -30,7 +30,7 @@ from jj_review.github.error_messages import (
     github_unavailable_message,
     remote_unavailable_message,
 )
-from jj_review.jj import JjCliArgs, JjClient, UnsupportedStackError
+from jj_review.jj import JjCliArgs, UnsupportedStackError
 from jj_review.models.review_state import ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
@@ -182,7 +182,7 @@ def _run_status(
             verbose=options.verbose,
         )
         _emit_connected_stale_stacks_advisory(
-            jj_client=context.jj_client,
+            context=context,
             rendered_stacks=(prepared_status.prepared.stack,),
             state=prepared_status.prepared.state,
         )
@@ -197,7 +197,7 @@ def _run_status(
     for selector in options.selectors:
         try:
             resolved_selector = _resolve_status_selector(
-                jj_client=context.jj_client,
+                context=context,
                 selector=selector,
             )
             prepared_status = _prepare_status_with_spinner(
@@ -241,7 +241,7 @@ def _run_status(
         printed_blocks += 1
     if state is not None:
         _emit_connected_stale_stacks_advisory(
-            jj_client=context.jj_client,
+            context=context,
             rendered_stacks=tuple(rendered_stacks),
             state=state,
         )
@@ -250,7 +250,7 @@ def _run_status(
 
 def _emit_connected_stale_stacks_advisory(
     *,
-    jj_client: JjClient,
+    context: CommandContext,
     rendered_stacks: tuple[LocalStack, ...],
     state: ReviewState,
 ) -> None:
@@ -264,7 +264,7 @@ def _emit_connected_stale_stacks_advisory(
     if not state.changes:
         return
     discovered = discover_connected_tracked_stacks(
-        jj_client=jj_client,
+        jj_client=context.jj_client,
         selected_stacks=rendered_stacks,
         state=state,
     )
@@ -357,13 +357,13 @@ def _normalize_status_selectors(
 
 def _resolve_status_selector(
     *,
-    jj_client: JjClient,
+    context: CommandContext,
     selector: StatusSelector,
 ) -> _ResolvedStatusSelector:
     if selector.kind == "pull_request":
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="status",
-            jj_client=jj_client,
+            jj_client=context.jj_client,
             pull_request_reference=selector.value,
             revset=None,
         )
