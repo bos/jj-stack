@@ -105,7 +105,8 @@ same submit option objects instead of separate draft/reviewer/label parameters. 
 mutation phases share a `SubmitMutationRun` for dry-run mode and incremental state-save
 data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
 instead of separate config/client/state-store parameters. Plain cleanup's prepared target
-also carries `CommandContext` rather than duplicating those shared dependencies.
+also carries `CommandContext` rather than duplicating those shared dependencies, and
+cleanup rebase reads shared configuration through its prepared context.
 
 ## Repository layout
 
