@@ -95,6 +95,11 @@ command-specific option values at their orchestration boundaries, with `CommandC
 carrying shared runtime dependencies. Command code should use the context's state store
 rather than reconstructing one from the repo root.
 
+Commands that need nontrivial selection or validation carry that result as an explicit
+resolved/prepared target value before mutation. `close`, `land`, `relink`, and `unlink`
+use this shape to keep PR/revset selection, GitHub inspection, and saved-state mutation
+from sharing long-lived local variable bundles.
+
 ## Repository layout
 
 ```text
