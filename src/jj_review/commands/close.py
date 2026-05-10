@@ -91,7 +91,6 @@ from jj_review.state.journal import (
     append_abandoned_event,
 )
 from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
-from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 
 HELP = "Stop reviewing a jj stack on GitHub"
@@ -443,9 +442,8 @@ def prepare_close(
     if not options.dry_run:
         state_store.require_writable()
     fast_path = _prepare_untracked_close_fast_path(
-        jj_client=context.jj_client,
+        context=context,
         revset=revset,
-        state_store=state_store,
     )
     if fast_path is not None:
         return PreparedClose(
@@ -470,9 +468,8 @@ def prepare_close(
 
 def _prepare_untracked_close_fast_path(
     *,
-    jj_client: JjClient,
+    context: CommandContext,
     revset: str | None,
-    state_store: ReviewStateStore,
 ) -> PreparedStatus | None:
     """Build the no-op close path without bookmark discovery.
 
@@ -482,7 +479,8 @@ def _prepare_untracked_close_fast_path(
     normal remote diagnostics and stale-operation retirement behavior.
     """
 
-    client = jj_client
+    client = context.jj_client
+    state_store = context.state_store
     stack = client.discover_review_stack(
         revset,
         allow_divergent=True,
