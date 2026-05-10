@@ -200,6 +200,14 @@ class PreparedRebase:
 
 
 @dataclass(frozen=True, slots=True)
+class _ClassifiedCleanupRebaseRevision:
+    """A cleanup-rebase path revision with its derived review status."""
+
+    revision: ReviewStatusRevision
+    status: ReviewChangeStatus
+
+
+@dataclass(frozen=True, slots=True)
 class _RebaseOperationPlan:
     """Derived rebase planning data before preview/live rendering."""
 
@@ -908,17 +916,26 @@ def _plan_rebase_operations(
     path_revisions: tuple[ReviewStatusRevision, ...],
     prepared_status: PreparedStatus,
 ) -> _RebaseOperationPlan:
-    merged_revisions = tuple(
-        revision
+    classified_path_revisions = tuple(
+        _ClassifiedCleanupRebaseRevision(
+            revision=revision,
+            status=classify_review_status_revision(revision),
+        )
         for revision in path_revisions
-        if classify_review_status_revision(revision).pr_lifecycle == "merged"
+    )
+    merged_revisions = tuple(
+        classified
+        for classified in classified_path_revisions
+        if classified.status.pr_lifecycle == "merged"
     )
     closed_unmerged_revisions = tuple(
-        revision
-        for revision in path_revisions
-        if classify_review_status_revision(revision).pr_lifecycle == "closed"
+        classified
+        for classified in classified_path_revisions
+        if classified.status.pr_lifecycle == "closed"
     )
-    revisions_by_change_id = {revision.change_id: revision for revision in path_revisions}
+    classified_revisions_by_change_id = (
+        _classified_cleanup_revisions_by_change_id(classified_path_revisions)
+    )
     current_commit_id_by_change_id = {
         prepared_revision.revision.change_id: prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
@@ -933,43 +950,53 @@ def _plan_rebase_operations(
         actions=actions,
         blocked=blocked,
         prepared_status=prepared_status,
-        revisions_by_change_id=revisions_by_change_id,
+        revisions_by_change_id=classified_revisions_by_change_id,
     )
 
     return _RebaseOperationPlan(
         blocked=blocked,
-        closed_unmerged_revisions=closed_unmerged_revisions,
-        merged_revisions=merged_revisions,
+        closed_unmerged_revisions=tuple(
+            classified.revision for classified in closed_unmerged_revisions
+        ),
+        merged_revisions=tuple(classified.revision for classified in merged_revisions),
         pre_actions=tuple(actions),
         rebase_plans=tuple(rebase_plans),
     )
 
 
+def _classified_cleanup_revisions_by_change_id(
+    revisions: tuple[_ClassifiedCleanupRebaseRevision, ...],
+) -> dict[str, _ClassifiedCleanupRebaseRevision]:
+    return {classified.revision.change_id: classified for classified in revisions}
+
+
 def _collect_rebase_pre_actions(
     *,
-    closed_unmerged_revisions: tuple[ReviewStatusRevision, ...],
+    closed_unmerged_revisions: tuple[_ClassifiedCleanupRebaseRevision, ...],
     current_commit_id_by_change_id: dict[str, str],
-    merged_revisions: tuple[ReviewStatusRevision, ...],
+    merged_revisions: tuple[_ClassifiedCleanupRebaseRevision, ...],
 ) -> tuple[bool, list[CleanupAction]]:
     """Record blocking rebase conditions before survivor planning begins."""
 
     blocked = False
     actions: list[CleanupAction] = []
-    for revision in closed_unmerged_revisions:
+    for classified in closed_unmerged_revisions:
+        revision = classified.revision
         blocked = True
         actions.append(
             CleanupAction(
-                    kind="rebase",
-                    status="blocked",
-                    body=(
-                        t"cannot rebase past {_revision_label_template(revision)} because "
-                        t"PR #{revision.pull_request_number()} is closed without "
-                        t"merge; decide whether to keep or drop that change first"
-                    ),
-                )
+                kind="rebase",
+                status="blocked",
+                body=(
+                    t"cannot rebase past {_revision_label_template(revision)} because "
+                    t"PR #{revision.pull_request_number()} is closed without "
+                    t"merge; decide whether to keep or drop that change first"
+                ),
+            )
         )
 
-    for revision in merged_revisions:
+    for classified in merged_revisions:
+        revision = classified.revision
         cached_change = revision.cached_change
         if cached_change is None or cached_change.last_submitted_commit_id is None:
             continue
@@ -997,17 +1024,18 @@ def _plan_rebase_rebases(
     actions: list[CleanupAction],
     blocked: bool,
     prepared_status: PreparedStatus,
-    revisions_by_change_id: dict[str, ReviewStatusRevision],
+    revisions_by_change_id: dict[str, _ClassifiedCleanupRebaseRevision],
 ) -> tuple[bool, list[tuple[str, str | None]]]:
     """Plan survivor rebases after merged ancestors are removed from the path."""
 
     survivor_change_ids: list[str] = []
     rebase_plans: list[tuple[str, str | None]] = []
     for prepared_revision in prepared_status.prepared.status_revisions:
-        revision = revisions_by_change_id.get(prepared_revision.revision.change_id)
-        if revision is None:
+        classified = revisions_by_change_id.get(prepared_revision.revision.change_id)
+        if classified is None:
             continue
-        change_status = classify_review_status_revision(revision)
+        revision = classified.revision
+        change_status = classified.status
         if change_status.pr_lifecycle == "merged":
             continue
         if change_status.pr_lifecycle == "closed":
@@ -1042,15 +1070,15 @@ def _rebase_parent_is_merged(
     *,
     parent_commit_id: str | None,
     prepared_status: PreparedStatus,
-    revisions_by_change_id: dict[str, ReviewStatusRevision],
+    revisions_by_change_id: dict[str, _ClassifiedCleanupRebaseRevision],
 ) -> bool:
     for candidate in prepared_status.prepared.status_revisions:
         if candidate.revision.commit_id != parent_commit_id:
             continue
-        revision = revisions_by_change_id.get(candidate.revision.change_id)
+        classified = revisions_by_change_id.get(candidate.revision.change_id)
         return (
-            revision is not None
-            and classify_review_status_revision(revision).pr_lifecycle == "merged"
+            classified is not None
+            and classified.status.pr_lifecycle == "merged"
         )
     return False
 
