@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from jj_review.commands import cleanup as cleanup_module
 from jj_review.jj import JjClient
-from jj_review.models.intent import CleanupIntent, CleanupRebaseIntent
+from jj_review.models.intent import CleanupRebaseIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.intents import write_new_intent
+from jj_review.state.journal import OperationJournal, read_journal
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
@@ -854,12 +854,11 @@ def test_cleanup_apply_preserves_discovered_stack_comment_when_cache_id_is_missi
     assert len(issue_comments(fake_repo, 2)) == 1
 
 
-def test_cleanup_deletes_intent_file_after_successful_apply(
+def test_cleanup_completes_journal_after_successful_apply(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    """cleanup deletes its intent file on success."""
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
@@ -879,14 +878,15 @@ def test_cleanup_deletes_intent_file_after_successful_apply(
     state_dir = resolve_state_path(repo).parent
     intent_files = list(state_dir.glob("incomplete-*.json"))
     assert intent_files == [], f"Expected no intent files after success, found: {intent_files}"
+    [journal_path] = (state_dir / "journals").glob("*-cleanup-*.jsonl")
+    assert read_journal(journal_path)[-1].event == "completed"
 
 
-def test_cleanup_retains_intent_file_after_failed_apply(
+def test_cleanup_retains_journal_after_failed_apply(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    """cleanup leaves its intent file behind when it fails mid-way."""
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
@@ -914,13 +914,12 @@ def test_cleanup_retains_intent_file_after_failed_apply(
 
     state_dir = resolve_state_path(repo).parent
     intent_files = list(state_dir.glob("incomplete-*.json"))
-    assert len(intent_files) == 1, f"Expected 1 intent file after failure, found: {intent_files}"
+    assert intent_files == []
+    [journal_path] = (state_dir / "journals").glob("*-cleanup-*.jsonl")
+    assert read_journal(journal_path)[-1].event == "begin"
 
-    data = json.loads(intent_files[0].read_text(encoding="utf-8"))
-    assert data["kind"] == "cleanup"
 
-
-def test_cleanup_retires_prior_interrupted_intent_after_success(
+def test_cleanup_retires_prior_interrupted_journal_after_success(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -929,13 +928,13 @@ def test_cleanup_retires_prior_interrupted_intent_after_success(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     state_dir = resolve_state_path(repo).parent
-    stale_intent = CleanupIntent(
-        kind="cleanup",
-        pid=99999999,
-        label="cleanup",
-        started_at="2026-04-07T00:24:40+00:00",
+    stale_journal = OperationJournal.begin(
+        state_dir,
+        operation="cleanup",
+        lock_holder=None,
+        options={},
+        resolved_scope={"cached_change_ids": ()},
     )
-    stale_path = write_new_intent(state_dir, stale_intent)
 
     exit_code = run_main(repo, config_path, "cleanup")
     captured = capsys.readouterr()
@@ -943,5 +942,5 @@ def test_cleanup_retires_prior_interrupted_intent_after_success(
     assert exit_code == 0
     assert "Note: a previous cleanup was interrupted (cleanup)" in captured.out
     assert "No cleanup actions needed." in captured.out
-    assert not stale_path.exists()
+    assert read_journal(stale_journal.path)[-1].event == "abandoned"
     assert list(state_dir.glob("incomplete-*.json")) == []

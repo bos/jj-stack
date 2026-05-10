@@ -39,6 +39,7 @@ from jj_review.review.intents import (
 )
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
 from jj_review.state.journal import (
+    CleanupOperationRecord,
     LandOperationRecord,
     LoadedOperationRecord,
     RelinkOperationRecord,
@@ -199,10 +200,10 @@ async def _abort_intent_async(
             state_store=context.state_store,
         )
 
-    # For all other intent types, only the intent file can be removed.  The
+    # For all other operation types, only the operation record can be cleared. The
     # operations themselves either mutate local jj history in ways that aren't
-    # straightforwardly reversible (cleanup rebase, land) or have no per-change state
-    # tracked in the intent (cleanup, relink, close).
+    # straightforwardly reversible (cleanup rebase, land) or have no reversible
+    # per-change state tracked in the record (cleanup, relink, close).
     note = _non_submit_note(intent)
     actions: list[AbortAction] = []
     if note:
@@ -634,7 +635,7 @@ def _operation_notice_is_stale(
     resolve_change_id: Callable[[str], bool],
 ) -> bool:
     if isinstance(loaded, LoadedOperationRecord):
-        if isinstance(loaded.operation, RelinkOperationRecord):
+        if isinstance(loaded.operation, RelinkOperationRecord | CleanupOperationRecord):
             if pid_is_alive(loaded.operation.pid):
                 return False
             try:

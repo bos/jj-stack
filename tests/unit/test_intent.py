@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from jj_review.models.intent import (
-    CleanupIntent,
     CleanupRebaseIntent,
     CloseIntent,
     LoadedIntent,
@@ -50,17 +48,6 @@ def _make_submit_intent(
         github_repo="stacked-review",
         ordered_change_ids=ordered_change_ids,
         bookmarks={"aaaa": "review/feat-1-aaaa", "bbbb": "review/feat-2-bbbb"},
-        started_at="2026-01-01T00:00:00+00:00",
-    )
-
-
-def _make_cleanup_intent(
-    pid: int = 12345,
-) -> CleanupIntent:
-    return CleanupIntent(
-        kind="cleanup",
-        pid=pid,
-        label="cleanup",
         started_at="2026-01-01T00:00:00+00:00",
     )
 
@@ -106,7 +93,6 @@ def _make_close_intent(
     ("intent_factory", "test_id"),
     [
         (_make_submit_intent, "submit"),
-        (_make_cleanup_intent, "cleanup"),
         (_make_cleanup_restack_intent, "cleanup-rebase"),
         (lambda: _make_close_intent(cleanup=True), "close"),
     ],
@@ -339,51 +325,6 @@ def test_stack_intent_stays_live_when_any_change_id_still_resolves(tmp_path: Pat
     assert intent_is_stale(intent, lambda cid: cid == "aaaa") is False
 
 
-@pytest.mark.parametrize(
-    ("intent_factory", "pid", "pid_alive", "now", "expected_stale", "test_id"),
-    [
-        (
-            _make_cleanup_intent,
-            99999999,
-            False,
-            datetime(2026, 1, 2, tzinfo=UTC),
-            False,
-            "cleanup-recent-dead-pid",
-        ),
-        (
-            _make_cleanup_intent,
-            12345,
-            True,
-            datetime(2030, 1, 1, tzinfo=UTC),
-            False,
-            "cleanup-live-pid",
-        ),
-        (
-            _make_cleanup_intent,
-            99999999,
-            False,
-            datetime(2026, 1, 9, tzinfo=UTC),
-            True,
-            "cleanup-old-dead-pid",
-        ),
-    ],
-    ids=lambda value: value if isinstance(value, str) else None,
-)
-def test_pid_based_intents_become_stale_only_when_old_and_dead(
-    monkeypatch: pytest.MonkeyPatch,
-    intent_factory,
-    pid: int,
-    pid_alive: bool,
-    now: datetime,
-    expected_stale: bool,
-    test_id: str,
-) -> None:
-    del test_id
-    monkeypatch.setattr("jj_review.review.intents.pid_is_alive", lambda actual_pid: pid_alive)
-    intent = intent_factory(pid=pid)
-    assert intent_is_stale(intent, lambda cid: False, now=now) is expected_stale
-
-
 # ---------------------------------------------------------------------------
 # check_same_kind_intent
 # ---------------------------------------------------------------------------
@@ -409,9 +350,9 @@ def test_check_same_kind_intent_ignores_different_kind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("jj_review.system.pid_is_alive", lambda pid: False)
-    # Write a cleanup intent (different kind)
-    cleanup_intent = _make_cleanup_intent(pid=99999999)
-    write_new_intent(tmp_path, cleanup_intent)
+    # Write a close intent (different kind)
+    close_intent = _make_close_intent(pid=99999999)
+    write_new_intent(tmp_path, close_intent)
 
     # Check for submit kind — should return nothing
     new_submit_intent = _make_submit_intent()

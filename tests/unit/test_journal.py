@@ -8,6 +8,7 @@ from jj_review.models.review_state import CachedChange
 from jj_review.state.journal import (
     JOURNAL_DIRNAME,
     MIN_RETAINED_JOURNALS,
+    CleanupOperationRecord,
     LandOperationRecord,
     OperationJournal,
     append_abandoned_event,
@@ -156,6 +157,22 @@ def test_scan_incomplete_operation_records_loads_relink_scope(tmp_path: Path) ->
     assert loaded.path == journal.path
     assert loaded.operation.kind == "relink"
     assert loaded.operation.change_ids() == frozenset({"change-1"})
+
+
+def test_scan_incomplete_operation_records_loads_cleanup_scope(tmp_path: Path) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="cleanup",
+        lock_holder=None,
+        options={},
+        resolved_scope={"cached_change_ids": ("change-1",)},
+    )
+
+    [loaded] = scan_incomplete_operation_records(tmp_path)
+
+    assert loaded.path == journal.path
+    assert isinstance(loaded.operation, CleanupOperationRecord)
+    assert loaded.operation.change_ids() == frozenset()
 
 
 def test_prune_operation_journals_keeps_recent_files_and_minimum_count(

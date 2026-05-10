@@ -51,7 +51,7 @@ from jj_review.jj import JjCliArgs, JjClient
 from jj_review.jj.client import UnsupportedStackError
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubIssueComment
-from jj_review.models.intent import CleanupIntent, CleanupRebaseIntent, LoadedIntent
+from jj_review.models.intent import CleanupRebaseIntent, LoadedIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_review.review.change_status import (
@@ -75,6 +75,8 @@ from jj_review.review.status import (
     stream_status,
 )
 from jj_review.state.intents import check_same_kind_intent, write_new_intent
+from jj_review.state.journal import OperationJournal, append_abandoned_event
+from jj_review.state.operation_lock import read_operation_lock_holder
 from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message, plain_text
 
@@ -999,22 +1001,30 @@ async def _run_cleanup_async(
         if on_action is not None:
             on_action(action)
 
-    # Write an intent file before the first mutation on live runs only.
-    intent_path: Path | None = None
+    # Write an operation journal before the first mutation on live runs only.
+    journal: OperationJournal | None = None
     _cleanup_succeeded = False
-    stale_intents: list[LoadedIntent] = []
+    stale_operations = []
     if not dry_run:
         state_dir = prepared_cleanup.state_store.require_writable()
-        _intent = CleanupIntent(
-            kind="cleanup",
-            pid=os.getpid(),
-            label="cleanup",
-            started_at=datetime.now(UTC).isoformat(),
+        stale_operations = [
+            loaded
+            for loaded in prepared_cleanup.state_store.list_operations()
+            if loaded.operation.kind == "cleanup"
+        ]
+        for loaded in stale_operations:
+            console.note(
+                f"Note: a previous cleanup was interrupted ({loaded.operation.label})"
+            )
+        journal = OperationJournal.begin(
+            state_dir,
+            operation="cleanup",
+            lock_holder=read_operation_lock_holder(state_dir),
+            options={},
+            resolved_scope={
+                "cached_change_ids": tuple(prepared_cleanup.state.changes),
+            },
         )
-        stale_intents = check_same_kind_intent(state_dir, _intent)
-        for _loaded in stale_intents:
-            console.note(f"Note: a previous cleanup was interrupted ({_loaded.intent.label})")
-        intent_path = write_new_intent(state_dir, _intent)
 
     try:
         if stale_reasons is None:
@@ -1078,10 +1088,13 @@ async def _run_cleanup_async(
             actions=tuple(actions),
         )
     finally:
-        if _cleanup_succeeded and intent_path is not None:
-            for loaded in stale_intents:
-                loaded.path.unlink(missing_ok=True)
-            intent_path.unlink(missing_ok=True)
+        if _cleanup_succeeded and journal is not None:
+            journal.append(
+                "completed",
+                {"cached_change_ids": tuple(prepared_cleanup.state.changes)},
+            )
+            for loaded in stale_operations:
+                append_abandoned_event(loaded.path, reason="superseded_by_cleanup")
 
 def _run_local_cleanup_pass(
     *,

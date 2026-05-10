@@ -86,7 +86,23 @@ class RelinkOperationRecord:
         return frozenset([self.change_id])
 
 
-type OperationRecord = LandOperationRecord | RelinkOperationRecord
+@dataclass(frozen=True, slots=True)
+class CleanupOperationRecord:
+    """Journal-backed recovery record for one incomplete repo cleanup operation."""
+
+    kind: Literal["cleanup"]
+    path: Path
+    pid: int
+    label: str
+    started_at: str
+
+    def change_ids(self) -> frozenset[str]:
+        """Return the change IDs mentioned by this operation."""
+
+        return frozenset()
+
+
+type OperationRecord = LandOperationRecord | RelinkOperationRecord | CleanupOperationRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +252,8 @@ def operation_record_from_journal(
         return land_operation_record_from_events(path, events, active_pid=active_pid)
     if first.operation == "relink":
         return relink_operation_record_from_events(path, events, active_pid=active_pid)
+    if first.operation == "cleanup":
+        return cleanup_operation_record_from_events(path, events, active_pid=active_pid)
     return None
 
 
@@ -353,6 +371,31 @@ def relink_operation_record_from_events(
         label=f"relink for {change_id[:8]}",
         started_at=first.timestamp,
         change_id=change_id,
+    )
+
+
+def cleanup_operation_record_from_events(
+    path: Path,
+    events: tuple[JournalEvent, ...],
+    *,
+    active_pid: int = 0,
+) -> CleanupOperationRecord:
+    """Parse one cleanup operation record from journal events."""
+
+    if not events:
+        raise ValueError(f"Journal is empty: {path}")
+    first = events[0]
+    if first.operation != "cleanup":
+        raise ValueError(f"Journal is not a cleanup operation: {path}")
+    if first.event != "begin":
+        raise ValueError(f"Journal does not start with begin: {path}")
+
+    return CleanupOperationRecord(
+        kind="cleanup",
+        path=path,
+        pid=active_pid,
+        label="cleanup",
+        started_at=first.timestamp,
     )
 
 

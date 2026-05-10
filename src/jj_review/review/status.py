@@ -52,7 +52,11 @@ from jj_review.review.change_status import (
     submitted_state_disagreements,
 )
 from jj_review.review.intents import intent_is_stale
-from jj_review.state.journal import LoadedOperationRecord, RelinkOperationRecord
+from jj_review.state.journal import (
+    CleanupOperationRecord,
+    LoadedOperationRecord,
+    RelinkOperationRecord,
+)
 from jj_review.state.operation_lock import try_acquire_operation_lock
 from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
@@ -356,7 +360,7 @@ def _operation_is_stale(
     *,
     now: datetime | None = None,
 ) -> bool:
-    if isinstance(operation, RelinkOperationRecord):
+    if isinstance(operation, RelinkOperationRecord | CleanupOperationRecord):
         if pid_is_alive(operation.pid):
             return False
         current_time = datetime.now(UTC) if now is None else now

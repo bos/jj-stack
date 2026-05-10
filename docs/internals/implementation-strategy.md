@@ -247,6 +247,9 @@ concurrency primitive, and live legacy intent records are reported without polli
 the only abort concurrency guard.
 `relink` also writes a retained journal record instead of an intent file; interrupted
 relink notices are read from the journal and can be cleared by `abort`.
+Plain repo-wide `cleanup` uses the same retained journal path; successful cleanup
+marks its current and superseded cleanup records terminal instead of deleting intent
+files.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal

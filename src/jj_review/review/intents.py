@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 
 from jj_review import ui
 from jj_review.models.intent import (
-    CleanupIntent,
     CleanupRebaseIntent,
     CloseIntent,
     IntentFile,
@@ -19,8 +18,11 @@ from jj_review.models.intent import (
     SubmitIntent,
 )
 from jj_review.review.submit_recovery import should_retire_submit_after_submit
-from jj_review.state.journal import LandOperationRecord, RelinkOperationRecord
-from jj_review.system import pid_is_alive
+from jj_review.state.journal import (
+    CleanupOperationRecord,
+    LandOperationRecord,
+    RelinkOperationRecord,
+)
 from jj_review.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -52,7 +54,10 @@ def match_ordered_change_ids(
 
 
 def describe_intent(
-    intent: IntentFile | LandOperationRecord | RelinkOperationRecord,
+    intent: IntentFile
+    | LandOperationRecord
+    | RelinkOperationRecord
+    | CleanupOperationRecord,
 ) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
@@ -79,6 +84,8 @@ def describe_intent(
         )
     if isinstance(intent, RelinkOperationRecord):
         return t"{ui.cmd('relink')} for {ui.change_id(intent.change_id)}"
+    if isinstance(intent, CleanupOperationRecord):
+        return ui.cmd("cleanup")
     return intent.label
 
 
@@ -161,19 +168,6 @@ def intent_is_stale(
     now: datetime | None = None,
 ) -> bool:
     """Return whether an interrupted intent is now stale."""
-
-    if isinstance(intent, CleanupIntent):
-        if pid_is_alive(intent.pid):
-            return False
-        if now is None:
-            now = datetime.now(UTC)
-        try:
-            started = datetime.fromisoformat(intent.started_at)
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=UTC)
-        except ValueError:
-            return True
-        return (now - started).days >= 7
 
     ids = intent.change_ids()
     if not ids:

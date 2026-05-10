@@ -442,6 +442,33 @@ def test_abort_clears_relink_journal_with_note(
     assert read_journal(journal.path)[-1].event == "abandoned"
 
 
+def test_abort_clears_cleanup_journal(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    state_store = ReviewStateStore.for_repo(repo)
+    journal = OperationJournal.begin(
+        state_store.require_writable(),
+        operation="cleanup",
+        lock_holder=None,
+        options={},
+        resolved_scope={"cached_change_ids": ()},
+    )
+
+    exit_code = run_main(repo, config_path, "abort")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Applied abort actions" in captured.out
+    assert "cleared it from future status output" in captured.out
+    assert not state_store.list_operations()
+    assert read_journal(journal.path)[-1].event == "abandoned"
+
+
 def test_abort_reports_stale_when_all_intents_have_gone_change_ids(
     tmp_path: Path,
     monkeypatch,

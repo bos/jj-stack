@@ -32,7 +32,6 @@ from jj_review.github.error_messages import (
 )
 from jj_review.jj import JjCliArgs, JjClient, UnsupportedStackError
 from jj_review.models.intent import (
-    CleanupIntent,
     CleanupRebaseIntent,
     CloseIntent,
     SubmitIntent,
@@ -69,7 +68,11 @@ from jj_review.review.submit_recovery import (
     SubmitStatusDecision,
     submit_status_decision,
 )
-from jj_review.state.journal import LandOperationRecord, RelinkOperationRecord
+from jj_review.state.journal import (
+    CleanupOperationRecord,
+    LandOperationRecord,
+    RelinkOperationRecord,
+)
 from jj_review.system import pid_is_alive
 
 _SUMMARY_SECTION_HEAD_COUNT = 3
@@ -1113,7 +1116,7 @@ def _render_interrupted_intent_block(
                 ui.cmd("jj-review relink"),
             ),
         )
-    elif isinstance(intent, CleanupIntent):
+    elif isinstance(intent, CleanupOperationRecord):
         detail_lines = (
             (
                 "inspect with ",
@@ -1404,7 +1407,7 @@ def _render_intent_command(intent) -> object:
         return ui.cmd("land")
     if isinstance(intent, RelinkOperationRecord):
         return ui.cmd("relink")
-    if isinstance(intent, CleanupIntent):
+    if isinstance(intent, CleanupOperationRecord):
         return ui.cmd("cleanup")
     return intent.label
 
@@ -1669,7 +1672,7 @@ def _prefixed_intent_line(description: object, status: object) -> object:
 
 
 def _render_intent_description(intent) -> object:
-    if isinstance(intent, CleanupIntent):
+    if isinstance(intent, CleanupOperationRecord):
         return ui.cmd("cleanup")
     return describe_intent(intent)
 

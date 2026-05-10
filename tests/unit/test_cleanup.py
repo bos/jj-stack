@@ -26,6 +26,7 @@ from jj_review.state.store import ReviewStateStore
 
 def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:
     state = ReviewState.model_validate(
         {
@@ -44,7 +45,8 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     state_store = cast(
         ReviewStateStore,
         SimpleNamespace(
-            require_writable=lambda: Path("/tmp"),
+            list_operations=lambda: [],
+            require_writable=lambda: tmp_path,
             save=saved_states.append,
         ),
     )
@@ -103,15 +105,6 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
         "jj_review.commands.cleanup._plan_stack_comment_cleanup",
         fake_plan_stack_comment_cleanup,
     )
-    monkeypatch.setattr(
-        "jj_review.commands.cleanup.check_same_kind_intent",
-        lambda *args, **kwargs: (),
-    )
-    monkeypatch.setattr(
-        "jj_review.commands.cleanup.write_new_intent",
-        lambda *args, **kwargs: None,
-    )
-
     result = asyncio.run(
         _run_cleanup_async(
             on_action=None,
