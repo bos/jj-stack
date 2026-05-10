@@ -181,8 +181,10 @@ the underlying tracking fields directly.
 
 The classifier migration is intentionally incremental. Read-side status summaries and
 advisories, status cache persistence decisions, cleanup stale-change and rebase planning,
-close cleanup planning, unlink active-link checks, relink remote validation, submit
-untracked-remote repair, and land trunk/revision readiness checks consume these axes.
+close cleanup planning, bookmark discovery and matching, unlink active-link checks, relink
+remote validation, import remote validation and branch refresh decisions, submit
+untracked-remote repair, submit metadata sync, interrupted-submit artifact observation, and
+land trunk/revision readiness checks consume these axes.
 Direct reads of `CachedChange`, `PullRequestLookup`, and bookmark target fields remain
 where code is copying underlying data into saved state, rendering concrete GitHub
 payload details, or applying mutations that need the exact target value.
