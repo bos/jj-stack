@@ -37,6 +37,16 @@ class SubmitOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedSubmitOptions:
+    """Submit options after CLI values have been combined with config defaults."""
+
+    labels: list[str]
+    reviewers: list[str]
+    team_reviewers: list[str]
+    use_bookmarks: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SubmittedRevision:
     """Remote bookmark and GitHub result for one revision in the submitted stack."""
 

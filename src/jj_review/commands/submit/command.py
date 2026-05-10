@@ -62,6 +62,7 @@ from .models import (
     GeneratedDescription,
     PendingPullRequestSync,
     PreparedSubmitRevision,
+    ResolvedSubmitOptions,
     SubmitDraftMode,
     SubmitOptions,
     SubmitResult,
@@ -165,16 +166,6 @@ class _SubmitSelectionEmitter:
             )
 
 
-@dataclass(frozen=True, slots=True)
-class _ResolvedSubmitOptions:
-    """Submit options after CLI values have been combined with config defaults."""
-
-    labels: list[str]
-    reviewers: list[str]
-    team_reviewers: list[str]
-    use_bookmarks: tuple[str, ...]
-
-
 def _submit_options_from_cli(
     *,
     describe_with: str | None,
@@ -233,8 +224,8 @@ def _resolve_submit_options(
     *,
     config: RepoConfig,
     options: SubmitOptions,
-) -> _ResolvedSubmitOptions:
-    return _ResolvedSubmitOptions(
+) -> ResolvedSubmitOptions:
+    return ResolvedSubmitOptions(
         labels=config.labels if options.labels is None else options.labels,
         reviewers=config.reviewers if options.reviewers is None else options.reviewers,
         team_reviewers=(
@@ -419,15 +410,10 @@ async def _run_submit_async(
     )
     with console.spinner(description="Preparing submit"):
         prepared_inputs = prepare_submit_inputs(
-            config=config,
-            describe_with=options.describe_with,
-            dry_run=dry_run,
-            jj_client=context.jj_client,
+            context=context,
             on_prepared=on_prepared,
-            restart=options.restart,
-            revset=options.revset,
-            state_store=state_store,
-            use_bookmarks=resolved_options.use_bookmarks,
+            options=options,
+            resolved_options=resolved_options,
         )
     client = prepared_inputs.client
     remote = prepared_inputs.remote

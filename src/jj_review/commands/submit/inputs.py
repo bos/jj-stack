@@ -5,10 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from jj_review import ui
-from jj_review.config import RepoConfig
+from jj_review.bootstrap import CommandContext
 from jj_review.errors import CliError
 from jj_review.github.resolution import select_submit_remote
-from jj_review.jj import JjClient
 from jj_review.models.stack import LocalRevision
 from jj_review.review.bookmarks import (
     BookmarkResolver,
@@ -17,28 +16,30 @@ from jj_review.review.bookmarks import (
     match_bookmarks_for_revisions,
 )
 from jj_review.review.restart import restart_state_for_stack
-from jj_review.state.store import ReviewStateStore
 
 from .descriptions import resolve_generated_descriptions
-from .models import PreparedSubmitInputs, PrivateCommitFinder
+from .models import (
+    PreparedSubmitInputs,
+    PrivateCommitFinder,
+    ResolvedSubmitOptions,
+    SubmitOptions,
+)
 from .operations import repair_interrupted_untracked_remote_bookmarks
 
 
 def prepare_submit_inputs(
     *,
-    config: RepoConfig,
-    describe_with: str | None,
-    dry_run: bool,
-    jj_client: JjClient,
+    context: CommandContext,
     on_prepared: Callable[[str, str], None] | None,
-    restart: bool,
-    revset: str | None,
-    state_store: ReviewStateStore,
-    use_bookmarks: tuple[str, ...],
+    options: SubmitOptions,
+    resolved_options: ResolvedSubmitOptions,
 ) -> PreparedSubmitInputs:
     """Load local submit state before any GitHub mutation begins."""
 
-    client = jj_client
+    client = context.jj_client
+    config = context.config
+    state_store = context.state_store
+    dry_run = options.dry_run
     remote = select_submit_remote(client.list_git_remotes())
     if not dry_run:
         repair_interrupted_untracked_remote_bookmarks(
@@ -46,7 +47,7 @@ def prepare_submit_inputs(
             remote=remote,
             state_dir=state_store.require_writable(),
         )
-    stack = client.discover_review_stack(revset)
+    stack = client.discover_review_stack(options.revset)
     if on_prepared is not None:
         on_prepared(
             stack.head.change_id,
@@ -55,7 +56,7 @@ def prepare_submit_inputs(
     state = state_store.load()
     bookmark_states = client.list_bookmark_states()
     restarted_change_ids: frozenset[str] = frozenset()
-    if restart:
+    if options.restart:
         restart_result = restart_state_for_stack(
             bookmark_states=bookmark_states,
             config=config,
@@ -68,7 +69,7 @@ def prepare_submit_inputs(
         )
     matched_bookmarks = match_bookmarks_for_revisions(
         bookmark_states=bookmark_states,
-        patterns=use_bookmarks,
+        patterns=resolved_options.use_bookmarks,
         revisions=stack.revisions,
         remote_name=remote.name,
     )
@@ -91,7 +92,7 @@ def prepare_submit_inputs(
         generated_pull_request_descriptions,
         generated_stack_description,
     ) = resolve_generated_descriptions(
-        describe_with=describe_with,
+        describe_with=options.describe_with,
         jj_client=client,
         selected_revset=stack.selected_revset,
         revisions=stack.revisions,
