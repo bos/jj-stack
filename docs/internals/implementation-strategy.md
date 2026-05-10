@@ -107,12 +107,12 @@ data. Close's orphan and already-cleaned cleanup paths also receive `CommandCont
 instead of separate config/client/state-store parameters. Plain cleanup's prepared target
 also carries `CommandContext` rather than duplicating those shared dependencies, and
 cleanup rebase reads shared configuration through its prepared context. Status preparation
-receives the bootstrapped state store explicitly instead of reconstructing it from the
-`jj` client repo root. Land's prepared target carries `CommandContext` for shared
-configuration used by bookmark cleanup planning, and land finalization shares a
-`LandMutationRun` for live review state, pending state changes, and interim state saves.
-Close's prepared target carries `CommandContext` and parsed close options instead of
-duplicating shared configuration and mode flags.
+receives the bootstrapped `CommandContext` instead of separate config/client/state-store
+parameters. Land's prepared target carries `CommandContext` for shared configuration
+used by bookmark cleanup planning, and land finalization shares a `LandMutationRun` for
+live review state, pending state changes, and interim state saves. Close's prepared
+target carries `CommandContext` and parsed close options instead of duplicating shared
+configuration and mode flags.
 
 ## Repository layout
 
