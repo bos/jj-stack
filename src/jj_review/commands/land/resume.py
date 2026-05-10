@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from jj_review import console, ui
 from jj_review.errors import CliError
 from jj_review.github.resolution import ParsedGithubRepo
+from jj_review.review.change_status import classify_review_change
 from jj_review.review.operations import (
     describe_operation,
     match_ordered_change_ids,
@@ -247,7 +248,14 @@ def _remote_trunk_matches_commit(
     if local_target is not None and local_target != commit_id:
         return False
     remote_state = bookmark_state.remote_target(remote_name)
-    return remote_state is not None and remote_state.target == commit_id
+    review_status = classify_review_change(
+        cached_change=None,
+        commit_id=commit_id,
+        local="present",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
+    return review_status.remote_branch_matches_commit is True
 
 
 def _resume_land_plan(*, operation: LandOperationRecord, trunk_branch: str) -> LandPlan:

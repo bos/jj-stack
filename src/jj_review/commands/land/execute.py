@@ -12,6 +12,7 @@ from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.review.change_status import classify_review_change
 from jj_review.state.journal import (
     LandOperationRecord,
     LoadedOperationRecord,
@@ -89,25 +90,26 @@ def ensure_trunk_branch_matches_selected_trunk(
         )
 
     remote_state = bookmark_state.remote_target(remote_name)
-    if remote_state is None:
+    review_status = classify_review_change(
+        cached_change=None,
+        commit_id=trunk_commit_id,
+        local="present",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
+    if review_status.remote_branch == "absent":
         raise CliError(
             t"Remote trunk bookmark {ui.bookmark(f'{trunk_branch}@{remote_name}')} is not "
             t"available.",
             hint="Fetch and retry.",
         )
-    if len(remote_state.targets) > 1:
+    if review_status.remote_branch == "conflicted":
         raise CliError(
             t"Remote trunk bookmark {ui.bookmark(f'{trunk_branch}@{remote_name}')} is "
             t"conflicted.",
             hint="Resolve it before landing.",
         )
-    if remote_state.target is None:
-        raise CliError(
-            t"Remote trunk bookmark {ui.bookmark(f'{trunk_branch}@{remote_name}')} is not "
-            t"available.",
-            hint="Fetch and retry.",
-        )
-    if remote_state.target != trunk_commit_id:
+    if review_status.remote_branch_matches_commit is not True:
         raise CliError(
             t"Remote trunk bookmark {ui.bookmark(f'{trunk_branch}@{remote_name}')} moved since "
             t"the selected path was resolved.",
