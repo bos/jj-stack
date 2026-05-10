@@ -115,6 +115,8 @@ cleanup planning, and land finalization shares a `LandMutationRun` for live revi
 state, pending state changes, and interim state saves. Close's prepared target carries
 `CommandContext` and parsed close options instead of duplicating shared configuration
 and mode flags, and its untracked fast path reads shared dependencies from that context.
+Abort submit retraction receives `AbortRun` so its command context and parsed options
+move together through the live execution path.
 
 ## Repository layout
 
