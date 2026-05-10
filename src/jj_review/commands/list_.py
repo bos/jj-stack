@@ -371,6 +371,7 @@ def _build_row(
         prepared_stack,
         pull_request_lookups=pull_request_lookups,
     )
+    statuses = tuple(classify_review_status_revision(revision) for revision in revisions)
     review = _pull_request_range_from_revisions(revisions)
     local_fragments: list[ui.Message] = []
     if any(revision.divergent for revision in stack.revisions):
@@ -382,6 +383,7 @@ def _build_row(
         local_fragments=tuple(local_fragments),
         remote_error=prepared_stack.remote_error,
         revisions=revisions,
+        statuses=statuses,
     )
     return StackRow(
         current=is_current,
@@ -389,7 +391,7 @@ def _build_row(
         incomplete=_status_is_incomplete(
             github_error=github_error,
             remote_error=prepared_stack.remote_error,
-            revisions=revisions,
+            statuses=statuses,
         ),
         review=review,
         size=len(stack.revisions),
@@ -404,13 +406,16 @@ def _state_from_status(
     local_fragments: tuple[ui.Message, ...],
     remote_error: ErrorMessage | None,
     revisions: tuple[ReviewStatusRevision, ...],
+    statuses: tuple[ReviewChangeStatus, ...] | None = None,
 ) -> ui.Message:
+    if statuses is None:
+        statuses = tuple(classify_review_status_revision(revision) for revision in revisions)
     fragments = [
         *local_fragments,
         *_status_fragments(
             github_error=github_error,
             remote_error=remote_error,
-            revisions=revisions,
+            statuses=statuses,
         ),
     ]
     if fragments:
@@ -420,10 +425,7 @@ def _state_from_status(
                 joined.append(", ")
             joined.append(fragment)
         return tuple(joined)
-    if any(
-        classify_review_status_revision(revision).saved_review_identity
-        for revision in revisions
-    ):
+    if any(status.saved_review_identity for status in statuses):
         return "tracked"
     return "not submitted"
 
@@ -432,10 +434,9 @@ def _status_fragments(
     *,
     github_error: ErrorMessage | None,
     remote_error: ErrorMessage | None,
-    revisions: tuple[ReviewStatusRevision, ...],
+    statuses: tuple[ReviewChangeStatus, ...],
 ) -> tuple[ui.Message, ...]:
     fragments: list[ui.Message] = []
-    statuses = tuple(classify_review_status_revision(revision) for revision in revisions)
     if github_error is not None or remote_error is not None:
         fragments.append(ui.semantic_text("GitHub unavailable", "warning", "heading"))
 
@@ -520,14 +521,11 @@ def _status_is_incomplete(
     *,
     github_error: ErrorMessage | None,
     remote_error: ErrorMessage | None,
-    revisions: tuple[ReviewStatusRevision, ...],
+    statuses: tuple[ReviewChangeStatus, ...],
 ) -> bool:
     if github_error is not None or remote_error is not None:
         return True
-    return any(
-        _status_is_incomplete_change(classify_review_status_revision(revision))
-        for revision in revisions
-    )
+    return any(_status_is_incomplete_change(status) for status in statuses)
 
 
 def _status_is_incomplete_change(status: ReviewChangeStatus) -> bool:
