@@ -12,6 +12,7 @@ from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.models.github import GithubPullRequest, GithubPullRequestReview
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import BookmarkSource, bookmark_ownership_for_source
+from jj_review.review.change_status import classify_saved_review_change
 from jj_review.state.store import ReviewStateStore
 
 from .models import (
@@ -352,10 +353,11 @@ def _ensure_pull_request_link_is_consistent(
         cached_change=cached_change,
         change_id=change_id,
     )
-    if cached_change is None or (
-        cached_change.pr_number is None and cached_change.pr_url is None
-    ):
+    review_status = classify_saved_review_change(cached_change, local="present")
+    if not review_status.saved_pull_request_identity:
         return
+    if cached_change is None:
+        raise AssertionError("Saved pull request identity requires cached state.")
     if discovered_pull_request is None:
         raise CliError(
             t"Saved pull request link exists for bookmark {ui.bookmark(bookmark)}, "
