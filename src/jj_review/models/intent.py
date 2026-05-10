@@ -41,11 +41,6 @@ class SubmitIntent(OrderedChangeIdsIntent):
     bookmarks: dict[str, str]  # change_id → bookmark
 
 
-class CleanupRebaseIntent(OrderedChangeIdsIntent):
-    kind: Literal["cleanup-rebase"]
-    ordered_commit_ids: tuple[str, ...] = ()
-
-
 class CloseIntent(OrderedChangeIdsIntent):
     kind: Literal["close"]
     ordered_commit_ids: tuple[str, ...] = ()
@@ -53,7 +48,7 @@ class CloseIntent(OrderedChangeIdsIntent):
 
 
 type IntentFile = Annotated[
-    SubmitIntent | CleanupRebaseIntent | CloseIntent,
+    SubmitIntent | CloseIntent,
     Field(discriminator="kind"),
 ]
 

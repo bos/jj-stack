@@ -18,10 +18,8 @@ Use `--dry-run` to preview cleanup actions without making any changes.
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -32,7 +30,6 @@ from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
-from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.error_messages import (
     github_unavailable_message,
@@ -51,7 +48,6 @@ from jj_review.jj import JjCliArgs, JjClient
 from jj_review.jj.client import UnsupportedStackError
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubIssueComment
-from jj_review.models.intent import CleanupRebaseIntent, LoadedIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_review.review.change_status import (
@@ -64,7 +60,6 @@ from jj_review.review.change_status import (
 from jj_review.review.intents import (
     describe_intent,
     match_cleanup_rebase_intent,
-    retire_superseded_intents,
 )
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.review.status import (
@@ -74,9 +69,13 @@ from jj_review.review.status import (
     status_preparation_cli_error,
     stream_status,
 )
-from jj_review.state.intents import check_same_kind_intent, write_new_intent
-from jj_review.state.journal import OperationJournal, append_abandoned_event
-from jj_review.state.operation_lock import read_operation_lock_holder
+from jj_review.state.journal import (
+    CleanupRebaseOperationRecord,
+    LoadedOperationRecord,
+    OperationJournal,
+    append_abandoned_event,
+)
+from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
 from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message, plain_text
 
@@ -131,6 +130,7 @@ class PreparedCleanup:
     remote: GitRemote | None
     remote_error: ErrorMessage | None
     remote_context_loaded: bool
+    operation_lock: OperationLock
     state: ReviewState
     state_store: ReviewStateStore
 
@@ -193,6 +193,7 @@ class PreparedRebase:
 
     config: RepoConfig
     dry_run: bool
+    operation_lock: OperationLock
     prepared_status: PreparedStatus
 
 
@@ -208,12 +209,11 @@ class _RebaseOperationPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class _RebaseIntentState:
-    """Prepared rebase intent bookkeeping for resumable live runs."""
+class _RebaseOperationState:
+    """Prepared rebase operation bookkeeping for resumable live runs."""
 
-    intent: CleanupRebaseIntent | None
-    intent_path: Path | None
-    stale_intents: list[LoadedIntent]
+    journal: OperationJournal | None
+    stale_operations: list[LoadedOperationRecord]
 
 
 def _render_cleanup_action_header(*, dry_run: bool) -> str:
@@ -278,15 +278,17 @@ def cleanup(
     )
     options = CleanupOptions(dry_run=dry_run, rebase_revset=rebase_revset)
     command = "cleanup --rebase" if options.rebase_revset is not None else "cleanup"
-    with mutating_command_lock(command=command, context=context):
+    with mutating_command_lock(command=command, context=context) as operation_lock:
         if options.rebase_revset is not None:
             return _run_cleanup_rebase_command(
                 context=context,
+                operation_lock=operation_lock,
                 options=options,
             )
 
         return _run_cleanup_command(
             context=context,
+            operation_lock=operation_lock,
             options=options,
         )
 
@@ -294,6 +296,7 @@ def cleanup(
 def _run_cleanup_rebase_command(
     *,
     context: CommandContext,
+    operation_lock: OperationLock,
     options: CleanupOptions,
 ) -> int:
     """Render and run the `cleanup --rebase` command path."""
@@ -311,6 +314,7 @@ def _run_cleanup_rebase_command(
             prepared_rebase = PreparedRebase(
                 config=context.config,
                 dry_run=options.dry_run,
+                operation_lock=operation_lock,
                 prepared_status=prepare_status(
                     config=context.config,
                     fetch_remote_state=True,
@@ -345,6 +349,7 @@ def _run_cleanup_rebase_command(
 def _run_cleanup_command(
     *,
     context: CommandContext,
+    operation_lock: OperationLock,
     options: CleanupOptions,
 ) -> int:
     """Render and run the stale cleanup command path."""
@@ -352,6 +357,7 @@ def _run_cleanup_command(
     with console.spinner(description="Loading bookmark state"):
         prepared_cleanup = _prepare_cleanup(
             context=context,
+            operation_lock=operation_lock,
             options=options,
         )
     stale_reasons = _stale_change_reasons(
@@ -487,6 +493,7 @@ def _rebase_destination_template(destination_change_id: str | None):
 def _prepare_cleanup(
     *,
     context: CommandContext,
+    operation_lock: OperationLock,
     options: CleanupOptions,
 ) -> PreparedCleanup:
     """Resolve local cleanup inputs before any GitHub network inspection."""
@@ -512,6 +519,7 @@ def _prepare_cleanup(
         remote=None,
         remote_error=None,
         remote_context_loaded=False,
+        operation_lock=operation_lock,
         state=state,
         state_store=state_store,
     )
@@ -598,7 +606,7 @@ def _stream_rebase(
         record_action(action)
     rebase_plans = list(operation_plan.rebase_plans)
 
-    rebase_intent_state = _start_rebase_intent(
+    rebase_operation_state = _start_rebase_operation(
         blocked=blocked,
         prepared=prepared,
         prepared_rebase=prepared_rebase,
@@ -641,29 +649,37 @@ def _stream_rebase(
             blocked=blocked,
         )
     finally:
-        if (
-            _rebase_succeeded
-            and rebase_intent_state.intent_path is not None
-            and rebase_intent_state.intent is not None
-        ):
-            retire_superseded_intents(
-                rebase_intent_state.stale_intents,
-                rebase_intent_state.intent,
+        if _rebase_succeeded and rebase_operation_state.journal is not None:
+            ordered_change_ids = tuple(
+                prepared_revision.revision.change_id
+                for prepared_revision in prepared.status_revisions
             )
-            rebase_intent_state.intent_path.unlink(missing_ok=True)
+            rebase_operation_state.journal.append(
+                "completed",
+                {"ordered_change_ids": ordered_change_ids},
+            )
+            for loaded in rebase_operation_state.stale_operations:
+                operation = loaded.operation
+                if isinstance(operation, CleanupRebaseOperationRecord) and (
+                    set(operation.ordered_change_ids) & set(ordered_change_ids)
+                ):
+                    append_abandoned_event(
+                        loaded.path,
+                        reason="superseded_by_cleanup_rebase",
+                    )
 
 
-def _start_rebase_intent(
+def _start_rebase_operation(
     *,
     blocked: bool,
     prepared,
     prepared_rebase: PreparedRebase,
     selected_revset: str,
-) -> _RebaseIntentState:
-    """Write a rebase intent before live rebases begin."""
+) -> _RebaseOperationState:
+    """Write a rebase operation journal before live rebases begin."""
 
     if blocked or prepared_rebase.dry_run:
-        return _RebaseIntentState(intent=None, intent_path=None, stale_intents=[])
+        return _RebaseOperationState(journal=None, stale_operations=[])
 
     ordered_change_ids = tuple(
         str(prepared_revision.revision.change_id)
@@ -673,29 +689,22 @@ def _start_rebase_intent(
         str(prepared_revision.revision.commit_id)
         for prepared_revision in prepared.status_revisions
     )
-    intent = CleanupRebaseIntent(
-        kind="cleanup-rebase",
-        pid=os.getpid(),
-        label=(
-            f"cleanup --rebase for {short_change_id(ordered_change_ids[-1])} "
-            f"(from {selected_revset})"
-        ),
-        display_revset=selected_revset,
-        ordered_change_ids=ordered_change_ids,
-        ordered_commit_ids=ordered_commit_ids,
-        started_at=datetime.now(UTC).isoformat(),
-    )
     state_dir = prepared.state_store.require_writable()
-    stale_intents = check_same_kind_intent(state_dir, intent)
-    for loaded in stale_intents:
-        if not isinstance(loaded.intent, CleanupRebaseIntent):
+    stale_operations = [
+        loaded
+        for loaded in prepared.state_store.list_operations()
+        if isinstance(loaded.operation, CleanupRebaseOperationRecord)
+    ]
+    for loaded in stale_operations:
+        operation = loaded.operation
+        if not isinstance(operation, CleanupRebaseOperationRecord):
             continue
         match = match_cleanup_rebase_intent(
-            intent=loaded.intent,
+            intent=operation,
             current_change_ids=ordered_change_ids,
             current_commit_ids=ordered_commit_ids,
         )
-        description = describe_intent(loaded.intent)
+        description = describe_intent(operation)
         if match == "exact":
             console.note(t"Continuing interrupted {description}")
         elif match == "same-logical":
@@ -721,10 +730,21 @@ def _start_rebase_intent(
                             t"operation ({description})")
         else:
             console.note(t"Note: incomplete operation outstanding: {description}")
-    return _RebaseIntentState(
-        intent=intent,
-        intent_path=write_new_intent(state_dir, intent),
-        stale_intents=stale_intents,
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="cleanup-rebase",
+        lock_holder=read_operation_lock_holder(state_dir),
+        options={},
+        resolved_scope={
+            "ordered_change_ids": ordered_change_ids,
+            "ordered_commit_ids": ordered_commit_ids,
+            "selected_revset": selected_revset,
+        },
+    )
+    prepared_rebase.operation_lock.record_journal_path(journal.path)
+    return _RebaseOperationState(
+        journal=journal,
+        stale_operations=stale_operations,
     )
 
 
@@ -1025,6 +1045,7 @@ async def _run_cleanup_async(
                 "cached_change_ids": tuple(prepared_cleanup.state.changes),
             },
         )
+        prepared_cleanup.operation_lock.record_journal_path(journal.path)
 
     try:
         if stale_reasons is None:

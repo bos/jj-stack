@@ -6,9 +6,7 @@ import pytest
 
 from jj_review.commands import cleanup as cleanup_module
 from jj_review.jj import JjClient
-from jj_review.models.intent import CleanupRebaseIntent
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.intents import write_new_intent
 from jj_review.state.journal import OperationJournal, read_journal
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
@@ -48,6 +46,26 @@ def _mark_pr_state(
                 }
             }
         )
+    )
+
+
+def _begin_cleanup_rebase_journal(
+    state_dir: Path,
+    *,
+    display_revset: str,
+    ordered_change_ids: tuple[str, ...],
+    ordered_commit_ids: tuple[str, ...],
+) -> OperationJournal:
+    return OperationJournal.begin(
+        state_dir,
+        operation="cleanup-rebase",
+        lock_holder=None,
+        options={},
+        resolved_scope={
+            "ordered_change_ids": ordered_change_ids,
+            "ordered_commit_ids": ordered_commit_ids,
+            "selected_revset": display_revset,
+        },
     )
 
 
@@ -274,17 +292,11 @@ def test_cleanup_restack_continues_exact_interrupted_restack(
     fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
 
     state_dir = resolve_state_path(repo).parent
-    old_intent_path = write_new_intent(
+    old_journal = _begin_cleanup_rebase_journal(
         state_dir,
-        CleanupRebaseIntent(
-            kind="cleanup-rebase",
-            pid=99999999,
-            label=f"cleanup --rebase on {top.change_id}",
-            display_revset=top.change_id,
-            ordered_change_ids=(bottom.change_id, top.change_id),
-            ordered_commit_ids=(bottom.commit_id, top.commit_id),
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset=top.change_id,
+        ordered_change_ids=(bottom.change_id, top.change_id),
+        ordered_commit_ids=(bottom.commit_id, top.commit_id),
     )
 
     exit_code = run_main(repo, config_path, "cleanup", "--rebase", top.change_id)
@@ -292,7 +304,7 @@ def test_cleanup_restack_continues_exact_interrupted_restack(
 
     assert exit_code == 0
     assert "Continuing interrupted cleanup --rebase" in captured.out
-    assert not old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
 
 
 def test_cleanup_restack_uses_current_stack_after_rewrite(
@@ -315,17 +327,11 @@ def test_cleanup_restack_uses_current_stack_after_rewrite(
     fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
 
     state_dir = resolve_state_path(repo).parent
-    old_intent_path = write_new_intent(
+    old_journal = _begin_cleanup_rebase_journal(
         state_dir,
-        CleanupRebaseIntent(
-            kind="cleanup-rebase",
-            pid=99999999,
-            label="cleanup --rebase on @",
-            display_revset="@",
-            ordered_change_ids=(bottom.change_id, top.change_id),
-            ordered_commit_ids=(bottom.commit_id, top.commit_id),
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        display_revset="@",
+        ordered_change_ids=(bottom.change_id, top.change_id),
+        ordered_commit_ids=(bottom.commit_id, top.commit_id),
     )
 
     run_command(["jj", "describe", "-r", top.change_id, "-m", "feature 2 rewritten"], repo)
@@ -337,7 +343,7 @@ def test_cleanup_restack_uses_current_stack_after_rewrite(
     assert exit_code == 0
     assert "Continuing interrupted cleanup --rebase" not in captured.out
     assert "same logical stack, but it has been rewritten" in normalized_output
-    assert not old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
 
 
 def test_cleanup_dry_run_reports_stale_tracking_and_remote_branch_without_mutation(

@@ -9,7 +9,6 @@ from typing import Literal
 
 from jj_review import ui
 from jj_review.models.intent import (
-    CleanupRebaseIntent,
     CloseIntent,
     IntentFile,
     LoadedIntent,
@@ -20,6 +19,7 @@ from jj_review.models.intent import (
 from jj_review.review.submit_recovery import should_retire_submit_after_submit
 from jj_review.state.journal import (
     CleanupOperationRecord,
+    CleanupRebaseOperationRecord,
     LandOperationRecord,
     RelinkOperationRecord,
 )
@@ -57,7 +57,8 @@ def describe_intent(
     intent: IntentFile
     | LandOperationRecord
     | RelinkOperationRecord
-    | CleanupOperationRecord,
+    | CleanupOperationRecord
+    | CleanupRebaseOperationRecord,
 ) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
@@ -66,7 +67,7 @@ def describe_intent(
             t"{ui.cmd('submit')} for {_render_recorded_stack_head(intent)} "
             t"(from {ui.revset(intent.display_revset)})"
         )
-    if isinstance(intent, CleanupRebaseIntent):
+    if isinstance(intent, CleanupRebaseOperationRecord):
         return (
             t"{ui.cmd('cleanup --rebase')} for {_render_recorded_stack_head(intent)} "
             t"(from {ui.revset(intent.display_revset)})"
@@ -90,7 +91,7 @@ def describe_intent(
 
 
 def _render_recorded_stack_head(
-    intent: OrderedChangeIdsIntent | LandOperationRecord,
+    intent: OrderedChangeIdsIntent | LandOperationRecord | CleanupRebaseOperationRecord,
 ) -> Message:
     if not intent.ordered_change_ids:
         return "stack"
@@ -99,7 +100,7 @@ def _render_recorded_stack_head(
 
 def match_cleanup_rebase_intent(
     *,
-    intent: CleanupRebaseIntent,
+    intent: CleanupRebaseOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
 ) -> SubmitIntentMatch:
@@ -181,7 +182,7 @@ def retire_superseded_intents(
 ) -> None:
     """Auto-retire stale intents that a later successful run has superseded."""
 
-    if not isinstance(new_intent, SubmitIntent | CleanupRebaseIntent | CloseIntent):
+    if not isinstance(new_intent, SubmitIntent | CloseIntent):
         return
 
     new_ids = new_intent.ordered_change_ids
@@ -202,10 +203,6 @@ def retire_superseded_intents(
                 ) != "incompatible" and set(old.ordered_change_ids).issubset(new_ids)
             else:
                 continue
-        elif isinstance(new_intent, CleanupRebaseIntent):
-            if not isinstance(old, CleanupRebaseIntent):
-                continue
-            should_retire = bool(set(old.ordered_change_ids) & set(new_ids))
         if should_retire:
             loaded.path.unlink(missing_ok=True)
             logger.debug("Retired superseded intent %s", loaded.path.name)

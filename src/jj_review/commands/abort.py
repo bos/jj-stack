@@ -27,7 +27,6 @@ from jj_review.github.client import GithubClient, GithubClientError, build_githu
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo
 from jj_review.jj import JjCliArgs, JjClient, JjCommandError
 from jj_review.models.intent import (
-    CleanupRebaseIntent,
     CloseIntent,
     LoadedIntent,
     SubmitIntent,
@@ -40,6 +39,7 @@ from jj_review.review.intents import (
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
 from jj_review.state.journal import (
     CleanupOperationRecord,
+    CleanupRebaseOperationRecord,
     LandOperationRecord,
     LoadedOperationRecord,
     RelinkOperationRecord,
@@ -227,7 +227,7 @@ def _non_submit_note(intent) -> Message | None:
         return t"Landing cannot be retracted; changes already merged to trunk are " \
             t"permanent. The interrupted-operation notice will be cleared so future " \
             t"commands can proceed. Run {ui.cmd('status')} to inspect the current state."
-    if isinstance(intent, CleanupRebaseIntent):
+    if isinstance(intent, CleanupRebaseOperationRecord):
         return t"Rebase changes to local jj history cannot be automatically reversed. " \
             t"The interrupted-operation notice will be cleared. Inspect with " \
             t"{ui.cmd('jj log')} and repair manually if needed."

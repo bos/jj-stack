@@ -102,7 +102,31 @@ class CleanupOperationRecord:
         return frozenset()
 
 
-type OperationRecord = LandOperationRecord | RelinkOperationRecord | CleanupOperationRecord
+@dataclass(frozen=True, slots=True)
+class CleanupRebaseOperationRecord:
+    """Journal-backed recovery record for one incomplete `cleanup --rebase`."""
+
+    kind: Literal["cleanup-rebase"]
+    path: Path
+    pid: int
+    label: str
+    started_at: str
+    display_revset: str
+    ordered_change_ids: tuple[str, ...]
+    ordered_commit_ids: tuple[str, ...]
+
+    def change_ids(self) -> frozenset[str]:
+        """Return the change IDs mentioned by this operation."""
+
+        return frozenset(self.ordered_change_ids)
+
+
+type OperationRecord = (
+    LandOperationRecord
+    | RelinkOperationRecord
+    | CleanupOperationRecord
+    | CleanupRebaseOperationRecord
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +278,12 @@ def operation_record_from_journal(
         return relink_operation_record_from_events(path, events, active_pid=active_pid)
     if first.operation == "cleanup":
         return cleanup_operation_record_from_events(path, events, active_pid=active_pid)
+    if first.operation == "cleanup-rebase":
+        return cleanup_rebase_operation_record_from_events(
+            path,
+            events,
+            active_pid=active_pid,
+        )
     return None
 
 
@@ -396,6 +426,50 @@ def cleanup_operation_record_from_events(
         pid=active_pid,
         label="cleanup",
         started_at=first.timestamp,
+    )
+
+
+def cleanup_rebase_operation_record_from_events(
+    path: Path,
+    events: tuple[JournalEvent, ...],
+    *,
+    active_pid: int = 0,
+) -> CleanupRebaseOperationRecord:
+    """Parse one cleanup-rebase operation record from journal events."""
+
+    if not events:
+        raise ValueError(f"Journal is empty: {path}")
+    first = events[0]
+    if first.operation != "cleanup-rebase":
+        raise ValueError(f"Journal is not a cleanup-rebase operation: {path}")
+    if first.event != "begin":
+        raise ValueError(f"Journal does not start with begin: {path}")
+
+    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
+    display_revset = str(resolved_scope["selected_revset"])
+    ordered_change_ids = _string_tuple(
+        resolved_scope.get("ordered_change_ids"),
+        "ordered_change_ids",
+    )
+    ordered_commit_ids = _string_tuple(
+        resolved_scope.get("ordered_commit_ids"),
+        "ordered_commit_ids",
+    )
+    label = (
+        f"cleanup --rebase for {ordered_change_ids[-1][:8]} "
+        f"(from {display_revset})"
+        if ordered_change_ids
+        else f"cleanup --rebase (from {display_revset})"
+    )
+    return CleanupRebaseOperationRecord(
+        kind="cleanup-rebase",
+        path=path,
+        pid=active_pid,
+        label=label,
+        started_at=first.timestamp,
+        display_revset=display_revset,
+        ordered_change_ids=ordered_change_ids,
+        ordered_commit_ids=ordered_commit_ids,
     )
 
 

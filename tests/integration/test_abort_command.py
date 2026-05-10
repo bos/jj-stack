@@ -5,7 +5,7 @@ from pathlib import Path
 
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
-from jj_review.models.intent import CleanupRebaseIntent, SubmitIntent
+from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.intents import write_new_intent
 from jj_review.state.journal import OperationJournal, read_journal
@@ -321,7 +321,7 @@ def test_abort_keeps_local_bookmark_when_remote_bookmark_is_conflicted(
     assert state_store.list_intents()
 
 
-def test_abort_removes_cleanup_restack_intent_with_note(
+def test_abort_clears_cleanup_rebase_journal_with_note(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -334,15 +334,17 @@ def test_abort_removes_cleanup_restack_intent_with_note(
 
     state_store = ReviewStateStore.for_repo(repo)
     state_store.require_writable()
-    intent = CleanupRebaseIntent(
-        kind="cleanup-rebase",
-        pid=99999999,  # dead PID — simulates an interrupted operation
-        label="cleanup --rebase on @-",
-        display_revset="@-",
-        ordered_change_ids=(change_id,),
-        started_at="2026-01-01T00:00:00+00:00",
+    journal = OperationJournal.begin(
+        state_store.state_dir,
+        operation="cleanup-rebase",
+        lock_holder=None,
+        options={},
+        resolved_scope={
+            "ordered_change_ids": (change_id,),
+            "ordered_commit_ids": (stack.trunk.commit_id,),
+            "selected_revset": "@-",
+        },
     )
-    write_new_intent(state_store.state_dir, intent)
 
     exit_code = run_main(repo, config_path, "abort")
     captured = capsys.readouterr()
@@ -351,7 +353,8 @@ def test_abort_removes_cleanup_restack_intent_with_note(
     assert "Applied abort actions" in captured.out
     assert "cleared it from future status output" in captured.out
     assert "rebase" in captured.out  # note about manual inspection
-    assert not state_store.list_intents()
+    assert not state_store.list_operations()
+    assert read_journal(journal.path)[-1].event == "abandoned"
 
 
 def test_abort_clears_land_journal_with_note(

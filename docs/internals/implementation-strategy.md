@@ -250,6 +250,9 @@ relink notices are read from the journal and can be cleared by `abort`.
 Plain repo-wide `cleanup` uses the same retained journal path; successful cleanup
 marks its current and superseded cleanup records terminal instead of deleting intent
 files.
+`cleanup --rebase` also records its selected stack in a retained journal. Successful
+reruns append terminal events to overlapping stale rebase-cleanup journals while keeping
+the previous exact/same-logical/overlap recovery policy.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal

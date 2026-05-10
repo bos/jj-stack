@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from jj_review.models.intent import (
-    CleanupRebaseIntent,
     CloseIntent,
     LoadedIntent,
     SubmitIntent,
@@ -25,6 +24,7 @@ from jj_review.state.intents import (
     scan_intents,
     write_new_intent,
 )
+from jj_review.state.journal import CleanupRebaseOperationRecord
 from jj_review.system import pid_is_alive
 
 # ---------------------------------------------------------------------------
@@ -52,12 +52,13 @@ def _make_submit_intent(
     )
 
 
-def _make_cleanup_restack_intent(
+def _make_cleanup_rebase_operation(
     ordered_change_ids: tuple[str, ...] = ("aaaa", "bbbb"),
     pid: int = 12345,
-) -> CleanupRebaseIntent:
-    return CleanupRebaseIntent(
+) -> CleanupRebaseOperationRecord:
+    return CleanupRebaseOperationRecord(
         kind="cleanup-rebase",
+        path=Path("cleanup-rebase.jsonl"),
         pid=pid,
         label="cleanup --rebase on @",
         display_revset="@",
@@ -91,11 +92,10 @@ def _make_close_intent(
 
 @pytest.mark.parametrize(
     ("intent_factory", "test_id"),
-    [
-        (_make_submit_intent, "submit"),
-        (_make_cleanup_restack_intent, "cleanup-rebase"),
-        (lambda: _make_close_intent(cleanup=True), "close"),
-    ],
+        [
+            (_make_submit_intent, "submit"),
+            (lambda: _make_close_intent(cleanup=True), "close"),
+        ],
     ids=lambda value: value if isinstance(value, str) else None,
 )
 def test_write_intent_round_trips_supported_intent_kinds(
@@ -155,7 +155,7 @@ def test_match_ordered_change_ids_requires_prefix_order_for_superset() -> None:
 def test_match_cleanup_rebase_intent_returns_same_logical_for_rewritten_stack() -> None:
     assert (
         match_cleanup_rebase_intent(
-            intent=_make_cleanup_restack_intent(),
+            intent=_make_cleanup_rebase_operation(),
             current_change_ids=("aaaa", "bbbb"),
             current_commit_ids=("new-aaaa", "new-bbbb"),
         )
@@ -166,7 +166,7 @@ def test_match_cleanup_rebase_intent_returns_same_logical_for_rewritten_stack() 
 def test_match_cleanup_rebase_intent_returns_same_logical_for_reordered_stack() -> None:
     assert (
         match_cleanup_rebase_intent(
-            intent=_make_cleanup_restack_intent(("aaaa", "bbbb")),
+            intent=_make_cleanup_rebase_operation(("aaaa", "bbbb")),
             current_change_ids=("bbbb", "aaaa"),
             current_commit_ids=("commit-bbbb", "commit-aaaa"),
         )
@@ -177,75 +177,12 @@ def test_match_cleanup_rebase_intent_returns_same_logical_for_reordered_stack() 
 def test_match_cleanup_rebase_intent_returns_trimmed_for_shrunk_current_stack() -> None:
     assert (
         match_cleanup_rebase_intent(
-            intent=_make_cleanup_restack_intent(("aaaa", "bbbb", "cccc")),
+            intent=_make_cleanup_rebase_operation(("aaaa", "bbbb", "cccc")),
             current_change_ids=("bbbb", "cccc"),
             current_commit_ids=("commit-bbbb", "commit-cccc"),
         )
         == "trimmed"
     )
-
-
-def test_retire_superseded_intents_retires_reordered_cleanup_restack_intent(
-    tmp_path: Path,
-) -> None:
-    old_path = write_new_intent(
-        tmp_path,
-        _make_cleanup_restack_intent(("aaaa", "bbbb")),
-    )
-
-    retire_superseded_intents(
-        [
-            LoadedIntent(
-                path=old_path,
-                intent=_make_cleanup_restack_intent(("aaaa", "bbbb")),
-            )
-        ],
-        _make_cleanup_restack_intent(("bbbb", "aaaa")),
-    )
-
-    assert not old_path.exists()
-
-
-def test_retire_superseded_intents_retires_cleanup_restack_when_current_stack_shrinks(
-    tmp_path: Path,
-) -> None:
-    old_path = write_new_intent(
-        tmp_path,
-        _make_cleanup_restack_intent(("aaaa", "bbbb", "cccc")),
-    )
-
-    retire_superseded_intents(
-        [
-            LoadedIntent(
-                path=old_path,
-                intent=_make_cleanup_restack_intent(("aaaa", "bbbb", "cccc")),
-            )
-        ],
-        _make_cleanup_restack_intent(("bbbb", "cccc")),
-    )
-
-    assert not old_path.exists()
-
-
-def test_retire_superseded_intents_retires_overlapping_cleanup_restack_intent(
-    tmp_path: Path,
-) -> None:
-    old_path = write_new_intent(
-        tmp_path,
-        _make_cleanup_restack_intent(("aaaa", "bbbb", "cccc")),
-    )
-
-    retire_superseded_intents(
-        [
-            LoadedIntent(
-                path=old_path,
-                intent=_make_cleanup_restack_intent(("aaaa", "bbbb", "cccc")),
-            )
-        ],
-        _make_cleanup_restack_intent(("bbbb", "dddd")),
-    )
-
-    assert not old_path.exists()
 
 
 def test_match_close_intent_returns_disjoint_when_cleanup_mode_differs() -> None:

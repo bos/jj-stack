@@ -21,7 +21,19 @@ from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.status import PreparedStatus
+from jj_review.state.operation_lock import OperationLock
 from jj_review.state.store import ReviewStateStore
+
+
+def _fake_operation_lock(recorded_paths: list[Path] | None = None) -> OperationLock:
+    def record_journal_path(path: Path) -> None:
+        if recorded_paths is not None:
+            recorded_paths.append(path)
+
+    return cast(
+        OperationLock,
+        SimpleNamespace(record_journal_path=record_journal_path),
+    )
 
 
 def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
@@ -42,6 +54,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     )
     saved_states: list[ReviewState] = []
     deleted_comment_ids: list[int] = []
+    recorded_journal_paths: list[Path] = []
     state_store = cast(
         ReviewStateStore,
         SimpleNamespace(
@@ -64,6 +77,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
         remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
         remote_error=None,
         remote_context_loaded=True,
+        operation_lock=_fake_operation_lock(recorded_journal_paths),
         state=state,
         state_store=state_store,
     )
@@ -123,6 +137,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     assert [
         saved_state.changes["change-1"].navigation_comment_id for saved_state in saved_states
     ] == [None, None]
+    assert recorded_journal_paths
 
 
 def _status_revision(
@@ -169,6 +184,7 @@ def test_stream_rebase_plans_rebase_for_survivor_above_merged_path_revision(
     prepared_rebase = PreparedRebase(
         config=RepoConfig(),
         dry_run=True,
+        operation_lock=_fake_operation_lock(),
         prepared_status=cast(
             PreparedStatus,
             SimpleNamespace(
@@ -253,6 +269,7 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
     prepared_rebase = PreparedRebase(
         config=RepoConfig(),
         dry_run=False,
+        operation_lock=_fake_operation_lock(),
         prepared_status=cast(
             PreparedStatus,
             SimpleNamespace(
@@ -260,7 +277,10 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
                 github_repository=None,
                 prepared=SimpleNamespace(
                     client=FakeClient(),
-                    state_store=SimpleNamespace(require_writable=lambda: Path("/tmp")),
+                    state_store=SimpleNamespace(
+                        list_operations=lambda: [],
+                        require_writable=lambda: Path("/tmp"),
+                    ),
                     stack=SimpleNamespace(trunk=SimpleNamespace(commit_id="trunk-commit")),
                     status_revisions=(
                         SimpleNamespace(
