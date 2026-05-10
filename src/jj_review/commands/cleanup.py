@@ -432,12 +432,10 @@ def _prepare_cleanup_rebase(
         dry_run=options.dry_run,
         operation_lock=operation_lock,
         prepared_status=prepare_status(
-            config=context.config,
+            context=context,
             fetch_remote_state=True,
             fetch_only_when_tracked=True,
-            jj_client=context.jj_client,
             revset=selected_revset,
-            state_store=context.state_store,
         ),
     )
 

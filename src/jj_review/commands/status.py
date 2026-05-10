@@ -389,12 +389,10 @@ def _prepare_status_for_revset(
 ):
     try:
         return prepare_status(
-            config=context.config,
+            context=context,
             fetch_remote_state=False,
-            jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=revset,
-            state_store=context.state_store,
         )
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error

@@ -250,12 +250,10 @@ async def _prepare_import(
         )
     with console.spinner(description="Inspecting jj stack"):
         prepared_status = prepare_status(
-            config=context.config,
+            context=context,
             fetch_remote_state=options.fetch and selection.head_bookmark is None,
-            jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=selection.selected_revset,
-            state_store=context.state_store,
         )
     if (
         selection.default_current_stack

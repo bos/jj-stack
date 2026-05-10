@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
+from jj_review.bootstrap import CommandContext
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage
 from jj_review.github.client import GithubClientError
@@ -644,9 +645,14 @@ def _prepare_status_for_test(
     from jj_review.review.status import prepare_status
 
     return prepare_status(
-        config=config,
+        context=cast(
+            CommandContext,
+            SimpleNamespace(
+                config=config,
+                jj_client=cast(JjClient, jj_client),
+                state_store=cast(ReviewStateStore, state_store),
+            ),
+        ),
         fetch_remote_state=fetch_remote_state,
-        jj_client=cast(JjClient, jj_client),
         revset=None,
-        state_store=cast(ReviewStateStore, state_store),
     )

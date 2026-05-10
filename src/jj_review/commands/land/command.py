@@ -203,12 +203,10 @@ def _prepare_land(
     """Resolve local landing inputs before GitHub planning and execution."""
 
     prepared_status = prepare_status(
-        config=context.config,
+        context=context,
         fetch_remote_state=True,
-        jj_client=context.jj_client,
         re_resolve_after_remote_refresh=True,
         revset=revset,
-        state_store=context.state_store,
     )
     prepared = prepared_status.prepared
     if prepared.remote is None:

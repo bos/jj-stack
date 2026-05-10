@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from jj_review import ui
+from jj_review.bootstrap import CommandContext
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
@@ -220,17 +221,18 @@ def status_preparation_cli_error(error: UnsupportedStackError) -> CliError:
 
 def prepare_status(
     *,
-    config: RepoConfig,
+    context: CommandContext,
     fetch_remote_state: bool = False,
     fetch_only_when_tracked: bool = False,
-    jj_client: JjClient,
     persist_bookmarks: bool = False,
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
-    state_store: ReviewStateStore,
 ) -> PreparedStatus:
     """Resolve local status inputs before any GitHub network inspection."""
 
+    config = context.config
+    jj_client = context.jj_client
+    state_store = context.state_store
     state = state_store.load()
     remotes = jj_client.list_git_remotes()
     remote: GitRemote | None = None

@@ -459,13 +459,11 @@ def prepare_close(
         operation_lock=operation_lock,
         options=options,
         prepared_status=prepare_status(
-            config=context.config,
+            context=context,
             fetch_remote_state=options.cleanup,
             fetch_only_when_tracked=True,
-            jj_client=context.jj_client,
             persist_bookmarks=False,
             revset=revset,
-            state_store=context.state_store,
         ),
     )
 
