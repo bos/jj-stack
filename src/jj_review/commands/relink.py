@@ -26,6 +26,7 @@ from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision
+from jj_review.review.change_status import classify_review_change
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.state.journal import OperationJournal
 from jj_review.state.operation_lock import read_operation_lock_holder
@@ -249,14 +250,21 @@ def _validated_relink_bookmark(
             hint="Move or forget it explicitly before relinking.",
         )
     remote_state = bookmark_state.remote_target(remote.name)
-    if remote_state is None or not remote_state.targets:
+    review_status = classify_review_change(
+        cached_change=None,
+        commit_id=revision.commit_id,
+        local="present",
+        pull_request_lookup=None,
+        remote_state=remote_state,
+    )
+    if review_status.remote_branch == "absent":
         raise CliError(
             t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote.name}')} does not exist.",
             hint=(
                 "Fetch and retry once the PR head branch is visible on the selected remote."
             ),
         )
-    if len(remote_state.targets) > 1:
+    if review_status.remote_branch == "conflicted":
         raise CliError(
             t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote.name}')} is conflicted.",
             hint="Resolve it before relinking.",
