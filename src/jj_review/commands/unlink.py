@@ -17,6 +17,11 @@ from jj_review.errors import CliError
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import bookmark_ownership_for_source
+from jj_review.review.change_status import (
+    ReviewChangeStatus,
+    classify_review_status_revision,
+    classify_saved_review_change,
+)
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.review.status import (
     PreparedRevision,
@@ -56,6 +61,7 @@ class _PreparedUnlink:
     cached_change: CachedChange | None
     prepared_client: JjClient
     prepared_revision: PreparedRevision
+    review_status: ReviewChangeStatus
     selected_revset: str
     state: ReviewState
     state_store: ReviewStateStore
@@ -111,10 +117,7 @@ async def _run_unlink_async(
     options: UnlinkOptions,
 ) -> UnlinkResult:
     prepared_unlink = await _prepare_unlink(context=context, options=options)
-    if (
-        prepared_unlink.cached_change is not None
-        and prepared_unlink.cached_change.is_unlinked
-    ):
+    if prepared_unlink.review_status.link == "unlinked":
         return _unlink_result(
             already_unlinked=True,
             prepared_unlink=prepared_unlink,
@@ -125,7 +128,7 @@ async def _run_unlink_async(
         cached_change=prepared_unlink.cached_change,
         prepared_client=prepared_unlink.prepared_client,
         prepared_revision=prepared_unlink.prepared_revision,
-        status_revision=prepared_unlink.status_revision,
+        review_status=prepared_unlink.review_status,
     ):
         raise CliError(
             t"The selected change has no active review tracking link to unlink.",
@@ -190,6 +193,7 @@ async def _prepare_unlink(
         cached_change=cached_change,
         prepared_client=prepared.client,
         prepared_revision=prepared_revision,
+        review_status=classify_review_status_revision(status_revision),
         selected_revset=prepared_status.selected_revset,
         state=state,
         state_store=state_store,
@@ -268,30 +272,18 @@ def _revision_has_active_review_link(
     cached_change: CachedChange | None,
     prepared_client: JjClient,
     prepared_revision: PreparedRevision,
-    status_revision: ReviewStatusRevision,
+    review_status: ReviewChangeStatus,
 ) -> bool:
-    if (
-        cached_change is not None
-        and not cached_change.is_unlinked
-        and (
-            cached_change.bookmark is not None
-            or cached_change.pr_number is not None
-            or cached_change.pr_url is not None
-            or cached_change.pr_state is not None
-            or cached_change.navigation_comment_id is not None
-            or cached_change.overview_comment_id is not None
-        )
-    ):
+    cached_status = classify_saved_review_change(cached_change, local="present")
+    if cached_status.link == "active" and cached_status.saved_review_identity:
         return True
     if bookmark is not None:
         bookmark_state = prepared_client.get_bookmark_state(bookmark)
         if bookmark_state.local_target == prepared_revision.revision.commit_id:
             return True
-    remote_state = status_revision.remote_state
-    if remote_state is not None and remote_state.targets:
+    if review_status.remote_branch != "absent":
         return True
-    pull_request_lookup = status_revision.pull_request_lookup
-    return pull_request_lookup is not None and pull_request_lookup.pull_request is not None
+    return review_status.pr_lifecycle in {"open", "closed", "merged"}
 
 
 def _status_revision_for_change(
