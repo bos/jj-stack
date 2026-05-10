@@ -13,6 +13,7 @@ from jj_review.github.resolution import parse_github_repo
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult
+from jj_review.review.change_status import classify_review_change
 from jj_review.review.operations import describe_operation
 from jj_review.review.submit_recovery import (
     SubmitRecoveryIdentity,
@@ -232,9 +233,19 @@ def repair_interrupted_untracked_remote_bookmarks(
         if bookmark_state is None:
             continue
         remote_state = bookmark_state.remote_target(remote.name)
-        if remote_state is None or remote_state.is_tracked:
-            continue
         local_target = bookmark_state.local_target
-        if local_target is None or remote_state.target != local_target:
+        if local_target is None:
+            continue
+        review_status = classify_review_change(
+            cached_change=None,
+            commit_id=local_target,
+            local="present",
+            pull_request_lookup=None,
+            remote_state=remote_state,
+        )
+        if (
+            review_status.remote_branch != "untracked"
+            or review_status.remote_branch_matches_commit is not True
+        ):
             continue
         client.track_bookmark(remote=remote.name, bookmark=bookmark)
