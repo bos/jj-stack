@@ -39,7 +39,6 @@ from jj_review.state.journal import (
     SubmitOperationRecord,
     append_abandoned_event,
 )
-from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message, plain_text
 
@@ -83,6 +82,18 @@ class AbortResult:
     operation_kind: str
     operation_label: Message
     operation_started_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class AbortRun:
+    """Shared abort execution context for one command invocation."""
+
+    context: CommandContext
+    options: AbortOptions
+
+    @property
+    def dry_run(self) -> bool:
+        return self.options.dry_run
 
 
 def abort(
@@ -159,13 +170,13 @@ def _run_abort(
     if not outstanding:
         return 1
 
+    run = AbortRun(context=context, options=options)
     exit_code = 1 if live else 0
     for loaded in outstanding:
         result = asyncio.run(
             _abort_operation_async(
-                context=context,
                 loaded=loaded,
-                options=options,
+                run=run,
             )
         )
         _print_abort_result(result)
@@ -182,20 +193,17 @@ def _run_abort(
 
 async def _abort_operation_async(
     *,
-    context: CommandContext,
     loaded: LoadedOperationRecord,
-    options: AbortOptions,
+    run: AbortRun,
 ) -> AbortResult:
     operation = loaded.operation
-    dry_run = options.dry_run
+    dry_run = run.dry_run
 
     if isinstance(operation, SubmitOperationRecord):
         return await _abort_submit(
-            dry_run=dry_run,
             operation=operation,
             loaded=loaded,
-            jj_client=context.jj_client,
-            state_store=context.state_store,
+            run=run,
         )
 
     # For all other operation types, only the operation record can be cleared. The
@@ -248,14 +256,15 @@ def _non_submit_note(operation) -> Message | None:
 
 async def _abort_submit(
     *,
-    dry_run: bool,
     operation: SubmitOperationRecord,
     loaded: LoadedOperationRecord,
-    jj_client: JjClient,
-    state_store: ReviewStateStore,
+    run: AbortRun,
 ) -> AbortResult:
     """Retract a partial submit: close PRs, delete remote branches, clear state."""
 
+    dry_run = run.dry_run
+    jj_client = run.context.jj_client
+    state_store = run.context.state_store
     actions: list[AbortAction] = []
     if not _submit_operation_matches_recorded_stack(operation=operation, jj_client=jj_client):
         if not _submit_operation_head_visible(operation=operation, jj_client=jj_client):
