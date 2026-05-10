@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class IntentBase(BaseModel):
@@ -41,16 +41,7 @@ class SubmitIntent(OrderedChangeIdsIntent):
     bookmarks: dict[str, str]  # change_id → bookmark
 
 
-class CloseIntent(OrderedChangeIdsIntent):
-    kind: Literal["close"]
-    ordered_commit_ids: tuple[str, ...] = ()
-    cleanup: bool
-
-
-type IntentFile = Annotated[
-    SubmitIntent | CloseIntent,
-    Field(discriminator="kind"),
-]
+type IntentFile = SubmitIntent
 
 
 class LoadedIntent(BaseModel):

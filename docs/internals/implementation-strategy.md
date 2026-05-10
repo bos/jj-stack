@@ -253,6 +253,10 @@ files.
 `cleanup --rebase` also records its selected stack in a retained journal. Successful
 reruns append terminal events to overlapping stale rebase-cleanup journals while keeping
 the previous exact/same-logical/overlap recovery policy.
+Regular `close` and orphaned `close --cleanup --pull-request` write retained close
+journals too. Successful runs mark matching stale close journals terminal instead of
+deleting intent files, while cleanup closes can still retire superseded submit intents
+until submit itself moves to the journal.
 
 The first journaled command is `land`. Its journal records the resolved scope, planned
 mutations, applied GitHub or `jj` mutations, saved-state updates, and a terminal
@@ -307,7 +311,7 @@ It verifies the saved PR identity by PR number, then verifies that the PR head i
 saved branch on the configured GitHub repository before using head-branch lookup only
 to detect duplicate live claims. This lets merged orphan PRs be retired without
 mistaking a same-named fork branch for the review branch.
-It also writes regular close-intent bookkeeping, so reruns after interruption can
+It also writes regular close-journal bookkeeping, so reruns after interruption can
 continue remaining cleanup and retire older close records for the same orphaned PR.
 The orphan path lives in its own command module because it is a saved-state recovery
 flow rather than normal stack close planning; close action rendering and managed

@@ -9,7 +9,6 @@ from typing import Literal
 
 from jj_review import ui
 from jj_review.models.intent import (
-    CloseIntent,
     IntentFile,
     LoadedIntent,
     MatchResult,
@@ -20,6 +19,7 @@ from jj_review.review.submit_recovery import should_retire_submit_after_submit
 from jj_review.state.journal import (
     CleanupOperationRecord,
     CleanupRebaseOperationRecord,
+    CloseOperationRecord,
     LandOperationRecord,
     RelinkOperationRecord,
 )
@@ -58,7 +58,8 @@ def describe_intent(
     | LandOperationRecord
     | RelinkOperationRecord
     | CleanupOperationRecord
-    | CleanupRebaseOperationRecord,
+    | CleanupRebaseOperationRecord
+    | CloseOperationRecord,
 ) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
@@ -72,7 +73,7 @@ def describe_intent(
             t"{ui.cmd('cleanup --rebase')} for {_render_recorded_stack_head(intent)} "
             t"(from {ui.revset(intent.display_revset)})"
         )
-    if isinstance(intent, CloseIntent):
+    if isinstance(intent, CloseOperationRecord):
         verb = ui.cmd("close --cleanup" if intent.cleanup else "close")
         return (
             t"{verb} for {_render_recorded_stack_head(intent)} "
@@ -91,7 +92,12 @@ def describe_intent(
 
 
 def _render_recorded_stack_head(
-    intent: OrderedChangeIdsIntent | LandOperationRecord | CleanupRebaseOperationRecord,
+    intent: (
+        OrderedChangeIdsIntent
+        | LandOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+    ),
 ) -> Message:
     if not intent.ordered_change_ids:
         return "stack"
@@ -124,12 +130,12 @@ def match_cleanup_rebase_intent(
 
 def match_close_intent(
     *,
-    intent: CloseIntent,
+    intent: CloseOperationRecord,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
     current_cleanup: bool | None = None,
 ) -> SubmitIntentMatch:
-    """Classify how a recorded close intent relates to the current stack."""
+    """Classify how a recorded close operation relates to the current stack."""
 
     if (
         current_cleanup is not None
@@ -182,27 +188,17 @@ def retire_superseded_intents(
 ) -> None:
     """Auto-retire stale intents that a later successful run has superseded."""
 
-    if not isinstance(new_intent, SubmitIntent | CloseIntent):
+    if not isinstance(new_intent, SubmitIntent):
         return
 
-    new_ids = new_intent.ordered_change_ids
     for loaded in stale_intents:
         old = loaded.intent
-        if isinstance(new_intent, SubmitIntent):
-            if not isinstance(old, SubmitIntent):
-                continue
-            should_retire = should_retire_submit_after_submit(
-                old_intent=old,
-                new_intent=new_intent,
-            )
-        elif isinstance(new_intent, CloseIntent):
-            if isinstance(old, CloseIntent):
-                should_retire = close_intent_mode_relation(
-                    recorded_cleanup=old.cleanup,
-                    current_cleanup=new_intent.cleanup,
-                ) != "incompatible" and set(old.ordered_change_ids).issubset(new_ids)
-            else:
-                continue
+        if not isinstance(old, SubmitIntent):
+            continue
+        should_retire = should_retire_submit_after_submit(
+            old_intent=old,
+            new_intent=new_intent,
+        )
         if should_retire:
             loaded.path.unlink(missing_ok=True)
             logger.debug("Retired superseded intent %s", loaded.path.name)

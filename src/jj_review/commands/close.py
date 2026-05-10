@@ -15,10 +15,8 @@ To preview the close plan without changing anything, use `--dry-run`.
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
 from jj_review import console, ui
@@ -42,7 +40,6 @@ from jj_review.commands.close_orphan import (
 )
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
-from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, build_github_client
 from jj_review.github.error_messages import (
     github_unavailable_message,
@@ -52,7 +49,7 @@ from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo, sel
 from jj_review.github.stack_comments import stack_comment_label
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
-from jj_review.models.intent import CloseIntent, LoadedIntent, SubmitIntent
+from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import (
     bookmark_ownership_for_source,
@@ -65,7 +62,6 @@ from jj_review.review.intents import (
     close_intent_mode_relation,
     describe_intent,
     match_close_intent,
-    retire_superseded_intents,
 )
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -88,7 +84,13 @@ from jj_review.review.submit_recovery import (
     observe_submit_artifacts,
     should_retire_submit_after_cleanup,
 )
-from jj_review.state.intents import check_same_kind_intent, write_new_intent
+from jj_review.state.journal import (
+    CloseOperationRecord,
+    LoadedOperationRecord,
+    OperationJournal,
+    append_abandoned_event,
+)
+from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
 from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 
@@ -127,6 +129,7 @@ class PreparedClose:
     config: RepoConfig
     dry_run: bool
     cleanup: bool
+    operation_lock: OperationLock
     prepared_status: PreparedStatus
 
 
@@ -159,12 +162,11 @@ class _CloseExecutionState:
 
 
 @dataclass(frozen=True, slots=True)
-class _CloseIntentState:
-    """Prepared close intent bookkeeping for resumable live runs."""
+class _CloseOperationState:
+    """Prepared close operation bookkeeping for resumable live runs."""
 
-    intent: CloseIntent | None
-    intent_path: Path | None
-    stale_close_intents: list[LoadedIntent]
+    journal: OperationJournal | None
+    stale_close_operations: list[LoadedOperationRecord]
     stale_submit_intents: list[LoadedIntent]
 
 
@@ -209,9 +211,10 @@ def close(
         revset=revset,
     )
     command = "close --cleanup" if options.cleanup else "close"
-    with mutating_command_lock(command=command, context=context):
+    with mutating_command_lock(command=command, context=context) as operation_lock:
         return _run_close(
             context=context,
+            operation_lock=operation_lock,
             options=options,
         )
 
@@ -219,6 +222,7 @@ def close(
 def _run_close(
     *,
     context: CommandContext,
+    operation_lock: OperationLock,
     options: CloseOptions,
 ) -> int:
     """Run close after CLI arguments have been normalized into options."""
@@ -256,8 +260,9 @@ def _run_close(
                         github_client_builder=build_github_client,
                         github_repo_parser=parse_github_repo,
                         jj_client=context.jj_client,
+                        operation_lock=operation_lock,
                         pull_request_number=pull_request_number,
-                        report_stale_close_intents=_report_stale_close_intents,
+                        report_stale_close_operations=_report_stale_close_operations,
                         retire_submit_intents_cleared_by_cleanup=(
                             _retire_submit_intents_cleared_by_cleanup
                         ),
@@ -303,6 +308,7 @@ def _run_close(
     with console.spinner(description="Inspecting jj stack"):
         prepared_close = prepare_close(
             context=context,
+            operation_lock=operation_lock,
             options=options,
             revset=resolved_revset,
         )
@@ -344,6 +350,7 @@ def _run_close(
 def prepare_close(
     *,
     context: CommandContext,
+    operation_lock: OperationLock,
     options: CloseOptions,
     revset: str | None,
 ) -> PreparedClose:
@@ -362,12 +369,14 @@ def prepare_close(
             config=context.config,
             dry_run=options.dry_run,
             cleanup=options.cleanup,
+            operation_lock=operation_lock,
             prepared_status=fast_path,
         )
     return PreparedClose(
         config=context.config,
         dry_run=options.dry_run,
         cleanup=options.cleanup,
+        operation_lock=operation_lock,
         prepared_status=prepare_status(
             config=context.config,
             fetch_remote_state=options.cleanup,
@@ -532,14 +541,13 @@ async def _stream_close_async(
 
     execution_state = _prepare_close_execution_state(prepared_close=prepared_close)
     completed = False
-    intent_state = _CloseIntentState(
-        intent=None,
-        intent_path=None,
-        stale_close_intents=[],
+    operation_state = _CloseOperationState(
+        journal=None,
+        stale_close_operations=[],
         stale_submit_intents=[],
     )
     try:
-        intent_state = _start_close_intent(
+        operation_state = _start_close_operation(
             prepared_close=prepared_close,
         )
 
@@ -584,17 +592,28 @@ async def _stream_close_async(
             prepared_close=prepared_close,
         )
     finally:
-        if completed and intent_state.intent_path is not None and intent_state.intent is not None:
-            retire_superseded_intents(intent_state.stale_close_intents, intent_state.intent)
+        if completed and operation_state.journal is not None:
+            completed_change_ids = tuple(
+                prepared_revision.revision.change_id
+                for prepared_revision in prepared_status.prepared.status_revisions
+            )
+            operation_state.journal.append(
+                "completed",
+                {"ordered_change_ids": completed_change_ids},
+            )
+            _retire_superseded_close_operations(
+                current_change_ids=completed_change_ids,
+                current_cleanup=prepared_close.cleanup,
+                stale_operations=operation_state.stale_close_operations,
+            )
             if prepared_close.cleanup and not recorder.blocked:
                 _retire_submit_intents_cleared_by_cleanup(
                     current_state=execution_state.current_state.model_copy(
                         update={"changes": execution_state.next_changes}
                     ),
                     jj_client=prepared_status.prepared.client,
-                    stale_submit_intents=intent_state.stale_submit_intents,
+                    stale_submit_intents=operation_state.stale_submit_intents,
                 )
-            intent_state.intent_path.unlink(missing_ok=True)
 
 
 def _retire_submit_intents_cleared_by_cleanup(
@@ -616,6 +635,29 @@ def _retire_submit_intents_cleared_by_cleanup(
             )
         ):
             loaded.path.unlink(missing_ok=True)
+
+
+def _retire_superseded_close_operations(
+    *,
+    current_change_ids: tuple[str, ...],
+    current_cleanup: bool,
+    stale_operations: list[LoadedOperationRecord],
+) -> None:
+    """Mark interrupted close journals terminal when a later close covered them."""
+
+    current_id_set = set(current_change_ids)
+    for loaded in stale_operations:
+        operation = loaded.operation
+        if not isinstance(operation, CloseOperationRecord):
+            continue
+        mode_relation = close_intent_mode_relation(
+            recorded_cleanup=operation.cleanup,
+            current_cleanup=current_cleanup,
+        )
+        if mode_relation == "incompatible":
+            continue
+        if set(operation.ordered_change_ids).issubset(current_id_set):
+            append_abandoned_event(loaded.path, reason="superseded_by_close")
 
 
 def _observe_submit_artifacts(
@@ -707,17 +749,16 @@ def _save_close_progress(
         )
 
 
-def _start_close_intent(
+def _start_close_operation(
     *,
     prepared_close: PreparedClose,
-) -> _CloseIntentState:
-    """Write close intent metadata for resumable live runs."""
+) -> _CloseOperationState:
+    """Write close operation journal metadata for resumable live runs."""
 
     if prepared_close.dry_run:
-        return _CloseIntentState(
-            intent=None,
-            intent_path=None,
-            stale_close_intents=[],
+        return _CloseOperationState(
+            journal=None,
+            stale_close_operations=[],
             stale_submit_intents=[],
         )
 
@@ -729,26 +770,16 @@ def _start_close_intent(
     )
     ordered_change_ids = tuple(revision.change_id for revision in ordered_revisions)
     ordered_commit_ids = tuple(revision.commit_id for revision in ordered_revisions)
-    intent = CloseIntent(
-        kind="close",
-        pid=os.getpid(),
-        label=(
-            ("close --cleanup" if prepared_close.cleanup else "close")
-            + f" for {short_change_id(ordered_change_ids[-1])} "
-            f"(from {prepared_status.selected_revset})"
-        ),
-        display_revset=prepared_status.selected_revset,
-        ordered_change_ids=ordered_change_ids,
-        ordered_commit_ids=ordered_commit_ids,
-        cleanup=prepared_close.cleanup,
-        started_at=datetime.now(UTC).isoformat(),
-    )
-    stale_close_intents = check_same_kind_intent(state_dir, intent)
-    _report_stale_close_intents(
+    stale_close_operations = [
+        loaded
+        for loaded in prepared_status.prepared.state_store.list_operations()
+        if isinstance(loaded.operation, CloseOperationRecord)
+    ]
+    _report_stale_close_operations(
         current_change_ids=ordered_change_ids,
         current_commit_ids=ordered_commit_ids,
         current_cleanup=prepared_close.cleanup,
-        stale_intents=stale_close_intents,
+        stale_intents=stale_close_operations,
     )
     stale_submit_intents = (
         [
@@ -759,33 +790,45 @@ def _start_close_intent(
         if prepared_close.cleanup
         else []
     )
-    return _CloseIntentState(
-        intent=intent,
-        intent_path=write_new_intent(state_dir, intent),
-        stale_close_intents=stale_close_intents,
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="close",
+        lock_holder=read_operation_lock_holder(state_dir),
+        options={"cleanup": prepared_close.cleanup},
+        resolved_scope={
+            "ordered_change_ids": ordered_change_ids,
+            "ordered_commit_ids": ordered_commit_ids,
+            "selected_revset": prepared_status.selected_revset,
+        },
+    )
+    prepared_close.operation_lock.record_journal_path(journal.path)
+    return _CloseOperationState(
+        journal=journal,
+        stale_close_operations=stale_close_operations,
         stale_submit_intents=stale_submit_intents,
     )
 
 
-def _report_stale_close_intents(
+def _report_stale_close_operations(
     *,
     current_change_ids: tuple[str, ...],
     current_commit_ids: tuple[str, ...],
     current_cleanup: bool,
-    stale_intents: list[LoadedIntent],
+    stale_intents: list[LoadedOperationRecord],
 ) -> None:
     """Render interrupted close diagnostics for live execution."""
 
     for loaded in stale_intents:
-        if not isinstance(loaded.intent, CloseIntent):
+        if not isinstance(loaded.operation, CloseOperationRecord):
             continue
+        operation = loaded.operation
         mode_relation = close_intent_mode_relation(
-            recorded_cleanup=loaded.intent.cleanup,
+            recorded_cleanup=operation.cleanup,
             current_cleanup=current_cleanup,
         )
         # mode-aware match: a recorded cleanup run is "disjoint" from a plain close
         match = match_close_intent(
-            intent=loaded.intent,
+            intent=operation,
             current_change_ids=current_change_ids,
             current_commit_ids=current_commit_ids,
             current_cleanup=current_cleanup,
@@ -793,11 +836,11 @@ def _report_stale_close_intents(
         # mode-blind stack match: used below to detect an incompatible-mode intent
         # whose stack still matches, so we can warn "plain close does not finish cleanup"
         stack_match = match_close_intent(
-            intent=loaded.intent,
+            intent=operation,
             current_change_ids=current_change_ids,
             current_commit_ids=current_commit_ids,
         )
-        description = describe_intent(loaded.intent)
+        description = describe_intent(operation)
         if mode_relation == "same" and match == "exact":
             console.note(f"Continuing interrupted {description}")
         elif mode_relation == "expanded" and match == "exact":
@@ -807,7 +850,7 @@ def _report_stale_close_intents(
             )
         elif (
             mode_relation == "incompatible"
-            and loaded.intent.cleanup
+            and operation.cleanup
             and not current_cleanup
             and stack_match in {"exact", "same-logical", "covered"}
         ):

@@ -31,10 +31,7 @@ from jj_review.github.error_messages import (
     remote_unavailable_message,
 )
 from jj_review.jj import JjCliArgs, JjClient, UnsupportedStackError
-from jj_review.models.intent import (
-    CloseIntent,
-    SubmitIntent,
-)
+from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
@@ -70,6 +67,7 @@ from jj_review.review.submit_recovery import (
 from jj_review.state.journal import (
     CleanupOperationRecord,
     CleanupRebaseOperationRecord,
+    CloseOperationRecord,
     LandOperationRecord,
     RelinkOperationRecord,
 )
@@ -1056,7 +1054,7 @@ def _interrupted_intent_blocks_status(*, loaded, prepared_status) -> bool:
             == "overlap"
         )
 
-    if isinstance(loaded.intent, CloseIntent):
+    if isinstance(loaded.intent, CloseOperationRecord):
         return (
             match_close_intent(
                 intent=loaded.intent,
@@ -1094,7 +1092,7 @@ def _render_interrupted_intent_block(
             intent=intent,
             prepared_status=prepared_status,
         )
-    elif isinstance(intent, CleanupRebaseOperationRecord | CloseIntent):
+    elif isinstance(intent, CleanupRebaseOperationRecord | CloseOperationRecord):
         detail_lines = _interrupted_ordered_detail_lines(
             intent=intent,
             match=_match_ordered_intent(
@@ -1221,7 +1219,9 @@ def _recorded_stack_head_visible(*, intent: SubmitIntent, prepared_status) -> bo
 
 
 def _intent_rerun_command(
-    intent: SubmitIntent | CleanupRebaseOperationRecord | CloseIntent | LandOperationRecord,
+    intent: (
+        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord
+    ),
 ) -> str:
     if isinstance(intent, SubmitIntent):
         return "submit"
@@ -1234,7 +1234,7 @@ def _intent_rerun_command(
 
 def _match_ordered_intent(
     *,
-    intent: CleanupRebaseOperationRecord | CloseIntent,
+    intent: CleanupRebaseOperationRecord | CloseOperationRecord,
     prepared_status,
 ) -> SubmitIntentMatch:
     current_change_ids = tuple(
@@ -1289,7 +1289,7 @@ def _match_land_intent(
 def _interrupted_ordered_detail_lines(
     *,
     match: SubmitIntentMatch,
-    intent: CleanupRebaseOperationRecord | CloseIntent | LandOperationRecord,
+    intent: CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
 ) -> tuple[object, ...]:
     resume_command = _render_resume_command(intent)
 
@@ -1341,7 +1341,9 @@ def _interrupted_ordered_detail_lines(
 
 
 def _render_resume_command(
-    intent: SubmitIntent | CleanupRebaseOperationRecord | CloseIntent | LandOperationRecord,
+    intent: (
+        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord
+    ),
 ) -> ui.SemanticText:
     selector = _intent_selector(intent)
     command = f"jj-review {_intent_rerun_command(intent)}"
@@ -1361,7 +1363,7 @@ def _render_status_command(intent) -> ui.SemanticText:
 def _intent_selector(intent) -> str | None:
     if isinstance(
         intent,
-        SubmitIntent | CleanupRebaseOperationRecord | CloseIntent | LandOperationRecord,
+        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
     ):
         if intent.ordered_change_ids:
             return short_change_id(intent.ordered_change_ids[-1])
@@ -1374,7 +1376,7 @@ def _render_interrupted_intent_header(intent) -> object:
     started = _render_started_at(intent)
     if isinstance(
         intent,
-        SubmitIntent | CleanupRebaseOperationRecord | CloseIntent | LandOperationRecord,
+        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
     ):
         return (
             _render_intent_command(intent),
@@ -1401,7 +1403,7 @@ def _render_intent_command(intent) -> object:
         return ui.cmd("submit")
     if isinstance(intent, CleanupRebaseOperationRecord):
         return ui.cmd("cleanup --rebase")
-    if isinstance(intent, CloseIntent):
+    if isinstance(intent, CloseOperationRecord):
         return ui.cmd("close --cleanup" if intent.cleanup else "close")
     if isinstance(intent, LandOperationRecord):
         return ui.cmd("land")
@@ -1413,7 +1415,9 @@ def _render_intent_command(intent) -> object:
 
 
 def _render_recorded_stack_head(
-    intent: SubmitIntent | CleanupRebaseOperationRecord | CloseIntent | LandOperationRecord,
+    intent: (
+        SubmitIntent | CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord
+    ),
 ) -> object:
     if not intent.ordered_change_ids:
         return "stack"

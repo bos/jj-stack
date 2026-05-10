@@ -10,6 +10,7 @@ from jj_review.state.journal import (
     MIN_RETAINED_JOURNALS,
     CleanupOperationRecord,
     CleanupRebaseOperationRecord,
+    CloseOperationRecord,
     LandOperationRecord,
     OperationJournal,
     append_abandoned_event,
@@ -199,6 +200,31 @@ def test_scan_incomplete_operation_records_loads_cleanup_rebase_scope(
     assert loaded.operation.ordered_change_ids == ("change-1", "change-2")
     assert loaded.operation.ordered_commit_ids == ("commit-1", "commit-2")
     assert loaded.operation.change_ids() == frozenset({"change-1", "change-2"})
+
+
+def test_scan_incomplete_operation_records_loads_close_scope(
+    tmp_path: Path,
+) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="close",
+        lock_holder=None,
+        options={"cleanup": True},
+        resolved_scope={
+            "ordered_change_ids": ("change-1", "change-2"),
+            "ordered_commit_ids": ("commit-1", "commit-2"),
+            "selected_revset": "@-",
+        },
+    )
+
+    [loaded] = scan_incomplete_operation_records(tmp_path)
+
+    assert loaded.path == journal.path
+    assert isinstance(loaded.operation, CloseOperationRecord)
+    assert loaded.operation.display_revset == "@-"
+    assert loaded.operation.cleanup is True
+    assert loaded.operation.ordered_change_ids == ("change-1", "change-2")
+    assert loaded.operation.ordered_commit_ids == ("commit-1", "commit-2")
 
 
 def test_prune_operation_journals_keeps_recent_files_and_minimum_count(

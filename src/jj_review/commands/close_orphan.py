@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Literal
 
 from jj_review import console, ui
@@ -22,7 +19,6 @@ from jj_review.commands._close_actions import (
 )
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
-from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.error_messages import (
     github_unavailable_message,
@@ -37,11 +33,17 @@ from jj_review.github.stack_comments import StackCommentKind, stack_comment_labe
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
-from jj_review.models.intent import CloseIntent, LoadedIntent, SubmitIntent
+from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import find_changes_by_bookmark, is_review_bookmark
-from jj_review.review.intents import close_intent_mode_relation, retire_superseded_intents
-from jj_review.state.intents import check_same_kind_intent, write_new_intent
+from jj_review.review.intents import close_intent_mode_relation
+from jj_review.state.journal import (
+    CloseOperationRecord,
+    LoadedOperationRecord,
+    OperationJournal,
+    append_abandoned_event,
+)
+from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
 from jj_review.state.store import ReviewStateStore
 from jj_review.system import pid_is_alive
 from jj_review.ui import Message, plain_text
@@ -49,7 +51,7 @@ from jj_review.ui import Message, plain_text
 OrphanedPullRequestState = Literal["closed", "open"]
 GithubClientBuilder = Callable[..., Any]
 GithubRepoParser = Callable[[GitRemote], ParsedGithubRepo | None]
-ReportStaleCloseIntents = Callable[..., None]
+ReportStaleCloseOperations = Callable[..., None]
 RetireSubmitIntentsClearedByCleanup = Callable[..., None]
 
 
@@ -86,12 +88,11 @@ class _OrphanActionRecorder:
 
 
 @dataclass(frozen=True, slots=True)
-class _OrphanCloseIntentState:
-    """Prepared close intent bookkeeping for resumable orphan cleanup runs."""
+class _OrphanCloseOperationState:
+    """Prepared close operation bookkeeping for resumable orphan cleanup runs."""
 
-    intent: CloseIntent | None
-    intent_path: Path | None
-    stale_close_intents: list[LoadedIntent]
+    journal: OperationJournal | None
+    stale_close_operations: list[LoadedOperationRecord]
     stale_submit_intents: list[LoadedIntent]
 
 
@@ -202,50 +203,40 @@ def _retire_pull_request_close_intents(
     pull_request_number: int,
     state_store: ReviewStateStore,
 ) -> None:
-    """Retire stale close intents recorded for a now-closed PR selector."""
+    """Retire stale close journals recorded for a now-closed PR selector."""
 
     display_revset = f"--pull-request {pull_request_number}"
-    state_dir = state_store.require_writable()
-    probe_intent = CloseIntent(
-        kind="close",
-        pid=os.getpid(),
-        label=f"close --cleanup for PR #{pull_request_number}",
-        display_revset=display_revset,
-        ordered_change_ids=(),
-        ordered_commit_ids=(),
-        cleanup=True,
-        started_at=datetime.now(UTC).isoformat(),
-    )
-    stale_close_intents: list[tuple[LoadedIntent, CloseIntent]] = []
-    for loaded in check_same_kind_intent(state_dir, probe_intent):
-        intent = loaded.intent
-        if isinstance(intent, CloseIntent):
-            stale_close_intents.append((loaded, intent))
-    pr_selector_intents = [
-        intent
-        for _loaded, intent in stale_close_intents
-        if intent.display_revset == display_revset
+    state_store.require_writable()
+    stale_close_operations: list[tuple[LoadedOperationRecord, CloseOperationRecord]] = []
+    for loaded in state_store.list_operations():
+        operation = loaded.operation
+        if isinstance(operation, CloseOperationRecord):
+            stale_close_operations.append((loaded, operation))
+    pr_selector_operations = [
+        operation
+        for _loaded, operation in stale_close_operations
+        if operation.display_revset == display_revset
     ]
     covered_change_ids = {
         change_id
-        for intent in pr_selector_intents
-        for change_id in intent.ordered_change_ids
+        for operation in pr_selector_operations
+        for change_id in operation.ordered_change_ids
     }
-    for loaded, intent in stale_close_intents:
-        recorded_change_ids = set(intent.ordered_change_ids)
-        matches_pr_selector = intent.display_revset == display_revset
+    for loaded, operation in stale_close_operations:
+        recorded_change_ids = set(operation.ordered_change_ids)
+        matches_pr_selector = operation.display_revset == display_revset
         covered_by_pr_selector = (
             bool(recorded_change_ids)
             and recorded_change_ids.issubset(covered_change_ids)
             and close_intent_mode_relation(
-                recorded_cleanup=intent.cleanup,
+                recorded_cleanup=operation.cleanup,
                 current_cleanup=True,
             )
             != "incompatible"
         )
         if not matches_pr_selector and not covered_by_pr_selector:
             continue
-        loaded.path.unlink(missing_ok=True)
+        append_abandoned_event(loaded.path, reason="superseded_by_close")
 
 
 async def run_orphan_close(
@@ -256,8 +247,9 @@ async def run_orphan_close(
     github_client_builder: GithubClientBuilder,
     github_repo_parser: GithubRepoParser,
     jj_client: JjClient,
+    operation_lock: OperationLock,
     pull_request_number: int,
-    report_stale_close_intents: ReportStaleCloseIntents,
+    report_stale_close_operations: ReportStaleCloseOperations,
     retire_submit_intents_cleared_by_cleanup: RetireSubmitIntentsClearedByCleanup,
     state: ReviewState,
     state_store: ReviewStateStore,
@@ -323,19 +315,19 @@ async def run_orphan_close(
     recorder = _OrphanActionRecorder(actions=[])
     completed = False
     final_state: ReviewState | None = None
-    intent_state = _OrphanCloseIntentState(
-        intent=None,
-        intent_path=None,
-        stale_close_intents=[],
+    operation_state = _OrphanCloseOperationState(
+        journal=None,
+        stale_close_operations=[],
         stale_submit_intents=[],
     )
     try:
-        intent_state = _start_orphan_close_intent(
+        operation_state = _start_orphan_close_operation(
             cached_change=cached_change,
             change_id=change_id,
             dry_run=dry_run,
+            operation_lock=operation_lock,
             pull_request_number=pull_request_number,
-            report_stale_close_intents=report_stale_close_intents,
+            report_stale_close_operations=report_stale_close_operations,
             state_store=state_store,
         )
 
@@ -453,15 +445,21 @@ async def run_orphan_close(
             dry_run=dry_run,
         )
     finally:
-        if completed and intent_state.intent_path is not None and intent_state.intent is not None:
-            retire_superseded_intents(intent_state.stale_close_intents, intent_state.intent)
+        if completed and operation_state.journal is not None:
+            operation_state.journal.append(
+                "completed",
+                {"ordered_change_ids": (change_id,)},
+            )
+            _retire_superseded_orphan_close_operations(
+                current_change_ids=(change_id,),
+                stale_operations=operation_state.stale_close_operations,
+            )
             if not recorder.blocked and final_state is not None:
                 retire_submit_intents_cleared_by_cleanup(
                     current_state=final_state,
                     jj_client=jj_client,
-                    stale_submit_intents=intent_state.stale_submit_intents,
+                    stale_submit_intents=operation_state.stale_submit_intents,
                 )
-            intent_state.intent_path.unlink(missing_ok=True)
 
 
 def _orphan_should_cleanup_bookmark(
@@ -474,6 +472,30 @@ def _orphan_should_cleanup_bookmark(
     if cached_change.manages_bookmark:
         return is_review_bookmark(bookmark, prefix=prefix)
     return cleanup_user_bookmarks
+
+
+def _retire_superseded_orphan_close_operations(
+    *,
+    current_change_ids: tuple[str, ...],
+    stale_operations: list[LoadedOperationRecord],
+) -> None:
+    """Mark interrupted close journals terminal after orphan cleanup covers them."""
+
+    current_id_set = set(current_change_ids)
+    for loaded in stale_operations:
+        operation = loaded.operation
+        if not isinstance(operation, CloseOperationRecord):
+            continue
+        if (
+            close_intent_mode_relation(
+                recorded_cleanup=operation.cleanup,
+                current_cleanup=True,
+            )
+            == "incompatible"
+        ):
+            continue
+        if set(operation.ordered_change_ids).issubset(current_id_set):
+            append_abandoned_event(loaded.path, reason="superseded_by_close")
 
 
 def _render_orphan_close_actions(
@@ -791,22 +813,22 @@ def _blocked_orphaned_close_github_action() -> CloseAction:
     )
 
 
-def _start_orphan_close_intent(
+def _start_orphan_close_operation(
     *,
     cached_change: CachedChange,
     change_id: str,
     dry_run: bool,
+    operation_lock: OperationLock,
     pull_request_number: int,
-    report_stale_close_intents: ReportStaleCloseIntents,
+    report_stale_close_operations: ReportStaleCloseOperations,
     state_store: ReviewStateStore,
-) -> _OrphanCloseIntentState:
-    """Write close intent metadata for resumable orphan cleanup runs."""
+) -> _OrphanCloseOperationState:
+    """Write close operation journal metadata for resumable orphan cleanup runs."""
 
     if dry_run:
-        return _OrphanCloseIntentState(
-            intent=None,
-            intent_path=None,
-            stale_close_intents=[],
+        return _OrphanCloseOperationState(
+            journal=None,
+            stale_close_operations=[],
             stale_submit_intents=[],
         )
 
@@ -817,34 +839,39 @@ def _start_orphan_close_intent(
         if cached_change.last_submitted_commit_id is not None
         else ()
     )
-    intent = CloseIntent(
-        kind="close",
-        pid=os.getpid(),
-        label=(
-            f"close --cleanup for {short_change_id(change_id)} "
-            f"(from --pull-request {pull_request_number})"
-        ),
-        display_revset=f"--pull-request {pull_request_number}",
-        ordered_change_ids=ordered_change_ids,
-        ordered_commit_ids=ordered_commit_ids,
-        cleanup=True,
-        started_at=datetime.now(UTC).isoformat(),
-    )
-    stale_close_intents = check_same_kind_intent(state_dir, intent)
-    report_stale_close_intents(
+    stale_close_operations = [
+        loaded
+        for loaded in state_store.list_operations()
+        if isinstance(loaded.operation, CloseOperationRecord)
+    ]
+    report_stale_close_operations(
         current_change_ids=ordered_change_ids,
         current_commit_ids=ordered_commit_ids,
         current_cleanup=True,
-        stale_intents=stale_close_intents,
+        stale_intents=stale_close_operations,
     )
     stale_submit_intents = [
         loaded
         for loaded in state_store.list_intents()
         if isinstance(loaded.intent, SubmitIntent) and not pid_is_alive(loaded.intent.pid)
     ]
-    return _OrphanCloseIntentState(
-        intent=intent,
-        intent_path=write_new_intent(state_dir, intent),
-        stale_close_intents=stale_close_intents,
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="close",
+        lock_holder=read_operation_lock_holder(state_dir),
+        options={
+            "cleanup": True,
+            "pull_request_number": pull_request_number,
+        },
+        resolved_scope={
+            "ordered_change_ids": ordered_change_ids,
+            "ordered_commit_ids": ordered_commit_ids,
+            "selected_revset": f"--pull-request {pull_request_number}",
+        },
+    )
+    operation_lock.record_journal_path(journal.path)
+    return _OrphanCloseOperationState(
+        journal=journal,
+        stale_close_operations=stale_close_operations,
         stale_submit_intents=stale_submit_intents,
     )

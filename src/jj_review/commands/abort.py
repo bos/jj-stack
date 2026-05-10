@@ -26,11 +26,7 @@ from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo
 from jj_review.jj import JjCliArgs, JjClient, JjCommandError
-from jj_review.models.intent import (
-    CloseIntent,
-    LoadedIntent,
-    SubmitIntent,
-)
+from jj_review.models.intent import LoadedIntent, SubmitIntent
 from jj_review.models.review_state import CachedChange
 from jj_review.review.intents import (
     describe_intent,
@@ -40,6 +36,7 @@ from jj_review.review.submit_recovery import recorded_submit_still_exists_exactl
 from jj_review.state.journal import (
     CleanupOperationRecord,
     CleanupRebaseOperationRecord,
+    CloseOperationRecord,
     LandOperationRecord,
     LoadedOperationRecord,
     RelinkOperationRecord,
@@ -231,7 +228,7 @@ def _non_submit_note(intent) -> Message | None:
         return t"Rebase changes to local jj history cannot be automatically reversed. " \
             t"The interrupted-operation notice will be cleared. Inspect with " \
             t"{ui.cmd('jj log')} and repair manually if needed."
-    if isinstance(intent, CloseIntent):
+    if isinstance(intent, CloseOperationRecord):
         return t"Close operations cannot be automatically reversed here. " \
             t"The interrupted-operation notice will be cleared. Run {ui.cmd('status')} " \
             t"to inspect which pull requests were closed, and reopen them on GitHub " \

@@ -7,9 +7,10 @@ from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
 from jj_review.jj import JjClient
-from jj_review.models.intent import CloseIntent, SubmitIntent
+from jj_review.models.intent import SubmitIntent
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.intents import write_new_intent
+from jj_review.state.journal import OperationJournal, read_journal
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
@@ -36,6 +37,27 @@ from .submit_command_helpers import (
 
 def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
+
+
+def _begin_close_journal(
+    state_dir: Path,
+    *,
+    cleanup: bool,
+    display_revset: str,
+    ordered_change_ids: tuple[str, ...],
+    ordered_commit_ids: tuple[str, ...],
+) -> OperationJournal:
+    return OperationJournal.begin(
+        state_dir,
+        operation="close",
+        lock_holder=None,
+        options={"cleanup": cleanup},
+        resolved_scope={
+            "ordered_change_ids": ordered_change_ids,
+            "ordered_commit_ids": ordered_commit_ids,
+            "selected_revset": display_revset,
+        },
+    )
 
 
 def test_close_apply_closes_pull_request_and_retires_active_state(
@@ -179,18 +201,12 @@ def test_close_noop_short_circuit_retires_covered_interrupted_close_intent(
 
     revision = JjClient(repo).discover_review_stack().revisions[-1]
     state_dir = resolve_state_path(repo).parent
-    old_intent_path = write_new_intent(
+    old_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label="close on @",
-            display_revset="@",
-            ordered_change_ids=(revision.change_id,),
-            ordered_commit_ids=(revision.commit_id,),
-            cleanup=False,
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        cleanup=False,
+        display_revset="@",
+        ordered_change_ids=(revision.change_id,),
+        ordered_commit_ids=(revision.commit_id,),
     )
 
     exit_code = run_main(repo, config_path, "close")
@@ -201,7 +217,7 @@ def test_close_noop_short_circuit_retires_covered_interrupted_close_intent(
         "Nothing to close on the selected stack."
         in captured.out
     )
-    assert not old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
     assert list(state_dir.glob("incomplete-*.json")) == []
 
 
@@ -507,31 +523,19 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
 
     state_dir = state_store.require_writable()
-    stale_intent_path = write_new_intent(
+    stale_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label=f"close --cleanup for {bottom_change_id[:8]}",
-            display_revset=f"--pull-request {bottom_pr_number}",
-            ordered_change_ids=(bottom_change_id,),
-            ordered_commit_ids=(last_target,),
-            cleanup=True,
-            started_at=datetime.now(UTC).isoformat(),
-        ),
+        cleanup=True,
+        display_revset=f"--pull-request {bottom_pr_number}",
+        ordered_change_ids=(bottom_change_id,),
+        ordered_commit_ids=(last_target,),
     )
-    stale_plain_intent_path = write_new_intent(
+    stale_plain_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label=f"close for {bottom_change_id[:8]}",
-            display_revset=bottom_change_id,
-            ordered_change_ids=(bottom_change_id,),
-            ordered_commit_ids=(last_target,),
-            cleanup=False,
-            started_at=datetime.now(UTC).isoformat(),
-        ),
+        cleanup=False,
+        display_revset=bottom_change_id,
+        ordered_change_ids=(bottom_change_id,),
+        ordered_commit_ids=(last_target,),
     )
 
     rerun_exit_code = run_main(
@@ -547,8 +551,8 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     assert rerun_exit_code == 0
     assert f"Nothing to close for PR #{bottom_pr_number}." in rerun_captured.out
     assert "not linked" not in _combined_output(rerun_captured)
-    assert not stale_intent_path.exists()
-    assert not stale_plain_intent_path.exists()
+    assert read_journal(stale_journal.path)[-1].event == "abandoned"
+    assert read_journal(stale_plain_journal.path)[-1].event == "abandoned"
     assert list(state_dir.glob("incomplete-*.json")) == []
 
 
@@ -579,31 +583,19 @@ def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
     fake_repo.pull_requests[bottom_pr_number].state = "closed"
 
     state_dir = state_store.require_writable()
-    cleanup_intent_path = write_new_intent(
+    cleanup_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label=f"close --cleanup for {bottom_change_id[:8]}",
-            display_revset=f"--pull-request {bottom_pr_number}",
-            ordered_change_ids=(bottom_change_id,),
-            ordered_commit_ids=(last_target,),
-            cleanup=True,
-            started_at=datetime.now(UTC).isoformat(),
-        ),
+        cleanup=True,
+        display_revset=f"--pull-request {bottom_pr_number}",
+        ordered_change_ids=(bottom_change_id,),
+        ordered_commit_ids=(last_target,),
     )
-    plain_intent_path = write_new_intent(
+    plain_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label=f"close for {bottom_change_id[:8]}",
-            display_revset=f"--pull-request {bottom_pr_number}",
-            ordered_change_ids=(bottom_change_id,),
-            ordered_commit_ids=(last_target,),
-            cleanup=False,
-            started_at=datetime.now(UTC).isoformat(),
-        ),
+        cleanup=False,
+        display_revset=f"--pull-request {bottom_pr_number}",
+        ordered_change_ids=(bottom_change_id,),
+        ordered_commit_ids=(last_target,),
     )
 
     exit_code = run_main(
@@ -623,8 +615,8 @@ def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
     assert "prune orphan record" in captured.out
     assert bottom_change_id not in state_store.load().changes
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
-    assert not cleanup_intent_path.exists()
-    assert not plain_intent_path.exists()
+    assert read_journal(cleanup_journal.path)[-1].event == "abandoned"
+    assert read_journal(plain_journal.path)[-1].event == "abandoned"
     assert list(state_dir.glob("incomplete-*.json")) == []
 
 
@@ -1645,25 +1637,19 @@ def test_close_retires_covered_interrupted_close_intent(
     stack = JjClient(repo).discover_review_stack()
     first = stack.revisions[0]
     state_dir = resolve_state_path(repo).parent
-    old_intent_path = write_new_intent(
+    old_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label="close on @",
-            display_revset="@",
-            ordered_change_ids=(first.change_id,),
-            ordered_commit_ids=(first.commit_id,),
-            cleanup=False,
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        cleanup=False,
+        display_revset="@",
+        ordered_change_ids=(first.change_id,),
+        ordered_commit_ids=(first.commit_id,),
     )
 
     exit_code = run_main(repo, config_path, "close")
     capsys.readouterr()
 
     assert exit_code == 0
-    assert not old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
     assert list(state_dir.glob("incomplete-*.json")) == []
 
 
@@ -1684,25 +1670,19 @@ def test_close_continues_exact_interrupted_close_on_multi_revision_stack(
     first = stack.revisions[0]
     second = stack.revisions[1]
     state_dir = resolve_state_path(repo).parent
-    old_intent_path = write_new_intent(
+    old_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label="close on @",
-            display_revset="@",
-            ordered_change_ids=(first.change_id, second.change_id),
-            ordered_commit_ids=(first.commit_id, second.commit_id),
-            cleanup=False,
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        cleanup=False,
+        display_revset="@",
+        ordered_change_ids=(first.change_id, second.change_id),
+        ordered_commit_ids=(first.commit_id, second.commit_id),
     )
 
     exit_code = run_main(repo, config_path, "close")
     capsys.readouterr()
 
     assert exit_code == 0
-    assert not old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
 
 
 def test_close_does_not_resume_or_retire_interrupted_cleanup_close(
@@ -1716,25 +1696,19 @@ def test_close_does_not_resume_or_retire_interrupted_cleanup_close(
     stack = JjClient(repo).discover_review_stack()
     revision = stack.revisions[-1]
     state_dir = resolve_state_path(repo).parent
-    old_intent_path = write_new_intent(
+    old_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label="close --cleanup on @",
-            display_revset="@",
-            ordered_change_ids=(revision.change_id,),
-            ordered_commit_ids=(revision.commit_id,),
-            cleanup=True,
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        cleanup=True,
+        display_revset="@",
+        ordered_change_ids=(revision.change_id,),
+        ordered_commit_ids=(revision.commit_id,),
     )
 
     exit_code = run_main(repo, config_path, "close")
     capsys.readouterr()
 
     assert exit_code == 0
-    assert old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "begin"
 
 
 def test_cleanup_close_supersedes_plain_interrupted_close(
@@ -1748,25 +1722,19 @@ def test_cleanup_close_supersedes_plain_interrupted_close(
     stack = JjClient(repo).discover_review_stack()
     revision = stack.revisions[-1]
     state_dir = resolve_state_path(repo).parent
-    old_intent_path = write_new_intent(
+    old_journal = _begin_close_journal(
         state_dir,
-        CloseIntent(
-            kind="close",
-            pid=99999999,
-            label="close on @",
-            display_revset="@",
-            ordered_change_ids=(revision.change_id,),
-            ordered_commit_ids=(revision.commit_id,),
-            cleanup=False,
-            started_at="2026-01-01T00:00:00+00:00",
-        ),
+        cleanup=False,
+        display_revset="@",
+        ordered_change_ids=(revision.change_id,),
+        ordered_commit_ids=(revision.commit_id,),
     )
 
     exit_code = run_main(repo, config_path, "close", "--cleanup")
     capsys.readouterr()
 
     assert exit_code == 0
-    assert not old_intent_path.exists()
+    assert read_journal(old_journal.path)[-1].event == "abandoned"
 
 
 def test_cleanup_close_retires_covered_interrupted_submit(

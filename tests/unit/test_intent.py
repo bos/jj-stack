@@ -7,24 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.models.intent import (
-    CloseIntent,
-    LoadedIntent,
-    SubmitIntent,
-)
+from jj_review.models.intent import SubmitIntent
 from jj_review.review.intents import (
     intent_is_stale,
     match_cleanup_rebase_intent,
     match_close_intent,
     match_ordered_change_ids,
-    retire_superseded_intents,
 )
 from jj_review.state.intents import (
     check_same_kind_intent,
     scan_intents,
     write_new_intent,
 )
-from jj_review.state.journal import CleanupRebaseOperationRecord
+from jj_review.state.journal import CleanupRebaseOperationRecord, CloseOperationRecord
 from jj_review.system import pid_is_alive
 
 # ---------------------------------------------------------------------------
@@ -68,13 +63,14 @@ def _make_cleanup_rebase_operation(
     )
 
 
-def _make_close_intent(
+def _make_close_operation(
     ordered_change_ids: tuple[str, ...] = ("aaaa", "bbbb"),
     cleanup: bool = False,
     pid: int = 12345,
-) -> CloseIntent:
-    return CloseIntent(
+) -> CloseOperationRecord:
+    return CloseOperationRecord(
         kind="close",
+        path=Path("close.jsonl"),
         pid=pid,
         label="close on @",
         display_revset="@",
@@ -92,10 +88,9 @@ def _make_close_intent(
 
 @pytest.mark.parametrize(
     ("intent_factory", "test_id"),
-        [
-            (_make_submit_intent, "submit"),
-            (lambda: _make_close_intent(cleanup=True), "close"),
-        ],
+    [
+        (_make_submit_intent, "submit"),
+    ],
     ids=lambda value: value if isinstance(value, str) else None,
 )
 def test_write_intent_round_trips_supported_intent_kinds(
@@ -188,39 +183,13 @@ def test_match_cleanup_rebase_intent_returns_trimmed_for_shrunk_current_stack() 
 def test_match_close_intent_returns_disjoint_when_cleanup_mode_differs() -> None:
     assert (
         match_close_intent(
-            intent=_make_close_intent(cleanup=True),
+            intent=_make_close_operation(cleanup=True),
             current_change_ids=("aaaa", "bbbb"),
             current_commit_ids=("commit-aaaa", "commit-bbbb"),
             current_cleanup=False,
         )
         == "disjoint"
     )
-
-
-def test_retire_superseded_intents_keeps_close_intent_when_cleanup_mode_differs(
-    tmp_path: Path,
-) -> None:
-    old = _make_close_intent(("aaaa", "bbbb"), cleanup=True)
-    path = write_new_intent(tmp_path, old)
-    loaded = LoadedIntent(path=path, intent=old)
-    new = _make_close_intent(("aaaa", "bbbb"), cleanup=False)
-
-    retire_superseded_intents([loaded], new)
-
-    assert path.exists()
-
-
-def test_retire_superseded_intents_retires_plain_close_when_cleanup_close_covers_it(
-    tmp_path: Path,
-) -> None:
-    old = _make_close_intent(("aaaa", "bbbb"), cleanup=False)
-    path = write_new_intent(tmp_path, old)
-    loaded = LoadedIntent(path=path, intent=old)
-    new = _make_close_intent(("aaaa", "bbbb"), cleanup=True)
-
-    retire_superseded_intents([loaded], new)
-
-    assert not path.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -280,22 +249,6 @@ def test_check_same_kind_intent_returns_stale_dead_pid_intents(
 
     assert len(result) == 1
     assert result[0].intent == old_intent
-
-
-def test_check_same_kind_intent_ignores_different_kind(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("jj_review.system.pid_is_alive", lambda pid: False)
-    # Write a close intent (different kind)
-    close_intent = _make_close_intent(pid=99999999)
-    write_new_intent(tmp_path, close_intent)
-
-    # Check for submit kind — should return nothing
-    new_submit_intent = _make_submit_intent()
-    result = check_same_kind_intent(tmp_path, new_submit_intent)
-
-    assert result == []
 
 
 def test_check_same_kind_intent_reports_live_same_kind_intent_without_waiting(
