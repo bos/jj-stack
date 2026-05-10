@@ -21,6 +21,7 @@ from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange
 from jj_review.review.bookmarks import is_review_bookmark
+from jj_review.review.change_status import classify_review_change
 from jj_review.ui import Message, plain_text
 
 CloseActionStatus = Literal["applied", "blocked", "planned"]
@@ -262,8 +263,15 @@ def plan_bookmark_cleanup(
         local_forget = True
 
     remote_state = bookmark_state.remote_target(remote_name) if remote_name is not None else None
-    if remote_state is not None and commit_id is not None:
-        if len(remote_state.targets) > 1:
+    if commit_id is not None:
+        review_status = classify_review_change(
+            cached_change=cached_change,
+            commit_id=commit_id,
+            local="orphaned",
+            pull_request_lookup=None,
+            remote_state=remote_state,
+        )
+        if review_status.remote_branch == "conflicted":
             record_action(
                 CloseAction(
                     kind="remote branch",
@@ -273,7 +281,10 @@ def plan_bookmark_cleanup(
                 )
             )
             remote_conflict = True
-        elif remote_state.target != commit_id:
+        elif (
+            review_status.remote_branch != "absent"
+            and review_status.remote_branch_matches_commit is not True
+        ):
             record_action(
                 CloseAction(
                     kind="remote branch",
@@ -283,7 +294,7 @@ def plan_bookmark_cleanup(
                 )
             )
             remote_conflict = True
-        else:
+        elif review_status.remote_branch_matches_commit is True:
             remote_delete = True
 
     if local_conflict:
