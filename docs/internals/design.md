@@ -269,6 +269,13 @@ tool-specific file into the workspace.
 Reads treat a missing state file as empty state. Writes create the parent directory on
 demand and only fail if the filesystem refuses.
 
+Mutating commands take a repo-scoped advisory operation lock in that same state
+directory before reading or writing recovery state. The lock serializes cross-command
+mutation; its companion file records the owning command, PID, start time, and optional
+operation-record path for diagnostics. `list` and `doctor` do not take the lock.
+`status` does not lock for live inspection, but it tries the lock around its best-effort
+cache write and skips that write with a diagnostic if another operation is running.
+
 ## Submission algorithm
 
 Given a chosen head revision:

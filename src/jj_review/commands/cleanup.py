@@ -28,6 +28,7 @@ from typing import Literal
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._close_actions import comment_matches_kind as _comment_matches_kind
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
@@ -274,16 +275,18 @@ def cleanup(
         debug=debug,
     )
     options = CleanupOptions(dry_run=dry_run, rebase_revset=rebase_revset)
-    if options.rebase_revset is not None:
-        return _run_cleanup_rebase_command(
+    command = "cleanup --rebase" if options.rebase_revset is not None else "cleanup"
+    with mutating_command_lock(command=command, context=context):
+        if options.rebase_revset is not None:
+            return _run_cleanup_rebase_command(
+                context=context,
+                options=options,
+            )
+
+        return _run_cleanup_command(
             context=context,
             options=options,
         )
-
-    return _run_cleanup_command(
-        context=context,
-        options=options,
-    )
 
 
 def _run_cleanup_rebase_command(

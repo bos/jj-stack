@@ -258,6 +258,92 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
     assert result.revisions == local_only_revisions
 
 
+def test_stream_status_skips_cache_update_when_operation_lock_is_busy(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    remote = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
+    status_revision = ReviewStatusRevision(
+        bookmark="review/feature-1-aaaaaaaa",
+        bookmark_source="generated",
+        cached_change=CachedChange(bookmark="review/feature-1-aaaaaaaa", pr_number=1),
+        change_id="aaaaaaaaaaaa",
+        commit_id="commit-1",
+        link_state="active",
+        local_divergent=False,
+        pull_request_lookup=None,
+        remote_state=None,
+        managed_comments_lookup=None,
+        subject="feature 1",
+    )
+    saved_states: list[ReviewState] = []
+    prepared_status = PreparedStatus(
+        github_repository=ParsedGithubRepo(
+            host="github.com",
+            owner="octo-org",
+            repo="stacked-review",
+        ),
+        github_repository_error=None,
+        outstanding_intents=(),
+        prepared=cast(
+            PreparedStack,
+            SimpleNamespace(
+                remote=remote,
+                remote_error=None,
+                stack=SimpleNamespace(revisions=()),
+                state=ReviewState(),
+                state_store=SimpleNamespace(
+                    require_writable=lambda: tmp_path,
+                    save=lambda state: saved_states.append(state),
+                ),
+                status_revisions=(
+                    SimpleNamespace(
+                        bookmark="review/feature-1-aaaaaaaa",
+                        bookmark_source="generated",
+                        cached_change=CachedChange(pr_number=1),
+                        revision=SimpleNamespace(
+                            change_id="aaaaaaaaaaaa",
+                            commit_id="commit-1",
+                            subject="feature 1",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        selected_revset="@",
+        stale_intents=(),
+        base_parent_subject="base",
+    )
+    monkeypatch.setattr(
+        "jj_review.review.status.build_status_revisions_for_prepared_stack",
+        lambda prepared: (status_revision,),
+    )
+
+    async def fake_iter_status_revisions_with_github(**kwargs):
+        yield status_revision
+
+    monkeypatch.setattr(
+        "jj_review.review.status._iter_status_revisions_with_github",
+        fake_iter_status_revisions_with_github,
+    )
+    monkeypatch.setattr(
+        "jj_review.review.status.try_acquire_operation_lock",
+        lambda *args, **kwargs: None,
+    )
+
+    result = asyncio.run(
+        stream_status_async(
+            lock_cache_update=True,
+            on_github_status=None,
+            on_revision=None,
+            prepared_status=prepared_status,
+        )
+    )
+
+    assert result.cache_update_skipped is True
+    assert saved_states == []
+
+
 def test_summarize_github_lookup_error_preserves_transport_detail() -> None:
     error = GithubClientError("GitHub request failed: Connection refused")
 

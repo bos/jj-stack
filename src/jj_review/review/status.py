@@ -52,6 +52,7 @@ from jj_review.review.change_status import (
     submitted_state_disagreements,
 )
 from jj_review.review.intents import intent_is_stale
+from jj_review.state.operation_lock import try_acquire_operation_lock
 from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message
 
@@ -136,6 +137,7 @@ class StatusResult:
     selected_revset: str
     base_parent_subject: str
     submitted_state_disagreements: tuple[SubmittedStateDisagreement, ...] = ()
+    cache_update_skipped: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +340,7 @@ def stream_status(
     *,
     discover_remote_review: bool = False,
     inspect_stack_comments: bool = False,
+    lock_cache_update: bool = False,
     persist_cache_updates: bool = True,
     prepared_status: PreparedStatus,
     on_github_status: Callable[[str | None, ErrorMessage | None], None] | None = None,
@@ -349,6 +352,7 @@ def stream_status(
         stream_status_async(
             discover_remote_review=discover_remote_review,
             inspect_stack_comments=inspect_stack_comments,
+            lock_cache_update=lock_cache_update,
             on_github_status=on_github_status,
             on_revision=on_revision,
             persist_cache_updates=persist_cache_updates,
@@ -361,6 +365,7 @@ async def stream_status_async(
     *,
     discover_remote_review: bool = False,
     inspect_stack_comments: bool = False,
+    lock_cache_update: bool = False,
     on_github_status: Callable[[str | None, ErrorMessage | None], None] | None,
     on_revision: Callable[[ReviewStatusRevision, bool], None] | None,
     persist_cache_updates: bool = True,
@@ -502,9 +507,15 @@ async def stream_status_async(
         revisions_by_change_id.get(revision.change_id, revision)
         for revision in fallback_revisions
     )
+    cache_update_skipped = False
     if persist_cache_updates:
-        _persist_status_cache_updates(prepared=prepared, revisions=display_revisions)
+        cache_update_skipped = _persist_status_cache_updates_with_optional_lock(
+            lock_cache_update=lock_cache_update,
+            prepared=prepared,
+            revisions=display_revisions,
+        )
     return StatusResult(
+        cache_update_skipped=cache_update_skipped,
         github_error=None,
         github_repository=github_repository.full_name,
         incomplete=_status_is_incomplete(display_revisions),
@@ -515,6 +526,29 @@ async def stream_status_async(
         base_parent_subject=base_parent_subject,
         submitted_state_disagreements=submitted_disagreements,
     )
+
+
+def _persist_status_cache_updates_with_optional_lock(
+    *,
+    lock_cache_update: bool,
+    prepared: PreparedStack,
+    revisions: tuple[ReviewStatusRevision, ...],
+) -> bool:
+    """Persist status cache updates, returning True when lock contention skips them."""
+
+    if not lock_cache_update:
+        _persist_status_cache_updates(prepared=prepared, revisions=revisions)
+        return False
+
+    lock = try_acquire_operation_lock(
+        prepared.state_store.require_writable(),
+        command="status",
+    )
+    if lock is None:
+        return True
+    with lock:
+        _persist_status_cache_updates(prepared=prepared, revisions=revisions)
+    return False
 
 
 def prepare_stack_for_status(

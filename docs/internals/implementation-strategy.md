@@ -232,6 +232,15 @@ It does not decide stack topology or branch naming.
   state; writes create parent directories on demand and only fail if the filesystem
   refuses
 
+The repo state directory also contains the operation lock files:
+
+- `operation.lock` is the fixed-path advisory lock sentinel
+- `operation-lock.json` is diagnostic companion metadata for the current holder
+
+Mutating commands acquire the lock through `state.operation_lock` for their full command
+lifetime. `status` uses the non-blocking path only around its cache write, so live
+inspection still renders while another mutation is running.
+
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
 Interrupted-operation records carry `started_at` and ordered change IDs; status renders those

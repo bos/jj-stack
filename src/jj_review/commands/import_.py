@@ -21,6 +21,7 @@ from typing import Literal, Protocol
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError, ErrorMessage
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.error_messages import (
@@ -134,16 +135,17 @@ def import_(
         cli_args=cli_args,
         debug=debug,
     )
-    result = asyncio.run(
-        _run_import_async(
-            context=context,
-            options=ImportOptions(
-                fetch=fetch,
-                pull_request_reference=pull_request,
-                revset=revset,
-            ),
+    with mutating_command_lock(command="import", context=context):
+        result = asyncio.run(
+            _run_import_async(
+                context=context,
+                options=ImportOptions(
+                    fetch=fetch,
+                    pull_request_reference=pull_request,
+                    revset=revset,
+                ),
+            )
         )
-    )
     _print_import_result(result)
     return 0
 

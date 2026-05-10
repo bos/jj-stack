@@ -34,6 +34,7 @@ from jj_review.commands._close_actions import (
     render_close_action_message as _render_close_action_message,
     retire_cached_change as _retire_cached_change,
 )
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.commands.close_orphan import (
     run_orphan_close,
     run_untracked_cleanup_pull_request,
@@ -201,15 +202,18 @@ def close(
         cli_args=cli_args,
         debug=debug,
     )
-    return _run_close(
-        context=context,
-        options=CloseOptions(
-            cleanup=cleanup,
-            dry_run=dry_run,
-            pull_request=pull_request,
-            revset=revset,
-        ),
+    options = CloseOptions(
+        cleanup=cleanup,
+        dry_run=dry_run,
+        pull_request=pull_request,
+        revset=revset,
     )
+    command = "close --cleanup" if options.cleanup else "close"
+    with mutating_command_lock(command=command, context=context):
+        return _run_close(
+            context=context,
+            options=options,
+        )
 
 
 def _run_close(

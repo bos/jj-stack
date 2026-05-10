@@ -14,6 +14,7 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClientError, build_github_client
@@ -67,15 +68,16 @@ def relink(
         cli_args=cli_args,
         debug=debug,
     )
-    result = asyncio.run(
-        _run_relink_async(
-            context=context,
-            options=RelinkOptions(
-                pull_request_reference=pull_request,
-                revset=revset,
-            ),
+    with mutating_command_lock(command="relink", context=context):
+        result = asyncio.run(
+            _run_relink_async(
+                context=context,
+                options=RelinkOptions(
+                    pull_request_reference=pull_request,
+                    revset=revset,
+                ),
+            )
         )
-    )
     console.output(
         t"Relinked PR #{result.pull_request_number} for {result.subject} "
         t"({ui.change_id(result.change_id)}) -> {ui.bookmark(result.bookmark)}"

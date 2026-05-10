@@ -11,6 +11,7 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.jj import JjCliArgs
 from jj_review.review.restart import RestartedChange, restart_state_for_stack
@@ -51,13 +52,15 @@ def restart(
         cli_args=cli_args,
         debug=debug,
     )
-    result = _run_restart(
-        context=context,
-        options=RestartOptions(
-            dry_run=dry_run,
-            revset=revset,
-        ),
+    options = RestartOptions(
+        dry_run=dry_run,
+        revset=revset,
     )
+    with mutating_command_lock(command="restart", context=context):
+        result = _run_restart(
+            context=context,
+            options=options,
+        )
     _render_restart_result(result)
     return 0
 

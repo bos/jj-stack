@@ -419,9 +419,12 @@ def _render_prepared_status(
     progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         result = stream_status(
+            lock_cache_update=True,
             on_revision=lambda _revision, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
+    if getattr(result, "cache_update_skipped", False):
+        console.warning("Cache not refreshed: another jj-review operation is running.")
 
     github_lines = render_status_github_lines(
         github_error=result.github_error,

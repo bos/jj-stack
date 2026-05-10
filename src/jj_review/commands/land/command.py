@@ -35,6 +35,7 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClientError, build_github_client
@@ -100,16 +101,18 @@ def land(
         cli_args=cli_args,
         debug=debug,
     )
-    return _run_land(
-        context=context,
-        options=LandOptions(
-            bypass_readiness=bypass_readiness,
-            cleanup_bookmarks=not skip_cleanup,
-            dry_run=dry_run,
-            pull_request=pull_request,
-            revset=revset,
-        ),
+    options = LandOptions(
+        bypass_readiness=bypass_readiness,
+        cleanup_bookmarks=not skip_cleanup,
+        dry_run=dry_run,
+        pull_request=pull_request,
+        revset=revset,
     )
+    with mutating_command_lock(command="land", context=context):
+        return _run_land(
+            context=context,
+            options=options,
+        )
 
 
 def _run_land(

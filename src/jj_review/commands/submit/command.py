@@ -24,6 +24,7 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClientError, build_github_client
@@ -120,28 +121,29 @@ def submit(
             )
         emitted_prepared = True
 
-    result = asyncio.run(
-        _run_submit_async(
-            context=context,
-            on_prepared=emit_prepared,
-            options=SubmitOptions(
-                describe_with=describe_with,
-                draft_mode=(
-                    "draft_all"
-                    if draft_all
-                    else "draft" if draft else "publish" if publish else "default"
+    with mutating_command_lock(command="submit", context=context):
+        result = asyncio.run(
+            _run_submit_async(
+                context=context,
+                on_prepared=emit_prepared,
+                options=SubmitOptions(
+                    describe_with=describe_with,
+                    draft_mode=(
+                        "draft_all"
+                        if draft_all
+                        else "draft" if draft else "publish" if publish else "default"
+                    ),
+                    dry_run=dry_run,
+                    labels=label_list,
+                    re_request=re_request,
+                    restart=restart,
+                    reviewers=reviewer_list,
+                    revset=selected_revset,
+                    team_reviewers=team_reviewer_list,
+                    use_bookmarks=use_bookmark_list,
                 ),
-                dry_run=dry_run,
-                labels=label_list,
-                re_request=re_request,
-                restart=restart,
-                reviewers=reviewer_list,
-                revset=selected_revset,
-                team_reviewers=team_reviewer_list,
-                use_bookmarks=use_bookmark_list,
             ),
         )
-    )
     if not emitted_prepared:
         if revset is None:
             console.output(

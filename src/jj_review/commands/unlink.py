@@ -12,6 +12,7 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.jj import JjCliArgs
 from jj_review.models.review_state import CachedChange
@@ -57,12 +58,13 @@ def unlink(
         cli_args=cli_args,
         debug=debug,
     )
-    result = asyncio.run(
-        _run_unlink_async(
-            context=context,
-            options=UnlinkOptions(revset=revset),
+    with mutating_command_lock(command="unlink", context=context):
+        result = asyncio.run(
+            _run_unlink_async(
+                context=context,
+                options=UnlinkOptions(revset=revset),
+            )
         )
-    )
     revision_label = t"{result.subject} ({ui.change_id(result.change_id)})"
     if result.already_unlinked:
         console.output(t"{revision_label} is already unlinked from review tracking.")
