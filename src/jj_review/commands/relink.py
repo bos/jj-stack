@@ -36,14 +36,6 @@ HELP = "Reconnect an existing pull request to a local change"
 
 
 @dataclass(frozen=True, slots=True)
-class RelinkOptions:
-    """Parsed command options for `relink`."""
-
-    pull_request_reference: str
-    revset: str | None
-
-
-@dataclass(frozen=True, slots=True)
 class RelinkResult:
     """Explicit review relink result for one local revision."""
 
@@ -85,40 +77,33 @@ def relink(
         result = asyncio.run(
             _run_relink_async(
                 context=context,
-                options=_relink_options_from_cli(
-                    pull_request=pull_request,
-                    revset=revset,
-                ),
+                pull_request_reference=pull_request,
+                revset=revset,
             )
         )
     _print_relink_result(result)
     return 0
 
 
-def _relink_options_from_cli(
-    *,
-    pull_request: str,
-    revset: str | None,
-) -> RelinkOptions:
-    return RelinkOptions(
-        pull_request_reference=pull_request,
-        revset=revset,
-    )
-
-
 async def _run_relink_async(
     *,
     context: CommandContext,
-    options: RelinkOptions,
+    pull_request_reference: str,
+    revset: str | None,
 ) -> RelinkResult:
-    prepared = await _prepare_relink(context=context, options=options)
+    prepared = await _prepare_relink(
+        context=context,
+        pull_request_reference=pull_request_reference,
+        revset=revset,
+    )
     return _apply_relink(prepared=prepared)
 
 
 async def _prepare_relink(
     *,
     context: CommandContext,
-    options: RelinkOptions,
+    pull_request_reference: str,
+    revset: str | None,
 ) -> _PreparedRelink:
     client = context.jj_client
     state_store = context.state_store
@@ -126,7 +111,7 @@ async def _prepare_relink(
     revset = resolve_selected_revset(
         command_label="relink",
         require_explicit=True,
-        revset=options.revset,
+        revset=revset,
     )
 
     with console.spinner(description="Inspecting jj stack"):
@@ -144,7 +129,7 @@ async def _prepare_relink(
     github_repository = require_github_repo(remote)
     pull_request_number = _parse_relink_pull_request_number(
         github_repository=github_repository,
-        pull_request_reference=options.pull_request_reference,
+        pull_request_reference=pull_request_reference,
     )
 
     with console.spinner(description="Loading pull request"):

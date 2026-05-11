@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 from jj_review.models.bookmarks import RemoteBookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState
@@ -40,40 +40,6 @@ PullRequestReviewDecision = Literal[
     "unknown",
 ]
 BaselineFlag = Literal["commit_changed", "parent_changed", "stack_head_changed"]
-
-
-class _PullRequestLookupLike(Protocol):
-    @property
-    def pull_request(self) -> Any | None: ...
-
-    @property
-    def review_decision(self) -> str | None: ...
-
-    @property
-    def review_decision_error(self) -> str | None: ...
-
-    @property
-    def state(self) -> str: ...
-
-
-class _StatusRevisionLike(Protocol):
-    @property
-    def cached_change(self) -> CachedChange | None: ...
-
-    @property
-    def commit_id(self) -> str: ...
-
-    @property
-    def link_state(self) -> str: ...
-
-    @property
-    def local_divergent(self) -> bool: ...
-
-    @property
-    def pull_request_lookup(self) -> _PullRequestLookupLike | None: ...
-
-    @property
-    def remote_state(self) -> RemoteBookmarkState | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +94,7 @@ _OPEN_PR_STATES_FOR_ORPHANS = frozenset({"open", "draft"})
 
 
 def classify_review_status_revision(
-    revision: _StatusRevisionLike,
+    revision: Any,
     *,
     baseline_disagreement: SubmittedStateDisagreement | None = None,
 ) -> ReviewChangeStatus:
@@ -153,7 +119,7 @@ def classify_review_change(
     cached_change: CachedChange | None,
     commit_id: str | None,
     local: LocalReviewState,
-    pull_request_lookup: _PullRequestLookupLike | None,
+    pull_request_lookup: Any | None,
     remote_state: RemoteBookmarkState | None,
     link_state: str | None = None,
     baseline_disagreement: SubmittedStateDisagreement | None = None,
@@ -339,7 +305,7 @@ def _remote_branch_matches_commit(
 
 
 def _pull_request_lifecycle(
-    pull_request_lookup: _PullRequestLookupLike | None,
+    pull_request_lookup: Any | None,
 ) -> tuple[PullRequestLifecycle, bool]:
     if pull_request_lookup is None:
         return "none", False
@@ -363,7 +329,7 @@ def _pull_request_lifecycle(
 def _pull_request_draft(
     *,
     lifecycle: PullRequestLifecycle,
-    pull_request_lookup: _PullRequestLookupLike | None,
+    pull_request_lookup: Any | None,
 ) -> bool | None:
     if lifecycle != "open" or pull_request_lookup is None:
         return None
@@ -376,7 +342,7 @@ def _pull_request_draft(
 def _pull_request_review_decision(
     *,
     lifecycle: PullRequestLifecycle,
-    pull_request_lookup: _PullRequestLookupLike | None,
+    pull_request_lookup: Any | None,
 ) -> PullRequestReviewDecision:
     if lifecycle != "open" or pull_request_lookup is None:
         return "none"

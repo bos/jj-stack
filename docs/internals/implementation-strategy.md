@@ -261,43 +261,21 @@ The repo state directory also contains the operation lock files:
 - `journals/*.jsonl` are active recovery records for interrupted operations
 - `operation-log.jsonl` is the repo-level chronological audit log
 
-Mutating commands acquire the lock through `state.operation_lock` for their full command
-lifetime. `status` uses the non-blocking path only around its cache write, so live
-inspection still renders while another mutation is running.
-Same-kind interrupted-operation scans no longer wait for live PIDs; the operation lock is
-the concurrency primitive. `abort` no longer writes a separate abort sentinel; the repo
-operation lock is the only abort concurrency guard.
-`relink` writes an active recovery record instead of an intent file; interrupted relink
-notices are read from that record and can be cleared by `abort`.
-Plain repo-wide `cleanup` uses the same active-record path; successful cleanup appends
-terminal audit events for its current and superseded cleanup records, then removes their
-active files.
-`cleanup --rebase` also records its selected stack in an active recovery record.
-Successful reruns append terminal events for overlapping stale rebase-cleanup records
-while keeping the previous exact/same-logical/overlap recovery policy.
-Regular `close` and orphaned `close --cleanup --pull-request` write active close records
-too. Successful runs append terminal audit events for matching stale close records and
-remove their active files.
-`submit` records its selected stack, predicted bookmarks, selected remote, and resolved
-GitHub repository in an active submit record. Retry, status, doctor, abort, and
-cleanup-close retirement all consume that record, so the old
-`models/intent.py` and `state/intents.py` file-persistence path has been removed.
-Interrupted-operation matching and display policy lives in `review/operations.py`; command
-code should pass journal-backed operation records through that layer rather than reintroducing
-file-kind-specific branching.
+Mutating commands hold the lock through their full command lifetime. `status` uses the
+non-blocking path only around its best-effort cache write, so live inspection still renders
+while another mutation is running. The operation lock replaces same-kind PID waits and the
+old abort sentinel.
 
-Each operation event is appended to `operation-log.jsonl` for after-the-fact inspection.
-Active recovery files only keep the events needed to resume or clear interrupted work:
-the opening `begin` event and, for `land`, `saved_state_update` checkpoints. Planned
+`land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `close`, and orphaned
+`close --cleanup --pull-request` all use active recovery records instead of intent files.
+Retry, status, doctor, abort, and cleanup-close retirement consume those records through
+`review/operations.py`, which owns interrupted-operation matching and display policy.
+
+Every operation event is appended to `operation-log.jsonl` for after-the-fact inspection.
+Active recovery files keep only the events needed to resume or clear interrupted work:
+`begin` for every operation and `saved_state_update` checkpoints for `land`. Planned
 mutations, applied mutations, and terminal events live in the audit log. Terminal events
-remove the active file instead of retaining a per-operation journal, so there is no
-per-operation pruning path.
-
-The first journal-backed command is `land`. Its active recovery record stores the resolved
-scope and saved-state checkpoints. `land` no longer writes an intent file; interrupted
-land recovery, status notices, doctor checks, and abort clearing all consume the
-journal-backed operation record directly. Per-change completion is folded from
-journaled saved-state updates instead of mutating in-flight state after each finalized PR.
+remove the active file, so there is no per-operation pruning path.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.

@@ -22,12 +22,11 @@ from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import error_message
-from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo
 from jj_review.jj import JjCliArgs, JjClient, JjCommandError
 from jj_review.models.review_state import CachedChange
-from jj_review.review.operations import describe_operation, operation_kind
+from jj_review.review.operations import describe_operation, operation_kind, operation_selector
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
 from jj_review.state.journal import (
     CleanupOperationRecord,
@@ -266,9 +265,9 @@ async def _abort_submit(
     jj_client: JjClient = run.context.jj_client
     state_store = run.context.state_store
     actions: list[AbortAction] = []
+    selector = operation_selector(operation) or operation.display_revset
     if not _submit_operation_matches_recorded_stack(operation=operation, run=run):
         if not _submit_operation_head_visible(operation=operation, run=run):
-            selector = _submit_operation_selector(operation)
             changed = "would be changed" if dry_run else "were changed"
             actions.append(
                 AbortAction(
@@ -306,9 +305,9 @@ async def _abort_submit(
             AbortAction(
                 kind="notice",
                 body=t"kept — to continue, run "
-                t"{ui.cmd(f'jj-review submit {_submit_operation_selector(operation)}')}; "
+                t"{ui.cmd(f'jj-review submit {selector}')}; "
                 t"to retract the partial work, run "
-                t"{ui.cmd(f'jj-review close --cleanup {_submit_operation_selector(operation)}')}",
+                t"{ui.cmd(f'jj-review close --cleanup {selector}')}",
                 status="skipped",
             )
         )
@@ -444,12 +443,6 @@ def _submit_operation_head_visible(
     return bool(
         jj_client.query_revisions_by_change_ids((head_change_id,)).get(head_change_id, ())
     )
-
-
-def _submit_operation_selector(operation: SubmitOperationRecord) -> str:
-    if operation.ordered_change_ids:
-        return short_change_id(operation.ordered_change_ids[-1])
-    return operation.display_revset
 
 
 async def _retract_one_change(

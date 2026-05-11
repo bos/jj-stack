@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from jj_review import ui
+from jj_review.formatting import short_change_id
 from jj_review.state.journal import (
     CleanupOperationRecord,
     CleanupRebaseOperationRecord,
@@ -45,6 +46,41 @@ def operation_kind(operation: object) -> str:
     return str(getattr(operation, "kind", "operation"))
 
 
+def operation_command(operation: object) -> str:
+    """Return the jj-review command name for an interrupted operation."""
+
+    if isinstance(operation, SubmitOperationRecord):
+        return "submit"
+    if isinstance(operation, CleanupRebaseOperationRecord):
+        return "cleanup --rebase"
+    if isinstance(operation, CloseOperationRecord):
+        return "close --cleanup" if operation.cleanup else "close"
+    if isinstance(operation, LandOperationRecord):
+        return "land"
+    if isinstance(operation, RelinkOperationRecord):
+        return "relink"
+    if isinstance(operation, CleanupOperationRecord):
+        return "cleanup"
+    return str(getattr(operation, "label", "operation"))
+
+
+def operation_selector(operation: object) -> str | None:
+    """Return the short selector to rerun or inspect an interrupted operation."""
+
+    if isinstance(
+        operation,
+        SubmitOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+        | LandOperationRecord,
+    ):
+        if operation.ordered_change_ids:
+            return short_change_id(operation.ordered_change_ids[-1])
+    if isinstance(operation, RelinkOperationRecord):
+        return short_change_id(operation.change_id)
+    return None
+
+
 def match_ordered_change_ids(
     existing: tuple[str, ...],
     new: tuple[str, ...],
@@ -63,31 +99,22 @@ def match_ordered_change_ids(
 def describe_operation(operation: object) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
-    if isinstance(operation, SubmitOperationRecord):
+    if isinstance(
+        operation,
+        SubmitOperationRecord
+        | CleanupRebaseOperationRecord
+        | CloseOperationRecord
+        | LandOperationRecord,
+    ):
+        command = ui.cmd(operation_command(operation))
+        stack_head = _render_recorded_stack_head(operation)
         return (
-            t"{ui.cmd('submit')} for {_render_recorded_stack_head(operation)} "
-            t"(from {ui.revset(operation.display_revset)})"
-        )
-    if isinstance(operation, CleanupRebaseOperationRecord):
-        return (
-            t"{ui.cmd('cleanup --rebase')} for {_render_recorded_stack_head(operation)} "
-            t"(from {ui.revset(operation.display_revset)})"
-        )
-    if isinstance(operation, CloseOperationRecord):
-        verb = ui.cmd("close --cleanup" if operation.cleanup else "close")
-        return (
-            t"{verb} for {_render_recorded_stack_head(operation)} "
-            t"(from {ui.revset(operation.display_revset)})"
-        )
-    if isinstance(operation, LandOperationRecord):
-        return (
-            t"{ui.cmd('land')} for {_render_recorded_stack_head(operation)} "
-            t"(from {ui.revset(operation.display_revset)})"
+            t"{command} for {stack_head} (from {ui.revset(operation.display_revset)})"
         )
     if isinstance(operation, RelinkOperationRecord):
-        return t"{ui.cmd('relink')} for {ui.change_id(operation.change_id)}"
+        return t"{ui.cmd(operation_command(operation))} for {ui.change_id(operation.change_id)}"
     if isinstance(operation, CleanupOperationRecord):
-        return ui.cmd("cleanup")
+        return ui.cmd(operation_command(operation))
     return str(getattr(operation, "label", "operation"))
 
 
@@ -112,15 +139,23 @@ def match_cleanup_rebase_operation(
 ) -> OrderedOperationMatch:
     """Classify how a recorded cleanup rebase operation relates to the current stack."""
 
-    if operation.ordered_change_ids == current_change_ids:
-        if operation.ordered_commit_ids and operation.ordered_commit_ids == current_commit_ids:
-            return "exact"
-        return "same-logical"
-    if set(operation.ordered_change_ids) == set(current_change_ids):
-        return "same-logical"
-    if set(current_change_ids).issubset(operation.ordered_change_ids):
-        return "trimmed"
-    return _match_recorded_ordered_stack(
+    return match_stack_operation(
+        recorded_change_ids=operation.ordered_change_ids,
+        recorded_commit_ids=operation.ordered_commit_ids,
+        current_change_ids=current_change_ids,
+        current_commit_ids=current_commit_ids,
+    )
+
+
+def match_land_operation(
+    *,
+    operation: LandOperationRecord,
+    current_change_ids: tuple[str, ...],
+    current_commit_ids: tuple[str, ...],
+) -> OrderedOperationMatch:
+    """Classify how a recorded land operation relates to the current stack."""
+
+    return match_stack_operation(
         recorded_change_ids=operation.ordered_change_ids,
         recorded_commit_ids=operation.ordered_commit_ids,
         current_change_ids=current_change_ids,
@@ -152,6 +187,30 @@ def match_close_operation(
         current_change_ids=current_change_ids,
         current_commit_ids=current_commit_ids,
     )
+
+
+def match_stack_operation(
+    *,
+    recorded_change_ids: tuple[str, ...],
+    recorded_commit_ids: tuple[str, ...],
+    current_change_ids: tuple[str, ...],
+    current_commit_ids: tuple[str, ...],
+) -> OrderedOperationMatch:
+    """Classify how a recorded stack-like operation relates to the current stack."""
+
+    if recorded_change_ids == current_change_ids:
+        if recorded_commit_ids and recorded_commit_ids == current_commit_ids:
+            return "exact"
+        return "same-logical"
+    if set(recorded_change_ids) == set(current_change_ids):
+        return "same-logical"
+    if set(recorded_change_ids).issubset(current_change_ids):
+        return "covered"
+    if set(current_change_ids).issubset(recorded_change_ids):
+        return "trimmed"
+    if set(recorded_change_ids) & set(current_change_ids):
+        return "overlap"
+    return "disjoint"
 
 
 def close_operation_mode_relation(

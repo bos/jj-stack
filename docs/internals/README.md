@@ -22,6 +22,3 @@ If you are looking for how to use `jj-review`, see the [user guide](../README.md
 - **[help-and-docs-plan.md](help-and-docs-plan.md)** — plan for bringing
   built-in help and `docs/` to parity with `gt` and `gh stack`. Shrinks as
   items ship.
-- **[restructuring-plan.md](restructuring-plan.md)** — outcome of the
-  classifier, operation journal, and phase-context restructuring. No
-  user-visible behavior changes.

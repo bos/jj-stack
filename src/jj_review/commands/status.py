@@ -24,7 +24,6 @@ from jj_review.formatting import (
     format_status_annotation,
     render_revision_blocks,
     render_revision_lines,
-    short_change_id,
 )
 from jj_review.github.error_messages import (
     github_unavailable_message,
@@ -47,6 +46,9 @@ from jj_review.review.operations import (
     describe_operation,
     match_cleanup_rebase_operation,
     match_close_operation,
+    match_land_operation,
+    operation_command,
+    operation_selector,
 )
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -1186,7 +1188,7 @@ def _interrupted_submit_detail_lines(
         return (
             (
                 "change ",
-                ui.change_id(_operation_selector(operation) or operation.display_revset),
+                ui.change_id(operation_selector(operation) or operation.display_revset),
                 " from this interrupted submit is no longer visible in jj",
             ),
             (
@@ -1268,23 +1270,6 @@ def _recorded_stack_head_visible(
     return bool(revisions)
 
 
-def _operation_rerun_command(
-    operation: (
-        SubmitOperationRecord
-        | CleanupRebaseOperationRecord
-        | CloseOperationRecord
-        | LandOperationRecord
-    ),
-) -> str:
-    if isinstance(operation, SubmitOperationRecord):
-        return "submit"
-    if isinstance(operation, CleanupRebaseOperationRecord):
-        return "cleanup --rebase"
-    if isinstance(operation, LandOperationRecord):
-        return "land"
-    return "close --cleanup" if operation.cleanup else "close"
-
-
 def _match_ordered_operation(
     *,
     operation: CleanupRebaseOperationRecord | CloseOperationRecord,
@@ -1324,19 +1309,11 @@ def _match_land_operation(
         prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
     )
-    if operation.ordered_change_ids == current_change_ids:
-        if operation.ordered_commit_ids and operation.ordered_commit_ids == current_commit_ids:
-            return "exact"
-        return "same-logical"
-    if set(operation.ordered_change_ids) == set(current_change_ids):
-        return "same-logical"
-    if set(operation.ordered_change_ids).issubset(current_change_ids):
-        return "covered"
-    if set(current_change_ids).issubset(operation.ordered_change_ids):
-        return "trimmed"
-    if set(operation.ordered_change_ids) & set(current_change_ids):
-        return "overlap"
-    return "disjoint"
+    return match_land_operation(
+        operation=operation,
+        current_change_ids=current_change_ids,
+        current_commit_ids=current_commit_ids,
+    )
 
 
 def _interrupted_ordered_detail_lines(
@@ -1352,7 +1329,7 @@ def _interrupted_ordered_detail_lines(
             ("continue with ", resume_command),
         )
     if match == "same-logical":
-        command = _operation_rerun_command(operation)
+        command = operation_command(operation)
         return (
             (
                 "the recorded stack was rewritten; rerunning ",
@@ -1401,34 +1378,19 @@ def _render_resume_command(
         | LandOperationRecord
     ),
 ) -> ui.SemanticText:
-    selector = _operation_selector(operation)
-    command = f"jj-review {_operation_rerun_command(operation)}"
+    selector = operation_selector(operation)
+    command = f"jj-review {operation_command(operation)}"
     if selector is not None:
         command = f"{command} {selector}"
     return ui.cmd(command)
 
 
 def _render_status_command(operation) -> ui.SemanticText:
-    selector = _operation_selector(operation)
+    selector = operation_selector(operation)
     command = "jj-review status"
     if selector is not None:
         command = f"{command} {selector}"
     return ui.cmd(command)
-
-
-def _operation_selector(operation) -> str | None:
-    if isinstance(
-        operation,
-        SubmitOperationRecord
-        | CleanupRebaseOperationRecord
-        | CloseOperationRecord
-        | LandOperationRecord,
-    ):
-        if operation.ordered_change_ids:
-            return short_change_id(operation.ordered_change_ids[-1])
-    if isinstance(operation, RelinkOperationRecord):
-        return short_change_id(operation.change_id)
-    return None
 
 
 def _render_interrupted_operation_header(operation) -> object:
@@ -1441,7 +1403,7 @@ def _render_interrupted_operation_header(operation) -> object:
         | LandOperationRecord,
     ):
         return (
-            _render_operation_command(operation),
+            ui.cmd(operation_command(operation)),
             " for ",
             _render_recorded_stack_head(operation),
             ", ",
@@ -1451,29 +1413,13 @@ def _render_interrupted_operation_header(operation) -> object:
         )
     if isinstance(operation, RelinkOperationRecord):
         return (
-            _render_operation_command(operation),
+            ui.cmd(operation_command(operation)),
             " for ",
             ui.change_id(operation.change_id),
             ", ",
             started,
         )
-    return (_render_operation_command(operation), ", ", started)
-
-
-def _render_operation_command(operation) -> object:
-    if isinstance(operation, SubmitOperationRecord):
-        return ui.cmd("submit")
-    if isinstance(operation, CleanupRebaseOperationRecord):
-        return ui.cmd("cleanup --rebase")
-    if isinstance(operation, CloseOperationRecord):
-        return ui.cmd("close --cleanup" if operation.cleanup else "close")
-    if isinstance(operation, LandOperationRecord):
-        return ui.cmd("land")
-    if isinstance(operation, RelinkOperationRecord):
-        return ui.cmd("relink")
-    if isinstance(operation, CleanupOperationRecord):
-        return ui.cmd("cleanup")
-    return operation.label
+    return (ui.cmd(operation_command(operation)), ", ", started)
 
 
 def _render_recorded_stack_head(
