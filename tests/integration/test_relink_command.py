@@ -330,8 +330,6 @@ def test_relink_completes_journal_after_successful_relink(
 
     assert exit_code == 0
     state_dir = resolve_state_path(repo).parent
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
-    assert tuple((state_dir / "journals").glob("*-relink-*.jsonl")) == ()
     journal_events = tuple(
         event for event in read_operation_log(state_dir) if event.operation == "relink"
     )

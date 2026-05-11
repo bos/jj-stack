@@ -29,7 +29,6 @@ class OperationLockHolder:
     command: str
     pid: int
     started_at: str
-    journal_path: str | None = None
 
 
 class OperationLock:
@@ -72,23 +71,11 @@ class OperationLock:
         _unlock_file(self._file)
         self._file.close()
 
-    def record_journal_path(self, journal_path: Path) -> None:
-        """Update holder diagnostics with the operation journal path."""
-
-        self.holder = OperationLockHolder(
-            command=self.holder.command,
-            pid=self.holder.pid,
-            started_at=self.holder.started_at,
-            journal_path=str(journal_path),
-        )
-        _write_holder(self._holder_path, self.holder)
-
 
 def acquire_operation_lock(
     state_dir: Path,
     *,
     command: str,
-    journal_path: Path | None = None,
     poll_interval: float = DEFAULT_LOCK_POLL_SECONDS,
     timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> OperationLock:
@@ -99,7 +86,6 @@ def acquire_operation_lock(
         lock = try_acquire_operation_lock(
             state_dir,
             command=command,
-            journal_path=journal_path,
         )
         if lock is not None:
             return lock
@@ -115,7 +101,6 @@ def try_acquire_operation_lock(
     state_dir: Path,
     *,
     command: str,
-    journal_path: Path | None = None,
 ) -> OperationLock | None:
     """Try to acquire the repo operation lock without blocking."""
 
@@ -132,7 +117,6 @@ def try_acquire_operation_lock(
         command=command,
         pid=os.getpid(),
         started_at=datetime.now(UTC).isoformat(),
-        journal_path=str(journal_path) if journal_path is not None else None,
     )
     _write_holder(holder_path, holder)
     return OperationLock(file=lock_file, holder=holder, holder_path=holder_path)
@@ -151,9 +135,6 @@ def read_operation_lock_holder(state_dir: Path) -> OperationLockHolder | None:
             command=str(raw["command"]),
             pid=int(raw["pid"]),
             started_at=str(raw["started_at"]),
-            journal_path=(
-                None if raw.get("journal_path") is None else str(raw["journal_path"])
-            ),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -228,11 +209,6 @@ def _write_holder(holder_path: Path, holder: OperationLockHolder) -> None:
 def _cleanup_dead_holder(holder_path: Path) -> None:
     holder = read_operation_lock_holder(holder_path.parent)
     if holder is not None and not pid_is_alive(holder.pid):
-        if holder.journal_path is not None:
-            _append_dead_holder_abandoned_event(
-                Path(holder.journal_path),
-                holder=holder,
-            )
         holder_path.unlink(missing_ok=True)
 
 
@@ -249,38 +225,4 @@ def _operation_lock_busy_message(holder: OperationLockHolder | None) -> str:
         f"Another jj-review {holder.command} operation is already running "
         f"(PID {holder.pid}, started {holder.started_at})."
     )
-    if holder.journal_path is not None:
-        message += f" Operation record: {holder.journal_path}."
     return message
-
-
-def _append_dead_holder_abandoned_event(
-    journal_path: Path,
-    *,
-    holder: OperationLockHolder,
-) -> None:
-    try:
-        first_line = next(
-            line
-            for line in journal_path.read_text(encoding="utf-8").splitlines()
-            if line
-        )
-        first = json.loads(first_line)
-        entry = {
-            "data": {
-                "lock_holder": asdict(holder),
-                "reason": "dead_lock_holder",
-            },
-            "event": "abandoned",
-            "operation": str(first["operation"]),
-            "operation_id": str(first["operation_id"]),
-            "timestamp": datetime.now(UTC).isoformat(),
-        }
-        log_path = journal_path.parent.parent / "operation-log.jsonl"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as log:
-            log.write(json.dumps(entry, sort_keys=True))
-            log.write("\n")
-        journal_path.unlink(missing_ok=True)
-    except (OSError, StopIteration, KeyError, TypeError, ValueError):
-        return

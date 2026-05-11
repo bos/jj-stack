@@ -39,23 +39,12 @@ from jj_review.review.change_status import (
     classify_review_change,
     classify_saved_review_change,
 )
-from jj_review.review.operations import close_operation_mode_relation
-from jj_review.state.journal import (
-    CloseOperationRecord,
-    LoadedOperationRecord,
-    OperationJournal,
-    SubmitOperationRecord,
-    append_abandoned_event,
-)
-from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
-from jj_review.system import pid_is_alive
+from jj_review.state.journal import OperationJournal
 from jj_review.ui import Message, plain_text
 
 OrphanedPullRequestState = Literal["closed", "open"]
 GithubClientBuilder = Callable[..., Any]
 GithubRepoParser = Callable[[GitRemote], ParsedGithubRepo | None]
-ReportStaleCloseOperations = Callable[..., None]
-RetireSubmitOperationsClearedByCleanup = Callable[..., None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,21 +80,11 @@ class _OrphanActionRecorder:
 
 
 @dataclass(frozen=True, slots=True)
-class _OrphanCloseOperationState:
-    """Prepared close operation bookkeeping for resumable orphan cleanup runs."""
-
-    journal: OperationJournal | None
-    stale_close_operations: list[LoadedOperationRecord]
-    stale_submit_operations: list[LoadedOperationRecord]
-
-
-@dataclass(frozen=True, slots=True)
 class _OrphanCloseRun:
     """Shared execution context for one orphan close cleanup run."""
 
     context: CommandContext
     dry_run: bool
-    operation_lock: OperationLock
 
     @property
     def jj_client(self) -> JjClient:
@@ -131,13 +110,11 @@ async def run_untracked_cleanup_pull_request(
     github_client_builder: GithubClientBuilder,
     github_repo_parser: GithubRepoParser,
     pull_request_number: int,
-    retire_submit_operations_cleared_by_cleanup: RetireSubmitOperationsClearedByCleanup,
     state: ReviewState,
 ) -> int:
     """Handle cleanup by PR number after saved tracking was already retired."""
 
     jj_client = context.jj_client
-    state_store = context.state_store
     remotes = jj_client.list_git_remotes()
     if not remotes:
         raise _untracked_cleanup_verification_error(
@@ -181,21 +158,7 @@ async def run_untracked_cleanup_pull_request(
             ),
         )
 
-    if not dry_run:
-        _retire_pull_request_close_operations(
-            context=context,
-            pull_request_number=pull_request_number,
-        )
-        retire_submit_operations_cleared_by_cleanup(
-            current_state=state,
-            jj_client=jj_client,
-            stale_submit_operations=[
-                loaded
-                for loaded in state_store.list_operations()
-                if isinstance(loaded.operation, SubmitOperationRecord)
-                and not pid_is_alive(loaded.operation.pid)
-            ],
-        )
+    del dry_run, state
     console.output(t"Nothing to close for PR #{pull_request_number}.")
     return 0
 
@@ -214,48 +177,6 @@ def _untracked_cleanup_verification_error(
     )
 
 
-def _retire_pull_request_close_operations(
-    *,
-    context: CommandContext,
-    pull_request_number: int,
-) -> None:
-    """Retire stale close journals recorded for a now-closed PR selector."""
-
-    state_store = context.state_store
-    display_revset = f"--pull-request {pull_request_number}"
-    state_store.require_writable()
-    stale_close_operations: list[tuple[LoadedOperationRecord, CloseOperationRecord]] = []
-    for loaded in state_store.list_operations():
-        operation = loaded.operation
-        if isinstance(operation, CloseOperationRecord):
-            stale_close_operations.append((loaded, operation))
-    pr_selector_operations = [
-        operation
-        for _loaded, operation in stale_close_operations
-        if operation.display_revset == display_revset
-    ]
-    covered_change_ids = {
-        change_id
-        for operation in pr_selector_operations
-        for change_id in operation.ordered_change_ids
-    }
-    for loaded, operation in stale_close_operations:
-        recorded_change_ids = set(operation.ordered_change_ids)
-        matches_pr_selector = operation.display_revset == display_revset
-        covered_by_pr_selector = (
-            bool(recorded_change_ids)
-            and recorded_change_ids.issubset(covered_change_ids)
-            and close_operation_mode_relation(
-                recorded_cleanup=operation.cleanup,
-                current_cleanup=True,
-            )
-            != "incompatible"
-        )
-        if not matches_pr_selector and not covered_by_pr_selector:
-            continue
-        append_abandoned_event(loaded.path, reason="superseded_by_close")
-
-
 async def run_orphan_close(
     *,
     change_id: str,
@@ -263,10 +184,7 @@ async def run_orphan_close(
     dry_run: bool,
     github_client_builder: GithubClientBuilder,
     github_repo_parser: GithubRepoParser,
-    operation_lock: OperationLock,
     pull_request_number: int,
-    report_stale_close_operations: ReportStaleCloseOperations,
-    retire_submit_operations_cleared_by_cleanup: RetireSubmitOperationsClearedByCleanup,
     state: ReviewState,
 ) -> int:
     """Close an orphaned PR, deleting its review artifacts via saved data."""
@@ -334,21 +252,14 @@ async def run_orphan_close(
     run = _OrphanCloseRun(
         context=context,
         dry_run=dry_run,
-        operation_lock=operation_lock,
     )
     completed = False
-    final_state: ReviewState | None = None
-    operation_state = _OrphanCloseOperationState(
-        journal=None,
-        stale_close_operations=[],
-        stale_submit_operations=[],
-    )
+    close_journal: OperationJournal | None = None
     try:
-        operation_state = _start_orphan_close_operation(
+        close_journal = _start_orphan_close_operation_log(
             cached_change=cached_change,
             change_id=change_id,
             pull_request_number=pull_request_number,
-            report_stale_close_operations=report_stale_close_operations,
             run=run,
         )
 
@@ -452,8 +363,7 @@ async def run_orphan_close(
         if not dry_run:
             next_changes = dict(state.changes)
             next_changes.pop(change_id, None)
-            final_state = state.model_copy(update={"changes": next_changes})
-            state_store.save(final_state)
+            state_store.save(state.model_copy(update={"changes": next_changes}))
 
         completed = True
         return _render_orphan_close_actions(
@@ -462,21 +372,11 @@ async def run_orphan_close(
             run=run,
         )
     finally:
-        if completed and operation_state.journal is not None:
-            operation_state.journal.append(
+        if completed and close_journal is not None:
+            close_journal.append(
                 "completed",
                 {"ordered_change_ids": (change_id,)},
             )
-            _retire_superseded_orphan_close_operations(
-                current_change_ids=(change_id,),
-                stale_operations=operation_state.stale_close_operations,
-            )
-            if not recorder.blocked and final_state is not None:
-                retire_submit_operations_cleared_by_cleanup(
-                    current_state=final_state,
-                    jj_client=jj_client,
-                    stale_submit_operations=operation_state.stale_submit_operations,
-                )
 
 
 def _orphan_should_cleanup_bookmark(
@@ -489,30 +389,6 @@ def _orphan_should_cleanup_bookmark(
     if cached_change.manages_bookmark:
         return is_review_bookmark(bookmark, prefix=prefix)
     return cleanup_user_bookmarks
-
-
-def _retire_superseded_orphan_close_operations(
-    *,
-    current_change_ids: tuple[str, ...],
-    stale_operations: list[LoadedOperationRecord],
-) -> None:
-    """Mark interrupted close journals terminal after orphan cleanup covers them."""
-
-    current_id_set = set(current_change_ids)
-    for loaded in stale_operations:
-        operation = loaded.operation
-        if not isinstance(operation, CloseOperationRecord):
-            continue
-        if (
-            close_operation_mode_relation(
-                recorded_cleanup=operation.cleanup,
-                current_cleanup=True,
-            )
-            == "incompatible"
-        ):
-            continue
-        if set(operation.ordered_change_ids).issubset(current_id_set):
-            append_abandoned_event(loaded.path, reason="superseded_by_close")
 
 
 def _render_orphan_close_actions(
@@ -837,22 +713,17 @@ def _blocked_orphaned_close_github_action() -> CloseAction:
     )
 
 
-def _start_orphan_close_operation(
+def _start_orphan_close_operation_log(
     *,
     cached_change: CachedChange,
     change_id: str,
     pull_request_number: int,
-    report_stale_close_operations: ReportStaleCloseOperations,
     run: _OrphanCloseRun,
-) -> _OrphanCloseOperationState:
-    """Write close operation journal metadata for resumable orphan cleanup runs."""
+) -> OperationJournal | None:
+    """Write close operation log metadata for orphan cleanup runs."""
 
     if run.dry_run:
-        return _OrphanCloseOperationState(
-            journal=None,
-            stale_close_operations=[],
-            stale_submit_operations=[],
-        )
+        return None
 
     state_store = run.context.state_store
     state_dir = state_store.require_writable()
@@ -862,27 +733,9 @@ def _start_orphan_close_operation(
         if cached_change.last_submitted_commit_id is not None
         else ()
     )
-    stale_close_operations = [
-        loaded
-        for loaded in state_store.list_operations()
-        if isinstance(loaded.operation, CloseOperationRecord)
-    ]
-    report_stale_close_operations(
-        current_change_ids=ordered_change_ids,
-        current_commit_ids=ordered_commit_ids,
-        current_cleanup=True,
-        stale_operations=stale_close_operations,
-    )
-    stale_submit_operations = [
-        loaded
-        for loaded in state_store.list_operations()
-        if isinstance(loaded.operation, SubmitOperationRecord)
-        and not pid_is_alive(loaded.operation.pid)
-    ]
     journal = OperationJournal.begin(
         state_dir,
         operation="close",
-        lock_holder=read_operation_lock_holder(state_dir),
         options={
             "cleanup": True,
             "pull_request_number": pull_request_number,
@@ -893,9 +746,4 @@ def _start_orphan_close_operation(
             "selected_revset": f"--pull-request {pull_request_number}",
         },
     )
-    run.operation_lock.record_journal_path(journal.path)
-    return _OrphanCloseOperationState(
-        journal=journal,
-        stale_close_operations=stale_close_operations,
-        stale_submit_operations=stale_submit_operations,
-    )
+    return journal

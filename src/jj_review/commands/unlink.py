@@ -12,10 +12,9 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
-from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.jj import JjCliArgs
-from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.models.review_state import CachedChange
 from jj_review.review.bookmarks import bookmark_ownership_for_source
 from jj_review.review.change_status import (
     ReviewChangeStatus,
@@ -30,15 +29,9 @@ from jj_review.review.status import (
     prepare_status,
     stream_status_async,
 )
+from jj_review.state.operation_lock import acquire_operation_lock
 
 HELP = "Stop managing one local change as part of review"
-
-
-@dataclass(frozen=True, slots=True)
-class UnlinkOptions:
-    """Parsed command options for `unlink`."""
-
-    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,19 +42,6 @@ class UnlinkResult:
     bookmark: str | None
     change_id: str
     subject: str
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedUnlink:
-    """Resolved unlink target after local and GitHub inspection."""
-
-    bookmark: str | None
-    cached_change: CachedChange | None
-    context: CommandContext
-    prepared_revision: PreparedRevision
-    review_status: ReviewChangeStatus
-    state: ReviewState
-    status_revision: ReviewStatusRevision
 
 
 def unlink(
@@ -78,19 +58,15 @@ def unlink(
         cli_args=cli_args,
         debug=debug,
     )
-    with mutating_command_lock(command="unlink", context=context):
+    with acquire_operation_lock(context.state_store.require_writable(), command="unlink"):
         result = asyncio.run(
             _run_unlink_async(
                 context=context,
-                options=_unlink_options_from_cli(revset=revset),
+                revset=revset,
             )
         )
     _print_unlink_result(result)
     return 0
-
-
-def _unlink_options_from_cli(*, revset: str | None) -> UnlinkOptions:
-    return UnlinkOptions(revset=revset)
 
 
 def _print_unlink_result(result: UnlinkResult) -> None:
@@ -110,46 +86,12 @@ def _print_unlink_result(result: UnlinkResult) -> None:
 async def _run_unlink_async(
     *,
     context: CommandContext,
-    options: UnlinkOptions,
+    revset: str | None,
 ) -> UnlinkResult:
-    prepared_unlink = await _prepare_unlink(context=context, options=options)
-    if prepared_unlink.review_status.link == "unlinked":
-        return _unlink_result(
-            already_unlinked=True,
-            prepared_unlink=prepared_unlink,
-        )
-
-    if not _revision_has_active_review_link(
-        bookmark=prepared_unlink.bookmark,
-        cached_change=prepared_unlink.cached_change,
-        context=prepared_unlink.context,
-        prepared_revision=prepared_unlink.prepared_revision,
-        review_status=prepared_unlink.review_status,
-    ):
-        raise CliError(
-            t"The selected change has no active review tracking link to unlink.",
-            hint=(
-                t"Use {ui.cmd('relink')} only when you need to attach an existing PR "
-                t"intentionally."
-            ),
-        )
-
-    _apply_unlink(prepared_unlink=prepared_unlink)
-    return _unlink_result(
-        already_unlinked=False,
-        prepared_unlink=prepared_unlink,
-    )
-
-
-async def _prepare_unlink(
-    *,
-    context: CommandContext,
-    options: UnlinkOptions,
-) -> _PreparedUnlink:
     revset = resolve_selected_revset(
         command_label="unlink",
         require_explicit=True,
-        revset=options.revset,
+        revset=revset,
     )
     with console.spinner(description="Inspecting jj stack"):
         prepared_status = prepare_status(
@@ -182,26 +124,33 @@ async def _prepare_unlink(
         prepared_revision=prepared_revision,
         status_revision=status_revision,
     )
-    return _PreparedUnlink(
+    review_status = classify_review_status_revision(status_revision)
+    if review_status.link == "unlinked":
+        return UnlinkResult(
+            already_unlinked=True,
+            bookmark=bookmark,
+            change_id=prepared_revision.revision.change_id,
+            subject=prepared_revision.revision.subject,
+        )
+
+    if not _revision_has_active_review_link(
         bookmark=bookmark,
         cached_change=cached_change,
         context=context,
         prepared_revision=prepared_revision,
-        review_status=classify_review_status_revision(status_revision),
-        state=state,
-        status_revision=status_revision,
-    )
+        review_status=review_status,
+    ):
+        raise CliError(
+            t"The selected change has no active review tracking link to unlink.",
+            hint=(
+                t"Use {ui.cmd('relink')} only when you need to attach an existing PR "
+                t"intentionally."
+            ),
+        )
 
-
-def _apply_unlink(*, prepared_unlink: _PreparedUnlink) -> None:
-    cached_change = prepared_unlink.cached_change
-    prepared_revision = prepared_unlink.prepared_revision
-    status_revision = prepared_unlink.status_revision
-    updated_change = (
-        cached_change or CachedChange(bookmark=prepared_unlink.bookmark)
-    ).model_copy(
+    updated_change = (cached_change or CachedChange(bookmark=bookmark)).model_copy(
         update={
-            "bookmark": prepared_unlink.bookmark,
+            "bookmark": bookmark,
             "bookmark_ownership": (
                 cached_change.bookmark_ownership
                 if cached_change is not None
@@ -216,28 +165,20 @@ def _apply_unlink(*, prepared_unlink: _PreparedUnlink) -> None:
             "overview_comment_id": None,
         }
     )
-    next_state = prepared_unlink.state.model_copy(
+    next_state = state.model_copy(
         update={
             "changes": {
-                **prepared_unlink.state.changes,
+                **state.changes,
                 prepared_revision.revision.change_id: updated_change,
             }
         }
     )
-    prepared_unlink.context.state_store.save(next_state)
-
-
-def _unlink_result(
-    *,
-    already_unlinked: bool,
-    prepared_unlink: _PreparedUnlink,
-) -> UnlinkResult:
-    revision = prepared_unlink.prepared_revision.revision
+    context.state_store.save(next_state)
     return UnlinkResult(
-        already_unlinked=already_unlinked,
-        bookmark=prepared_unlink.bookmark,
-        change_id=revision.change_id,
-        subject=revision.subject,
+        already_unlinked=False,
+        bookmark=bookmark,
+        change_id=prepared_revision.revision.change_id,
+        subject=prepared_revision.revision.subject,
     )
 
 

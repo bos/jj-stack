@@ -14,7 +14,6 @@ from jj_review.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
-from .operation_journal_helpers import incomplete_submit_operations
 from .submit_property_scenarios import (
     BoundaryDriftKind,
     BoundaryDriftScenario,
@@ -171,11 +170,9 @@ def _replay_failed_first_submit(
 
     assert submit(None) != 0
     discard_output()
-    _mark_submit_operations_incomplete(repo)
 
     assert submit(None) == 0
     discard_output()
-    assert list(_submit_operation_paths(repo)) == []
 
     stack = _discover_stack_for_labels(
         repo=repo,
@@ -218,11 +215,9 @@ def _replay_failed_resubmit(
 
     assert submit(submit_revset) != 0
     discard_output()
-    _mark_submit_operations_incomplete(repo)
 
     assert submit(submit_revset) == 0
     discard_output()
-    assert list(_submit_operation_paths(repo)) == []
 
     stack = _discover_stack_for_labels(
         repo=repo,
@@ -951,15 +946,6 @@ def _apply_boundary_drift(
         )
         return labels_to_change_ids[label]
     raise AssertionError(f"unsupported boundary drift kind: {drift_kind}")
-
-
-def _submit_operation_paths(repo: Path) -> tuple[Path, ...]:
-    return tuple(sorted(operation.path for operation in incomplete_submit_operations(repo)))
-
-
-def _mark_submit_operations_incomplete(repo: Path) -> None:
-    operation_paths = _submit_operation_paths(repo)
-    assert operation_paths
 
 
 def _pull_request_snapshots(fake_repo: FakeGithubRepository) -> dict[int, tuple[str, ...]]:

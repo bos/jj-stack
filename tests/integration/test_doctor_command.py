@@ -13,7 +13,6 @@ from ..support.integration_helpers import (
     init_fake_github_repo,
     write_fake_github_config,
 )
-from ..support.operation_journal_helpers import write_submit_operation
 from .submit_command_helpers import run_main
 
 
@@ -58,7 +57,6 @@ def test_doctor_exits_zero_for_healthy_repo(
     assert exit_code == 0
     assert "remote" in captured.out
     assert "GitHub auth" in captured.out
-    assert "interruptions" in captured.out
     assert "warn" not in captured.out
     assert "fail" not in captured.out
 
@@ -82,36 +80,6 @@ def test_doctor_shows_skipped_checks_when_remote_fails(
     assert "connectivity" in captured.out
     assert "trunk branch" in captured.out
     assert "prior check failed" in captured.out
-
-
-def test_doctor_warns_for_interrupted_operation(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    from jj_review.jj import JjClient
-    from jj_review.state.store import ReviewStateStore
-
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id if stack.revisions else "aabbccddeeff00112233"
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.require_writable()
-    write_submit_operation(
-        state_store.state_dir,
-        display_revset=change_id[:8],
-        ordered_change_ids=(change_id,),
-        bookmarks={},
-    )
-
-    exit_code = run_main(repo, config_path, "doctor")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "warn" in captured.out
-    assert "interrupted operation" in captured.out
 
 
 def test_doctor_fails_when_github_token_missing(

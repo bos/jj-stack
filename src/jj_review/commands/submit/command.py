@@ -25,7 +25,6 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
-from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClientError, build_github_client
@@ -44,13 +43,8 @@ from jj_review.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
 )
-from jj_review.review.submit_recovery import should_retire_submit_after_submit
-from jj_review.state.journal import (
-    LoadedOperationRecord,
-    SubmitOperationRecord,
-    append_abandoned_event,
-)
-from jj_review.state.operation_lock import OperationLock
+from jj_review.state.journal import OperationJournal
+from jj_review.state.operation_lock import acquire_operation_lock
 
 from .auto_close import (
     retarget_review_bases_before_branch_push,
@@ -68,7 +62,6 @@ from .models import (
     SubmitResult,
     SubmittedRevision,
 )
-from .operations import start_submit_operation
 from .pull_requests import discover_pull_requests_by_bookmark, sync_pull_requests
 from .render import print_submit_result, render_selected_line
 from .revisions import prepare_submit_revisions, sync_remote_bookmarks
@@ -121,12 +114,14 @@ def submit(
     )
     selection_emitter = _SubmitSelectionEmitter(enabled=revset is None)
 
-    with mutating_command_lock(command="submit", context=context) as operation_lock:
+    with acquire_operation_lock(
+        context.state_store.require_writable(),
+        command="submit",
+    ):
         result = asyncio.run(
             _run_submit_async(
                 context=context,
                 on_prepared=selection_emitter.emit_prepared,
-                operation_lock=operation_lock,
                 options=options,
             ),
         )
@@ -399,7 +394,6 @@ async def _run_submit_async(
     *,
     context: CommandContext,
     on_prepared: Callable[[str, str], None] | None,
-    operation_lock: OperationLock,
     options: SubmitOptions,
 ) -> SubmitResult:
     dry_run = options.dry_run
@@ -458,14 +452,36 @@ async def _run_submit_async(
         state_changes=state_changes,
         state_store=state_store,
     )
-    operation_state = start_submit_operation(
-        bookmark_result=bookmark_result,
-        github_repository=github_repository,
-        operation_lock=operation_lock,
-        remote_name=remote.name,
-        run=mutation_run,
-        stack=stack,
-    )
+    journal = None
+    if not dry_run:
+        state_dir = state_store.require_writable()
+        journal = OperationJournal.begin(
+            state_dir,
+            operation="submit",
+            options={
+                "remote_name": remote.name,
+                "github_host": github_repository.host,
+                "github_owner": github_repository.owner,
+                "github_repo": github_repository.repo,
+            },
+            resolved_scope={
+                "bookmarks": {
+                    revision.change_id: resolution.bookmark
+                    for revision, resolution in zip(
+                        stack.revisions,
+                        bookmark_result.resolutions,
+                        strict=True,
+                    )
+                },
+                "ordered_change_ids": tuple(
+                    revision.change_id for revision in stack.revisions
+                ),
+                "ordered_commit_ids": tuple(
+                    revision.commit_id for revision in stack.revisions
+                ),
+                "selected_revset": stack.selected_revset,
+            },
+        )
     if dry_run:
         if not prepared_inputs.restarted_change_ids:
             local_only_dry_run = _build_local_only_dry_run_result(
@@ -594,31 +610,9 @@ async def _run_submit_async(
             trunk_branch=trunk_branch,
         )
     finally:
-        if succeeded and operation_state.journal is not None:
+        if succeeded and journal is not None:
             completed_change_ids = tuple(revision.change_id for revision in stack.revisions)
-            operation_state.journal.append(
+            journal.append(
                 "completed",
                 {"ordered_change_ids": completed_change_ids},
             )
-            _retire_superseded_submit_operations(
-                current_operation=operation_state.operation,
-                stale_operations=operation_state.stale_operations,
-            )
-
-
-def _retire_superseded_submit_operations(
-    *,
-    current_operation: SubmitOperationRecord,
-    stale_operations: list[LoadedOperationRecord],
-) -> None:
-    """Mark interrupted submit journals terminal after a later submit supersedes them."""
-
-    for loaded in stale_operations:
-        operation = loaded.operation
-        if not isinstance(operation, SubmitOperationRecord):
-            continue
-        if should_retire_submit_after_submit(
-            old_operation=operation,
-            new_operation=current_operation,
-        ):
-            append_abandoned_event(loaded.path, reason="superseded_by_submit")

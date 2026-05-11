@@ -105,7 +105,7 @@ surface:
 
 Those operations cover the common single-selected-stack failure classes while staying
 small enough for quick shrinking by inspection. Broader operations such as multi-stack
-merges, duplicate, split, and interrupted-submit injection can be added once their
+merges, duplicate, split, and failed-submit injection can be added once their
 expected product semantics are represented directly in the scenario model.
 
 ## Cross-Stack Split Harness

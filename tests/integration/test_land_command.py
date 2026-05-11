@@ -4,13 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.jj import JjClient
 from jj_review.jj.client import JjCommandError
 from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
-from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
@@ -21,7 +19,6 @@ from ..support.integration_helpers import (
 from .submit_command_helpers import (
     approve_pull_requests,
     configure_submit_environment,
-    patch_github_client_builders,
     read_remote_ref,
     run_main,
 )
@@ -132,7 +129,6 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
     )
     assert landed_state.changes[change_id_3].pr_state == "closed"
     state_dir = resolve_state_path(repo).parent
-    assert tuple((state_dir / "journals").glob("*-land-*.jsonl")) == ()
     journal_events = tuple(
         event for event in read_operation_log(state_dir) if event.operation == "land"
     )
@@ -351,7 +347,6 @@ def test_land_pull_request_selects_the_landed_prefix(
     assert fake_repo.pull_requests[2].merged_at is not None
     assert fake_repo.pull_requests[3].state == "open"
     assert JjClient(repo).get_bookmark_state(bookmark_3).local_target is not None
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
 def test_land_bypass_readiness_previews_and_finalizes_unapproved_change(
@@ -686,69 +681,3 @@ def test_land_replans_after_interrupted_push_when_landable_prefix_changes(
     assert "simulated trunk push failure" in first_run.err
     assert "Resuming interrupted" not in second_run.out
     assert read_remote_ref(fake_repo.git_dir, "main") == first_landable_commit_id
-
-
-def test_land_resumes_after_trunk_push_interruption(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(2):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-    approve_pull_requests(fake_repo, 1, 2)
-    submitted_stack = JjClient(repo).discover_review_stack()
-    first_change_id = submitted_stack.revisions[0].change_id
-    second_change_id = submitted_stack.revisions[1].change_id
-    landed_commit_id = submitted_stack.revisions[1].commit_id
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailingFinalizeClient(GithubClient):
-        get_pull_request_calls = 0
-
-        async def get_pull_request(self, owner: str, repo: str, *, pull_number: int):
-            type(self).get_pull_request_calls += 1
-            if type(self).get_pull_request_calls == 1:
-                raise GithubClientError("simulated PR finalization failure")
-            return await super().get_pull_request(owner, repo, pull_number=pull_number)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_review.commands.land.command",),
-        client_type=FailingFinalizeClient,
-    )
-
-    first_exit_code = run_main(repo, config_path, "land")
-    first_run = capsys.readouterr()
-
-    assert first_exit_code == 1
-    assert "simulated PR finalization failure" in first_run.err
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_review.commands.land.command",),
-    )
-
-    second_exit_code = run_main(repo, config_path, "land")
-    second_run = capsys.readouterr()
-
-    assert second_exit_code == 0
-    assert f"Resuming interrupted land for {second_change_id[:8]} (from @-)" in second_run.out
-    state = ReviewStateStore.for_repo(repo).load()
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].state == "closed"
-    assert fake_repo.pull_requests[2].merged_at is not None
-    assert state.changes[first_change_id].pr_state == "merged"
-    assert state.changes[second_change_id].pr_state == "merged"
-    assert ReviewStateStore.for_repo(repo).list_operations() == []

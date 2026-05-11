@@ -4,17 +4,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
 from jj_review.jj import JjClient
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.journal import OperationJournal, read_journal, read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
     FakeGithubState,
     create_app,
-    initialize_bare_repository,
 )
 from ..support.integration_helpers import (
     commit_file,
@@ -22,7 +18,6 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
 )
-from ..support.operation_journal_helpers import write_submit_operation
 from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     configure_submit_environment,
@@ -36,37 +31,6 @@ from .submit_command_helpers import (
 
 def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
-
-
-def _begin_close_journal(
-    state_dir: Path,
-    *,
-    cleanup: bool,
-    display_revset: str,
-    ordered_change_ids: tuple[str, ...],
-    ordered_commit_ids: tuple[str, ...],
-) -> OperationJournal:
-    return OperationJournal.begin(
-        state_dir,
-        operation="close",
-        lock_holder=None,
-        options={"cleanup": cleanup},
-        resolved_scope={
-            "ordered_change_ids": ordered_change_ids,
-            "ordered_commit_ids": ordered_commit_ids,
-            "selected_revset": display_revset,
-        },
-    )
-
-
-def _assert_journal_abandoned(journal: OperationJournal) -> None:
-    events = [
-        event
-        for event in read_operation_log(journal.path.parent.parent)
-        if event.operation_id == journal.operation_id
-    ]
-    assert not journal.path.exists()
-    assert events[-1].event == "abandoned"
 
 
 def test_close_apply_closes_pull_request_and_retires_active_state(
@@ -199,7 +163,7 @@ def test_close_cleanup_pull_request_without_saved_record_reports_open_pr_not_tra
     assert "not linked to any local change" not in combined
 
 
-def test_close_noop_short_circuit_retires_covered_interrupted_close_intent(
+def test_close_noop_short_circuit_on_untracked_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -207,16 +171,6 @@ def test_close_noop_short_circuit_retires_covered_interrupted_close_intent(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
-
-    revision = JjClient(repo).discover_review_stack().revisions[-1]
-    state_dir = resolve_state_path(repo).parent
-    old_journal = _begin_close_journal(
-        state_dir,
-        cleanup=False,
-        display_revset="@",
-        ordered_change_ids=(revision.change_id,),
-        ordered_commit_ids=(revision.commit_id,),
-    )
 
     exit_code = run_main(repo, config_path, "close")
     captured = capsys.readouterr()
@@ -226,8 +180,6 @@ def test_close_noop_short_circuit_retires_covered_interrupted_close_intent(
         "Nothing to close on the selected stack."
         in captured.out
     )
-    _assert_journal_abandoned(old_journal)
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
 def test_close_and_cleanup_match_dry_run_on_fully_untracked_stack(
@@ -531,22 +483,6 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     assert bottom_change_id not in refreshed_state.changes
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
 
-    state_dir = state_store.require_writable()
-    stale_journal = _begin_close_journal(
-        state_dir,
-        cleanup=True,
-        display_revset=f"--pull-request {bottom_pr_number}",
-        ordered_change_ids=(bottom_change_id,),
-        ordered_commit_ids=(last_target,),
-    )
-    stale_plain_journal = _begin_close_journal(
-        state_dir,
-        cleanup=False,
-        display_revset=bottom_change_id,
-        ordered_change_ids=(bottom_change_id,),
-        ordered_commit_ids=(last_target,),
-    )
-
     rerun_exit_code = run_main(
         repo,
         config_path,
@@ -560,12 +496,9 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     assert rerun_exit_code == 0
     assert f"Nothing to close for PR #{bottom_pr_number}." in rerun_captured.out
     assert "not linked" not in _combined_output(rerun_captured)
-    _assert_journal_abandoned(stale_journal)
-    _assert_journal_abandoned(stale_plain_journal)
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
-def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
+def test_close_cleanup_pull_request_closes_orphaned_pr(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -591,22 +524,6 @@ def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
     run_command(["jj", "abandon", bottom_change_id], repo)
     fake_repo.pull_requests[bottom_pr_number].state = "closed"
 
-    state_dir = state_store.require_writable()
-    cleanup_journal = _begin_close_journal(
-        state_dir,
-        cleanup=True,
-        display_revset=f"--pull-request {bottom_pr_number}",
-        ordered_change_ids=(bottom_change_id,),
-        ordered_commit_ids=(last_target,),
-    )
-    plain_journal = _begin_close_journal(
-        state_dir,
-        cleanup=False,
-        display_revset=f"--pull-request {bottom_pr_number}",
-        ordered_change_ids=(bottom_change_id,),
-        ordered_commit_ids=(last_target,),
-    )
-
     exit_code = run_main(
         repo,
         config_path,
@@ -616,17 +533,11 @@ def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
         str(bottom_pr_number),
     )
     captured = capsys.readouterr()
-    combined = _combined_output(captured)
 
     assert exit_code == 0
-    assert "Continuing interrupted" in combined
-    assert "close --cleanup" in combined
     assert "prune orphan record" in captured.out
     assert bottom_change_id not in state_store.load().changes
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
-    _assert_journal_abandoned(cleanup_journal)
-    _assert_journal_abandoned(plain_journal)
-    assert state_store.list_operations() == []
 
 
 def test_close_cleanup_pull_request_blocks_when_saved_pr_head_is_from_fork(
@@ -1487,7 +1398,6 @@ def test_close_apply_checkpoints_prior_progress_before_later_block(
     assert checkpointed_state.changes[head_change_id].pr_state == "closed"
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
     assert "previous close was interrupted" not in second_run.out
     assert f"close PR #{head_pr_number}" not in second_run.out
 
@@ -1627,367 +1537,3 @@ def test_close_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
     assert "Close blocked:" in captured.out
     assert "stack navigation comment:" in captured.out
     assert fake_repo.pull_requests[2].state == "closed"
-
-
-def test_close_retires_covered_interrupted_close_intent(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    first = stack.revisions[0]
-    state_dir = resolve_state_path(repo).parent
-    old_journal = _begin_close_journal(
-        state_dir,
-        cleanup=False,
-        display_revset="@",
-        ordered_change_ids=(first.change_id,),
-        ordered_commit_ids=(first.commit_id,),
-    )
-
-    exit_code = run_main(repo, config_path, "close")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    _assert_journal_abandoned(old_journal)
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
-
-
-def test_close_continues_exact_interrupted_close_on_multi_revision_stack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    first = stack.revisions[0]
-    second = stack.revisions[1]
-    state_dir = resolve_state_path(repo).parent
-    old_journal = _begin_close_journal(
-        state_dir,
-        cleanup=False,
-        display_revset="@",
-        ordered_change_ids=(first.change_id, second.change_id),
-        ordered_commit_ids=(first.commit_id, second.commit_id),
-    )
-
-    exit_code = run_main(repo, config_path, "close")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    _assert_journal_abandoned(old_journal)
-
-
-def test_close_does_not_resume_or_retire_interrupted_cleanup_close(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    revision = stack.revisions[-1]
-    state_dir = resolve_state_path(repo).parent
-    old_journal = _begin_close_journal(
-        state_dir,
-        cleanup=True,
-        display_revset="@",
-        ordered_change_ids=(revision.change_id,),
-        ordered_commit_ids=(revision.commit_id,),
-    )
-
-    exit_code = run_main(repo, config_path, "close")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    assert read_journal(old_journal.path)[-1].event == "begin"
-
-
-def test_cleanup_close_supersedes_plain_interrupted_close(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    revision = stack.revisions[-1]
-    state_dir = resolve_state_path(repo).parent
-    old_journal = _begin_close_journal(
-        state_dir,
-        cleanup=False,
-        display_revset="@",
-        ordered_change_ids=(revision.change_id,),
-        ordered_commit_ids=(revision.commit_id,),
-    )
-
-    exit_code = run_main(repo, config_path, "close", "--cleanup")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    _assert_journal_abandoned(old_journal)
-
-
-def test_cleanup_close_retires_covered_interrupted_submit(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    revision = stack.revisions[-1]
-    state_dir = resolve_state_path(repo).parent
-    bookmark = ReviewStateStore.for_repo(repo).load().changes[revision.change_id].bookmark
-    assert bookmark is not None
-    old_journal = write_submit_operation(
-        state_dir,
-        display_revset="@",
-        ordered_change_ids=(revision.change_id,),
-        ordered_commit_ids=(revision.commit_id,),
-        bookmarks={revision.change_id: bookmark},
-    )
-
-    exit_code = run_main(repo, config_path, "close", "--cleanup")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    _assert_journal_abandoned(old_journal)
-    assert not ReviewStateStore.for_repo(repo).list_operations()
-
-
-def test_cleanup_close_keeps_interrupted_submit_when_only_local_bookmark_remains(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    submitted = stack.revisions[-1]
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().changes[submitted.change_id].bookmark
-    assert bookmark is not None
-
-    old_journal = write_submit_operation(
-        resolve_state_path(repo).parent,
-        display_revset="@",
-        ordered_change_ids=(submitted.change_id,),
-        ordered_commit_ids=(submitted.commit_id,),
-        bookmarks={submitted.change_id: bookmark},
-    )
-
-    JjClient(repo).delete_remote_bookmarks(
-        remote="origin",
-        deletions=((bookmark, submitted.commit_id),),
-    )
-    run_command(["jj", "bookmark", "create", bookmark, "-r", submitted.commit_id], repo)
-    state_store.save(ReviewState())
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    exit_code = run_main(repo, config_path, "close", "--cleanup")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert (
-        "Nothing to close on the selected stack."
-        in captured.out
-    )
-    assert read_journal(old_journal.path)[-1].event == "begin"
-
-
-def test_cleanup_close_does_not_retire_interrupted_submit_after_relink_to_new_bookmark(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    revision = stack.revisions[-1]
-    state_store = ReviewStateStore.for_repo(repo)
-    original_bookmark = state_store.load().changes[revision.change_id].bookmark
-    assert original_bookmark is not None
-
-    old_journal = write_submit_operation(
-        resolve_state_path(repo).parent,
-        display_revset="@",
-        ordered_change_ids=(revision.change_id,),
-        ordered_commit_ids=(revision.commit_id,),
-        bookmarks={revision.change_id: original_bookmark},
-    )
-
-    run_command(
-        [
-            "jj",
-            "describe",
-            "--ignore-immutable",
-            "-r",
-            revision.change_id,
-            "-m",
-            "feature 1 relinked",
-        ],
-        repo,
-    )
-    rewritten = JjClient(repo).discover_review_stack(revision.change_id).revisions[-1]
-    manual_bookmark = "review/manual-feature-1"
-    run_command(
-        ["jj", "bookmark", "create", manual_bookmark, "-r", rewritten.change_id],
-        repo,
-    )
-    run_command(
-        ["jj", "git", "push", "--remote", "origin", "--bookmark", manual_bookmark],
-        repo,
-    )
-    fake_repo.create_pull_request(
-        base_ref="main",
-        body="manual body",
-        head_ref=manual_bookmark,
-        title="manual title",
-    )
-
-    assert run_main(repo, config_path, "relink", "2", rewritten.change_id) == 0
-    capsys.readouterr()
-
-    assert run_main(repo, config_path, "close", "--cleanup", rewritten.change_id) == 0
-    capsys.readouterr()
-
-    assert read_journal(old_journal.path)[-1].event == "begin"
-    assert read_remote_ref(fake_repo.git_dir, original_bookmark) == revision.commit_id
-
-
-def test_cleanup_close_retires_interrupted_submit_when_only_closed_cached_metadata_remains(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    submitted = stack.revisions[-1]
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().changes[submitted.change_id].bookmark
-    assert bookmark is not None
-
-    old_journal = write_submit_operation(
-        resolve_state_path(repo).parent,
-        display_revset="@",
-        ordered_change_ids=(submitted.change_id,),
-        ordered_commit_ids=(submitted.commit_id,),
-        bookmarks={submitted.change_id: bookmark},
-    )
-
-    JjClient(repo).delete_remote_bookmarks(
-        remote="origin",
-        deletions=((bookmark, submitted.commit_id),),
-    )
-    state_store.save(
-        ReviewState(
-            changes={
-                submitted.change_id: CachedChange(
-                    bookmark=bookmark,
-                    last_submitted_commit_id=submitted.commit_id,
-                    pr_number=1,
-                    pr_state="closed",
-                    pr_url="https://github.test/octo-org/stacked-review/pull/1",
-                )
-            }
-        )
-    )
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "close", "--cleanup") == 0
-    capsys.readouterr()
-
-    _assert_journal_abandoned(old_journal)
-
-
-def test_cleanup_close_keeps_interrupted_submit_when_remote_name_is_reused_for_other_repo(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    other_repo = initialize_bare_repository(
-        tmp_path / "remotes-extra",
-        owner="octo-org",
-        name="other-review",
-    )
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    submitted = stack.revisions[-1]
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().changes[submitted.change_id].bookmark
-    assert bookmark is not None
-
-    old_journal = write_submit_operation(
-        resolve_state_path(repo).parent,
-        display_revset="@",
-        ordered_change_ids=(submitted.change_id,),
-        ordered_commit_ids=(submitted.commit_id,),
-        bookmarks={submitted.change_id: bookmark},
-    )
-
-    JjClient(repo).delete_remote_bookmarks(
-        remote="origin",
-        deletions=((bookmark, submitted.commit_id),),
-    )
-    state_store.save(ReviewState())
-    run_command(["jj", "git", "remote", "remove", "origin"], repo)
-    run_command(["jj", "git", "remote", "add", "origin", str(other_repo.git_dir)], repo)
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    def _parse_other_repo(remote):
-        if remote.name == "origin":
-            return ParsedGithubRepo(
-                host="github.test",
-                owner="octo-org",
-                repo="other-review",
-            )
-        return ParsedGithubRepo(
-            host="github.test",
-            owner=fake_repo.owner,
-            repo=fake_repo.name,
-        )
-
-    monkeypatch.setattr("jj_review.commands.close.parse_github_repo", _parse_other_repo)
-
-    assert run_main(repo, config_path, "close", "--cleanup") == 0
-    capsys.readouterr()
-
-    assert read_journal(old_journal.path)[-1].event == "begin"
-    assert run_main(repo, config_path, "status") == 0
-    status_after = capsys.readouterr()
-    assert f"submit for {submitted.change_id[:8]}" in status_after.out

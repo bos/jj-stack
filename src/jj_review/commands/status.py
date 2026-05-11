@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -21,7 +20,6 @@ from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.formatting import (
     format_pull_request_label,
-    format_status_annotation,
     render_revision_blocks,
     render_revision_lines,
 )
@@ -41,15 +39,6 @@ from jj_review.review.change_status import (
     submitted_state_disagreement,
 )
 from jj_review.review.discovery import discover_connected_tracked_stacks
-from jj_review.review.operations import (
-    OrderedOperationMatch,
-    describe_operation,
-    match_cleanup_rebase_operation,
-    match_close_operation,
-    match_land_operation,
-    operation_command,
-    operation_selector,
-)
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_selected_revset,
@@ -62,20 +51,6 @@ from jj_review.review.status import (
     status_preparation_cli_error,
     stream_status,
 )
-from jj_review.review.submit_recovery import (
-    SubmitRecoveryIdentity,
-    SubmitStatusDecision,
-    submit_status_decision,
-)
-from jj_review.state.journal import (
-    CleanupOperationRecord,
-    CleanupRebaseOperationRecord,
-    CloseOperationRecord,
-    LandOperationRecord,
-    RelinkOperationRecord,
-    SubmitOperationRecord,
-)
-from jj_review.system import pid_is_alive
 
 _SUMMARY_SECTION_HEAD_COUNT = 3
 _SUMMARY_SECTION_TAIL_COUNT = 3
@@ -91,15 +66,6 @@ class StatusSelector:
 
     kind: StatusSelectorKind
     value: str
-
-
-@dataclass(frozen=True, slots=True)
-class StatusOptions:
-    """Parsed command options for `status` after CLI normalization."""
-
-    fetch: bool
-    selectors: tuple[StatusSelector, ...]
-    verbose: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,25 +102,6 @@ def status(
     )
     return _run_status(
         context=context,
-        options=_status_options_from_cli(
-            fetch=fetch,
-            pull_request=pull_request,
-            revset=revset,
-            selectors=selectors,
-            verbose=verbose,
-        ),
-    )
-
-
-def _status_options_from_cli(
-    *,
-    fetch: bool,
-    pull_request: str | Sequence[str] | None,
-    revset: str | Sequence[str] | None,
-    selectors: Sequence[StatusSelector] | None,
-    verbose: bool,
-) -> StatusOptions:
-    return StatusOptions(
         fetch=fetch,
         selectors=_normalize_status_selectors(
             pull_request=pull_request,
@@ -168,12 +115,14 @@ def _status_options_from_cli(
 def _run_status(
     *,
     context: CommandContext,
-    options: StatusOptions,
+    fetch: bool,
+    selectors: tuple[StatusSelector, ...],
+    verbose: bool,
 ) -> int:
-    if options.fetch:
+    if fetch:
         refresh_remote_state_for_status(jj_client=context.jj_client)
 
-    if not options.selectors:
+    if not selectors:
         prepared_status = _prepare_status_with_spinner(
             context=context,
             revset=None,
@@ -181,7 +130,7 @@ def _run_status(
         exit_code = _render_prepared_status(
             context=context,
             prepared_status=prepared_status,
-            verbose=options.verbose,
+            verbose=verbose,
         )
         _emit_connected_stale_stacks_advisory(
             context=context,
@@ -191,12 +140,12 @@ def _run_status(
         return exit_code
 
     exit_code = 0
-    multi_selector = len(options.selectors) > 1
+    multi_selector = len(selectors) > 1
     rendered_stack_keys: set[tuple[object, ...]] = set()
     rendered_stacks: list[LocalStack] = []
     state: ReviewState | None = None
     printed_blocks = 0
-    for selector in options.selectors:
+    for selector in selectors:
         try:
             resolved_selector = _resolve_status_selector(
                 context=context,
@@ -237,7 +186,7 @@ def _run_status(
             _render_prepared_status(
                 context=context,
                 prepared_status=prepared_status,
-                verbose=options.verbose,
+                verbose=verbose,
             ),
         )
         printed_blocks += 1
@@ -489,18 +438,8 @@ def _render_prepared_status(
         )
     )
     _emit_lines(render_status_advisory_lines(config=context.config, result=result))
-    _emit_lines(render_status_operation_lines(prepared_status=prepared_status))
 
-    exit_code = 1 if result.incomplete else 0
-    if any(
-        _interrupted_operation_blocks_status(
-            loaded=loaded,
-            prepared_status=prepared_status,
-        )
-        for loaded in prepared_status.outstanding_operations
-    ):
-        exit_code = max(exit_code, 1)
-    return exit_code
+    return 1 if result.incomplete else 0
 
 
 def render_status_selection_lines(*, prepared_status) -> tuple[object, ...]:
@@ -1034,451 +973,6 @@ def _link_advisory_kind(classified: _ClassifiedStatusRevision) -> str:
     raise AssertionError(f"Unexpected link advisory state: {change_status.pr_lifecycle}")
 
 
-def render_status_operation_lines(*, prepared_status) -> tuple[object, ...]:
-    """Render any stale or incomplete operation notices."""
-
-    lines: list[object] = []
-    if prepared_status.stale_operations:
-        lines.extend(("", "Stale incomplete operations (change IDs no longer in repo):"))
-        for loaded in prepared_status.stale_operations:
-            alive = pid_is_alive(loaded.operation.pid)
-            status_str = "process alive" if alive else "process dead"
-            lines.append(
-                _prefixed_operation_line(
-                    describe_operation(loaded.operation),
-                    format_status_annotation(f"{status_str}, {loaded.path.name}"),
-                )
-            )
-
-    if prepared_status.outstanding_operations:
-        lines.extend(("", "Interrupted operations recorded:"))
-        for loaded in prepared_status.outstanding_operations:
-            lines.extend(
-                _render_interrupted_operation_block(
-                    loaded=loaded,
-                    prepared_status=prepared_status,
-                )
-            )
-    return tuple(lines)
-
-
-def _interrupted_operation_blocks_status(*, loaded, prepared_status) -> bool:
-    """Return True when an interrupted operation should make `status` exit nonzero."""
-
-    if pid_is_alive(loaded.operation.pid):
-        return True
-
-    current_change_ids = tuple(
-        prepared_revision.revision.change_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    current_commit_ids = tuple(
-        prepared_revision.revision.commit_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-
-    if isinstance(loaded.operation, SubmitOperationRecord):
-        decision = submit_status_decision(
-            operation=loaded.operation,
-            current_change_ids=current_change_ids,
-            current_commit_ids=current_commit_ids,
-            current_identity=_current_submit_identity(prepared_status=prepared_status),
-        )
-        return decision is SubmitStatusDecision.INSPECT
-
-    if isinstance(loaded.operation, CleanupRebaseOperationRecord):
-        return (
-            match_cleanup_rebase_operation(
-                operation=loaded.operation,
-                current_change_ids=current_change_ids,
-                current_commit_ids=current_commit_ids,
-            )
-            == "overlap"
-        )
-
-    if isinstance(loaded.operation, CloseOperationRecord):
-        return (
-            match_close_operation(
-                operation=loaded.operation,
-                current_change_ids=current_change_ids,
-                current_commit_ids=current_commit_ids,
-            )
-            == "overlap"
-        )
-
-    current_change_id_set = set(current_change_ids)
-    return bool(loaded.operation.change_ids() & current_change_id_set)
-
-
-def _render_interrupted_operation_block(
-    *,
-    loaded,
-    prepared_status,
-) -> tuple[object, ...]:
-    operation = loaded.operation
-    header = _render_interrupted_operation_header(operation)
-    lines: list[object] = [("  ", header)]
-
-    if pid_is_alive(operation.pid):
-        lines.append(
-            (
-                "    ",
-                t"still in progress (PID {operation.pid}); run "
-                t"{ui.cmd('jj-review status')} again after it finishes",
-            )
-        )
-        return tuple(lines)
-
-    if isinstance(operation, SubmitOperationRecord):
-        detail_lines = _interrupted_submit_detail_lines(
-            operation=operation,
-            prepared_status=prepared_status,
-        )
-    elif isinstance(operation, CleanupRebaseOperationRecord | CloseOperationRecord):
-        detail_lines = _interrupted_ordered_detail_lines(
-            operation=operation,
-            match=_match_ordered_operation(
-                operation=operation,
-                prepared_status=prepared_status,
-            ),
-        )
-    elif isinstance(operation, LandOperationRecord):
-        detail_lines = _interrupted_ordered_detail_lines(
-            operation=operation,
-            match=_match_land_operation(operation=operation, prepared_status=prepared_status),
-        )
-    elif isinstance(operation, RelinkOperationRecord):
-        detail_lines = (
-            (
-                "inspect with ",
-                _render_status_command(operation),
-                " before rerunning ",
-                ui.cmd("jj-review relink"),
-            ),
-        )
-    elif isinstance(operation, CleanupOperationRecord):
-        detail_lines = (
-            (
-                "inspect with ",
-                _render_status_command(operation),
-                "; rerun ",
-                ui.cmd("jj-review cleanup"),
-                " if still needed",
-            ),
-        )
-    else:
-        detail_lines = (("inspect with ", ui.cmd("jj-review status")),)
-
-    lines.extend(("    ", detail) for detail in detail_lines)
-    return tuple(lines)
-
-
-def _interrupted_submit_detail_lines(
-    *,
-    operation: SubmitOperationRecord,
-    prepared_status,
-) -> tuple[object, ...]:
-    if (
-        _recorded_stack_head_visible(
-            operation=operation,
-            prepared_status=prepared_status,
-        )
-        is False
-    ):
-        return (
-            (
-                "change ",
-                ui.change_id(operation_selector(operation) or operation.display_revset),
-                " from this interrupted submit is no longer visible in jj",
-            ),
-            (
-                "preview clearing this notice with ",
-                ui.cmd("jj-review abort --dry-run"),
-                "; clear it with ",
-                ui.cmd("jj-review abort"),
-            ),
-        )
-
-    current_change_ids = tuple(
-        prepared_revision.revision.change_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    current_commit_ids = tuple(
-        prepared_revision.revision.commit_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    decision = submit_status_decision(
-        operation=operation,
-        current_change_ids=current_change_ids,
-        current_commit_ids=current_commit_ids,
-        current_identity=_current_submit_identity(prepared_status=prepared_status),
-    )
-    resume_command = _render_resume_command(operation)
-    abort_command = ui.cmd("jj-review abort --dry-run")
-    if decision is SubmitStatusDecision.CONTINUE:
-        return (
-            "this matches the stack shown above",
-            ("continue with ", resume_command, ", or preview backout with ", abort_command),
-        )
-    if decision is SubmitStatusDecision.CURRENT_STACK:
-        return (
-            "the recorded stack was rewritten; rerunning submit will use the stack shown above",
-            ("continue with ", resume_command, ", or preview backout with ", abort_command),
-        )
-    if decision is SubmitStatusDecision.INSPECT:
-        return (
-            "this matches the stack shown above, but the recorded submit target is different",
-            (
-                "inspect before continuing with ",
-                resume_command,
-                "; preview backout with ",
-                abort_command,
-            ),
-        )
-    return (
-        "this is not the stack shown above",
-        ("inspect with ", _render_status_command(operation)),
-        ("finish with ", resume_command, ", or preview backout with ", abort_command),
-    )
-
-
-def _current_submit_identity(*, prepared_status) -> SubmitRecoveryIdentity | None:
-    current_remote = prepared_status.prepared.remote
-    current_github_repository = prepared_status.github_repository
-    if current_remote is None or current_github_repository is None:
-        return None
-    return SubmitRecoveryIdentity.from_github_repository(
-        remote_name=current_remote.name,
-        github_repository=current_github_repository,
-    )
-
-
-def _recorded_stack_head_visible(
-    *,
-    operation: SubmitOperationRecord,
-    prepared_status,
-) -> bool | None:
-    """Return whether the recorded submit head still resolves, when status can tell."""
-
-    if not operation.ordered_change_ids:
-        return None
-    client = getattr(prepared_status.prepared, "client", None)
-    if client is None:
-        return None
-    head_change_id = operation.ordered_change_ids[-1]
-    revisions = client.query_revisions_by_change_ids((head_change_id,)).get(head_change_id, ())
-    return bool(revisions)
-
-
-def _match_ordered_operation(
-    *,
-    operation: CleanupRebaseOperationRecord | CloseOperationRecord,
-    prepared_status,
-) -> OrderedOperationMatch:
-    current_change_ids = tuple(
-        prepared_revision.revision.change_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    current_commit_ids = tuple(
-        prepared_revision.revision.commit_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    if isinstance(operation, CleanupRebaseOperationRecord):
-        return match_cleanup_rebase_operation(
-            operation=operation,
-            current_change_ids=current_change_ids,
-            current_commit_ids=current_commit_ids,
-        )
-    return match_close_operation(
-        operation=operation,
-        current_change_ids=current_change_ids,
-        current_commit_ids=current_commit_ids,
-    )
-
-
-def _match_land_operation(
-    *,
-    operation: LandOperationRecord,
-    prepared_status,
-) -> OrderedOperationMatch:
-    current_change_ids = tuple(
-        prepared_revision.revision.change_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    current_commit_ids = tuple(
-        prepared_revision.revision.commit_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    return match_land_operation(
-        operation=operation,
-        current_change_ids=current_change_ids,
-        current_commit_ids=current_commit_ids,
-    )
-
-
-def _interrupted_ordered_detail_lines(
-    *,
-    match: OrderedOperationMatch,
-    operation: CleanupRebaseOperationRecord | CloseOperationRecord | LandOperationRecord,
-) -> tuple[object, ...]:
-    resume_command = _render_resume_command(operation)
-
-    if match == "exact":
-        return (
-            "this matches the stack shown above",
-            ("continue with ", resume_command),
-        )
-    if match == "same-logical":
-        command = operation_command(operation)
-        return (
-            (
-                "the recorded stack was rewritten; rerunning ",
-                command,
-                " will use the stack shown above",
-            ),
-            ("continue with ", resume_command),
-        )
-    if match == "covered":
-        return (
-            "the recorded changes are all included in the stack shown above",
-            ("continue with ", resume_command),
-        )
-    if match == "trimmed":
-        return (
-            "the recorded stack includes changes that are no longer in the stack shown above",
-            (
-                "inspect with ",
-                _render_status_command(operation),
-                " before continuing with ",
-                resume_command,
-            ),
-        )
-    if match == "overlap":
-        return (
-            "the recorded stack partly overlaps the stack shown above",
-            (
-                "inspect with ",
-                _render_status_command(operation),
-                " before continuing with ",
-                resume_command,
-            ),
-        )
-    return (
-        "this is not the stack shown above",
-        ("inspect with ", _render_status_command(operation)),
-        ("finish with ", resume_command),
-    )
-
-
-def _render_resume_command(
-    operation: (
-        SubmitOperationRecord
-        | CleanupRebaseOperationRecord
-        | CloseOperationRecord
-        | LandOperationRecord
-    ),
-) -> ui.SemanticText:
-    selector = operation_selector(operation)
-    command = f"jj-review {operation_command(operation)}"
-    if selector is not None:
-        command = f"{command} {selector}"
-    return ui.cmd(command)
-
-
-def _render_status_command(operation) -> ui.SemanticText:
-    selector = operation_selector(operation)
-    command = "jj-review status"
-    if selector is not None:
-        command = f"{command} {selector}"
-    return ui.cmd(command)
-
-
-def _render_interrupted_operation_header(operation) -> object:
-    started = _render_started_at(operation)
-    if isinstance(
-        operation,
-        SubmitOperationRecord
-        | CleanupRebaseOperationRecord
-        | CloseOperationRecord
-        | LandOperationRecord,
-    ):
-        return (
-            ui.cmd(operation_command(operation)),
-            " for ",
-            _render_recorded_stack_head(operation),
-            ", ",
-            started,
-            " from ",
-            ui.revset(operation.display_revset),
-        )
-    if isinstance(operation, RelinkOperationRecord):
-        return (
-            ui.cmd(operation_command(operation)),
-            " for ",
-            ui.change_id(operation.change_id),
-            ", ",
-            started,
-        )
-    return (ui.cmd(operation_command(operation)), ", ", started)
-
-
-def _render_recorded_stack_head(
-    operation: (
-        SubmitOperationRecord
-        | CleanupRebaseOperationRecord
-        | CloseOperationRecord
-        | LandOperationRecord
-    ),
-) -> object:
-    if not operation.ordered_change_ids:
-        return "stack"
-    return ui.change_id(operation.ordered_change_ids[-1])
-
-
-def _render_started_at(operation) -> str:
-    started_at = getattr(operation, "started_at", None)
-    if not isinstance(started_at, str):
-        return "started at unknown time"
-    return f"started {_format_operation_age(started_at)}"
-
-
-def _format_operation_age(
-    started_at: str,
-    *,
-    now: datetime | None = None,
-) -> str:
-    if now is None:
-        now = _now_utc()
-    try:
-        started = datetime.fromisoformat(started_at)
-    except ValueError:
-        return "at unknown time"
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=UTC)
-    else:
-        started = started.astimezone(UTC)
-
-    elapsed_seconds = int((now - started).total_seconds())
-    if elapsed_seconds < 0:
-        return started.date().isoformat()
-    if elapsed_seconds < 60:
-        return "just now"
-    elapsed_minutes = elapsed_seconds // 60
-    if elapsed_minutes < 60:
-        return f"{elapsed_minutes}m ago"
-    elapsed_hours = elapsed_minutes // 60
-    if elapsed_hours < 24:
-        return f"{elapsed_hours}h ago"
-    elapsed_days = elapsed_hours // 24
-    if elapsed_days < 7:
-        return f"{elapsed_days}d ago"
-    return started.date().isoformat()
-
-
-def _now_utc() -> datetime:
-    return datetime.now(UTC)
-
-
 def _render_summary_revision_lines(
     *,
     classified: _ClassifiedStatusRevision,
@@ -1665,10 +1159,6 @@ def _format_cached_pull_request_label(cached_change) -> str | None:
         _rd = cached_change.pr_review_decision
         details.append("changes requested" if _rd == "changes_requested" else _rd)
     return f"{label} ({', '.join(details)})"
-
-
-def _prefixed_operation_line(description: object, status: object) -> object:
-    return ui.prefixed_line("  ", (description, "  ", status))
 
 
 def _classified_revision_has_link_advisory(

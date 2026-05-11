@@ -3,20 +3,21 @@
 Items that need to be implemented or thought through, but are not blocking
 current slices.
 
-## Crash and Interrupt Recovery
+## Crash and Interrupt Diagnosis
 
-_Benefit: medium — affects users with interrupted operations, which is uncommon
-but leaves them stuck with inconsistent state until resolved._
+_Benefit: medium — affects users with failed mutating commands, which is uncommon
+but can leave jj, GitHub, and saved tracking data out of sync._
 
-Intent files now act as the concurrency lock, mutating commands hard-fail when
-saved jj-review data is unavailable, saved-data writes are incremental during
-mutating operations, `status` surfaces outstanding and stale incomplete
-operations, and `abort` retracts completed work from an interrupted submit and
-removes the intent file.
+Mutating commands now use a repo-scoped operation lock and append events to the
+repo-level operation log. Retry behavior derives from the jj DAG, saved tracking
+data, GitHub state, and explicit user selectors instead of retained recovery
+records.
 
-The remaining follow-up in this area is extending abort to cover partial land
-retraction and `close` reversal (reopening closed PRs), both of which require
-GitHub access and careful ordering of retraction steps.
+Possible follow-up work:
+
+- add a small diagnostic command that prints recent operation-log entries in a
+  user-facing format
+- document how to locate the repo state directory when debugging with support
 
 ## Start-Fresh Review Repair
 

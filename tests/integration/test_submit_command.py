@@ -16,20 +16,12 @@ from jj_review.github.stack_comments import (
 )
 from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
-from jj_review.models.review_state import ReviewState
-from jj_review.review.bookmarks import BookmarkResolver
-from jj_review.state.journal import (
-    OperationJournal,
-    append_abandoned_event,
-    read_journal,
-    read_operation_log,
-)
+from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
     FakeGithubState,
     create_app,
-    initialize_bare_repository,
 )
 from ..support.integration_helpers import (
     commit_file,
@@ -37,10 +29,6 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
     write_file,
-)
-from ..support.operation_journal_helpers import (
-    incomplete_submit_operations,
-    write_submit_operation,
 )
 from .submit_command_helpers import (
     approve_pull_requests,
@@ -52,24 +40,6 @@ from .submit_command_helpers import (
     run_main,
     write_config,
 )
-
-
-def _predicted_bookmarks(_repo: Path, stack) -> dict[str, str]:
-    result = BookmarkResolver(ReviewState()).pin_revisions(stack.revisions)
-    return {
-        revision.change_id: resolution.bookmark
-        for revision, resolution in zip(stack.revisions, result.resolutions, strict=True)
-    }
-
-
-def _assert_journal_abandoned(journal: OperationJournal) -> None:
-    events = [
-        event
-        for event in read_operation_log(journal.path.parent.parent)
-        if event.operation_id == journal.operation_id
-    ]
-    assert not journal.path.exists()
-    assert events[-1].event == "abandoned"
 
 
 def _navigation_comments(fake_repo, issue_number: int):
@@ -1262,7 +1232,6 @@ def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
     assert fake_repo.pull_requests[1].title == "feature 1"
     assert remote_refs(fake_repo.git_dir) == remote_refs_before
     assert ReviewStateStore.for_repo(repo).load() == state_before
-    assert incomplete_submit_operations(repo) == ()
 
 
 def test_submit_dry_run_skips_stack_comment_github_reads(
@@ -1858,8 +1827,6 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
     assert remote_state is not None
     assert remote_state.is_tracked is True
 
-    assert len(incomplete_submit_operations(repo)) == 1
-
     monkeypatch.setattr(
         "jj_review.commands.submit.command.JjClient.update_untracked_remote_bookmark",
         original_update_untracked_remote_bookmark,
@@ -2381,8 +2348,6 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
     assert fake_repo.pull_requests[1].requested_reviewers == ["alice"]
     assert fake_repo.pull_requests[1].requested_team_reviewers == ["platform"]
     assert fake_repo.pull_requests[1].labels == []
-    for loaded in ReviewStateStore.for_repo(repo).list_operations():
-        append_abandoned_event(loaded.path, reason="test_reset")
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
@@ -2714,10 +2679,15 @@ def test_submit_completes_operation_journal_after_successful_submit(
     capsys.readouterr()
 
     assert exit_code == 0
-    assert incomplete_submit_operations(repo) == ()
+    submit_events = [
+        event
+        for event in read_operation_log(resolve_state_path(repo).parent)
+        if event.operation == "submit"
+    ]
+    assert [event.event for event in submit_events] == ["begin", "completed"]
 
 
-def test_submit_retains_operation_journal_after_failed_submit(
+def test_submit_logs_begin_after_failed_submit(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -2780,126 +2750,19 @@ def test_submit_retains_operation_journal_after_failed_submit(
     assert set(pushed_review_refs.values()) == {
         revision.commit_id for revision in stack.revisions
     }
-    submit_operations = incomplete_submit_operations(repo)
-    assert len(submit_operations) == 1
-    operation = submit_operations[0]
-    assert operation.remote_name == "origin"
-    assert operation.github_host == "github.test"
-    assert operation.github_owner == "octo-org"
-    assert operation.github_repo == "stacked-review"
-    stored_ids = operation.ordered_change_ids
-    stored_commit_ids = operation.ordered_commit_ids
+    submit_events = [
+        event
+        for event in read_operation_log(resolve_state_path(repo).parent)
+        if event.operation == "submit"
+    ]
+    assert [event.event for event in submit_events] == ["begin"]
+    begin_data = submit_events[0].data
+    assert begin_data["options"]["remote_name"] == "origin"
+    assert begin_data["options"]["github_host"] == "github.test"
+    assert begin_data["options"]["github_owner"] == "octo-org"
+    assert begin_data["options"]["github_repo"] == "stacked-review"
+    stored_ids = begin_data["resolved_scope"]["ordered_change_ids"]
+    stored_commit_ids = begin_data["resolved_scope"]["ordered_commit_ids"]
     assert change_id_1 in stored_ids
     assert change_id_2 in stored_ids
-    assert stored_commit_ids == tuple(revision.commit_id for revision in stack.revisions)
-
-
-def test_submit_resumes_and_retires_stale_operation(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id_1 = stack.revisions[0].change_id
-    change_id_2 = stack.revisions[1].change_id
-    bookmarks = _predicted_bookmarks(repo, stack)
-    state_dir = resolve_state_path(repo).parent
-
-    old_journal = write_submit_operation(
-        state_dir,
-        display_revset="@",
-        ordered_change_ids=(change_id_1, change_id_2),
-        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
-        bookmarks=bookmarks,
-    )
-
-    exit_code = run_main(repo, config_path, "submit")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    _assert_journal_abandoned(old_journal)
-    assert incomplete_submit_operations(repo) == ()
-
-
-def test_submit_does_not_retire_stale_operation_from_other_remote(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    upstream_repo = initialize_bare_repository(
-        tmp_path / "remotes-extra",
-        owner="octo-org",
-        name="other-review",
-    )
-    run_command(["jj", "git", "remote", "add", "upstream", str(upstream_repo.git_dir)], repo)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    stack = JjClient(repo).discover_review_stack()
-    bookmarks = _predicted_bookmarks(repo, stack)
-    state_dir = resolve_state_path(repo).parent
-    old_journal = write_submit_operation(
-        state_dir,
-        display_revset="upstream",
-        remote_name="upstream",
-        github_repo="other-review",
-        ordered_change_ids=tuple(revision.change_id for revision in stack.revisions),
-        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
-        bookmarks=bookmarks,
-    )
-    matching_journal = write_submit_operation(
-        state_dir,
-        display_revset="@",
-        ordered_change_ids=tuple(revision.change_id for revision in stack.revisions),
-        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
-        bookmarks=bookmarks,
-    )
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    assert read_journal(old_journal.path)[-1].event == "begin"
-    _assert_journal_abandoned(matching_journal)
-    assert tuple(operation.path for operation in incomplete_submit_operations(repo)) == (
-        old_journal.path,
-    )
-
-
-def test_submit_treats_rewritten_matching_change_ids_as_new_submit(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id_1 = stack.revisions[0].change_id
-    change_id_2 = stack.revisions[1].change_id
-    bookmarks = _predicted_bookmarks(repo, stack)
-    state_dir = resolve_state_path(repo).parent
-    old_journal = write_submit_operation(
-        state_dir,
-        display_revset="@",
-        ordered_change_ids=(change_id_1, change_id_2),
-        ordered_commit_ids=tuple(revision.commit_id for revision in stack.revisions),
-        bookmarks=bookmarks,
-    )
-
-    run_command(["jj", "describe", "-r", change_id_2, "-m", "feature 2 rewritten"], repo)
-
-    exit_code = run_main(repo, config_path, "submit", "--dry-run")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    assert read_journal(old_journal.path)[-1].event == "begin"
-    assert fake_repo.pull_requests == {}
+    assert stored_commit_ids == [revision.commit_id for revision in stack.revisions]

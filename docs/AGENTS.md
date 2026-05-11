@@ -23,8 +23,7 @@ implementation — terms a jj user would not know without reading the source:
 - Not "local-history repair path" → just say what the command does
 - Not "remote review branches" → "review branches" is fine; "remote review
   branches" is an internal double-noun
-- Not "retraction plan" → "what abort will undo"
-- Not "outstanding incomplete operation" → "interrupted operation"
+- Not "outstanding incomplete operation" → "failed command" or "interrupted command"
 
 The distinction is between standard jj/git vocabulary (fine) and
 `jj-review`-specific design prose that leaked into the wrong layer (not fine).

@@ -1,7 +1,6 @@
 """Command package for the standalone CLI."""
 
 from jj_review.commands import (
-    abort,
     cleanup,
     close,
     doctor,
@@ -16,7 +15,6 @@ from jj_review.commands import (
 )
 
 __all__ = [
-    "abort",
     "cleanup",
     "close",
     "doctor",

@@ -221,21 +221,14 @@ Possible causes:
 
 - `submit` or another mutating command was cut short (Ctrl-C, crash, power or network failure)
   after it had already done some work but before it finished
-- `status` reports an interrupted operation
 
-First, see what was interrupted:
+First, inspect the stack:
 
 ```bash
 jj-review status
 ```
 
-`status` names the command that was cut short and the stack it was working on. From there you
-have two options: **finish what was started**, or **back out**.
-
-Interrupted-operation lines include when the command started. Recent notices usually mean a
-command failed or was interrupted during your current work; older notices usually mean leftover
-state from a previous day. If `status` says the interrupted operation is not for the stack shown
-above, start by inspecting the printed change ID:
+If you know which stack was being changed, inspect it directly:
 
 ```bash
 jj-review status <change-id>
@@ -243,59 +236,28 @@ jj-review status <change-id>
 
 ### Finish what was started
 
-Re-run the same command, passing the change ID or revset `status` printed so you don't
-accidentally operate on a different stack. `jj-review` picks up where it left off and skips the
-work that already completed.
+Re-run the same command, passing the change ID or revset so you don't accidentally operate on a
+different stack. `jj-review` derives the current state from jj, saved tracking data, and GitHub
+instead of replaying a retained recovery record.
 
-| If `status` says was interrupted | Re-run                                   |
-| -------------------------------- | ---------------------------------------- |
-| `submit`                         | `jj-review submit <revset>`              |
-| `close` / `close --cleanup`      | `jj-review close [--cleanup] <revset>`   |
-| `cleanup --rebase`               | `jj-review cleanup --rebase <revset>`    |
-| `land`                           | `jj-review land <revset>`                |
+| Command that failed         | Re-run                                  |
+| --------------------------- | --------------------------------------- |
+| `submit`                    | `jj-review submit <revset>`             |
+| `close` / `close --cleanup` | `jj-review close [--cleanup] <revset>`  |
+| `cleanup --rebase`          | `jj-review cleanup --rebase <revset>`   |
+| `land`                      | `jj-review land <revset>`               |
 
-For an interrupted `land` specifically: if the trunk push already succeeded before the
-interruption, the landed commits are already on `trunk()`. A rerun here just finishes the
-post-land bookkeeping (closing PRs, forgetting local review bookmarks).
+For an interrupted `land` specifically: if the trunk push already succeeded before a later
+failure, the landed commits are already on `trunk()`. Inspect GitHub and local tracking before
+deciding whether to close PRs or clean up bookmarks by hand.
 
-### Back out with `abort`
+### Back out
 
 ```bash
-jj-review abort --dry-run   # preview
-jj-review abort             # apply
+jj-review close --cleanup <change-id>
 ```
 
-What `abort` actually does depends on which command was interrupted:
-
-- **`submit`**: closes any PRs it created, deletes the corresponding remote branches, forgets
-  the local bookmarks, and clears the tracking entries. This is the only case where `abort`
-  performs a real undo.
-- **`close`**: clears the interrupted-operation notice. It does **not** reopen PRs that were
-  already closed.
-- **`cleanup --rebase`**: clears the interrupted-operation notice. It does **not** restore the
-  old local history. Use `jj op restore` if you want to undo the rebase itself.
-- **`land`**: clears the interrupted-operation notice. It **cannot** un-merge changes that
-  already reached `trunk()`.
-
-If you want to fully back out one of the latter three, you have to do it by hand; `abort` is
-only a true reverse for `submit`.
-
-### `abort` refuses because the stack has changed
-
-If you rewrite or reorder the stack after a `submit` was interrupted, `abort` will not try to
-guess which PRs or review branches came from that interrupted submit. In that case you have two
-options:
-
-- **Finish the submit**: re-run `submit <change-id-from-status>` or another explicit revset for
-  the stack you want. It detects any review branches or PRs that already exist, and completes
-  whatever is still outstanding for that stack.
-- **Undo the partial work**: run `jj-review close --cleanup <change-id-from-status>` or another
-  explicit revset for that stack. A successful `close --cleanup` closes the open PRs, deletes
-  the review branches, and clears the interrupted `submit` record once the recorded review
-  artifacts for that stack are gone.
-
-If the change ID printed by `status` no longer exists, the original stack head has been
-abandoned or otherwise dropped from visible history. In that case `abort` only clears the
-interrupted-operation notice; it does not close PRs or delete review branches for that missing
-stack. Run `jj-review abort --dry-run` to preview the change, then run `jj-review abort` to
-clear the notice.
+If a failed `submit` created PRs or review branches that you no longer want, run
+`close --cleanup` on the selected stack. If the change was abandoned and only saved PR data
+remains, use `jj-review list` to find the orphaned PR and then
+`jj-review close --cleanup --pull-request <pr>`.

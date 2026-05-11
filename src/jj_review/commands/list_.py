@@ -49,13 +49,6 @@ HELP = "List review stacks in this repo"
 
 
 @dataclass(frozen=True, slots=True)
-class ListOptions:
-    """Parsed command options for `list`."""
-
-    fetch: bool
-
-
-@dataclass(frozen=True, slots=True)
 class StackRow:
     current: bool
     head_change_id: str
@@ -108,20 +101,16 @@ def list_(
     )
     return _run_list(
         context=context,
-        options=_list_options_from_cli(fetch=fetch),
+        fetch=fetch,
     )
-
-
-def _list_options_from_cli(*, fetch: bool) -> ListOptions:
-    return ListOptions(fetch=fetch)
 
 
 def _run_list(
     *,
     context: CommandContext,
-    options: ListOptions,
+    fetch: bool,
 ) -> int:
-    if options.fetch:
+    if fetch:
         refresh_remote_state_for_status(jj_client=context.jj_client)
 
     state = context.state_store.load()

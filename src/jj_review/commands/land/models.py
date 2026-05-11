@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal, Protocol
 
 from jj_review import ui
@@ -11,8 +10,6 @@ from jj_review.bootstrap import CommandContext
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.status import PreparedStatus
-from jj_review.state.journal import LandOperationRecord, LoadedOperationRecord
-from jj_review.state.operation_lock import OperationLock
 from jj_review.state.store import ReviewStateStore
 from jj_review.ui import Message, plain_text
 
@@ -55,7 +52,6 @@ class PreparedLand:
     dry_run: bool
     bypass_readiness: bool
     context: CommandContext
-    operation_lock: OperationLock | None
     prepared_status: PreparedStatus
     selected_pr_number: int | None
 
@@ -93,7 +89,7 @@ class LandPlan:
 
     blocked: bool
     boundary_action: LandAction | None
-    # Revisions this run should land or finish finalizing after a resumed trunk push.
+    # Revisions this run should land.
     planned_revisions: tuple[LandRevision, ...]
     push_trunk: bool
     trunk_branch: str
@@ -166,25 +162,6 @@ class ReviewBookmarkCleanupPlan:
     bookmark: str
     can_forget: bool
     change_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class ResumeLandOperation:
-    """An incomplete land operation that still matches the current selected stack."""
-
-    operation: LandOperationRecord
-    path: Path
-    mode: Literal["exact-path", "tail-after-landed-prefix"]
-
-
-@dataclass(frozen=True, slots=True)
-class LandExecutionState:
-    """Resolved live-run land state after resume checks."""
-
-    execution_plan: LandPlan
-    resume_operation: ResumeLandOperation | None
-    stale_operations: list[LoadedOperationRecord]
-    state_dir: Path
 
 
 class BookmarkStateReader(Protocol):

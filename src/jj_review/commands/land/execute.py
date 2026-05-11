@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.errors import CliError
@@ -13,14 +12,7 @@ from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange
 from jj_review.review.change_status import classify_review_change
-from jj_review.review.operations import match_ordered_change_ids
-from jj_review.state.journal import (
-    LandOperationRecord,
-    LoadedOperationRecord,
-    OperationJournal,
-    append_abandoned_event,
-)
-from jj_review.state.operation_lock import read_operation_lock_holder
+from jj_review.state.journal import OperationJournal
 
 from .models import (
     BookmarkStateReader,
@@ -32,7 +24,6 @@ from .models import (
     PreparedLand,
     ReviewBookmarkCleanupPlan,
 )
-from .resume import CompletedLandResume, prepare_land_execution_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,80 +133,57 @@ async def execute_land_plan(
         trunk_branch=trunk_branch,
         trunk_subject=trunk_subject,
     )
-    try:
-        execution_state = prepare_land_execution_state(
-            github_repository=github_repository,
-            plan=plan,
-            prepared_land=prepared_land,
-            prepared_status=prepared_status,
-            remote_name=remote_name,
-            selected_revset=selected_revset,
-            trunk_branch=trunk_branch,
-            trunk_subject=trunk_subject,
-        )
-    except CompletedLandResume as resume:
-        return resume.result
-    execution_plan = execution_state.execution_plan
+    execution_plan = plan
     if execution_plan.blocked:
         return result_context.result(
             actions=execution_plan.planned_actions(),
             applied=False,
             blocked=True,
         )
-    resume_operation = execution_state.resume_operation
-    journal = (
-        OperationJournal.open(resume_operation.path)
-        if resume_operation is not None
-        else OperationJournal.begin(
-            execution_state.state_dir,
-            operation="land",
-            options={
-                "bypass_readiness": prepared_land.bypass_readiness,
-                "cleanup_bookmarks": prepared_land.cleanup_bookmarks,
-                "selected_pr_number": prepared_land.selected_pr_number,
-            },
-            resolved_scope={
-                "github_repository": github_repository.full_name,
-                "landed_change_ids": tuple(
-                    revision.change_id for revision in execution_plan.planned_revisions
-                ),
-                "landed_commit_id": (
-                    execution_plan.planned_revisions[-1].commit_id
-                    if execution_plan.planned_revisions
-                    else prepared.stack.trunk.commit_id
-                ),
-                "ordered_change_ids": tuple(
-                    prepared_revision.revision.change_id
-                    for prepared_revision in prepared_status.prepared.status_revisions
-                ),
-                "ordered_commit_ids": tuple(
-                    prepared_revision.revision.commit_id
-                    for prepared_revision in prepared_status.prepared.status_revisions
-                ),
-                "planned_change_ids": tuple(
-                    revision.change_id for revision in execution_plan.planned_revisions
-                ),
-                "planned_revisions": tuple(
-                    {
-                        "bookmark": revision.bookmark,
-                        "bookmark_managed": revision.bookmark_managed,
-                        "change_id": revision.change_id,
-                        "commit_id": revision.commit_id,
-                        "pull_request_number": revision.pull_request_number,
-                        "subject": revision.subject,
-                    }
-                    for revision in execution_plan.planned_revisions
-                ),
-                "push_trunk": execution_plan.push_trunk,
-                "remote_name": remote_name,
-                "selected_revset": selected_revset,
-                "trunk_branch": trunk_branch,
-            },
-            lock_holder=read_operation_lock_holder(execution_state.state_dir),
-        )
+    state_dir = prepared.state_store.require_writable()
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="land",
+        options={
+            "bypass_readiness": prepared_land.bypass_readiness,
+            "cleanup_bookmarks": prepared_land.cleanup_bookmarks,
+            "selected_pr_number": prepared_land.selected_pr_number,
+        },
+        resolved_scope={
+            "github_repository": github_repository.full_name,
+            "landed_change_ids": tuple(
+                revision.change_id for revision in execution_plan.planned_revisions
+            ),
+            "landed_commit_id": (
+                execution_plan.planned_revisions[-1].commit_id
+                if execution_plan.planned_revisions
+                else prepared.stack.trunk.commit_id
+            ),
+            "ordered_change_ids": tuple(
+                prepared_revision.revision.change_id
+                for prepared_revision in prepared_status.prepared.status_revisions
+            ),
+            "ordered_commit_ids": tuple(
+                prepared_revision.revision.commit_id
+                for prepared_revision in prepared_status.prepared.status_revisions
+            ),
+            "planned_revisions": tuple(
+                {
+                    "bookmark": revision.bookmark,
+                    "bookmark_managed": revision.bookmark_managed,
+                    "change_id": revision.change_id,
+                    "commit_id": revision.commit_id,
+                    "pull_request_number": revision.pull_request_number,
+                    "subject": revision.subject,
+                }
+                for revision in execution_plan.planned_revisions
+            ),
+            "push_trunk": execution_plan.push_trunk,
+            "remote_name": remote_name,
+            "selected_revset": selected_revset,
+            "trunk_branch": trunk_branch,
+        },
     )
-    if resume_operation is None and prepared_land.operation_lock is not None:
-        prepared_land.operation_lock.record_journal_path(journal.path)
 
     state = prepared.state_store.load()
     mutation_run = LandMutationRun(
@@ -225,60 +193,47 @@ async def execute_land_plan(
     )
 
     actions: list[LandAction] = []
-    succeeded = False
     bookmark_cleanup_by_change_id = {
         cleanup_plan.change_id: cleanup_plan for cleanup_plan in bookmark_cleanup_plans
     }
-    try:
-        blocked_result = await _apply_trunk_transition(
-            actions=actions,
-            client=prepared.client,
-            execution_plan=execution_plan,
-            github_client=github_client,
-            github_repository=github_repository,
-            journal=journal,
-            prepared_land=prepared_land,
-            remote_name=remote_name,
-            result_context=result_context,
-            trunk_branch=trunk_branch,
-        )
-        if blocked_result is not None:
-            return blocked_result
-        await _finalize_planned_revisions(
-            actions=actions,
-            bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
-            client=prepared.client,
-            execution_plan=execution_plan,
-            github_client=github_client,
-            github_repository=github_repository,
-            journal=journal,
-            mutation_run=mutation_run,
-            trunk_branch=trunk_branch,
-        )
-        journal.append(
-            "completed",
-            {
-                "completed_change_ids": tuple(
-                    revision.change_id for revision in execution_plan.planned_revisions
-                )
-            },
-        )
-        succeeded = True
-        return result_context.result(
-            actions=execution_plan.completed_actions(actions=tuple(actions)),
-            applied=True,
-            blocked=False,
-        )
-    finally:
-        if succeeded:
-            _retire_superseded_land_operations(
-                execution_state.stale_operations,
-                current_journal_path=journal.path,
-                current_change_ids=tuple(
-                    prepared_revision.revision.change_id
-                    for prepared_revision in prepared_status.prepared.status_revisions
-                ),
+    blocked_result = await _apply_trunk_transition(
+        actions=actions,
+        client=prepared.client,
+        execution_plan=execution_plan,
+        github_client=github_client,
+        github_repository=github_repository,
+        journal=journal,
+        prepared_land=prepared_land,
+        remote_name=remote_name,
+        result_context=result_context,
+        trunk_branch=trunk_branch,
+    )
+    if blocked_result is not None:
+        return blocked_result
+    await _finalize_planned_revisions(
+        actions=actions,
+        bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
+        client=prepared.client,
+        execution_plan=execution_plan,
+        github_client=github_client,
+        github_repository=github_repository,
+        journal=journal,
+        mutation_run=mutation_run,
+        trunk_branch=trunk_branch,
+    )
+    journal.append(
+        "completed",
+        {
+            "completed_change_ids": tuple(
+                revision.change_id for revision in execution_plan.planned_revisions
             )
+        },
+    )
+    return result_context.result(
+        actions=execution_plan.completed_actions(actions=tuple(actions)),
+        applied=True,
+        blocked=False,
+    )
 
 
 async def _apply_trunk_transition(
@@ -560,27 +515,6 @@ async def _finalize_planned_revisions(
                     },
                 )
     return None
-
-
-def _retire_superseded_land_operations(
-    stale_operations: list[LoadedOperationRecord],
-    *,
-    current_journal_path: Path,
-    current_change_ids: tuple[str, ...],
-) -> None:
-    for loaded in stale_operations:
-        if loaded.path == current_journal_path:
-            continue
-        if not isinstance(loaded.operation, LandOperationRecord):
-            continue
-        if (
-            match_ordered_change_ids(loaded.operation.ordered_change_ids, current_change_ids)
-            in {"exact", "superset"}
-        ):
-            append_abandoned_event(
-                loaded.path,
-                reason="superseded_by_successful_land",
-            )
 
 
 def _apply_review_bookmark_cleanup(

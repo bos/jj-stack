@@ -4,8 +4,7 @@ Runs a series of read-only checks and prints a status line for each. Nothing
 is changed. Exit status is 0 if all checks pass or warn; 1 if any check fails.
 
 It checks remote resolution, GitHub repository discovery, GitHub token
-availability, GitHub API access, trunk discovery, and whether interrupted
-operations are waiting for recovery.
+availability, GitHub API access, and trunk discovery.
 """
 
 from __future__ import annotations
@@ -34,8 +33,6 @@ from jj_review.github.resolution import (
 from jj_review.jj import JjCliArgs
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubRepository
-from jj_review.review.operations import describe_operation
-from jj_review.system import pid_is_alive
 from jj_review.ui import Message
 
 HELP = "check GitHub auth, remote resolution, and local state"
@@ -80,7 +77,6 @@ async def _run_checks(
 
     if selected_remote is None:
         results.extend(_skipped("GitHub remote", "GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(context=context))
         return results
 
     # Check 2: GitHub remote parsing
@@ -89,7 +85,6 @@ async def _run_checks(
 
     if parsed_repo is None:
         results.extend(_skipped("GitHub auth", "connectivity", "trunk branch"))
-        results.append(_check_interruptions(context=context))
         return results
 
     # Check 3: GitHub auth
@@ -98,7 +93,6 @@ async def _run_checks(
 
     if token is None:
         results.extend(_skipped("connectivity", "trunk branch"))
-        results.append(_check_interruptions(context=context))
         return results
 
     # Checks 4 & 5: Connectivity and trunk branch
@@ -113,8 +107,6 @@ async def _run_checks(
     else:
         results.append(CheckResult("trunk branch", "skip", "connectivity failed"))
 
-    # Check 6: Interrupted operations
-    results.append(_check_interruptions(context=context))
     return results
 
 
@@ -231,34 +223,6 @@ def _check_trunk_branch(github_repo: GithubRepository) -> CheckResult:
         "warn",
         t"GitHub repository has no default branch set; set a default branch on GitHub "
         t"or configure {ui.revset('trunk()')} in jj",
-    )
-
-
-def _check_interruptions(*, context: CommandContext) -> CheckResult:
-    state_store = context.state_store
-    if not state_store.state_dir.exists():
-        return CheckResult("interruptions", "ok", "none")
-    try:
-        all_operations = state_store.list_operations()
-    except Exception as error:
-        return CheckResult("interruptions", "warn", f"could not check: {error}")
-
-    # Ignore operations whose process is still alive — those are active operations,
-    # not interrupted ones. Only dead-PID operations need recovery.
-    interrupted = [loaded for loaded in all_operations if not pid_is_alive(loaded.operation.pid)]
-
-    if not interrupted:
-        return CheckResult("interruptions", "ok", "none")
-
-    count = len(interrupted)
-    noun = "interrupted operation" if count == 1 else "interrupted operations"
-    return CheckResult(
-        "interruptions",
-        "warn",
-        t"{count} {noun}: "
-        t"{ui.join(describe_operation, (loaded.operation for loaded in interrupted))}; "
-        t"run "
-        t"{ui.cmd('jj-review abort --dry-run')} to preview recovery",
     )
 
 

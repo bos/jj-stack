@@ -6,7 +6,6 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Literal
 
 from jj_review import ui
@@ -50,14 +49,8 @@ from jj_review.review.change_status import (
     classify_saved_review_change,
     submitted_state_disagreements,
 )
-from jj_review.state.journal import (
-    CleanupOperationRecord,
-    LoadedOperationRecord,
-    RelinkOperationRecord,
-)
 from jj_review.state.operation_lock import try_acquire_operation_lock
 from jj_review.state.store import ReviewStateStore
-from jj_review.system import pid_is_alive
 from jj_review.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -150,10 +143,8 @@ class PreparedStatus:
 
     github_repository: ParsedGithubRepo | None
     github_repository_error: ErrorMessage | None
-    outstanding_operations: tuple[LoadedOperationRecord, ...]
     prepared: PreparedStack
     selected_revset: str
-    stale_operations: tuple[LoadedOperationRecord, ...]
     base_parent_subject: str
 
     def github_inspection_count(self, *, discover_remote_review: bool = False) -> int:
@@ -293,15 +284,11 @@ def prepare_status(
                 t"Could not determine the GitHub repository for remote "
                 t"{ui.bookmark(prepared.remote.name)}. Use a GitHub remote URL."
             )
-    outstanding_operations, stale_operations = _classify_status_operations(prepared)
-
     return PreparedStatus(
         github_repository=github_repository,
         github_repository_error=github_repository_error,
-        outstanding_operations=outstanding_operations,
         prepared=prepared,
         selected_revset=prepared.stack.selected_revset,
-        stale_operations=stale_operations,
         base_parent_subject=prepared.stack.base_parent.subject,
     )
 
@@ -317,51 +304,6 @@ def refresh_remote_state_for_status(*, jj_client: JjClient) -> None:
     except CliError:
         return
     jj_client.fetch_remote(remote=remote.name)
-
-
-def _classify_status_operations(
-    prepared: PreparedStack,
-) -> tuple[
-    tuple[LoadedOperationRecord, ...],
-    tuple[LoadedOperationRecord, ...],
-]:
-    outstanding_operations: list[LoadedOperationRecord] = []
-    stale_operations: list[LoadedOperationRecord] = []
-    now = datetime.now(UTC)
-
-    for loaded in prepared.state_store.list_operations():
-        if _operation_is_stale(
-            loaded.operation,
-            lambda change_id: _change_id_resolves(prepared.client, change_id),
-            now=now,
-        ):
-            stale_operations.append(loaded)
-        else:
-            outstanding_operations.append(loaded)
-    return tuple(outstanding_operations), tuple(stale_operations)
-
-
-def _operation_is_stale(
-    operation,
-    resolve_change_id: Callable[[str], bool],
-    *,
-    now: datetime | None = None,
-) -> bool:
-    if isinstance(operation, RelinkOperationRecord | CleanupOperationRecord):
-        if pid_is_alive(operation.pid):
-            return False
-        current_time = datetime.now(UTC) if now is None else now
-        try:
-            started = datetime.fromisoformat(operation.started_at)
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=UTC)
-        except ValueError:
-            return True
-        return (current_time - started).days >= 7
-    ids = operation.change_ids()
-    if not ids:
-        return False
-    return not any(resolve_change_id(change_id) for change_id in ids)
 
 
 def stream_status(
@@ -1251,11 +1193,3 @@ def _is_repository_level_github_lookup_error(error: GithubClientError) -> bool:
         return True
     return error.status_code >= 500
 
-
-def _change_id_resolves(client: JjClient, change_id: str) -> bool:
-    """Return True if the change_id resolves to a visible revision in the local repo."""
-    try:
-        client.resolve_revision(change_id)
-        return True
-    except CliError:
-        return False

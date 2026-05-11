@@ -30,12 +30,10 @@ pull requests on GitHub.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
-from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id
 from jj_review.github.client import GithubClientError, build_github_client
@@ -54,7 +52,7 @@ from jj_review.review.status import (
     prepare_status,
     stream_status,
 )
-from jj_review.state.operation_lock import OperationLock
+from jj_review.state.operation_lock import acquire_operation_lock
 
 from .execute import (
     ensure_trunk_branch_matches_selected_trunk,
@@ -71,25 +69,6 @@ from .plan import (
 from .render import print_land_result
 
 HELP = "Land the ready changes at the bottom of a stack"
-
-
-@dataclass(frozen=True, slots=True)
-class LandOptions:
-    """Parsed command options for `land`."""
-
-    bypass_readiness: bool
-    cleanup_bookmarks: bool
-    dry_run: bool
-    pull_request: str | None
-    revset: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class _LandTarget:
-    """Selected landing target after CLI selection has been resolved."""
-
-    pull_request_number: int | None
-    revset: str | None
 
 
 def land(
@@ -110,52 +89,42 @@ def land(
         cli_args=cli_args,
         debug=debug,
     )
-    options = _land_options_from_cli(
-        bypass_readiness=bypass_readiness,
-        dry_run=dry_run,
-        pull_request=pull_request,
-        revset=revset,
-        skip_cleanup=skip_cleanup,
-    )
-    with mutating_command_lock(command="land", context=context) as operation_lock:
+    with acquire_operation_lock(
+        context.state_store.require_writable(),
+        command="land",
+    ):
         return _run_land(
+            bypass_readiness=bypass_readiness,
+            cleanup_bookmarks=not skip_cleanup,
             context=context,
-            operation_lock=operation_lock,
-            options=options,
+            dry_run=dry_run,
+            pull_request=pull_request,
+            revset=revset,
         )
-
-
-def _land_options_from_cli(
-    *,
-    bypass_readiness: bool,
-    dry_run: bool,
-    pull_request: str | None,
-    revset: str | None,
-    skip_cleanup: bool,
-) -> LandOptions:
-    return LandOptions(
-        bypass_readiness=bypass_readiness,
-        cleanup_bookmarks=not skip_cleanup,
-        dry_run=dry_run,
-        pull_request=pull_request,
-        revset=revset,
-    )
 
 
 def _run_land(
     *,
+    bypass_readiness: bool,
+    cleanup_bookmarks: bool,
     context: CommandContext,
-    operation_lock: OperationLock,
-    options: LandOptions,
+    dry_run: bool,
+    pull_request: str | None,
+    revset: str | None,
 ) -> int:
-    target = _resolve_land_target(context=context, options=options)
+    selected_pr_number, selected_revset = _resolve_land_target(
+        context=context,
+        pull_request=pull_request,
+        revset=revset,
+    )
     with console.spinner(description="Inspecting jj stack"):
         prepared_land = _prepare_land(
+            bypass_readiness=bypass_readiness,
+            cleanup_bookmarks=cleanup_bookmarks,
             context=context,
-            operation_lock=operation_lock,
-            options=options,
-            revset=target.revset,
-            selected_pr_number=target.pull_request_number,
+            dry_run=dry_run,
+            revset=selected_revset,
+            selected_pr_number=selected_pr_number,
         )
     result = _stream_land(prepared_land=prepared_land)
     print_land_result(result)
@@ -165,38 +134,37 @@ def _run_land(
 def _resolve_land_target(
     *,
     context: CommandContext,
-    options: LandOptions,
-) -> _LandTarget:
-    if options.pull_request is not None:
+    pull_request: str | None,
+    revset: str | None,
+) -> tuple[int | None, str | None]:
+    if pull_request is not None:
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="land",
             jj_client=context.jj_client,
-            pull_request_reference=options.pull_request,
-            revset=options.revset,
+            pull_request_reference=pull_request,
+            revset=revset,
         )
         console.note(
             t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
         )
-        return _LandTarget(
-            pull_request_number=pull_request_number,
-            revset=resolved_revset,
-        )
-    return _LandTarget(
-        pull_request_number=None,
-        revset=resolve_selected_revset(
+        return pull_request_number, resolved_revset
+    return (
+        None,
+        resolve_selected_revset(
             command_label="land",
             default_revset="@-",
             require_explicit=False,
-            revset=options.revset,
+            revset=revset,
         ),
     )
 
 
 def _prepare_land(
     *,
+    bypass_readiness: bool,
+    cleanup_bookmarks: bool,
     context: CommandContext,
-    operation_lock: OperationLock,
-    options: LandOptions,
+    dry_run: bool,
     revset: str | None,
     selected_pr_number: int | None,
 ) -> PreparedLand:
@@ -216,14 +184,13 @@ def _prepare_land(
         message = prepared_status.github_repository_error or t"Could not resolve GitHub target."
         raise CliError(message)
 
-    if not options.dry_run:
+    if not dry_run:
         prepared.state_store.require_writable()
     return PreparedLand(
-        cleanup_bookmarks=options.cleanup_bookmarks,
-        dry_run=options.dry_run,
-        bypass_readiness=options.bypass_readiness,
+        cleanup_bookmarks=cleanup_bookmarks,
+        dry_run=dry_run,
+        bypass_readiness=bypass_readiness,
         context=context,
-        operation_lock=operation_lock,
         prepared_status=prepared_status,
         selected_pr_number=selected_pr_number,
     )

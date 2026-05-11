@@ -190,7 +190,7 @@ The classifier migration is intentionally incremental. Read-side status summarie
 advisories, status cache persistence decisions, cleanup stale-change and rebase planning,
 close cleanup planning, bookmark discovery and matching, unlink active-link checks, relink
 remote validation, import remote validation and branch refresh decisions, submit
-untracked-remote repair, submit metadata sync, interrupted-submit artifact observation, and
+untracked-remote repair, submit metadata sync, failed-submit artifact observation, and
 land trunk/revision readiness checks consume these axes.
 Direct reads of `CachedChange`, `PullRequestLookup`, and bookmark target fields remain
 where code is copying underlying data into saved state, rendering concrete GitHub
@@ -228,8 +228,8 @@ two independently submitted stacks merged into one selected linear stack, provin
 identity and approvals follow `change_id` across the new combined chain. A stack-move
 oracle exercises moving one change between independently submitted stacks, proving the
 destination stack adopts that change's existing PR while the source remainder is left
-untouched. An interrupted-submit retry oracle injects one-shot failures after remote
-branch push, PR creation, PR update, and metadata label sync, then proves a rerun
+untouched. A failed-submit retry oracle injects one-shot failures after remote branch
+push, PR creation, PR update, and metadata label sync, then proves a rerun
 converges without duplicate PRs. The property coverage also includes representative
 fail-closed replay for external drift, remote review-branch drift, conflicted rebases,
 and merge commits selected after an initial submit.
@@ -250,40 +250,27 @@ It does not decide stack topology or branch naming.
 - tracking state lives in `~/.local/state/jj-review/repos/<repo-id>/state.json`
 - `<repo-id>` is derived from the canonical `.jj/repo` storage path so every workspace
   for the same repo shares one state location
-- reads treat a missing state file or missing interrupted-operation records as empty
-  state; writes create parent directories on demand and only fail if the filesystem
-  refuses
+- reads treat a missing state file as empty state; writes create parent directories on
+  demand and only fail if the filesystem refuses
 
 The repo state directory also contains the operation lock files:
 
 - `operation.lock` is the fixed-path advisory lock sentinel
 - `operation-lock.json` is diagnostic companion metadata for the current holder
-- `journals/*.jsonl` are active recovery records for interrupted operations
 - `operation-log.jsonl` is the repo-level chronological audit log
 
 Mutating commands hold the lock through their full command lifetime. `status` uses the
 non-blocking path only around its best-effort cache write, so live inspection still renders
-while another mutation is running. The operation lock replaces same-kind PID waits and the
-old abort sentinel.
+while another mutation is running. The operation lock replaces same-kind PID waits.
 
 `land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `close`, and orphaned
-`close --cleanup --pull-request` all use active recovery records instead of intent files.
-Retry, status, doctor, abort, and cleanup-close retirement consume those records through
-`review/operations.py`, which owns interrupted-operation matching and display policy.
-
-Every operation event is appended to `operation-log.jsonl` for after-the-fact inspection.
-Active recovery files keep only the events needed to resume or clear interrupted work:
-`begin` for every operation and `saved_state_update` checkpoints for `land`. Planned
-mutations, applied mutations, and terminal events live in the audit log. Terminal events
-remove the active file, so there is no per-operation pruning path.
+`close --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
+events to `operation-log.jsonl` for after-the-fact inspection. Retry behavior derives from
+the current jj DAG, saved tracking data, GitHub state, and explicit user selectors, not from
+retained per-operation records.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
-Interrupted-operation records carry `started_at` and ordered change IDs; status renders those
-fields directly as age-stamped recovery guidance with change-ID-based commands, without adding
-derived recovery state to the tracking file. If the top change from an interrupted submit no
-longer resolves, status suppresses revset-based continuation guidance and abort can clear only
-the unusable operation record.
 
 Repo-scoped inspection treats orphan-only tracking as first-class output. `list` can
 render those saved orphan rows directly without loading bookmark state when no live
@@ -321,8 +308,6 @@ It verifies the saved PR identity by PR number, then verifies that the PR head i
 saved branch on the configured GitHub repository before using head-branch lookup only
 to detect duplicate live claims. This lets merged orphan PRs be retired without
 mistaking a same-named fork branch for the review branch.
-It also writes regular close-journal bookkeeping, so reruns after interruption can
-continue remaining cleanup and retire older close records for the same orphaned PR.
 The orphan path lives in its own command module because it is a saved-state recovery
 flow rather than normal stack close planning; close action rendering and managed
 stack-comment lookup stay in a shared helper used by both paths.

@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from io import StringIO
-from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-
-import pytest
 
 from jj_review import console as console_module
 from jj_review.commands import status as status_module
@@ -14,7 +10,6 @@ from jj_review.config import RepoConfig
 from jj_review.models.review_state import CachedChange
 from jj_review.review.change_status import SubmittedStateDisagreement
 from jj_review.review.status import StatusResult
-from jj_review.state.journal import SubmitOperationRecord
 
 
 def _render_lines(*lines: object) -> tuple[str, ...]:
@@ -23,26 +18,6 @@ def _render_lines(*lines: object) -> tuple[str, ...]:
         for line in lines:
             console_module.output(line)
     return tuple(stdout.getvalue().splitlines())
-
-
-def _submit_operation_record(
-    *,
-    ordered_change_ids: tuple[str, ...],
-    ordered_commit_ids: tuple[str, ...],
-) -> SubmitOperationRecord:
-    return SubmitOperationRecord(
-        path=Path("/tmp/submit.jsonl"),
-        pid=99999999,
-        display_revset="@-",
-        ordered_change_ids=ordered_change_ids,
-        ordered_commit_ids=ordered_commit_ids,
-        remote_name="origin",
-        github_host="github.test",
-        github_owner="octo-org",
-        github_repo="stacked-review",
-        bookmarks={},
-        started_at="2026-04-25T11:00:00+00:00",
-    )
 
 
 def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> None:
@@ -235,157 +210,6 @@ def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None
         "○  abcdefgh 12345678: submitted, no PR found for branch",
         "│  feature 8",
         "",
-    )
-
-
-def test_render_status_operation_lines_reports_stale_and_interrupted_operations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_pid_is_alive(pid: int) -> bool:
-        return pid == 101
-
-    monkeypatch.setattr(status_module, "pid_is_alive", fake_pid_is_alive)
-    prepared_status = SimpleNamespace(
-        stale_operations=(
-            SimpleNamespace(
-                operation=SimpleNamespace(label="submit on @", pid=101),
-                path=Path("/tmp/stale-submit.json"),
-            ),
-        ),
-        outstanding_operations=(
-            SimpleNamespace(
-                operation=SimpleNamespace(label="land on @", pid=202),
-                path=Path("/tmp/outstanding-land.json"),
-            ),
-        ),
-        prepared=SimpleNamespace(status_revisions=()),
-    )
-
-    lines = _render_lines(
-        *status_module.render_status_operation_lines(prepared_status=prepared_status)
-    )
-
-    assert "Stale incomplete operations (change IDs no longer in repo):" in lines
-    assert any("submit on @" in line and "process alive" in line for line in lines)
-    assert any("land on @" in line and "started at unknown time" in line for line in lines)
-    assert any("inspect with jj-review status" in line for line in lines)
-
-
-def test_render_status_operation_lines_guides_submit_for_different_stack(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(status_module, "pid_is_alive", lambda _pid: False)
-    monkeypatch.setattr(
-        status_module,
-        "_now_utc",
-        lambda: datetime(2026, 4, 29, 12, tzinfo=UTC),
-    )
-    operation = _submit_operation_record(
-        ordered_change_ids=("nnszmtlxaaaaaaaa",),
-        ordered_commit_ids=("recordedcommit",),
-    )
-    prepared_status = SimpleNamespace(
-        stale_operations=(),
-        outstanding_operations=(SimpleNamespace(operation=operation),),
-        prepared=SimpleNamespace(
-            status_revisions=(
-                SimpleNamespace(
-                    revision=SimpleNamespace(
-                        change_id="xvxxlmonaaaaaaaa",
-                        commit_id="currentcommit",
-                    )
-                ),
-            ),
-            remote=None,
-        ),
-        github_repository=None,
-    )
-
-    lines = _render_lines(
-        *status_module.render_status_operation_lines(prepared_status=prepared_status)
-    )
-    normalized_lines = " ".join(" ".join(line.split()) for line in lines)
-
-    assert "submit for nnszmtlx, started 4d ago from @-" in normalized_lines
-    assert "this is not the stack shown above" in normalized_lines
-    assert "inspect with jj-review status nnszmtlx" in normalized_lines
-    assert "finish with jj-review submit nnszmtlx" in normalized_lines
-    assert "preview backout with jj-review abort --dry-run" in normalized_lines
-    assert "recorded stack differs from the current selection" not in normalized_lines
-
-
-def test_render_status_operation_lines_avoids_missing_recorded_submit_head(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(status_module, "pid_is_alive", lambda _pid: False)
-    monkeypatch.setattr(
-        status_module,
-        "_now_utc",
-        lambda: datetime(2026, 4, 29, 12, tzinfo=UTC),
-    )
-
-    class MissingHeadClient:
-        def query_revisions_by_change_ids(self, change_ids):
-            return {change_id: () for change_id in change_ids}
-
-    operation = _submit_operation_record(
-        ordered_change_ids=("aaaaaaaabbbbbbbb", "nnszmtlxaaaaaaaa"),
-        ordered_commit_ids=("bottomcommit", "headcommit"),
-    )
-    prepared_status = SimpleNamespace(
-        stale_operations=(),
-        outstanding_operations=(SimpleNamespace(operation=operation),),
-        prepared=SimpleNamespace(
-            client=MissingHeadClient(),
-            status_revisions=(
-                SimpleNamespace(
-                    revision=SimpleNamespace(
-                        change_id="xvxxlmonaaaaaaaa",
-                        commit_id="currentcommit",
-                    )
-                ),
-            ),
-            remote=None,
-        ),
-        github_repository=None,
-    )
-
-    lines = _render_lines(
-        *status_module.render_status_operation_lines(prepared_status=prepared_status)
-    )
-    normalized_lines = " ".join(" ".join(line.split()) for line in lines)
-
-    assert (
-        "change nnszmtlx from this interrupted submit is no longer visible in jj"
-        in normalized_lines
-    )
-    assert "jj-review abort --dry-run" in normalized_lines
-    assert "jj-review abort" in normalized_lines
-    assert "jj-review cleanup" not in normalized_lines
-    assert "jj-review submit nnszmtlx" not in normalized_lines
-    assert "jj-review close --cleanup nnszmtlx" not in normalized_lines
-
-
-@pytest.mark.parametrize(
-    ("started_at", "expected"),
-    [
-        ("2026-04-29T11:59:35+00:00", "just now"),
-        ("2026-04-29T11:47:00+00:00", "13m ago"),
-        ("2026-04-29T07:30:00+00:00", "4h ago"),
-        ("2026-04-25T11:00:00+00:00", "4d ago"),
-        ("2026-04-20T11:00:00+00:00", "2026-04-20"),
-    ],
-)
-def test_format_operation_age_uses_relative_time_for_recent_records(
-    started_at: str,
-    expected: str,
-) -> None:
-    assert (
-        status_module._format_operation_age(
-            started_at,
-            now=datetime(2026, 4, 29, 12, tzinfo=UTC),
-        )
-        == expected
     )
 
 

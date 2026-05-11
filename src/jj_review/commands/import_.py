@@ -21,7 +21,6 @@ from typing import Literal, Protocol
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
-from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError, ErrorMessage
 from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.error_messages import (
@@ -50,6 +49,7 @@ from jj_review.review.status import (
     prepare_status,
     stream_status_async,
 )
+from jj_review.state.operation_lock import acquire_operation_lock
 from jj_review.ui import Message, plain_text
 
 HELP = "Connect jj-review to an existing stack of pull requests"
@@ -57,15 +57,6 @@ HELP = "Connect jj-review to an existing stack of pull requests"
 _DISPLAY_CHANGE_ID_LENGTH = 8
 ImportActionStatus = Literal["applied"]
 type ImportActionBody = Message
-
-
-@dataclass(frozen=True, slots=True)
-class ImportOptions:
-    """Parsed command options for `import`."""
-
-    fetch: bool
-    pull_request_reference: str | None
-    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,32 +138,17 @@ def import_(
         cli_args=cli_args,
         debug=debug,
     )
-    with mutating_command_lock(command="import", context=context):
+    with acquire_operation_lock(context.state_store.require_writable(), command="import"):
         result = asyncio.run(
             _run_import_async(
                 context=context,
-                options=_import_options_from_cli(
-                    fetch=fetch,
-                    pull_request=pull_request,
-                    revset=revset,
-                ),
+                fetch=fetch,
+                pull_request_reference=pull_request,
+                revset=revset,
             )
         )
     _print_import_result(result)
     return 0
-
-
-def _import_options_from_cli(
-    *,
-    fetch: bool,
-    pull_request: str | None,
-    revset: str | None,
-) -> ImportOptions:
-    return ImportOptions(
-        fetch=fetch,
-        pull_request_reference=pull_request,
-        revset=revset,
-    )
 
 
 def _print_import_result(result: ImportResult) -> None:
@@ -207,9 +183,16 @@ def _print_import_result(result: ImportResult) -> None:
 async def _run_import_async(
     *,
     context: CommandContext,
-    options: ImportOptions,
+    fetch: bool,
+    pull_request_reference: str | None,
+    revset: str | None,
 ) -> ImportResult:
-    prepared_import = await _prepare_import(context=context, options=options)
+    prepared_import = await _prepare_import(
+        context=context,
+        fetch=fetch,
+        pull_request_reference=pull_request_reference,
+        revset=revset,
+    )
     actions = _import_local_state(
         client=prepared_import.prepared_status.prepared.client,
         prepared_status=prepared_import.prepared_status,
@@ -226,18 +209,20 @@ async def _run_import_async(
 async def _prepare_import(
     *,
     context: CommandContext,
-    options: ImportOptions,
+    fetch: bool,
+    pull_request_reference: str | None,
+    revset: str | None,
 ) -> _PreparedImport:
     client = context.jj_client
     with console.spinner(description="Resolving import selection"):
         selection = await _resolve_selection(
             client=client,
-            fetch=options.fetch,
-            pull_request_reference=options.pull_request_reference,
-            revset=options.revset,
+            fetch=fetch,
+            pull_request_reference=pull_request_reference,
+            revset=revset,
         )
     if (
-        not options.fetch
+        not fetch
         and selection.head_bookmark is not None
         and selection.selected_revset is not None
         and not client.query_revisions(selection.selected_revset, limit=1)
@@ -251,7 +236,7 @@ async def _prepare_import(
     with console.spinner(description="Inspecting jj stack"):
         prepared_status = prepare_status(
             context=context,
-            fetch_remote_state=options.fetch and selection.head_bookmark is None,
+            fetch_remote_state=fetch and selection.head_bookmark is None,
             persist_bookmarks=False,
             revset=selection.selected_revset,
         )
@@ -283,7 +268,7 @@ async def _prepare_import(
     with console.spinner(description="Loading bookmark state"):
         bookmark_states = prepared.client.list_bookmark_states()
     authoritative_remote_targets: dict[str, str] = {}
-    if options.fetch and selection.head_bookmark is not None and prepared.remote is not None:
+    if fetch and selection.head_bookmark is not None and prepared.remote is not None:
         with console.spinner(description="Fetching jj remote"):
             authoritative_remote_targets = _fetch_selected_stack_bookmarks(
                 prefix=context.config.bookmark_prefix,

@@ -13,7 +13,6 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
 )
-from ..support.operation_journal_helpers import write_submit_operation
 from .submit_command_helpers import (
     configure_submit_environment,
     patch_github_client_builders,
@@ -671,35 +670,3 @@ def test_status_reports_merged_pull_request_state(
     assert refreshed_state.changes[change_id].pr_state == "merged"
     assert refreshed_state.changes[change_id].pr_review_decision is None
 
-
-def test_status_shows_outstanding_submit_intent(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    # First do a submit to create saved local data
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[0].change_id
-    state_dir = resolve_state_path(repo).parent
-
-    # Write an outstanding operation record.
-    write_submit_operation(
-        state_dir,
-        display_revset="@",
-        ordered_change_ids=(change_id,),
-        ordered_commit_ids=(stack.revisions[0].commit_id,),
-        bookmarks={},
-    )
-
-    run_main(repo, config_path, "status")
-    captured = capsys.readouterr()
-
-    assert "Interrupted operations recorded:" in captured.out
-    assert change_id[:8] in captured.out

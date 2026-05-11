@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from io import StringIO
-from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
-from jj_review import console
 from jj_review.bootstrap import CommandContext
 from jj_review.commands.land import (
     LandAction,
@@ -27,11 +23,6 @@ from jj_review.commands.land.plan import (
     _land_boundary_message,
     _plan_review_bookmark_cleanup,
 )
-from jj_review.commands.land.resume import (
-    _remote_trunk_matches_commit,
-    _report_stale_land_operations,
-    _resume_land_plan,
-)
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
@@ -44,7 +35,6 @@ from jj_review.review.status import (
     ReviewStatusRevision,
     StatusResult,
 )
-from jj_review.state.journal import LandOperationRecord, LoadedOperationRecord, OperationJournal
 from jj_review.ui import plain_text
 
 
@@ -74,7 +64,6 @@ def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
         dry_run=True,
         bypass_readiness=False,
         context=_fake_context(),
-        operation_lock=None,
         prepared_status=prepared_status,
         selected_pr_number=None,
     )
@@ -391,101 +380,6 @@ def test_landed_revision_updates_cached_change_after_merge() -> None:
     assert updated.overview_comment_id is None
 
 
-def test_report_stale_land_operations_does_not_claim_resume_without_resume_match() -> None:
-    prepared_status = _prepared_status(("change-1", "change-2"))
-    loaded_operation = _loaded_land_operation(
-        cleanup_bookmarks=False,
-        ordered_change_ids=("change-1", "change-2"),
-        ordered_commit_ids=("commit-1", "commit-2"),
-        landed_change_ids=("change-1",),
-    )
-
-    stdout = StringIO()
-    stderr = StringIO()
-    with console.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
-        _report_stale_land_operations(
-            prepared_status=prepared_status,
-            resume_operation=None,
-            stale_operations=[loaded_operation],
-        )
-
-    rendered = stdout.getvalue()
-    assert "Resuming interrupted" not in rendered
-    assert "incomplete operation outstanding: land for change-2" in rendered
-
-
-def test_remote_trunk_matches_commit_requires_matching_remote_and_local_state() -> None:
-    client = _BookmarkClientStub(
-        BookmarkState(
-            name="main",
-            local_targets=("commit-2",),
-            remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-2",)),),
-        )
-    )
-
-    assert (
-        _remote_trunk_matches_commit(
-            client=client,
-            remote_name="origin",
-            trunk_branch="main",
-            commit_id="commit-2",
-        )
-        is True
-    )
-    assert (
-        _remote_trunk_matches_commit(
-            client=client,
-            remote_name="origin",
-            trunk_branch="main",
-            commit_id="commit-1",
-        )
-        is False
-    )
-
-
-def test_resume_land_plan_reads_completed_change_ids_from_journal(tmp_path: Path) -> None:
-    journal = OperationJournal.begin(
-        tmp_path,
-        operation="land",
-        lock_holder=None,
-        options={},
-        resolved_scope={},
-    )
-    journal.append(
-        "saved_state_update",
-        {
-            "after": CachedChange(pr_state="merged"),
-            "before": None,
-            "change_id": "change-1",
-        },
-    )
-    operation = _land_operation_record(
-        path=journal.path,
-        ordered_change_ids=("change-1", "change-2"),
-        ordered_commit_ids=("commit-1", "commit-2"),
-        landed_change_ids=("change-1", "change-2"),
-    )
-
-    plan = _resume_land_plan(
-        operation=operation,
-        trunk_branch="main",
-    )
-
-    assert [revision.change_id for revision in plan.planned_revisions] == ["change-2"]
-
-
-def test_resume_land_plan_rejects_incomplete_intent_data() -> None:
-    operation = _land_operation_record(
-        ordered_change_ids=("change-1", "change-2"),
-        ordered_commit_ids=("commit-1", "commit-2"),
-        landed_change_ids=("change-1", "change-2"),
-    )
-    broken_operation = replace(operation, landed_subjects={"change-1": "feature 1"})
-
-    with pytest.raises(CliError, match="Interrupted land journal"):
-        _resume_land_plan(operation=broken_operation, trunk_branch="main")
-
-
 def test_plan_review_bookmark_cleanup_forgets_owned_bookmark() -> None:
     plan = _plan_review_bookmark_cleanup(
         bookmark="bosullivan/feature-aaaaaaaa",
@@ -743,82 +637,6 @@ def _prepared_status(
             ),
             selected_revset=selected_revset,
         ),
-    )
-
-
-def _loaded_land_operation(
-    *,
-    bypass_readiness: bool = False,
-    cleanup_bookmarks: bool = True,
-    ordered_change_ids: tuple[str, ...],
-    ordered_commit_ids: tuple[str, ...],
-    landed_change_ids: tuple[str, ...],
-    selected_pr_number: int | None = None,
-    trunk_branch: str = "main",
-) -> LoadedOperationRecord:
-    path = Path("/tmp/incomplete-land.jsonl")
-    return LoadedOperationRecord(
-        path=path,
-        operation=_land_operation_record(
-            path=path,
-            bypass_readiness=bypass_readiness,
-            cleanup_bookmarks=cleanup_bookmarks,
-            ordered_change_ids=ordered_change_ids,
-            ordered_commit_ids=ordered_commit_ids,
-            landed_change_ids=landed_change_ids,
-            selected_pr_number=selected_pr_number,
-            trunk_branch=trunk_branch,
-        ),
-    )
-
-
-def _land_operation_record(
-    *,
-    path: Path = Path("/tmp/incomplete-land.jsonl"),
-    bypass_readiness: bool = False,
-    cleanup_bookmarks: bool = True,
-    ordered_change_ids: tuple[str, ...],
-    ordered_commit_ids: tuple[str, ...],
-    landed_change_ids: tuple[str, ...],
-    selected_pr_number: int | None = None,
-    trunk_branch: str = "main",
-) -> LandOperationRecord:
-    return LandOperationRecord(
-        path=path,
-        pid=123,
-        bypass_readiness=bypass_readiness,
-        cleanup_bookmarks=cleanup_bookmarks,
-        display_revset="@-",
-        ordered_change_ids=ordered_change_ids,
-        ordered_commit_ids=ordered_commit_ids,
-        landed_change_ids=landed_change_ids,
-        landed_bookmarks={
-            change_id: f"review/{change_id}" for change_id in ordered_change_ids
-        },
-        landed_bookmark_managed={change_id: True for change_id in ordered_change_ids},
-        landed_commit_ids={
-            change_id: commit_id
-            for change_id, commit_id in zip(
-                ordered_change_ids,
-                ordered_commit_ids,
-                strict=True,
-            )
-        },
-        landed_pull_request_numbers={
-            change_id: index + 1 for index, change_id in enumerate(ordered_change_ids)
-        },
-        landed_subjects={
-            change_id: f"feature {index + 1}"
-            for index, change_id in enumerate(ordered_change_ids)
-        },
-        trunk_branch=trunk_branch,
-        landed_commit_id=(
-            ordered_commit_ids[len(landed_change_ids) - 1]
-            if landed_change_ids
-            else "trunk-commit"
-        ),
-        selected_pr_number=selected_pr_number,
-        started_at="2026-03-22T12:00:00Z",
     )
 
 

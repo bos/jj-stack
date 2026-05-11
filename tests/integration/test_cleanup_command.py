@@ -7,7 +7,7 @@ import pytest
 from jj_review.commands import cleanup as cleanup_module
 from jj_review.jj import JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.journal import OperationJournal, read_journal, read_operation_log
+from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
@@ -46,26 +46,6 @@ def _mark_pr_state(
                 }
             }
         )
-    )
-
-
-def _begin_cleanup_rebase_journal(
-    state_dir: Path,
-    *,
-    display_revset: str,
-    ordered_change_ids: tuple[str, ...],
-    ordered_commit_ids: tuple[str, ...],
-) -> OperationJournal:
-    return OperationJournal.begin(
-        state_dir,
-        operation="cleanup-rebase",
-        lock_holder=None,
-        options={},
-        resolved_scope={
-            "ordered_change_ids": ordered_change_ids,
-            "ordered_commit_ids": ordered_commit_ids,
-            "selected_revset": display_revset,
-        },
     )
 
 
@@ -270,82 +250,6 @@ def test_cleanup_restack_skips_inspection_on_fully_untracked_stack(
     assert "Planned rebase actions:" not in captured.out
     assert "Applied rebase actions:" not in captured.out
     assert fetch_calls == []
-
-
-def test_cleanup_restack_continues_exact_interrupted_restack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom = stack.revisions[0]
-    top = stack.revisions[1]
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
-
-    state_dir = resolve_state_path(repo).parent
-    old_journal = _begin_cleanup_rebase_journal(
-        state_dir,
-        display_revset=top.change_id,
-        ordered_change_ids=(bottom.change_id, top.change_id),
-        ordered_commit_ids=(bottom.commit_id, top.commit_id),
-    )
-
-    exit_code = run_main(repo, config_path, "cleanup", "--rebase", top.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "Continuing interrupted cleanup --rebase" in captured.out
-    assert not old_journal.path.exists()
-    assert read_operation_log(state_dir)[-1].event == "abandoned"
-
-
-def test_cleanup_restack_uses_current_stack_after_rewrite(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom = stack.revisions[0]
-    top = stack.revisions[1]
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
-
-    state_dir = resolve_state_path(repo).parent
-    old_journal = _begin_cleanup_rebase_journal(
-        state_dir,
-        display_revset="@",
-        ordered_change_ids=(bottom.change_id, top.change_id),
-        ordered_commit_ids=(bottom.commit_id, top.commit_id),
-    )
-
-    run_command(["jj", "describe", "-r", top.change_id, "-m", "feature 2 rewritten"], repo)
-
-    exit_code = run_main(repo, config_path, "cleanup", "--rebase")
-    captured = capsys.readouterr()
-    normalized_output = " ".join(captured.out.split())
-
-    assert exit_code == 0
-    assert "Continuing interrupted cleanup --rebase" not in captured.out
-    assert "same logical stack, but it has been rewritten" in normalized_output
-    assert not old_journal.path.exists()
-    assert read_operation_log(state_dir)[-1].event == "abandoned"
 
 
 def test_cleanup_dry_run_reports_stale_tracking_and_remote_branch_without_mutation(
@@ -884,12 +788,13 @@ def test_cleanup_completes_journal_after_successful_apply(
 
     assert exit_code == 0
     state_dir = resolve_state_path(repo).parent
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
-    assert not tuple((state_dir / "journals").glob("*-cleanup-*.jsonl"))
-    assert read_operation_log(state_dir)[-1].event == "completed"
+    cleanup_events = [
+        event for event in read_operation_log(state_dir) if event.operation == "cleanup"
+    ]
+    assert [event.event for event in cleanup_events] == ["begin", "completed"]
 
 
-def test_cleanup_retains_journal_after_failed_apply(
+def test_cleanup_logs_begin_after_failed_apply(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -920,34 +825,7 @@ def test_cleanup_retains_journal_after_failed_apply(
     capsys.readouterr()
 
     state_dir = resolve_state_path(repo).parent
-    assert ReviewStateStore.for_repo(repo).list_operations()
-    [journal_path] = (state_dir / "journals").glob("*-cleanup-*.jsonl")
-    assert read_journal(journal_path)[-1].event == "begin"
-
-
-def test_cleanup_retires_prior_interrupted_journal_after_success(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    state_dir = resolve_state_path(repo).parent
-    stale_journal = OperationJournal.begin(
-        state_dir,
-        operation="cleanup",
-        lock_holder=None,
-        options={},
-        resolved_scope={"cached_change_ids": ()},
-    )
-
-    exit_code = run_main(repo, config_path, "cleanup")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "Note: a previous cleanup was interrupted (cleanup)" in captured.out
-    assert "No cleanup actions needed." in captured.out
-    assert not stale_journal.path.exists()
-    assert read_operation_log(state_dir)[-1].event == "abandoned"
-    assert ReviewStateStore.for_repo(repo).list_operations() == []
+    cleanup_events = [
+        event for event in read_operation_log(state_dir) if event.operation == "cleanup"
+    ]
+    assert [event.event for event in cleanup_events] == ["begin"]

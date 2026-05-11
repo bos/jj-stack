@@ -24,7 +24,6 @@ from .models import (
     ResolvedSubmitOptions,
     SubmitOptions,
 )
-from .operations import repair_interrupted_untracked_remote_bookmarks
 
 
 def prepare_submit_inputs(
@@ -39,14 +38,7 @@ def prepare_submit_inputs(
     client = context.jj_client
     config = context.config
     state_store = context.state_store
-    dry_run = options.dry_run
     remote = select_submit_remote(client.list_git_remotes())
-    if not dry_run:
-        repair_interrupted_untracked_remote_bookmarks(
-            client=client,
-            remote=remote,
-            state_dir=state_store.require_writable(),
-        )
     stack = client.discover_review_stack(options.revset)
     if on_prepared is not None:
         on_prepared(

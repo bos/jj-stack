@@ -11,21 +11,13 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
-from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.jj import JjCliArgs
 from jj_review.review.restart import RestartedChange, restart_state_for_stack
 from jj_review.review.selection import resolve_selected_revset
+from jj_review.state.operation_lock import acquire_operation_lock
 
 HELP = "Start a fresh review for local changes that should get new pull requests"
-
-
-@dataclass(frozen=True, slots=True)
-class RestartOptions:
-    """Parsed command options for `restart`."""
-
-    dry_run: bool
-    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,39 +44,26 @@ def restart(
         cli_args=cli_args,
         debug=debug,
     )
-    options = _restart_options_from_cli(
-        dry_run=dry_run,
-        revset=revset,
-    )
-    with mutating_command_lock(command="restart", context=context):
+    with acquire_operation_lock(context.state_store.require_writable(), command="restart"):
         result = _run_restart(
             context=context,
-            options=options,
+            dry_run=dry_run,
+            revset=revset,
         )
     _render_restart_result(result)
     return 0
 
 
-def _restart_options_from_cli(
-    *,
-    dry_run: bool,
-    revset: str | None,
-) -> RestartOptions:
-    return RestartOptions(
-        dry_run=dry_run,
-        revset=revset,
-    )
-
-
 def _run_restart(
     *,
     context: CommandContext,
-    options: RestartOptions,
+    dry_run: bool,
+    revset: str | None,
 ) -> RestartResult:
     revset = resolve_selected_revset(
         command_label="restart",
         require_explicit=True,
-        revset=options.revset,
+        revset=revset,
     )
     with console.spinner(description="Inspecting jj stack"):
         stack = context.jj_client.discover_review_stack(revset)
@@ -92,7 +71,7 @@ def _run_restart(
         raise CliError("The selected stack has no changes to review.")
 
     state_store = context.state_store
-    if not options.dry_run:
+    if not dry_run:
         state_store.require_writable()
     state = state_store.load()
     restart_result = restart_state_for_stack(
@@ -101,11 +80,11 @@ def _run_restart(
         stack=stack,
         state=state,
     )
-    if restart_result.changed and not options.dry_run:
+    if restart_result.changed and not dry_run:
         state_store.save(restart_result.state)
     return RestartResult(
         changed=restart_result.changed,
-        dry_run=options.dry_run,
+        dry_run=dry_run,
         selected_revset=stack.selected_revset,
     )
 

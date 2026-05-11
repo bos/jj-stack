@@ -11,11 +11,6 @@ from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult, BookmarkSource
-from jj_review.state.journal import (
-    LoadedOperationRecord,
-    OperationJournal,
-    SubmitOperationRecord,
-)
 from jj_review.state.store import ReviewStateStore
 
 LocalBookmarkAction = Literal["created", "moved", "unchanged"]
@@ -163,15 +158,6 @@ class SubmitMutationRun:
         self.state_store.save(interim_state)
 
 
-@dataclass(frozen=True, slots=True)
-class SubmitOperationState:
-    """Prepared submit operation bookkeeping for resumable runs."""
-
-    journal: OperationJournal | None
-    operation: SubmitOperationRecord
-    stale_operations: list[LoadedOperationRecord]
-
-
 class PrivateCommitFinder(Protocol):
     """Subset of the jj client interface needed for git.private-commits checks."""
 
@@ -197,19 +183,3 @@ class RemoteBookmarkSyncer(Protocol):
         expected_remote_target: str,
     ) -> None:
         """Update an existing untracked remote bookmark without importing it first."""
-
-
-class InterruptedRemoteBookmarkRepairer(Protocol):
-    """Subset of the jj client interface needed for stale remote bookmark repair."""
-
-    def fetch_remote(self, *, remote: str) -> None:
-        """Refresh remembered remote bookmark state for the selected remote."""
-
-    def list_bookmark_states(
-        self,
-        bookmarks: tuple[str, ...] | None = None,
-    ) -> dict[str, BookmarkState]:
-        """Return local and remote state for the requested bookmark names."""
-
-    def track_bookmark(self, *, remote: str, bookmark: str) -> None:
-        """Track an existing remote bookmark locally."""

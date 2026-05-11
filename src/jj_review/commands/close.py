@@ -32,7 +32,6 @@ from jj_review.commands._close_actions import (
     render_close_action_message as _render_close_action_message,
     retire_cached_change as _retire_cached_change,
 )
-from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.commands.close_orphan import (
     run_orphan_close,
     run_untracked_cleanup_pull_request,
@@ -57,11 +56,6 @@ from jj_review.review.change_status import (
     classify_review_status_revision,
     classify_saved_review_change,
 )
-from jj_review.review.operations import (
-    close_operation_mode_relation,
-    describe_operation,
-    match_close_operation,
-)
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
@@ -76,34 +70,12 @@ from jj_review.review.status import (
     prepare_status,
     stream_status,
 )
-from jj_review.review.submit_recovery import (
-    SubmitArtifactObservation,
-    SubmitRecoveryIdentity,
-    SubmitTargetRelation,
-    observe_submit_artifacts,
-    should_retire_submit_after_cleanup,
+from jj_review.state.journal import OperationJournal
+from jj_review.state.operation_lock import (
+    acquire_operation_lock,
 )
-from jj_review.state.journal import (
-    CloseOperationRecord,
-    LoadedOperationRecord,
-    OperationJournal,
-    SubmitOperationRecord,
-    append_abandoned_event,
-)
-from jj_review.state.operation_lock import OperationLock, read_operation_lock_holder
-from jj_review.system import pid_is_alive
 
 HELP = "Stop reviewing a jj stack on GitHub"
-
-
-@dataclass(frozen=True, slots=True)
-class CloseOptions:
-    """Parsed close options after CLI normalization."""
-
-    cleanup: bool
-    dry_run: bool
-    pull_request: str | None
-    revset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,18 +97,10 @@ class CloseResult:
 class PreparedClose:
     """Locally prepared close inputs before any GitHub mutation."""
 
+    cleanup: bool
     context: CommandContext
-    operation_lock: OperationLock
-    options: CloseOptions
+    dry_run: bool
     prepared_status: PreparedStatus
-
-    @property
-    def cleanup(self) -> bool:
-        return self.options.cleanup
-
-    @property
-    def dry_run(self) -> bool:
-        return self.options.dry_run
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,15 +137,6 @@ class _CloseExecutionState:
     current_state: ReviewState
     next_changes: dict[str, CachedChange]
     commit_ids_by_change_id: dict[str, str]
-
-
-@dataclass(frozen=True, slots=True)
-class _CloseOperationState:
-    """Prepared close operation bookkeeping for resumable live runs."""
-
-    journal: OperationJournal | None
-    stale_close_operations: list[LoadedOperationRecord]
-    stale_submit_operations: list[LoadedOperationRecord]
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,44 +215,44 @@ def close(
         cli_args=cli_args,
         debug=debug,
     )
-    options = _close_options_from_cli(
-        cleanup=cleanup,
-        dry_run=dry_run,
-        pull_request=pull_request,
-        revset=revset,
-    )
-    command = "close --cleanup" if options.cleanup else "close"
-    with mutating_command_lock(command=command, context=context) as operation_lock:
+    command = "close --cleanup" if cleanup else "close"
+    with acquire_operation_lock(
+        context.state_store.require_writable(),
+        command=command,
+    ):
         return _run_close(
             context=context,
-            operation_lock=operation_lock,
-            options=options,
+            cleanup=cleanup,
+            dry_run=dry_run,
+            pull_request=pull_request,
+            revset=revset,
         )
 
 
 def _run_close(
     *,
+    cleanup: bool,
     context: CommandContext,
-    operation_lock: OperationLock,
-    options: CloseOptions,
+    dry_run: bool,
+    pull_request: str | None,
+    revset: str | None,
 ) -> int:
-    """Run close after CLI arguments have been normalized into options."""
-
-    target = _resolve_close_target(context=context, options=options)
+    target = _resolve_close_target(
+        cleanup=cleanup,
+        context=context,
+        dry_run=dry_run,
+        pull_request=pull_request,
+        revset=revset,
+    )
     if isinstance(target, _CloseOrphanPullRequestTarget):
         return asyncio.run(
             run_orphan_close(
                 change_id=target.change_id,
                 context=context,
-                dry_run=options.dry_run,
+                dry_run=dry_run,
                 github_client_builder=build_github_client,
                 github_repo_parser=parse_github_repo,
-                operation_lock=operation_lock,
                 pull_request_number=target.pull_request_number,
-                report_stale_close_operations=_report_stale_close_operations,
-                retire_submit_operations_cleared_by_cleanup=(
-                    _retire_submit_operations_cleared_by_cleanup
-                ),
                 state=target.state,
             )
         )
@@ -305,22 +260,19 @@ def _run_close(
         return asyncio.run(
             run_untracked_cleanup_pull_request(
                 context=context,
-                dry_run=options.dry_run,
+                dry_run=dry_run,
                 github_client_builder=build_github_client,
                 github_repo_parser=parse_github_repo,
                 pull_request_number=target.pull_request_number,
-                retire_submit_operations_cleared_by_cleanup=(
-                    _retire_submit_operations_cleared_by_cleanup
-                ),
                 state=target.state,
             )
         )
 
     with console.spinner(description="Inspecting jj stack"):
         prepared_close = prepare_close(
+            cleanup=cleanup,
             context=context,
-            operation_lock=operation_lock,
-            options=options,
+            dry_run=dry_run,
             revset=target.revset,
         )
     result = stream_close(prepared_close=prepared_close)
@@ -328,38 +280,26 @@ def _run_close(
     return 1 if result.blocked else 0
 
 
-def _close_options_from_cli(
+def _resolve_close_target(
     *,
     cleanup: bool,
+    context: CommandContext,
     dry_run: bool,
     pull_request: str | None,
     revset: str | None,
-) -> CloseOptions:
-    return CloseOptions(
-        cleanup=cleanup,
-        dry_run=dry_run,
-        pull_request=pull_request,
-        revset=revset,
-    )
-
-
-def _resolve_close_target(
-    *,
-    context: CommandContext,
-    options: CloseOptions,
 ) -> _CloseTarget:
-    if options.pull_request is not None:
-        if options.cleanup and options.revset is None:
-            if not options.dry_run:
+    if pull_request is not None:
+        if cleanup and revset is None:
+            if not dry_run:
                 context.state_store.require_writable()
             state = context.state_store.load()
             pull_request_number = resolve_pull_request_number(
                 jj_client=context.jj_client,
-                pull_request_reference=options.pull_request,
+                pull_request_reference=pull_request,
             )
             orphan_target = resolve_orphaned_pull_request(
                 jj_client=context.jj_client,
-                pull_request_reference=options.pull_request,
+                pull_request_reference=pull_request,
                 state=state,
             )
             if orphan_target is not None:
@@ -380,8 +320,8 @@ def _resolve_close_target(
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="close",
             jj_client=context.jj_client,
-            pull_request_reference=options.pull_request,
-            revset=options.revset,
+            pull_request_reference=pull_request,
+            revset=revset,
         )
         console.note(
             t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
@@ -390,20 +330,20 @@ def _resolve_close_target(
 
     return _CloseSelectedStack(
         revset=resolve_selected_revset(
-            command_label=_close_command_label(options),
+            command_label=_close_command_label(cleanup=cleanup, dry_run=dry_run),
             default_revset="@-",
             require_explicit=False,
-            revset=options.revset,
+            revset=revset,
         )
     )
 
 
-def _close_command_label(options: CloseOptions) -> str:
-    if options.cleanup and options.dry_run:
+def _close_command_label(*, cleanup: bool, dry_run: bool) -> str:
+    if cleanup and dry_run:
         return "close --cleanup --dry-run"
-    if options.cleanup:
+    if cleanup:
         return "close --cleanup"
-    if options.dry_run:
+    if dry_run:
         return "close --dry-run"
     return "close"
 
@@ -444,15 +384,15 @@ def print_close_result(result: CloseResult) -> None:
 
 def prepare_close(
     *,
+    cleanup: bool,
     context: CommandContext,
-    operation_lock: OperationLock,
-    options: CloseOptions,
+    dry_run: bool,
     revset: str | None,
 ) -> PreparedClose:
     """Resolve local close inputs before any GitHub inspection."""
 
     state_store = context.state_store
-    if not options.dry_run:
+    if not dry_run:
         state_store.require_writable()
     fast_path = _prepare_untracked_close_fast_path(
         context=context,
@@ -460,18 +400,18 @@ def prepare_close(
     )
     if fast_path is not None:
         return PreparedClose(
+            cleanup=cleanup,
             context=context,
-            operation_lock=operation_lock,
-            options=options,
+            dry_run=dry_run,
             prepared_status=fast_path,
         )
     return PreparedClose(
+        cleanup=cleanup,
         context=context,
-        operation_lock=operation_lock,
-        options=options,
+        dry_run=dry_run,
         prepared_status=prepare_status(
             context=context,
-            fetch_remote_state=options.cleanup,
+            fetch_remote_state=cleanup,
             fetch_only_when_tracked=True,
             persist_bookmarks=False,
             revset=revset,
@@ -552,10 +492,8 @@ def _prepare_untracked_close_fast_path(
     return PreparedStatus(
         github_repository=github_repository,
         github_repository_error=github_repository_error,
-        outstanding_operations=(),
         prepared=prepared,
         selected_revset=stack.selected_revset,
-        stale_operations=(),
         base_parent_subject=stack.base_parent.subject,
     )
 
@@ -632,13 +570,9 @@ async def _stream_close_async(
 
     execution_state = _prepare_close_execution_state(prepared_close=prepared_close)
     completed = False
-    operation_state = _CloseOperationState(
-        journal=None,
-        stale_close_operations=[],
-        stale_submit_operations=[],
-    )
+    close_journal: OperationJournal | None = None
     try:
-        operation_state = _start_close_operation(
+        close_journal = _start_close_operation_log(
             prepared_close=prepared_close,
         )
 
@@ -683,108 +617,15 @@ async def _stream_close_async(
             prepared_close=prepared_close,
         )
     finally:
-        if completed and operation_state.journal is not None:
+        if completed and close_journal is not None:
             completed_change_ids = tuple(
                 prepared_revision.revision.change_id
                 for prepared_revision in prepared_status.prepared.status_revisions
             )
-            operation_state.journal.append(
+            close_journal.append(
                 "completed",
                 {"ordered_change_ids": completed_change_ids},
             )
-            _retire_superseded_close_operations(
-                current_change_ids=completed_change_ids,
-                current_cleanup=prepared_close.cleanup,
-                stale_operations=operation_state.stale_close_operations,
-            )
-            if prepared_close.cleanup and not recorder.blocked:
-                _retire_submit_operations_cleared_by_cleanup(
-                    current_state=execution_state.current_state.model_copy(
-                        update={"changes": execution_state.next_changes}
-                    ),
-                    jj_client=prepared_status.prepared.client,
-                    stale_submit_operations=operation_state.stale_submit_operations,
-                )
-
-
-def _retire_submit_operations_cleared_by_cleanup(
-    *,
-    current_state: ReviewState,
-    jj_client: JjClient,
-    stale_submit_operations: list[LoadedOperationRecord],
-) -> None:
-    """Mark interrupted submit journals terminal once cleanup clears their artifacts."""
-
-    for loaded in stale_submit_operations:
-        operation = loaded.operation
-        if not isinstance(operation, SubmitOperationRecord):
-            continue
-        if should_retire_submit_after_cleanup(
-            observation=_observe_submit_artifacts(
-                current_state=current_state,
-                operation=operation,
-                jj_client=jj_client,
-            )
-        ):
-            append_abandoned_event(loaded.path, reason="superseded_by_cleanup")
-
-
-def _retire_superseded_close_operations(
-    *,
-    current_change_ids: tuple[str, ...],
-    current_cleanup: bool,
-    stale_operations: list[LoadedOperationRecord],
-) -> None:
-    """Mark interrupted close journals terminal when a later close covered them."""
-
-    current_id_set = set(current_change_ids)
-    for loaded in stale_operations:
-        operation = loaded.operation
-        if not isinstance(operation, CloseOperationRecord):
-            continue
-        mode_relation = close_operation_mode_relation(
-            recorded_cleanup=operation.cleanup,
-            current_cleanup=current_cleanup,
-        )
-        if mode_relation == "incompatible":
-            continue
-        if set(operation.ordered_change_ids).issubset(current_id_set):
-            append_abandoned_event(loaded.path, reason="superseded_by_close")
-
-
-def _observe_submit_artifacts(
-    *,
-    current_state: ReviewState,
-    operation: SubmitOperationRecord,
-    jj_client: JjClient,
-) -> SubmitArtifactObservation:
-    """Collect the live artifact state for a recorded submit operation."""
-
-    remotes_by_name = {remote.name: remote for remote in jj_client.list_git_remotes()}
-    recorded_remote = remotes_by_name.get(operation.remote_name)
-    if recorded_remote is None:
-        target_relation = SubmitTargetRelation.UNKNOWN
-    else:
-        current_github_repository = parse_github_repo(recorded_remote)
-        target_relation = (
-            SubmitTargetRelation.MATCH
-            if SubmitRecoveryIdentity.from_operation(operation)
-            == SubmitRecoveryIdentity.from_github_repository(
-                remote_name=operation.remote_name,
-                github_repository=current_github_repository,
-            )
-            else SubmitTargetRelation.MISMATCH
-        )
-
-    return observe_submit_artifacts(
-        current_changes=current_state.changes,
-        operation=operation,
-        bookmark_states={
-            bookmark: jj_client.get_bookmark_state(bookmark)
-            for bookmark in operation.bookmarks.values()
-        },
-        target_relation=target_relation,
-    )
 
 
 def _inspected_close_has_no_work(
@@ -841,18 +682,14 @@ def _save_close_progress(
         )
 
 
-def _start_close_operation(
+def _start_close_operation_log(
     *,
     prepared_close: PreparedClose,
-) -> _CloseOperationState:
-    """Write close operation journal metadata for resumable live runs."""
+) -> OperationJournal | None:
+    """Write close operation log metadata for live runs."""
 
     if prepared_close.dry_run:
-        return _CloseOperationState(
-            journal=None,
-            stale_close_operations=[],
-            stale_submit_operations=[],
-        )
+        return None
 
     prepared_status = prepared_close.prepared_status
     state_dir = prepared_status.prepared.state_store.require_writable()
@@ -862,31 +699,9 @@ def _start_close_operation(
     )
     ordered_change_ids = tuple(revision.change_id for revision in ordered_revisions)
     ordered_commit_ids = tuple(revision.commit_id for revision in ordered_revisions)
-    stale_close_operations = [
-        loaded
-        for loaded in prepared_status.prepared.state_store.list_operations()
-        if isinstance(loaded.operation, CloseOperationRecord)
-    ]
-    _report_stale_close_operations(
-        current_change_ids=ordered_change_ids,
-        current_commit_ids=ordered_commit_ids,
-        current_cleanup=prepared_close.cleanup,
-        stale_operations=stale_close_operations,
-    )
-    stale_submit_operations = (
-        [
-            loaded
-            for loaded in prepared_status.prepared.state_store.list_operations()
-            if isinstance(loaded.operation, SubmitOperationRecord)
-            and not pid_is_alive(loaded.operation.pid)
-        ]
-        if prepared_close.cleanup
-        else []
-    )
     journal = OperationJournal.begin(
         state_dir,
         operation="close",
-        lock_holder=read_operation_lock_holder(state_dir),
         options={"cleanup": prepared_close.cleanup},
         resolved_scope={
             "ordered_change_ids": ordered_change_ids,
@@ -894,84 +709,7 @@ def _start_close_operation(
             "selected_revset": prepared_status.selected_revset,
         },
     )
-    prepared_close.operation_lock.record_journal_path(journal.path)
-    return _CloseOperationState(
-        journal=journal,
-        stale_close_operations=stale_close_operations,
-        stale_submit_operations=stale_submit_operations,
-    )
-
-
-def _report_stale_close_operations(
-    *,
-    current_change_ids: tuple[str, ...],
-    current_commit_ids: tuple[str, ...],
-    current_cleanup: bool,
-    stale_operations: list[LoadedOperationRecord],
-) -> None:
-    """Render interrupted close diagnostics for live execution."""
-
-    for loaded in stale_operations:
-        if not isinstance(loaded.operation, CloseOperationRecord):
-            continue
-        operation = loaded.operation
-        mode_relation = close_operation_mode_relation(
-            recorded_cleanup=operation.cleanup,
-            current_cleanup=current_cleanup,
-        )
-        # mode-aware match: a recorded cleanup run is "disjoint" from a plain close
-        match = match_close_operation(
-            operation=operation,
-            current_change_ids=current_change_ids,
-            current_commit_ids=current_commit_ids,
-            current_cleanup=current_cleanup,
-        )
-        # mode-blind stack match: used below to detect an incompatible-mode operation
-        # whose stack still matches, so we can warn "plain close does not finish cleanup"
-        stack_match = match_close_operation(
-            operation=operation,
-            current_change_ids=current_change_ids,
-            current_commit_ids=current_commit_ids,
-        )
-        description = describe_operation(operation)
-        if mode_relation == "same" and match == "exact":
-            console.note(f"Continuing interrupted {description}")
-        elif mode_relation == "expanded" and match == "exact":
-            console.note(
-                t"Interrupted {description} is covered by this "
-                t"{ui.cmd('close --cleanup')} run."
-            )
-        elif (
-            mode_relation == "incompatible"
-            and operation.cleanup
-            and not current_cleanup
-            and stack_match in {"exact", "same-logical", "covered"}
-        ):
-            console.warning(
-                t"Interrupted {description} is still outstanding; plain close "
-                t"does not finish cleanup. Run {ui.cmd('close --cleanup')} to complete it."
-            )
-        elif match == "same-logical":
-            console.note(
-                t"Interrupted {description} targeted the same logical stack, but it "
-                t"has been rewritten. This "
-                t"{ui.cmd('close --cleanup' if current_cleanup else 'close')} "
-                t"will use the current stack."
-            )
-        elif match == "covered":
-            console.note(
-                t"Interrupted {description} targeted changes that are all included "
-                t"in the current stack. This "
-                t"{ui.cmd('close --cleanup' if current_cleanup else 'close')} "
-                t"will use the current stack."
-            )
-        elif match == "overlap":
-            console.warning(
-                t"This {ui.cmd('close --cleanup' if current_cleanup else 'close')} "
-                t"overlaps an incomplete earlier operation ({description})"
-            )
-        else:
-            console.note(f"Incomplete operation outstanding: {description}")
+    return journal
 
 
 async def _process_close_revisions(

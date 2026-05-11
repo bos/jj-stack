@@ -63,9 +63,7 @@ def test_status_updates_tty_progress_bar_while_streaming(
             ),
             github_repository=SimpleNamespace(full_name="octo-org/stacked-review"),
             github_repository_error=None,
-            outstanding_operations=(),
             selected_revset="@",
-            stale_operations=(),
             base_parent_subject="base",
         ),
     )
@@ -154,9 +152,7 @@ def test_status_passes_cli_color_override_to_native_jj_rendering(
             ),
             github_repository=SimpleNamespace(full_name="octo-org/stacked-review"),
             github_repository_error=None,
-            outstanding_operations=(),
             selected_revset="@",
-            stale_operations=(),
             base_parent_subject="base",
         ),
     )

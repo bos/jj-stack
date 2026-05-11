@@ -29,7 +29,7 @@ These are strengths worth preserving rather than replacing:
 - docs already separate user-facing material under `docs/` from contributor notes under
   `docs/internals/`
 - `troubleshooting.md` is already organized by symptom and next command
-- the product already has strong recovery-oriented commands such as `doctor`, `abort`,
+- the product already has strong repair and diagnostic commands such as `doctor`,
   `import`, `relink`, and `cleanup --rebase`
 
 The biggest remaining gap is not "missing feature parity". It is that some important user
@@ -71,7 +71,6 @@ Highest-value commands should grow 2-3 short examples in long help:
 - `land`
 - `close`
 - `import`
-- `abort`
 - `cleanup --rebase`
 
 Examples should come from real workflows already documented in `docs/`, not invented toy

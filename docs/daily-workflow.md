@@ -235,24 +235,18 @@ jj-review submit
 
 ## When something goes wrong
 
-If a command is interrupted mid-way (crash, Ctrl-C, network failure), `status`
-will report an interrupted operation, when it started, and whether it belongs
-to the stack currently being shown. Use the command lines printed by `status`
-to inspect or continue the recorded stack:
+If a command is interrupted mid-way (crash, Ctrl-C, network failure), inspect the
+stack and rerun the command you were using with an explicit revset or change ID:
 
 ```bash
-jj-review status              # see what was interrupted
-jj-review status <change-id>  # inspect the interrupted stack
-jj-review submit <change-id>  # finish an interrupted submit
-jj-review abort --dry-run     # preview what abort would undo
-jj-review abort               # undo and clean up, if the preview looks right
+jj-review status
+jj-review status <change-id>
+jj-review submit <change-id>
+jj-review close --cleanup <change-id>
 ```
 
-For interrupted `submit`, the recorded notice identifies the stack it started
-from. Re-run `submit` or `close --cleanup` with an explicit revset for the
-stack you want, not a naked command that falls back to the default selection.
-
-If you rewrote that stack in the meantime, `abort` will not try to guess how to
-undo the old partial submit.
+Use explicit selectors after a failure, not a naked command that falls back to
+the default stack. If you want to undo review work that was partially created,
+use `close --cleanup` on the stack you want to retire.
 
 See the [troubleshooting guide](troubleshooting.md) for more recovery scenarios.

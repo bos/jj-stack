@@ -270,19 +270,15 @@ Reads treat a missing state file as empty state. Writes create the parent direct
 demand and only fail if the filesystem refuses.
 
 Mutating commands take a repo-scoped advisory operation lock in that same state
-directory before reading or writing recovery state. The lock serializes cross-command
-mutation; its companion file records the owning command, PID, start time, and optional
-operation-record path for diagnostics. `list` and `doctor` do not take the lock.
+directory before reading or writing state. The lock serializes cross-command mutation; its
+companion file records the owning command, PID, and start time for diagnostics. `list` and
+`doctor` do not take the lock.
 `status` does not lock for live inspection, but it tries the lock around its best-effort
 cache write and skips that write with a diagnostic if another operation is running.
 
-Active operation recovery records live under the repo state directory while interrupted
-work can still be resumed or cleared. Every operation event is also appended to the
-repo-level `operation-log.jsonl` audit log. Terminal `completed` and `abandoned`
-events remove the active recovery file, leaving the audit log for post-hoc debugging.
-The log is not a topology source of truth; it is evidence for explaining what happened
-after the fact. `land` uses its active recovery record for interruption recovery; it
-does not write a separate intent file.
+Mutating commands append operation events to the repo-level `operation-log.jsonl` audit log.
+The log is not a topology source of truth and does not drive retry behavior; it is evidence
+for explaining what happened after the fact.
 
 ## Submission algorithm
 
@@ -302,7 +298,7 @@ Given a chosen head revision:
 5. For saved review branches, verify the selected remote's actual branch head before
    asking GitHub for PR state. The remote head is safe only when it still points at the
    saved submitted commit, or already points at the selected change's current commit
-   after a previous interrupted submit pushed the branch. Any other target means the
+   after a previous failed submit pushed the branch. Any other target means the
    branch drifted outside this submit, so `submit` stops before local bookmark, remote
    branch, or GitHub mutation.
 6. Look up GitHub PR state for those bookmarks.
@@ -470,11 +466,6 @@ Unlike `submit`, `status` may fall back to local-only output when the repo is no
 configured well enough to resolve a remote or GitHub target. Default output stays
 concise — one effective summary per change rather than dumping saved-data and transport
 diagnostics inline.
-
-When interrupted-operation records exist, `status` renders them as recovery guidance:
-the command that was interrupted, the saved top change, the original selector, the
-age from `started_at`, whether the record matches the stack currently shown, and stable
-change-ID-based commands to inspect, continue, or preview abort behavior.
 
 `status` may add a repo-level advisory for other tracked stacks when the saved
 submitted state disagrees with the current DAG: either a tracked change's saved
@@ -853,7 +844,6 @@ The full command surface:
 - `jj review cleanup [--dry-run] [--rebase [<revset>]]`
 - `jj review import [--fetch] [--pull-request <pr> | --revset <revset>]`
 - `jj review land [--dry-run] [--pull-request <pr> | <revset>]`
-- `jj review abort [--dry-run]`
 - `jj review completion <bash|zsh|fish>`
 
 `completion` is auxiliary CLI glue. It prints shell completion scripts. It is not a
@@ -990,9 +980,9 @@ one before merging.
 - **Deletion of a remote review branch** (`jj git push --delete`, via
   `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the
   deleted branch. Defense: branch deletion is invoked only by `cleanup`, `close`
-  (including the `close --pull-request <n>` orphan-close sub-mode), and `abort`,
-  and only after the corresponding PR is closed, merged, or absent. Open or
-  orphaned PRs keep their branch.
+  (including the `close --pull-request <n>` orphan-close sub-mode), and only after
+  the corresponding PR is closed, merged, or absent. Open or orphaned PRs keep
+  their branch.
 
 - **`update_pull_request(base=…)`**. Setting a PR base to a branch that already
   contains the PR's head triggers GitHub's merged auto-close. Defense: in `submit`,
@@ -1014,9 +1004,8 @@ one before merging.
   head before the child PR is created.
 
 - **`close_pull_request`**. Destructive by design. Defense: only invoked by
-  `close` (including the `close --pull-request <n>` orphan-close sub-mode),
-  `abort`, or `land`, each on explicit user instruction or after a successful
-  merge.
+  `close` (including the `close --pull-request <n>` orphan-close sub-mode) or
+  `land`, each on explicit user instruction or after a successful merge.
 
 - **`convert_pull_request_to_draft`**. Repo policy may dismiss approvals on draft
   conversion. Defense: only invoked for an existing open PR when `--draft=all` is
@@ -1042,8 +1031,8 @@ one before merging.
   most recent successful submit. `cleanup` additionally limits deletion to managed
   comments that no longer represent a live linked review stack.
 
-This list is the bar `submit`, `close`, `land`, `cleanup`, `abort`, and any future
-command must clear before introducing a new GitHub call.
+This list is the bar `submit`, `close`, `land`, `cleanup`, and any future command
+must clear before introducing a new GitHub call.
 
 ### Cleanup semantics
 
@@ -1135,35 +1124,6 @@ it stops with a targeted diagnostic when:
 
 It does not stop merely because fetched GitHub merges created extra visible revisions
 or moved PR branches to merge commits.
-
-### Abort semantics
-
-`jj review abort` undoes the completed work from an interrupted operation. It reads the
-outstanding interrupted-operation record to find what was in progress, checks the
-tracking state to see what completed before the interruption, then undoes those steps
-and removes the record.
-
-For a `submit` operation, undoing means: close any PRs that were created or updated,
-delete the corresponding remote branches, forget the local bookmarks, and clear the
-saved entries for the aborted changes.
-
-For operations that mutate local `jj` history (`cleanup --rebase`) or that cannot be
-automatically reversed (`land`, `close`), `abort` only removes the record and reports
-a diagnostic so the user knows to inspect state manually.
-
-`abort` mutates by default; `--dry-run` previews what would be undone. It is
-conservative — it only removes state the tool can prove was written during this
-operation, and stops rather than guessing when the evidence is ambiguous.
-
-If an interrupted `submit` no longer has a visible top change, the original stack
-cannot be continued or closed by revset. In that case `abort` clears only the unusable
-interrupted-operation record, reports that it did not close PRs or delete review
-branches, and avoids presenting cleanup as an alternate way to clear the notice.
-
-`abort` operates on all outstanding records for the current repo. "Outstanding" means
-the record is for changes that still exist locally (not stale by the standard
-change-ID resolution check). If only stale records are found, `abort` reports them and
-suggests `cleanup`.
 
 ### Landing and merge lifecycle
 
