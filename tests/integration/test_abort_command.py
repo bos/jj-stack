@@ -5,7 +5,7 @@ from pathlib import Path
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.journal import OperationJournal, read_journal
+from jj_review.state.journal import OperationJournal, read_operation_log
 from jj_review.state.store import ReviewStateStore
 
 from ..support.fake_github import initialize_bare_repository
@@ -306,7 +306,8 @@ def test_abort_clears_cleanup_rebase_journal_with_note(
     assert "cleared it from future status output" in captured.out
     assert "rebase" in captured.out  # note about manual inspection
     assert not state_store.list_operations()
-    assert read_journal(journal.path)[-1].event == "abandoned"
+    assert not journal.path.exists()
+    assert read_operation_log(state_store.state_dir)[-1].event == "abandoned"
 
 
 def test_abort_clears_land_journal_with_note(
@@ -360,7 +361,8 @@ def test_abort_clears_land_journal_with_note(
     assert "Applied abort actions" in captured.out
     assert "Landing cannot be retracted" in captured.out
     assert not state_store.list_operations()
-    assert read_journal(journal.path)[-1].event == "abandoned"
+    assert not journal.path.exists()
+    assert read_operation_log(state_store.state_dir)[-1].event == "abandoned"
 
 
 def test_abort_clears_relink_journal_with_note(
@@ -394,7 +396,8 @@ def test_abort_clears_relink_journal_with_note(
     assert "Applied abort actions" in captured.out
     assert "Relink changes which PR a change tracks" in captured.out
     assert not state_store.list_operations()
-    assert read_journal(journal.path)[-1].event == "abandoned"
+    assert not journal.path.exists()
+    assert read_operation_log(state_store.state_dir)[-1].event == "abandoned"
 
 
 def test_abort_clears_cleanup_journal(
@@ -421,7 +424,8 @@ def test_abort_clears_cleanup_journal(
     assert "Applied abort actions" in captured.out
     assert "cleared it from future status output" in captured.out
     assert not state_store.list_operations()
-    assert read_journal(journal.path)[-1].event == "abandoned"
+    assert not journal.path.exists()
+    assert read_operation_log(state_store.state_dir)[-1].event == "abandoned"
 
 
 def test_abort_reports_stale_when_all_operations_have_gone_change_ids(
@@ -489,7 +493,7 @@ def test_abort_skips_live_locked_operation_and_warns(
     # Should warn and exit 1 without retracting anything.
     assert exit_code == 1
     assert "Another jj-review submit operation is already running" in captured.err
-    # PR untouched, operation journal still present.
+    # PR untouched, active recovery record still present.
     assert fake_repo.pull_requests[1].state == "open"
     assert state_store.list_operations()
 
@@ -502,7 +506,7 @@ def test_abort_preserves_state_and_operation_when_step_is_blocked(
     # When remote branch deletion fails (e.g. network outage), abort should:
     # - still close the PR (PR close runs before local steps)
     # - preserve the state cache entry so the user retains PR tracking data
-    # - keep the operation journal so the user can re-run abort once the block clears
+    # - keep the active recovery record so the user can rerun abort once the block clears
     from jj_review.jj import JjCommandError
 
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)

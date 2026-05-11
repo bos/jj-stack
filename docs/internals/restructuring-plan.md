@@ -27,7 +27,7 @@ baseline, and saved-identity axes. Commands still own their policy and mutations
 The old intent-file system has been replaced by:
 
 - a repo-scoped operation lock for mutating commands
-- retained append-only operation journals in `state/journal.py`
+- active operation recovery records plus a repo-level operation log in `state/journal.py`
 - per-command recovery records folded from journal events
 - `abort`, `status`, `doctor`, and mutators reading the same journal-backed operation
   list instead of per-kind intent files

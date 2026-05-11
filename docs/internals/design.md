@@ -276,11 +276,13 @@ operation-record path for diagnostics. `list` and `doctor` do not take the lock.
 `status` does not lock for live inspection, but it tries the lock around its best-effort
 cache write and skips that write with a diagnostic if another operation is running.
 
-Completed operation journals are retained under the repo state directory. They are
-append-only JSONL records of resolved scope, planned mutations, applied mutations, and
-saved-state updates. The journal is not a topology source of truth; it is durable
-evidence for recovery and post-hoc debugging. `land` uses the journal itself as its
-interrupted-operation record; it does not write a separate intent file.
+Active operation recovery records live under the repo state directory while interrupted
+work can still be resumed or cleared. Every operation event is also appended to the
+repo-level `operation-log.jsonl` audit log. Terminal `completed` and `abandoned`
+events remove the active recovery file, leaving the audit log for post-hoc debugging.
+The log is not a topology source of truth; it is evidence for explaining what happened
+after the fact. `land` uses its active recovery record for interruption recovery; it
+does not write a separate intent file.
 
 ## Submission algorithm
 

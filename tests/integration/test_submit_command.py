@@ -18,7 +18,12 @@ from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import ReviewState
 from jj_review.review.bookmarks import BookmarkResolver
-from jj_review.state.journal import append_abandoned_event, read_journal
+from jj_review.state.journal import (
+    OperationJournal,
+    append_abandoned_event,
+    read_journal,
+    read_operation_log,
+)
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
@@ -55,6 +60,16 @@ def _predicted_bookmarks(_repo: Path, stack) -> dict[str, str]:
         revision.change_id: resolution.bookmark
         for revision, resolution in zip(stack.revisions, result.resolutions, strict=True)
     }
+
+
+def _assert_journal_abandoned(journal: OperationJournal) -> None:
+    events = [
+        event
+        for event in read_operation_log(journal.path.parent.parent)
+        if event.operation_id == journal.operation_id
+    ]
+    assert not journal.path.exists()
+    assert events[-1].event == "abandoned"
 
 
 def _navigation_comments(fake_repo, issue_number: int):
@@ -2807,7 +2822,7 @@ def test_submit_resumes_and_retires_stale_operation(
     capsys.readouterr()
 
     assert exit_code == 0
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(old_journal)
     assert incomplete_submit_operations(repo) == ()
 
 
@@ -2851,7 +2866,7 @@ def test_submit_does_not_retire_stale_operation_from_other_remote(
     capsys.readouterr()
 
     assert read_journal(old_journal.path)[-1].event == "begin"
-    assert read_journal(matching_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(matching_journal)
     assert tuple(operation.path for operation in incomplete_submit_operations(repo)) == (
         old_journal.path,
     )

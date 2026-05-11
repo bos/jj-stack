@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import os
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from jj_review.models.review_state import CachedChange
 from jj_review.state.journal import (
-    JOURNAL_DIRNAME,
-    MIN_RETAINED_JOURNALS,
+    OPERATION_LOG_FILENAME,
     CleanupOperationRecord,
     CleanupRebaseOperationRecord,
     CloseOperationRecord,
@@ -16,8 +13,8 @@ from jj_review.state.journal import (
     RelinkOperationRecord,
     SubmitOperationRecord,
     append_abandoned_event,
-    prune_operation_journals,
     read_journal,
+    read_operation_log,
     scan_incomplete_operation_records,
 )
 from jj_review.state.operation_lock import OperationLockHolder
@@ -45,7 +42,7 @@ def test_operation_journal_appends_jsonl_events(tmp_path: Path) -> None:
     )
     journal.append("completed", {"completed_change_ids": ("change-1",)})
 
-    events = read_journal(journal.path)
+    events = read_operation_log(tmp_path)
 
     assert [event.event for event in events] == [
         "begin",
@@ -55,6 +52,42 @@ def test_operation_journal_appends_jsonl_events(tmp_path: Path) -> None:
     assert events[0].data["lock_holder"]["command"] == "land"
     assert events[1].data["after"]["pr_number"] == 1
     assert events[2].data["completed_change_ids"] == ["change-1"]
+    assert not journal.path.exists()
+
+
+def test_operation_journal_keeps_recovery_events_until_terminal(
+    tmp_path: Path,
+) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="land",
+        lock_holder=None,
+        options={"dry_run": False},
+        resolved_scope={"selected_revset": "@-"},
+    )
+    journal.append(
+        "planned_mutation",
+        {
+            "change_id": "change-1",
+            "mutation": "push_trunk",
+        },
+    )
+    journal.append(
+        "saved_state_update",
+        {
+            "after": CachedChange(pr_number=1, pr_state="merged"),
+            "before": None,
+            "change_id": "change-1",
+        },
+    )
+
+    recovery_events = read_journal(journal.path)
+
+    assert [event.event for event in recovery_events] == [
+        "begin",
+        "saved_state_update",
+    ]
+    assert (tmp_path / OPERATION_LOG_FILENAME).exists()
 
 
 def test_scan_incomplete_operation_records_loads_land_scope(tmp_path: Path) -> None:
@@ -168,6 +201,8 @@ def test_scan_incomplete_operation_records_excludes_terminal_journals(
     append_abandoned_event(journal.path, reason="test")
 
     assert scan_incomplete_operation_records(tmp_path) == []
+    assert not journal.path.exists()
+    assert read_operation_log(tmp_path)[-1].event == "abandoned"
 
 
 def test_scan_incomplete_operation_records_loads_relink_scope(tmp_path: Path) -> None:
@@ -256,29 +291,3 @@ def test_scan_incomplete_operation_records_loads_close_scope(
     assert loaded.operation.cleanup is True
     assert loaded.operation.ordered_change_ids == ("change-1", "change-2")
     assert loaded.operation.ordered_commit_ids == ("commit-1", "commit-2")
-
-
-def test_prune_operation_journals_keeps_recent_files_and_minimum_count(
-    tmp_path: Path,
-) -> None:
-    now = datetime(2026, 5, 1, tzinfo=UTC)
-    journal_dir = tmp_path / JOURNAL_DIRNAME
-    journal_dir.mkdir()
-    old_paths = []
-    for index in range(MIN_RETAINED_JOURNALS + 5):
-        path = journal_dir / f"old-{index:02d}.jsonl"
-        path.write_text("{}\n", encoding="utf-8")
-        timestamp = (now - timedelta(days=45, seconds=index)).timestamp()
-        os.utime(path, (timestamp, timestamp))
-        old_paths.append(path)
-    recent_path = journal_dir / "recent.jsonl"
-    recent_path.write_text("{}\n", encoding="utf-8")
-    recent_timestamp = (now - timedelta(days=2)).timestamp()
-    os.utime(recent_path, (recent_timestamp, recent_timestamp))
-
-    prune_operation_journals(tmp_path, now=now)
-
-    retained = set(journal_dir.glob("*.jsonl"))
-    assert recent_path in retained
-    assert len(retained) == MIN_RETAINED_JOURNALS
-    assert not set(old_paths[-5:]) & retained

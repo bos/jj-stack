@@ -276,8 +276,11 @@ def _append_dead_holder_abandoned_event(
             "operation_id": str(first["operation_id"]),
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        with journal_path.open("a", encoding="utf-8") as journal:
-            journal.write(json.dumps(entry, sort_keys=True))
-            journal.write("\n")
+        log_path = journal_path.parent.parent / "operation-log.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(json.dumps(entry, sort_keys=True))
+            log.write("\n")
+        journal_path.unlink(missing_ok=True)
     except (OSError, StopIteration, KeyError, TypeError, ValueError):
         return

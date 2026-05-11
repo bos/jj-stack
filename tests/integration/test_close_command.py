@@ -8,7 +8,7 @@ from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
 from jj_review.jj import JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.journal import OperationJournal, read_journal
+from jj_review.state.journal import OperationJournal, read_journal, read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
@@ -57,6 +57,16 @@ def _begin_close_journal(
             "selected_revset": display_revset,
         },
     )
+
+
+def _assert_journal_abandoned(journal: OperationJournal) -> None:
+    events = [
+        event
+        for event in read_operation_log(journal.path.parent.parent)
+        if event.operation_id == journal.operation_id
+    ]
+    assert not journal.path.exists()
+    assert events[-1].event == "abandoned"
 
 
 def test_close_apply_closes_pull_request_and_retires_active_state(
@@ -216,7 +226,7 @@ def test_close_noop_short_circuit_retires_covered_interrupted_close_intent(
         "Nothing to close on the selected stack."
         in captured.out
     )
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(old_journal)
     assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
@@ -550,8 +560,8 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     assert rerun_exit_code == 0
     assert f"Nothing to close for PR #{bottom_pr_number}." in rerun_captured.out
     assert "not linked" not in _combined_output(rerun_captured)
-    assert read_journal(stale_journal.path)[-1].event == "abandoned"
-    assert read_journal(stale_plain_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(stale_journal)
+    _assert_journal_abandoned(stale_plain_journal)
     assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
@@ -614,8 +624,8 @@ def test_close_cleanup_pull_request_continues_interrupted_orphan_close(
     assert "prune orphan record" in captured.out
     assert bottom_change_id not in state_store.load().changes
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
-    assert read_journal(cleanup_journal.path)[-1].event == "abandoned"
-    assert read_journal(plain_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(cleanup_journal)
+    _assert_journal_abandoned(plain_journal)
     assert state_store.list_operations() == []
 
 
@@ -1647,7 +1657,7 @@ def test_close_retires_covered_interrupted_close_intent(
     capsys.readouterr()
 
     assert exit_code == 0
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(old_journal)
     assert ReviewStateStore.for_repo(repo).list_operations() == []
 
 
@@ -1680,7 +1690,7 @@ def test_close_continues_exact_interrupted_close_on_multi_revision_stack(
     capsys.readouterr()
 
     assert exit_code == 0
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(old_journal)
 
 
 def test_close_does_not_resume_or_retire_interrupted_cleanup_close(
@@ -1732,7 +1742,7 @@ def test_cleanup_close_supersedes_plain_interrupted_close(
     capsys.readouterr()
 
     assert exit_code == 0
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(old_journal)
 
 
 def test_cleanup_close_retires_covered_interrupted_submit(
@@ -1760,7 +1770,7 @@ def test_cleanup_close_retires_covered_interrupted_submit(
     capsys.readouterr()
 
     assert exit_code == 0
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(old_journal)
     assert not ReviewStateStore.for_repo(repo).list_operations()
 
 
@@ -1914,7 +1924,7 @@ def test_cleanup_close_retires_interrupted_submit_when_only_closed_cached_metada
     assert run_main(repo, config_path, "close", "--cleanup") == 0
     capsys.readouterr()
 
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    _assert_journal_abandoned(old_journal)
 
 
 def test_cleanup_close_keeps_interrupted_submit_when_remote_name_is_reused_for_other_repo(

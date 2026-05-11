@@ -19,7 +19,7 @@ def write_submit_operation(
     ordered_commit_ids: Sequence[str] = (),
     remote_name: str = "origin",
 ) -> OperationJournal:
-    """Write an incomplete submit operation journal for tests."""
+    """Write an incomplete submit recovery record for tests."""
 
     return OperationJournal.begin(
         state_dir,

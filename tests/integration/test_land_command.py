@@ -7,7 +7,7 @@ import pytest
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.jj import JjClient
 from jj_review.jj.client import JjCommandError
-from jj_review.state.journal import read_journal
+from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -131,8 +131,11 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
         landed_state.changes[change_id_2].last_submitted_stack_head_change_id == change_id_2
     )
     assert landed_state.changes[change_id_3].pr_state == "closed"
-    [journal_path] = (resolve_state_path(repo).parent / "journals").glob("*-land-*.jsonl")
-    journal_events = read_journal(journal_path)
+    state_dir = resolve_state_path(repo).parent
+    assert tuple((state_dir / "journals").glob("*-land-*.jsonl")) == ()
+    journal_events = tuple(
+        event for event in read_operation_log(state_dir) if event.operation == "land"
+    )
     assert journal_events[0].event == "begin"
     assert any(
         event.event == "mutation_applied" and event.data["mutation"] == "push_trunk"

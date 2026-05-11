@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_review.jj import JjClient
-from jj_review.state.journal import read_journal
+from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
@@ -331,5 +331,8 @@ def test_relink_completes_journal_after_successful_relink(
     assert exit_code == 0
     state_dir = resolve_state_path(repo).parent
     assert ReviewStateStore.for_repo(repo).list_operations() == []
-    [journal_path] = (state_dir / "journals").glob("*-relink-*.jsonl")
-    assert read_journal(journal_path)[-1].event == "completed"
+    assert tuple((state_dir / "journals").glob("*-relink-*.jsonl")) == ()
+    journal_events = tuple(
+        event for event in read_operation_log(state_dir) if event.operation == "relink"
+    )
+    assert journal_events[-1].event == "completed"

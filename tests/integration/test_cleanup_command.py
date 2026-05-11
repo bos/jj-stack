@@ -7,7 +7,7 @@ import pytest
 from jj_review.commands import cleanup as cleanup_module
 from jj_review.jj import JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.journal import OperationJournal, read_journal
+from jj_review.state.journal import OperationJournal, read_journal, read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
@@ -304,7 +304,8 @@ def test_cleanup_restack_continues_exact_interrupted_restack(
 
     assert exit_code == 0
     assert "Continuing interrupted cleanup --rebase" in captured.out
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    assert not old_journal.path.exists()
+    assert read_operation_log(state_dir)[-1].event == "abandoned"
 
 
 def test_cleanup_restack_uses_current_stack_after_rewrite(
@@ -343,7 +344,8 @@ def test_cleanup_restack_uses_current_stack_after_rewrite(
     assert exit_code == 0
     assert "Continuing interrupted cleanup --rebase" not in captured.out
     assert "same logical stack, but it has been rewritten" in normalized_output
-    assert read_journal(old_journal.path)[-1].event == "abandoned"
+    assert not old_journal.path.exists()
+    assert read_operation_log(state_dir)[-1].event == "abandoned"
 
 
 def test_cleanup_dry_run_reports_stale_tracking_and_remote_branch_without_mutation(
@@ -883,8 +885,8 @@ def test_cleanup_completes_journal_after_successful_apply(
     assert exit_code == 0
     state_dir = resolve_state_path(repo).parent
     assert ReviewStateStore.for_repo(repo).list_operations() == []
-    [journal_path] = (state_dir / "journals").glob("*-cleanup-*.jsonl")
-    assert read_journal(journal_path)[-1].event == "completed"
+    assert not tuple((state_dir / "journals").glob("*-cleanup-*.jsonl"))
+    assert read_operation_log(state_dir)[-1].event == "completed"
 
 
 def test_cleanup_retains_journal_after_failed_apply(
@@ -946,5 +948,6 @@ def test_cleanup_retires_prior_interrupted_journal_after_success(
     assert exit_code == 0
     assert "Note: a previous cleanup was interrupted (cleanup)" in captured.out
     assert "No cleanup actions needed." in captured.out
-    assert read_journal(stale_journal.path)[-1].event == "abandoned"
+    assert not stale_journal.path.exists()
+    assert read_operation_log(state_dir)[-1].event == "abandoned"
     assert ReviewStateStore.for_repo(repo).list_operations() == []

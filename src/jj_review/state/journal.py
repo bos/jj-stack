@@ -1,11 +1,11 @@
-"""Append-only operation journal storage."""
+"""Operation recovery records and audit log storage."""
 
 from __future__ import annotations
 
 import json
 import logging
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -22,8 +22,9 @@ JournalEventKind = Literal[
 ]
 
 JOURNAL_DIRNAME = "journals"
-MIN_RETAINED_JOURNALS = 50
-MIN_RETAINED_JOURNAL_AGE = timedelta(days=30)
+OPERATION_LOG_FILENAME = "operation-log.jsonl"
+_RECOVERY_EVENT_KINDS = frozenset({"begin", "saved_state_update"})
+_TERMINAL_EVENT_KINDS = frozenset({"completed", "abandoned"})
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ class LoadedOperationRecord:
 
 
 class OperationJournal:
-    """Append-only JSONL journal for one operation."""
+    """Active recovery record plus repo-level audit log for one operation."""
 
     def __init__(
         self,
@@ -186,9 +187,8 @@ class OperationJournal:
         resolved_scope: dict[str, Any],
         lock_holder: OperationLockHolder | None,
     ) -> OperationJournal:
-        """Create a new operation journal and append its begin event."""
+        """Create a new operation recovery record and append its begin event."""
 
-        prune_operation_journals(state_dir)
         operation_id = uuid4().hex
         path = _journal_path(state_dir, operation=operation, operation_id=operation_id)
         journal = cls(operation=operation, operation_id=operation_id, path=path)
@@ -217,9 +217,8 @@ class OperationJournal:
         )
 
     def append(self, event: JournalEventKind, data: dict[str, Any]) -> None:
-        """Append one event to the journal."""
+        """Append one event to the audit log and active recovery file when needed."""
 
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         entry = JournalEvent(
             event=event,
             operation=self.operation,
@@ -227,13 +226,30 @@ class OperationJournal:
             timestamp=datetime.now(UTC).isoformat(),
             data=data,
         )
-        with self.path.open("a", encoding="utf-8") as journal:
-            journal.write(json.dumps(_jsonable(asdict(entry)), sort_keys=True))
-            journal.write("\n")
+        _append_event(_operation_log_path(self.path), entry)
+        if event in _RECOVERY_EVENT_KINDS:
+            _append_event(self.path, entry)
+        if event in _TERMINAL_EVENT_KINDS:
+            self.path.unlink(missing_ok=True)
 
 
 def read_journal(path: Path) -> tuple[JournalEvent, ...]:
-    """Read a JSONL operation journal."""
+    """Read an active operation recovery record."""
+
+    return _read_events(path)
+
+
+def read_operation_log(state_dir: Path) -> tuple[JournalEvent, ...]:
+    """Read the repo-level operation audit log."""
+
+    path = state_dir / OPERATION_LOG_FILENAME
+    if not path.exists():
+        return ()
+    return _read_events(path)
+
+
+def _read_events(path: Path) -> tuple[JournalEvent, ...]:
+    """Read JSONL operation events."""
 
     events: list[JournalEvent] = []
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -508,39 +524,21 @@ def append_abandoned_event(
     journal.append("abandoned", payload)
 
 
-def prune_operation_journals(
-    state_dir: Path,
-    *,
-    now: datetime | None = None,
-) -> None:
-    """Prune retained journals while keeping recent files and a minimum count."""
-
-    journal_dir = state_dir / JOURNAL_DIRNAME
-    if not journal_dir.exists():
-        return
-    current_time = now or datetime.now(UTC)
-    cutoff = current_time - MIN_RETAINED_JOURNAL_AGE
-    journal_paths = sorted(
-        (path for path in journal_dir.glob("*.jsonl") if path.is_file()),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    newest = set(journal_paths[:MIN_RETAINED_JOURNALS])
-    recent = {
-        path
-        for path in journal_paths
-        if datetime.fromtimestamp(path.stat().st_mtime, UTC) >= cutoff
-    }
-    keep = newest | recent
-    for path in journal_paths:
-        if path not in keep:
-            path.unlink(missing_ok=True)
-
-
 def _journal_path(state_dir: Path, *, operation: str, operation_id: str) -> Path:
     timestamp = datetime.now(UTC).strftime("%Y-%m-%d-%H-%M-%S")
     filename = f"{timestamp}-{operation}-{operation_id}.jsonl"
     return state_dir / JOURNAL_DIRNAME / filename
+
+
+def _operation_log_path(journal_path: Path) -> Path:
+    return journal_path.parent.parent / OPERATION_LOG_FILENAME
+
+
+def _append_event(path: Path, entry: JournalEvent) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(_jsonable(asdict(entry)), sort_keys=True))
+        output.write("\n")
 
 
 def _require_mapping(value: Any, label: str) -> dict[str, Any]:

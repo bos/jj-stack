@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from jj_review.state.journal import OperationJournal, read_operation_log
 from jj_review.state.operation_lock import (
     HOLDER_FILENAME,
     acquire_operation_lock,
@@ -98,3 +99,41 @@ def test_operation_lock_replaces_dead_pid_holder_file(tmp_path: Path) -> None:
     assert holder.pid != 99_999_999
     assert holder.journal_path is None
     assert not holder_path.exists()
+
+
+def test_operation_lock_abandons_dead_holder_recovery_record(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="cleanup",
+        lock_holder=None,
+        options={},
+        resolved_scope={"cached_change_ids": ()},
+    )
+    holder_path = state_dir / HOLDER_FILENAME
+    holder_path.write_text(
+        json.dumps(
+            {
+                "command": "cleanup",
+                "pid": 99_999_999,
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "journal_path": str(journal.path),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with acquire_operation_lock(state_dir, command="next", timeout=0.1):
+        holder = read_operation_lock_holder(state_dir)
+
+    events = [
+        event
+        for event in read_operation_log(state_dir)
+        if event.operation_id == journal.operation_id
+    ]
+    assert holder is not None
+    assert holder.command == "next"
+    assert not journal.path.exists()
+    assert [event.event for event in events] == ["begin", "abandoned"]
+    assert events[-1].data["reason"] == "dead_lock_holder"
