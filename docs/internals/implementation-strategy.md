@@ -96,47 +96,16 @@ carrying shared runtime dependencies. Command code should use the context's stat
 rather than reconstructing one from the repo root.
 
 Commands that need nontrivial selection or validation carry that result as an explicit
-resolved/prepared target value before mutation. `submit`, `close`, `land`, `relink`, and
-`unlink` use this shape to keep PR/revset selection, GitHub inspection, and saved-state
-mutation from sharing long-lived local variable bundles. `submit` preparation takes the
-bootstrapped `CommandContext` plus parsed/resolved submit option objects rather than a
-hand-threaded config/client/state-store bundle, resolved submit options read defaults from
-that context, local revision preparation reads mode from `SubmitOptions`, and
-pull-request synchronization uses the same submit option objects instead of separate
-draft/reviewer/label parameters. Submit
-mutation phases share a `SubmitMutationRun` for dry-run mode, journal setup, remote
-bookmark synchronization, stack-comment synchronization, and incremental state-save
-data. Close's orphan and already-cleaned cleanup paths also receive `CommandContext`
-instead of separate config/client/state-store parameters, and orphan close journal setup
-receives `_OrphanCloseRun` for live execution state. Orphan close also threads that run
-through blocked-tracking retirement, managed-comment cleanup, bookmark cleanup preflight,
-action rendering, and shared bookmark cleanup application. Unlink's prepared target carries
-`CommandContext` for state persistence and bookmark inspection. Relink's prepared target
-carries the same context for state-store access and bookmark mutation. Restart applies
-saved-state changes from a
-prepared target that carries the context, options, selected stack, loaded state, and
-bookmark observations. Plain cleanup's prepared target also carries `CommandContext`
-rather than duplicating those shared dependencies, and cleanup and cleanup rebase
-prepared targets retain parsed `CleanupOptions` for mode state and action rendering.
-Cleanup local discovery helpers read config and jj access through `CommandContext`.
-Cleanup remote resolution and orphan bookmark planning also read shared dependencies
-through the context, and stale cleanup mutation application reads jj and remote data from
-the prepared cleanup target.
-Cleanup rebase reads shared configuration through its prepared context. Status preparation
-receives the bootstrapped `CommandContext` instead of separate config/client/state-store
-parameters, including the helper that prepares an already-resolved stack, and status
-command helpers keep the context for selection, rendering, and stale-stack advisory work.
-Doctor checks also receive the command context for remote selection and interruption
-reporting. List repo inspection reads shared config and jj access from `CommandContext`.
-Land's prepared target carries `CommandContext` for shared configuration used by bookmark
-cleanup planning, and land finalization shares a `LandMutationRun` for live review state,
-pending state changes, and interim state saves. Close's prepared target carries
-`CommandContext` and parsed close options instead of duplicating shared configuration and
-mode flags, cleanup helpers derive shared values from that prepared target, and its
-untracked fast path reads shared dependencies from that context.
-Abort submit retraction receives `AbortRun` so its command context and parsed options
-move together through the live execution path, including per-change local and GitHub
-retraction helpers, recorded-stack visibility predicates, and operation-notice planning.
+resolved/prepared target value before mutation. The prepared value should hold the
+selected stack or revision, GitHub and remote observations, parsed options, and the
+`CommandContext` when later phases need shared dependencies. Mutating phases that need
+dry-run mode, journal state, or interim saves use a small run object such as
+`SubmitMutationRun`, `LandMutationRun`, `_OrphanCloseRun`, or `AbortRun`.
+
+Do not append command-by-command wiring notes here as new helpers are converted. The rule
+is the stable part: keep argparse values, shared dependencies, selected targets, and live
+mutation state separate, then delete wrapper objects once they only forward those pieces
+to a single caller.
 
 ## Repository layout
 

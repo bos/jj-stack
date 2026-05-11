@@ -278,7 +278,7 @@ def _resume_land_plan(*, operation: LandOperationRecord, trunk_branch: str) -> L
             )
         except KeyError as error:
             raise CliError(
-                t"Interrupted land journal for {operation.label} is incomplete. "
+                t"Interrupted land journal for {describe_operation(operation)} is incomplete. "
                 t"Re-run {ui.cmd('land')} to refresh the plan."
             ) from error
     return LandPlan(
@@ -297,7 +297,7 @@ def _completed_land_change_ids(operation: LandOperationRecord) -> tuple[str, ...
         events = read_journal(operation.path)
     except (OSError, ValueError, KeyError) as error:
         raise CliError(
-            t"Interrupted land journal for {operation.label} is unreadable. "
+            t"Interrupted land journal for {describe_operation(operation)} is unreadable. "
             t"Re-run {ui.cmd('land')} to refresh the plan."
         ) from error
     completed: list[str] = []

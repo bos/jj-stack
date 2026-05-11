@@ -27,7 +27,7 @@ from jj_review.github.client import GithubClient, GithubClientError, build_githu
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo
 from jj_review.jj import JjCliArgs, JjClient, JjCommandError
 from jj_review.models.review_state import CachedChange
-from jj_review.review.operations import describe_operation
+from jj_review.review.operations import describe_operation, operation_kind
 from jj_review.review.submit_recovery import recorded_submit_still_exists_exactly
 from jj_review.state.journal import (
     CleanupOperationRecord,
@@ -163,8 +163,8 @@ def _run_abort(
 
     for loaded in live:
         console.output(
-            f"{loaded.operation.label} is still in progress "
-            f"(PID {loaded.operation.pid}) — wait for it to finish, then run abort again."
+            t"{describe_operation(loaded.operation)} is still in progress "
+            t"(PID {loaded.operation.pid}) — wait for it to finish, then run abort again."
         )
 
     if not outstanding:
@@ -222,7 +222,7 @@ async def _abort_operation_async(
         actions=tuple(actions),
         applied=not dry_run,
         dry_run=dry_run,
-        operation_kind=operation.kind,
+        operation_kind=operation_kind(operation),
         operation_label=describe_operation(operation),
         operation_started_at=operation.started_at,
     )
@@ -287,7 +287,7 @@ async def _abort_submit(
                 actions=tuple(actions),
                 applied=not dry_run,
                 dry_run=dry_run,
-                operation_kind=operation.kind,
+                operation_kind=operation_kind(operation),
                 operation_label=describe_operation(operation),
                 operation_started_at=operation.started_at,
             )
@@ -316,7 +316,7 @@ async def _abort_submit(
             actions=tuple(actions),
             applied=False,
             dry_run=dry_run,
-            operation_kind=operation.kind,
+            operation_kind=operation_kind(operation),
             operation_label=describe_operation(operation),
             operation_started_at=operation.started_at,
         )
@@ -402,7 +402,7 @@ async def _abort_submit(
         actions=tuple(actions),
         applied=all_retracted and not dry_run,
         dry_run=dry_run,
-        operation_kind=operation.kind,
+        operation_kind=operation_kind(operation),
         operation_label=describe_operation(operation),
         operation_started_at=operation.started_at,
     )

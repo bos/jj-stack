@@ -69,6 +69,7 @@ from jj_review.review.status import (
     stream_status,
 )
 from jj_review.state.journal import (
+    CleanupOperationRecord,
     CleanupRebaseOperationRecord,
     LoadedOperationRecord,
     OperationJournal,
@@ -1102,11 +1103,12 @@ async def _run_cleanup_async(
         stale_operations = [
             loaded
             for loaded in prepared_cleanup.context.state_store.list_operations()
-            if loaded.operation.kind == "cleanup"
+            if isinstance(loaded.operation, CleanupOperationRecord)
         ]
         for loaded in stale_operations:
             console.note(
-                f"Note: a previous cleanup was interrupted ({loaded.operation.label})"
+                t"Note: a previous cleanup was interrupted "
+                t"({describe_operation(loaded.operation)})"
             )
         journal = OperationJournal.begin(
             state_dir,

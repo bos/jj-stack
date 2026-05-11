@@ -10,7 +10,6 @@ from jj_review.state.journal import (
     CleanupRebaseOperationRecord,
     CloseOperationRecord,
     LandOperationRecord,
-    OperationRecord,
     RelinkOperationRecord,
     SubmitOperationRecord,
 )
@@ -28,6 +27,24 @@ OrderedOperationMatch = Literal[
 CloseOperationModeRelation = Literal["same", "expanded", "incompatible"]
 
 
+def operation_kind(operation: object) -> str:
+    """Return the stable journal operation kind for diagnostics."""
+
+    if isinstance(operation, LandOperationRecord):
+        return "land"
+    if isinstance(operation, SubmitOperationRecord):
+        return "submit"
+    if isinstance(operation, RelinkOperationRecord):
+        return "relink"
+    if isinstance(operation, CleanupOperationRecord):
+        return "cleanup"
+    if isinstance(operation, CleanupRebaseOperationRecord):
+        return "cleanup-rebase"
+    if isinstance(operation, CloseOperationRecord):
+        return "close"
+    return str(getattr(operation, "kind", "operation"))
+
+
 def match_ordered_change_ids(
     existing: tuple[str, ...],
     new: tuple[str, ...],
@@ -43,9 +60,7 @@ def match_ordered_change_ids(
     return "disjoint"
 
 
-def describe_operation(
-    operation: OperationRecord,
-) -> Message:
+def describe_operation(operation: object) -> Message:
     """Return a user-facing description for an interrupted operation."""
 
     if isinstance(operation, SubmitOperationRecord):
@@ -73,7 +88,7 @@ def describe_operation(
         return t"{ui.cmd('relink')} for {ui.change_id(operation.change_id)}"
     if isinstance(operation, CleanupOperationRecord):
         return ui.cmd("cleanup")
-    return operation.label
+    return str(getattr(operation, "label", "operation"))
 
 
 def _render_recorded_stack_head(

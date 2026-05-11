@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jj_review import console
-from jj_review.formatting import short_change_id
 from jj_review.github.resolution import parse_github_repo
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.stack import LocalStack
@@ -47,12 +46,8 @@ def start_submit_operation(
     ordered_change_ids = tuple(revision.change_id for revision in stack.revisions)
     ordered_commit_ids = tuple(revision.commit_id for revision in stack.revisions)
     operation = SubmitOperationRecord(
-        kind="submit",
         path=Path(),
         pid=os.getpid(),
-        label=(
-            f"submit for {short_change_id(stack.head.change_id)} (from {stack.selected_revset})"
-        ),
         display_revset=stack.selected_revset,
         ordered_commit_ids=ordered_commit_ids,
         remote_name=remote_name,
@@ -72,7 +67,6 @@ def start_submit_operation(
     )
     if run.dry_run:
         stale_operations = _list_stale_submit_operations_without_waiting(
-            operation=operation,
             run=run,
         )
         _report_stale_submit_operations(
@@ -169,13 +163,13 @@ def _report_stale_submit_operations(
 
 def _list_stale_submit_operations_without_waiting(
     *,
-    operation: SubmitOperationRecord,
     run: SubmitMutationRun,
 ) -> list[LoadedOperationRecord]:
     return [
         loaded
         for loaded in run.state_store.list_operations()
-        if loaded.operation.kind == operation.kind and not pid_is_alive(loaded.operation.pid)
+        if isinstance(loaded.operation, SubmitOperationRecord)
+        and not pid_is_alive(loaded.operation.pid)
     ]
 
 

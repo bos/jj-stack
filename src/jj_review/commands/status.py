@@ -549,14 +549,12 @@ def render_status_summary_lines(
     unsubmitted_revisions = tuple(
         classified
         for classified in classified_revisions
-        if _classify_revision_for_summary(classified, github_available=github_available)
-        == "unsubmitted"
+        if _classify_revision_for_summary(classified) == "unsubmitted"
     )
     submitted_revisions = tuple(
         classified
         for classified in classified_revisions
-        if _classify_revision_for_summary(classified, github_available=github_available)
-        == "submitted"
+        if _classify_revision_for_summary(classified) == "submitted"
     )
 
     lines: list[str] = []
@@ -1045,7 +1043,7 @@ def render_status_operation_lines(*, prepared_status) -> tuple[object, ...]:
             status_str = "process alive" if alive else "process dead"
             lines.append(
                 _prefixed_operation_line(
-                    _render_operation_description(loaded.operation),
+                    describe_operation(loaded.operation),
                     format_status_annotation(f"{status_str}, {loaded.path.name}"),
                 )
             )
@@ -1563,30 +1561,16 @@ def _render_summary_revision_lines(
 
 def _classify_revision_for_summary(
     classified: _ClassifiedStatusRevision,
-    *,
-    github_available: bool,
 ) -> str:
     """Classify a revision into submitted, unsubmitted, or other."""
 
     change_status = classified.status
     if change_status.link == "unlinked":
         return "submitted"
-
-    if change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
-        if change_status.saved_review_identity:
-            return "submitted"
-        return "unsubmitted"
-
     if change_status.pr_lifecycle in {"open", "closed", "merged"}:
         return "submitted"
-    if change_status.pr_lifecycle == "missing":
-        if change_status.saved_review_identity:
-            return "submitted"
-        return "unsubmitted"
-    if change_status.pr_lifecycle == "ambiguous" or change_status.pr_lookup_error:
-        if change_status.saved_review_identity:
-            return "submitted"
-        return "unsubmitted"
+    if change_status.saved_review_identity:
+        return "submitted"
     return "unsubmitted"
 
 
@@ -1739,12 +1723,6 @@ def _format_cached_pull_request_label(cached_change) -> str | None:
 
 def _prefixed_operation_line(description: object, status: object) -> object:
     return ui.prefixed_line("  ", (description, "  ", status))
-
-
-def _render_operation_description(operation) -> object:
-    if isinstance(operation, CleanupOperationRecord):
-        return ui.cmd("cleanup")
-    return describe_operation(operation)
 
 
 def _classified_revision_has_link_advisory(

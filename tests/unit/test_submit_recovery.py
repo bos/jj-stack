@@ -27,10 +27,8 @@ def _make_submit_operation(
     bookmarks: dict[str, str] | None = None,
 ) -> SubmitOperationRecord:
     return SubmitOperationRecord(
-        kind="submit",
         path=Path("submit.jsonl"),
         pid=12345,
-        label="submit on @",
         display_revset="@",
         ordered_change_ids=ordered_change_ids,
         ordered_commit_ids=ordered_commit_ids,

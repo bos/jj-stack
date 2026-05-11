@@ -13,6 +13,7 @@ from jj_review.jj import JjClient
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange
 from jj_review.review.change_status import classify_review_change
+from jj_review.review.operations import match_ordered_change_ids
 from jj_review.state.journal import (
     LandOperationRecord,
     LoadedOperationRecord,
@@ -572,20 +573,14 @@ def _retire_superseded_land_operations(
             continue
         if not isinstance(loaded.operation, LandOperationRecord):
             continue
-        if match_ordered_land_operation(loaded.operation.ordered_change_ids, current_change_ids):
+        if (
+            match_ordered_change_ids(loaded.operation.ordered_change_ids, current_change_ids)
+            in {"exact", "superset"}
+        ):
             append_abandoned_event(
                 loaded.path,
                 reason="superseded_by_successful_land",
             )
-
-
-def match_ordered_land_operation(
-    existing: tuple[str, ...],
-    new: tuple[str, ...],
-) -> bool:
-    if existing == new:
-        return True
-    return len(new) > len(existing) and new[: len(existing)] == existing
 
 
 def _apply_review_bookmark_cleanup(

@@ -784,10 +784,8 @@ def _land_operation_record(
     trunk_branch: str = "main",
 ) -> LandOperationRecord:
     return LandOperationRecord(
-        kind="land",
         path=path,
         pid=123,
-        label="land on @-",
         bypass_readiness=bypass_readiness,
         cleanup_bookmarks=cleanup_bookmarks,
         display_revset="@-",

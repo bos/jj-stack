@@ -14,9 +14,6 @@ from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._operation_lock import mutating_command_lock
 from jj_review.errors import CliError
 from jj_review.jj import JjCliArgs
-from jj_review.models.bookmarks import BookmarkState
-from jj_review.models.review_state import ReviewState
-from jj_review.models.stack import LocalStack
 from jj_review.review.restart import RestartedChange, restart_state_for_stack
 from jj_review.review.selection import resolve_selected_revset
 
@@ -38,17 +35,6 @@ class RestartResult:
     changed: tuple[RestartedChange, ...]
     dry_run: bool
     selected_revset: str
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedRestart:
-    """Resolved restart target before saved review state mutation."""
-
-    bookmark_states: dict[str, BookmarkState]
-    context: CommandContext
-    options: RestartOptions
-    stack: LocalStack
-    state: ReviewState
 
 
 def restart(
@@ -95,15 +81,6 @@ def _run_restart(
     context: CommandContext,
     options: RestartOptions,
 ) -> RestartResult:
-    prepared = _prepare_restart(context=context, options=options)
-    return _apply_restart(prepared=prepared)
-
-
-def _prepare_restart(
-    *,
-    context: CommandContext,
-    options: RestartOptions,
-) -> _PreparedRestart:
     revset = resolve_selected_revset(
         command_label="restart",
         require_explicit=True,
@@ -118,34 +95,18 @@ def _prepare_restart(
     if not options.dry_run:
         state_store.require_writable()
     state = state_store.load()
-    return _PreparedRestart(
+    restart_result = restart_state_for_stack(
         bookmark_states=context.jj_client.list_bookmark_states(),
-        context=context,
-        options=options,
+        config=context.config,
         stack=stack,
         state=state,
-    )
-
-
-def _apply_restart(
-    *,
-    prepared: _PreparedRestart,
-) -> RestartResult:
-    context = prepared.context
-    options = prepared.options
-    state_store = context.state_store
-    restart_result = restart_state_for_stack(
-        bookmark_states=prepared.bookmark_states,
-        config=context.config,
-        stack=prepared.stack,
-        state=prepared.state,
     )
     if restart_result.changed and not options.dry_run:
         state_store.save(restart_result.state)
     return RestartResult(
         changed=restart_result.changed,
         dry_run=options.dry_run,
-        selected_revset=prepared.stack.selected_revset,
+        selected_revset=stack.selected_revset,
     )
 
 

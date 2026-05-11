@@ -13,6 +13,7 @@ from jj_review.state.journal import (
     CloseOperationRecord,
     LandOperationRecord,
     OperationJournal,
+    RelinkOperationRecord,
     SubmitOperationRecord,
     append_abandoned_event,
     prune_operation_journals,
@@ -187,7 +188,7 @@ def test_scan_incomplete_operation_records_loads_relink_scope(tmp_path: Path) ->
     [loaded] = scan_incomplete_operation_records(tmp_path)
 
     assert loaded.path == journal.path
-    assert loaded.operation.kind == "relink"
+    assert isinstance(loaded.operation, RelinkOperationRecord)
     assert loaded.operation.change_ids() == frozenset({"change-1"})
 
 

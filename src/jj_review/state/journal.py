@@ -28,6 +28,27 @@ MIN_RETAINED_JOURNAL_AGE = timedelta(days=30)
 logger = logging.getLogger(__name__)
 
 
+class _OrderedChangeIds:
+    __slots__ = ()
+
+    def change_ids(self) -> frozenset[str]:
+        return frozenset(object.__getattribute__(self, "ordered_change_ids"))
+
+
+class _SingleChangeId:
+    __slots__ = ()
+
+    def change_ids(self) -> frozenset[str]:
+        return frozenset([object.__getattribute__(self, "change_id")])
+
+
+class _NoChangeIds:
+    __slots__ = ()
+
+    def change_ids(self) -> frozenset[str]:
+        return frozenset()
+
+
 @dataclass(frozen=True, slots=True)
 class JournalEvent:
     """One append-only operation journal event."""
@@ -40,13 +61,11 @@ class JournalEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class LandOperationRecord:
+class LandOperationRecord(_OrderedChangeIds):
     """Journal-backed recovery record for one incomplete `land` operation."""
 
-    kind: Literal["land"]
     path: Path
     pid: int
-    label: str
     started_at: str
     bypass_readiness: bool
     cleanup_bookmarks: bool
@@ -63,20 +82,13 @@ class LandOperationRecord:
     landed_commit_id: str
     selected_pr_number: int | None = None
 
-    def change_ids(self) -> frozenset[str]:
-        """Return the change IDs mentioned by this operation."""
-
-        return frozenset(self.ordered_change_ids)
-
 
 @dataclass(frozen=True, slots=True)
-class SubmitOperationRecord:
+class SubmitOperationRecord(_OrderedChangeIds):
     """Journal-backed recovery record for one incomplete `submit` operation."""
 
-    kind: Literal["submit"]
     path: Path
     pid: int
-    label: str
     started_at: str
     display_revset: str
     ordered_change_ids: tuple[str, ...]
@@ -87,82 +99,49 @@ class SubmitOperationRecord:
     github_repo: str
     bookmarks: dict[str, str]
 
-    def change_ids(self) -> frozenset[str]:
-        """Return the change IDs mentioned by this operation."""
-
-        return frozenset(self.ordered_change_ids)
-
 
 @dataclass(frozen=True, slots=True)
-class RelinkOperationRecord:
+class RelinkOperationRecord(_SingleChangeId):
     """Journal-backed recovery record for one incomplete `relink` operation."""
 
-    kind: Literal["relink"]
     path: Path
     pid: int
-    label: str
     started_at: str
     change_id: str
 
-    def change_ids(self) -> frozenset[str]:
-        """Return the change IDs mentioned by this operation."""
-
-        return frozenset([self.change_id])
-
 
 @dataclass(frozen=True, slots=True)
-class CleanupOperationRecord:
+class CleanupOperationRecord(_NoChangeIds):
     """Journal-backed recovery record for one incomplete repo cleanup operation."""
 
-    kind: Literal["cleanup"]
     path: Path
     pid: int
-    label: str
     started_at: str
-
-    def change_ids(self) -> frozenset[str]:
-        """Return the change IDs mentioned by this operation."""
-
-        return frozenset()
 
 
 @dataclass(frozen=True, slots=True)
-class CleanupRebaseOperationRecord:
+class CleanupRebaseOperationRecord(_OrderedChangeIds):
     """Journal-backed recovery record for one incomplete `cleanup --rebase`."""
 
-    kind: Literal["cleanup-rebase"]
     path: Path
     pid: int
-    label: str
     started_at: str
     display_revset: str
     ordered_change_ids: tuple[str, ...]
     ordered_commit_ids: tuple[str, ...]
 
-    def change_ids(self) -> frozenset[str]:
-        """Return the change IDs mentioned by this operation."""
-
-        return frozenset(self.ordered_change_ids)
-
 
 @dataclass(frozen=True, slots=True)
-class CloseOperationRecord:
+class CloseOperationRecord(_OrderedChangeIds):
     """Journal-backed recovery record for one incomplete `close` operation."""
 
-    kind: Literal["close"]
     path: Path
     pid: int
-    label: str
     started_at: str
     display_revset: str
     ordered_change_ids: tuple[str, ...]
     ordered_commit_ids: tuple[str, ...]
     cleanup: bool
-
-    def change_ids(self) -> frozenset[str]:
-        """Return the change IDs mentioned by this operation."""
-
-        return frozenset(self.ordered_change_ids)
 
 
 type OperationRecord = (
@@ -331,19 +310,6 @@ def operation_record_from_journal(
     return None
 
 
-def land_operation_record_from_journal(
-    path: Path,
-    *,
-    active_pid: int = 0,
-) -> LandOperationRecord | None:
-    """Parse one incomplete land operation record from a journal, if present."""
-
-    events = read_journal(path)
-    if any(event.event in {"completed", "abandoned"} for event in events):
-        return None
-    return land_operation_record_from_events(path, events, active_pid=active_pid)
-
-
 def land_operation_record_from_events(
     path: Path,
     events: tuple[JournalEvent, ...],
@@ -352,16 +318,11 @@ def land_operation_record_from_events(
 ) -> LandOperationRecord:
     """Parse one land operation record from journal events."""
 
-    if not events:
-        raise ValueError(f"Journal is empty: {path}")
-    first = events[0]
-    if first.operation != "land":
-        raise ValueError(f"Journal is not a land operation: {path}")
-    if first.event != "begin":
-        raise ValueError(f"Journal does not start with begin: {path}")
-
-    options = _require_mapping(first.data.get("options"), "options")
-    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
+    first, options, resolved_scope = _begin_operation_scope(
+        path,
+        events,
+        operation="land",
+    )
     planned_revisions = tuple(
         _require_mapping(item, "planned_revisions item")
         for item in _require_sequence(
@@ -369,13 +330,8 @@ def land_operation_record_from_events(
             "planned_revisions",
         )
     )
-    ordered_change_ids = _string_tuple(
-        resolved_scope.get("ordered_change_ids"),
-        "ordered_change_ids",
-    )
-    ordered_commit_ids = _string_tuple(
-        resolved_scope.get("ordered_commit_ids"),
-        "ordered_commit_ids",
+    display_revset, ordered_change_ids, ordered_commit_ids = _ordered_scope(
+        resolved_scope,
     )
     landed_change_ids = _string_tuple(
         resolved_scope.get("landed_change_ids", resolved_scope.get("planned_change_ids")),
@@ -384,12 +340,9 @@ def land_operation_record_from_events(
     selected_pr_number = options.get("selected_pr_number")
     if selected_pr_number is not None:
         selected_pr_number = int(selected_pr_number)
-    display_revset = str(resolved_scope["selected_revset"])
     return LandOperationRecord(
-        kind="land",
         path=path,
         pid=active_pid,
-        label=f"land on {display_revset}",
         started_at=first.timestamp,
         bypass_readiness=bool(options["bypass_readiness"]),
         cleanup_bookmarks=bool(options["cleanup_bookmarks"]),
@@ -428,21 +381,11 @@ def relink_operation_record_from_events(
 ) -> RelinkOperationRecord:
     """Parse one relink operation record from journal events."""
 
-    if not events:
-        raise ValueError(f"Journal is empty: {path}")
-    first = events[0]
-    if first.operation != "relink":
-        raise ValueError(f"Journal is not a relink operation: {path}")
-    if first.event != "begin":
-        raise ValueError(f"Journal does not start with begin: {path}")
-
-    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
+    first, _, resolved_scope = _begin_operation_scope(path, events, operation="relink")
     change_id = str(resolved_scope["change_id"])
     return RelinkOperationRecord(
-        kind="relink",
         path=path,
         pid=active_pid,
-        label=f"relink for {change_id[:8]}",
         started_at=first.timestamp,
         change_id=change_id,
     )
@@ -456,36 +399,18 @@ def submit_operation_record_from_events(
 ) -> SubmitOperationRecord:
     """Parse one submit operation record from journal events."""
 
-    if not events:
-        raise ValueError(f"Journal is empty: {path}")
-    first = events[0]
-    if first.operation != "submit":
-        raise ValueError(f"Journal is not a submit operation: {path}")
-    if first.event != "begin":
-        raise ValueError(f"Journal does not start with begin: {path}")
-
-    options = _require_mapping(first.data.get("options"), "options")
-    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
-    display_revset = str(resolved_scope["selected_revset"])
-    ordered_change_ids = _string_tuple(
-        resolved_scope.get("ordered_change_ids"),
-        "ordered_change_ids",
+    first, options, resolved_scope = _begin_operation_scope(
+        path,
+        events,
+        operation="submit",
     )
-    ordered_commit_ids = _string_tuple(
-        resolved_scope.get("ordered_commit_ids"),
-        "ordered_commit_ids",
+    display_revset, ordered_change_ids, ordered_commit_ids = _ordered_scope(
+        resolved_scope,
     )
     bookmarks = _require_mapping(resolved_scope.get("bookmarks"), "bookmarks")
-    label = (
-        f"submit for {ordered_change_ids[-1][:8]} (from {display_revset})"
-        if ordered_change_ids
-        else f"submit (from {display_revset})"
-    )
     return SubmitOperationRecord(
-        kind="submit",
         path=path,
         pid=active_pid,
-        label=label,
         started_at=first.timestamp,
         display_revset=display_revset,
         ordered_change_ids=ordered_change_ids,
@@ -506,19 +431,10 @@ def cleanup_operation_record_from_events(
 ) -> CleanupOperationRecord:
     """Parse one cleanup operation record from journal events."""
 
-    if not events:
-        raise ValueError(f"Journal is empty: {path}")
-    first = events[0]
-    if first.operation != "cleanup":
-        raise ValueError(f"Journal is not a cleanup operation: {path}")
-    if first.event != "begin":
-        raise ValueError(f"Journal does not start with begin: {path}")
-
+    first = _begin_operation_event(path, events, operation="cleanup")
     return CleanupOperationRecord(
-        kind="cleanup",
         path=path,
         pid=active_pid,
-        label="cleanup",
         started_at=first.timestamp,
     )
 
@@ -531,35 +447,17 @@ def cleanup_rebase_operation_record_from_events(
 ) -> CleanupRebaseOperationRecord:
     """Parse one cleanup-rebase operation record from journal events."""
 
-    if not events:
-        raise ValueError(f"Journal is empty: {path}")
-    first = events[0]
-    if first.operation != "cleanup-rebase":
-        raise ValueError(f"Journal is not a cleanup-rebase operation: {path}")
-    if first.event != "begin":
-        raise ValueError(f"Journal does not start with begin: {path}")
-
-    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
-    display_revset = str(resolved_scope["selected_revset"])
-    ordered_change_ids = _string_tuple(
-        resolved_scope.get("ordered_change_ids"),
-        "ordered_change_ids",
+    first, _, resolved_scope = _begin_operation_scope(
+        path,
+        events,
+        operation="cleanup-rebase",
     )
-    ordered_commit_ids = _string_tuple(
-        resolved_scope.get("ordered_commit_ids"),
-        "ordered_commit_ids",
-    )
-    label = (
-        f"cleanup --rebase for {ordered_change_ids[-1][:8]} "
-        f"(from {display_revset})"
-        if ordered_change_ids
-        else f"cleanup --rebase (from {display_revset})"
+    display_revset, ordered_change_ids, ordered_commit_ids = _ordered_scope(
+        resolved_scope,
     )
     return CleanupRebaseOperationRecord(
-        kind="cleanup-rebase",
         path=path,
         pid=active_pid,
-        label=label,
         started_at=first.timestamp,
         display_revset=display_revset,
         ordered_change_ids=ordered_change_ids,
@@ -575,37 +473,18 @@ def close_operation_record_from_events(
 ) -> CloseOperationRecord:
     """Parse one close operation record from journal events."""
 
-    if not events:
-        raise ValueError(f"Journal is empty: {path}")
-    first = events[0]
-    if first.operation != "close":
-        raise ValueError(f"Journal is not a close operation: {path}")
-    if first.event != "begin":
-        raise ValueError(f"Journal does not start with begin: {path}")
-
-    options = _require_mapping(first.data.get("options"), "options")
-    resolved_scope = _require_mapping(first.data.get("resolved_scope"), "resolved_scope")
-    display_revset = str(resolved_scope["selected_revset"])
-    ordered_change_ids = _string_tuple(
-        resolved_scope.get("ordered_change_ids"),
-        "ordered_change_ids",
+    first, options, resolved_scope = _begin_operation_scope(
+        path,
+        events,
+        operation="close",
     )
-    ordered_commit_ids = _string_tuple(
-        resolved_scope.get("ordered_commit_ids"),
-        "ordered_commit_ids",
+    display_revset, ordered_change_ids, ordered_commit_ids = _ordered_scope(
+        resolved_scope,
     )
     cleanup = bool(options["cleanup"])
-    command = "close --cleanup" if cleanup else "close"
-    label = (
-        f"{command} for {ordered_change_ids[-1][:8]} (from {display_revset})"
-        if ordered_change_ids
-        else f"{command} (from {display_revset})"
-    )
     return CloseOperationRecord(
-        kind="close",
         path=path,
         pid=active_pid,
-        label=label,
         started_at=first.timestamp,
         display_revset=display_revset,
         ordered_change_ids=ordered_change_ids,
@@ -668,6 +547,46 @@ def _require_mapping(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError(f"Journal field {label} must be an object")
     return dict(value)
+
+
+def _begin_operation_event(
+    path: Path,
+    events: tuple[JournalEvent, ...],
+    *,
+    operation: str,
+) -> JournalEvent:
+    if not events:
+        raise ValueError(f"Journal is empty: {path}")
+    first = events[0]
+    if first.operation != operation:
+        raise ValueError(f"Journal is not a {operation} operation: {path}")
+    if first.event != "begin":
+        raise ValueError(f"Journal does not start with begin: {path}")
+    return first
+
+
+def _begin_operation_scope(
+    path: Path,
+    events: tuple[JournalEvent, ...],
+    *,
+    operation: str,
+) -> tuple[JournalEvent, dict[str, Any], dict[str, Any]]:
+    first = _begin_operation_event(path, events, operation=operation)
+    return (
+        first,
+        _require_mapping(first.data.get("options"), "options"),
+        _require_mapping(first.data.get("resolved_scope"), "resolved_scope"),
+    )
+
+
+def _ordered_scope(
+    resolved_scope: dict[str, Any],
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    return (
+        str(resolved_scope["selected_revset"]),
+        _string_tuple(resolved_scope.get("ordered_change_ids"), "ordered_change_ids"),
+        _string_tuple(resolved_scope.get("ordered_commit_ids"), "ordered_commit_ids"),
+    )
 
 
 def _require_sequence(value: Any, label: str) -> tuple[Any, ...]:

@@ -31,10 +31,8 @@ def _submit_operation_record(
     ordered_commit_ids: tuple[str, ...],
 ) -> SubmitOperationRecord:
     return SubmitOperationRecord(
-        kind="submit",
         path=Path("/tmp/submit.jsonl"),
         pid=99999999,
-        label="submit for nnszmtlx (from @-)",
         display_revset="@-",
         ordered_change_ids=ordered_change_ids,
         ordered_commit_ids=ordered_commit_ids,

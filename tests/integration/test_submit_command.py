@@ -2768,7 +2768,6 @@ def test_submit_retains_operation_journal_after_failed_submit(
     submit_operations = incomplete_submit_operations(repo)
     assert len(submit_operations) == 1
     operation = submit_operations[0]
-    assert operation.kind == "submit"
     assert operation.remote_name == "origin"
     assert operation.github_host == "github.test"
     assert operation.github_owner == "octo-org"

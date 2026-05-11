@@ -27,8 +27,9 @@ from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision
 from jj_review.review.change_status import classify_review_change, classify_saved_review_change
+from jj_review.review.operations import describe_operation
 from jj_review.review.selection import resolve_selected_revset
-from jj_review.state.journal import OperationJournal
+from jj_review.state.journal import OperationJournal, RelinkOperationRecord
 from jj_review.state.operation_lock import read_operation_lock_holder
 
 HELP = "Reconnect an existing pull request to a local change"
@@ -48,10 +49,7 @@ class RelinkResult:
 
     bookmark: str
     change_id: str
-    github_repository: str
     pull_request_number: int
-    remote_name: str
-    selected_revset: str
     subject: str
 
 
@@ -61,9 +59,7 @@ class _PreparedRelink:
 
     bookmark: str
     context: CommandContext
-    github_repository: ParsedGithubRepo
     pull_request: GithubPullRequest
-    remote: GitRemote
     revision: LocalRevision
     selected_revset: str
     state: ReviewState
@@ -182,9 +178,7 @@ async def _prepare_relink(
     return _PreparedRelink(
         bookmark=bookmark,
         context=context,
-        github_repository=github_repository,
         pull_request=pull_request,
-        remote=remote,
         revision=revision,
         selected_revset=selected_revset,
         state=state,
@@ -282,8 +276,10 @@ def _apply_relink(
     client = context.jj_client
     state_store = context.state_store
     for loaded in state_store.list_operations():
-        if loaded.operation.kind == "relink":
-            console.warning(f"A previous relink was interrupted ({loaded.operation.label})")
+        if isinstance(loaded.operation, RelinkOperationRecord):
+            console.warning(
+                t"A previous relink was interrupted ({describe_operation(loaded.operation)})"
+            )
 
     journal = OperationJournal.begin(
         prepared.state_dir,
@@ -363,10 +359,7 @@ def _apply_relink(
         return RelinkResult(
             bookmark=prepared.bookmark,
             change_id=prepared.revision.change_id,
-            github_repository=prepared.github_repository.full_name,
             pull_request_number=prepared.pull_request.number,
-            remote_name=prepared.remote.name,
-            selected_revset=prepared.selected_revset,
             subject=prepared.revision.description,
         )
     finally:

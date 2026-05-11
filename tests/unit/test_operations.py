@@ -25,10 +25,8 @@ def _make_cleanup_rebase_operation(
     pid: int = 12345,
 ) -> CleanupRebaseOperationRecord:
     return CleanupRebaseOperationRecord(
-        kind="cleanup-rebase",
         path=Path("cleanup-rebase.jsonl"),
         pid=pid,
-        label="cleanup --rebase on @",
         display_revset="@",
         ordered_change_ids=ordered_change_ids,
         ordered_commit_ids=("commit-aaaa", "commit-bbbb"),
@@ -42,10 +40,8 @@ def _make_close_operation(
     pid: int = 12345,
 ) -> CloseOperationRecord:
     return CloseOperationRecord(
-        kind="close",
         path=Path("close.jsonl"),
         pid=pid,
-        label="close on @",
         display_revset="@",
         ordered_change_ids=ordered_change_ids,
         ordered_commit_ids=("commit-aaaa", "commit-bbbb"),
@@ -149,4 +145,3 @@ def test_pid_is_alive_returns_false_for_missing_process(
 
     monkeypatch.setattr(os, "kill", fake_kill)
     assert pid_is_alive(99999999) is False
-

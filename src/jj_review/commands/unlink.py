@@ -48,7 +48,6 @@ class UnlinkResult:
     already_unlinked: bool
     bookmark: str | None
     change_id: str
-    selected_revset: str
     subject: str
 
 
@@ -61,7 +60,6 @@ class _PreparedUnlink:
     context: CommandContext
     prepared_revision: PreparedRevision
     review_status: ReviewChangeStatus
-    selected_revset: str
     state: ReviewState
     status_revision: ReviewStatusRevision
 
@@ -190,7 +188,6 @@ async def _prepare_unlink(
         context=context,
         prepared_revision=prepared_revision,
         review_status=classify_review_status_revision(status_revision),
-        selected_revset=prepared_status.selected_revset,
         state=state,
         status_revision=status_revision,
     )
@@ -240,7 +237,6 @@ def _unlink_result(
         already_unlinked=already_unlinked,
         bookmark=prepared_unlink.bookmark,
         change_id=revision.change_id,
-        selected_revset=prepared_unlink.selected_revset,
         subject=revision.subject,
     )
 
