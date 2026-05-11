@@ -71,9 +71,7 @@ from jj_review.review.status import (
     stream_status,
 )
 from jj_review.state.journal import OperationJournal
-from jj_review.state.operation_lock import (
-    acquire_operation_lock,
-)
+from jj_review.state.operation_lock import acquire_operation_lock
 
 HELP = "Stop reviewing a jj stack on GitHub"
 
@@ -101,14 +99,6 @@ class PreparedClose:
     context: CommandContext
     dry_run: bool
     prepared_status: PreparedStatus
-
-
-@dataclass(frozen=True, slots=True)
-class _ClassifiedCloseRevision:
-    """A close target revision with its derived review status."""
-
-    revision: ReviewStatusRevision
-    status: ReviewChangeStatus
 
 
 @dataclass(slots=True)
@@ -543,10 +533,7 @@ async def _stream_close_async(
             prepared_close=prepared_close,
         )
 
-    no_work = _inspected_close_has_no_work(
-        prepared_close=prepared_close,
-        revisions=status_result.revisions,
-    )
+    no_work = _inspected_close_has_no_work(revisions=status_result.revisions)
 
     if not no_work and (status_result.github_error is not None or github_repository is None):
         recorder.record(
@@ -628,11 +615,7 @@ async def _stream_close_async(
             )
 
 
-def _inspected_close_has_no_work(
-    *,
-    prepared_close: PreparedClose,
-    revisions,
-) -> bool:
+def _inspected_close_has_no_work(*, revisions) -> bool:
     """Whether close has nothing to do for the inspected revisions.
 
     Both plain close and cleanup only act on changes jj-review tracks: closing
@@ -643,7 +626,6 @@ def _inspected_close_has_no_work(
     we never pushed that branch and must not delete it.
     """
 
-    del prepared_close  # unused; same predicate for plain and cleanup
     for revision in revisions:
         cached = revision.cached_change
         if classify_saved_review_change(cached, local="present").saved_review_identity:
@@ -693,12 +675,14 @@ def _start_close_operation_log(
 
     prepared_status = prepared_close.prepared_status
     state_dir = prepared_status.prepared.state_store.require_writable()
-    ordered_revisions = tuple(
-        prepared_revision.revision
+    ordered_change_ids = tuple(
+        prepared_revision.revision.change_id
         for prepared_revision in prepared_status.prepared.status_revisions
     )
-    ordered_change_ids = tuple(revision.change_id for revision in ordered_revisions)
-    ordered_commit_ids = tuple(revision.commit_id for revision in ordered_revisions)
+    ordered_commit_ids = tuple(
+        prepared_revision.revision.commit_id
+        for prepared_revision in prepared_status.prepared.status_revisions
+    )
     journal = OperationJournal.begin(
         state_dir,
         operation="close",
@@ -725,12 +709,8 @@ async def _process_close_revisions(
     """Process each revision in order, stopping on the first fail-closed block."""
 
     for revision in revisions:
-        classified_revision = _ClassifiedCloseRevision(
-            revision=revision,
-            status=classify_review_status_revision(revision),
-        )
         should_stop = await _process_close_revision(
-            classified_revision=classified_revision,
+            change_status=classify_review_status_revision(revision),
             commit_id=execution_state.commit_ids_by_change_id.get(revision.change_id),
             current_state=execution_state.current_state,
             github_client=github_client,
@@ -738,6 +718,7 @@ async def _process_close_revisions(
             next_changes=execution_state.next_changes,
             prepared_close=prepared_close,
             record_action=recorder.record,
+            revision=revision,
         )
         if on_revision_complete is not None:
             on_revision_complete()
@@ -771,7 +752,7 @@ def _close_result(
 
 async def _process_close_revision(
     *,
-    classified_revision: _ClassifiedCloseRevision,
+    change_status: ReviewChangeStatus,
     commit_id: str | None,
     current_state,
     github_client: GithubClient,
@@ -779,10 +760,9 @@ async def _process_close_revision(
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
+    revision: ReviewStatusRevision,
 ) -> bool:
-    revision = classified_revision.revision
     lookup = revision.pull_request_lookup
-    change_status = classified_revision.status
     if lookup is None and not change_status.has_pull_request_lookup_failure:
         return False
     if change_status.pr_lifecycle == "ambiguous" or change_status.has_pull_request_lookup_failure:

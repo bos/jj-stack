@@ -565,7 +565,6 @@ def _stream_rebase(
             on_revision=lambda _revision, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
-    prepared_status = prepared_rebase.prepared_status
     prepared = prepared_status.prepared
     path_revisions = _resolve_rebase_path_revisions(
         prepared_status=prepared_status,
@@ -604,7 +603,6 @@ def _stream_rebase(
     closed_unmerged_revisions = operation_plan.closed_unmerged_revisions
     for action in operation_plan.pre_actions:
         recorder.record(action)
-    rebase_plans = list(operation_plan.rebase_plans)
 
     rebase_journal = _start_rebase_operation_log(
         blocked=blocked,
@@ -621,7 +619,7 @@ def _stream_rebase(
             client=client,
             closed_unmerged_revisions=closed_unmerged_revisions,
             prepared_rebase=prepared_rebase,
-            rebase_plans=tuple(rebase_plans),
+            rebase_plans=operation_plan.rebase_plans,
             record_action=recorder.record,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )

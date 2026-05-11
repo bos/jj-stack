@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from jj_review import console, ui
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError
@@ -24,35 +22,6 @@ from .models import (
     PreparedLand,
     ReviewBookmarkCleanupPlan,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class _LandResultContext:
-    bypass_readiness: bool
-    github_repository: str
-    remote_name: str
-    selected_revset: str
-    trunk_branch: str
-    trunk_subject: str
-
-    def result(
-        self,
-        *,
-        actions: tuple[LandAction, ...],
-        applied: bool,
-        blocked: bool,
-    ) -> LandResult:
-        return LandResult(
-            actions=actions,
-            applied=applied,
-            bypass_readiness=self.bypass_readiness,
-            blocked=blocked,
-            github_repository=self.github_repository,
-            remote_name=self.remote_name,
-            selected_revset=self.selected_revset,
-            trunk_branch=self.trunk_branch,
-            trunk_subject=self.trunk_subject,
-        )
 
 
 def ensure_trunk_branch_matches_selected_trunk(
@@ -125,17 +94,28 @@ async def execute_land_plan(
 
     prepared_status = prepared_land.prepared_status
     prepared = prepared_status.prepared
-    result_context = _LandResultContext(
-        bypass_readiness=prepared_land.bypass_readiness,
-        github_repository=github_repository.full_name,
-        remote_name=remote_name,
-        selected_revset=selected_revset,
-        trunk_branch=trunk_branch,
-        trunk_subject=trunk_subject,
-    )
+
+    def land_result(
+        *,
+        actions: tuple[LandAction, ...],
+        applied: bool,
+        blocked: bool,
+    ) -> LandResult:
+        return LandResult(
+            actions=actions,
+            applied=applied,
+            bypass_readiness=prepared_land.bypass_readiness,
+            blocked=blocked,
+            github_repository=github_repository.full_name,
+            remote_name=remote_name,
+            selected_revset=selected_revset,
+            trunk_branch=trunk_branch,
+            trunk_subject=trunk_subject,
+        )
+
     execution_plan = plan
     if execution_plan.blocked:
-        return result_context.result(
+        return land_result(
             actions=execution_plan.planned_actions(),
             applied=False,
             blocked=True,
@@ -196,7 +176,7 @@ async def execute_land_plan(
     bookmark_cleanup_by_change_id = {
         cleanup_plan.change_id: cleanup_plan for cleanup_plan in bookmark_cleanup_plans
     }
-    blocked_result = await _apply_trunk_transition(
+    trunk_transition_blocked = await _apply_trunk_transition(
         actions=actions,
         client=prepared.client,
         execution_plan=execution_plan,
@@ -205,11 +185,14 @@ async def execute_land_plan(
         journal=journal,
         prepared_land=prepared_land,
         remote_name=remote_name,
-        result_context=result_context,
         trunk_branch=trunk_branch,
     )
-    if blocked_result is not None:
-        return blocked_result
+    if trunk_transition_blocked:
+        return land_result(
+            actions=tuple(actions),
+            applied=True,
+            blocked=True,
+        )
     await _finalize_planned_revisions(
         actions=actions,
         bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
@@ -229,7 +212,7 @@ async def execute_land_plan(
             )
         },
     )
-    return result_context.result(
+    return land_result(
         actions=execution_plan.completed_actions(actions=tuple(actions)),
         applied=True,
         blocked=False,
@@ -246,11 +229,10 @@ async def _apply_trunk_transition(
     journal: OperationJournal,
     prepared_land: PreparedLand,
     remote_name: str,
-    result_context: _LandResultContext,
     trunk_branch: str,
-) -> LandResult | None:
+) -> bool:
     if not execution_plan.push_trunk:
-        return None
+        return False
 
     if execution_plan.resubmit_revisions:
         journal.append(
@@ -282,11 +264,7 @@ async def _apply_trunk_transition(
         )
     if dismissed_action is not None:
         actions.append(dismissed_action)
-        return result_context.result(
-            actions=tuple(actions),
-            applied=True,
-            blocked=True,
-        )
+        return True
 
     trunk_revision = execution_plan.planned_revisions[-1]
     journal.append(
@@ -315,7 +293,7 @@ async def _apply_trunk_transition(
         },
     )
     actions.append(trunk_action)
-    return None
+    return False
 
 
 async def _refresh_rebased_review_branches(

@@ -59,7 +59,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--retry-scenarios",
         type=_non_negative_int,
         help=(
-            "Number of generated interrupted-submit retry scenarios to run "
+            "Number of generated failed-submit retry scenarios to run "
             "(default: max(4, scenarios // 10))."
         ),
     )

@@ -128,7 +128,7 @@ def replay_boundary_drift_scenario(
     assert fake_repo.pull_request_events == []
 
 
-def replay_interrupted_submit_retry_scenario(
+def replay_failed_submit_retry_scenario(
     *,
     discard_output: OutputDiscarder,
     fake_repo: FakeGithubRepository,

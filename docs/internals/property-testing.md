@@ -310,8 +310,8 @@ The opt-in runner sets these environment variables for the pytest adapter:
   merge scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS`: target number of unique cross-stack
   single-change move scenarios
-- `JJ_REVIEW_SUBMIT_PROPERTY_RETRY_SCENARIOS`: target number of unique interrupted
-  submit retry scenarios
+- `JJ_REVIEW_SUBMIT_PROPERTY_RETRY_SCENARIOS`: target number of unique failed-submit
+  retry scenarios
 - `JJ_REVIEW_SUBMIT_PROPERTY_SEED`: deterministic random seed
 
 Those variables configure the adapter; they are not part of the core harness contract.

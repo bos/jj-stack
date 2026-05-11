@@ -13,7 +13,7 @@ from tests.support.integration_helpers import init_fake_github_repo
 from tests.support.submit_property_harness import (
     replay_boundary_drift_scenario,
     replay_cross_stack_split_scenario,
-    replay_interrupted_submit_retry_scenario,
+    replay_failed_submit_retry_scenario,
     replay_stack_merge_scenario,
     replay_stack_move_scenario,
     replay_successful_stack_edit_scenario,
@@ -191,7 +191,7 @@ def test_submit_property_boundary_drift_fails_closed(
     SUBMIT_RETRY_SCENARIOS,
     ids=lambda scenario: scenario.name,
 )
-def test_submit_property_interrupted_submit_retry_converges(
+def test_submit_property_failed_submit_retry_converges(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -214,7 +214,7 @@ def test_submit_property_interrupted_submit_retry_converges(
         args = () if revset is None else (revset,)
         return run_main(repo, config_path, "submit", *args)
 
-    replay_interrupted_submit_retry_scenario(
+    replay_failed_submit_retry_scenario(
         discard_output=capsys.readouterr,
         fake_repo=fake_repo,
         repo=repo,

@@ -500,7 +500,7 @@ def stack_move_scenarios_from_environment() -> tuple[StackMoveScenario, ...]:
 
 
 def submit_retry_scenarios_from_environment() -> tuple[SubmitRetryScenario, ...]:
-    """Return deterministic interrupted-submit retry scenarios for the pytest adapter."""
+    """Return deterministic failed-submit retry scenarios for the pytest adapter."""
 
     count = int(
         os.environ.get(
