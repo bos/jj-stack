@@ -517,7 +517,13 @@ def _persist_status_cache_updates_with_optional_lock(
     if lock is None:
         return True
     with lock:
-        _persist_status_cache_updates(prepared=prepared, revisions=revisions)
+        current_state = prepared.state_store.load()
+        _persist_status_cache_updates(
+            base_state=current_state,
+            prepared=prepared,
+            revisions=revisions,
+            state_changes=dict(current_state.changes),
+        )
     return False
 
 
@@ -704,13 +710,16 @@ def _resolved_review_decision(
 
 def _persist_status_cache_updates(
     *,
+    base_state: ReviewState | None = None,
     prepared: PreparedStack,
     revisions: tuple[ReviewStatusRevision, ...],
+    state_changes: dict[str, CachedChange] | None = None,
 ) -> None:
-    state_changes = dict(prepared.state_changes)
+    base_state = prepared.state if base_state is None else base_state
+    state_changes = dict(prepared.state_changes if state_changes is None else state_changes)
     for revision in revisions:
         change_status = classify_review_status_revision(revision)
-        cached_change = state_changes.get(revision.change_id) or prepared.state.changes.get(
+        cached_change = state_changes.get(revision.change_id) or base_state.changes.get(
             revision.change_id
         )
         updated_change = cached_change
@@ -791,8 +800,8 @@ def _persist_status_cache_updates(
         if updated_change is not None and updated_change != cached_change:
             state_changes[revision.change_id] = updated_change
 
-    next_state = prepared.state.model_copy(update={"changes": state_changes})
-    if next_state != prepared.state:
+    next_state = base_state.model_copy(update={"changes": state_changes})
+    if next_state != base_state:
         prepared.state_store.save(next_state)
 
 
@@ -1192,4 +1201,3 @@ def _is_repository_level_github_lookup_error(error: GithubClientError) -> bool:
     if error.status_code in {401, 403, 404}:
         return True
     return error.status_code >= 500
-

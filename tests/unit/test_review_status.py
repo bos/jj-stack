@@ -337,6 +337,82 @@ def test_stream_status_skips_cache_update_when_operation_lock_is_busy(
     assert saved_states == []
 
 
+def test_locked_status_cache_update_merges_with_current_saved_state(tmp_path) -> None:
+    state_store = ReviewStateStore(tmp_path / "state.json")
+    prepared_state = ReviewState(
+        changes={
+            "aaaaaaaaaaaa": CachedChange(
+                bookmark="review/feature-1-aaaaaaaa",
+                pr_number=1,
+                pr_review_decision="changes_requested",
+                pr_state="open",
+            )
+        }
+    )
+    current_state = ReviewState(
+        changes={
+            "aaaaaaaaaaaa": CachedChange(
+                bookmark="review/feature-1-aaaaaaaa",
+                pr_number=1,
+                pr_review_decision="changes_requested",
+                pr_state="open",
+            ),
+            "bbbbbbbbbbbb": CachedChange(
+                bookmark="review/other-bbbbbbbb",
+                pr_number=99,
+                pr_state="open",
+            ),
+        }
+    )
+    state_store.save(current_state)
+    pull_request = GithubPullRequest(
+        base={"ref": "main"},
+        head={"ref": "review/feature-1-aaaaaaaa"},
+        html_url="https://github.test/octo-org/stacked-review/pull/1",
+        number=1,
+        review_decision="approved",
+        state="open",
+        title="feature 1",
+    )
+    status_revision = ReviewStatusRevision(
+        bookmark="review/feature-1-aaaaaaaa",
+        bookmark_source="saved",
+        cached_change=prepared_state.changes["aaaaaaaaaaaa"],
+        change_id="aaaaaaaaaaaa",
+        commit_id="commit-1",
+        link_state="active",
+        local_divergent=False,
+        pull_request_lookup=status_module.PullRequestLookup(
+            message=None,
+            pull_request=pull_request,
+            review_decision="approved",
+            review_decision_error=None,
+            state="open",
+        ),
+        remote_state=None,
+        managed_comments_lookup=None,
+        subject="feature 1",
+    )
+
+    skipped = status_module._persist_status_cache_updates_with_optional_lock(
+        lock_cache_update=True,
+        prepared=cast(
+            PreparedStack,
+            SimpleNamespace(
+                state=prepared_state,
+                state_changes=dict(prepared_state.changes),
+                state_store=state_store,
+            ),
+        ),
+        revisions=(status_revision,),
+    )
+
+    saved = state_store.load()
+    assert skipped is False
+    assert saved.changes["aaaaaaaaaaaa"].pr_review_decision == "approved"
+    assert saved.changes["bbbbbbbbbbbb"].pr_number == 99
+
+
 def test_summarize_github_lookup_error_preserves_transport_detail() -> None:
     error = GithubClientError("GitHub request failed: Connection refused")
 

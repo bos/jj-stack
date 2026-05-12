@@ -1060,7 +1060,7 @@ def _format_status_summary(
             is_draft=lookup.pull_request.is_draft,
         )
         review_decision = change_status.pr_review_decision
-        if review_decision == "none" and lookup.review_decision_error is not None:
+        if review_decision == "unknown" and lookup.review_decision_error is not None:
             review_decision = (
                 "none" if cached_change is None else cached_change.pr_review_decision or "none"
             )

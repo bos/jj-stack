@@ -213,6 +213,51 @@ def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None
     )
 
 
+def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fails() -> None:
+    revision = SimpleNamespace(
+        bookmark="review/feature-7-abcdefgh",
+        cached_change=CachedChange(
+            bookmark="review/feature-7-abcdefgh",
+            pr_number=7,
+            pr_review_decision="approved",
+            pr_state="open",
+        ),
+        change_id="abcdefgh1234",
+        commit_id="1234567890abcdef",
+        link_state="active",
+        local_divergent=False,
+        pull_request_lookup=SimpleNamespace(
+            pull_request=SimpleNamespace(
+                html_url="https://github.test/octo/repo/pull/7",
+                is_draft=False,
+                number=7,
+            ),
+            review_decision=None,
+            review_decision_error="review decision lookup failed",
+            state="open",
+        ),
+        managed_comments_lookup=None,
+        subject="feature 7",
+    )
+
+    lines = status_module.render_status_summary_lines(
+        client=SimpleNamespace(
+            resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
+            render_revision_log_lines=lambda current_revision, *, color_when: (
+                f"○  {current_revision.change_id[:8]} {current_revision.commit_id[:8]}",
+                f"│  {current_revision.subject}",
+            ),
+        ),
+        github_available=True,
+        leading_separator=False,
+        result=SimpleNamespace(revisions=(revision,)),
+        verbose=False,
+    )
+
+    normalized_lines = " ".join(lines)
+    assert "PR #7 approved" in normalized_lines
+
+
 def test_status_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
     revisions = tuple(
         SimpleNamespace(
