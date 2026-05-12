@@ -123,6 +123,46 @@ def test_classifier_marks_single_remote_target_that_does_not_match_commit() -> N
     assert status.remote_branch_matches_commit is False
 
 
+def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None:
+    status = classify_review_change(
+        cached_change=CachedChange(pr_number=1, pr_state="open"),
+        commit_id="commit-1",
+        local="present",
+        pull_request_lookup=PullRequestLookup(
+            message=None,
+            pull_request=_pull_request(),
+            review_decision=None,
+            review_decision_error="GitHub returned 502",
+            state="open",
+        ),
+        remote_state=None,
+    )
+
+    assert status.pr_lifecycle == "open"
+    assert status.pr_review_decision == "unknown"
+    assert status.pr_review_decision_error == "GitHub returned 502"
+    assert status.has_pull_request_lookup_failure is True
+
+
+def test_classifier_treats_unrecognized_review_decision_as_unknown() -> None:
+    status = classify_review_change(
+        cached_change=CachedChange(pr_number=1, pr_state="open"),
+        commit_id="commit-1",
+        local="present",
+        pull_request_lookup=PullRequestLookup(
+            message=None,
+            pull_request=_pull_request(),
+            review_decision="DISMISSED",
+            review_decision_error=None,
+            state="open",
+        ),
+        remote_state=None,
+    )
+
+    assert status.pr_review_decision == "unknown"
+    assert status.pr_review_decision_error is None
+
+
 def test_classifier_preserves_independent_baseline_flags() -> None:
     status = classify_review_change(
         baseline_disagreement=SubmittedStateDisagreement(
