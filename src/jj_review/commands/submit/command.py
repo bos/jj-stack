@@ -64,7 +64,11 @@ from .models import (
 )
 from .pull_requests import discover_pull_requests_by_bookmark, sync_pull_requests
 from .render import print_submit_result, render_selected_line
-from .revisions import prepare_submit_revisions, sync_remote_bookmarks
+from .revisions import (
+    prepare_submit_revisions,
+    sync_local_bookmarks,
+    sync_remote_bookmarks,
+)
 from .stack_comments import sync_stack_comments
 
 HELP = "Send a jj stack to GitHub for review"
@@ -441,17 +445,10 @@ async def _run_submit_async(
         bookmark_result=bookmark_result,
         bookmark_states=bookmark_states,
         client=client,
-        options=options,
         remote=remote,
         stack=stack,
     )
     state_changes = dict(bookmark_result.state.changes)
-    mutation_run = SubmitMutationRun(
-        dry_run=dry_run,
-        state=bookmark_result.state,
-        state_changes=state_changes,
-        state_store=state_store,
-    )
     journal = None
     if not dry_run:
         state_dir = state_store.require_writable()
@@ -482,6 +479,13 @@ async def _run_submit_async(
                 "selected_revset": stack.selected_revset,
             },
         )
+    mutation_run = SubmitMutationRun(
+        dry_run=dry_run,
+        journal=journal,
+        state=bookmark_result.state,
+        state_changes=state_changes,
+        state_store=state_store,
+    )
     if dry_run:
         if not prepared_inputs.restarted_change_ids:
             local_only_dry_run = _build_local_only_dry_run_result(
@@ -537,6 +541,13 @@ async def _run_submit_async(
                 discovered_pull_requests=discovered_pull_requests,
                 prepared_revisions=prepared_revisions,
                 restarted_change_ids=prepared_inputs.restarted_change_ids,
+            )
+            sync_local_bookmarks(
+                bookmark_result=bookmark_result,
+                bookmark_states=bookmark_states,
+                client=client,
+                prepared_revisions=prepared_revisions,
+                run=mutation_run,
             )
             if not dry_run and any(
                 revision.remote_action == "pushed" for revision in prepared_revisions

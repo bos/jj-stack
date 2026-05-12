@@ -2684,7 +2684,20 @@ def test_submit_completes_operation_journal_after_successful_submit(
         for event in read_operation_log(resolve_state_path(repo).parent)
         if event.operation == "submit"
     ]
-    assert [event.event for event in submit_events] == ["begin", "completed"]
+    submit_event_names = [event.event for event in submit_events]
+    assert submit_event_names[0] == "begin"
+    assert submit_event_names[-1] == "completed"
+    assert any(
+        event.event == "mutation_applied"
+        and event.data["mutation"] == "sync_local_bookmarks"
+        for event in submit_events
+    )
+    assert any(
+        event.event == "mutation_applied"
+        and event.data["mutation"] == "push_review_bookmarks"
+        for event in submit_events
+    )
+    assert any(event.event == "saved_state_update" for event in submit_events)
 
 
 def test_submit_logs_begin_after_failed_submit(
@@ -2755,7 +2768,19 @@ def test_submit_logs_begin_after_failed_submit(
         for event in read_operation_log(resolve_state_path(repo).parent)
         if event.operation == "submit"
     ]
-    assert [event.event for event in submit_events] == ["begin"]
+    submit_event_names = [event.event for event in submit_events]
+    assert submit_event_names[0] == "begin"
+    assert "completed" not in submit_event_names
+    assert any(
+        event.event == "mutation_applied"
+        and event.data["mutation"] == "sync_local_bookmarks"
+        for event in submit_events
+    )
+    assert any(
+        event.event == "mutation_applied"
+        and event.data["mutation"] == "push_review_bookmarks"
+        for event in submit_events
+    )
     begin_data = submit_events[0].data
     assert begin_data["options"]["remote_name"] == "origin"
     assert begin_data["options"]["github_host"] == "github.test"

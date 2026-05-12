@@ -100,8 +100,14 @@ async def sync_stack_comments(
 
         def handle_success(_index: int, result: tuple[str, CachedChange]) -> None:
             change_id, updated_change = result
-            if run.state_changes.get(change_id) != updated_change:
+            previous_change = run.state_changes.get(change_id) or run.state.changes.get(change_id)
+            if previous_change != updated_change:
                 run.state_changes[change_id] = updated_change
+                run.record_saved_state_update(
+                    after=updated_change,
+                    before=previous_change,
+                    change_id=change_id,
+                )
                 run.save_interim_state()
             progress.advance()
 

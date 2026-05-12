@@ -177,7 +177,6 @@ def test_prepare_submit_revisions_preflights_remote_drift_before_local_bookmark_
                 ),
             },
             client=cast(JjClient, client),
-            options=_submit_options(),
             remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
             stack=_local_stack(first_revision, second_revision),
         )
@@ -235,7 +234,6 @@ def test_prepare_submit_revisions_rejects_non_atomic_push_before_bookmark_moves(
                 ),
             },
             client=cast(JjClient, client),
-            options=_submit_options(),
             remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
             stack=_local_stack(first_revision, second_revision),
         )

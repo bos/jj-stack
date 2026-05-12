@@ -67,8 +67,17 @@ async def sync_pull_requests(
         submitted: tuple[SubmittedRevision, CachedChange | None],
     ) -> None:
         submitted_revision, cached_change = submitted
+        previous_change = (
+            run.state_changes.get(submitted_revision.change_id)
+            or run.state.changes.get(submitted_revision.change_id)
+        )
         if cached_change is not None:
             run.state_changes[submitted_revision.change_id] = cached_change
+            run.record_saved_state_update(
+                after=cached_change,
+                before=previous_change,
+                change_id=submitted_revision.change_id,
+            )
         run.save_interim_state()
         if on_progress is not None:
             on_progress()
