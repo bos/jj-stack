@@ -190,8 +190,7 @@ jj-review cleanup
 ```
 
 Use `--dry-run` if you want first, to preview what it plans to remove. Then run plain `cleanup`
-to delete the old review branches, local review bookmarks, and saved review tracking data it
-described.
+to delete the old review branches, local review bookmarks, and tracking data it described.
 
 ## You want to stop reviewing a stack on GitHub
 

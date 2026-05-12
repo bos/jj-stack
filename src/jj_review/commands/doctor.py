@@ -35,7 +35,7 @@ from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubRepository
 from jj_review.ui import Message
 
-HELP = "check GitHub auth, remote resolution, and local state"
+HELP = "Check GitHub auth, remote resolution, and local state"
 
 type CheckDetail = Message
 

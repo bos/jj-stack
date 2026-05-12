@@ -216,8 +216,8 @@ If `jj-review list` says another tracked stack changed since its last submit, ei
 `jj-review submit <head-change-id>` to refresh the PR branches or run
 `jj-review status <head-change-id>` to inspect first. `status` only emits this warning for another
 stack when that stack is built on top of a change in the stack you are inspecting. Status calls
-out whether local commits, review parents, or stack membership differ from the last successful
-submit, and it will also show if cleanup is needed first.
+out whether commit IDs, PR bases, or the stack head differ from the last successful submit, and
+it will also show if cleanup is needed first.
 
 ## Short version
 

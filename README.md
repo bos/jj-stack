@@ -68,8 +68,8 @@ This project has been developed with heavy agent assistance. Judge it by the beh
 
 - The user experience is treated as part of correctness
 - User-facing docs are managed separately from the generated implementation work
-- The test suite covers the main workflows, with around 550 tests and greater than 80% coverage
-  as of April 2026
+- The test suite covers the main workflows, with around 520 tests and greater than 80% coverage
+  as of May 2026
 - Performance has been a major focus, with a lot of attention to concurrent and batched
   operations when those are costly (e.g. roundtrips to the GitHub API)
 
