@@ -330,6 +330,102 @@ def test_stream_rebase_applies_rebase_for_survivor_above_merged_path_revision(
     assert result.actions[0].status == "applied"
 
 
+def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
+    monkeypatch,
+) -> None:
+    first_survivor_revision = _status_revision(
+        change_id="first-survivor-change",
+        number=1,
+        pull_request_state="open",
+        subject="first survivor",
+    )
+    merged_revision = _status_revision(
+        change_id="merged-change",
+        number=2,
+        pull_request_state="merged",
+        subject="merged feature",
+    )
+    second_survivor_revision = _status_revision(
+        change_id="second-survivor-change",
+        number=3,
+        pull_request_state="open",
+        subject="second survivor",
+    )
+    prepared_rebase = PreparedRebase(
+        context=_fake_context(),
+        dry_run=False,
+        prepared_status=cast(
+            PreparedStatus,
+            SimpleNamespace(
+                github_inspection_count=lambda: 3,
+                github_repository=None,
+                prepared=SimpleNamespace(
+                    client=SimpleNamespace(),
+                    state_store=SimpleNamespace(
+                        require_writable=lambda: Path("/tmp"),
+                    ),
+                    stack=SimpleNamespace(trunk=SimpleNamespace(commit_id="trunk-commit")),
+                    status_revisions=(
+                        SimpleNamespace(
+                            cached_change=CachedChange(pr_number=1, pr_state="open"),
+                            revision=SimpleNamespace(
+                                change_id="first-survivor-change",
+                                commit_id="first-survivor-commit",
+                                only_parent_commit_id=lambda: "trunk-commit",
+                            ),
+                        ),
+                        SimpleNamespace(
+                            cached_change=CachedChange(pr_number=2, pr_state="merged"),
+                            revision=SimpleNamespace(
+                                change_id="merged-change",
+                                commit_id="merged-commit",
+                                only_parent_commit_id=lambda: "first-survivor-commit",
+                            ),
+                        ),
+                        SimpleNamespace(
+                            cached_change=CachedChange(pr_number=3, pr_state="open"),
+                            revision=SimpleNamespace(
+                                change_id="second-survivor-change",
+                                commit_id="second-survivor-commit",
+                                only_parent_commit_id=lambda: "merged-commit",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "jj_review.commands.cleanup.stream_status",
+        lambda **kwargs: SimpleNamespace(
+            github_error=None,
+            github_repository="octo-org/stacked-review",
+            incomplete=False,
+            remote=GitRemote(
+                name="origin",
+                url="git@github.com:octo-org/stacked-review.git",
+            ),
+            remote_error=None,
+            revisions=(
+                first_survivor_revision,
+                merged_revision,
+                second_survivor_revision,
+            ),
+            selected_revset="@",
+        ),
+    )
+
+    result = _stream_rebase(prepared_rebase=prepared_rebase)
+
+    assert len(result.actions) == 1
+    assert result.blocked is True
+    assert result.actions[0].kind == "rebase"
+    assert result.actions[0].status == "blocked"
+    assert "cannot automatically rebase second survivor" in result.actions[0].message
+    assert "onto surviving change first-su" in result.actions[0].message
+
+
 def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned() -> None:
     remote_state = RemoteBookmarkState(remote="origin", targets=("commit-1",))
     cached_change = CachedChange(

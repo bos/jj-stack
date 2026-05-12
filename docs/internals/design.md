@@ -1064,7 +1064,7 @@ UX is explicit:
 - without `--dry-run`, it performs only rebase steps whose destination is `trunk()`
 - with `--dry-run`, it previews the local rebase plan
 - if a rebase step would land on another surviving change, it stops and tells the user
-  to either rebase manually with `jj rebase` or rerun with `--allow-nontrunk-rebase`
+  to rebase manually with `jj rebase`
 - if repo policy is part of the problem, it says so directly rather than making the
   user reverse-engineer it from the DAG
 
@@ -1095,8 +1095,7 @@ The algorithm:
    desired new parent, but in the default mode only run the steps whose destination is
    `trunk()`.
 6. If later remaining segments would still need to land on another remaining change,
-   stop and require either manual `jj rebase` or an explicit
-   `--allow-nontrunk-rebase`.
+   stop and require manual `jj rebase`.
 7. Once the rebases succeed, leftover merged or fetched side copies may stay in place
    until a later conservative cleanup pass can prove they are removable.
    `cleanup --rebase`'s primary job is to repair the active local stack first.

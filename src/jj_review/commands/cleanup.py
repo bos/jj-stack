@@ -948,6 +948,22 @@ def _plan_rebase_rebases(
             prepared_status=prepared_status,
             revisions_by_change_id=revisions_by_change_id,
         ):
+            if desired_parent_change_id is not None:
+                blocked = True
+                actions.append(
+                    CleanupAction(
+                        kind="rebase",
+                        status="blocked",
+                        body=(
+                            t"cannot automatically rebase {_revision_label_template(revision)} "
+                            t"onto surviving change "
+                            t"{ui.change_id(desired_parent_change_id)}; rebase manually "
+                            t"with {ui.cmd('jj rebase')}"
+                        ),
+                    )
+                )
+                survivor_change_ids.append(revision.change_id)
+                continue
             rebase_plans.append((revision.change_id, desired_parent_change_id))
         survivor_change_ids.append(revision.change_id)
     return blocked, rebase_plans
