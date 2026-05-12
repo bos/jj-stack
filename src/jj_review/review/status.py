@@ -226,6 +226,7 @@ def prepare_status(
     remotes = jj_client.list_git_remotes()
     remote: GitRemote | None = None
     remote_error: ErrorMessage | None = None
+    fetched_remote_state = False
     if remotes:
         try:
             remote = select_submit_remote(remotes)
@@ -240,6 +241,7 @@ def prepare_status(
         and not fetch_only_when_tracked
     ):
         jj_client.fetch_remote(remote=remote.name)
+        fetched_remote_state = True
     else:
         stack = jj_client.discover_review_stack(
             revset, allow_divergent=True, allow_immutable=True
@@ -254,12 +256,15 @@ def prepare_status(
             )
             if should_fetch:
                 jj_client.fetch_remote(remote=remote.name)
+                fetched_remote_state = True
                 if re_resolve_after_remote_refresh:
                     stack = None
     if stack is None:
         stack = jj_client.discover_review_stack(
             revset, allow_divergent=True, allow_immutable=True
         )
+    if fetched_remote_state:
+        state = state_store.load()
 
     prepared = prepare_stack_for_status(
         context=context,

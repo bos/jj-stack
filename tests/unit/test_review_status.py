@@ -25,6 +25,7 @@ from jj_review.review.status import (
     stream_status_async,
 )
 from jj_review.state.store import ReviewStateStore
+from tests.support.revision_helpers import make_revision
 
 
 def test_stream_status_streams_local_fallback_revisions_after_github_abort(
@@ -358,80 +359,17 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
 def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
     tmp_path,
 ) -> None:
-    first = LocalRevision(
-        change_id="aaaaaaaa1234",
+    first = make_revision(
         commit_id="commit-1",
-        current_working_copy=False,
         description="feature 1",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("trunk-commit",),
+        change_id="aaaaaaaa1234",
     )
-    second = LocalRevision(
-        change_id="bbbbbbbb5678",
+    second = make_revision(
         commit_id="commit-2",
-        current_working_copy=False,
         description="feature 2",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("commit-1",),
+        change_id="bbbbbbbb5678",
     )
-    trunk = LocalRevision(
-        change_id="trunkchangeid",
-        commit_id="trunk-commit",
-        current_working_copy=False,
-        description="base",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=True,
-        parents=("root",),
-    )
-    stack = LocalStack(
-        base_parent=trunk,
-        head=second,
-        revisions=(first, second),
-        selected_revset="@",
-        trunk=trunk,
-    )
-    remote = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
-
-    class FakeClient:
-        def __init__(self, repo_root) -> None:
-            self.repo_root = repo_root
-            self.list_calls: list[tuple[str, ...] | None] = []
-
-        def discover_review_stack(self, revset, *, allow_divergent=False, allow_immutable=False):
-            return stack
-
-        def list_git_remotes(self):
-            return (remote,)
-
-        def fetch_remote(self, *, remote: str) -> None:
-            pass
-
-        def list_bookmark_states(self, bookmarks=None):
-            self.list_calls.append(None if bookmarks is None else tuple(bookmarks))
-            return {}
-
-    class FakeStateStore:
-        def __init__(self, state: ReviewState) -> None:
-            self.state = state
-
-        def load(self) -> ReviewState:
-            return self.state
-
-        def save(self, state: ReviewState) -> None:
-            self.state = state
-
-    def build_client(saved_state: ReviewState) -> tuple[FakeClient, FakeStateStore]:
-        client = FakeClient(tmp_path)
-        state_store = FakeStateStore(saved_state)
-        return client, state_store
+    stack = _stack_for_status(first, second)
 
     pinned_state = ReviewState(
         changes={
@@ -439,7 +377,8 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
             "bbbbbbbb5678": CachedChange(bookmark="review/feature-2-bbbbbbbb"),
         }
     )
-    client, state_store = build_client(pinned_state)
+    client = _PrepareStatusClient(stack)
+    state_store = _StateStoreStub(pinned_state)
     _prepare_status_for_test(
         config=RepoConfig(),
         fetch_remote_state=False,
@@ -450,7 +389,8 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
         ("review/feature-1-aaaaaaaa", "review/feature-2-bbbbbbbb"),
     ]
 
-    client, state_store = build_client(
+    client = _PrepareStatusClient(stack)
+    state_store = _StateStoreStub(
         ReviewState(
             changes={"aaaaaaaa1234": CachedChange(bookmark="review/feature-1-aaaaaaaa")}
         )
@@ -462,6 +402,41 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
         state_store=state_store,
     )
     assert client.list_calls == [None]
+
+
+def test_prepare_status_reloads_saved_state_after_fetch() -> None:
+    revision = make_revision(
+        commit_id="commit-1",
+        description="feature 1",
+        change_id="aaaaaaaa1234",
+    )
+    stack = _stack_for_status(revision)
+    stale_state = ReviewState(
+        changes={
+            revision.change_id: CachedChange(bookmark="review/stale", pr_number=1)
+        }
+    )
+    refreshed_state = ReviewState(
+        changes={
+            revision.change_id: CachedChange(bookmark="review/refreshed", pr_number=2)
+        }
+    )
+
+    client = _PrepareStatusClient(stack)
+    state_store = _StateStoreStub(stale_state, refreshed_state)
+
+    prepared_status = _prepare_status_for_test(
+        config=RepoConfig(),
+        fetch_remote_state=True,
+        jj_client=client,
+        state_store=state_store,
+    )
+
+    assert state_store.loads == 2
+    assert client.fetches == ["origin"]
+    assert client.list_calls == [("review/refreshed",)]
+    prepared_revision = prepared_status.prepared.status_revisions[0]
+    assert prepared_revision.cached_change == refreshed_state.changes[revision.change_id]
 
 
 def test_pull_request_lookup_ignores_draft_review_decision() -> None:
@@ -545,6 +520,58 @@ def test_prepare_stack_for_status_does_not_persist_generated_bookmarks() -> None
     assert prepared.state_changes == {}
     assert prepared.status_revisions[0].bookmark_source == "generated"
     assert prepared.status_revisions[0].cached_change is None
+
+
+_STATUS_REMOTE = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
+
+
+def _stack_for_status(*revisions: LocalRevision) -> LocalStack:
+    trunk = make_revision(
+        commit_id="trunk",
+        description="base",
+        change_id="trunkchangeid",
+    )
+    return LocalStack(
+        base_parent=trunk,
+        head=revisions[-1],
+        revisions=tuple(revisions),
+        selected_revset="@",
+        trunk=trunk,
+    )
+
+
+class _PrepareStatusClient:
+    def __init__(self, stack: LocalStack) -> None:
+        self.fetches: list[str] = []
+        self.list_calls: list[tuple[str, ...] | None] = []
+        self._stack = stack
+
+    def discover_review_stack(self, revset, *, allow_divergent=False, allow_immutable=False):
+        return self._stack
+
+    def list_git_remotes(self):
+        return (_STATUS_REMOTE,)
+
+    def fetch_remote(self, *, remote: str) -> None:
+        self.fetches.append(remote)
+
+    def list_bookmark_states(self, bookmarks=None):
+        self.list_calls.append(None if bookmarks is None else tuple(bookmarks))
+        return {}
+
+
+class _StateStoreStub:
+    def __init__(self, *states: ReviewState) -> None:
+        self.loads = 0
+        self._states = states
+
+    def load(self) -> ReviewState:
+        state = self._states[min(self.loads, len(self._states) - 1)]
+        self.loads += 1
+        return state
+
+    def save(self, state: ReviewState) -> None:
+        raise AssertionError("status preparation should not save state")
 
 
 def _prepare_status_for_test(
