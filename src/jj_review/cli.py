@@ -17,9 +17,10 @@ from argparse import (
     Namespace,
     _SubParsersAction,
 )
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from inspect import signature
 from pathlib import Path
 from typing import Any, cast
 
@@ -119,12 +120,25 @@ _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "list": ("ls",),
     "status": ("st",),
 }
+_COMMAND_PARSERS_ATTR = "_jj_review_command_parsers"
 _KNOWN_COMMANDS = frozenset(
     name
     for _, entries in _TOP_LEVEL_HELP_GROUPS
     for entry in entries
     for name in (entry.name, *_COMMAND_ALIASES.get(entry.name, ()))
 )
+type _ArgSource = str | Callable[[Namespace], Any]
+
+
+def _command_parameter_names(function: Callable[..., Any]) -> tuple[str, ...]:
+    return tuple(
+        name
+        for name, parameter in signature(function).parameters.items()
+        if parameter.kind is not parameter.VAR_KEYWORD
+    )
+
+
+_STATUS_HANDLER_ARGS = _command_parameter_names(commands.status.status)
 
 
 class _TopLevelArgumentParser(ArgumentParser):
@@ -174,33 +188,18 @@ def build_parser() -> ArgumentParser:
         help="Show program's version number and exit",
     )
 
-    subparsers = parser.add_subparsers(
+    subcommands = parser.add_subparsers(
         dest="command",
         parser_class=_CommandArgumentParser,
     )
+    setattr(parser, _COMMAND_PARSERS_ATTR, subcommands)
     submit_parser = _add_revision_command(
-        subparsers,
+        subcommands,
         command="submit",
         aliases=_COMMAND_ALIASES["submit"],
         help_text=_normalized_help_text(commands.submit.HELP),
         description_text=commands.submit.__doc__ or "",
-        handler=lambda args: commands.submit.submit(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            describe_with=args.describe_with,
-            draft=args.draft,
-            draft_all=args.draft_all,
-            dry_run=args.dry_run,
-            labels=args.labels,
-            publish=args.publish,
-            re_request=args.re_request,
-            repository=args.repository,
-            restart=args.restart,
-            reviewers=args.reviewers,
-            revset=args.revset,
-            team_reviewers=args.team_reviewers,
-            use_bookmarks=args.use_bookmarks,
-        ),
+        handler=_forward_handler(commands.submit.submit),
         revset_help=(
             t"Revision to submit; defaults to {ui.revset('@-')} (the current stack head)"
         ),
@@ -289,20 +288,15 @@ def build_parser() -> ArgumentParser:
         help="Forget previous PR tracking for selected changes and create fresh PRs",
     )
     status_parser = _add_revision_command(
-        subparsers,
+        subcommands,
         command="status",
         aliases=_COMMAND_ALIASES["status"],
         help_text=_normalized_help_text(commands.status.HELP),
         description_text=commands.status.__doc__ or "",
-        handler=lambda args: commands.status.status(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            fetch=args.fetch,
-            pull_request=args.pull_request,
-            repository=args.repository,
-            revset=args.revset,
-            selectors=getattr(args, "status_selectors", None),
-            verbose=args.verbose,
+        handler=_forward_handler(
+            commands.status.status,
+            *_STATUS_HANDLER_ARGS,
+            selectors=_status_selectors_or_none,
         ),
         revset_help=(
             "Revsets to inspect; can be mixed with repeated --pull-request selectors; "
@@ -329,53 +323,33 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Expand submitted and unsubmitted summary sections; keep native jj log lines",
     )
-    list_parser = subparsers.add_parser(
-        "list",
+    list_parser = _add_command_parser(
+        subcommands,
+        command="list",
         aliases=list(_COMMAND_ALIASES["list"]),
-        help=_normalized_help_text(commands.list_.HELP),
-        description=_normalized_help_text(commands.list_.__doc__ or ""),
+        help_text=_normalized_help_text(commands.list_.HELP),
+        description_text=commands.list_.__doc__ or "",
+        handler=_forward_handler(commands.list_.list_),
     )
-    _add_common_options(list_parser)
-    _normalize_help_action_text(list_parser)
     list_parser.add_argument(
         "-f",
         "--fetch",
         action="store_true",
         help="Fetch first so list uses current remote branch locations",
     )
-    list_parser.set_defaults(
-        handler=lambda args: commands.list_.list_(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            fetch=args.fetch,
-            repository=args.repository,
-        )
-    )
     _add_relink_parser(
-        subparsers,
+        subcommands,
         command="relink",
         help_text=_normalized_help_text(commands.relink.HELP),
         description_text=commands.relink.__doc__ or "",
-        handler=lambda args: commands.relink.relink(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            pull_request=args.pull_request,
-            repository=args.repository,
-            revset=args.revset,
-        ),
+        handler=_forward_handler(commands.relink.relink),
     )
     restart_parser = _add_revision_command(
-        subparsers,
+        subcommands,
         command="restart",
         help_text=_normalized_help_text(commands.restart.HELP),
         description_text=commands.restart.__doc__ or "",
-        handler=lambda args: commands.restart.restart(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            dry_run=args.dry_run,
-            repository=args.repository,
-            revset=args.revset,
-        ),
+        handler=_forward_handler(commands.restart.restart),
         revset_nargs=None,
         revset_help="Stack head to prepare for fresh pull requests",
     )
@@ -385,34 +359,20 @@ def build_parser() -> ArgumentParser:
         help="Show what would be reset without changing tracking data",
     )
     _add_revision_command(
-        subparsers,
+        subcommands,
         command="unlink",
         help_text=_normalized_help_text(commands.unlink.HELP),
         description_text=commands.unlink.__doc__ or "",
-        handler=lambda args: commands.unlink.unlink(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            repository=args.repository,
-            revset=args.revset,
-        ),
+        handler=_forward_handler(commands.unlink.unlink),
         revset_nargs=None,
         revset_help="Revision to unlink",
     )
     land_parser = _add_revision_command(
-        subparsers,
+        subcommands,
         command="land",
         help_text=_normalized_help_text(commands.land.HELP),
         description_text=commands.land.__doc__ or "",
-        handler=lambda args: commands.land.land(
-            dry_run=args.dry_run,
-            bypass_readiness=args.bypass_readiness,
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            pull_request=args.pull_request,
-            repository=args.repository,
-            revset=args.revset,
-            skip_cleanup=args.skip_cleanup,
-        ),
+        handler=_forward_handler(commands.land.land),
         revset_help=(
             t"Revision to land; defaults to {ui.revset('@-')} (the current stack head); "
             t"cannot be combined with {ui.cmd('--pull-request')}"
@@ -440,19 +400,11 @@ def build_parser() -> ArgumentParser:
         help="Keep landed local review bookmarks instead of forgetting them",
     )
     close_parser = _add_revision_command(
-        subparsers,
+        subcommands,
         command="close",
         help_text=_normalized_help_text(commands.close.HELP),
         description_text=commands.close.__doc__ or "",
-        handler=lambda args: commands.close.close(
-            dry_run=args.dry_run,
-            cleanup=args.cleanup,
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            pull_request=args.pull_request,
-            repository=args.repository,
-            revset=args.revset,
-        ),
+        handler=_forward_handler(commands.close.close),
         revset_help=(
             t"Revision to close; defaults to {ui.revset('@-')} (the current stack head); "
             t"cannot be combined with {ui.cmd('--pull-request')}"
@@ -478,27 +430,23 @@ def build_parser() -> ArgumentParser:
         ),
     )
     _add_import_parser(
-        subparsers,
+        subcommands,
         command="import",
         help_text=_normalized_help_text(commands.import_.HELP),
         description_text=commands.import_.__doc__ or "",
-        handler=lambda args: commands.import_.import_(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            fetch=args.fetch,
-            pull_request=args.pull_request,
-            repository=args.repository,
-            revset=args.revset,
-        ),
+        handler=_forward_handler(commands.import_.import_),
     )
 
-    cleanup_parser = subparsers.add_parser(
-        "cleanup",
-        help=_normalized_help_text(cleanup_command.HELP),
-        description=_normalized_help_text(cleanup_command.__doc__ or ""),
+    cleanup_parser = _add_command_parser(
+        subcommands,
+        command="cleanup",
+        help_text=_normalized_help_text(cleanup_command.HELP),
+        description_text=cleanup_command.__doc__ or "",
+        handler=_forward_handler(
+            cleanup_command.cleanup,
+            rebase_revset="rebase",
+        ),
     )
-    _add_common_options(cleanup_parser)
-    _normalize_help_action_text(cleanup_parser)
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -515,49 +463,36 @@ def build_parser() -> ArgumentParser:
             t"defaults to {ui.revset('@-')} when passed without an explicit revset"
         ),
     )
-    cleanup_parser.set_defaults(
-        handler=lambda args: cleanup_command.cleanup(
-            dry_run=args.dry_run,
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            repository=args.repository,
-            rebase_revset=args.rebase,
-        )
+
+    _add_command_parser(
+        subcommands,
+        command="doctor",
+        help_text=_normalized_help_text(commands.doctor.HELP),
+        description_text=commands.doctor.__doc__ or "",
+        handler=_forward_handler(commands.doctor.doctor),
     )
 
-    doctor_parser = subparsers.add_parser(
-        "doctor",
-        help=_normalized_help_text(commands.doctor.HELP),
-        description=_normalized_help_text(commands.doctor.__doc__ or ""),
+    completion_parser = _add_command_parser(
+        subcommands,
+        command="completion",
+        help_text=_COMPLETION_HELP,
+        description_text=_COMPLETION_DESCRIPTION,
+        handler=_completion_handler,
+        common_options=False,
     )
-    _add_common_options(doctor_parser)
-    _normalize_help_action_text(doctor_parser)
-    doctor_parser.set_defaults(
-        handler=lambda args: commands.doctor.doctor(
-            cli_args=_global_cli_args(args),
-            debug=args.debug,
-            repository=args.repository,
-        )
-    )
-
-    completion_parser = subparsers.add_parser(
-        "completion",
-        help=_COMPLETION_HELP,
-        description=_normalized_help_text(_COMPLETION_DESCRIPTION),
-    )
-    _normalize_help_action_text(completion_parser)
     completion_parser.add_argument(
         "shell",
         choices=("bash", "zsh", "fish"),
         help="Shell to generate completion support for",
     )
-    completion_parser.set_defaults(handler=_completion_handler)
-    help_parser = subparsers.add_parser(
-        "help",
-        help=SUPPRESS,
-        description=_normalized_help_text(_HELP_DESCRIPTION),
+    help_parser = _add_command_parser(
+        subcommands,
+        command="help",
+        help_text=SUPPRESS,
+        description_text=_HELP_DESCRIPTION,
+        handler=_help_handler,
+        common_options=False,
     )
-    _normalize_help_action_text(help_parser)
     _add_help_argument(
         help_parser,
         "--all",
@@ -569,7 +504,6 @@ def build_parser() -> ArgumentParser:
         nargs="?",
         help="Command to describe",
     )
-    help_parser.set_defaults(handler=_help_handler)
     return parser
 
 
@@ -843,13 +777,11 @@ def _find_subcommand_parser(
     parser: ArgumentParser,
     command_name: str,
 ) -> ArgumentParser | None:
-    for action in parser._actions:
-        if not isinstance(action, _SubParsersAction):
-            continue
-        parser_choice = action.choices.get(command_name)
-        if parser_choice is not None:
-            return parser_choice
-    return None
+    subcommands = getattr(parser, _COMMAND_PARSERS_ATTR, None)
+    if not isinstance(subcommands, _SubParsersAction):
+        return None
+    parser_choice = subcommands.choices.get(command_name)
+    return parser_choice if isinstance(parser_choice, ArgumentParser) else None
 
 
 def _print_cli_error(error: CliError) -> None:
@@ -1143,66 +1075,87 @@ def _is_grouped_status_flag(arg: str) -> bool:
     return arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) <= {"f", "v", "h"}
 
 
-def _add_revision_command[SubparserT: ArgumentParser](
-    subparsers: _SubParsersAction[SubparserT],
+def _add_command_parser(
+    subcommands: _SubParsersAction[Any],
     *,
     command: str,
     aliases: Sequence[str] = (),
     help_text: str,
     description_text: str,
-    handler,
-    revset_nargs: str | int | None = "?",
-    revset_help: ui.Message | str = "Revision to operate on",
-) -> SubparserT:
-    parser = subparsers.add_parser(
+    handler: Callable[[Namespace], int],
+    common_options: bool = True,
+) -> ArgumentParser:
+    parser = subcommands.add_parser(
         command,
         aliases=list(aliases),
         help=help_text,
         description=_normalized_help_text(description_text),
     )
-    _add_common_options(parser)
+    if common_options:
+        _add_common_options(parser)
     _normalize_help_action_text(parser)
-    _add_help_argument(parser, "revset", nargs=revset_nargs, help=revset_help)
     parser.set_defaults(handler=handler)
     return parser
 
 
-def _add_relink_parser[SubparserT: ArgumentParser](
-    subparsers: _SubParsersAction[SubparserT],
+def _add_revision_command(
+    subcommands: _SubParsersAction[Any],
+    *,
+    command: str,
+    aliases: Sequence[str] = (),
+    help_text: str,
+    description_text: str,
+    handler: Callable[[Namespace], int],
+    revset_nargs: str | int | None = "?",
+    revset_help: ui.Message | str = "Revision to operate on",
+) -> ArgumentParser:
+    parser = _add_command_parser(
+        subcommands,
+        command=command,
+        aliases=aliases,
+        help_text=help_text,
+        description_text=description_text,
+        handler=handler,
+    )
+    _add_help_argument(parser, "revset", nargs=revset_nargs, help=revset_help)
+    return parser
+
+
+def _add_relink_parser(
+    subcommands: _SubParsersAction[Any],
     *,
     command: str,
     help_text: str,
     description_text: str,
-    handler,
-) -> SubparserT:
-    parser = subparsers.add_parser(
-        command,
-        help=help_text,
-        description=_normalized_help_text(description_text),
+    handler: Callable[[Namespace], int],
+) -> ArgumentParser:
+    parser = _add_command_parser(
+        subcommands,
+        command=command,
+        help_text=help_text,
+        description_text=description_text,
+        handler=handler,
     )
-    _add_common_options(parser)
-    _normalize_help_action_text(parser)
     _add_help_argument(parser, "pull_request", help="Pull request number or URL")
     _add_help_argument(parser, "revset", help="Revision to reassociate with the pull request")
-    parser.set_defaults(handler=handler)
     return parser
 
 
-def _add_import_parser[SubparserT: ArgumentParser](
-    subparsers: _SubParsersAction[SubparserT],
+def _add_import_parser(
+    subcommands: _SubParsersAction[Any],
     *,
     command: str,
     help_text: str,
     description_text: str,
-    handler,
-) -> SubparserT:
-    parser = subparsers.add_parser(
-        command,
-        help=help_text,
-        description=_normalized_help_text(description_text),
+    handler: Callable[[Namespace], int],
+) -> ArgumentParser:
+    parser = _add_command_parser(
+        subcommands,
+        command=command,
+        help_text=help_text,
+        description_text=description_text,
+        handler=handler,
     )
-    _add_common_options(parser)
-    _normalize_help_action_text(parser)
     selector = parser.add_mutually_exclusive_group(required=False)
     _add_help_argument(
         selector,
@@ -1225,7 +1178,6 @@ def _add_import_parser[SubparserT: ArgumentParser](
             t"that stack"
         ),
     )
-    parser.set_defaults(handler=handler)
     return parser
 
 
@@ -1357,6 +1309,46 @@ def _extract_config_overrides(argv: Sequence[str]) -> tuple[JjCliArgs, list[str]
 
 def _global_cli_args(args: Namespace) -> JjCliArgs:
     return getattr(args, "cli_args", None) or JjCliArgs()
+
+
+def _status_selectors_or_none(
+    args: Namespace,
+) -> tuple[commands.status.StatusSelector, ...] | None:
+    return getattr(args, "status_selectors", None)
+
+
+def _forward_handler(
+    function: Callable[..., int],
+    *fallback_arg_names: str,
+    **arg_sources: _ArgSource,
+) -> Callable[[Namespace], int]:
+    """Build a command handler that forwards argparse values as keyword arguments."""
+
+    parameters = signature(function).parameters
+    if any(parameter.kind is parameter.VAR_KEYWORD for parameter in parameters.values()):
+        parameter_names = fallback_arg_names
+    else:
+        parameter_names = tuple(
+            name
+            for name, parameter in parameters.items()
+            if parameter.kind is not parameter.VAR_KEYWORD
+        )
+    parameter_sources: dict[str, _ArgSource] = dict(arg_sources)
+    for name in parameter_names:
+        parameter_sources[name] = arg_sources.get(
+            name,
+            _global_cli_args if name == "cli_args" else name,
+        )
+
+    def handler(args: Namespace) -> int:
+        return function(
+            **{
+                name: source(args) if not isinstance(source, str) else getattr(args, source)
+                for name, source in parameter_sources.items()
+            }
+        )
+
+    return handler
 
 
 def _completion_handler(args: Namespace) -> int:
