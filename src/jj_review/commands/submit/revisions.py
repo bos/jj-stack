@@ -9,7 +9,10 @@ from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkS
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult, BookmarkSource
-from jj_review.review.change_status import ReviewChangeStatus, classify_review_change
+from jj_review.review.change_status import (
+    ReviewChangeStatus,
+    classify_review_change_without_pull_request,
+)
 
 from .models import (
     LocalBookmarkAction,
@@ -64,9 +67,9 @@ def prepare_submit_revisions(
         )
         cached_change = bookmark_result.state.changes.get(revision.change_id)
         remote_state = bookmark_state.remote_target(remote.name)
-        review_status = _classify_submit_change(
+        review_status = classify_review_change_without_pull_request(
             cached_change=cached_change,
-            desired_target=revision.commit_id,
+            commit_id=revision.commit_id,
             remote_state=remote_state,
         )
         _ensure_remote_can_be_updated(
@@ -176,21 +179,6 @@ def sync_local_bookmarks(
         )
 
 
-def _classify_submit_change(
-    *,
-    cached_change: CachedChange | None,
-    desired_target: str | None,
-    remote_state: RemoteBookmarkState | None,
-) -> ReviewChangeStatus:
-    return classify_review_change(
-        cached_change=cached_change,
-        commit_id=desired_target,
-        local="present",
-        pull_request_lookup=None,
-        remote_state=remote_state,
-    )
-
-
 def _remote_push_plan(
     *,
     remote_state: RemoteBookmarkState | None,
@@ -228,9 +216,7 @@ def _preflight_atomic_remote_push_plan(
         return
 
     fallback_revisions = tuple(
-        revision
-        for revision in remote_mutations
-        if revision.push_operation == "git_update"
+        revision for revision in remote_mutations if revision.push_operation == "git_update"
     )
     if not fallback_revisions:
         return
@@ -308,9 +294,9 @@ def _cached_change_has_saved_remote_target(
 ) -> bool:
     if cached_change is None:
         return False
-    review_status = _classify_submit_change(
+    review_status = classify_review_change_without_pull_request(
         cached_change=cached_change,
-        desired_target=None,
+        commit_id=None,
         remote_state=None,
     )
     return (
@@ -347,8 +333,7 @@ def _ensure_actual_remote_target_is_safe(
             ),
         )
     raise CliError(
-        t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} points to an "
-        t"unexpected commit.",
+        t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} points to an unexpected commit.",
         hint=(
             t"Fetch and inspect the PR link before submitting again. If this branch "
             t"should stay attached to this change, repair the link with relink."
@@ -427,9 +412,9 @@ def _ensure_remote_can_be_updated(
     review_status: ReviewChangeStatus | None = None,
 ) -> None:
     if review_status is None:
-        review_status = _classify_submit_change(
+        review_status = classify_review_change_without_pull_request(
             cached_change=state.changes.get(change_id),
-            desired_target=desired_target,
+            commit_id=desired_target,
             remote_state=remote_state,
         )
     if review_status.remote_branch == "absent":
@@ -474,15 +459,12 @@ def _bookmark_link_is_proven(
     cached_change = state.changes.get(change_id)
     if cached_change is None:
         return False
-    review_status = _classify_submit_change(
+    review_status = classify_review_change_without_pull_request(
         cached_change=cached_change,
-        desired_target=None,
+        commit_id=None,
         remote_state=None,
     )
-    return (
-        review_status.link == "active"
-        and cached_change.bookmark == bookmark
-    )
+    return review_status.link == "active" and cached_change.bookmark == bookmark
 
 
 def sync_remote_bookmarks(
@@ -563,9 +545,9 @@ def ensure_change_is_not_unlinked(
     cached_change: CachedChange | None,
     change_id: str,
 ) -> None:
-    review_status = _classify_submit_change(
+    review_status = classify_review_change_without_pull_request(
         cached_change=cached_change,
-        desired_target=None,
+        commit_id=None,
         remote_state=None,
     )
     if review_status.link != "unlinked":

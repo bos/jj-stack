@@ -151,12 +151,28 @@ def classify_review_change(
         baseline=_baseline_flags(baseline_disagreement),
         pr_lookup_error=pr_lookup_error,
         pr_review_decision_error=(
-            None
-            if pull_request_lookup is None
-            else pull_request_lookup.review_decision_error
+            None if pull_request_lookup is None else pull_request_lookup.review_decision_error
         ),
         saved_review_identity=_has_saved_review_identity(cached_change),
         saved_pull_request_identity=_has_saved_pull_request_identity(cached_change),
+    )
+
+
+def classify_review_change_without_pull_request(
+    *,
+    cached_change: CachedChange | None = None,
+    commit_id: str | None,
+    local: LocalReviewState = "present",
+    remote_state: RemoteBookmarkState | None,
+) -> ReviewChangeStatus:
+    """Classify review state when pull request data was not loaded."""
+
+    return classify_review_change(
+        cached_change=cached_change,
+        commit_id=commit_id,
+        local=local,
+        pull_request_lookup=None,
+        remote_state=remote_state,
     )
 
 

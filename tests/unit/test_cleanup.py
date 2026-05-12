@@ -25,6 +25,7 @@ from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState
+from jj_review.review.change_status import classify_review_change_without_pull_request
 from jj_review.review.status import PreparedStatus
 from jj_review.state.store import ReviewStateStore
 
@@ -41,9 +42,7 @@ def _fake_context(
             config=RepoConfig() if config is None else config,
             jj_client=cast(JjClient, SimpleNamespace()) if jj_client is None else jj_client,
             state_store=(
-                cast(ReviewStateStore, SimpleNamespace())
-                if state_store is None
-                else state_store
+                cast(ReviewStateStore, SimpleNamespace()) if state_store is None else state_store
             ),
         ),
     )
@@ -108,6 +107,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
         "jj_review.commands.cleanup.command.build_github_client",
         lambda **kwargs: FakeGithubClientContext(),
     )
+
     async def fake_plan_stack_comment_cleanup(**kwargs):
         return StackCommentCleanupPlan(
             actions=(
@@ -119,6 +119,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
             ),
             comments=((12, "navigation"),),
         )
+
     monkeypatch.setattr(
         "jj_review.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {change_id: None for change_id in kwargs["change_ids"]},
@@ -347,8 +348,10 @@ def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned()
         local_bookmark_forget_planned=True,
         remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
         remote_state=remote_state,
-        review_status=cleanup_module._classify_cleanup_change(
+        review_status=classify_review_change_without_pull_request(
             cached_change=cached_change,
+            commit_id=None,
+            local="orphaned",
             remote_state=remote_state,
         ),
     )
@@ -373,8 +376,10 @@ def test_plan_remote_branch_cleanup_skips_records_without_saved_pr_number() -> N
         local_bookmark_forget_planned=True,
         remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
         remote_state=remote_state,
-        review_status=cleanup_module._classify_cleanup_change(
+        review_status=classify_review_change_without_pull_request(
             cached_change=cached_change,
+            commit_id=None,
+            local="orphaned",
             remote_state=remote_state,
         ),
     )

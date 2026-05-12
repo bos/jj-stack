@@ -44,7 +44,7 @@ from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import is_review_bookmark
 from jj_review.review.change_status import (
     ReviewChangeStatus,
-    classify_review_change,
+    classify_review_change_without_pull_request,
     is_open_pr_record,
 )
 from jj_review.state.journal import (
@@ -299,8 +299,10 @@ def _run_local_cleanup_pass(
             if prepared_cleanup.remote is None
             else bookmark_state.remote_target(prepared_cleanup.remote.name)
         )
-        review_status = _classify_cleanup_change(
+        review_status = classify_review_change_without_pull_request(
             cached_change=cached_change,
+            commit_id=None,
+            local="orphaned",
             remote_state=remote_state,
         )
         prepared_change = PreparedCleanupChange(
@@ -787,20 +789,6 @@ def _stale_change_reasons(
                 "local change no longer participates in a supported review stack"
             )
     return reasons
-
-
-def _classify_cleanup_change(
-    *,
-    cached_change: CachedChange,
-    remote_state: RemoteBookmarkState | None,
-) -> ReviewChangeStatus:
-    return classify_review_change(
-        cached_change=cached_change,
-        commit_id=None,
-        local="orphaned",
-        pull_request_lookup=None,
-        remote_state=remote_state,
-    )
 
 
 def _remote_cleanup_target(

@@ -42,7 +42,7 @@ from jj_review.review.bookmarks import (
     bookmark_ownership_for_source,
     discover_bookmarks_for_revisions,
 )
-from jj_review.review.change_status import ReviewChangeStatus, classify_review_change
+from jj_review.review.change_status import classify_review_change_without_pull_request
 from jj_review.review.status import (
     PreparedStatus,
     StatusResult,
@@ -173,9 +173,7 @@ def _print_import_result(result: ImportResult) -> None:
             )
     else:
         if result.reviewable_revision_count:
-            console.output(
-                "Local tracking is already up to date for this stack."
-            )
+            console.output("Local tracking is already up to date for this stack.")
         else:
             console.output("The selected stack has no changes to review.")
 
@@ -351,8 +349,7 @@ async def _resolve_selection(
         pull_request_flag = ui.cmd("--pull-request")
         revset_flag = ui.cmd("--revset")
         raise CliError(
-            t"{import_cmd} accepts at most one selector: {pull_request_flag} or "
-            t"{revset_flag}."
+            t"{import_cmd} accepts at most one selector: {pull_request_flag} or {revset_flag}."
         )
 
     if selector_count == 0:
@@ -461,8 +458,7 @@ def _fetch_selected_stack_bookmarks(
             {
                 f"refs/heads/{explicit_head_bookmark}",
                 *(
-                    f"refs/heads/{prefix}/*-"
-                    f"{revision.change_id[:_DISPLAY_CHANGE_ID_LENGTH]}"
+                    f"refs/heads/{prefix}/*-{revision.change_id[:_DISPLAY_CHANGE_ID_LENGTH]}"
                     for revision in revisions
                 ),
             }
@@ -504,8 +500,8 @@ def _fetch_selected_stack_bookmarks(
     bookmark_states = client.list_bookmark_states(tuple(sorted(selected_branch_targets)))
     branches_to_fetch: list[str] = []
     for bookmark, target in sorted(selected_branch_targets.items()):
-        remote_status = _classify_import_remote_branch(
-            desired_commit_id=target,
+        remote_status = classify_review_change_without_pull_request(
+            commit_id=target,
             remote_state=bookmark_states.get(
                 bookmark,
                 BookmarkState(name=bookmark),
@@ -585,9 +581,7 @@ async def _load_pull_request(
                 pull_number=pull_request_number,
             )
         except GithubClientError as error:
-            raise CliError(
-                f"Could not load pull request #{pull_request_number}"
-            ) from error
+            raise CliError(f"Could not load pull request #{pull_request_number}") from error
 
     if pull_request.head.label != f"{github_repository.owner}:{pull_request.head.ref}":
         pull_request_head = ui.bookmark(pull_request.head.label or pull_request.head.ref)
@@ -628,8 +622,8 @@ def _remote_bookmark_commit_id(
 ) -> str:
     bookmark_token = ui.bookmark(head)
     remote_token = ui.bookmark(remote.name)
-    remote_status = _classify_import_remote_branch(
-        desired_commit_id=None,
+    remote_status = classify_review_change_without_pull_request(
+        commit_id=None,
         remote_state=remote_state,
     )
     if remote_status.remote_branch == "absent":
@@ -686,8 +680,7 @@ def _import_local_state(
         if bookmark in seen_bookmarks:
             bookmark_token = ui.bookmark(bookmark)
             raise CliError(
-                t"Selected stack resolves multiple changes to the same bookmark "
-                t"{bookmark_token}."
+                t"Selected stack resolves multiple changes to the same bookmark {bookmark_token}."
             )
         seen_bookmarks.add(bookmark)
 
@@ -703,8 +696,8 @@ def _import_local_state(
             if prepared.remote is not None
             else None
         )
-        remote_status = _classify_import_remote_branch(
-            desired_commit_id=prepared_revision.revision.commit_id,
+        remote_status = classify_review_change_without_pull_request(
+            commit_id=prepared_revision.revision.commit_id,
             remote_state=remote_state,
         )
         track_remote = (
@@ -800,8 +793,8 @@ def _validate_bookmark_state(
     if selected_remote_name is None:
         return
     remote_state = bookmark_state.remote_target(selected_remote_name)
-    remote_status = _classify_import_remote_branch(
-        desired_commit_id=desired_commit_id,
+    remote_status = classify_review_change_without_pull_request(
+        commit_id=desired_commit_id,
         remote_state=remote_state,
     )
     if remote_status.remote_branch == "absent":
@@ -841,9 +834,7 @@ def _update_cached_change_from_status(
     updated_change = cached_change.model_copy(
         update={
             "bookmark": bookmark,
-            "bookmark_ownership": bookmark_ownership_for_source(
-                status_revision.bookmark_source
-            ),
+            "bookmark_ownership": bookmark_ownership_for_source(status_revision.bookmark_source),
         }
     )
     if cached_change.is_unlinked:
@@ -851,9 +842,7 @@ def _update_cached_change_from_status(
     pull_request_lookup = status_revision.pull_request_lookup
     if pull_request_lookup is not None:
         if pull_request_lookup.state == "missing":
-            updated_change = (
-                updated_change.with_cleared_pr_identity().with_cleared_comments()
-            )
+            updated_change = updated_change.with_cleared_pr_identity().with_cleared_comments()
         elif pull_request_lookup.pull_request is not None:
             pull_request = pull_request_lookup.pull_request
             updated_change = updated_change.model_copy(
@@ -905,27 +894,13 @@ def _prepared_status_has_discoverable_remote_link(
             BookmarkState(name=revision.bookmark),
         ).remote_target(remote.name)
         revision_value = getattr(revision, "revision", None)
-        remote_status = _classify_import_remote_branch(
-            desired_commit_id=getattr(revision_value, "commit_id", None),
+        remote_status = classify_review_change_without_pull_request(
+            commit_id=getattr(revision_value, "commit_id", None),
             remote_state=remote_state,
         )
         if remote_status.remote_branch != "absent":
             return True
     return False
-
-
-def _classify_import_remote_branch(
-    *,
-    desired_commit_id: str | None,
-    remote_state: RemoteBookmarkState | None,
-) -> ReviewChangeStatus:
-    return classify_review_change(
-        cached_change=None,
-        commit_id=desired_commit_id,
-        local="present",
-        pull_request_lookup=None,
-        remote_state=remote_state,
-    )
 
 
 def _ensure_selected_head_has_pull_request(
@@ -985,8 +960,8 @@ def _resolve_import_bookmark(
         return bookmark
     bookmark_state = bookmark_states.get(bookmark, BookmarkState(name=bookmark))
     remote_state = bookmark_state.remote_target(selected_remote_name)
-    remote_status = _classify_import_remote_branch(
-        desired_commit_id=prepared_revision.revision.commit_id,
+    remote_status = classify_review_change_without_pull_request(
+        commit_id=prepared_revision.revision.commit_id,
         remote_state=remote_state,
     )
     if remote_status.remote_branch in {"absent", "conflicted"}:
