@@ -123,6 +123,7 @@ async def execute_land_plan(
     state_dir = prepared.state_store.require_writable()
     journal = OperationJournal.begin(
         state_dir,
+        durable=execution_plan.push_trunk,
         operation="land",
         options={
             "bypass_readiness": prepared_land.bypass_readiness,
@@ -211,6 +212,7 @@ async def execute_land_plan(
                 revision.change_id for revision in execution_plan.planned_revisions
             )
         },
+        durable=execution_plan.push_trunk,
     )
     return land_result(
         actions=execution_plan.completed_actions(actions=tuple(actions)),
@@ -291,6 +293,7 @@ async def _apply_trunk_transition(
             "mutation": "push_trunk",
             "trunk_branch": trunk_branch,
         },
+        durable=True,
     )
     actions.append(trunk_action)
     return False

@@ -277,8 +277,10 @@ companion file records the owning command, PID, and start time for diagnostics. 
 cache write and skips that write with a diagnostic if another operation is running.
 
 Mutating commands append operation events to the repo-level `operation-log.jsonl` audit log.
-The log is not a topology source of truth and does not drive retry behavior; it is evidence
-for explaining what happened after the fact.
+The log is not a topology source of truth and is mostly evidence for explaining what
+happened after the fact. The one retry carve-out is `land`: after a trunk push succeeds,
+the log can prove that a rerun should finish the exact remaining PR/state/bookmark
+finalization instead of attempting trunk movement again.
 
 ## Submission algorithm
 

@@ -266,9 +266,14 @@ while another mutation is running. The operation lock replaces same-kind PID wai
 `land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `close`, and orphaned
 `close --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
 events to `operation-log.jsonl` for after-the-fact inspection. Retry behavior derives from
-the current jj DAG, saved tracking data, GitHub state, explicit user selectors, and, for
-`land`, operation-log evidence that an unfinished run already pushed trunk. The log is
-audit evidence, not a retained recovery model.
+the current jj DAG, saved tracking data, GitHub state, and explicit user selectors. The
+log is primarily audit evidence and is not a generic recovery model; the one carve-out is
+`land`, which consults the log to detect that an unfinished run already pushed trunk so a
+rerun finishes the remaining work instead of attempting trunk movement a second time. To
+keep that single recovery path reliable across crashes without slowing every audit append,
+trunk-moving `land` runs fsync the begin event, the pushed-trunk event, and the completed
+marker. When a durable append creates `operation-log.jsonl`, it also fsyncs the state
+directory on platforms that support directory fsync.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jj_review.models.review_state import CachedChange
+from jj_review.state import journal as journal_module
 from jj_review.state.journal import (
     OPERATION_LOG_FILENAME,
     OperationJournal,
@@ -65,3 +68,48 @@ def test_operation_journal_uses_one_repo_log(tmp_path: Path) -> None:
         "submit",
         "cleanup",
     ]
+
+
+def test_operation_journal_does_not_fsync_audit_events_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fsync_calls: list[int] = []
+    directory_fsyncs: list[Path] = []
+
+    monkeypatch.setattr(journal_module.os, "fsync", fsync_calls.append)
+    monkeypatch.setattr(journal_module, "_fsync_directory", directory_fsyncs.append)
+
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="submit",
+        options={},
+        resolved_scope={},
+    )
+    journal.append("completed", {"ok": True})
+
+    assert fsync_calls == []
+    assert directory_fsyncs == []
+
+
+def test_operation_journal_durable_append_fsyncs_new_log_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fsync_calls: list[int] = []
+    directory_fsyncs: list[Path] = []
+
+    monkeypatch.setattr(journal_module.os, "fsync", fsync_calls.append)
+    monkeypatch.setattr(journal_module, "_fsync_directory", directory_fsyncs.append)
+
+    journal = OperationJournal.begin(
+        tmp_path,
+        durable=True,
+        operation="land",
+        options={},
+        resolved_scope={},
+    )
+    journal.append("completed", {"ok": True}, durable=True)
+
+    assert len(fsync_calls) == 2
+    assert directory_fsyncs == [tmp_path]

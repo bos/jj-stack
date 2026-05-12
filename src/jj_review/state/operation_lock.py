@@ -112,13 +112,18 @@ def try_acquire_operation_lock(
         lock_file.close()
         return None
 
-    _cleanup_dead_holder(holder_path)
-    holder = OperationLockHolder(
-        command=command,
-        pid=os.getpid(),
-        started_at=datetime.now(UTC).isoformat(),
-    )
-    _write_holder(holder_path, holder)
+    try:
+        _cleanup_dead_holder(holder_path)
+        holder = OperationLockHolder(
+            command=command,
+            pid=os.getpid(),
+            started_at=datetime.now(UTC).isoformat(),
+        )
+        _write_holder(holder_path, holder)
+    except BaseException:
+        _unlock_file(lock_file)
+        lock_file.close()
+        raise
     return OperationLock(file=lock_file, holder=holder, holder_path=holder_path)
 
 
@@ -221,8 +226,13 @@ def _clear_holder_if_owned(holder_path: Path, holder: OperationLockHolder) -> No
 def _operation_lock_busy_message(holder: OperationLockHolder | None) -> str:
     if holder is None:
         return "Another jj-review operation is already running."
-    message = (
+    if not pid_is_alive(holder.pid):
+        return (
+            f"Operation lock is held but the recorded {holder.command} holder "
+            f"(PID {holder.pid}, started {holder.started_at}) is no longer running. "
+            f"Wait for the previous process to exit or retry shortly."
+        )
+    return (
         f"Another jj-review {holder.command} operation is already running "
         f"(PID {holder.pid}, started {holder.started_at})."
     )
-    return message

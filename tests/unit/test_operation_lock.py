@@ -5,10 +5,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from jj_review.state import operation_lock as operation_lock_module
 from jj_review.state.operation_lock import (
     HOLDER_FILENAME,
+    LOCK_FILENAME,
     acquire_operation_lock,
     read_operation_lock_holder,
+    try_acquire_operation_lock,
 )
 
 
@@ -96,3 +101,60 @@ def test_operation_lock_replaces_dead_pid_holder_file(tmp_path: Path) -> None:
     assert holder.command == "next"
     assert holder.pid != 99_999_999
     assert not holder_path.exists()
+
+
+def test_operation_lock_releases_file_lock_when_holder_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / "state"
+
+    def _explode(*_args, **_kwargs) -> None:
+        raise OSError("simulated holder write failure")
+
+    monkeypatch.setattr(operation_lock_module, "_write_holder", _explode)
+
+    with pytest.raises(OSError, match="simulated holder write failure"):
+        try_acquire_operation_lock(state_dir, command="first")
+
+    monkeypatch.undo()
+
+    completed = _run_lock_script(
+        """
+from pathlib import Path
+import sys
+from jj_review.state.operation_lock import try_acquire_operation_lock
+
+lock = try_acquire_operation_lock(Path(sys.argv[1]), command="next")
+if lock is None:
+    raise SystemExit(2)
+lock.release()
+raise SystemExit(0)
+""",
+        state_dir,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_operation_lock_busy_message_flags_dead_holder_pid(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / LOCK_FILENAME).touch()
+    (state_dir / HOLDER_FILENAME).write_text(
+        json.dumps(
+            {
+                "command": "land",
+                "pid": 99_999_999,
+                "started_at": "2026-05-12T12:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    holder = read_operation_lock_holder(state_dir)
+    assert holder is not None
+    message = operation_lock_module._operation_lock_busy_message(holder)
+    assert "no longer running" in message
+    assert "PID 99999999" in message

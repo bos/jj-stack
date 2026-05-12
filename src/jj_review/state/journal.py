@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +53,7 @@ class OperationJournal:
         cls,
         state_dir: Path,
         *,
+        durable: bool = False,
         operation: str,
         options: dict[str, Any],
         resolved_scope: dict[str, Any],
@@ -71,10 +73,17 @@ class OperationJournal:
                 "options": options,
                 "resolved_scope": resolved_scope,
             },
+            durable=durable,
         )
         return journal
 
-    def append(self, event: JournalEventKind, data: dict[str, Any]) -> None:
+    def append(
+        self,
+        event: JournalEventKind,
+        data: dict[str, Any],
+        *,
+        durable: bool = False,
+    ) -> None:
         """Append one event to the repo operation log."""
 
         _append_event(
@@ -86,6 +95,7 @@ class OperationJournal:
                 timestamp=datetime.now(UTC).isoformat(),
                 data=data,
             ),
+            durable=durable,
         )
 
 
@@ -116,11 +126,28 @@ def _read_events(path: Path) -> tuple[JournalEvent, ...]:
     return tuple(events)
 
 
-def _append_event(path: Path, entry: JournalEvent) -> None:
+def _append_event(path: Path, entry: JournalEvent, *, durable: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(_jsonable(asdict(entry)), sort_keys=True) + "\n"
+    created_log = not path.exists()
     with path.open("a", encoding="utf-8") as output:
-        output.write(json.dumps(_jsonable(asdict(entry)), sort_keys=True))
-        output.write("\n")
+        output.write(payload)
+        if durable:
+            output.flush()
+            os.fsync(output.fileno())
+    if durable and created_log:
+        _fsync_directory(path.parent)
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _jsonable(value):
