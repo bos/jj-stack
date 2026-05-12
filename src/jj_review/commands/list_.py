@@ -18,6 +18,7 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_review.console import requested_color_mode
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo, select_submit_remote
@@ -30,7 +31,6 @@ from jj_review.review.change_status import (
     classify_review_status_revision,
     classify_saved_review_change,
     enumerate_orphaned_records,
-    submitted_state_disagreement,
 )
 from jj_review.review.discovery import discover_tracked_stacks
 from jj_review.review.status import (
@@ -123,8 +123,7 @@ def _run_list(
         jj_client=context.jj_client,
     )
     orphan_rows = tuple(
-        _build_orphan_row(orphan)
-        for orphan in enumerate_orphaned_records(state, ordered)
+        _build_orphan_row(orphan) for orphan in enumerate_orphaned_records(state, ordered)
     )
     if not ordered:
         if not orphan_rows:
@@ -214,11 +213,7 @@ def _build_orphan_row(orphan) -> OrphanRow:
     pr_number = orphan.cached_change.pr_number
     return OrphanRow(
         change_id=orphan.change_id,
-        hint=(
-            f"close --cleanup --pull-request {pr_number}"
-            if pr_number is not None
-            else None
-        ),
+        hint=(f"close --cleanup --pull-request {pr_number}" if pr_number is not None else None),
         review=f"PR #{pr_number}" if pr_number is not None else "(no PR number)",
         state=ui.semantic_text("orphan", "warning", "heading"),
         subject="local change missing",
@@ -245,31 +240,11 @@ def _emit_stale_stacks_advisory(
     than naming one mutation.
     """
 
-    stale_heads = tuple(
-        stack.head.change_id
-        for stack in discovered
-        if submitted_state_disagreement(state, (stack,))
-    )
-    if not stale_heads:
-        return
-    if len(stale_heads) == 1:
-        head = stale_heads[0][:8]
-        console.warning(
-            (
-                "Tracked stack has changed since its last submit; ",
-                t"inspect with {ui.cmd(f'jj-review status {head}')} or refresh with "
-                t"{ui.cmd(f'jj-review submit {head}')}.",
-            )
-        )
-        return
-    heads_fragments = ui.join(ui.change_id, stale_heads)
-    console.warning(
-        (
-            "Tracked stacks have changed since their last submit; ",
-            t"inspect with {ui.cmd('jj-review status <head>')} or refresh with "
-            t"{ui.cmd('jj-review submit <head>')}: ",
-            *heads_fragments,
-        )
+    emit_stale_stacks_advisory(
+        stacks=discovered,
+        state=state,
+        single_subject="Tracked stack",
+        plural_subject="Tracked stacks",
     )
 
 
@@ -456,9 +431,7 @@ def _status_fragments(
         label = "ambiguous PR" if ambiguous == 1 else f"{ambiguous} ambiguous PRs"
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    lookup_failures = sum(
-        1 for status in statuses if status.has_pull_request_lookup_failure
-    )
+    lookup_failures = sum(1 for status in statuses if status.has_pull_request_lookup_failure)
     if lookup_failures:
         label = (
             "GitHub lookup failed"
@@ -473,9 +446,7 @@ def _status_fragments(
         fragments.append(ui.semantic_text(label, "hint", "heading"))
 
     open_non_draft_decisions = tuple(
-        status.pr_review_decision
-        for status in statuses
-        if _is_open_published(status)
+        status.pr_review_decision for status in statuses if _is_open_published(status)
     )
     changes_requested = sum(
         1 for decision in open_non_draft_decisions if decision == "changes_requested"

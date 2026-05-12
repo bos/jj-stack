@@ -16,6 +16,7 @@ from typing import Literal
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.formatting import (
@@ -36,7 +37,6 @@ from jj_review.review.change_status import (
     SubmittedStateDisagreement,
     classify_review_status_revision,
     classify_saved_review_change,
-    submitted_state_disagreement,
 )
 from jj_review.review.discovery import discover_connected_tracked_stacks
 from jj_review.review.selection import (
@@ -236,31 +236,11 @@ def _emit_connected_stale_stacks_advisory(
     )
     if not other_stacks:
         return
-    stale_heads = tuple(
-        stack.head.change_id
-        for stack in other_stacks
-        if submitted_state_disagreement(state, (stack,))
-    )
-    if not stale_heads:
-        return
-    if len(stale_heads) == 1:
-        head = stale_heads[0][:8]
-        console.warning(
-            (
-                "Other tracked stack has changed since its last submit; ",
-                t"inspect with {ui.cmd(f'jj-review status {head}')} or refresh with "
-                t"{ui.cmd(f'jj-review submit {head}')}.",
-            )
-        )
-        return
-    heads_fragments = ui.join(ui.change_id, stale_heads)
-    console.warning(
-        (
-            "Other tracked stacks have changed since their last submit; ",
-            t"inspect with {ui.cmd('jj-review status <head>')} or refresh with "
-            t"{ui.cmd('jj-review submit <head>')}: ",
-            *heads_fragments,
-        )
+    emit_stale_stacks_advisory(
+        stacks=other_stacks,
+        state=state,
+        single_subject="Other tracked stack",
+        plural_subject="Other tracked stacks",
     )
 
 
@@ -665,8 +645,7 @@ def render_status_advisory_lines(
     divergent_revisions = [
         classified
         for classified in classified_revisions
-        if classified.status.local == "divergent"
-        and classified.status.pr_lifecycle != "merged"
+        if classified.status.local == "divergent" and classified.status.pr_lifecycle != "merged"
     ]
     link_revisions = [
         classified
@@ -897,11 +876,7 @@ def _link_advisory_summary_row(
     change_phrase = _link_advisory_change_phrase(link_revisions)
     restart_submit_command = ui.cmd(f"jj-review submit --restart {selected_revset}")
     if states == {"closed"}:
-        label = (
-            "Closed GitHub PR"
-            if len(link_revisions) == 1
-            else "Closed GitHub PRs"
-        )
+        label = "Closed GitHub PR" if len(link_revisions) == 1 else "Closed GitHub PRs"
         closed_phrase = "a closed PR" if len(link_revisions) == 1 else "closed PRs"
         detail = (
             f"GitHub reports {closed_phrase} for {change_phrase}; submit will not "
@@ -917,18 +892,13 @@ def _link_advisory_summary_row(
             "GitHub did not report a PR for the remembered review branch of "
             f"{change_phrase}. Run ",
             ui.cmd("jj-review status --fetch <change>"),
-            " if branch state may be stale. Relink an open PR if one exists; "
-            "otherwise run ",
+            " if branch state may be stale. Relink an open PR if one exists; otherwise run ",
             restart_submit_command,
             " to create fresh PRs.",
         )
         return label, detail
     if states == {"ambiguous"}:
-        label = (
-            "Ambiguous GitHub PR"
-            if len(link_revisions) == 1
-            else "Ambiguous GitHub PRs"
-        )
+        label = "Ambiguous GitHub PR" if len(link_revisions) == 1 else "Ambiguous GitHub PRs"
         detail = (
             "GitHub reports multiple PRs for the remembered review branch of "
             f"{change_phrase}. Run ",
@@ -1089,9 +1059,7 @@ def _format_status_summary(
             is_draft=False,
         )
         if change_status.pr_lifecycle == "merged":
-            summary = (
-                f"{pr_label} merged into {lookup.pull_request.base.ref}, cleanup needed"
-            )
+            summary = f"{pr_label} merged into {lookup.pull_request.base.ref}, cleanup needed"
         else:
             summary = f"{pr_label} closed"
     else:
@@ -1197,8 +1165,7 @@ def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> object:
         cached_change = revision.cached_change
         if cached_change is not None and cached_change.pr_number is not None:
             return (
-                f"GitHub did not report remembered PR #{cached_change.pr_number} "
-                "for this branch"
+                f"GitHub did not report remembered PR #{cached_change.pr_number} for this branch"
             )
         cached_label = _format_cached_pull_request_label(cached_change)
         if cached_label is None:
