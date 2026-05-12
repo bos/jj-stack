@@ -24,6 +24,7 @@ from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._action_recorder import ActionRecorder
 from jj_review.commands._close_actions import comment_matches_kind as _comment_matches_kind
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.errors import CliError, ErrorMessage, error_message
@@ -65,7 +66,6 @@ from .shared import (
     StackCommentCleanupEligibility,
     StackCommentCleanupPlan,
     _build_action_streamer,
-    _CleanupActionRecorder,
     _emit_output_lines,
     _emit_severity_lines,
     _render_cleanup_action_header,
@@ -194,7 +194,7 @@ async def _run_cleanup_async(
     stale_reasons: dict[str, str | None] | None = None,
 ) -> CleanupResult:
     next_changes = dict(prepared_cleanup.state.changes)
-    recorder = _CleanupActionRecorder(on_action=on_action)
+    recorder = ActionRecorder[CleanupAction](on_action=on_action)
     dry_run = prepared_cleanup.dry_run
 
     # Write an operation journal before the first mutation on live runs only.

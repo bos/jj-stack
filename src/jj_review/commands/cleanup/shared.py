@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from jj_review import console, ui
@@ -143,22 +143,6 @@ class _RebaseOperationPlan:
     merged_revisions: tuple[ReviewStatusRevision, ...]
     pre_actions: tuple[CleanupAction, ...]
     rebase_plans: tuple[tuple[str, str | None], ...]
-
-
-@dataclass(slots=True)
-class _CleanupActionRecorder:
-    """Collect cleanup actions and optionally stream them as they are recorded."""
-
-    on_action: Callable[[CleanupAction], None] | None
-    actions: list[CleanupAction] = field(default_factory=list)
-
-    def record(self, action: CleanupAction) -> None:
-        self.actions.append(action)
-        if self.on_action is not None:
-            self.on_action(action)
-
-    def as_tuple(self) -> tuple[CleanupAction, ...]:
-        return tuple(self.actions)
 
 
 def _render_cleanup_action_header(*, dry_run: bool) -> str:

@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
+from jj_review.commands._action_recorder import ActionRecorder
 from jj_review.commands._close_actions import (
     BookmarkCleanupPlan as _BookmarkCleanupPlan,
     CloseAction,
@@ -99,25 +100,6 @@ class PreparedClose:
     context: CommandContext
     dry_run: bool
     prepared_status: PreparedStatus
-
-
-@dataclass(slots=True)
-class _CloseActionRecorder:
-    """Collect close actions and track whether any step blocked progress."""
-
-    on_action: Callable[[CloseAction], None] | None
-    actions: list[CloseAction] = field(default_factory=list)
-    blocked: bool = False
-
-    def record(self, action: CloseAction) -> None:
-        if action.status == "blocked":
-            self.blocked = True
-        self.actions.append(action)
-        if self.on_action is not None:
-            self.on_action(action)
-
-    def as_tuple(self) -> tuple[CloseAction, ...]:
-        return tuple(self.actions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,9 +295,7 @@ def _resolve_close_target(
             pull_request_reference=pull_request,
             revset=revset,
         )
-        console.note(
-            t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
-        )
+        console.note(t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}")
         return _CloseSelectedStack(revset=resolved_revset)
 
     return _CloseSelectedStack(
@@ -522,7 +502,10 @@ async def _stream_close_async(
     prepared_status = prepared_close.prepared_status
     github_repository = prepared_status.github_repository
 
-    recorder = _CloseActionRecorder(on_action=on_action)
+    recorder = ActionRecorder[CloseAction](
+        on_action=on_action,
+        blocks=lambda action: action.status == "blocked",
+    )
 
     if not status_result.revisions:
         return _close_result(
@@ -703,7 +686,7 @@ async def _process_close_revisions(
     github_repository,
     on_revision_complete: Callable[[], None] | None,
     prepared_close: PreparedClose,
-    recorder: _CloseActionRecorder,
+    recorder: ActionRecorder[CloseAction],
     revisions,
 ) -> bool:
     """Process each revision in order, stopping on the first fail-closed block."""
@@ -1131,9 +1114,7 @@ async def _cleanup_revision(
         or cached_change.overview_comment_id is not None
         or cleared_comment
     ):
-        context.next_changes[context.revision.change_id] = (
-            cached_change.with_cleared_comments()
-        )
+        context.next_changes[context.revision.change_id] = cached_change.with_cleared_comments()
 
 
 def _plan_review_bookmark_cleanup(

@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext
+from jj_review.commands._action_recorder import ActionRecorder
 from jj_review.jj import JjClient
 from jj_review.jj.client import UnsupportedStackError
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
@@ -29,7 +30,6 @@ from .shared import (
     RebaseResult,
     _build_action_streamer,
     _ClassifiedCleanupRebaseRevision,
-    _CleanupActionRecorder,
     _emit_output_lines,
     _emit_severity_lines,
     _rebase_destination_template,
@@ -140,7 +140,7 @@ def _stream_rebase(
         prepared_status=prepared_status,
         status_result=status_result,
     )
-    recorder = _CleanupActionRecorder(on_action=on_action)
+    recorder = ActionRecorder[CleanupAction](on_action=on_action)
 
     if status_result.github_error is not None or status_result.github_repository is None:
         recorder.record(

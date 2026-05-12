@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext
+from jj_review.commands._action_recorder import ActionRecorder
 from jj_review.commands._close_actions import (
     BookmarkCleanupPlan as _OrphanBookmarkCleanupPlan,
     CloseAction,
@@ -61,22 +62,6 @@ class _ResolvedOrphanedComment:
 
     comment: GithubIssueComment
     kind: StackCommentKind
-
-
-@dataclass(slots=True)
-class _OrphanActionRecorder:
-    """Collect orphan-close actions and track whether any step blocked progress."""
-
-    actions: list[CloseAction]
-    blocked: bool = False
-
-    def record(self, action: CloseAction) -> None:
-        if action.status == "blocked":
-            self.blocked = True
-        self.actions.append(action)
-
-    def as_tuple(self) -> tuple[CloseAction, ...]:
-        return tuple(self.actions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,7 +233,7 @@ async def run_orphan_close(
     if cleanup_bookmark:
         jj_client.fetch_remote(remote=remote.name, branches=(bookmark,))
     bookmark_state = jj_client.get_bookmark_state(bookmark)
-    recorder = _OrphanActionRecorder(actions=[])
+    recorder = ActionRecorder[CloseAction](blocks=lambda action: action.status == "blocked")
     run = _OrphanCloseRun(
         context=context,
         dry_run=dry_run,
@@ -422,7 +407,7 @@ def _retire_blocked_orphan_close_tracking(
     cached_change: CachedChange,
     change_id: str,
     inspection: _OrphanedPullRequestInspection | None,
-    recorder: _OrphanActionRecorder,
+    recorder: ActionRecorder[CloseAction],
     revision_label: Message,
     run: _OrphanCloseRun,
     state: ReviewState,
@@ -456,7 +441,7 @@ def _preflight_orphan_bookmark_cleanup(
     bookmark: str,
     bookmark_state: BookmarkState,
     cached_change: CachedChange,
-    recorder: _OrphanActionRecorder,
+    recorder: ActionRecorder[CloseAction],
     remote_name: str,
     run: _OrphanCloseRun,
     saved_commit_id: str | None,
@@ -480,8 +465,10 @@ def _preflight_orphan_bookmark_cleanup(
             )
         )
     if saved_commit_id is None:
-        if bookmark_state.local_target is not None or bookmark_state.local_targets or (
-            review_status.remote_branch != "absent"
+        if (
+            bookmark_state.local_target is not None
+            or bookmark_state.local_targets
+            or (review_status.remote_branch != "absent")
         ):
             recorder.record(
                 CloseAction(
@@ -511,7 +498,7 @@ def _plan_orphan_bookmark_cleanup(
     bookmark_state: BookmarkState,
     cached_change: CachedChange,
     commit_id: str,
-    recorder: _OrphanActionRecorder,
+    recorder: ActionRecorder[CloseAction],
     remote_name: str,
     run: _OrphanCloseRun,
 ) -> _OrphanBookmarkCleanupPlan:
@@ -534,7 +521,7 @@ async def _preflight_orphaned_comment_cleanup(
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     pull_request_number: int,
-    recorder: _OrphanActionRecorder,
+    recorder: ActionRecorder[CloseAction],
 ) -> tuple[_ResolvedOrphanedComment, ...]:
     resolved_comments: list[_ResolvedOrphanedComment] = []
     for kind, cached_comment_id in (
@@ -561,7 +548,7 @@ async def _apply_orphaned_comment_cleanup(
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
     pull_request_number: int,
-    recorder: _OrphanActionRecorder,
+    recorder: ActionRecorder[CloseAction],
     resolved_comments: tuple[_ResolvedOrphanedComment, ...],
     run: _OrphanCloseRun,
 ) -> None:
