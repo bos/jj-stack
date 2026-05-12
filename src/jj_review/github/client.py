@@ -5,17 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import subprocess
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import urlparse
 
 import httpxyz
 from pydantic import BaseModel, Field, ValidationError
 
+from jj_review.github.auth import github_token_for_base_url
 from jj_review.models.github import (
     GithubIssueComment,
     GithubPullRequest,
@@ -879,49 +877,8 @@ def _pull_request_connection_from_graphql(
 def build_github_client(*, base_url: str) -> GithubClient:
     return GithubClient(
         base_url=base_url,
-        token=_github_token_for_base_url(base_url),
+        token=github_token_for_base_url(base_url),
     )
-
-
-def github_token_from_env() -> str | None:
-    return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-
-
-def _github_token_for_base_url(base_url: str) -> str | None:
-    if token := github_token_from_env():
-        return token
-    if hostname := _github_hostname_from_api_base_url(base_url):
-        return _github_token_from_gh_cli(hostname)
-    return None
-
-
-def _github_hostname_from_api_base_url(base_url: str) -> str | None:
-    hostname = urlparse(base_url).hostname
-    if hostname is None:
-        return None
-    if hostname == "api.github.com":
-        return "github.com"
-    if hostname.startswith("api."):
-        return hostname[4:]
-    return hostname
-
-
-def _github_token_from_gh_cli(hostname: str) -> str | None:
-    try:
-        completed = subprocess.run(
-            ["gh", "auth", "token", "--hostname", hostname],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
-    except FileNotFoundError:
-        return None
-    if completed.returncode != 0:
-        return None
-    token = completed.stdout.strip()
-    if not token:
-        return None
-    return token
 
 
 def _review_decision_from_graphql(

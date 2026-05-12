@@ -18,11 +18,10 @@ from typing import Literal
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError, error_message
+from jj_review.github.auth import github_token_for_base_url, github_token_from_env
 from jj_review.github.client import (
     GithubClient,
     GithubClientError,
-    _github_token_for_base_url,
-    github_token_from_env,
 )
 from jj_review.github.error_messages import summarize_github_error_reason
 from jj_review.github.resolution import (
@@ -162,7 +161,7 @@ def _check_github_auth(base_url: str) -> tuple[CheckResult, str | None]:
         return CheckResult("GitHub auth", "ok", f"token found ({env_var})"), env_token
 
     # Env vars not set — try the gh CLI
-    token = _github_token_for_base_url(base_url)
+    token = github_token_for_base_url(base_url)
     if token:
         return CheckResult("GitHub auth", "ok", "token found (gh CLI)"), token
 

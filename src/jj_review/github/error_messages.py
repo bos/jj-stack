@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from jj_review.github.client import GithubClientError, github_token_from_env
+from jj_review.github.auth import github_token_from_env
+from jj_review.github.client import GithubClientError
 from jj_review.ui import Message, code
 
 

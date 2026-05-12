@@ -91,7 +91,7 @@ def test_doctor_fails_when_github_token_missing(
     # Remove the token that _configure_doctor_environment sets.
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
-    monkeypatch.setattr(doctor_mod, "_github_token_for_base_url", lambda base_url: None)
+    monkeypatch.setattr(doctor_mod, "github_token_for_base_url", lambda base_url: None)
 
     exit_code = run_main(repo, config_path, "doctor")
     captured = capsys.readouterr()
