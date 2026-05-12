@@ -4,11 +4,13 @@ from pathlib import Path
 
 import pytest
 
+from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.jj import JjClient
 from jj_review.jj.client import JjCommandError
 from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
+from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
@@ -19,6 +21,7 @@ from ..support.integration_helpers import (
 from .submit_command_helpers import (
     approve_pull_requests,
     configure_submit_environment,
+    patch_github_client_builders,
     read_remote_ref,
     run_main,
 )
@@ -681,3 +684,81 @@ def test_land_replans_after_interrupted_push_when_landable_prefix_changes(
     assert "simulated trunk push failure" in first_run.err
     assert "Resuming interrupted" not in second_run.out
     assert read_remote_ref(fake_repo.git_dir, "main") == first_landable_commit_id
+
+
+def test_land_finishes_after_trunk_push_interrupted_before_finalization(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    for index in range(3):
+        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+    approve_pull_requests(fake_repo, 1, 2)
+    fake_repo.pull_requests[3].state = "closed"
+    stack = JjClient(repo).discover_review_stack()
+    landed_commit_id = stack.revisions[1].commit_id
+    landed_change_ids = tuple(revision.change_id for revision in stack.revisions[:2])
+    state_store = ReviewStateStore.for_repo(repo)
+    submitted_state = state_store.load()
+    bookmarks = tuple(
+        submitted_state.changes[change_id].bookmark for change_id in landed_change_ids
+    )
+    if any(bookmark is None for bookmark in bookmarks):
+        raise AssertionError("Expected saved bookmarks after submit.")
+    saved_bookmarks = tuple(bookmark for bookmark in bookmarks if bookmark is not None)
+
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnFinalizeLoadClient(GithubClient):
+        async def get_pull_request(self, owner, repo, *, pull_number):
+            if pull_number == 1:
+                raise GithubClientError("Simulated finalization failure", status_code=500)
+            return await super().get_pull_request(owner, repo, pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_review.commands.land.command",),
+        client_type=FailOnFinalizeLoadClient,
+    )
+
+    first_exit_code = run_main(repo, config_path, "land")
+    first_run = capsys.readouterr()
+
+    assert first_exit_code == 1
+    assert "Could not load PR #1 during land" in first_run.err
+    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
+    assert state_store.load().changes[landed_change_ids[0]].pr_state == "open"
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_review.commands.land.command",),
+    )
+
+    second_exit_code = run_main(repo, config_path, "land")
+    second_run = capsys.readouterr()
+    rendered = _squash_whitespace(second_run.out)
+
+    assert second_exit_code == 0
+    assert "Finalizing PR #1 for feature 1" in rendered
+    assert "Finalizing PR #2 for feature 2" in rendered
+    assert "push main to feature 2" not in rendered
+    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "closed"
+    assert fake_repo.pull_requests[2].merged_at is not None
+    bookmark_states = JjClient(repo).list_bookmark_states(saved_bookmarks)
+    for bookmark in saved_bookmarks:
+        assert bookmark_states[bookmark].local_target is None
+    finished_state = state_store.load()
+    assert finished_state.changes[landed_change_ids[0]].pr_state == "merged"
+    assert finished_state.changes[landed_change_ids[1]].pr_state == "merged"

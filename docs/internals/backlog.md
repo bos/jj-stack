@@ -10,8 +10,9 @@ but can leave jj, GitHub, and saved tracking data out of sync._
 
 Mutating commands now use a repo-scoped operation lock and append events to the
 repo-level operation log. Retry behavior derives from the jj DAG, saved tracking
-data, GitHub state, and explicit user selectors instead of retained recovery
-records.
+data, GitHub state, explicit user selectors, and narrow log evidence when `land`
+must prove that an unfinished run already pushed trunk. The log remains audit
+evidence, not a retained recovery model.
 
 Possible follow-up work:
 

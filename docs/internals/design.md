@@ -1215,6 +1215,9 @@ Recovery guidance stays case-specific:
 `land` only owns the bookkeeping that follows directly from the trunk transition:
 
 - record enough state to resume idempotently if interrupted
+- if rerun after the trunk push already succeeded, use the operation log plus
+  current `trunk()` and saved PR identity to prove the landed prefix, then finish
+  only the remaining exact PR/state/bookmark finalization
 - update tracking for the landed changes
 - close or mark landed only the PRs that correspond exactly to the landed changes,
   once the trunk transition succeeds

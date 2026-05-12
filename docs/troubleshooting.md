@@ -248,8 +248,9 @@ instead of replaying a retained recovery record.
 | `land`                      | `jj-review land <revset>`               |
 
 For an interrupted `land` specifically: if the trunk push already succeeded before a later
-failure, the landed commits are already on `trunk()`. Inspect GitHub and local tracking before
-deciding whether to close PRs or clean up bookmarks by hand.
+failure, the landed commits are already on `trunk()`. Rerun `jj-review land <revset>`;
+`jj-review` will skip the trunk push it can already prove happened and finish PR/state/bookmark
+finalization for the exact landed commits.
 
 ### Back out
 

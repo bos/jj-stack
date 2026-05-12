@@ -111,7 +111,7 @@ class LandPlan:
             cleanup_plan.change_id: cleanup_plan.action
             for cleanup_plan in bookmark_cleanup_plans
         }
-        if self.push_trunk and self.planned_revisions:
+        if self.planned_revisions:
             for resubmit_revision in self.resubmit_revisions:
                 actions.append(
                     LandAction(
@@ -122,15 +122,16 @@ class LandPlan:
                         status="planned",
                     )
                 )
-            actions.append(
-                LandAction(
-                    kind="trunk",
-                    body=t"push {ui.bookmark(self.trunk_branch)} to "
-                    t"{self.planned_revisions[-1].subject} "
-                    t"{ui.change_id(self.planned_revisions[-1].change_id)}",
-                    status="planned",
+            if self.push_trunk:
+                actions.append(
+                    LandAction(
+                        kind="trunk",
+                        body=t"push {ui.bookmark(self.trunk_branch)} to "
+                        t"{self.planned_revisions[-1].subject} "
+                        t"{ui.change_id(self.planned_revisions[-1].change_id)}",
+                        status="planned",
+                    )
                 )
-            )
             for landed_revision in self.planned_revisions:
                 actions.append(
                     LandAction(

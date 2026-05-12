@@ -41,6 +41,7 @@ from jj_review.github.resolution import (
     resolve_trunk_branch,
 )
 from jj_review.jj import JjCliArgs
+from jj_review.models.review_state import ReviewState
 from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -52,6 +53,7 @@ from jj_review.review.status import (
     prepare_status,
     stream_status,
 )
+from jj_review.state.journal import JournalEvent, read_operation_log
 from jj_review.state.operation_lock import acquire_operation_lock
 
 from .execute import (
@@ -59,7 +61,9 @@ from .execute import (
     execute_land_plan,
 )
 from .models import (
+    LandPlan,
     LandResult,
+    LandRevision,
     PreparedLand,
 )
 from .plan import (
@@ -265,6 +269,48 @@ async def _stream_land_async(
             trunk_branch=trunk_branch,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
+
+        async def finish_plan(plan: LandPlan) -> LandResult:
+            bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
+                client=prepared.client,
+                prefix=prepared_land.context.config.bookmark_prefix,
+                cleanup_bookmarks=prepared_land.cleanup_bookmarks,
+                cleanup_user_bookmarks=prepared_land.context.config.cleanup_user_bookmarks,
+                planned_revisions=plan.planned_revisions,
+            )
+            if prepared_land.dry_run:
+                return LandResult(
+                    actions=plan.planned_actions(
+                        bookmark_cleanup_plans=bookmark_cleanup_plans,
+                    ),
+                    applied=False,
+                    bypass_readiness=prepared_land.bypass_readiness,
+                    blocked=plan.blocked,
+                    github_repository=github_repository.full_name,
+                    remote_name=remote.name,
+                    selected_revset=status_result.selected_revset,
+                    trunk_branch=trunk_branch,
+                    trunk_subject=prepared.stack.trunk.subject,
+                )
+            return await execute_land_plan(
+                bookmark_cleanup_plans=bookmark_cleanup_plans,
+                github_client=github_client,
+                github_repository=github_repository,
+                plan=plan,
+                prepared_land=prepared_land,
+                remote_name=remote.name,
+                selected_revset=status_result.selected_revset,
+                trunk_branch=trunk_branch,
+                trunk_subject=prepared.stack.trunk.subject,
+            )
+
+        completion_plan = _land_completion_plan_from_log(
+            prepared_land=prepared_land,
+            trunk_branch=trunk_branch,
+        )
+        if completion_plan is not None:
+            return await finish_plan(completion_plan)
+
         plan = build_land_plan(
             bypass_readiness=prepared_land.bypass_readiness,
             client=prepared.client,
@@ -272,38 +318,115 @@ async def _stream_land_async(
             status_result=status_result,
             trunk_branch=trunk_branch,
         )
-        bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
-            client=prepared.client,
-            prefix=prepared_land.context.config.bookmark_prefix,
-            cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-            cleanup_user_bookmarks=prepared_land.context.config.cleanup_user_bookmarks,
-            planned_revisions=plan.planned_revisions,
-        )
-        if prepared_land.dry_run:
-            return LandResult(
-                actions=plan.planned_actions(
-                    bookmark_cleanup_plans=bookmark_cleanup_plans,
-                ),
-                applied=False,
-                bypass_readiness=prepared_land.bypass_readiness,
-                blocked=plan.blocked,
-                github_repository=github_repository.full_name,
-                remote_name=remote.name,
-                selected_revset=status_result.selected_revset,
-                trunk_branch=trunk_branch,
-                trunk_subject=prepared.stack.trunk.subject,
-            )
+        return await finish_plan(plan)
 
-        return await execute_land_plan(
-            bookmark_cleanup_plans=bookmark_cleanup_plans,
-            github_client=github_client,
-            github_repository=github_repository,
-            plan=plan,
-            prepared_land=prepared_land,
-            remote_name=remote.name,
-            selected_revset=status_result.selected_revset,
-            trunk_branch=trunk_branch,
-            trunk_subject=prepared.stack.trunk.subject,
+
+def _land_completion_plan_from_log(
+    *,
+    prepared_land: PreparedLand,
+    trunk_branch: str,
+) -> LandPlan | None:
+    """Build a post-trunk land completion plan from log evidence and current state."""
+
+    prepared = prepared_land.prepared_status.prepared
+    state = prepared.state_store.load()
+    begin_event = _latest_interrupted_land_with_trunk_push(
+        events=read_operation_log(prepared.state_store.state_dir),
+        selected_head_change_id=prepared.stack.head.change_id,
+    )
+    if begin_event is None:
+        return None
+    planned_revisions = _logged_land_revisions(begin_event)
+    if not planned_revisions:
+        return None
+
+    commit_ids = tuple(revision.commit_id for revision in planned_revisions)
+    trunk_ancestor_commit_ids = prepared.client.query_trunk_ancestor_commit_ids(commit_ids)
+    if set(commit_ids) - trunk_ancestor_commit_ids:
+        raise CliError(
+            "Cannot finish the interrupted land because the logged landed commits "
+            f"are not all on {ui.revset('trunk()')}.",
+            hint="Inspect the operation log and current trunk before retrying.",
+        )
+
+    for revision in planned_revisions:
+        _ensure_logged_land_matches_saved_state(revision=revision, state=state)
+
+    return LandPlan(
+        blocked=False,
+        boundary_action=None,
+        planned_revisions=planned_revisions,
+        push_trunk=False,
+        trunk_branch=trunk_branch,
+    )
+
+
+def _latest_interrupted_land_with_trunk_push(
+    *,
+    events: tuple[JournalEvent, ...],
+    selected_head_change_id: str,
+) -> JournalEvent | None:
+    completed_operation_ids = {
+        event.operation_id
+        for event in events
+        if event.operation == "land" and event.event == "completed"
+    }
+    pushed_trunk_operation_ids = {
+        event.operation_id
+        for event in events
+        if event.operation == "land"
+        and event.event == "mutation_applied"
+        and event.data.get("mutation") == "push_trunk"
+    }
+    for event in reversed(events):
+        if event.operation != "land" or event.event != "begin":
+            continue
+        if event.operation_id in completed_operation_ids:
+            continue
+        if event.operation_id not in pushed_trunk_operation_ids:
+            continue
+        scope = event.data.get("resolved_scope", {})
+        ordered_change_ids = tuple(scope.get("ordered_change_ids", ()))
+        if selected_head_change_id in ordered_change_ids:
+            return event
+    return None
+
+
+def _logged_land_revisions(event: JournalEvent) -> tuple[LandRevision, ...]:
+    scope = event.data.get("resolved_scope", {})
+    planned_revisions = scope.get("planned_revisions")
+    if not isinstance(planned_revisions, list):
+        return ()
+    return tuple(
+        LandRevision(
+            bookmark=raw_revision["bookmark"],
+            bookmark_managed=raw_revision.get("bookmark_managed", True),
+            change_id=raw_revision["change_id"],
+            commit_id=raw_revision["commit_id"],
+            needs_resubmit=False,
+            pull_request_number=raw_revision["pull_request_number"],
+            subject=raw_revision["subject"],
+        )
+        for raw_revision in planned_revisions
+    )
+
+
+def _ensure_logged_land_matches_saved_state(
+    *,
+    revision: LandRevision,
+    state: ReviewState,
+) -> None:
+    cached_change = state.changes.get(revision.change_id)
+    if (
+        cached_change is None
+        or cached_change.link_state != "active"
+        or cached_change.bookmark != revision.bookmark
+        or cached_change.pr_number != revision.pull_request_number
+    ):
+        raise CliError(
+            t"Cannot finish the interrupted land because saved review identity for "
+            t"{ui.change_id(revision.change_id)} no longer matches the logged land.",
+            hint=t"Run {ui.cmd('status --fetch')} and inspect the stack before retrying.",
         )
 
 
