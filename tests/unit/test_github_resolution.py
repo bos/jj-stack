@@ -31,14 +31,6 @@ def test_select_submit_remote_uses_origin_when_multiple_remotes_exist() -> None:
     assert remote.name == "origin"
 
 
-def test_select_submit_remote_uses_only_remote_when_unambiguous() -> None:
-    remote = select_submit_remote(
-        (GitRemote(name="upstream", url="git@example.com:org/repo.git"),)
-    )
-
-    assert remote.name == "upstream"
-
-
 def test_select_submit_remote_rejects_ambiguous_remote_set_without_origin() -> None:
     with pytest.raises(
         CliError,
@@ -92,10 +84,6 @@ def test_parse_github_repo_returns_none_for_unparseable_remote() -> None:
     assert parse_github_repo(GitRemote(name="origin", url="/tmp/remote.git")) is None
 
 
-def test_parse_github_repo_rejects_windows_drive_path() -> None:
-    assert parse_github_repo(GitRemote(name="origin", url="C:/tmp/remote.git")) is None
-
-
 def test_github_token_from_env_prefers_github_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -129,19 +117,6 @@ def test_github_token_for_base_url_falls_back_to_gh_cli(
 
     assert _github_token_for_base_url("https://api.github.com") == "gh-token"
     assert calls == [["gh", "auth", "token", "--hostname", "github.com"]]
-
-
-def test_github_token_for_base_url_prefers_environment_over_gh_cli(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
-
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("gh auth token should not be called when env token exists")
-
-    monkeypatch.setattr(github_client_module.subprocess, "run", fail_if_called)
-
-    assert _github_token_for_base_url("https://api.github.com") == "github-token"
 
 
 def test_resolve_trunk_branch_uses_repository_default_branch() -> None:

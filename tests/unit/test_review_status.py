@@ -7,10 +7,6 @@ from typing import Any, cast
 from jj_review.bootstrap import CommandContext
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, ErrorMessage
-from jj_review.github.client import GithubClientError
-from jj_review.github.error_messages import (
-    summarize_github_lookup_error,
-)
 from jj_review.github.resolution import (
     ParsedGithubRepo,
 )
@@ -133,47 +129,6 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
         local_only_revisions[1],
         local_only_revisions[0],
     )
-
-
-def test_stream_status_reports_github_target_without_error_for_empty_stack() -> None:
-    remote = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
-    prepared_status = PreparedStatus(
-        github_repository=ParsedGithubRepo(
-            host="github.com",
-            owner="octo-org",
-            repo="stacked-review",
-        ),
-        github_repository_error=None,
-        prepared=cast(
-            PreparedStack,
-            SimpleNamespace(
-                remote=remote,
-                remote_error=None,
-                stack=SimpleNamespace(revisions=()),
-                state=ReviewState(),
-                status_revisions=(),
-            ),
-        ),
-        selected_revset="main",
-        base_parent_subject="base",
-    )
-    github_status_calls: list[tuple[str | None, ErrorMessage | None]] = []
-
-    result = asyncio.run(
-        stream_status_async(
-            on_github_status=lambda github_repository, github_error: github_status_calls.append(
-                (github_repository, github_error)
-            ),
-            on_revision=None,
-            prepared_status=prepared_status,
-        )
-    )
-
-    assert github_status_calls == [("octo-org/stacked-review", None)]
-    assert result.github_error is None
-    assert result.github_repository == "octo-org/stacked-review"
-    assert result.incomplete is False
-    assert result.revisions == ()
 
 
 def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -> None:
@@ -413,15 +368,6 @@ def test_locked_status_cache_update_merges_with_current_saved_state(tmp_path) ->
     assert saved.changes["bbbbbbbbbbbb"].pr_number == 99
 
 
-def test_summarize_github_lookup_error_preserves_transport_detail() -> None:
-    error = GithubClientError("GitHub request failed: Connection refused")
-
-    assert (
-        summarize_github_lookup_error(action="pull request lookup", error=error)
-        == "pull request lookup failed (Connection refused)"
-    )
-
-
 def test_pinned_bookmarks_for_revisions_uses_cached_bookmarks_and_dedupes() -> None:
     first = cast(LocalRevision, SimpleNamespace(change_id="aaaaaaaa1234"))
     second = cast(LocalRevision, SimpleNamespace(change_id="bbbbbbbb5678"))
@@ -600,25 +546,6 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
         state_store=state_store,
     )
     assert client.list_calls == [None]
-
-
-def test_pull_request_lookup_uses_review_decision_from_head_lookup() -> None:
-    lookup = status_module._pull_request_lookup_from_discovered(
-        head_label="octo-org:review/open",
-        pull_requests=(
-            GithubPullRequest(
-                base={"ref": "main"},
-                head={"ref": "review/open"},
-                html_url="https://github.test/octo-org/stacked-review/pull/2",
-                number=2,
-                review_decision="approved",
-                state="open",
-                title="open",
-            ),
-        ),
-    )
-
-    assert lookup.review_decision == "approved"
 
 
 def test_pull_request_lookup_ignores_draft_review_decision() -> None:

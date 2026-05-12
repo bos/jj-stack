@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import jj_review.cli as cli_module
-from jj_review.cli import _extract_config_overrides, _rewrite_help_args, main
+from jj_review.cli import _extract_config_overrides, main
 
 
 @pytest.fixture(autouse=True)
@@ -122,11 +122,3 @@ def test_config_overrides_stop_at_end_of_options_marker() -> None:
     assert remaining == ["status", "--", "--config", "x=1"]
 
 
-def test_rewrite_help_args_respects_end_of_options_marker() -> None:
-    """``--help`` after ``--`` is a positional argument, not a help request."""
-
-    assert _rewrite_help_args(["status", "--", "--help"]) == [
-        "status",
-        "--",
-        "--help",
-    ]

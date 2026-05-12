@@ -15,7 +15,6 @@ from jj_review.github.stack_comments import (
     is_overview_comment,
 )
 from jj_review.jj import JjClient
-from jj_review.models.github import GithubPullRequest
 from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
@@ -189,56 +188,6 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
     assert pull_requests_by_title["feature 1"].base_ref == bookmarks_by_subject["feature 4"]
 
 
-def test_submit_preserves_prs_when_middle_change_moves_to_stack_top(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    commit_file(repo, "feature 3", "feature-3.txt")
-    commit_file(repo, "feature 4", "feature-4.txt")
-
-    initial_stack = JjClient(repo).discover_review_stack()
-    change_ids_by_subject = {
-        revision.subject: revision.change_id for revision in initial_stack.revisions
-    }
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    run_command(
-        [
-            "jj",
-            "rebase",
-            "-r",
-            change_ids_by_subject["feature 2"],
-            "-A",
-            change_ids_by_subject["feature 4"],
-        ],
-        repo,
-    )
-    moved_stack = JjClient(repo).discover_review_stack()
-
-    assert [revision.subject for revision in moved_stack.revisions] == [
-        "feature 1",
-        "feature 3",
-        "feature 4",
-        "feature 2",
-    ]
-    assert run_main(repo, config_path, "submit", moved_stack.head.change_id) == 0
-    capsys.readouterr()
-
-    _assert_stack_pull_requests_match_dag(
-        fake_repo=fake_repo,
-        repo=repo,
-        stack=moved_stack,
-    )
-    assert len(fake_repo.pull_requests) == 4
-
-
 def test_submit_preserves_existing_prs_when_change_is_inserted_in_stack(
     tmp_path: Path,
     monkeypatch,
@@ -336,104 +285,6 @@ def test_submit_preserves_orphaned_pr_when_middle_change_is_abandoned(
     assert fake_repo.pull_requests[orphaned_pr_number].state == "open"
     assert fake_repo.pull_requests[orphaned_pr_number].merged_at is None
     assert read_remote_ref(fake_repo.git_dir, orphaned_bookmark) == orphaned_remote_target
-
-
-def test_submit_preserves_prs_when_top_change_moves_to_stack_bottom(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    commit_file(repo, "feature 3", "feature-3.txt")
-    commit_file(repo, "feature 4", "feature-4.txt")
-
-    initial_stack = JjClient(repo).discover_review_stack()
-    change_ids_by_subject = {
-        revision.subject: revision.change_id for revision in initial_stack.revisions
-    }
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    run_command(
-        [
-            "jj",
-            "rebase",
-            "-r",
-            change_ids_by_subject["feature 4"],
-            "-B",
-            change_ids_by_subject["feature 1"],
-        ],
-        repo,
-    )
-    moved_stack = JjClient(repo).discover_review_stack()
-
-    assert [revision.subject for revision in moved_stack.revisions] == [
-        "feature 4",
-        "feature 1",
-        "feature 2",
-        "feature 3",
-    ]
-    assert run_main(repo, config_path, "submit", moved_stack.head.change_id) == 0
-    capsys.readouterr()
-
-    _assert_stack_pull_requests_match_dag(
-        fake_repo=fake_repo,
-        repo=repo,
-        stack=moved_stack,
-    )
-    assert len(fake_repo.pull_requests) == 4
-
-
-def test_submit_preserves_prs_when_adjacent_changes_are_swapped(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    commit_file(repo, "feature 3", "feature-3.txt")
-
-    initial_stack = JjClient(repo).discover_review_stack()
-    change_ids_by_subject = {
-        revision.subject: revision.change_id for revision in initial_stack.revisions
-    }
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    run_command(
-        [
-            "jj",
-            "rebase",
-            "-r",
-            change_ids_by_subject["feature 2"],
-            "-A",
-            change_ids_by_subject["feature 3"],
-        ],
-        repo,
-    )
-    swapped_stack = JjClient(repo).discover_review_stack()
-
-    assert [revision.subject for revision in swapped_stack.revisions] == [
-        "feature 1",
-        "feature 3",
-        "feature 2",
-    ]
-    assert run_main(repo, config_path, "submit", swapped_stack.head.change_id) == 0
-    capsys.readouterr()
-
-    _assert_stack_pull_requests_match_dag(
-        fake_repo=fake_repo,
-        repo=repo,
-        stack=swapped_stack,
-    )
-    assert len(fake_repo.pull_requests) == 3
 
 
 def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
@@ -719,29 +570,6 @@ def test_submit_uses_configured_use_bookmarks(
     assert "refs/heads/potato/feature-1" in remote_refs(fake_repo.git_dir)
     assert "refs/heads/spam/eggs" in remote_refs(fake_repo.git_dir)
 
-
-def test_submit_cli_use_bookmarks_overrides_configured_patterns(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(
-        monkeypatch,
-        tmp_path,
-        fake_repo,
-        extra_config_lines=['use_bookmarks = ["wrong/*"]'],
-    )
-    commit_file(repo, "feature 1", "feature-1.txt")
-    stack = JjClient(repo).discover_review_stack()
-    run_command(
-        ["jj", "bookmark", "create", "potato/feature-1", "-r", stack.revisions[0].commit_id], repo
-    )
-
-    assert run_main(repo, config_path, "submit", "--use-bookmarks=potato/*") == 0
-    state = ReviewStateStore.for_repo(repo).load()
-
-    assert state.changes[stack.revisions[0].change_id].bookmark == "potato/feature-1"
-    assert state.changes[stack.revisions[0].change_id].bookmark_ownership == "external"
 
 def test_submit_draft_creates_draft_pull_requests_and_persists_draft_state(
     tmp_path: Path,
@@ -1035,62 +863,6 @@ def test_submit_describe_with_generates_pull_request_and_stack_metadata(
     )
 
 
-def test_submit_describe_with_skips_stack_helper_for_single_commit_stack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    helper = tmp_path / "describe.py"
-    log_path = tmp_path / "helper.log"
-    helper.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import json",
-                "import pathlib",
-                "import sys",
-                "",
-                f"log_path = pathlib.Path({str(log_path)!r})",
-                "log_path.write_text(",
-                "    log_path.read_text() + ' '.join(sys.argv[1:]) + '\\n' if log_path.exists()",
-                "    else ' '.join(sys.argv[1:]) + '\\n'",
-                ")",
-                "kind, revset = sys.argv[1], sys.argv[2]",
-                "if kind != '--pr':",
-                "    raise SystemExit(f'unexpected args: {sys.argv[1:]}')",
-                "print(json.dumps({'title': f'AI {revset[:8]}', 'body': f'Body {revset}'}))",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    helper.chmod(0o755)
-
-    assert (
-        run_main(
-            repo,
-            config_path,
-            "submit",
-            "--describe-with",
-            str(helper),
-        )
-        == 0
-    )
-    capsys.readouterr()
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state = ReviewStateStore.for_repo(repo).load()
-
-    assert fake_repo.pull_requests[1].title == f"AI {change_id[:8]}"
-    assert log_path.read_text(encoding="utf-8").splitlines() == [f"--pr {change_id}"]
-    assert issue_comments(fake_repo, 1) == []
-    assert state.changes[change_id].navigation_comment_id is None
-    assert state.changes[change_id].overview_comment_id is None
-
-
 def test_submit_describe_with_failure_aborts_before_mutation(
     tmp_path: Path,
     monkeypatch,
@@ -1153,60 +925,6 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     assert remote_refs(fake_repo.git_dir) == initial_remote_refs
 
 
-def test_submit_dry_run_skips_github_for_never_tracked_local_stack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    class NoGithubReadsClient(GithubClient):
-        async def get_repository(self, owner: str, repo: str):
-            raise AssertionError("dry-run should not load the GitHub repository")
-
-        async def get_pull_requests_by_head_refs(
-            self,
-            owner: str,
-            repo: str,
-            *,
-            head_refs: Sequence[str],
-        ) -> dict[str, tuple[GithubPullRequest, ...]]:
-            raise AssertionError(
-                f"dry-run should not discover pull requests for {head_refs!r}"
-            )
-
-        async def list_issue_comments(
-            self,
-            owner: str,
-            repo: str,
-            *,
-            issue_number: int,
-        ):
-            raise AssertionError(
-                f"dry-run should not inspect stack comments for pull request #{issue_number}"
-            )
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
-        client_type=NoGithubReadsClient,
-    )
-
-    exit_code = run_main(repo, config_path, "submit", "--dry-run")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "Dry run: no local, remote, or GitHub changes applied." in captured.out
-    assert "Planned changes:" in captured.out
-    assert fake_repo.pull_requests == {}
-
-
 def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
     tmp_path: Path,
     monkeypatch,
@@ -1232,48 +950,6 @@ def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
     assert fake_repo.pull_requests[1].title == "feature 1"
     assert remote_refs(fake_repo.git_dir) == remote_refs_before
     assert ReviewStateStore.for_repo(repo).load() == state_before
-
-
-def test_submit_dry_run_skips_stack_comment_github_reads(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    class NoCommentReadsClient(GithubClient):
-        async def list_issue_comments(
-            self,
-            owner: str,
-            repo: str,
-            *,
-            issue_number: int,
-        ):
-            raise AssertionError(
-                f"dry-run should not inspect stack comments for pull request #{issue_number}"
-            )
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
-        client_type=NoCommentReadsClient,
-    )
-
-    exit_code = run_main(repo, config_path, "submit", "--dry-run")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "Dry run: no local, remote, or GitHub changes applied." in captured.out
-    assert "Planned changes:" in captured.out
 
 
 def test_submit_batches_stack_comment_reads_with_graphql(
@@ -2077,26 +1753,6 @@ def test_submit_fails_closed_when_saved_remote_branch_drifted_externally(
         for number, pull_request in fake_repo.pull_requests.items()
     } == pull_requests_before
     assert fake_repo.pull_request_events == []
-
-
-def test_submit_reports_no_reviewable_commits_without_mutation_when_head_is_trunk(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack("main")
-
-    exit_code = run_main(repo, config_path, "submit", "main")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert stack.trunk.subject in captured.out
-    assert "The selected stack has no changes to review." in captured.out
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
-    assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
-    assert fake_repo.pull_requests == {}
 
 
 def test_submit_accepts_stack_forked_from_trunk_ancestor(

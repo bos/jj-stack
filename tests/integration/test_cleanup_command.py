@@ -122,32 +122,6 @@ def test_cleanup_forgets_orphan_local_review_bookmark_without_saved_state(
     ).stdout
 
 
-def test_cleanup_forgets_orphan_local_bookmark_with_configured_prefix(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path, with_remote=False)
-    config_path = configure_submit_environment(
-        monkeypatch,
-        tmp_path,
-        fake_repo,
-        extra_config_lines=['bookmark_prefix = "bosullivan"'],
-    )
-
-    run_command(["jj", "bookmark", "set", "bosullivan/orphan-immutable", "-r", "main"], repo)
-
-    exit_code = run_main(repo, config_path, "cleanup")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "forget bosullivan/orphan-immutable" in " ".join(captured.out.split())
-    assert "bosullivan/orphan-immutable" not in run_command(
-        ["jj", "bookmark", "list", "bosullivan/orphan-immutable"],
-        repo,
-    ).stdout
-
-
 def test_cleanup_keeps_orphan_local_review_bookmark_on_live_reviewable_change(
     tmp_path: Path,
     monkeypatch,

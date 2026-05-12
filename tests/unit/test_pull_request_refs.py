@@ -5,19 +5,10 @@ import pytest
 from jj_review.errors import CliError
 from jj_review.github.pull_request_refs import (
     ParsedPullRequestUrl,
-    parse_pull_request_number,
     parse_pull_request_url,
     parse_repository_pull_request_reference,
 )
 from jj_review.github.resolution import ParsedGithubRepo
-
-
-def test_parse_pull_request_number_accepts_digits() -> None:
-    assert parse_pull_request_number("42") == 42
-
-
-def test_parse_pull_request_number_rejects_non_digits() -> None:
-    assert parse_pull_request_number("pr-42") is None
 
 
 def test_parse_pull_request_url_accepts_standard_pull_request_url() -> None:

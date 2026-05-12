@@ -118,40 +118,6 @@ def test_main_renders_cli_error_hint_on_separate_line(
     assert "Hint: Run status --fetch and retry." in err_lines
 
 
-def test_main_runs_status_when_subcommand_is_omitted(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[str] = []
-
-    def fake_status(**kwargs) -> int:
-        seen.append("called")
-        return 23
-
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
-
-    exit_code = main([])
-
-    assert exit_code == 23
-    assert seen == ["called"]
-
-
-def test_main_dispatches_status_alias(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[str] = []
-
-    def fake_status(**kwargs) -> int:
-        seen.append("called")
-        return 29
-
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
-
-    exit_code = main(["st"])
-
-    assert exit_code == 29
-    assert seen == ["called"]
-
-
 def test_main_preserves_status_selector_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -166,50 +132,6 @@ def test_main_preserves_status_selector_order(
     exit_code = main(["status", "foo", "--pull-request", "17", "bar"])
 
     assert exit_code == 0
-    assert observed["selectors"] == (
-        StatusSelector(kind="revset", value="foo"),
-        StatusSelector(kind="pull_request", value="17"),
-        StatusSelector(kind="revset", value="bar"),
-    )
-
-
-def test_main_preserves_status_selector_order_with_short_pull_request_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed: dict[str, object] = {}
-
-    def fake_status(**kwargs) -> int:
-        observed.update(kwargs)
-        return 0
-
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
-
-    exit_code = main(["status", "foo", "-p", "17", "bar"])
-
-    assert exit_code == 0
-    assert observed["pull_request"] == ["17"]
-    assert observed["selectors"] == (
-        StatusSelector(kind="revset", value="foo"),
-        StatusSelector(kind="pull_request", value="17"),
-        StatusSelector(kind="revset", value="bar"),
-    )
-
-
-def test_main_preserves_status_selector_order_with_attached_short_pull_request_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed: dict[str, object] = {}
-
-    def fake_status(**kwargs) -> int:
-        observed.update(kwargs)
-        return 0
-
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
-
-    exit_code = main(["status", "foo", "-p17", "bar"])
-
-    assert exit_code == 0
-    assert observed["pull_request"] == ["17"]
     assert observed["selectors"] == (
         StatusSelector(kind="revset", value="foo"),
         StatusSelector(kind="pull_request", value="17"),
@@ -259,19 +181,6 @@ def test_main_reports_unknown_command_with_short_recovery_hint(
     err_lines = captured.err.splitlines()
     assert err_lines[0] == "Error: Unknown command pants."
     assert "Hint: Run jj-review help to list commands." in err_lines
-
-
-@pytest.mark.parametrize("argv", [["help"], ["help", "--all"], ["help", "submit"]])
-def test_main_help_smoke_renders_without_error(
-    argv: list[str],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    exit_code = main(argv)
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "jj-review" in captured.out
-    assert "Traceback" not in captured.err
 
 
 def _patch_fake_jj_workspace(

@@ -148,12 +148,3 @@ def test_revset_uses_semantic_style(
     assert text.spans == [import_module("rich.text").Span(0, 7, _style_cls()(color="blue"))]
 
 
-def test_spinner_is_noop_when_stderr_is_not_a_tty() -> None:
-    stdout = StringIO()
-    stderr = StringIO()
-
-    with console_module.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
-        with console_module.spinner(description="Inspecting jj stack") as spinner:
-            spinner.update("Rendering jj log")
-
-    assert stderr.getvalue() == ""

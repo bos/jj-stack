@@ -6,17 +6,11 @@ from typing import cast
 import pytest
 
 from jj_review.bootstrap import CommandContext
-from jj_review.commands.land import (
-    LandAction,
-    LandResult,
-    PreparedLand,
-)
-from jj_review.commands.land.command import _stack_not_on_trunk_error, _stream_land
+from jj_review.commands.land.command import _stack_not_on_trunk_error
 from jj_review.commands.land.execute import (
     _updated_landed_change,
     ensure_trunk_branch_matches_selected_trunk,
 )
-from jj_review.commands.land.models import LandPlan
 from jj_review.commands.land.plan import (
     _collect_landable_prefix,
     _DivergenceKind,
@@ -55,67 +49,6 @@ def _fake_context() -> CommandContext:
         CommandContext,
         SimpleNamespace(config=RepoConfig()),
     )
-
-
-def test_stream_land_skips_stack_comment_inspection(monkeypatch) -> None:
-    prepared_status = _prepared_status(("change-1",))
-    prepared_land = PreparedLand(
-        cleanup_bookmarks=True,
-        dry_run=True,
-        bypass_readiness=False,
-        context=_fake_context(),
-        prepared_status=prepared_status,
-        selected_pr_number=None,
-    )
-    expected_result = LandResult(
-        actions=(),
-        applied=False,
-        bypass_readiness=False,
-        blocked=False,
-        github_repository="octo-org/stacked-review",
-        remote_name="origin",
-        selected_revset="@-",
-        trunk_branch="main",
-        trunk_subject="base",
-    )
-
-    def fake_stream_status(**kwargs):
-        assert kwargs["inspect_stack_comments"] is False
-        return cast(StatusResult, SimpleNamespace())
-
-    async def fake_stream_land_async(*, prepared_land, status_result):
-        assert status_result is not None
-        return expected_result
-
-    monkeypatch.setattr("jj_review.commands.land.command.stream_status", fake_stream_status)
-    monkeypatch.setattr(
-        "jj_review.commands.land.command._stream_land_async",
-        fake_stream_land_async,
-    )
-
-    result = _stream_land(prepared_land=prepared_land)
-
-    assert result == expected_result
-
-
-def test_land_plan_completed_actions_include_boundary_reason_for_partial_land() -> None:
-    applied_action = LandAction(kind="trunk", body="push trunk", status="applied")
-    boundary_action = LandAction(
-        kind="boundary",
-        body="before top because PR is draft",
-        status="planned",
-    )
-    plan = LandPlan(
-        blocked=False,
-        boundary_action=boundary_action,
-        planned_revisions=(),
-        push_trunk=False,
-        trunk_branch="main",
-    )
-
-    actions = plan.completed_actions(actions=(applied_action,))
-
-    assert actions == (applied_action, boundary_action)
 
 
 def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -> None:

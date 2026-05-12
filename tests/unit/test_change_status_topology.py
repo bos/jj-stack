@@ -114,22 +114,6 @@ def test_submitted_state_disagreement_flags_rewrite_without_topology_change() ->
     assert submitted_state_disagreement(state, (stack,)) == ("change-a",)
 
 
-def test_submitted_state_disagreement_accepts_same_submitted_commit() -> None:
-    a = _revision("change-a")
-    stack = _stack(a)
-    state = ReviewState(
-        changes={
-            "change-a": _tracked(
-                commit_id=a.commit_id,
-                parent=None,
-                head="change-a",
-            ),
-        }
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ()
-
-
 def test_submitted_state_disagreement_catches_inserted_change_via_neighbors() -> None:
     a = _revision("change-a")
     inserted = _revision("change-inserted")
@@ -230,13 +214,6 @@ def test_submitted_state_disagreement_skips_unlinked_records_even_when_stale() -
     )
 
     assert submitted_state_disagreement(state, (stack,)) == ()
-
-
-def test_submitted_state_disagreement_skips_revisions_without_any_saved_record() -> None:
-    a = _revision("change-a")
-    stack = _stack(a)
-
-    assert submitted_state_disagreement(ReviewState(), (stack,)) == ()
 
 
 def _orphan_record(

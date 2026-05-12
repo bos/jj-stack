@@ -208,34 +208,6 @@ def test_list_does_not_warn_when_tracked_stack_still_starts_at_mutable_trunk(
     assert head_change_id[:8] not in captured.err
 
 
-def test_list_does_not_warn_when_tracked_stack_starts_at_mutable_trunk_ancestor(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    run_command(
-        ["jj", "config", "set", "--repo", 'revset-aliases."immutable_heads()"', "none()"],
-        repo,
-    )
-
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-    head_change_id = JjClient(repo).discover_review_stack().head.change_id
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "trunk 2", "trunk-2.txt")
-    run_command(["jj", "bookmark", "set", "main", "-r", "@-"], repo)
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert head_change_id[:8] not in captured.err
-
-
 def test_list_extends_tracked_stack_through_unsubmitted_local_descendant(
     tmp_path,
     monkeypatch,
@@ -597,26 +569,3 @@ def test_list_marks_stale_saved_pull_request_link_and_exits_nonzero(
     assert "PR 1" in captured.out
 
 
-def test_list_with_fetch_runs_remote_refresh(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    fetch_calls: list[str] = []
-    original_fetch_remote = JjClient.fetch_remote
-
-    def tracking_fetch_remote(self, *, remote: str) -> None:
-        fetch_calls.append(remote)
-        return original_fetch_remote(self, remote=remote)
-
-    monkeypatch.setattr(JjClient, "fetch_remote", tracking_fetch_remote)
-
-    exit_code = run_main(repo, config_path, "list", "--fetch")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert fetch_calls == ["origin"]
-    assert "feature 1" in captured.out

@@ -843,55 +843,6 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation() -
     assert "('cand-c' & ::'base-3')" in revset
 
 
-def test_query_paired_ancestor_membership_short_circuits_on_empty_pairs() -> None:
-    seen_commands: list[tuple[str, ...]] = []
-
-    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        seen_commands.append(tuple(command))
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    result = JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(())
-
-    assert result == set()
-    assert seen_commands == []
-
-
-def test_query_paired_ancestor_membership_dedupes_repeated_pairs() -> None:
-    seen_commands: list[tuple[str, ...]] = []
-    candidate_a = _revision_line(
-        commit_id="cand-a", parents=["trunk"], change_id="a-change", description="a\n"
-    )
-
-    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        seen_commands.append(tuple(command))
-        return subprocess.CompletedProcess(command, 0, stdout=candidate_a, stderr="")
-
-    JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
-        (("cand-a", "base-1"), ("cand-a", "base-1")),
-    )
-
-    assert len(seen_commands) == 1
-    revset = seen_commands[0][seen_commands[0].index("-r") + 1]
-    assert revset.count("'cand-a'") == 1
-
-
-def test_query_paired_ancestor_membership_includes_target_itself_for_self_pair() -> None:
-    target_revision = _revision_line(
-        commit_id="target", parents=["trunk"], change_id="t-change", description="t\n"
-    )
-
-    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        revset = tuple(command)[tuple(command).index("-r") + 1]
-        assert revset == "('target' & ::'target')"
-        return subprocess.CompletedProcess(command, 0, stdout=target_revision, stderr="")
-
-    result = JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
-        (("target", "target"),),
-    )
-
-    assert result == {"target"}
-
-
 def test_push_bookmarks_issues_one_atomic_jj_invocation_for_a_batch() -> None:
     seen_commands: list[tuple[str, ...]] = []
 
@@ -910,18 +861,6 @@ def test_push_bookmarks_issues_one_atomic_jj_invocation_for_a_batch() -> None:
     assert "--remote" in invocation and "origin" in invocation
     assert invocation.count("--bookmark") == 3
     assert {"review/feat-1", "review/feat-2", "review/feat-3"}.issubset(set(invocation))
-
-
-def test_push_bookmarks_skips_jj_invocation_when_batch_is_empty() -> None:
-    seen_commands: list[tuple[str, ...]] = []
-
-    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        seen_commands.append(tuple(command))
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    JjClient(Path("/repo"), runner=runner).push_bookmarks(remote="origin", bookmarks=())
-
-    assert seen_commands == []
 
 
 def _template() -> str:

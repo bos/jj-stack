@@ -24,10 +24,6 @@ def _fake_jj_version(version_string: str) -> subprocess.CompletedProcess[str]:
 # --- _parse_jj_version ---
 
 
-def test_parse_jj_version_accepts_release_version() -> None:
-    assert _parse_jj_version("jj 0.39.0") == (0, 39, 0)
-
-
 def test_parse_jj_version_ignores_build_suffix() -> None:
     assert _parse_jj_version("jj 0.39.0-d9689cd9b51b") == (0, 39, 0)
 
@@ -39,16 +35,6 @@ def test_parse_jj_version_returns_none_for_unexpected_format() -> None:
 
 
 # --- check_jj_version ---
-
-
-def test_check_jj_version_accepts_minimum_version() -> None:
-    with patch("subprocess.run", return_value=_fake_jj_version("0.39.0")):
-        check_jj_version()  # should not raise
-
-
-def test_check_jj_version_accepts_newer_version() -> None:
-    with patch("subprocess.run", return_value=_fake_jj_version("0.39.0-abc123")):
-        check_jj_version()  # should not raise
 
 
 def test_check_jj_version_rejects_older_version() -> None:

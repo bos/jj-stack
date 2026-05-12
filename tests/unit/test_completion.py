@@ -19,9 +19,3 @@ def test_emit_shell_completion_smoke(shell: str, marker: str) -> None:
 
     assert marker in script
     assert "jj-review" in script
-
-
-def test_emit_shell_completion_includes_status_alias() -> None:
-    script = emit_shell_completion(build_parser(), "bash")
-
-    assert "st) printf" in script

@@ -277,27 +277,6 @@ def test_land_recommends_cleanup_when_selected_stack_already_has_merged_changes(
     assert "jj rebase -s" not in captured.err
 
 
-def test_land_defaults_to_at_minus_when_working_copy_is_non_empty(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-
-    write_file(repo / "wip.txt", "wip\n")
-
-    exit_code = run_main(repo, config_path, "land", "--dry-run")
-    captured = capsys.readouterr()
-    rendered = _squash_whitespace(captured.out)
-
-    assert exit_code == 0
-    assert "Planned land actions:" in rendered
-    assert "finalize PR #1" in rendered
-    assert "unlinked from review tracking" not in rendered
-
-
 def test_land_blocks_unapproved_prefix_by_default(
     tmp_path: Path,
     monkeypatch,

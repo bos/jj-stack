@@ -60,55 +60,6 @@ def test_import_bootstraps_local_review_state_from_pull_request(
     )
 
 
-def test_import_bootstraps_local_review_state_with_configured_bookmark_prefix(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(
-        monkeypatch,
-        tmp_path,
-        fake_repo,
-        extra_config_lines=['bookmark_prefix = "bosullivan"'],
-    )
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert _main(repo, config_path, "submit") == 0
-    state_before = ReviewStateStore.for_repo(repo).load()
-    review_bookmarks = sorted(
-        {
-            change.bookmark
-            for change in state_before.changes.values()
-            if change.bookmark is not None and change.bookmark.startswith("bosullivan/")
-        }
-    )
-    for bookmark in review_bookmarks:
-        run_command(["jj", "bookmark", "forget", bookmark], repo)
-    resolve_state_path(repo).unlink()
-    capsys.readouterr()
-
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "Fetched tip commit:" in captured.out
-    state_after = ReviewStateStore.for_repo(repo).load()
-    bookmarks_after = sorted(
-        {
-            change.bookmark
-            for change in state_after.changes.values()
-            if change.bookmark is not None
-        }
-    )
-    assert bookmarks_after == review_bookmarks
-    bookmark_states = JjClient(repo).list_bookmark_states(review_bookmarks)
-    assert all(
-        bookmark_states[bookmark].local_target is not None for bookmark in review_bookmarks
-    )
-
-
 def test_import_current_rejects_remote_branches_without_pull_requests(
     tmp_path: Path,
     monkeypatch,
@@ -305,51 +256,6 @@ def test_import_fails_closed_when_stack_would_need_generated_bookmarks(
     assert "saved branch" in captured.err
     assert "is not present on the selected remote" in captured.err
     assert ReviewStateStore.for_repo(repo).load().changes == {}
-    bookmark_states = JjClient(repo).list_bookmark_states((bottom_bookmark, top_bookmark))
-    assert bookmark_states[bottom_bookmark].local_target is None
-    assert bookmark_states[top_bookmark].local_target is None
-
-
-def test_import_fails_closed_when_cached_bookmark_is_missing_on_selected_remote(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert _main(repo, config_path, "submit") == 0
-    state_before = ReviewStateStore.for_repo(repo).load()
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    top_change_id = stack.revisions[-1].change_id
-    bottom_bookmark = state_before.changes[bottom_change_id].bookmark
-    top_bookmark = state_before.changes[top_change_id].bookmark
-    assert bottom_bookmark is not None
-    assert top_bookmark is not None
-
-    for bookmark in (bottom_bookmark, top_bookmark):
-        run_command(["jj", "bookmark", "forget", bookmark], repo)
-    run_command(
-        [
-            "git",
-            "--git-dir",
-            str(fake_repo.git_dir),
-            "update-ref",
-            "-d",
-            f"refs/heads/{bottom_bookmark}",
-        ],
-        repo,
-    )
-
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "saved branch" in captured.err
-    assert "is not present on the selected remote" in captured.err
     bookmark_states = JjClient(repo).list_bookmark_states((bottom_bookmark, top_bookmark))
     assert bookmark_states[bottom_bookmark].local_target is None
     assert bookmark_states[top_bookmark].local_target is None

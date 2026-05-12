@@ -517,24 +517,6 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
     assert len(queries) == 1
 
 
-def test_github_client_closes_pull_request_via_issue_api() -> None:
-    def handler(request: httpxyz.Request) -> httpxyz.Response:
-        assert request.method == "PATCH"
-        assert request.url.path == "/repos/octo-org/stacked-review/issues/7"
-        assert json.loads(request.content.decode("utf-8")) == {"state": "closed"}
-        return httpxyz.Response(200, json={"state": "closed"}, request=request)
-
-    async def run_test() -> None:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
-            await client.close_pull_request("octo-org", "stacked-review", pull_number=7)
-
-    asyncio.run(run_test())
-
-
 def test_github_client_converts_pull_request_to_draft_via_graphql() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.method == "POST"

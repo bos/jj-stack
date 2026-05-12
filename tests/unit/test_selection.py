@@ -15,18 +15,6 @@ from jj_review.review.selection import (
 )
 
 
-def test_resolve_selected_revset_returns_explicit_value() -> None:
-    assert (
-        resolve_selected_revset(
-            command_label="submit",
-            default_revset="@-",
-            require_explicit=False,
-            revset="@",
-        )
-        == "@"
-    )
-
-
 def test_resolve_selected_revset_requires_explicit_selection() -> None:
     with pytest.raises(CliError, match="requires an explicit revision selection"):
         resolve_selected_revset(

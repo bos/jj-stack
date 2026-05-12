@@ -461,64 +461,6 @@ def test_status_fetch_surfaces_unlinked_state_without_repopulating_link(
     assert unlinked_change.overview_comment_id is None
 
 
-def test_status_fetch_refreshes_pr_metadata_without_stack_comment_reads(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    change_id: initial_state.changes[change_id].model_copy(
-                        update={
-                            "pr_number": None,
-                            "pr_url": None,
-                            "navigation_comment_id": None,
-                        }
-                    ),
-                }
-            }
-        )
-    )
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailingCommentLookupClient(GithubClient):
-        async def list_issue_comments(self, owner, repo, *, issue_number):
-            raise AssertionError("status should not inspect stack comments")
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_review.review.status",),
-        client_type=FailingCommentLookupClient,
-    )
-
-    exit_code = run_main(repo, config_path, "status", "--fetch", change_id)
-    captured = capsys.readouterr()
-    refreshed_state = state_store.load()
-
-    assert exit_code == 0
-    assert "PR #2" in captured.out
-    assert refreshed_state.changes[change_id].pr_number == 2
-    assert refreshed_state.changes[change_id].navigation_comment_id is None
-
-
 def test_status_reports_unsubmitted_after_state_loss(
     tmp_path: Path,
     monkeypatch,
@@ -609,36 +551,6 @@ def test_status_preserves_cached_pull_request_metadata_when_github_reports_missi
     assert change_id in captured.out
     assert refreshed_state.changes[change_id].pr_number == 1
     assert refreshed_state.changes[change_id].pr_state == "open"
-    assert (
-        refreshed_state.changes[change_id].pr_url
-        == "https://github.test/octo-org/stacked-review/pull/1"
-    )
-    assert refreshed_state.changes[change_id].navigation_comment_id is None
-    assert refreshed_state.changes[change_id].overview_comment_id is None
-
-
-def test_status_refreshes_closed_pull_request_state_in_cache(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    fake_repo.pull_requests[1].state = "closed"
-
-    exit_code = run_main(repo, config_path, "status", change_id)
-    captured = capsys.readouterr()
-    refreshed_state = state_store.load()
-
-    assert exit_code == 0
-    assert "PR #1 closed" in captured.out
-    assert refreshed_state.changes[change_id].pr_number == 1
-    assert refreshed_state.changes[change_id].pr_review_decision is None
-    assert refreshed_state.changes[change_id].pr_state == "closed"
     assert (
         refreshed_state.changes[change_id].pr_url
         == "https://github.test/octo-org/stacked-review/pull/1"

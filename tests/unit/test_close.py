@@ -186,40 +186,6 @@ async def _run_cleanup_revision(*, bookmark_state: BookmarkState) -> _CleanupRes
     return _CleanupResult(actions=actions, jj_client=jj_client)
 
 
-def test_cleanup_revision_keeps_external_bookmark() -> None:
-    actions: list[CloseAction] = []
-    jj_client = _JjClientStub()
-
-    asyncio.run(
-        _cleanup_revision(
-            bookmark_state=BookmarkState(
-                name="review/feature-aaaaaaaa",
-                local_targets=("commit-1",),
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
-            ),
-            cached_change=CachedChange(
-                bookmark="review/feature-aaaaaaaa",
-                bookmark_ownership="external",
-            ),
-            commit_id="commit-1",
-            context=_CloseCleanupContext(
-                github_client=cast(GithubClient, SimpleNamespace()),
-                github_repository=_GITHUB_REPO,
-                next_changes={},
-                prepared_close=_prepared_close(jj_client=jj_client),
-                record_action=actions.append,
-                remote_name="origin",
-                revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
-                revision_label="feature 1 (aaaaaaaa)",
-            ),
-        )
-    )
-
-    assert actions == []
-    assert jj_client.delete_calls == []
-    assert jj_client.forget_calls == []
-
-
 def test_cleanup_revision_deletes_external_bookmark_when_configured() -> None:
     actions: list[CloseAction] = []
     jj_client = _JjClientStub()

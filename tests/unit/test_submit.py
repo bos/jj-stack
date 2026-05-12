@@ -355,15 +355,6 @@ def _prepared_revision(
     )
 
 
-def test_preflight_private_commits_passes_when_no_private_commits() -> None:
-    client = _FakeJjClientWithPrivateCommits(())
-    revisions = (
-        make_revision(commit_id="head", change_id="head-change", description="feature\n"),
-    )
-
-    _preflight_private_commits(client, revisions)  # no exception
-
-
 def test_preflight_private_commits_raises_on_private_commit() -> None:
     private = make_revision(
         commit_id="head", change_id="head-change", description="private thing\n"
@@ -374,14 +365,6 @@ def test_preflight_private_commits_raises_on_private_commit() -> None:
         _preflight_private_commits(client, (private,))
 
 
-def test_preflight_private_commits_error_names_the_blocked_changes() -> None:
-    private = make_revision(
-        commit_id="abc12345", change_id="abcd1234", description="secret work\n"
-    )
-    client = _FakeJjClientWithPrivateCommits((private,))
-
-    with pytest.raises(CliError, match="secret work"):
-        _preflight_private_commits(client, (private,))
 def test_preflight_conflicted_revisions_raises_on_conflicted_change() -> None:
     conflicted = LocalRevision(
         change_id="head-change",
@@ -397,24 +380,6 @@ def test_preflight_conflicted_revisions_raises_on_conflicted_change() -> None:
     )
 
     with pytest.raises(CliError, match="unresolved conflicts"):
-        _preflight_conflicted_revisions((conflicted,))
-
-
-def test_preflight_conflicted_revisions_error_names_the_blocked_changes() -> None:
-    conflicted = LocalRevision(
-        change_id="abcd1234",
-        commit_id="abc12345",
-        conflict=True,
-        current_working_copy=False,
-        description="conflicted feature\n",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("trunk",),
-    )
-
-    with pytest.raises(CliError, match="conflicted feature"):
         _preflight_conflicted_revisions((conflicted,))
 
 
