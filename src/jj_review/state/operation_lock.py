@@ -206,7 +206,7 @@ def _write_holder(holder_path: Path, holder: OperationLockHolder) -> None:
             json.dump(asdict(holder), tmp, indent=2)
             tmp.write("\n")
         Path(tmp_path_str).replace(holder_path)
-    except Exception:
+    except OSError:
         Path(tmp_path_str).unlink(missing_ok=True)
         raise
 
