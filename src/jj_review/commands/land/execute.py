@@ -658,7 +658,5 @@ def _updated_landed_change(
             "pr_review_decision": None,
             "pr_state": pr_state,
             "pr_url": pull_request.html_url,
-            "navigation_comment_id": None,
-            "overview_comment_id": None,
         }
-    )
+    ).with_cleared_comments()

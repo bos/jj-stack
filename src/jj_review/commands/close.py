@@ -1131,11 +1131,8 @@ async def _cleanup_revision(
         or cached_change.overview_comment_id is not None
         or cleared_comment
     ):
-        context.next_changes[context.revision.change_id] = cached_change.model_copy(
-            update={
-                "navigation_comment_id": None,
-                "overview_comment_id": None,
-            }
+        context.next_changes[context.revision.change_id] = (
+            cached_change.with_cleared_comments()
         )
 
 

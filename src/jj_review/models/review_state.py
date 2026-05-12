@@ -64,6 +64,29 @@ class CachedChange(BaseModel):
 
         return self.bookmark_ownership == "managed"
 
+    def with_cleared_comments(self) -> CachedChange:
+        """Return this record without saved managed-comment identities."""
+
+        return self.model_copy(
+            update={
+                "navigation_comment_id": None,
+                "overview_comment_id": None,
+            }
+        )
+
+    def with_cleared_pr_identity(self) -> CachedChange:
+        """Return this record without saved pull-request identity."""
+
+        return self.model_copy(
+            update={
+                "pr_is_draft": None,
+                "pr_number": None,
+                "pr_review_decision": None,
+                "pr_state": None,
+                "pr_url": None,
+            }
+        )
+
 
 class ReviewState(BaseModel):
     """Saved tracking data."""

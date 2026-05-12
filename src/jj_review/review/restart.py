@@ -116,15 +116,8 @@ def restart_cached_change(cached_change: CachedChange, *, new_bookmark: str) -> 
             "last_submitted_parent_change_id": None,
             "last_submitted_stack_head_change_id": None,
             "link_state": "active",
-            "pr_is_draft": None,
-            "pr_number": None,
-            "pr_review_decision": None,
-            "pr_state": None,
-            "pr_url": None,
-            "navigation_comment_id": None,
-            "overview_comment_id": None,
         }
-    )
+    ).with_cleared_pr_identity().with_cleared_comments()
 
 
 def fresh_bookmark_name(

@@ -851,15 +851,8 @@ def _update_cached_change_from_status(
     pull_request_lookup = status_revision.pull_request_lookup
     if pull_request_lookup is not None:
         if pull_request_lookup.state == "missing":
-            updated_change = updated_change.model_copy(
-                update={
-                    "pr_number": None,
-                    "pr_review_decision": None,
-                    "pr_state": None,
-                    "pr_url": None,
-                    "navigation_comment_id": None,
-                    "overview_comment_id": None,
-                }
+            updated_change = (
+                updated_change.with_cleared_pr_identity().with_cleared_comments()
             )
         elif pull_request_lookup.pull_request is not None:
             pull_request = pull_request_lookup.pull_request
@@ -875,12 +868,7 @@ def _update_cached_change_from_status(
                     update={"pr_review_decision": pull_request_lookup.review_decision}
                 )
             if pull_request_lookup.state != "open":
-                updated_change = updated_change.model_copy(
-                    update={
-                        "navigation_comment_id": None,
-                        "overview_comment_id": None,
-                    }
-                )
+                updated_change = updated_change.with_cleared_comments()
 
     managed_comments_lookup = status_revision.managed_comments_lookup
     if managed_comments_lookup is not None and managed_comments_lookup.state == "resolved":

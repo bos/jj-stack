@@ -174,10 +174,8 @@ async def _run_relink_async(
                 "pr_review_decision": None,
                 "pr_state": pull_request.state,
                 "pr_url": pull_request.html_url,
-                "navigation_comment_id": None,
-                "overview_comment_id": None,
             }
-        )
+        ).with_cleared_comments()
         journal.append(
             "planned_mutation",
             {

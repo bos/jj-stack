@@ -157,14 +157,8 @@ async def _run_unlink_async(
                 else bookmark_ownership_for_source(status_revision.bookmark_source)
             ),
             "link_state": "unlinked",
-            "pr_number": None,
-            "pr_review_decision": None,
-            "pr_state": None,
-            "pr_url": None,
-            "navigation_comment_id": None,
-            "overview_comment_id": None,
         }
-    )
+    ).with_cleared_pr_identity().with_cleared_comments()
     next_state = state.model_copy(
         update={
             "changes": {

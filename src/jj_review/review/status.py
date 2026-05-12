@@ -767,12 +767,7 @@ def _persist_status_cache_updates(
                     }
                 )
                 if change_status.pr_lifecycle != "open":
-                    updated_change = updated_change.model_copy(
-                        update={
-                            "navigation_comment_id": None,
-                            "overview_comment_id": None,
-                        }
-                    )
+                    updated_change = updated_change.with_cleared_comments()
         managed_comments_lookup = revision.managed_comments_lookup
         if managed_comments_lookup is not None:
             if updated_change is None:

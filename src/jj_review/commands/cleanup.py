@@ -1406,12 +1406,7 @@ async def _apply_stack_comment_cleanup_action(
     for action in comment_plan.actions[len(targeted_actions) :]:
         record_action(action)
     if applied_comments and change_id in next_changes:
-        next_changes[change_id] = next_changes[change_id].model_copy(
-            update={
-                "navigation_comment_id": None,
-                "overview_comment_id": None,
-            }
-        )
+        next_changes[change_id] = next_changes[change_id].with_cleared_comments()
     if not prepared_cleanup.dry_run:
         prepared_cleanup.context.state_store.save(
             prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
