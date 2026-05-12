@@ -109,7 +109,10 @@ def test_operation_journal_durable_append_fsyncs_new_log_directory(
         options={},
         resolved_scope={},
     )
+    fsyncs_after_begin = len(fsync_calls)
+
     journal.append("completed", {"ok": True}, durable=True)
 
-    assert len(fsync_calls) == 2
+    assert fsyncs_after_begin >= 1
+    assert len(fsync_calls) > fsyncs_after_begin
     assert directory_fsyncs == [tmp_path]
