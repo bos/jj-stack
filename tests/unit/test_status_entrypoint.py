@@ -83,6 +83,7 @@ def test_status_updates_tty_progress_bar_while_streaming(
         kwargs["on_revision"](object(), True)
         kwargs["on_revision"](object(), True)
         return SimpleNamespace(
+            cache_update_skipped=False,
             github_error=None,
             github_repository="octo-org/stacked-review",
             incomplete=False,
@@ -160,6 +161,7 @@ def test_status_passes_cli_color_override_to_native_jj_rendering(
         status_module,
         "stream_status",
         lambda **kwargs: SimpleNamespace(
+            cache_update_skipped=False,
             github_error=None,
             github_repository="octo-org/stacked-review",
             incomplete=False,

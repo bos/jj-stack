@@ -893,9 +893,8 @@ def _prepared_status_has_discoverable_remote_link(
             revision.bookmark,
             BookmarkState(name=revision.bookmark),
         ).remote_target(remote.name)
-        revision_value = getattr(revision, "revision", None)
         remote_status = classify_review_change_without_pull_request(
-            commit_id=getattr(revision_value, "commit_id", None),
+            commit_id=revision.revision.commit_id,
             remote_state=remote_state,
         )
         if remote_status.remote_branch != "absent":

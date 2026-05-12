@@ -35,7 +35,12 @@ def test_run_import_current_rejects_before_github_inspection(
                 remote_error=None,
                 stack=SimpleNamespace(revisions=()),
                 state_store=SimpleNamespace(load=lambda: SimpleNamespace(changes={})),
-                status_revisions=(SimpleNamespace(bookmark="review/feature-aaaa"),),
+                status_revisions=(
+                    SimpleNamespace(
+                        bookmark="review/feature-aaaa",
+                        revision=SimpleNamespace(commit_id="feature-commit"),
+                    ),
+                ),
             ),
             github_repository=SimpleNamespace(full_name="octo-org/stacked-review"),
             selected_revset="@",

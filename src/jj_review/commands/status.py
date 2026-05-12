@@ -18,7 +18,7 @@ from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_review.config import RepoConfig
-from jj_review.errors import CliError, ErrorMessage, error_message
+from jj_review.errors import CliError, error_message
 from jj_review.formatting import (
     format_pull_request_label,
     render_revision_blocks,
@@ -364,7 +364,11 @@ def _render_prepared_status(
     prepared_status,
     verbose: bool,
 ) -> int:
-    selection_lines = render_status_selection_lines(prepared_status=prepared_status)
+    selection_lines = (
+        ()
+        if prepared_status.prepared.remote is not None
+        else (remote_unavailable_message(remote_error=prepared_status.prepared.remote_error),)
+    )
     if selection_lines:
         _emit_lines(selection_lines, emitter=console.warning)
 
@@ -375,13 +379,14 @@ def _render_prepared_status(
             on_revision=lambda _revision, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
-    if getattr(result, "cache_update_skipped", False):
+    if result.cache_update_skipped:
         console.warning("Cache not refreshed: another jj-review operation is running.")
 
-    github_lines = render_status_github_lines(
+    github_message = github_unavailable_message(
         github_error=result.github_error,
         github_repository=result.github_repository,
     )
+    github_lines = () if github_message is None else (github_message,)
     if result.github_error is not None:
         _emit_lines(github_lines, emitter=console.warning, soft_wrap=False)
     else:
@@ -421,33 +426,6 @@ def _render_prepared_status(
     _emit_lines(render_status_advisory_lines(config=context.config, result=result))
 
     return 1 if result.incomplete else 0
-
-
-def render_status_selection_lines(*, prepared_status) -> tuple[object, ...]:
-    """Render exceptional local selection context lines."""
-
-    prepared = prepared_status.prepared
-    lines: list[object] = []
-    if prepared.remote is None:
-        lines.append(remote_unavailable_message(remote_error=prepared.remote_error))
-    return tuple(lines)
-
-
-def render_status_github_lines(
-    *,
-    github_error: ErrorMessage | None,
-    github_repository: str | None,
-) -> tuple[object, ...]:
-    """Render GitHub availability lines as status streaming begins."""
-
-    lines: list[object] = []
-    github_message = github_unavailable_message(
-        github_error=github_error,
-        github_repository=github_repository,
-    )
-    if github_message is not None:
-        lines.append(github_message)
-    return tuple(lines)
 
 
 def render_status_summary_lines(
