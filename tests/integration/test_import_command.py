@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_review.cli import main
-from jj_review.errors import CliError
 from jj_review.jj import JjClient
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
@@ -397,14 +396,7 @@ def test_import_revset_rejects_generated_bookmarks_without_selected_remote(
     for bookmark in (bottom_bookmark, top_bookmark):
         run_command(["jj", "bookmark", "forget", bookmark], repo)
     resolve_state_path(repo).unlink()
-
-    def _no_selected_remote(*args, **kwargs):
-        raise CliError("No submit remote configured.")
-
-    monkeypatch.setattr(
-        "jj_review.review.status.select_submit_remote",
-        _no_selected_remote,
-    )
+    run_command(["jj", "git", "remote", "remove", "origin"], repo)
 
     exit_code = _main(repo, config_path, "import", "--revset", top_change_id)
     captured = capsys.readouterr()

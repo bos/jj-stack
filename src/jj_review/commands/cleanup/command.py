@@ -27,12 +27,11 @@ from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._action_recorder import ActionRecorder
 from jj_review.commands._close_actions import comment_matches_kind as _comment_matches_kind
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
-from jj_review.errors import CliError, ErrorMessage, error_message
+from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.resolution import (
     ParsedGithubRepo,
-    parse_github_repo,
-    select_submit_remote,
+    resolve_github_target,
 )
 from jj_review.github.stack_comments import (
     StackCommentKind,
@@ -612,36 +611,22 @@ async def _apply_stack_comment_cleanup_action(
         )
 
 
-def _resolve_remote(*, context: CommandContext) -> tuple[GitRemote | None, ErrorMessage | None]:
-    try:
-        return select_submit_remote(context.jj_client.list_git_remotes()), None
-    except CliError as error:
-        return None, error_message(error)
-
-
 def _load_cleanup_remote_context(*, prepared_cleanup: PreparedCleanup) -> PreparedCleanup:
     """Resolve remote and GitHub target details once plain cleanup actually needs them."""
 
     if prepared_cleanup.remote_context_loaded:
         return prepared_cleanup
 
-    remote, remote_error = _resolve_remote(context=prepared_cleanup.context)
-    github_repository = None
-    github_error = None
-    if remote is not None:
-        github_repository = parse_github_repo(remote)
-        if github_repository is None:
-            github_error = (
-                t"Could not determine the GitHub repository for remote "
-                t"{ui.bookmark(remote.name)}. Use a GitHub remote URL."
-            )
+    github_target = resolve_github_target(
+        prepared_cleanup.context.jj_client.list_git_remotes()
+    )
 
     return replace(
         prepared_cleanup,
-        github_repository=github_repository,
-        github_repository_error=github_error,
-        remote=remote,
-        remote_error=remote_error,
+        github_repository=github_target.github_repository,
+        github_repository_error=github_target.github_repository_error,
+        remote=github_target.remote,
+        remote_error=github_target.remote_error,
         remote_context_loaded=True,
     )
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from jj_review import ui
-from jj_review.errors import CliError
+from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubRepository
 
@@ -31,6 +31,16 @@ class ParsedGithubRepo:
     @property
     def full_name(self) -> str:
         return f"{self.owner}/{self.repo}"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedGithubTarget:
+    """Optional GitHub target details for commands that can continue without GitHub."""
+
+    remote: GitRemote | None
+    remote_error: ErrorMessage | None
+    github_repository: ParsedGithubRepo | None
+    github_repository_error: ErrorMessage | None
 
 
 def select_submit_remote(remotes: tuple[GitRemote, ...]) -> GitRemote:
@@ -80,6 +90,32 @@ def _looks_like_scp_remote(url: str) -> bool:
     if len(prefix) == 1 and prefix.isalpha():
         return False
     return True
+
+
+def resolve_github_target(remotes: tuple[GitRemote, ...]) -> ResolvedGithubTarget:
+    """Resolve the optional remote/GitHub target used by read-mostly commands."""
+
+    remote: GitRemote | None = None
+    remote_error: ErrorMessage | None = None
+    if remotes:
+        try:
+            remote = select_submit_remote(remotes)
+        except CliError as error:
+            remote_error = error_message(error)
+
+    github_repository = parse_github_repo(remote) if remote is not None else None
+    github_repository_error: ErrorMessage | None = None
+    if remote is not None and github_repository is None:
+        github_repository_error = (
+            t"Could not determine the GitHub repository for remote "
+            t"{ui.bookmark(remote.name)}. Use a GitHub remote URL."
+        )
+    return ResolvedGithubTarget(
+        remote=remote,
+        remote_error=remote_error,
+        github_repository=github_repository,
+        github_repository_error=github_repository_error,
+    )
 
 
 def require_github_repo(remote: GitRemote) -> ParsedGithubRepo:

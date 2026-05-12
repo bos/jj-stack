@@ -37,13 +37,16 @@ from jj_review.commands.close_orphan import (
     run_untracked_cleanup_pull_request,
     state_has_pull_request_record,
 )
-from jj_review.errors import CliError, ErrorMessage, error_message
+from jj_review.errors import ErrorMessage
 from jj_review.github.client import GithubClient, build_github_client
 from jj_review.github.error_messages import (
     github_unavailable_message,
     remote_unavailable_message,
 )
-from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo, select_submit_remote
+from jj_review.github.resolution import (
+    ParsedGithubRepo,
+    resolve_github_target,
+)
 from jj_review.github.stack_comments import stack_comment_label
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
@@ -222,7 +225,6 @@ def _run_close(
                 context=context,
                 dry_run=dry_run,
                 github_client_builder=build_github_client,
-                github_repo_parser=parse_github_repo,
                 pull_request_number=target.pull_request_number,
                 state=target.state,
             )
@@ -233,7 +235,6 @@ def _run_close(
                 context=context,
                 dry_run=dry_run,
                 github_client_builder=build_github_client,
-                github_repo_parser=parse_github_repo,
                 pull_request_number=target.pull_request_number,
                 state=target.state,
             )
@@ -415,31 +416,14 @@ def _prepare_untracked_close_fast_path(
             )
         )
 
-    remotes = client.list_git_remotes()
-    remote: GitRemote | None = None
-    remote_error: ErrorMessage | None = None
-    if remotes:
-        try:
-            remote = select_submit_remote(remotes)
-        except CliError as error:
-            remote_error = error_message(error)
-
-    github_repository = None
-    github_repository_error = None
-    if remote is not None:
-        github_repository = parse_github_repo(remote)
-        if github_repository is None:
-            github_repository_error = (
-                t"Could not determine the GitHub repository for remote "
-                t"{ui.bookmark(remote.name)}. Use a GitHub remote URL."
-            )
+    github_target = resolve_github_target(client.list_git_remotes())
 
     prepared = PreparedStack(
         bookmark_states={},
         bookmark_result_changed=False,
         client=client,
-        remote=remote,
-        remote_error=remote_error,
+        remote=github_target.remote,
+        remote_error=github_target.remote_error,
         stack=stack,
         state=state,
         state_changes=dict(state.changes),
@@ -447,8 +431,8 @@ def _prepare_untracked_close_fast_path(
         status_revisions=tuple(status_revisions),
     )
     return PreparedStatus(
-        github_repository=github_repository,
-        github_repository_error=github_repository_error,
+        github_repository=github_target.github_repository,
+        github_repository_error=github_target.github_repository_error,
         prepared=prepared,
         selected_revset=stack.selected_revset,
         base_parent_subject=stack.base_parent.subject,

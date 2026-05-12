@@ -18,7 +18,7 @@ from jj_review.commands._close_actions import (
     plan_bookmark_cleanup,
     retire_cached_change as _retire_cached_change,
 )
-from jj_review.errors import CliError, ErrorMessage, error_message
+from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.error_messages import (
     github_unavailable_message,
@@ -27,11 +27,11 @@ from jj_review.github.error_messages import (
 )
 from jj_review.github.resolution import (
     ParsedGithubRepo,
-    select_submit_remote,
+    resolve_github_target,
 )
 from jj_review.github.stack_comments import StackCommentKind, stack_comment_label
 from jj_review.jj import JjClient
-from jj_review.models.bookmarks import BookmarkState, GitRemote
+from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import find_changes_by_bookmark, is_review_bookmark
@@ -44,7 +44,6 @@ from jj_review.ui import Message, plain_text
 
 OrphanedPullRequestState = Literal["closed", "open"]
 GithubClientBuilder = Callable[..., Any]
-GithubRepoParser = Callable[[GitRemote], ParsedGithubRepo | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,28 +91,25 @@ async def run_untracked_cleanup_pull_request(
     context: CommandContext,
     dry_run: bool,
     github_client_builder: GithubClientBuilder,
-    github_repo_parser: GithubRepoParser,
     pull_request_number: int,
     state: ReviewState,
 ) -> int:
     """Handle cleanup by PR number after saved tracking was already retired."""
 
-    jj_client = context.jj_client
-    remotes = jj_client.list_git_remotes()
-    if not remotes:
+    github_target = resolve_github_target(context.jj_client.list_git_remotes())
+    if github_target.remote is None and github_target.remote_error is None:
         raise _untracked_cleanup_verification_error(
             detail="no GitHub remote is configured",
             pull_request_number=pull_request_number,
         )
-    try:
-        remote = select_submit_remote(remotes)
-    except CliError as error:
+    if github_target.remote is None:
         raise _untracked_cleanup_verification_error(
-            detail=plain_text(error_message(error)),
+            detail=plain_text(github_target.remote_error),
             pull_request_number=pull_request_number,
-        ) from error
+        )
 
-    github_repository = github_repo_parser(remote)
+    remote = github_target.remote
+    github_repository = github_target.github_repository
     if github_repository is None:
         raise _untracked_cleanup_verification_error(
             detail=f"remote {remote.name} is not a GitHub remote",
@@ -167,7 +163,6 @@ async def run_orphan_close(
     context: CommandContext,
     dry_run: bool,
     github_client_builder: GithubClientBuilder,
-    github_repo_parser: GithubRepoParser,
     pull_request_number: int,
     state: ReviewState,
 ) -> int:
@@ -198,22 +193,14 @@ async def run_orphan_close(
             hint=t"Run {ui.cmd('unlink')} on the orphan record instead.",
         )
 
-    remotes = jj_client.list_git_remotes()
-    remote_error: ErrorMessage | None = None
-    remote: GitRemote | None = None
-    try:
-        remote = select_submit_remote(remotes) if remotes else None
-    except CliError as error:
-        remote_error = error_message(error)
-    github_repository = github_repo_parser(remote) if remote is not None else None
-    github_error: ErrorMessage | None = None
-    if remote is not None and github_repository is None:
-        github_error = f"Could not determine the GitHub repository for remote {remote.name}."
+    github_target = resolve_github_target(jj_client.list_git_remotes())
+    remote = github_target.remote
+    github_repository = github_target.github_repository
     if remote is None or github_repository is None:
         if remote is None:
-            console.warning(remote_unavailable_message(remote_error=remote_error))
+            console.warning(remote_unavailable_message(remote_error=github_target.remote_error))
         github_message = github_unavailable_message(
-            github_error=github_error,
+            github_error=github_target.github_repository_error,
             github_repository=None,
         )
         if github_message is not None:

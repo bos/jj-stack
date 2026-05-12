@@ -105,6 +105,8 @@ def patch_github_client_builders(
     def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:
         return ParsedGithubRepo(host="github.test", owner=fake_repo.owner, repo=fake_repo.name)
 
+    resolution_module = importlib.import_module("jj_review.github.resolution")
+    monkeypatch.setattr(resolution_module, "parse_github_repo", parse_github_repo)
     for module in modules:
         module_object = importlib.import_module(module)
         monkeypatch.setattr(

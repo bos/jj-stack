@@ -21,7 +21,10 @@ from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_review.console import requested_color_mode
 from jj_review.errors import CliError, ErrorMessage, error_message
-from jj_review.github.resolution import ParsedGithubRepo, parse_github_repo, select_submit_remote
+from jj_review.github.resolution import (
+    ParsedGithubRepo,
+    resolve_github_target,
+)
 from jj_review.jj import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.review_state import CachedChange, ReviewState
@@ -256,35 +259,23 @@ def _prepare_repo_inspection_context(
 ) -> _RepoInspectionContext:
     config = context.config
     jj_client = context.jj_client
-    remotes = jj_client.list_git_remotes()
-    remote: GitRemote | None = None
-    remote_error: ErrorMessage | None = None
-    if remotes:
-        try:
-            remote = select_submit_remote(remotes)
-        except CliError as error:
-            remote_error = error_message(error)
+    github_target = resolve_github_target(jj_client.list_git_remotes())
 
     all_revisions = tuple(revision for stack in discovered for revision in stack.revisions)
     bookmark_states: dict[str, BookmarkState] = {}
-    if remote is not None or config.use_bookmarks:
+    if github_target.remote is not None or config.use_bookmarks:
         pinned_bookmarks = _tracked_pinned_bookmarks_for_repo_inspection(
             revisions=all_revisions,
             state=state,
         )
         bookmark_states = jj_client.list_bookmark_states(pinned_bookmarks)
 
-    github_repository = parse_github_repo(remote) if remote is not None else None
-    github_error: ErrorMessage | None = None
-    if remote is not None and github_repository is None:
-        github_error = f"Could not determine the GitHub repository for remote {remote.name}."
-
     return _RepoInspectionContext(
         bookmark_states=bookmark_states,
-        github_error=github_error,
-        github_repository=github_repository,
-        remote=remote,
-        remote_error=remote_error,
+        github_error=github_target.github_repository_error,
+        github_repository=github_target.github_repository,
+        remote=github_target.remote,
+        remote_error=github_target.remote_error,
     )
 
 

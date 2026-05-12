@@ -23,7 +23,7 @@ from jj_review.github.error_messages import (
 )
 from jj_review.github.resolution import (
     ParsedGithubRepo,
-    parse_github_repo,
+    resolve_github_target,
     select_submit_remote,
 )
 from jj_review.github.stack_comments import (
@@ -223,30 +223,23 @@ def prepare_status(
     jj_client = context.jj_client
     state_store = context.state_store
     state = state_store.load()
-    remotes = jj_client.list_git_remotes()
-    remote: GitRemote | None = None
-    remote_error: ErrorMessage | None = None
+    github_target = resolve_github_target(jj_client.list_git_remotes())
     fetched_remote_state = False
-    if remotes:
-        try:
-            remote = select_submit_remote(remotes)
-        except CliError as error:
-            remote_error = error_message(error)
 
     stack: LocalStack | None = None
     if (
-        remote is not None
+        github_target.remote is not None
         and fetch_remote_state
         and re_resolve_after_remote_refresh
         and not fetch_only_when_tracked
     ):
-        jj_client.fetch_remote(remote=remote.name)
+        jj_client.fetch_remote(remote=github_target.remote.name)
         fetched_remote_state = True
     else:
         stack = jj_client.discover_review_stack(
             revset, allow_divergent=True, allow_immutable=True
         )
-        if remote is not None and fetch_remote_state:
+        if github_target.remote is not None and fetch_remote_state:
             should_fetch = not fetch_only_when_tracked or any(
                 classify_saved_review_change(
                     state.changes.get(revision.change_id),
@@ -255,7 +248,7 @@ def prepare_status(
                 for revision in stack.revisions
             )
             if should_fetch:
-                jj_client.fetch_remote(remote=remote.name)
+                jj_client.fetch_remote(remote=github_target.remote.name)
                 fetched_remote_state = True
                 if re_resolve_after_remote_refresh:
                     stack = None
@@ -269,8 +262,8 @@ def prepare_status(
     prepared = prepare_stack_for_status(
         context=context,
         persist_bookmarks=persist_bookmarks,
-        remote=remote,
-        remote_error=remote_error,
+        remote=github_target.remote,
+        remote_error=github_target.remote_error,
         stack=stack,
         state=state,
     )
@@ -280,18 +273,9 @@ def prepare_status(
         len(prepared.status_revisions),
         prepared.remote.name if prepared.remote is not None else "unavailable",
     )
-    github_repository = None
-    github_repository_error = None
-    if prepared.remote is not None:
-        github_repository = parse_github_repo(prepared.remote)
-        if github_repository is None:
-            github_repository_error = (
-                t"Could not determine the GitHub repository for remote "
-                t"{ui.bookmark(prepared.remote.name)}. Use a GitHub remote URL."
-            )
     return PreparedStatus(
-        github_repository=github_repository,
-        github_repository_error=github_repository_error,
+        github_repository=github_target.github_repository,
+        github_repository_error=github_target.github_repository_error,
         prepared=prepared,
         selected_revset=prepared.stack.selected_revset,
         base_parent_subject=prepared.stack.base_parent.subject,
