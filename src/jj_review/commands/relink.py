@@ -146,6 +146,42 @@ async def _run_relink_async(
 
     relink_succeeded = False
     try:
+        cached_change = state.changes.get(revision.change_id)
+        updated_change = (cached_change or CachedChange()).model_copy(
+            update={
+                "bookmark": bookmark,
+                "bookmark_ownership": "external",
+                "link_state": "active",
+                "pr_number": pull_request.number,
+                "pr_review_decision": None,
+                "pr_state": pull_request.state,
+                "pr_url": pull_request.html_url,
+            }
+        ).with_cleared_comments()
+        next_state = state.model_copy(
+            update={
+                "changes": {
+                    **state.changes,
+                    revision.change_id: updated_change,
+                }
+            }
+        )
+        journal.append(
+            "planned_mutation",
+            {
+                "change_id": revision.change_id,
+                "mutation": "saved_state_update",
+            },
+        )
+        state_store.save(next_state)
+        journal.append(
+            "saved_state_update",
+            {
+                "after": updated_change,
+                "before": cached_change,
+                "change_id": revision.change_id,
+            },
+        )
         journal.append(
             "planned_mutation",
             {
@@ -161,44 +197,6 @@ async def _run_relink_async(
                 "bookmark": bookmark,
                 "change_id": revision.change_id,
                 "mutation": "set_local_bookmark",
-            },
-        )
-
-        cached_change = state.changes.get(revision.change_id)
-        updated_change = (cached_change or CachedChange()).model_copy(
-            update={
-                "bookmark": bookmark,
-                "bookmark_ownership": "external",
-                "link_state": "active",
-                "pr_number": pull_request.number,
-                "pr_review_decision": None,
-                "pr_state": pull_request.state,
-                "pr_url": pull_request.html_url,
-            }
-        ).with_cleared_comments()
-        journal.append(
-            "planned_mutation",
-            {
-                "change_id": revision.change_id,
-                "mutation": "saved_state_update",
-            },
-        )
-        state_store.save(
-            state.model_copy(
-                update={
-                    "changes": {
-                        **state.changes,
-                        revision.change_id: updated_change,
-                    }
-                }
-            )
-        )
-        journal.append(
-            "saved_state_update",
-            {
-                "after": updated_change,
-                "before": cached_change,
-                "change_id": revision.change_id,
             },
         )
         journal.append("completed", {"change_id": revision.change_id})

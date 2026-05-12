@@ -333,4 +333,16 @@ def test_relink_completes_journal_after_successful_relink(
     journal_events = tuple(
         event for event in read_operation_log(state_dir) if event.operation == "relink"
     )
+    saved_state_update_index = next(
+        index
+        for index, event in enumerate(journal_events)
+        if event.event == "saved_state_update"
+    )
+    bookmark_mutation_index = next(
+        index
+        for index, event in enumerate(journal_events)
+        if event.event == "mutation_applied"
+        and event.data["mutation"] == "set_local_bookmark"
+    )
+    assert saved_state_update_index < bookmark_mutation_index
     assert journal_events[-1].event == "completed"
