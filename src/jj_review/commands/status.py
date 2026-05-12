@@ -44,6 +44,7 @@ from jj_review.review.selection import (
     resolve_selected_revset,
 )
 from jj_review.review.status import (
+    PullRequestLookup,
     ReviewStatusRevision,
     StatusResult,
     prepare_status,
@@ -966,7 +967,7 @@ def _link_advisory_kind(classified: _ClassifiedStatusRevision) -> str:
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
     change_status = classified.status
-    if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
+    if lookup.source == "remembered" and lookup.message is not None:
         return "remembered"
     if change_status.pr_lifecycle in {"ambiguous", "closed", "missing"}:
         return change_status.pr_lifecycle
@@ -1119,11 +1120,11 @@ def _format_status_summary(
 
 def _format_live_pull_request_label(
     *,
-    lookup,
+    lookup: PullRequestLookup,
     pull_request_number: int,
     is_draft: bool,
 ) -> str:
-    prefix = "remembered " if getattr(lookup, "source", "head") == "remembered" else ""
+    prefix = "remembered " if lookup.source == "remembered" else ""
     return format_pull_request_label(
         pull_request_number,
         is_draft=is_draft,
@@ -1171,7 +1172,7 @@ def _classified_revision_has_link_advisory(
     lookup = revision.pull_request_lookup
     if lookup is None:
         return False
-    if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
+    if lookup.source == "remembered" and lookup.message is not None:
         return True
     if change_status.pr_lifecycle == "ambiguous":
         return True
@@ -1188,7 +1189,7 @@ def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> object:
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
     change_status = classified.status
-    if getattr(lookup, "source", "head") == "remembered" and lookup.message is not None:
+    if lookup.source == "remembered" and lookup.message is not None:
         return lookup.message
     if change_status.pr_lifecycle == "ambiguous":
         return lookup.message or "GitHub reports more than one matching pull request"

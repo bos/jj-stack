@@ -7,9 +7,64 @@ from typing import cast
 from jj_review import console as console_module
 from jj_review.commands import status as status_module
 from jj_review.config import RepoConfig
-from jj_review.models.review_state import CachedChange
+from jj_review.models.bookmarks import RemoteBookmarkState
+from jj_review.models.github import GithubPullRequest
+from jj_review.models.review_state import CachedChange, LinkState
 from jj_review.review.change_status import SubmittedStateDisagreement
-from jj_review.review.status import StatusResult
+from jj_review.review.status import (
+    ManagedCommentsLookup,
+    PullRequestLookup,
+    PullRequestLookupSource,
+    PullRequestLookupState,
+    ReviewStatusRevision,
+    StatusResult,
+)
+
+
+def _lookup(
+    *,
+    state: PullRequestLookupState,
+    pull_request: object | None = None,
+    review_decision: str | None = None,
+    review_decision_error: str | None = None,
+    source: PullRequestLookupSource = "head",
+) -> PullRequestLookup:
+    return PullRequestLookup(
+        message=None,
+        pull_request=cast(GithubPullRequest | None, pull_request),
+        review_decision=review_decision,
+        review_decision_error=review_decision_error,
+        state=state,
+        source=source,
+    )
+
+
+def _status_revision(
+    *,
+    bookmark: str = "",
+    cached_change: CachedChange | None = None,
+    change_id: str,
+    commit_id: str = "commit-1",
+    link_state: LinkState = "active",
+    local_divergent: bool = False,
+    managed_comments_lookup: ManagedCommentsLookup | None = None,
+    pull_request_lookup: PullRequestLookup | None = None,
+    remote_state: RemoteBookmarkState | None = None,
+    subject: str = "feature",
+) -> ReviewStatusRevision:
+    return ReviewStatusRevision(
+        bookmark=bookmark,
+        bookmark_source="generated",
+        cached_change=cached_change,
+        change_id=change_id,
+        commit_id=commit_id,
+        link_state=link_state,
+        local_divergent=local_divergent,
+        managed_comments_lookup=managed_comments_lookup,
+        pull_request_lookup=pull_request_lookup,
+        remote_state=remote_state,
+        subject=subject,
+    )
 
 
 def _render_lines(*lines: object) -> tuple[str, ...]:
@@ -21,12 +76,9 @@ def _render_lines(*lines: object) -> tuple[str, ...]:
 
 
 def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> None:
-    merged_revision = SimpleNamespace(
-        cached_change=None,
+    merged_revision = _status_revision(
         change_id="abcdefghijkl",
-        link_state="active",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
+        pull_request_lookup=_lookup(
             pull_request=SimpleNamespace(
                 base=SimpleNamespace(ref="team/feature-base"),
                 number=5,
@@ -34,8 +86,6 @@ def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> 
             ),
             state="closed",
         ),
-        pull_request_number=lambda: 5,
-        managed_comments_lookup=None,
     )
 
     lines = _render_lines(
@@ -96,17 +146,12 @@ def test_status_advises_submit_when_selected_stack_changed_since_submit() -> Non
 
 
 def test_status_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
-    revision = SimpleNamespace(
-        cached_change=None,
+    revision = _status_revision(
         change_id="loqvlqrqabcdefghijkl",
-        link_state="active",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
+        pull_request_lookup=_lookup(
             pull_request=SimpleNamespace(number=21216, state="closed"),
             state="closed",
         ),
-        pull_request_number=lambda: 21216,
-        managed_comments_lookup=None,
     )
 
     lines = _render_lines(
@@ -133,20 +178,16 @@ def test_status_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
 
 
 def test_status_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
-    revision = SimpleNamespace(
+    revision = _status_revision(
         cached_change=CachedChange(
             bookmark="review/feature-8-abcdefgh",
             pr_number=42,
         ),
         change_id="abcdefgh1234",
-        link_state="active",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
+        pull_request_lookup=_lookup(
             pull_request=None,
             state="missing",
         ),
-        pull_request_number=lambda: None,
-        managed_comments_lookup=None,
     )
 
     lines = _render_lines(
@@ -173,7 +214,7 @@ def test_status_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
 
 
 def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
-    revision = SimpleNamespace(
+    revision = _status_revision(
         bookmark="review/feature-8-abcdefgh",
         cached_change=CachedChange(
             bookmark="review/feature-8-abcdefgh",
@@ -181,13 +222,10 @@ def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
-        link_state="active",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
+        pull_request_lookup=_lookup(
             pull_request=None,
             state="missing",
         ),
-        managed_comments_lookup=None,
         subject="feature 8",
     )
 
@@ -214,7 +252,7 @@ def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None
 
 
 def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fails() -> None:
-    revision = SimpleNamespace(
+    revision = _status_revision(
         bookmark="review/feature-7-abcdefgh",
         cached_change=CachedChange(
             bookmark="review/feature-7-abcdefgh",
@@ -224,9 +262,7 @@ def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fa
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
-        link_state="active",
-        local_divergent=False,
-        pull_request_lookup=SimpleNamespace(
+        pull_request_lookup=_lookup(
             pull_request=SimpleNamespace(
                 html_url="https://github.test/octo/repo/pull/7",
                 is_draft=False,
@@ -236,7 +272,6 @@ def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fa
             review_decision_error="review decision lookup failed",
             state="open",
         ),
-        managed_comments_lookup=None,
         subject="feature 7",
     )
 
@@ -260,14 +295,10 @@ def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fa
 
 def test_status_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
     revisions = tuple(
-        SimpleNamespace(
+        _status_revision(
             bookmark=f"review/feature-{index}",
-            cached_change=None,
             change_id=f"{index}" * 12,
-            link_state="active",
-            local_divergent=False,
-            pull_request_lookup=None,
-            managed_comments_lookup=None,
+            commit_id=f"commit-{index}",
             subject=f"feature {index}",
         )
         for index in range(8, 0, -1)
@@ -307,15 +338,10 @@ def test_status_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
 
 
 def test_status_verbose_keeps_managed_review_bookmark_in_native_log_output() -> None:
-    revision = SimpleNamespace(
+    revision = _status_revision(
         bookmark="review/feature-8-abcdefgh",
-        cached_change=None,
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
-        link_state="active",
-        local_divergent=False,
-        pull_request_lookup=None,
-        managed_comments_lookup=None,
         subject="feature 8",
     )
 

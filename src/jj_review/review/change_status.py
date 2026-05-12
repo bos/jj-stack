@@ -9,11 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from jj_review.models.bookmarks import RemoteBookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack
+
+if TYPE_CHECKING:
+    from jj_review.review.status import PullRequestLookup, ReviewStatusRevision
 
 LocalReviewState = Literal["present", "divergent", "orphaned", "missing"]
 ReviewLinkState = Literal["untracked", "active", "unlinked"]
@@ -94,23 +97,21 @@ _OPEN_PR_STATES_FOR_ORPHANS = frozenset({"open", "draft"})
 
 
 def classify_review_status_revision(
-    revision: Any,
+    revision: ReviewStatusRevision,
     *,
     baseline_disagreement: SubmittedStateDisagreement | None = None,
 ) -> ReviewChangeStatus:
     """Classify a rendered status revision without performing I/O."""
 
-    local: LocalReviewState = (
-        "divergent" if getattr(revision, "local_divergent", False) else "present"
-    )
+    local: LocalReviewState = "divergent" if revision.local_divergent else "present"
     return classify_review_change(
         baseline_disagreement=baseline_disagreement,
-        cached_change=getattr(revision, "cached_change", None),
-        commit_id=getattr(revision, "commit_id", None),
-        link_state=getattr(revision, "link_state", None),
+        cached_change=revision.cached_change,
+        commit_id=revision.commit_id,
+        link_state=revision.link_state,
         local=local,
-        pull_request_lookup=getattr(revision, "pull_request_lookup", None),
-        remote_state=getattr(revision, "remote_state", None),
+        pull_request_lookup=revision.pull_request_lookup,
+        remote_state=revision.remote_state,
     )
 
 
@@ -119,7 +120,7 @@ def classify_review_change(
     cached_change: CachedChange | None,
     commit_id: str | None,
     local: LocalReviewState,
-    pull_request_lookup: Any | None,
+    pull_request_lookup: PullRequestLookup | None,
     remote_state: RemoteBookmarkState | None,
     link_state: str | None = None,
     baseline_disagreement: SubmittedStateDisagreement | None = None,
@@ -152,7 +153,7 @@ def classify_review_change(
         pr_review_decision_error=(
             None
             if pull_request_lookup is None
-            else getattr(pull_request_lookup, "review_decision_error", None)
+            else pull_request_lookup.review_decision_error
         ),
         saved_review_identity=_has_saved_review_identity(cached_change),
         saved_pull_request_identity=_has_saved_pull_request_identity(cached_change),
@@ -305,16 +306,16 @@ def _remote_branch_matches_commit(
 
 
 def _pull_request_lifecycle(
-    pull_request_lookup: Any | None,
+    pull_request_lookup: PullRequestLookup | None,
 ) -> tuple[PullRequestLifecycle, bool]:
     if pull_request_lookup is None:
         return "none", False
-    lookup_state = getattr(pull_request_lookup, "state", "error")
+    lookup_state = pull_request_lookup.state
     if lookup_state == "open":
         return "open", False
     if lookup_state == "closed":
-        pull_request = getattr(pull_request_lookup, "pull_request", None)
-        if pull_request is not None and getattr(pull_request, "state", None) == "merged":
+        pull_request = pull_request_lookup.pull_request
+        if pull_request is not None and pull_request.state == "merged":
             return "merged", False
         return "closed", False
     if lookup_state == "missing":
@@ -329,26 +330,26 @@ def _pull_request_lifecycle(
 def _pull_request_draft(
     *,
     lifecycle: PullRequestLifecycle,
-    pull_request_lookup: Any | None,
+    pull_request_lookup: PullRequestLookup | None,
 ) -> bool | None:
     if lifecycle != "open" or pull_request_lookup is None:
         return None
-    pull_request = getattr(pull_request_lookup, "pull_request", None)
+    pull_request = pull_request_lookup.pull_request
     if pull_request is None:
         return None
-    return bool(getattr(pull_request, "is_draft", False))
+    return pull_request.is_draft
 
 
 def _pull_request_review_decision(
     *,
     lifecycle: PullRequestLifecycle,
-    pull_request_lookup: Any | None,
+    pull_request_lookup: PullRequestLookup | None,
 ) -> PullRequestReviewDecision:
     if lifecycle != "open" or pull_request_lookup is None:
         return "none"
-    if getattr(pull_request_lookup, "review_decision_error", None) is not None:
+    if pull_request_lookup.review_decision_error is not None:
         return "unknown"
-    decision = getattr(pull_request_lookup, "review_decision", None)
+    decision = pull_request_lookup.review_decision
     if decision is None:
         return "none"
     if decision in {"approved", "changes_requested", "commented"}:
