@@ -120,7 +120,6 @@ _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "list": ("ls",),
     "status": ("st",),
 }
-_COMMAND_PARSERS_ATTR = "_jj_review_command_parsers"
 _KNOWN_COMMANDS = frozenset(
     name
     for _, entries in _TOP_LEVEL_HELP_GROUPS
@@ -192,7 +191,6 @@ def build_parser() -> ArgumentParser:
         dest="command",
         parser_class=_CommandArgumentParser,
     )
-    setattr(parser, _COMMAND_PARSERS_ATTR, subcommands)
     submit_parser = _add_revision_command(
         subcommands,
         command="submit",
@@ -777,11 +775,11 @@ def _find_subcommand_parser(
     parser: ArgumentParser,
     command_name: str,
 ) -> ArgumentParser | None:
-    subcommands = getattr(parser, _COMMAND_PARSERS_ATTR, None)
-    if not isinstance(subcommands, _SubParsersAction):
-        return None
-    parser_choice = subcommands.choices.get(command_name)
-    return parser_choice if isinstance(parser_choice, ArgumentParser) else None
+    for action in parser._actions:
+        if isinstance(action, _SubParsersAction):
+            parser_choice = action.choices.get(command_name)
+            return parser_choice if isinstance(parser_choice, ArgumentParser) else None
+    return None
 
 
 def _print_cli_error(error: CliError) -> None:
@@ -1308,13 +1306,13 @@ def _extract_config_overrides(argv: Sequence[str]) -> tuple[JjCliArgs, list[str]
 
 
 def _global_cli_args(args: Namespace) -> JjCliArgs:
-    return getattr(args, "cli_args", None) or JjCliArgs()
+    return args.cli_args
 
 
 def _status_selectors_or_none(
     args: Namespace,
 ) -> tuple[commands.status.StatusSelector, ...] | None:
-    return getattr(args, "status_selectors", None)
+    return args.status_selectors
 
 
 def _forward_handler(
@@ -1341,9 +1339,10 @@ def _forward_handler(
         )
 
     def handler(args: Namespace) -> int:
+        values = vars(args)
         return function(
             **{
-                name: source(args) if not isinstance(source, str) else getattr(args, source)
+                name: source(args) if not isinstance(source, str) else values[source]
                 for name, source in parameter_sources.items()
             }
         )
