@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext
@@ -19,7 +18,7 @@ from jj_review.commands._close_actions import (
     retire_cached_change as _retire_cached_change,
 )
 from jj_review.errors import CliError
-from jj_review.github.client import GithubClient, GithubClientError
+from jj_review.github.client import GithubClient, GithubClientError, build_github_client
 from jj_review.github.error_messages import (
     github_unavailable_message,
     remote_unavailable_message,
@@ -43,7 +42,6 @@ from jj_review.state.journal import OperationJournal
 from jj_review.ui import Message, plain_text
 
 OrphanedPullRequestState = Literal["closed", "open"]
-GithubClientBuilder = Callable[..., Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +88,6 @@ async def run_untracked_cleanup_pull_request(
     *,
     context: CommandContext,
     dry_run: bool,
-    github_client_builder: GithubClientBuilder,
     pull_request_number: int,
     state: ReviewState,
 ) -> int:
@@ -116,7 +113,7 @@ async def run_untracked_cleanup_pull_request(
             pull_request_number=pull_request_number,
         )
 
-    async with github_client_builder(base_url=github_repository.api_base_url) as github_client:
+    async with build_github_client(base_url=github_repository.api_base_url) as github_client:
         try:
             pull_request = await github_client.get_pull_request(
                 github_repository.owner,
@@ -162,7 +159,6 @@ async def run_orphan_close(
     change_id: str,
     context: CommandContext,
     dry_run: bool,
-    github_client_builder: GithubClientBuilder,
     pull_request_number: int,
     state: ReviewState,
 ) -> int:
@@ -234,9 +230,7 @@ async def run_orphan_close(
             run=run,
         )
 
-        async with github_client_builder(
-            base_url=github_repository.api_base_url
-        ) as github_client:
+        async with build_github_client(base_url=github_repository.api_base_url) as github_client:
             inspection, blocked_action = await _lookup_orphaned_pull_request(
                 cached_change=cached_change,
                 github_client=github_client,

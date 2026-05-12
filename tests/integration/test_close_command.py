@@ -1026,7 +1026,7 @@ def test_close_cleanup_pull_request_reports_blocked_when_github_is_unavailable(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.close",),
+        modules=("jj_review.commands.close", "jj_review.commands.close_orphan"),
         client_type=OfflineGithubClient,
     )
 

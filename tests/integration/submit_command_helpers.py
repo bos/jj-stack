@@ -30,6 +30,7 @@ def configure_submit_environment(
             "jj_review.commands.submit.command",
             "jj_review.commands.relink",
             "jj_review.commands.close",
+            "jj_review.commands.close_orphan",
             "jj_review.commands.cleanup.command",
             "jj_review.commands.land.command",
             "jj_review.commands.list_",

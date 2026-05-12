@@ -224,7 +224,6 @@ def _run_close(
                 change_id=target.change_id,
                 context=context,
                 dry_run=dry_run,
-                github_client_builder=build_github_client,
                 pull_request_number=target.pull_request_number,
                 state=target.state,
             )
@@ -234,7 +233,6 @@ def _run_close(
             run_untracked_cleanup_pull_request(
                 context=context,
                 dry_run=dry_run,
-                github_client_builder=build_github_client,
                 pull_request_number=target.pull_request_number,
                 state=target.state,
             )
