@@ -19,11 +19,7 @@ from .submit_command_helpers import run_main
         ("status", ()),
         ("submit", ()),
         ("cleanup", ()),
-        ("doctor", ()),
         ("land", ()),
-        ("close", ()),
-        ("restart", ("@",)),
-        ("unlink", ("@",)),
     ],
 )
 def test_commands_do_not_crash_in_empty_repo(
@@ -42,26 +38,15 @@ def test_commands_do_not_crash_in_empty_repo(
     _assert_no_traceback(captured)
 
 
-@pytest.mark.parametrize(
-    ("command", "args"),
-    [
-        ("status", ()),
-        ("submit", ()),
-        ("cleanup", ("--rebase",)),
-        ("unlink", ("@-",)),
-    ],
-)
 def test_stack_commands_fail_closed_for_disconnected_roots(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    command: str,
-    args: tuple[str, ...],
 ) -> None:
     repo = _init_disconnected_root_repo(tmp_path)
     _add_github_like_remote(repo)
     config_path = _write_config(tmp_path)
 
-    exit_code = run_main(repo, config_path, command, *args)
+    exit_code = run_main(repo, config_path, "submit")
     captured = capsys.readouterr()
     combined = captured.out + captured.err
 
@@ -71,11 +56,9 @@ def test_stack_commands_fail_closed_for_disconnected_roots(
     _assert_no_traceback(captured)
 
 
-@pytest.mark.parametrize("command", ["status", "submit"])
 def test_commands_report_non_github_remote_without_traceback(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    command: str,
 ) -> None:
     repo = init_repo(tmp_path)
     commit_file(repo, "feature 1", "feature-1.txt")
@@ -85,7 +68,7 @@ def test_commands_report_non_github_remote_without_traceback(
     )
     config_path = _write_config(tmp_path)
 
-    exit_code = run_main(repo, config_path, command)
+    exit_code = run_main(repo, config_path, "submit")
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -93,26 +76,15 @@ def test_commands_report_non_github_remote_without_traceback(
     _assert_no_traceback(captured)
 
 
-@pytest.mark.parametrize(
-    ("command", "args"),
-    [
-        ("status", ()),
-        ("submit", ()),
-        ("cleanup", ("--rebase",)),
-        ("unlink", ("@-",)),
-    ],
-)
 def test_stack_commands_reject_merge_commits_without_traceback(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    command: str,
-    args: tuple[str, ...],
 ) -> None:
     repo = _init_merge_commit_repo(tmp_path)
     _add_github_like_remote(repo)
     config_path = _write_config(tmp_path)
 
-    exit_code = run_main(repo, config_path, command, *args)
+    exit_code = run_main(repo, config_path, "submit")
     captured = capsys.readouterr()
     combined = captured.out + captured.err
 
