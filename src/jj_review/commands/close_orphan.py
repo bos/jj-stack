@@ -187,7 +187,7 @@ async def run_orphan_close(
     pull_request_number: int,
     state: ReviewState,
 ) -> int:
-    """Close an orphaned PR, deleting its review artifacts via saved data."""
+    """Close an orphaned PR, deleting its review artifacts via tracking data."""
 
     config = context.config
     jj_client = context.jj_client
@@ -355,7 +355,7 @@ async def run_orphan_close(
 
         recorder.record(
             CloseAction(
-                kind="saved data",
+                kind="tracking data",
                 body=t"prune orphan record for {label}",
                 status="planned" if dry_run else "applied",
             )

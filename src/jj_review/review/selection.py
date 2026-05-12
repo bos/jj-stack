@@ -73,9 +73,9 @@ def resolve_orphaned_pull_request(
     the live-link path raise its targeted diagnostic).
 
     Raises `CliError` when two or more active tracked records claim the same
-    pull request number. The saved state is ambiguous; the user must repair it
-    via `unlink` or `relink` before `close --cleanup --pull-request` can act,
-    because there is no single orphan target to retire.
+    pull request number. The tracking data is ambiguous; the user must repair
+    it via `unlink` or `relink` before `close --cleanup --pull-request` can
+    act, because there is no single orphan target to retire.
 
     The membership check matches what `list` renders as an `orphan` row: a
     visible-but-unsupported revision, for example one on a bookmark outside the
@@ -99,8 +99,8 @@ def resolve_orphaned_pull_request(
         raise CliError(
             t"PR #{pull_request_number} is claimed by multiple tracked records ({rendered}).",
             hint=(
-                t"Repair the saved state with {ui.cmd('unlink')} or {ui.cmd('relink')} "
-                t"before retrying."
+                t"Repair the tracking data with {ui.cmd('unlink')} "
+                t"or {ui.cmd('relink')} before retrying."
             ),
         )
     change_id = matching_change_ids[0]

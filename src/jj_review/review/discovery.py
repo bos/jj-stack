@@ -1,4 +1,4 @@
-"""Discover tracked review stacks from saved state plus the live `jj` DAG.
+"""Discover tracked review stacks from tracking state plus the live `jj` DAG.
 
 Both `status` (for the moved-stacks advisory it emits about other tracked stacks)
 and `list` (for the per-stack rendering and for orphan-row enumeration) need the

@@ -148,7 +148,7 @@ The oracle asserts:
 - every review branch points at the merged-stack commit for that `change_id`
 - every PR base is recalculated from the merged selected DAG
 - no PR is closed, merged, or replaced during the merge submit
-- the merged stack has one selected-stack topology in saved state
+- the merged stack has one selected-stack topology in tracking state
 
 The initial scenario family covers both directions: appending the second stack after the
 first and appending the first stack after the second, with small stack sizes plus random

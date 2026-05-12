@@ -370,10 +370,10 @@ def _bookmark_is_already_managed_for_change(
     of the desired commit (the other half of the split, or any post-rewrite commit that
     is not a descendant of the previous target). `jj bookmark set` refuses such
     "backwards or sideways" moves by default. The move is legitimate when the tool's
-    saved state already records this bookmark as managed for this change, or when the
-    bookmark's current local target itself resolves to the same logical change as the
-    desired commit. In either case `allow_backwards` is correct. For any other case the
-    default guard stays in effect so an unrelated bookmark cannot be silently
+    tracking state already records this bookmark as managed for this change, or when
+    the bookmark's current local target itself resolves to the same logical change as
+    the desired commit. In either case `allow_backwards` is correct. For any other
+    case the default guard stays in effect so an unrelated bookmark cannot be silently
     retargeted.
 
     A hidden `local_target` (e.g., abandoned by the user manually) returns False on the

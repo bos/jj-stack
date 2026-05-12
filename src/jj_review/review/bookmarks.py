@@ -34,7 +34,7 @@ class ResolvedBookmark:
 
 @dataclass(frozen=True, slots=True)
 class BookmarkResolutionResult:
-    """Bookmark resolutions plus the updated saved local data."""
+    """Bookmark resolutions plus the updated tracking data."""
 
     changed: bool
     resolutions: tuple[ResolvedBookmark, ...]

@@ -91,7 +91,7 @@ def test_resolve_orphaned_pull_request_fails_closed_on_multiple_matches() -> Non
             pull_request_reference="17",
             state=state,
         )
-    assert "Repair the saved state" in str(excinfo.value)
+    assert "Repair the tracking data" in str(excinfo.value)
 
 
 _REPO_ROOT = Path(__file__).resolve().parent

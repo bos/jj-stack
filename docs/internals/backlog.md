@@ -93,8 +93,8 @@ Concrete follow-up questions:
 - how the queue or landing-PR path should preserve the current fail-closed
   behavior when the ready prefix changes locally while a queued landing is in
   flight
-- whether queue-backed landing needs resumable intent state distinct from the
-  current direct-landing intent model
+- whether queue-backed landing needs resumable operation data beyond the
+  operation-log evidence and tracking state used by the direct-push flow
 - how repo policy requirements such as required checks, branch protection, and
   review-only `review/*` branches should be diagnosed before a landing attempt
 
@@ -116,7 +116,7 @@ Useful follow-up work here includes:
 - clearer distinction between "inspect only", "safe retry", and "history
   rewrite" recovery paths when something is stale or ambiguous
 - an explicit guided-recovery flow for common cases such as "ancestor already
-  landed", "remote branch disappeared", or "saved state no longer matches the
+  landed", "remote branch disappeared", or "tracking state no longer matches the
   selected stack"
 - whether some of the current recovery-oriented guidance should eventually live
   behind a dedicated helper command rather than being repeated ad hoc in

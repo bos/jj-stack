@@ -22,7 +22,7 @@ agents working on the codebase. Most users will never open this directory.
 ## Vocabulary
 
 Internal files can use the full implementation vocabulary freely: revsets,
-bookmarks, intent files, saved state, ancestry shape, trunk mapping, ready
+bookmarks, tracking state, operation log, ancestry shape, trunk mapping, ready
 prefix, fail-closed, materialized, etc. That vocabulary is appropriate here
 because these files describe implementation, not user experience.
 

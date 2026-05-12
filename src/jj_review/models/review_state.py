@@ -1,4 +1,4 @@
-"""Typed models for saved local jj-review data."""
+"""Typed models for jj-review tracking data."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ BookmarkOwnership = Literal["managed", "external"]
 
 
 class CachedChange(BaseModel):
-    """Saved jj-review data for one logical `jj` change."""
+    """Tracking data for one logical `jj` change."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -31,7 +31,7 @@ class CachedChange(BaseModel):
 
     @property
     def has_review_identity(self) -> bool:
-        """Whether saved state proves this change was attached to review before."""
+        """Whether tracking state proves this change was attached to review before."""
 
         return any(
             value is not None
@@ -66,7 +66,7 @@ class CachedChange(BaseModel):
 
 
 class ReviewState(BaseModel):
-    """Saved local jj-review data."""
+    """Saved tracking data."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

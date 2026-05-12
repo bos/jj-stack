@@ -35,7 +35,7 @@ Also remember current project reality:
 Many bugs here come from interactions between loosely coupled systems. Pay extra attention to:
 
 - interrupted operations that leave work half-applied or hard to recover
-- mismatch or drift between `jj-review` saved state, `jj`, GitHub
+- mismatch or drift between `jj-review` tracking state, `jj`, GitHub
 - states where recovery paths fail and the user can no longer get back to something sane
 - unusual DAG topology, including rewrites, relinks, local deletions, and non-linear history
 - cases where only one selected stack should matter, but surrounding history can interfere

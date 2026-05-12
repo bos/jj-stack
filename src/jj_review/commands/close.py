@@ -122,7 +122,7 @@ class _CloseActionRecorder:
 
 @dataclass(frozen=True, slots=True)
 class _CloseExecutionState:
-    """Local saved state and commit lookup used during close execution."""
+    """Local tracking state and commit lookup used during close execution."""
 
     current_state: ReviewState
     next_changes: dict[str, CachedChange]
@@ -634,7 +634,7 @@ def _inspected_close_has_no_work(*, revisions) -> bool:
 
 
 def _prepare_close_execution_state(*, prepared_close: PreparedClose) -> _CloseExecutionState:
-    """Load local saved state and commit IDs once before close execution."""
+    """Load local tracking state and commit IDs once before close execution."""
 
     prepared_status = prepared_close.prepared_status
     prepared = prepared_status.prepared
@@ -1162,7 +1162,7 @@ def _plan_review_bookmark_cleanup(
 
 
 def _has_retirable_cached_review_identity(cached_change: CachedChange) -> bool:
-    """Return True when saved state proves this change previously had review identity."""
+    """Return True when tracking state proves prior review identity."""
 
     return classify_saved_review_change(
         cached_change,

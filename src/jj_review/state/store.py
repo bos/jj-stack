@@ -1,4 +1,4 @@
-"""Persistence helpers for saved local jj-review data."""
+"""Persistence helpers for jj-review tracking data."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ STATE_FILENAME = "state.json"
 
 
 class ReviewStateError(CliError):
-    """Raised when the saved local jj-review data is unreadable or invalid."""
+    """Raised when the tracking data is unreadable or invalid."""
 
 
 class ReviewStateStore:
@@ -48,7 +48,7 @@ class ReviewStateStore:
         return self._path.parent
 
     def load(self) -> ReviewState:
-        """Load the saved data, or defaults when the file is missing."""
+        """Load tracking data, or defaults when the file is missing."""
 
         try:
             return self._load_state()

@@ -488,7 +488,7 @@ When GitHub data is available, `status`:
 - surfaces a concise review-decision summary (approval, changes requested) for open PRs
 - renders open draft PRs differently from open published PRs
 - if GitHub is unreachable or misconfigured, reports that once at the repo level and
-  falls back to conservative per-change summaries from saved data rather than claiming a
+  falls back to conservative per-change summaries from tracking data rather than claiming a
   PR is absent. Because the output is incomplete, `status` exits non-zero
 - if it finds an ambiguous PR match, surfaces that inline and exits non-zero rather
   than silently calling the stack healthy
@@ -499,7 +499,7 @@ When GitHub data is available, `status`:
 - when the link is stale, closed, or ambiguous, prints a short repair advisory that
   distinguishes reopening the same PR, relinking an open replacement, and running
   `submit --restart` to create fresh PRs
-- when a saved PR link includes a last-known PR state, surfaces that as saved data
+- when a saved PR link includes a last-known PR state, surfaces that as tracking data
   rather than implying it is live
 - does not inspect managed stack-summary comments. Those comments are derived review
   artifacts, and the commands that create or delete them own their validation.
@@ -1164,7 +1164,7 @@ be landed now. That means:
 `land` may also offer an explicit readiness-bypass flag for users who want to preview or
 apply the open prefix anyway, but the bypass stays narrow:
 
-- it may bypass readiness gates such as draft or review-decision state
+- it may bypass readiness checks such as draft or review-decision state
 - it must not bypass ambiguous or missing PR linkage
 - it must not bypass trunk push protection or other integrity checks
 

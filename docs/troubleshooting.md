@@ -236,7 +236,7 @@ jj-review status <change-id>
 ### Finish what was started
 
 Re-run the same command, passing the change ID or revset so you don't accidentally operate on a
-different stack. `jj-review` derives the current state from jj, saved tracking data, and GitHub
+different stack. `jj-review` derives the current state from jj, tracking data, and GitHub
 instead of replaying a retained recovery record.
 
 | Command that failed         | Re-run                                  |
@@ -258,6 +258,6 @@ jj-review close --cleanup <change-id>
 ```
 
 If a failed `submit` created PRs or review branches that you no longer want, run
-`close --cleanup` on the selected stack. If the change was abandoned and only saved PR data
+`close --cleanup` on the selected stack. If the change was abandoned and only tracking data
 remains, use `jj-review list` to find the orphaned PR and then
 `jj-review close --cleanup --pull-request <pr>`.

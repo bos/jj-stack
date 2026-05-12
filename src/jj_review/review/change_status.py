@@ -2,7 +2,7 @@
 
 This module centralizes the observational state that commands derive from the
 local `jj` stack, saved tracking data, bookmark observations, and GitHub PR
-lookups. It deliberately does not mutate saved state or decide command policy.
+lookups. It deliberately does not mutate tracking state or decide command policy.
 """
 
 from __future__ import annotations
@@ -176,9 +176,9 @@ def classify_saved_review_change(
 
 
 def is_open_pr_record(cached_change: CachedChange) -> bool:
-    """Whether a saved record's PR is still open from saved state alone.
+    """Whether a saved record's PR is still open from tracking state alone.
 
-    This is a saved-state-only predicate: actively linked state, a saved PR
+    This is a tracking-state-only predicate: actively linked state, a saved PR
     number, and `pr_state` either open/draft or unknown. Callers that care
     whether the change has left live stacks must filter for that separately.
     """

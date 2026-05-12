@@ -193,7 +193,7 @@ remote validation, import remote validation and branch refresh decisions, submit
 untracked-remote repair, submit metadata sync, failed-submit artifact observation, and
 land trunk/revision readiness checks consume these axes.
 Direct reads of `CachedChange`, `PullRequestLookup`, and bookmark target fields remain
-where code is copying underlying data into saved state, rendering concrete GitHub
+where code is copying underlying data into tracking state, rendering concrete GitHub
 payload details, or applying mutations that need the exact target value.
 
 This is where most correctness lives.

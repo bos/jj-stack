@@ -18,8 +18,8 @@ implementation — terms a jj user would not know without reading the source:
 - Not "ancestry shape" → describe what happened: "your remaining changes are
   still based on the old history"
 - Not "materialized locally" → "set up local tracking for"
-- Not "local saved jj-review state" → describe the effect, e.g. "jj-review
-  doesn't know about these PRs yet"
+- When mentioning persisted records, say "tracking data" or describe the
+  effect, e.g. "jj-review doesn't know about these PRs yet"
 - Not "local-history repair path" → just say what the command does
 - Not "remote review branches" → "review branches" is fine; "remote review
   branches" is an internal double-noun
@@ -51,12 +51,10 @@ design-doc language is not.
 Specific patterns to watch for in help text:
 
 - Not "ready prefix" — say "the ready changes at the bottom of the stack"
-- Not "readiness gates" — say "readiness checks" or just describe the checks
-- Not "retraction plan" — say "what would be undone"
-- Not "intent file" — users don't need to know this term
-- Not "saved jj-review data" or "saved local data" — say "tracking data" or
-  describe the effect
-- Not "local jj-review tracking" — say "tracking" or describe what it does
+- Say "readiness checks" or describe the checks directly
+- Say "what would be undone" when previewing cleanup or reset behavior
+- For persisted records, say "tracking data" or describe the effect
+- Say "tracking" rather than naming jj-review's local tracking implementation
 
 ## Updating user docs after implementing something
 

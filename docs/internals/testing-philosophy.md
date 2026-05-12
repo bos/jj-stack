@@ -49,7 +49,7 @@ Examples of high-value test scenarios:
 - bad config, missing config, or config that conflicts with actual state
 - surprising DAG topology or stack selection edge cases
 - interrupted operations and partial cleanup
-- stale, missing, or contradictory saved state
+- stale, missing, or contradictory tracking state
 - drift or surprising interleaving across `jj-review`, `jj`, GitHub, and
   subprocess-visible state
 - recovery paths after a command discovers inconsistent state
