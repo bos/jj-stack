@@ -27,10 +27,9 @@ from jj_review.commands._close_actions import (
     CloseAction,
     CloseActionBody,
     apply_bookmark_cleanup,
-    close_action_presentation as _close_action_presentation,
+    emit_close_actions,
     find_managed_comment as _find_managed_comment,
     plan_bookmark_cleanup,
-    render_close_action_message as _render_close_action_message,
     retire_cached_change as _retire_cached_change,
 )
 from jj_review.commands.close_orphan import (
@@ -328,23 +327,11 @@ def print_close_result(result: CloseResult) -> None:
     if github_message is not None:
         console.warning(github_message)
     if result.actions:
-        if result.blocked:
-            header = "Close blocked:"
-        elif result.applied:
-            header = "Applied close actions:"
-        else:
-            header = "Planned close actions:"
-        console.output(header)
-        for action in result.actions:
-            prefix, prefix_style, body_style = _close_action_presentation(action.status)
-            console.output(
-                ui.prefixed_line(
-                    f"{prefix} ",
-                    _render_close_action_message(action),
-                    prefix_labels=prefix_style,
-                    message_labels=body_style,
-                )
-            )
+        emit_close_actions(
+            actions=result.actions,
+            applied=result.applied,
+            blocked=result.blocked,
+        )
     else:
         if result.applied:
             console.note("No close actions were needed for the selected stack.")

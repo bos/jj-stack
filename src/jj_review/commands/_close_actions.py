@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from jj_review import ui
+from jj_review import console, ui
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.error_messages import summarize_github_error_reason
 from jj_review.github.resolution import ParsedGithubRepo
@@ -181,13 +181,34 @@ async def find_managed_comment(
     return matching_comments[0], None
 
 
-def render_close_action_message(action: CloseAction) -> CloseActionBody:
-    if action.kind == "tracking":
-        return action.body
-    return (ui.semantic_text(action.kind, "prefix"), ": ", action.body)
+def emit_close_actions(
+    *,
+    actions: tuple[CloseAction, ...],
+    applied: bool,
+    blocked: bool,
+) -> None:
+    header = (
+        "Close blocked:"
+        if blocked
+        else ("Applied close actions:" if applied else "Planned close actions:")
+    )
+    console.output(header)
+    for action in actions:
+        prefix, prefix_style, body_style = _close_action_presentation(action.status)
+        body = action.body
+        if action.kind != "tracking":
+            body = (ui.semantic_text(action.kind, "prefix"), ": ", body)
+        console.output(
+            ui.prefixed_line(
+                f"{prefix} ",
+                body,
+                prefix_labels=prefix_style,
+                message_labels=body_style,
+            )
+        )
 
 
-def close_action_presentation(
+def _close_action_presentation(
     status: CloseActionStatus,
 ) -> tuple[str, tuple[str, ...] | None, tuple[str, ...] | None]:
     if status == "applied":

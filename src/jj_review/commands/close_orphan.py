@@ -13,10 +13,9 @@ from jj_review.commands._close_actions import (
     BookmarkCleanupPlan as _OrphanBookmarkCleanupPlan,
     CloseAction,
     apply_bookmark_cleanup,
-    close_action_presentation,
+    emit_close_actions,
     find_managed_comment,
     plan_bookmark_cleanup,
-    render_close_action_message,
     retire_cached_change as _retire_cached_change,
 )
 from jj_review.errors import CliError, ErrorMessage, error_message
@@ -382,23 +381,11 @@ def _render_orphan_close_actions(
     blocked: bool,
     run: _OrphanCloseRun,
 ) -> int:
-    dry_run = run.dry_run
-    header = (
-        "Close blocked:"
-        if blocked
-        else ("Applied close actions:" if not dry_run else "Planned close actions:")
+    emit_close_actions(
+        actions=actions,
+        applied=not run.dry_run,
+        blocked=blocked,
     )
-    console.output(header)
-    for action in actions:
-        prefix, prefix_style, body_style = close_action_presentation(action.status)
-        console.output(
-            ui.prefixed_line(
-                f"{prefix} ",
-                render_close_action_message(action),
-                prefix_labels=prefix_style,
-                message_labels=body_style,
-            )
-        )
     return 1 if blocked else 0
 
 
