@@ -12,11 +12,13 @@ from jj_review.commands.cleanup import (
     PreparedCleanup,
     PreparedRebase,
     StackCommentCleanupPlan,
+    _apply_stack_comment_cleanup_action,
     _plan_remote_branch_cleanup,
     _run_cleanup_async,
     _stream_rebase,
 )
 from jj_review.config import RepoConfig
+from jj_review.github.client import GithubClient
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
@@ -141,6 +143,57 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     assert [
         saved_state.changes["change-1"].navigation_comment_id for saved_state in saved_states
     ] == [None, None]
+
+
+def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
+    tmp_path: Path,
+) -> None:
+    state_store = cast(
+        ReviewStateStore,
+        SimpleNamespace(
+            require_writable=lambda: tmp_path,
+            save=lambda _state: None,
+        ),
+    )
+    prepared_cleanup = PreparedCleanup(
+        context=_fake_context(state_store=state_store),
+        bookmark_states={},
+        github_repository=ParsedGithubRepo(
+            host="github.com",
+            owner="octo-org",
+            repo="stacked-review",
+        ),
+        github_repository_error=None,
+        remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+        remote_error=None,
+        remote_context_loaded=True,
+        dry_run=True,
+        state=ReviewState(),
+    )
+    blocked_action = CleanupAction(
+        kind="stack navigation comment",
+        body="cannot delete stack navigation comments because GitHub reports multiple candidates",
+        status="blocked",
+    )
+    recorded_actions: list[CleanupAction] = []
+
+    asyncio.run(
+        _apply_stack_comment_cleanup_action(
+            comment_plan=StackCommentCleanupPlan(actions=(blocked_action,)),
+            change_id="change-1",
+            github_client=cast(GithubClient, SimpleNamespace()),
+            github_repository=ParsedGithubRepo(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
+            next_changes={},
+            prepared_cleanup=prepared_cleanup,
+            record_action=recorded_actions.append,
+        )
+    )
+
+    assert recorded_actions == [blocked_action]
 
 
 def _status_revision(

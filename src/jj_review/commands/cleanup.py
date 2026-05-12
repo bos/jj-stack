@@ -1382,8 +1382,9 @@ async def _apply_stack_comment_cleanup_action(
     record_action: Callable[[CleanupAction], None],
 ) -> None:
     applied_comments = False
+    targeted_actions = comment_plan.actions[: len(comment_plan.comments)]
     for action, (comment_id, kind) in zip(
-        comment_plan.actions,
+        targeted_actions,
         comment_plan.comments,
         strict=True,
     ):
@@ -1402,7 +1403,7 @@ async def _apply_stack_comment_cleanup_action(
             applied_comments = True
             comment_action = replace(action, status="applied")
         record_action(comment_action)
-    for action in comment_plan.actions[len(comment_plan.comments) :]:
+    for action in comment_plan.actions[len(targeted_actions) :]:
         record_action(action)
     if applied_comments and change_id in next_changes:
         next_changes[change_id] = next_changes[change_id].model_copy(
