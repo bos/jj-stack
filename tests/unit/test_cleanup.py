@@ -6,16 +6,18 @@ from types import SimpleNamespace
 from typing import cast
 
 from jj_review.bootstrap import CommandContext
-from jj_review.commands import cleanup as cleanup_module
-from jj_review.commands.cleanup import (
+from jj_review.commands.cleanup import command as cleanup_module
+from jj_review.commands.cleanup.command import (
+    _apply_stack_comment_cleanup_action,
+    _plan_remote_branch_cleanup,
+    _run_cleanup_async,
+)
+from jj_review.commands.cleanup.rebase import _stream_rebase
+from jj_review.commands.cleanup.shared import (
     CleanupAction,
     PreparedCleanup,
     PreparedRebase,
     StackCommentCleanupPlan,
-    _apply_stack_comment_cleanup_action,
-    _plan_remote_branch_cleanup,
-    _run_cleanup_async,
-    _stream_rebase,
 )
 from jj_review.config import RepoConfig
 from jj_review.github.client import GithubClient
@@ -103,7 +105,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
         deleted_comment_ids.append(comment_id)
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.build_github_client",
+        "jj_review.commands.cleanup.command.build_github_client",
         lambda **kwargs: FakeGithubClientContext(),
     )
     async def fake_plan_stack_comment_cleanup(**kwargs):
@@ -118,11 +120,11 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
             comments=((12, "navigation"),),
         )
     monkeypatch.setattr(
-        "jj_review.commands.cleanup._stale_change_reasons",
+        "jj_review.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {change_id: None for change_id in kwargs["change_ids"]},
     )
     monkeypatch.setattr(
-        "jj_review.commands.cleanup._plan_stack_comment_cleanup",
+        "jj_review.commands.cleanup.command._plan_stack_comment_cleanup",
         fake_plan_stack_comment_cleanup,
     )
     result = asyncio.run(
@@ -298,7 +300,7 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
     )
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.stream_status",
+        "jj_review.commands.cleanup.rebase.stream_status",
         lambda **kwargs: SimpleNamespace(
             github_error=None,
             github_repository="octo-org/stacked-review",

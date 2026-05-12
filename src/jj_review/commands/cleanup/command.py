@@ -19,9 +19,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
-from typing import Literal
 
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
@@ -29,10 +28,6 @@ from jj_review.commands._close_actions import comment_matches_kind as _comment_m
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
-from jj_review.github.error_messages import (
-    github_unavailable_message,
-    remote_unavailable_message,
-)
 from jj_review.github.resolution import (
     ParsedGithubRepo,
     parse_github_repo,
@@ -42,26 +37,15 @@ from jj_review.github.stack_comments import (
     StackCommentKind,
     stack_comment_label,
 )
-from jj_review.jj import JjCliArgs, JjClient
-from jj_review.jj.client import UnsupportedStackError
+from jj_review.jj import JjCliArgs
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
+from jj_review.review.bookmarks import is_review_bookmark
 from jj_review.review.change_status import (
     ReviewChangeStatus,
     classify_review_change,
-    classify_review_status_revision,
-    classify_saved_review_change,
     is_open_pr_record,
-)
-from jj_review.review.selection import resolve_selected_revset
-from jj_review.review.status import (
-    PreparedStatus,
-    ReviewStatusRevision,
-    prepare_status,
-    status_preparation_cli_error,
-    stream_status,
 )
 from jj_review.state.journal import (
     OperationJournal,
@@ -69,194 +53,29 @@ from jj_review.state.journal import (
 from jj_review.state.operation_lock import (
     acquire_operation_lock,
 )
-from jj_review.ui import Message, plain_text
+
+from .rebase import _run_cleanup_rebase_command
+from .shared import (
+    CleanupAction,
+    CleanupResult,
+    OrphanLocalBookmarkCleanupPlan,
+    PreparedCleanup,
+    PreparedCleanupChange,
+    RemoteBranchCleanupPlan,
+    StackCommentCleanupEligibility,
+    StackCommentCleanupPlan,
+    _build_action_streamer,
+    _CleanupActionRecorder,
+    _emit_output_lines,
+    _emit_severity_lines,
+    _render_cleanup_action_header,
+    _render_cleanup_postamble,
+    _render_remote_and_github_lines,
+    _StaleCleanupMutationPlan,
+)
 
 HELP = "Remove stale tracking data and review branches; optionally rebase one stack"
-
-CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
-type StackCommentCleanupEligibility = Literal["inspect", "needs-remote-check", "skip"]
-type CleanupBody = Message
 _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
-
-
-@dataclass(frozen=True, slots=True)
-class CleanupAction:
-    """One cleanup action that was planned, applied, blocked, or skipped."""
-
-    kind: str
-    status: CleanupActionStatus
-    body: CleanupBody
-
-    @property
-    def message(self) -> str:
-        """Return the plain-text form of this action body."""
-
-        return plain_text(self.body)
-
-
-@dataclass(frozen=True, slots=True)
-class CleanupResult:
-    """Rendered cleanup result for the selected repository."""
-
-    actions: tuple[CleanupAction, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedCleanup:
-    """Locally prepared cleanup inputs before any GitHub inspection."""
-
-    context: CommandContext
-    bookmark_states: dict[str, BookmarkState]
-    github_repository: ParsedGithubRepo | None
-    github_repository_error: ErrorMessage | None
-    remote: GitRemote | None
-    remote_error: ErrorMessage | None
-    remote_context_loaded: bool
-    dry_run: bool
-    state: ReviewState
-
-
-@dataclass(frozen=True, slots=True)
-class StackCommentCleanupPlan:
-    """Planned or blocked stack-comment cleanup details."""
-
-    actions: tuple[CleanupAction, ...]
-    comments: tuple[tuple[int, StackCommentKind], ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class RemoteBranchCleanupPlan:
-    """Planned or blocked remote-branch cleanup details."""
-
-    action: CleanupAction
-    expected_remote_target: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class OrphanLocalBookmarkCleanupPlan:
-    """Planned or blocked cleanup for one untracked local review bookmark."""
-
-    action: CleanupAction
-    bookmark: str
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedCleanupChange:
-    """Locally prepared cleanup state for one cached change."""
-
-    bookmark_state: BookmarkState
-    cached_change: CachedChange
-    change_id: str
-    inspect_stack_comment: bool
-    remote_state: RemoteBookmarkState | None
-    review_status: ReviewChangeStatus
-    stale_reason: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class _StaleCleanupMutationPlan:
-    """Planned local bookmark and remote branch mutations for one stale change."""
-
-    cached_change: CachedChange
-    local_bookmark_action: CleanupAction | None
-    remote_plan: RemoteBranchCleanupPlan | None
-
-
-@dataclass(frozen=True, slots=True)
-class RebaseResult:
-    """Rendered rebase result for one selected local stack."""
-
-    actions: tuple[CleanupAction, ...]
-    blocked: bool
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedRebase:
-    """Locally prepared rebase inputs before any rewrite."""
-
-    context: CommandContext
-    dry_run: bool
-    prepared_status: PreparedStatus
-
-
-@dataclass(frozen=True, slots=True)
-class _ClassifiedCleanupRebaseRevision:
-    """A cleanup-rebase path revision with its derived review status."""
-
-    revision: ReviewStatusRevision
-    status: ReviewChangeStatus
-
-
-@dataclass(frozen=True, slots=True)
-class _RebaseOperationPlan:
-    """Derived rebase planning data before preview/live rendering."""
-
-    blocked: bool
-    closed_unmerged_revisions: tuple[ReviewStatusRevision, ...]
-    merged_revisions: tuple[ReviewStatusRevision, ...]
-    pre_actions: tuple[CleanupAction, ...]
-    rebase_plans: tuple[tuple[str, str | None], ...]
-
-
-@dataclass(slots=True)
-class _CleanupActionRecorder:
-    """Collect cleanup actions and optionally stream them as they are recorded."""
-
-    on_action: Callable[[CleanupAction], None] | None
-    actions: list[CleanupAction] = field(default_factory=list)
-
-    def record(self, action: CleanupAction) -> None:
-        self.actions.append(action)
-        if self.on_action is not None:
-            self.on_action(action)
-
-    def as_tuple(self) -> tuple[CleanupAction, ...]:
-        return tuple(self.actions)
-
-
-def _render_cleanup_action_header(*, dry_run: bool) -> str:
-    """Render the cleanup action section header."""
-
-    return "Planned cleanup actions:" if dry_run else "Applied cleanup actions:"
-
-
-def _render_cleanup_postamble(*, result: CleanupResult) -> tuple[str, ...]:
-    """Render cleanup lines that only depend on the completed result."""
-
-    if not result.actions:
-        return ("No cleanup actions needed.",)
-    return ()
-
-
-def _render_rebase_preamble(*, prepared_rebase: PreparedRebase) -> tuple[tuple[str, str], ...]:
-    """Render the non-streaming rebase context lines for the CLI."""
-
-    prepared_status = prepared_rebase.prepared_status
-    prepared = prepared_status.prepared
-    return _render_remote_and_github_lines(
-        remote=prepared.remote,
-        remote_error=prepared.remote_error,
-        github_repository=(
-            prepared_status.github_repository.full_name
-            if prepared_status.github_repository is not None
-            else None
-        ),
-        github_error=prepared_status.github_repository_error,
-    )
-
-
-def _render_rebase_action_header(*, dry_run: bool) -> str:
-    """Render the rebase action section header."""
-
-    return "Planned rebase actions:" if dry_run else "Applied rebase actions:"
-
-
-def _render_rebase_postamble(*, result: RebaseResult) -> tuple[str, ...]:
-    """Render rebase lines that only depend on the completed result."""
-
-    if not result.actions:
-        return ("No merged changes on the selected stack need rebasing.",)
-    return ()
 
 
 def cleanup(
@@ -289,38 +108,6 @@ def cleanup(
             context=context,
             dry_run=dry_run,
         )
-
-
-def _run_cleanup_rebase_command(
-    *,
-    context: CommandContext,
-    dry_run: bool,
-    rebase_revset: str,
-) -> int:
-    """Render and run the `cleanup --rebase` command path."""
-
-    try:
-        with console.spinner(description="Inspecting jj stack"):
-            prepared_rebase = _prepare_cleanup_rebase(
-                context=context,
-                dry_run=dry_run,
-                rebase_revset=rebase_revset,
-            )
-    except UnsupportedStackError as error:
-        raise status_preparation_cli_error(error) from error
-    _emit_severity_lines(_render_rebase_preamble(prepared_rebase=prepared_rebase))
-
-    try:
-        result = _stream_rebase(
-            on_action=_build_action_streamer(
-                header=_render_rebase_action_header(dry_run=prepared_rebase.dry_run),
-            ),
-            prepared_rebase=prepared_rebase,
-        )
-    except UnsupportedStackError as error:
-        raise status_preparation_cli_error(error) from error
-    _emit_output_lines(_render_rebase_postamble(result=result))
-    return 1 if result.blocked else 0
 
 
 def _run_cleanup_command(
@@ -370,137 +157,6 @@ def _run_cleanup_command(
     return 0
 
 
-def _prepare_cleanup_rebase(
-    *,
-    context: CommandContext,
-    dry_run: bool,
-    rebase_revset: str,
-) -> PreparedRebase:
-    selected_revset = resolve_selected_revset(
-        command_label=_cleanup_rebase_command_label(dry_run=dry_run),
-        default_revset="@-",
-        require_explicit=False,
-        revset=rebase_revset,
-    )
-    return PreparedRebase(
-        context=context,
-        dry_run=dry_run,
-        prepared_status=prepare_status(
-            context=context,
-            fetch_remote_state=True,
-            fetch_only_when_tracked=True,
-            revset=selected_revset,
-        ),
-    )
-
-
-def _cleanup_rebase_command_label(*, dry_run: bool) -> str:
-    return "cleanup --rebase --dry-run" if dry_run else "cleanup --rebase"
-
-
-def _emit_severity_lines(lines: tuple[tuple[str, str], ...]) -> None:
-    for severity, line in lines:
-        if severity == "warning":
-            console.warning(line)
-        else:
-            console.output(line)
-
-
-def _emit_output_lines(lines: tuple[str, ...]) -> None:
-    for line in lines:
-        console.output(line)
-
-
-def _build_action_streamer(
-    *,
-    header: str,
-) -> Callable[[CleanupAction], None]:
-    """Print the action header once, then stream actions as they arrive."""
-
-    header_printed = False
-
-    def emit_action(action: CleanupAction) -> None:
-        nonlocal header_printed
-        if not header_printed:
-            console.output(header)
-            header_printed = True
-        prefix, prefix_style, body_style = _action_presentation(action.status)
-        body = action.body
-        if action.kind != "tracking":
-            body = (ui.semantic_text(action.kind, "prefix"), ": ", body)
-        console.output(
-            ui.prefixed_line(
-                f"{prefix} ",
-                body,
-                message_labels=body_style,
-                prefix_labels=prefix_style,
-            )
-        )
-
-    return emit_action
-
-
-def _render_remote_and_github_lines(
-    *,
-    remote: GitRemote | None,
-    remote_error: ErrorMessage | None,
-    github_repository: str | None,
-    github_error: ErrorMessage | None,
-) -> tuple[tuple[str, str], ...]:
-    lines: list[tuple[str, str]] = []
-    if remote is None:
-        lines.append(
-            ("warning", ui.plain_text(remote_unavailable_message(remote_error=remote_error)))
-        )
-    github_message = github_unavailable_message(
-        github_error=github_error,
-        github_repository=github_repository,
-    )
-    if github_message is not None:
-        lines.append(("warning", plain_text(github_message)))
-    return tuple(lines)
-
-
-def _action_presentation(
-    status: CleanupActionStatus,
-) -> tuple[str, tuple[str, ...] | None, tuple[str, ...] | None]:
-    if status == "applied":
-        return (
-            "  ✓",
-            ("signature status good",),
-            None,
-        )
-    if status == "planned":
-        return (
-            "  ~",
-            ("hint heading",),
-            None,
-        )
-    if status == "blocked":
-        return (
-            "  ✗",
-            ("error heading",),
-            ("warning heading",),
-        )
-    if status == "skipped":
-        return (
-            "  -",
-            ("hint heading",),
-            None,
-        )
-    return ("  ?", None, None)
-
-
-def _revision_label_template(revision: ReviewStatusRevision):
-    return t"{revision.subject} ({ui.change_id(revision.change_id)})"
-
-
-def _rebase_destination_template(destination_change_id: str | None):
-    if destination_change_id is None:
-        return ui.revset("trunk()")
-    return ui.change_id(destination_change_id)
-
-
 def _prepare_cleanup(
     *,
     context: CommandContext,
@@ -529,461 +185,6 @@ def _prepare_cleanup(
         dry_run=dry_run,
         state=state,
     )
-
-
-def _prepared_rebase_has_potential_work(*, prepared_status: PreparedStatus) -> bool:
-    """Whether any selected revision could possibly need rebasing.
-
-    Cleanup rebase moves surviving descendants past merged ancestors, so a
-    stack where no revision carries review identity cannot have any known
-    merged PRs and has nothing for cleanup rebase to plan. Skipping the GitHub
-    inspection here also avoids misreporting GitHub outages as rebase-blocking
-    when there would have been nothing to rebase regardless.
-    """
-
-    for prepared_revision in prepared_status.prepared.status_revisions:
-        cached = prepared_revision.cached_change
-        if classify_saved_review_change(cached, local="present").saved_review_identity:
-            return True
-    return False
-
-
-def _stream_rebase(
-    *,
-    on_action: Callable[[CleanupAction], None] | None = None,
-    prepared_rebase: PreparedRebase,
-) -> RebaseResult:
-    """Inspect and optionally execute a local rebase plan after merged changes."""
-
-    prepared_status = prepared_rebase.prepared_status
-    if not _prepared_rebase_has_potential_work(prepared_status=prepared_status):
-        return RebaseResult(actions=(), blocked=False)
-    progress_total = prepared_status.github_inspection_count()
-    with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
-        status_result = stream_status(
-            inspect_stack_comments=True,
-            on_revision=lambda _revision, _github_available: progress.advance(),
-            prepared_status=prepared_status,
-        )
-    prepared = prepared_status.prepared
-    path_revisions = _resolve_rebase_path_revisions(
-        prepared_status=prepared_status,
-        status_result=status_result,
-    )
-    recorder = _CleanupActionRecorder(on_action=on_action)
-
-    if status_result.github_error is not None or status_result.github_repository is None:
-        recorder.record(
-            CleanupAction(
-                kind="rebase",
-                status="blocked",
-                body=(
-                    "cannot compute a rebase plan without live GitHub pull request "
-                    "state; fix GitHub access and retry"
-                ),
-            )
-        )
-        return RebaseResult(
-            actions=recorder.as_tuple(),
-            blocked=True,
-        )
-
-    operation_plan = _plan_rebase_operations(
-        path_revisions=path_revisions,
-        prepared_status=prepared_status,
-    )
-    blocked = operation_plan.blocked
-    merged_revisions = operation_plan.merged_revisions
-    if not merged_revisions:
-        return RebaseResult(
-            actions=(),
-            blocked=False,
-        )
-
-    closed_unmerged_revisions = operation_plan.closed_unmerged_revisions
-    for action in operation_plan.pre_actions:
-        recorder.record(action)
-
-    rebase_journal = _start_rebase_operation_log(
-        blocked=blocked,
-        prepared=prepared,
-        prepared_rebase=prepared_rebase,
-        selected_revset=status_result.selected_revset,
-    )
-
-    client = prepared.client
-    _rebase_succeeded = False
-    try:
-        _run_rebase_pass(
-            blocked=blocked,
-            client=client,
-            closed_unmerged_revisions=closed_unmerged_revisions,
-            prepared_rebase=prepared_rebase,
-            rebase_plans=operation_plan.rebase_plans,
-            record_action=recorder.record,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
-        )
-
-        _record_rebase_policy_actions(
-            prefix=prepared_rebase.context.config.bookmark_prefix,
-            merged_revisions=merged_revisions,
-            record_action=recorder.record,
-        )
-
-        if not recorder.actions and merged_revisions:
-            recorder.record(
-                CleanupAction(
-                    kind="rebase",
-                    status="planned" if prepared_rebase.dry_run else "applied",
-                    body=t"merged changes remain on the selected stack "
-                    t"({ui.join(_revision_label_template, merged_revisions)}), but no "
-                    t"surviving descendants need to move",
-                )
-            )
-
-        _rebase_succeeded = True
-        return RebaseResult(
-            actions=recorder.as_tuple(),
-            blocked=blocked,
-        )
-    finally:
-        if _rebase_succeeded and rebase_journal is not None:
-            ordered_change_ids = tuple(
-                prepared_revision.revision.change_id
-                for prepared_revision in prepared.status_revisions
-            )
-            rebase_journal.append(
-                "completed",
-                {"ordered_change_ids": ordered_change_ids},
-            )
-
-
-def _start_rebase_operation_log(
-    *,
-    blocked: bool,
-    prepared,
-    prepared_rebase: PreparedRebase,
-    selected_revset: str,
-) -> OperationJournal | None:
-    """Write a rebase operation log entry before live rebases begin."""
-
-    if blocked or prepared_rebase.dry_run:
-        return None
-
-    ordered_change_ids = tuple(
-        str(prepared_revision.revision.change_id)
-        for prepared_revision in prepared.status_revisions
-    )
-    ordered_commit_ids = tuple(
-        str(prepared_revision.revision.commit_id)
-        for prepared_revision in prepared.status_revisions
-    )
-    state_dir = prepared.state_store.require_writable()
-    journal = OperationJournal.begin(
-        state_dir,
-        operation="cleanup-rebase",
-        options={},
-        resolved_scope={
-            "ordered_change_ids": ordered_change_ids,
-            "ordered_commit_ids": ordered_commit_ids,
-            "selected_revset": selected_revset,
-        },
-    )
-    return journal
-
-
-def _record_rebase_policy_actions(
-    *,
-    prefix: str,
-    merged_revisions: tuple[ReviewStatusRevision, ...],
-    record_action: Callable[[CleanupAction], None],
-) -> None:
-    """Warn when a merged PR targeted another review branch."""
-
-    for revision in merged_revisions:
-        pull_request_number = revision.pull_request_number()
-        if pull_request_number is None:
-            continue
-        base_ref = revision.pull_request_base_ref()
-        if base_ref is None or not is_review_bookmark(base_ref, prefix=prefix):
-            continue
-        record_action(
-            CleanupAction(
-                kind="policy",
-                status="planned",
-                body=(
-                    t"PR #{pull_request_number} merged into branch {ui.bookmark(base_ref)}; "
-                    t"configure GitHub to block merges of PRs targeting "
-                    t"{ui.bookmark(bookmark_glob(prefix))}"
-                ),
-            )
-        )
-
-def _resolve_rebase_path_revisions(
-    *,
-    prepared_status: PreparedStatus,
-    status_result,
-) -> tuple[ReviewStatusRevision, ...]:
-    revisions_by_change_id = {
-        revision.change_id: revision for revision in status_result.revisions
-    }
-    return tuple(
-        revisions_by_change_id[prepared_revision.revision.change_id]
-        for prepared_revision in prepared_status.prepared.status_revisions
-        if prepared_revision.revision.change_id in revisions_by_change_id
-    )
-
-
-def _run_rebase_pass(
-    *,
-    blocked: bool,
-    client: JjClient,
-    closed_unmerged_revisions: tuple[ReviewStatusRevision, ...],
-    prepared_rebase: PreparedRebase,
-    rebase_plans: tuple[tuple[str, str | None], ...],
-    record_action: Callable[[CleanupAction], None],
-    trunk_commit_id: str,
-) -> None:
-    if not prepared_rebase.dry_run and not blocked:
-        for source_change_id, destination_change_id in rebase_plans:
-            source_revision = client.resolve_revision(source_change_id)
-            destination_commit_id = _rebase_destination_commit_id(
-                client=client,
-                destination_change_id=destination_change_id,
-                trunk_commit_id=trunk_commit_id,
-            )
-            if source_revision.only_parent_commit_id() == destination_commit_id:
-                continue
-            client.rebase_revision(
-                source=source_change_id,
-                destination=destination_commit_id,
-            )
-            record_action(
-                CleanupAction(
-                    kind="rebase",
-                    status="applied",
-                    body=(
-                        t"rebase {ui.change_id(source_change_id)} onto "
-                        t"{_rebase_destination_template(destination_change_id)}"
-                    ),
-                )
-            )
-        return
-
-    for source_change_id, destination_change_id in rebase_plans:
-        status = "blocked" if blocked else "planned"
-        body = (
-            t"rebase {ui.change_id(source_change_id)} onto "
-            t"{_rebase_destination_template(destination_change_id)}"
-        )
-        if blocked and closed_unmerged_revisions:
-            body = t"{body} once blocked changes on the stack are resolved"
-        record_action(
-            CleanupAction(
-                kind="rebase",
-                status=status,
-                body=body,
-            )
-        )
-
-
-def _rebase_destination_commit_id(
-    *,
-    client: JjClient,
-    destination_change_id: str | None,
-    trunk_commit_id: str,
-) -> str:
-    if destination_change_id is None:
-        return trunk_commit_id
-    return client.resolve_revision(destination_change_id).commit_id
-
-
-def _plan_rebase_operations(
-    *,
-    path_revisions: tuple[ReviewStatusRevision, ...],
-    prepared_status: PreparedStatus,
-) -> _RebaseOperationPlan:
-    classified_path_revisions = tuple(
-        _ClassifiedCleanupRebaseRevision(
-            revision=revision,
-            status=classify_review_status_revision(revision),
-        )
-        for revision in path_revisions
-    )
-    merged_revisions = tuple(
-        classified
-        for classified in classified_path_revisions
-        if classified.status.pr_lifecycle == "merged"
-    )
-    closed_unmerged_revisions = tuple(
-        classified
-        for classified in classified_path_revisions
-        if classified.status.pr_lifecycle == "closed"
-    )
-    classified_revisions_by_change_id = (
-        _classified_cleanup_revisions_by_change_id(classified_path_revisions)
-    )
-    current_commit_id_by_change_id = {
-        prepared_revision.revision.change_id: prepared_revision.revision.commit_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    }
-
-    blocked, actions = _collect_rebase_pre_actions(
-        closed_unmerged_revisions=closed_unmerged_revisions,
-        current_commit_id_by_change_id=current_commit_id_by_change_id,
-        merged_revisions=merged_revisions,
-    )
-    blocked, rebase_plans = _plan_rebase_rebases(
-        actions=actions,
-        blocked=blocked,
-        prepared_status=prepared_status,
-        revisions_by_change_id=classified_revisions_by_change_id,
-    )
-
-    return _RebaseOperationPlan(
-        blocked=blocked,
-        closed_unmerged_revisions=tuple(
-            classified.revision for classified in closed_unmerged_revisions
-        ),
-        merged_revisions=tuple(classified.revision for classified in merged_revisions),
-        pre_actions=tuple(actions),
-        rebase_plans=tuple(rebase_plans),
-    )
-
-
-def _classified_cleanup_revisions_by_change_id(
-    revisions: tuple[_ClassifiedCleanupRebaseRevision, ...],
-) -> dict[str, _ClassifiedCleanupRebaseRevision]:
-    return {classified.revision.change_id: classified for classified in revisions}
-
-
-def _collect_rebase_pre_actions(
-    *,
-    closed_unmerged_revisions: tuple[_ClassifiedCleanupRebaseRevision, ...],
-    current_commit_id_by_change_id: dict[str, str],
-    merged_revisions: tuple[_ClassifiedCleanupRebaseRevision, ...],
-) -> tuple[bool, list[CleanupAction]]:
-    """Record blocking rebase conditions before survivor planning begins."""
-
-    blocked = False
-    actions: list[CleanupAction] = []
-    for classified in closed_unmerged_revisions:
-        revision = classified.revision
-        blocked = True
-        actions.append(
-            CleanupAction(
-                kind="rebase",
-                status="blocked",
-                body=(
-                    t"cannot rebase past {_revision_label_template(revision)} because "
-                    t"PR #{revision.pull_request_number()} is closed without "
-                    t"merge; decide whether to keep or drop that change first"
-                ),
-            )
-        )
-
-    for classified in merged_revisions:
-        revision = classified.revision
-        cached_change = revision.cached_change
-        if cached_change is None or cached_change.last_submitted_commit_id is None:
-            continue
-        current_commit_id = current_commit_id_by_change_id[revision.change_id]
-        if current_commit_id == cached_change.last_submitted_commit_id:
-            continue
-        blocked = True
-        actions.append(
-            CleanupAction(
-                kind="rebase",
-                status="blocked",
-                body=(
-                    t"cannot rebase past {_revision_label_template(revision)} because it "
-                    t"has local edits since last submit; push a new version first or "
-                    t"rebase manually"
-                ),
-            )
-        )
-
-    return blocked, actions
-
-
-def _plan_rebase_rebases(
-    *,
-    actions: list[CleanupAction],
-    blocked: bool,
-    prepared_status: PreparedStatus,
-    revisions_by_change_id: dict[str, _ClassifiedCleanupRebaseRevision],
-) -> tuple[bool, list[tuple[str, str | None]]]:
-    """Plan survivor rebases after merged ancestors are removed from the path."""
-
-    survivor_change_ids: list[str] = []
-    rebase_plans: list[tuple[str, str | None]] = []
-    for prepared_revision in prepared_status.prepared.status_revisions:
-        classified = revisions_by_change_id.get(prepared_revision.revision.change_id)
-        if classified is None:
-            continue
-        revision = classified.revision
-        change_status = classified.status
-        if change_status.pr_lifecycle == "merged":
-            continue
-        if change_status.pr_lifecycle == "closed":
-            continue
-        if change_status.local == "divergent":
-            blocked = True
-            actions.append(
-                CleanupAction(
-                    kind="rebase",
-                    status="blocked",
-                    body=(
-                        t"cannot rebase {_revision_label_template(revision)} while "
-                        t"multiple visible revisions still share that change ID"
-                    ),
-                )
-            )
-            survivor_change_ids.append(revision.change_id)
-            continue
-
-        desired_parent_change_id = survivor_change_ids[-1] if survivor_change_ids else None
-        if _rebase_parent_is_merged(
-            parent_commit_id=prepared_revision.revision.only_parent_commit_id(),
-            prepared_status=prepared_status,
-            revisions_by_change_id=revisions_by_change_id,
-        ):
-            if desired_parent_change_id is not None:
-                blocked = True
-                actions.append(
-                    CleanupAction(
-                        kind="rebase",
-                        status="blocked",
-                        body=(
-                            t"cannot automatically rebase {_revision_label_template(revision)} "
-                            t"onto surviving change "
-                            t"{ui.change_id(desired_parent_change_id)}; rebase manually "
-                            t"with {ui.cmd('jj rebase')}"
-                        ),
-                    )
-                )
-                survivor_change_ids.append(revision.change_id)
-                continue
-            rebase_plans.append((revision.change_id, desired_parent_change_id))
-        survivor_change_ids.append(revision.change_id)
-    return blocked, rebase_plans
-
-
-def _rebase_parent_is_merged(
-    *,
-    parent_commit_id: str | None,
-    prepared_status: PreparedStatus,
-    revisions_by_change_id: dict[str, _ClassifiedCleanupRebaseRevision],
-) -> bool:
-    for candidate in prepared_status.prepared.status_revisions:
-        if candidate.revision.commit_id != parent_commit_id:
-            continue
-        classified = revisions_by_change_id.get(candidate.revision.change_id)
-        return (
-            classified is not None
-            and classified.status.pr_lifecycle == "merged"
-        )
-    return False
 
 
 async def _run_cleanup_async(
@@ -1038,9 +239,7 @@ async def _run_cleanup_async(
                 actions=recorder.as_tuple(),
             )
 
-        if not any(
-            prepared_change.inspect_stack_comment for prepared_change in prepared_changes
-        ):
+        if not any(prepared_change.inspect_stack_comment for prepared_change in prepared_changes):
             _save_cleanup_state_if_changed(
                 next_changes=next_changes,
                 prepared_cleanup=prepared_cleanup,
@@ -1180,9 +379,7 @@ def _process_stale_cleanup_change(
     if is_open_pr_record(prepared_change.cached_change):
         pull_request_number = prepared_change.cached_change.pr_number
         assert pull_request_number is not None
-        close_hint = ui.cmd(
-            f"jj-review close --cleanup --pull-request {pull_request_number}"
-        )
+        close_hint = ui.cmd(f"jj-review close --cleanup --pull-request {pull_request_number}")
         body = (
             t"preserve open orphan {ui.change_id(prepared_change.change_id)} "
             t"(run {close_hint} to retire it)"
@@ -1474,10 +671,13 @@ def _cleanup_needs_remote_context(
             )
         ):
             return True
-        if _stack_comment_cleanup_eligibility(
-            cached_change=cached_change,
-            stale_reason=stale_reason,
-        ) != "skip":
+        if (
+            _stack_comment_cleanup_eligibility(
+                cached_change=cached_change,
+                stale_reason=stale_reason,
+            )
+            != "skip"
+        ):
             return True
     return False
 
@@ -1531,8 +731,7 @@ def _load_bookmark_states(
     relevant_bookmarks = {
         bookmark
         for bookmark, bookmark_state in bookmark_states.items()
-        if is_review_bookmark(bookmark, prefix=prefix)
-        and bookmark_state.local_targets
+        if is_review_bookmark(bookmark, prefix=prefix) and bookmark_state.local_targets
     }
     relevant_bookmarks.update(tracked_bookmarks)
 
@@ -1856,7 +1055,6 @@ async def _plan_stack_comment_cleanup(
         ),
         comments=tuple((comment.id, kind) for kind, comment in managed_comments),
     )
-
 
 
 async def _resolve_managed_comments(

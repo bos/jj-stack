@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.commands import cleanup as cleanup_module
 from jj_review.jj import JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.journal import read_operation_log
@@ -85,7 +84,7 @@ def test_cleanup_prunes_stale_state_without_a_remote(
 
     run_command(["jj", "abandon", change_id], repo)
     monkeypatch.setattr(
-        cleanup_module.JjClient,
+        JjClient,
         "list_git_remotes",
         lambda self: (_ for _ in ()).throw(
             AssertionError("plain cleanup should not resolve remotes for local-only stale state")
@@ -387,7 +386,7 @@ def test_cleanup_plans_local_bookmark_forget_before_remote_delete_when_safe(
 
     run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
     monkeypatch.setattr(
-        "jj_review.commands.cleanup._stale_change_reasons",
+        "jj_review.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -431,7 +430,7 @@ def test_cleanup_forgets_local_bookmark_before_deleting_remote_branch_when_safe(
 
     run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
     monkeypatch.setattr(
-        "jj_review.commands.cleanup._stale_change_reasons",
+        "jj_review.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -486,7 +485,7 @@ def test_cleanup_can_delete_user_bookmarks_when_configured(
     _mark_pr_state(state_store, change_id=tracked_change_id, pr_state="merged")
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup._stale_change_reasons",
+        "jj_review.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -534,7 +533,7 @@ def test_cleanup_apply_batches_remote_delete_local_forget_and_fetch(
         run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup._stale_change_reasons",
+        "jj_review.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -570,15 +569,15 @@ def test_cleanup_apply_batches_remote_delete_local_forget_and_fetch(
         return original_fetch_remote(self, remote=remote, branches=branches)
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.JjClient.delete_remote_bookmarks",
+        "jj_review.jj.JjClient.delete_remote_bookmarks",
         tracking_delete_remote_bookmarks,
     )
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.JjClient.forget_bookmarks",
+        "jj_review.jj.JjClient.forget_bookmarks",
         tracking_forget_bookmarks,
     )
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.JjClient.fetch_remote",
+        "jj_review.jj.JjClient.fetch_remote",
         tracking_fetch_remote,
     )
 
@@ -655,7 +654,7 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
         )
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.JjClient.delete_remote_bookmarks",
+        "jj_review.jj.JjClient.delete_remote_bookmarks",
         delete_remote_bookmarks_with_race,
     )
 
@@ -790,7 +789,7 @@ def test_cleanup_logs_begin_after_failed_apply(
         raise RuntimeError("Simulated failure during live cleanup")
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.JjClient.delete_remote_bookmarks",
+        "jj_review.jj.JjClient.delete_remote_bookmarks",
         failing_delete_remote_bookmarks,
     )
 

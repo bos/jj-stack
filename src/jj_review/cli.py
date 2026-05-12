@@ -25,6 +25,7 @@ from typing import Any, cast
 
 from jj_review import __version__, bootstrap, commands, console, ui
 from jj_review.bootstrap import APP_START
+from jj_review.commands.cleanup import command as cleanup_command
 from jj_review.completion import emit_shell_completion
 from jj_review.console import ColorMode, RequestedColorMode, configured_console, rich_color_mode
 from jj_review.errors import CliError, error_hint, error_message
@@ -90,7 +91,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[_HelpCommand, ...]], ...] = (
     (
         "Support commands",
         (
-            _HelpCommand("cleanup", commands.cleanup.HELP),
+            _HelpCommand("cleanup", cleanup_command.HELP),
             _HelpCommand("import", commands.import_.HELP),
             _HelpCommand("doctor", commands.doctor.HELP),
         ),
@@ -493,8 +494,8 @@ def build_parser() -> ArgumentParser:
 
     cleanup_parser = subparsers.add_parser(
         "cleanup",
-        help=_normalized_help_text(commands.cleanup.HELP),
-        description=_normalized_help_text(commands.cleanup.__doc__ or ""),
+        help=_normalized_help_text(cleanup_command.HELP),
+        description=_normalized_help_text(cleanup_command.__doc__ or ""),
     )
     _add_common_options(cleanup_parser)
     _normalize_help_action_text(cleanup_parser)
@@ -515,7 +516,7 @@ def build_parser() -> ArgumentParser:
         ),
     )
     cleanup_parser.set_defaults(
-        handler=lambda args: commands.cleanup.cleanup(
+        handler=lambda args: cleanup_command.cleanup(
             dry_run=args.dry_run,
             cli_args=_global_cli_args(args),
             debug=args.debug,
