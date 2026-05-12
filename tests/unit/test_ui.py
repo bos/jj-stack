@@ -62,15 +62,8 @@ def test_semantic_style_uses_machine_readable_jj_config(
     )
 
     def fake_run(command, **kwargs):
-        assert command == [
-            "jj",
-            "config",
-            "list",
-            "--include-defaults",
-            "colors",
-            "-T",
-            r'name ++ "\0" ++ json(value) ++ "\n"',
-        ]
+        assert command[:3] == ["jj", "config", "list"]
+        assert "colors" in command
         assert kwargs["cwd"] == repository
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 

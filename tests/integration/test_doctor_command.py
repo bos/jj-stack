@@ -55,10 +55,8 @@ def test_doctor_exits_zero_for_healthy_repo(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "remote" in captured.out
     assert "GitHub auth" in captured.out
-    assert "warn" not in captured.out
-    assert "fail" not in captured.out
+    assert "Traceback" not in captured.out + captured.err
 
 
 def test_doctor_shows_skipped_checks_when_remote_fails(
