@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -88,11 +87,7 @@ def build_land_plan(
     )
     planned_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=bypass_readiness,
-        classify_divergence=lambda local_commit_id, remote_target: _classify_revision_divergence(
-            client=client,
-            local_commit_id=local_commit_id,
-            remote_target=remote_target,
-        ),
+        client=client,
         path_revisions=path_revisions,
     )
 
@@ -151,7 +146,7 @@ def _resolve_land_path_revisions(
 def _collect_landable_prefix(
     *,
     bypass_readiness: bool,
-    classify_divergence: Callable[[str, str | None], _DivergenceKind],
+    client: JjClient,
     path_revisions: tuple[tuple[PreparedRevision, ReviewStatusRevision], ...],
 ) -> tuple[tuple[LandRevision, ...], LandAction | None]:
     planned_revisions: list[LandRevision] = []
@@ -162,7 +157,7 @@ def _collect_landable_prefix(
         )
         decision = _landability_decision(
             bypass_readiness=bypass_readiness,
-            classify_divergence=classify_divergence,
+            client=client,
             land_revision=land_revision,
         )
         if decision.boundary_message is not None:
@@ -203,7 +198,7 @@ def _land_path_revision(
 def _landability_decision(
     *,
     bypass_readiness: bool,
-    classify_divergence: Callable[[str, str | None], _DivergenceKind],
+    client: JjClient,
     land_revision: _LandPathRevision,
 ) -> _LandabilityDecision:
     revision = land_revision.revision
@@ -249,9 +244,10 @@ def _landability_decision(
                     t"because {detail}"
                 )
             )
-        divergence = classify_divergence(
-            land_revision.local_commit_id,
-            land_revision.remote_target,
+        divergence = _classify_revision_divergence(
+            client=client,
+            local_commit_id=land_revision.local_commit_id,
+            remote_target=land_revision.remote_target,
         )
         if divergence == "content_divergent":
             return _LandabilityDecision(

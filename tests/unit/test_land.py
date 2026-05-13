@@ -13,11 +13,11 @@ from jj_review.commands.land.execute import (
 )
 from jj_review.commands.land.plan import (
     _collect_landable_prefix,
-    _DivergenceKind,
     _plan_review_bookmark_cleanup,
 )
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
+from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_review.models.github import GithubBranchRef, GithubPullRequest
 from jj_review.models.review_state import CachedChange, LinkState
@@ -31,16 +31,18 @@ from jj_review.review.status import (
 from jj_review.ui import plain_text
 
 
-def _assume_diff_equivalent(local_commit_id: str, remote_target: str | None) -> _DivergenceKind:
-    if remote_target is None or remote_target == local_commit_id:
-        return "in_sync"
-    return "diff_equivalent"
+class _FakeJjClient:
+    def __init__(self, diffs: dict[str, str] | None = None) -> None:
+        self.diffs = diffs or {}
+        self.diff_calls: list[str] = []
+
+    def get_commit_diff(self, commit_id: str) -> str:
+        self.diff_calls.append(commit_id)
+        return self.diffs[commit_id]
 
 
-def _assume_content_divergent(local_commit_id: str, remote_target: str | None) -> _DivergenceKind:
-    if remote_target is None or remote_target == local_commit_id:
-        return "in_sync"
-    return "content_divergent"
+def _jj_client(diffs: dict[str, str] | None = None) -> JjClient:
+    return cast(JjClient, _FakeJjClient(diffs))
 
 
 def _fake_context() -> CommandContext:
@@ -53,13 +55,13 @@ def _fake_context() -> CommandContext:
 def _land_boundary_message(
     *,
     bypass_readiness: bool,
-    classify_divergence,
+    client: JjClient,
     prepared_revision,
     revision,
 ):
     _planned_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=bypass_readiness,
-        classify_divergence=classify_divergence,
+        client=client,
         path_revisions=((prepared_revision, revision),),
     )
     if boundary_action is None:
@@ -81,7 +83,7 @@ def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        classify_divergence=_assume_diff_equivalent,
+        client=_jj_client({"commit-1": "same", "other-tip": "same"}),
         prepared_revision=prepared_revision,
         revision=revision,
     )
@@ -89,7 +91,7 @@ def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -
     assert message is None
 
 
-def test_landable_prefix_reuses_the_divergence_decision_for_resubmit() -> None:
+def test_landable_prefix_marks_diff_equivalent_revision_for_resubmit() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     revision = _status_revision(
         change_id="change-1",
@@ -100,20 +102,16 @@ def test_landable_prefix_reuses_the_divergence_decision_for_resubmit() -> None:
         review_decision="approved",
         subject="feature 1",
     )
-    classifier_calls: list[tuple[str, str | None]] = []
-
-    def classify_once(local_commit_id: str, remote_target: str | None) -> _DivergenceKind:
-        classifier_calls.append((local_commit_id, remote_target))
-        return "diff_equivalent"
+    client = _FakeJjClient({"commit-1": "same", "other-tip": "same"})
 
     planned_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=False,
-        classify_divergence=classify_once,
+        client=cast(JjClient, client),
         path_revisions=((prepared_revision, revision),),
     )
 
     assert boundary_action is None
-    assert classifier_calls == [("commit-1", "other-tip")]
+    assert client.diff_calls == ["commit-1", "other-tip"]
     assert len(planned_revisions) == 1
     assert planned_revisions[0].needs_resubmit is True
 
@@ -132,7 +130,7 @@ def test_land_boundary_message_allows_ready_revision_without_remote_state() -> N
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        classify_divergence=_assume_diff_equivalent,
+        client=_jj_client(),
         prepared_revision=prepared_revision,
         revision=revision,
     )
@@ -154,7 +152,7 @@ def test_land_boundary_message_blocks_content_divergent_revision() -> None:
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        classify_divergence=_assume_content_divergent,
+        client=_jj_client({"commit-1": "local", "old-commit-1": "remote"}),
         prepared_revision=prepared_revision,
         revision=revision,
     )
@@ -178,7 +176,7 @@ def test_land_boundary_message_prefers_unlinked_state_over_content_divergence() 
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        classify_divergence=_assume_content_divergent,
+        client=_jj_client(),
         prepared_revision=prepared_revision,
         revision=revision,
     )
@@ -202,7 +200,7 @@ def test_land_boundary_message_prefers_missing_pr_over_content_divergence() -> N
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        classify_divergence=_assume_content_divergent,
+        client=_jj_client(),
         prepared_revision=prepared_revision,
         revision=revision,
     )
