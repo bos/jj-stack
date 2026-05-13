@@ -29,7 +29,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from string.templatelib import Template
-from typing import IO, Any, Literal, Protocol, cast
+from typing import IO, Any, Literal, Protocol, TypeGuard, cast
 
 from rich import box as rich_box
 from rich.console import Console, ConsoleRenderable, Group, NewLine, RenderableType, RichCast
@@ -64,6 +64,9 @@ _SEMANTIC_STYLE_FALLBACKS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = 
     (frozenset({"code"}), ("config_list", "value")),
 )
 StyleArg = Style | str
+type ConsoleObject = (
+    ui.Renderable | ConsoleRenderable | RichCast
+)
 
 
 class ProgressLike(Protocol):
@@ -490,7 +493,7 @@ def _render_status_badge(status: ui.StatusBadge) -> Text:
 
 
 def rich_text(
-    content: Template | ui.SemanticText | tuple[Any, ...] | Any,
+    content: ui.Message,
     *,
     style: StyleArg | None = None,
 ) -> Text:
@@ -521,11 +524,11 @@ def style_time_prefix(text: str) -> str:
     return capture.get()
 
 
-def _is_semantic_message_object(value: object) -> bool:
-    return isinstance(value, Template | ui.SemanticText | tuple)
+def _is_semantic_message_object(value: object) -> TypeGuard[ui.Message]:
+    return isinstance(value, str | Template | ui.SemanticText | tuple)
 
 
-def _coerce_renderable(value: object) -> RenderableType:
+def _coerce_renderable(value: ConsoleObject) -> RenderableType:
     if isinstance(value, str) and "\x1b[" in value:
         return ansi_text(value)
     if isinstance(value, ui.StatusBadge):
@@ -541,14 +544,14 @@ def _coerce_renderable(value: object) -> RenderableType:
     return str(value)
 
 
-def output(*objects, **kwargs) -> None:
+def output(*objects: ConsoleObject, **kwargs) -> None:
     """Write plain user-facing output to stdout."""
 
     kwargs.setdefault("markup", False)
     _STDOUT_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
 
-def error(*objects, **kwargs) -> None:
+def error(*objects: ConsoleObject, **kwargs) -> None:
     """Write styled error output to stderr."""
 
     kwargs.setdefault("markup", False)
@@ -556,14 +559,14 @@ def error(*objects, **kwargs) -> None:
     _STDERR_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
 
-def stderr_output(*objects, **kwargs) -> None:
+def stderr_output(*objects: ConsoleObject, **kwargs) -> None:
     """Write plain user-facing output to stderr."""
 
     kwargs.setdefault("markup", False)
     _STDERR_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
 
-def warning(*objects, **kwargs) -> None:
+def warning(*objects: ConsoleObject, **kwargs) -> None:
     """Write styled warning output to stderr."""
 
     kwargs.setdefault("markup", False)
@@ -571,7 +574,7 @@ def warning(*objects, **kwargs) -> None:
     _STDERR_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
 
-def note(*objects, **kwargs) -> None:
+def note(*objects: ConsoleObject, **kwargs) -> None:
     """Write styled note output to stdout."""
 
     kwargs.setdefault("markup", False)
@@ -768,7 +771,7 @@ def _progress_console(*, stream: IO[str], color_mode: ColorMode) -> Console:
 
 def _append_rich_text(
     rendered: Text,
-    content: Template | ui.SemanticText | tuple[Any, ...] | Any,
+    content: ui.Message,
     *,
     base_style: StyleArg | None,
 ) -> None:
@@ -799,7 +802,7 @@ def _append_rich_text(
             appended.stylize(base_style, 0, len(appended.plain))
         rendered.append_text(appended)
         return
-    rendered.append(str(content), style=base_style)
+    rendered.append(content, style=base_style)
 
 
 def _combine_styles(
@@ -826,18 +829,15 @@ def _render_prefixed_line(line: ui.PrefixedLine) -> _HangingIndentRenderable:
     message_style = (
         semantic_style(*line.message_labels) if line.message_labels is not None else None
     )
-    if isinstance(line.body, str | Template | ui.SemanticText | tuple):
-        message_cell: RenderableType = rich_text(line.body, style=message_style)
-    else:
+    if isinstance(line.body, ui.StatusBadge):
         message_cell = _coerce_renderable(line.body)
+    else:
+        message_cell: RenderableType = rich_text(line.body, style=message_style)
 
     prefix_style = (
         semantic_style(*line.prefix_labels) if line.prefix_labels is not None else None
     )
-    if isinstance(line.prefix, str | Template | ui.SemanticText | tuple):
-        prefix_cell: RenderableType = rich_text(line.prefix, style=prefix_style)
-    else:
-        prefix_cell = _coerce_renderable(line.prefix)
+    prefix_cell: RenderableType = rich_text(line.prefix, style=prefix_style)
     return _HangingIndentRenderable(
         prefix=prefix_cell,
         prefix_width=prefix_width,

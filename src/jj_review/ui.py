@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from string.templatelib import Interpolation, Template, convert
-from typing import Any, Literal
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +20,7 @@ class SemanticText:
 
 
 StatusValue = Literal["ok", "warn", "fail", "skip"]
-type Message = str | Template | SemanticText | tuple[Any, ...]
+type Message = str | Template | SemanticText | tuple[Message, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +34,13 @@ class StatusBadge:
 class PrefixedLine:
     """A hanging-indent line with semantic prefix and body content."""
 
-    prefix: Message | Any
-    body: Any
+    prefix: Message
+    body: Message | StatusBadge
     message_labels: tuple[str, ...] | None = None
     prefix_labels: tuple[str, ...] | None = None
+
+
+type TableCell = Message | StatusBadge | PrefixedLine
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +57,7 @@ class DataTable:
     """A lightweight table model rendered by the console layer."""
 
     columns: tuple[TableColumn, ...]
-    rows: tuple[tuple[Any, ...], ...]
+    rows: tuple[tuple[TableCell, ...], ...]
     box: str = "simple"
     expand: bool = False
     header_style: str | None = "bold"
@@ -62,6 +65,9 @@ class DataTable:
     padding: int | tuple[int, int] | tuple[int, int, int, int] = (0, 0)
     show_edge: bool = False
     show_header: bool = True
+
+
+type Renderable = TableCell | DataTable
 
 
 def semantic_text(text: str, *labels: str) -> SemanticText:
@@ -117,12 +123,12 @@ def status(value: StatusValue) -> StatusBadge:
 
 
 def join[T](
-    render_item: Callable[[T], object],
+    render_item: Callable[[T], Message],
     items: Iterable[T],
-) -> tuple[object, ...]:
+) -> tuple[Message, ...]:
     """Render and comma-join items."""
 
-    parts: list[object] = []
+    parts: list[Message] = []
     for index, item in enumerate(items):
         if index:
             parts.append(", ")
@@ -131,8 +137,8 @@ def join[T](
 
 
 def prefixed_line(
-    prefix: Message | Any,
-    body: Any,
+    prefix: Message,
+    body: Message | StatusBadge,
     *,
     message_labels: tuple[str, ...] | None = None,
     prefix_labels: tuple[str, ...] | None = None,
@@ -147,7 +153,7 @@ def prefixed_line(
     )
 
 
-def plain_text(content: Message | Any) -> str:
+def plain_text(content: Message) -> str:
     """Render semantic template content into plain text."""
 
     parts: list[str] = []
@@ -155,7 +161,7 @@ def plain_text(content: Message | Any) -> str:
     return "".join(parts)
 
 
-def _append_plain_text(parts: list[str], content: Message | Any) -> None:
+def _append_plain_text(parts: list[str], content: Message) -> None:
     if isinstance(content, tuple):
         for item in content:
             _append_plain_text(parts, item)
@@ -173,7 +179,7 @@ def _append_plain_text(parts: list[str], content: Message | Any) -> None:
     parts.append(str(content))
 
 
-def resolve_interpolation(interpolation: Interpolation) -> Template | SemanticText | Any:
+def resolve_interpolation(interpolation: Interpolation) -> Message:
     value = interpolation.value
     if isinstance(value, SemanticText):
         if interpolation.conversion is not None:
@@ -201,4 +207,4 @@ def resolve_interpolation(interpolation: Interpolation) -> Template | SemanticTe
     converted = convert(value, interpolation.conversion)
     if interpolation.format_spec:
         return format(converted, interpolation.format_spec)
-    return converted
+    return str(converted)

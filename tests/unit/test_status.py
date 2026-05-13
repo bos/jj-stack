@@ -4,7 +4,7 @@ from io import StringIO
 from types import SimpleNamespace
 from typing import cast
 
-from jj_review import console as console_module
+from jj_review import console as console_module, ui as ui_module
 from jj_review.commands import status as status_module
 from jj_review.config import RepoConfig
 from jj_review.models.bookmarks import RemoteBookmarkState
@@ -67,7 +67,7 @@ def _status_revision(
     )
 
 
-def _render_lines(*lines: object) -> tuple[str, ...]:
+def _render_lines(*lines: ui_module.Renderable) -> tuple[str, ...]:
     stdout = StringIO()
     with console_module.configured_console(stdout=stdout, stderr=StringIO(), color_mode="never"):
         for line in lines:

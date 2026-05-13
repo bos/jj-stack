@@ -71,7 +71,7 @@ class StatusSelector:
 
 @dataclass(frozen=True, slots=True)
 class _ResolvedStatusSelector:
-    note: object | None
+    note: ui.Message | None
     revset: str | None
 
 
@@ -142,7 +142,7 @@ def _run_status(
 
     exit_code = 0
     multi_selector = len(selectors) > 1
-    rendered_stack_keys: set[tuple[object, ...]] = set()
+    rendered_stack_keys: set[tuple[str, ...]] = set()
     rendered_stacks: list[LocalStack] = []
     state: ReviewState | None = None
     printed_blocks = 0
@@ -342,7 +342,7 @@ def _prepare_status_with_spinner(
         )
 
 
-def _prepared_status_identity(prepared_status) -> tuple[object, ...]:
+def _prepared_status_identity(prepared_status) -> tuple[str, ...]:
     change_ids = tuple(
         revision.revision.change_id for revision in prepared_status.prepared.status_revisions
     )
@@ -352,7 +352,7 @@ def _prepared_status_identity(prepared_status) -> tuple[object, ...]:
     )
 
 
-def _status_heading(selector: StatusSelector) -> object:
+def _status_heading(selector: StatusSelector) -> ui.Message:
     if selector.kind == "pull_request":
         return f"Status for PR {selector.value}:"
     return t"Status for {ui.revset(selector.value)}:"
@@ -520,7 +520,7 @@ def render_trunk_status_lines(
 def render_empty_status_lines(
     *,
     prepared_status,
-) -> tuple[object, ...]:
+) -> tuple[ui.Message, ...]:
     """Render the empty-stack footer and explanation."""
 
     return (
@@ -605,7 +605,7 @@ def render_status_advisory_lines(
     *,
     config: RepoConfig,
     result: StatusResult,
-) -> tuple[object, ...]:
+) -> tuple[ui.Renderable, ...]:
     """Render any advisories that follow the status stack output."""
 
     classified_revisions = tuple(
@@ -631,7 +631,7 @@ def render_status_advisory_lines(
         if _classified_revision_has_link_advisory(classified)
     ]
     submitted_disagreements = result.submitted_state_disagreements
-    policy_warning_rows: list[tuple[object, object]] = []
+    policy_warning_rows: list[tuple[ui.TableCell, ui.TableCell]] = []
     for classified in cleanup_revisions:
         revision = classified.revision
         lookup = revision.pull_request_lookup
@@ -658,7 +658,7 @@ def render_status_advisory_lines(
     ):
         return ()
 
-    rows: list[tuple[object, object]] = []
+    rows: list[tuple[ui.TableCell, ui.TableCell]] = []
     if submitted_disagreements:
         rows.append(
             (
@@ -764,7 +764,7 @@ def render_status_advisory_lines(
 
 def _submitted_state_disagreement_rows(
     disagreements: Sequence[SubmittedStateDisagreement],
-) -> tuple[tuple[object, object], ...]:
+) -> tuple[tuple[ui.TableCell, ui.TableCell], ...]:
     commit_changed = tuple(
         disagreement.change_id for disagreement in disagreements if disagreement.commit_changed
     )
@@ -776,7 +776,7 @@ def _submitted_state_disagreement_rows(
         for disagreement in disagreements
         if disagreement.stack_head_changed
     )
-    rows: list[tuple[object, object]] = []
+    rows: list[tuple[ui.TableCell, ui.TableCell]] = []
     if commit_changed:
         rows.append(
             (
@@ -814,14 +814,16 @@ def _format_submit_baseline_reason(
     *,
     change_ids: Sequence[str],
     noun: str,
-) -> object:
+) -> ui.Message:
     if len(change_ids) == 1:
         return ui.change_id(change_ids[0])
     plural_noun = f"{noun}s" if len(change_ids) != 1 else noun
     return (f"{len(change_ids)} {plural_noun}: ", *_format_change_id_list(change_ids))
 
 
-def _format_change_id_list(change_ids: Sequence[str], *, limit: int = 5) -> tuple[object, ...]:
+def _format_change_id_list(
+    change_ids: Sequence[str], *, limit: int = 5
+) -> tuple[ui.Message, ...]:
     visible = tuple(change_ids[:limit])
     rendered = list(ui.join(ui.change_id, visible))
     remaining = len(change_ids) - limit
@@ -832,7 +834,7 @@ def _format_change_id_list(change_ids: Sequence[str], *, limit: int = 5) -> tupl
     return tuple(rendered)
 
 
-def _advisory_table(rows: tuple[tuple[object, object], ...]) -> ui.DataTable:
+def _advisory_table(rows: tuple[tuple[ui.TableCell, ui.TableCell], ...]) -> ui.DataTable:
     return ui.DataTable(
         columns=(
             ui.TableColumn("advisory", no_wrap=True),
@@ -849,7 +851,7 @@ def _link_advisory_summary_row(
     *,
     link_revisions: tuple[_ClassifiedStatusRevision, ...],
     selected_revset: str,
-) -> tuple[object, object]:
+) -> tuple[ui.TableCell, ui.TableCell]:
     states = {_link_advisory_kind(revision) for revision in link_revisions}
     change_phrase = _link_advisory_change_phrase(link_revisions)
     restart_submit_command = ui.cmd(f"jj-review submit --restart {selected_revset}")
@@ -903,7 +905,7 @@ def _link_advisory_summary_row(
     return "GitHub PRs need repair", detail
 
 
-def _link_advisory_change_phrase(link_revisions: tuple[object, ...]) -> str:
+def _link_advisory_change_phrase(link_revisions: tuple[_ClassifiedStatusRevision, ...]) -> str:
     if len(link_revisions) == 1:
         return "the change shown above"
     return "one or more changes shown above"
@@ -1079,7 +1081,7 @@ def _format_live_pull_request_label(
 
 
 def _emit_lines(
-    lines: tuple[object, ...], *, emitter=console.output, soft_wrap: bool = True
+    lines: tuple[ui.Renderable, ...], *, emitter=console.output, soft_wrap: bool = True
 ) -> None:
     for line in lines:
         emitter(line, soft_wrap=soft_wrap)
@@ -1129,7 +1131,7 @@ def _classified_revision_has_link_advisory(
     return False
 
 
-def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> object:
+def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> ui.Message:
     revision = classified.revision
     lookup = revision.pull_request_lookup
     if lookup is None:

@@ -77,7 +77,7 @@ def render_selected_line(
     )
 
 
-def _print_submit_line(line: object, *, client: JjClient | None) -> None:
+def _print_submit_line(line: ui.Renderable, *, client: JjClient | None) -> None:
     if client is None:
         console.output(line)
     else:
@@ -89,7 +89,7 @@ def _render_submit_revision_lines(
     client: JjClient | None,
     prerendered_lines: tuple[str, ...] | None = None,
     revision: SubmittedRevision,
-) -> tuple[object, ...]:
+) -> tuple[ui.Renderable, ...]:
     parts: list[str] = []
     if revision.pull_request_action != "created":
         if revision.remote_action == "up to date":
@@ -136,7 +136,7 @@ def _render_submit_trunk_lines(
     client: JjClient | None,
     prerendered_lines: tuple[str, ...] | None = None,
     result: SubmitResult,
-) -> tuple[object, ...]:
+) -> tuple[ui.Renderable, ...]:
     if client is None:
         return (
             ui.prefixed_line(

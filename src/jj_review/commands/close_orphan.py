@@ -101,6 +101,7 @@ async def run_untracked_cleanup_pull_request(
             pull_request_number=pull_request_number,
         )
     if github_target.remote is None:
+        assert github_target.remote_error is not None
         raise _untracked_cleanup_verification_error(
             detail=plain_text(github_target.remote_error),
             pull_request_number=pull_request_number,

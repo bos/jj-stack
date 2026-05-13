@@ -531,8 +531,8 @@ def _help_inline_code(text: str) -> ui.SemanticText:
     return ui.cmd(text)
 
 
-def _help_rich_text(text: str) -> ui.Message | str:
-    parts: list[object] = []
+def _help_rich_text(text: str) -> ui.Message:
+    parts: list[ui.Message] = []
     last_index = 0
     for match in re.finditer(r"`([^`]+)`", text):
         start, end = match.span()
@@ -611,7 +611,7 @@ def _action_label_message(action) -> ui.Message:
 
 
 def _help_table(
-    rows: Sequence[tuple[Any, Any]],
+    rows: Sequence[tuple[ui.Message, ui.TableCell]],
 ) -> ui.DataTable:
     label_width = max(len(ui.plain_text(label)) for label, _ in rows) + 2
     return ui.DataTable(
@@ -627,7 +627,7 @@ def _help_table(
 
 def _action_rows_for_actions(
     actions: Sequence[Any],
-) -> tuple[tuple[Any, Any], ...]:
+) -> tuple[tuple[ui.Message, ui.TableCell], ...]:
     return tuple(
         (
             _action_label_message(action),
@@ -637,7 +637,7 @@ def _action_rows_for_actions(
     )
 
 
-def _emit_help_table_section(title: str, rows: Sequence[tuple[Any, Any]]) -> None:
+def _emit_help_table_section(title: str, rows: Sequence[tuple[ui.Message, ui.TableCell]]) -> None:
     console.output(_help_heading(f"{title}:"))
     console.output(_help_table(rows))
 
@@ -648,7 +648,7 @@ def _is_common_option_action(action: Any) -> bool:
     )
 
 
-def _action_rows(actions: Sequence[Any]) -> tuple[tuple[Any, Any], ...] | None:
+def _action_rows(actions: Sequence[Any]) -> tuple[tuple[ui.Message, ui.TableCell], ...] | None:
     visible_actions = [action for action in actions if action.help is not SUPPRESS]
     if not visible_actions:
         return None
