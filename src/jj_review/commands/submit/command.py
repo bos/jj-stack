@@ -23,7 +23,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_review.errors import CliError
@@ -33,7 +34,7 @@ from jj_review.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
 )
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj.client import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.stack import LocalStack

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_review.formatting import short_change_id
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.review_state import CachedChange
 from jj_review.state.store import ReviewStateStore
 

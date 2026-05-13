@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.commands._close_actions import (
     comment_matches_kind as _managed_comment_matches_kind,
 )

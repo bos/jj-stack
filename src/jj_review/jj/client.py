@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.errors import CliError, ErrorHint, ErrorMessage
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.stack import LocalRevision, LocalStack

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 
 
 def app_context(

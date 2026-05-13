@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_review.config import RepoConfig
@@ -30,7 +31,7 @@ from jj_review.github.error_messages import (
     github_unavailable_message,
     remote_unavailable_message,
 )
-from jj_review.jj import JjCliArgs, UnsupportedStackError
+from jj_review.jj.client import JjCliArgs, UnsupportedStackError
 from jj_review.models.review_state import ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark

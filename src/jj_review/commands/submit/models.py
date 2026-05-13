@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState

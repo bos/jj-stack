@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.commands.close import (
     CloseAction,
     PreparedClose,
@@ -16,7 +16,7 @@ from jj_review.commands.close import (
 from jj_review.config import RepoConfig
 from jj_review.github.client import GithubClient
 from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_review.models.review_state import CachedChange
 from jj_review.review.status import ReviewStatusRevision

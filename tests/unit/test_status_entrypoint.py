@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from jj_review import console as console_module
-from jj_review.commands import status as status_module
-from jj_review.jj import JjCliArgs
+import jj_review.commands.status as status_module
+import jj_review.console as console_module
+from jj_review.jj.client import JjCliArgs
 from jj_review.models.review_state import CachedChange, ReviewState
 
 from .entrypoint_test_helpers import patch_bootstrap

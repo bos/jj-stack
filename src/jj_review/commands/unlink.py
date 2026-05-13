@@ -10,10 +10,11 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError
-from jj_review.jj import JjCliArgs
+from jj_review.jj.client import JjCliArgs
 from jj_review.models.review_state import CachedChange
 from jj_review.review.bookmarks import bookmark_ownership_for_source
 from jj_review.review.change_status import (

@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from jj_review.errors import CliError
-from jj_review.jj import JjClient, JjCommandError
+from jj_review.jj.client import JjClient, JjCommandError
 
 CONFIG_SECTION = "jj-review"
 DEFAULT_BOOKMARK_PREFIX = "review"

@@ -16,7 +16,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_review.console import requested_color_mode
@@ -25,7 +26,7 @@ from jj_review.github.resolution import (
     ParsedGithubRepo,
     resolve_github_target,
 )
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj.client import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack

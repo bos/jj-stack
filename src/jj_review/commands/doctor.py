@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError, error_message
 from jj_review.github.auth import github_token_for_base_url, github_token_from_env
@@ -29,7 +30,7 @@ from jj_review.github.resolution import (
     parse_github_repo,
     select_submit_remote,
 )
-from jj_review.jj import JjCliArgs
+from jj_review.jj.client import JjCliArgs
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubRepository
 from jj_review.ui import Message

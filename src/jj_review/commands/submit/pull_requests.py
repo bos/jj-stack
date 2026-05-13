@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError

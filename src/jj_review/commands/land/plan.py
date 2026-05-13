@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from jj_review import ui
-from jj_review.jj import JjClient
+import jj_review.ui as ui
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.github import GithubPullRequest
 from jj_review.review.bookmarks import is_review_bookmark

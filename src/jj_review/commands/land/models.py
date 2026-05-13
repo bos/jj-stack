@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState

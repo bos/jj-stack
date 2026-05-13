@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext
 from jj_review.commands._action_recorder import ActionRecorder
-from jj_review.jj import JjClient
-from jj_review.jj.client import UnsupportedStackError
+from jj_review.jj.client import JjClient, UnsupportedStackError
 from jj_review.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_review.review.change_status import (
     classify_review_status_revision,

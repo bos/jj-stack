@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.formatting import (
     format_pull_request_label,
     render_revision_blocks,
     render_revision_lines,
 )
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 
 from .models import SubmitResult, SubmittedRevision
 

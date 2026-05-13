@@ -32,7 +32,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id
@@ -40,7 +41,7 @@ from jj_review.github.client import GithubClientError, build_github_client
 from jj_review.github.resolution import (
     resolve_trunk_branch,
 )
-from jj_review.jj import JjCliArgs
+from jj_review.jj.client import JjCliArgs
 from jj_review.models.review_state import ReviewState
 from jj_review.review.change_status import classify_review_status_revision
 from jj_review.review.selection import (

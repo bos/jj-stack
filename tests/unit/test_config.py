@@ -8,7 +8,7 @@ import pytest
 
 from jj_review.config import load_config, parse_jj_review_config_toml
 from jj_review.errors import CliError
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj.client import JjCliArgs, JjClient
 
 
 def _patch_config_output(

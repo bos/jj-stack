@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext
 from jj_review.errors import CliError
 from jj_review.github.resolution import select_submit_remote

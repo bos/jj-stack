@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.errors import CliError, ErrorMessage, error_message
 from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.github import GithubRepository

@@ -5,8 +5,7 @@ from pathlib import Path
 import pytest
 
 from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.jj import JjClient
-from jj_review.jj.client import JjCommandError
+from jj_review.jj.client import JjClient, JjCommandError
 from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
@@ -482,7 +481,7 @@ def test_land_blocks_dismissed_approval_after_resubmit(
             review.state = "DISMISSED"
 
     monkeypatch.setattr(
-        "jj_review.jj.JjClient.push_bookmarks",
+        "jj_review.jj.client.JjClient.push_bookmarks",
         dismissing_push,
     )
 

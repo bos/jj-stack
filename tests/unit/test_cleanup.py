@@ -5,9 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import jj_review.commands.cleanup.command as cleanup_module
 from jj_review.bootstrap import CommandContext
 from jj_review.commands._close_actions import ManagedCommentLookup
-from jj_review.commands.cleanup import command as cleanup_module
 from jj_review.commands.cleanup.command import (
     _apply_stack_comment_cleanup_action,
     _CleanupSaver,
@@ -25,7 +25,7 @@ from jj_review.commands.cleanup.shared import (
 from jj_review.config import RepoConfig
 from jj_review.github.client import GithubClient
 from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange, ReviewState

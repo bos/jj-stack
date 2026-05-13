@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.jj import (
+from jj_review.jj.client import (
     JjClient,
     JjCommandError,
     StaleWorkspaceError,

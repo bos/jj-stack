@@ -34,7 +34,7 @@ from tests.support.submit_property_scenarios import (
     submit_retry_scenarios_from_environment,
 )
 
-from jj_review.commands.submit import command as submit_command
+import jj_review.commands.submit.command as submit_command
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError
 

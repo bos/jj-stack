@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_review.cli import main
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubRepository

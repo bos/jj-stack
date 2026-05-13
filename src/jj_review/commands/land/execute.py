@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange
 from jj_review.review.change_status import classify_review_change

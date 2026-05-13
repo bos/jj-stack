@@ -22,7 +22,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._action_recorder import ActionRecorder
 from jj_review.commands._close_actions import find_managed_comments as _find_managed_comments
@@ -37,7 +38,7 @@ from jj_review.github.stack_comments import (
     StackCommentKind,
     stack_comment_label,
 )
-from jj_review.jj import JjCliArgs
+from jj_review.jj.client import JjCliArgs
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import is_review_bookmark

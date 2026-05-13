@@ -9,10 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError
-from jj_review.jj import JjCliArgs
+from jj_review.jj.client import JjCliArgs
 from jj_review.review.restart import RestartedChange, restart_state_for_stack
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.state.operation_lock import acquire_operation_lock

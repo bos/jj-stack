@@ -14,7 +14,7 @@ from jj_review.github.stack_comments import (
     is_navigation_comment,
     is_overview_comment,
 )
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
 

@@ -10,7 +10,7 @@ from jj_review.errors import CliError, ErrorMessage
 from jj_review.github.resolution import (
     ParsedGithubRepo,
 )
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
@@ -585,7 +585,7 @@ def _prepare_status_for_test(
     jj_client,
     state_store,
 ) -> PreparedStatus:
-    from jj_review.jj import JjClient
+    from jj_review.jj.client import JjClient
     from jj_review.review.status import prepare_status
 
     return prepare_status(

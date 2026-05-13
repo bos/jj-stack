@@ -23,7 +23,7 @@ from jj_review.commands.submit.revisions import (
     prepare_submit_revisions as _prepare_submit_revisions,
 )
 from jj_review.errors import CliError
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubBranchRef, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState

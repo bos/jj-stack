@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.errors import CliError
 from jj_review.github.pull_request_refs import (
     parse_pull_request_number,
     parse_repository_pull_request_reference,
 )
 from jj_review.github.resolution import parse_github_repo, select_submit_remote
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.change_status import classify_saved_review_change
 from jj_review.review.discovery import discover_tracked_stacks

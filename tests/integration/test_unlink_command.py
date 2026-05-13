@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.state.store import ReviewStateStore
 
 from ..support.integration_helpers import (

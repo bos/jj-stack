@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.errors import CliError
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalStack

@@ -4,8 +4,9 @@ from io import StringIO
 from types import SimpleNamespace
 from typing import cast
 
-from jj_review import console as console_module, ui as ui_module
-from jj_review.commands import status as status_module
+import jj_review.commands.status as status_module
+import jj_review.console as console_module
+import jj_review.ui as ui_module
 from jj_review.config import RepoConfig
 from jj_review.models.bookmarks import RemoteBookmarkState
 from jj_review.models.github import GithubPullRequest

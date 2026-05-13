@@ -16,7 +16,7 @@ def test_main_reports_keyboard_interrupt_without_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        cli_module.commands.status,
+        cli_module.status_command,
         "status",
         lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
@@ -38,7 +38,7 @@ def test_main_preserves_partial_handler_output_on_keyboard_interrupt(
         print("before interrupt")
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(cli_module.commands.status, "status", fake_status)
+    monkeypatch.setattr(cli_module.status_command, "status", fake_status)
 
     exit_code = main(["status"])
     captured = capsys.readouterr()
@@ -120,5 +120,4 @@ def test_config_overrides_stop_at_end_of_options_marker() -> None:
 
     assert cli_args.to_argv() == ()
     assert remaining == ["status", "--", "--config", "x=1"]
-
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.state.store import ReviewStateStore
 
 from ..support.fake_github import FakeGithubState, create_app

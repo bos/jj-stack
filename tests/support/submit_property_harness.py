@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.review_state import CachedChange
 from jj_review.state.store import ReviewStateStore
 

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.github import GithubPullRequest
 

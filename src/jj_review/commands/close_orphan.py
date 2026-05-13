@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext
 from jj_review.commands._action_recorder import ActionRecorder
 from jj_review.commands._close_actions import (
@@ -29,7 +30,7 @@ from jj_review.github.resolution import (
     resolve_github_target,
 )
 from jj_review.github.stack_comments import StackCommentKind, stack_comment_label
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState

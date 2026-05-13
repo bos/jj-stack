@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
 from jj_review.formatting import short_change_id

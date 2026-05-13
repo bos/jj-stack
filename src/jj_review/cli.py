@@ -24,13 +24,26 @@ from inspect import signature
 from pathlib import Path
 from typing import Any, cast
 
-from jj_review import __version__, bootstrap, commands, console, ui
+import jj_review.bootstrap as bootstrap
+import jj_review.commands.cleanup.command as cleanup_command
+import jj_review.commands.close as close_command
+import jj_review.commands.doctor as doctor_command
+import jj_review.commands.import_ as import_command
+import jj_review.commands.land.command as land_command
+import jj_review.commands.list_ as list_command
+import jj_review.commands.relink as relink_command
+import jj_review.commands.restart as restart_command
+import jj_review.commands.status as status_command
+import jj_review.commands.submit.command as submit_command
+import jj_review.commands.unlink as unlink_command
+import jj_review.console as console
+import jj_review.ui as ui
+from jj_review import __version__
 from jj_review.bootstrap import APP_START
-from jj_review.commands.cleanup import command as cleanup_command
 from jj_review.completion import emit_shell_completion
 from jj_review.console import ColorMode, RequestedColorMode, configured_console, rich_color_mode
 from jj_review.errors import CliError, error_hint, error_message
-from jj_review.jj import JjCliArgs
+from jj_review.jj.client import JjCliArgs
 
 logger = logging.getLogger(__name__)
 _COLOR_CHOICES: tuple[RequestedColorMode, ...] = ("always", "never", "debug", "auto")
@@ -82,27 +95,27 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[_HelpCommand, ...]], ...] = (
     (
         "Core commands",
         (
-            _HelpCommand("submit", commands.submit.HELP),
-            _HelpCommand("status", commands.status.HELP),
-            _HelpCommand("list", commands.list_.HELP),
-            _HelpCommand("land", commands.land.HELP),
-            _HelpCommand("close", commands.close.HELP),
+            _HelpCommand("submit", submit_command.HELP),
+            _HelpCommand("status", status_command.HELP),
+            _HelpCommand("list", list_command.HELP),
+            _HelpCommand("land", land_command.HELP),
+            _HelpCommand("close", close_command.HELP),
         ),
     ),
     (
         "Support commands",
         (
             _HelpCommand("cleanup", cleanup_command.HELP),
-            _HelpCommand("import", commands.import_.HELP),
-            _HelpCommand("doctor", commands.doctor.HELP),
+            _HelpCommand("import", import_command.HELP),
+            _HelpCommand("doctor", doctor_command.HELP),
         ),
     ),
     (
         "Advanced repair",
         (
-            _HelpCommand("restart", commands.restart.HELP, hidden=True),
-            _HelpCommand("relink", commands.relink.HELP, hidden=True),
-            _HelpCommand("unlink", commands.unlink.HELP, hidden=True),
+            _HelpCommand("restart", restart_command.HELP, hidden=True),
+            _HelpCommand("relink", relink_command.HELP, hidden=True),
+            _HelpCommand("unlink", unlink_command.HELP, hidden=True),
         ),
     ),
     (
@@ -137,7 +150,7 @@ def _command_parameter_names(function: Callable[..., Any]) -> tuple[str, ...]:
     )
 
 
-_STATUS_HANDLER_ARGS = _command_parameter_names(commands.status.status)
+_STATUS_HANDLER_ARGS = _command_parameter_names(status_command.status)
 
 
 class _TopLevelArgumentParser(ArgumentParser):
@@ -195,9 +208,9 @@ def build_parser() -> ArgumentParser:
         subcommands,
         command="submit",
         aliases=_COMMAND_ALIASES["submit"],
-        help_text=_normalized_help_text(commands.submit.HELP),
-        description_text=commands.submit.__doc__ or "",
-        handler=_forward_handler(commands.submit.submit),
+        help_text=_normalized_help_text(submit_command.HELP),
+        description_text=submit_command.__doc__ or "",
+        handler=_forward_handler(submit_command.submit),
         revset_help=(
             t"Revision to submit; defaults to {ui.revset('@-')} (the current stack head)"
         ),
@@ -289,10 +302,10 @@ def build_parser() -> ArgumentParser:
         subcommands,
         command="status",
         aliases=_COMMAND_ALIASES["status"],
-        help_text=_normalized_help_text(commands.status.HELP),
-        description_text=commands.status.__doc__ or "",
+        help_text=_normalized_help_text(status_command.HELP),
+        description_text=status_command.__doc__ or "",
         handler=_forward_handler(
-            commands.status.status,
+            status_command.status,
             *_STATUS_HANDLER_ARGS,
             selectors=_status_selectors_or_none,
         ),
@@ -325,9 +338,9 @@ def build_parser() -> ArgumentParser:
         subcommands,
         command="list",
         aliases=list(_COMMAND_ALIASES["list"]),
-        help_text=_normalized_help_text(commands.list_.HELP),
-        description_text=commands.list_.__doc__ or "",
-        handler=_forward_handler(commands.list_.list_),
+        help_text=_normalized_help_text(list_command.HELP),
+        description_text=list_command.__doc__ or "",
+        handler=_forward_handler(list_command.list_),
     )
     list_parser.add_argument(
         "-f",
@@ -338,16 +351,16 @@ def build_parser() -> ArgumentParser:
     _add_relink_parser(
         subcommands,
         command="relink",
-        help_text=_normalized_help_text(commands.relink.HELP),
-        description_text=commands.relink.__doc__ or "",
-        handler=_forward_handler(commands.relink.relink),
+        help_text=_normalized_help_text(relink_command.HELP),
+        description_text=relink_command.__doc__ or "",
+        handler=_forward_handler(relink_command.relink),
     )
     restart_parser = _add_revision_command(
         subcommands,
         command="restart",
-        help_text=_normalized_help_text(commands.restart.HELP),
-        description_text=commands.restart.__doc__ or "",
-        handler=_forward_handler(commands.restart.restart),
+        help_text=_normalized_help_text(restart_command.HELP),
+        description_text=restart_command.__doc__ or "",
+        handler=_forward_handler(restart_command.restart),
         revset_nargs=None,
         revset_help="Stack head to prepare for fresh pull requests",
     )
@@ -359,18 +372,18 @@ def build_parser() -> ArgumentParser:
     _add_revision_command(
         subcommands,
         command="unlink",
-        help_text=_normalized_help_text(commands.unlink.HELP),
-        description_text=commands.unlink.__doc__ or "",
-        handler=_forward_handler(commands.unlink.unlink),
+        help_text=_normalized_help_text(unlink_command.HELP),
+        description_text=unlink_command.__doc__ or "",
+        handler=_forward_handler(unlink_command.unlink),
         revset_nargs=None,
         revset_help="Revision to unlink",
     )
     land_parser = _add_revision_command(
         subcommands,
         command="land",
-        help_text=_normalized_help_text(commands.land.HELP),
-        description_text=commands.land.__doc__ or "",
-        handler=_forward_handler(commands.land.land),
+        help_text=_normalized_help_text(land_command.HELP),
+        description_text=land_command.__doc__ or "",
+        handler=_forward_handler(land_command.land),
         revset_help=(
             t"Revision to land; defaults to {ui.revset('@-')} (the current stack head); "
             t"cannot be combined with {ui.cmd('--pull-request')}"
@@ -400,9 +413,9 @@ def build_parser() -> ArgumentParser:
     close_parser = _add_revision_command(
         subcommands,
         command="close",
-        help_text=_normalized_help_text(commands.close.HELP),
-        description_text=commands.close.__doc__ or "",
-        handler=_forward_handler(commands.close.close),
+        help_text=_normalized_help_text(close_command.HELP),
+        description_text=close_command.__doc__ or "",
+        handler=_forward_handler(close_command.close),
         revset_help=(
             t"Revision to close; defaults to {ui.revset('@-')} (the current stack head); "
             t"cannot be combined with {ui.cmd('--pull-request')}"
@@ -430,9 +443,9 @@ def build_parser() -> ArgumentParser:
     _add_import_parser(
         subcommands,
         command="import",
-        help_text=_normalized_help_text(commands.import_.HELP),
-        description_text=commands.import_.__doc__ or "",
-        handler=_forward_handler(commands.import_.import_),
+        help_text=_normalized_help_text(import_command.HELP),
+        description_text=import_command.__doc__ or "",
+        handler=_forward_handler(import_command.import_),
     )
 
     cleanup_parser = _add_command_parser(
@@ -465,9 +478,9 @@ def build_parser() -> ArgumentParser:
     _add_command_parser(
         subcommands,
         command="doctor",
-        help_text=_normalized_help_text(commands.doctor.HELP),
-        description_text=commands.doctor.__doc__ or "",
-        handler=_forward_handler(commands.doctor.doctor),
+        help_text=_normalized_help_text(doctor_command.HELP),
+        description_text=doctor_command.__doc__ or "",
+        handler=_forward_handler(doctor_command.doctor),
     )
 
     completion_parser = _add_command_parser(
@@ -945,7 +958,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _default_status_handler(args: Namespace) -> int:
     """Run bare `jj-review` as the default `status` command."""
 
-    return commands.status.status(
+    return status_command.status(
         cli_args=_global_cli_args(args),
         debug=args.debug,
         fetch=False,
@@ -960,7 +973,7 @@ def _default_status_handler(args: Namespace) -> int:
 @dataclass(frozen=True)
 class _ParsedStatusCommandArgs:
     argv: tuple[str, ...]
-    selectors: tuple[commands.status.StatusSelector, ...]
+    selectors: tuple[status_command.StatusSelector, ...]
 
 
 def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs | None:
@@ -974,7 +987,7 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
     command_argv = argv[command_index + 1 :]
     options: list[str] = []
     revsets: list[str] = []
-    selectors: list[commands.status.StatusSelector] = []
+    selectors: list[status_command.StatusSelector] = []
     index = 0
     while index < len(command_argv):
         arg = command_argv[index]
@@ -982,7 +995,7 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
             trailing_revsets = command_argv[index + 1 :]
             revsets.extend(trailing_revsets)
             selectors.extend(
-                commands.status.StatusSelector(kind="revset", value=value)
+                status_command.StatusSelector(kind="revset", value=value)
                 for value in trailing_revsets
             )
             break
@@ -994,7 +1007,7 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
             options.extend((arg, value))
             if arg in _PULL_REQUEST_OPTION_STRINGS:
                 selectors.append(
-                    commands.status.StatusSelector(
+                    status_command.StatusSelector(
                         kind="pull_request",
                         value=value,
                     )
@@ -1016,7 +1029,7 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
                 value = None
             if value is not None:
                 selectors.append(
-                    commands.status.StatusSelector(
+                    status_command.StatusSelector(
                         kind="pull_request",
                         value=value,
                     )
@@ -1032,7 +1045,7 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
             index += 1
             continue
         revsets.append(arg)
-        selectors.append(commands.status.StatusSelector(kind="revset", value=arg))
+        selectors.append(status_command.StatusSelector(kind="revset", value=arg))
         index += 1
     normalized = [*prefix, *options]
     if revsets:
@@ -1311,7 +1324,7 @@ def _global_cli_args(args: Namespace) -> JjCliArgs:
 
 def _status_selectors_or_none(
     args: Namespace,
-) -> tuple[commands.status.StatusSelector, ...] | None:
+) -> tuple[status_command.StatusSelector, ...] | None:
     return args.status_selectors
 
 

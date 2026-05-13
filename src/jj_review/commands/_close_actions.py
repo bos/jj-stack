@@ -6,7 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.error_messages import summarize_github_error_reason
 from jj_review.github.resolution import ParsedGithubRepo
@@ -16,7 +17,7 @@ from jj_review.github.stack_comments import (
     is_overview_comment,
     stack_comment_label,
 )
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import BookmarkState
 from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange

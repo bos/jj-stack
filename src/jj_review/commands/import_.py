@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError, ErrorMessage
 from jj_review.github.client import GithubClientError, build_github_client
@@ -33,7 +34,7 @@ from jj_review.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj.client import JjCliArgs, JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubPullRequest
 from jj_review.models.review_state import CachedChange

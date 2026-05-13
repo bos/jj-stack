@@ -47,8 +47,8 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-from jj_review import ui
-from jj_review.jj import JjCliArgs
+import jj_review.ui as ui
+from jj_review.jj.client import JjCliArgs
 
 _NO_CLI_ARGS = JjCliArgs()
 

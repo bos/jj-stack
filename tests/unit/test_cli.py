@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.cli import main
 from jj_review.commands.status import StatusSelector
 from jj_review.errors import CliError
@@ -91,7 +91,7 @@ def test_main_renders_semantic_cli_errors_without_flattening_first(
     def fake_status(**kwargs) -> int:
         raise CliError(("Problem at ", ui.change_id("abcdefgh1234")))
 
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
 
     exit_code = main(["status"])
     captured = capsys.readouterr()
@@ -107,7 +107,7 @@ def test_main_renders_cli_error_hint_on_separate_line(
     def fake_status(**kwargs) -> int:
         raise CliError("Problem at trunk.", hint="Run status --fetch and retry.")
 
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
 
     exit_code = main(["status"])
     captured = capsys.readouterr()
@@ -127,7 +127,7 @@ def test_main_preserves_status_selector_order(
         observed.update(kwargs)
         return 0
 
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
 
     exit_code = main(["status", "foo", "--pull-request", "17", "bar"])
 
@@ -157,7 +157,7 @@ def test_main_preserves_status_positional_escape_for_dash_prefixed_revsets(
         observed.update(kwargs)
         return 0
 
-    monkeypatch.setattr("jj_review.cli.commands.status.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
 
     exit_code = main(argv)
 

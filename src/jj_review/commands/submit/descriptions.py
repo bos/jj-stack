@@ -9,9 +9,9 @@ import tempfile
 from pathlib import Path
 from typing import Literal
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.errors import CliError
-from jj_review.jj import JjClient, JjCommandError
+from jj_review.jj.client import JjClient, JjCommandError
 from jj_review.models.stack import LocalRevision
 
 from .models import GeneratedDescription

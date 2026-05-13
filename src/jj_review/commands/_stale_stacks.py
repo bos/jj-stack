@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from jj_review import console, ui
+import jj_review.console as console
+import jj_review.ui as ui
 from jj_review.models.review_state import ReviewState
 from jj_review.models.stack import LocalStack
 from jj_review.review.change_status import submitted_state_disagreement

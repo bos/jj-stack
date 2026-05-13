@@ -10,7 +10,7 @@ from jj_review.bootstrap import CommandContext
 from jj_review.commands.import_ import _run_import_async
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 
 
 def test_run_import_current_rejects_before_github_inspection(

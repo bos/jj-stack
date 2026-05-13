@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.state.journal import read_operation_log
 from jj_review.state.store import ReviewStateStore, resolve_state_path
@@ -569,15 +569,15 @@ def test_cleanup_apply_batches_remote_delete_local_forget_and_fetch(
         return original_fetch_remote(self, remote=remote, branches=branches)
 
     monkeypatch.setattr(
-        "jj_review.jj.JjClient.delete_remote_bookmarks",
+        "jj_review.jj.client.JjClient.delete_remote_bookmarks",
         tracking_delete_remote_bookmarks,
     )
     monkeypatch.setattr(
-        "jj_review.jj.JjClient.forget_bookmarks",
+        "jj_review.jj.client.JjClient.forget_bookmarks",
         tracking_forget_bookmarks,
     )
     monkeypatch.setattr(
-        "jj_review.jj.JjClient.fetch_remote",
+        "jj_review.jj.client.JjClient.fetch_remote",
         tracking_fetch_remote,
     )
 
@@ -654,7 +654,7 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
         )
 
     monkeypatch.setattr(
-        "jj_review.jj.JjClient.delete_remote_bookmarks",
+        "jj_review.jj.client.JjClient.delete_remote_bookmarks",
         delete_remote_bookmarks_with_race,
     )
 
@@ -789,7 +789,7 @@ def test_cleanup_logs_begin_after_failed_apply(
         raise RuntimeError("Simulated failure during live cleanup")
 
     monkeypatch.setattr(
-        "jj_review.jj.JjClient.delete_remote_bookmarks",
+        "jj_review.jj.client.JjClient.delete_remote_bookmarks",
         failing_delete_remote_bookmarks,
     )
 

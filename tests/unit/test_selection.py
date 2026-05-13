@@ -4,7 +4,7 @@ from typing import cast
 import pytest
 
 from jj_review.errors import CliError
-from jj_review.jj import JjClient
+from jj_review.jj.client import JjClient
 from jj_review.models.bookmarks import GitRemote
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision

@@ -8,10 +8,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.config import AppConfig, load_config
 from jj_review.errors import CliError
-from jj_review.jj import JjCliArgs, JjClient
+from jj_review.jj.client import JjCliArgs, JjClient
 from jj_review.state.store import ReviewStateStore
 
 _MINIMUM_JJ_VERSION = (0, 39, 0)

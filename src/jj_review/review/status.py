@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from jj_review import ui
+import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_review.errors import CliError, ErrorMessage, error_message
@@ -30,7 +30,7 @@ from jj_review.github.stack_comments import (
     is_navigation_comment,
     is_overview_comment,
 )
-from jj_review.jj import JjClient, UnsupportedStackError
+from jj_review.jj.client import JjClient, UnsupportedStackError
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubIssueComment, GithubPullRequest
 from jj_review.models.review_state import CachedChange, LinkState, ReviewState
