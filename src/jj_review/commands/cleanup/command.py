@@ -25,7 +25,7 @@ from pathlib import Path
 from jj_review import console, ui
 from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.commands._action_recorder import ActionRecorder
-from jj_review.commands._close_actions import comment_matches_kind as _comment_matches_kind
+from jj_review.commands._close_actions import find_managed_comments as _find_managed_comments
 from jj_review.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_review.errors import CliError
 from jj_review.github.client import GithubClient, GithubClientError, build_github_client
@@ -39,7 +39,6 @@ from jj_review.github.stack_comments import (
 )
 from jj_review.jj import JjCliArgs
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.bookmarks import is_review_bookmark
 from jj_review.review.change_status import (
@@ -1003,94 +1002,49 @@ async def _plan_stack_comment_cleanup(
         if pull_request.head.ref == bookmark and pull_request.head.label == expected_label:
             return None
 
-    managed_comments = await _resolve_managed_comments(
-        cached_change=cached_change,
+    lookups = await _find_managed_comments(
+        cached_navigation_comment_id=cached_change.navigation_comment_id,
+        cached_overview_comment_id=cached_change.overview_comment_id,
         github_client=github_client,
         github_repository=github_repository,
         pull_request_number=pull_request_number,
     )
-    if isinstance(managed_comments, CleanupAction):
-        return StackCommentCleanupPlan(actions=(managed_comments,))
-    if not managed_comments:
+    if not lookups:
         return None
 
-    return StackCommentCleanupPlan(
-        actions=tuple(
+    delete_actions: list[CleanupAction] = []
+    delete_targets: list[tuple[int, StackCommentKind]] = []
+    for lookup in lookups:
+        if lookup.blocked_reason is not None:
+            return StackCommentCleanupPlan(
+                actions=(
+                    CleanupAction(
+                        kind=stack_comment_label(lookup.kind),
+                        status="blocked",
+                        body=lookup.blocked_reason,
+                    ),
+                )
+            )
+        if lookup.comment is None:
+            continue
+        delete_actions.append(
             CleanupAction(
-                kind=stack_comment_label(kind),
+                kind=stack_comment_label(lookup.kind),
                 status="planned",
                 body=(
-                    f"delete {stack_comment_label(kind)} #{comment.id} from PR "
+                    f"delete {stack_comment_label(lookup.kind)} #{lookup.comment.id} from PR "
                     f"#{pull_request_number}"
                 ),
             )
-            for kind, comment in managed_comments
-        ),
-        comments=tuple((comment.id, kind) for kind, comment in managed_comments),
-    )
-
-
-async def _resolve_managed_comments(
-    *,
-    cached_change: CachedChange,
-    github_client: GithubClient,
-    github_repository,
-    pull_request_number: int,
-) -> tuple[tuple[StackCommentKind, GithubIssueComment], ...] | CleanupAction:
-    try:
-        comments = await github_client.list_issue_comments(
-            github_repository.owner,
-            github_repository.repo,
-            issue_number=pull_request_number,
         )
-    except GithubClientError as error:
-        raise CliError(
-            f"Could not list stack comments for pull request #{pull_request_number}"
-        ) from error
+        delete_targets.append((lookup.comment.id, lookup.kind))
 
-    resolved: list[tuple[StackCommentKind, GithubIssueComment]] = []
-    for kind, cached_comment_id in (
-        ("navigation", cached_change.navigation_comment_id),
-        ("overview", cached_change.overview_comment_id),
-    ):
-        cached_comment = None
-        if cached_comment_id is not None:
-            cached_comment = next(
-                (comment for comment in comments if comment.id == cached_comment_id),
-                None,
-            )
-            if cached_comment is not None and not _comment_matches_kind(
-                body=cached_comment.body,
-                kind=kind,
-            ):
-                return CleanupAction(
-                    kind=stack_comment_label(kind),
-                    status="blocked",
-                    body=(
-                        f"cannot delete saved {stack_comment_label(kind)} "
-                        f"#{cached_comment.id} because it does not belong to us"
-                    ),
-                )
-        if cached_comment is not None:
-            resolved.append((kind, cached_comment))
-            continue
-
-        matching_comments = [
-            comment for comment in comments if _comment_matches_kind(body=comment.body, kind=kind)
-        ]
-        if len(matching_comments) > 1:
-            return CleanupAction(
-                kind=stack_comment_label(kind),
-                status="blocked",
-                body=(
-                    f"cannot delete {stack_comment_label(kind)}s because GitHub reports "
-                    f"multiple candidates on PR #{pull_request_number}"
-                ),
-            )
-        if matching_comments:
-            resolved.append((kind, matching_comments[0]))
-
-    return tuple(resolved)
+    if not delete_actions:
+        return None
+    return StackCommentCleanupPlan(
+        actions=tuple(delete_actions),
+        comments=tuple(delete_targets),
+    )
 
 
 async def _resolve_unlinked_pull_request_number(

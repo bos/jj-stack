@@ -28,7 +28,7 @@ from jj_review.commands._close_actions import (
     CloseActionBody,
     apply_bookmark_cleanup,
     emit_close_actions,
-    find_managed_comment as _find_managed_comment,
+    find_managed_comments as _find_managed_comments,
     plan_bookmark_cleanup,
     retire_cached_change as _retire_cached_change,
 )
@@ -1043,29 +1043,32 @@ async def _cleanup_revision(
     if cached_change.pr_number is None:
         return
 
+    lookups = await _find_managed_comments(
+        cached_navigation_comment_id=cached_change.navigation_comment_id,
+        cached_overview_comment_id=cached_change.overview_comment_id,
+        github_client=context.github_client,
+        github_repository=context.github_repository,
+        pull_request_number=cached_change.pr_number,
+    )
     cleared_comment = False
-    for kind, cached_comment_id in (
-        ("navigation", cached_change.navigation_comment_id),
-        ("overview", cached_change.overview_comment_id),
-    ):
-        comment, comment_error = await _find_managed_comment(
-            cached_comment_id=cached_comment_id,
-            github_client=context.github_client,
-            github_repository=context.github_repository,
-            kind=kind,
-            pull_request_number=cached_change.pr_number,
-        )
-        if comment_error is not None:
-            context.record_action(comment_error)
+    for lookup in lookups:
+        if lookup.blocked_reason is not None:
+            context.record_action(
+                CloseAction(
+                    kind=stack_comment_label(lookup.kind),
+                    body=lookup.blocked_reason,
+                    status="blocked",
+                )
+            )
             return
-        if comment is None:
+        if lookup.comment is None:
             continue
         cleared_comment = True
         context.record_action(
             CloseAction(
-                kind=stack_comment_label(kind),
+                kind=stack_comment_label(lookup.kind),
                 body=(
-                    f"delete {stack_comment_label(kind)} #{comment.id} from PR "
+                    f"delete {stack_comment_label(lookup.kind)} #{lookup.comment.id} from PR "
                     f"#{cached_change.pr_number}"
                 ),
                 status="planned" if context.dry_run else "applied",
@@ -1075,7 +1078,7 @@ async def _cleanup_revision(
             await context.github_client.delete_issue_comment(
                 context.github_repository.owner,
                 context.github_repository.repo,
-                comment_id=comment.id,
+                comment_id=lookup.comment.id,
             )
 
     if (

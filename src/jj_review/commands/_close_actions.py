@@ -73,15 +73,38 @@ def comment_matches_kind(*, body: str, kind: StackCommentKind) -> bool:
     return is_overview_comment(body)
 
 
-async def find_managed_comment(
+@dataclass(frozen=True, slots=True)
+class ManagedCommentLookup:
+    """One resolution result for a managed stack comment on a pull request.
+
+    Exactly one of ``comment`` or ``blocked_reason`` is set; the other is
+    ``None``. Kinds with neither a cached id nor a body-marker match are
+    omitted from the result rather than represented as a third state.
+    """
+
+    kind: StackCommentKind
+    comment: GithubIssueComment | None = None
+    blocked_reason: str | None = None
+
+
+async def find_managed_comments(
     *,
-    cached_comment_id: int | None,
+    cached_navigation_comment_id: int | None,
+    cached_overview_comment_id: int | None,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
-    kind: StackCommentKind,
     pull_request_number: int,
-) -> tuple[GithubIssueComment | None, CloseAction | None]:
-    """Resolve the saved jj-review stack comment for a PR, if any."""
+) -> tuple[ManagedCommentLookup, ...]:
+    """Resolve managed stack comments for one PR via a single list call.
+
+    Returns entries only for kinds that resolved to a delete target or were
+    blocked. Kinds with no cached id and no body-marker match are omitted.
+    """
+
+    cached_ids: dict[StackCommentKind, int | None] = {
+        "navigation": cached_navigation_comment_id,
+        "overview": cached_overview_comment_id,
+    }
 
     try:
         comments = await github_client.list_issue_comments(
@@ -90,56 +113,46 @@ async def find_managed_comment(
             issue_number=pull_request_number,
         )
     except GithubClientError as error:
-        if error.status_code == 404:
-            if cached_comment_id is None:
-                return None, None
-            try:
-                cached_comment = await github_client.get_issue_comment(
-                    github_repository.owner,
-                    github_repository.repo,
-                    comment_id=cached_comment_id,
-                )
-            except GithubClientError as cached_comment_error:
-                if cached_comment_error.status_code == 404:
-                    return None, None
-                return (
-                    None,
-                    CloseAction(
-                        kind=stack_comment_label(kind),
-                        body=(
-                            f"cannot inspect saved {stack_comment_label(kind)} "
-                            f"#{cached_comment_id}: "
-                            f"{summarize_github_error_reason(cached_comment_error)}"
-                        ),
-                        status="blocked",
+        if error.status_code != 404:
+            reason = summarize_github_error_reason(error)
+            return tuple(
+                ManagedCommentLookup(
+                    kind=kind,
+                    blocked_reason=(
+                        f"cannot inspect {stack_comment_label(kind)}s for PR "
+                        f"#{pull_request_number}: {reason}"
                     ),
                 )
-            if not comment_matches_kind(body=cached_comment.body, kind=kind):
-                return (
-                    None,
-                    CloseAction(
-                        kind=stack_comment_label(kind),
-                        body=(
-                            f"cannot delete saved {stack_comment_label(kind)} "
-                            f"#{cached_comment_id} because it does not belong to "
-                            "jj-review"
-                        ),
-                        status="blocked",
-                    ),
-                )
-            return cached_comment, None
-        return (
-            None,
-            CloseAction(
-                kind=stack_comment_label(kind),
-                body=(
-                    f"cannot inspect {stack_comment_label(kind)}s for PR "
-                    f"#{pull_request_number}: {summarize_github_error_reason(error)}"
-                ),
-                status="blocked",
-            ),
+                for kind in cached_ids
+            )
+        return await _resolve_cached_managed_comments_after_404(
+            cached_ids=cached_ids,
+            github_client=github_client,
+            github_repository=github_repository,
         )
 
+    return tuple(
+        entry
+        for kind, cached_comment_id in cached_ids.items()
+        for entry in (
+            _resolve_managed_comment_from_listed(
+                cached_comment_id=cached_comment_id,
+                comments=comments,
+                kind=kind,
+                pull_request_number=pull_request_number,
+            ),
+        )
+        if entry is not None
+    )
+
+
+def _resolve_managed_comment_from_listed(
+    *,
+    cached_comment_id: int | None,
+    comments: tuple[GithubIssueComment, ...],
+    kind: StackCommentKind,
+    pull_request_number: int,
+) -> ManagedCommentLookup | None:
     if cached_comment_id is not None:
         cached_comment = next(
             (comment for comment in comments if comment.id == cached_comment_id),
@@ -147,38 +160,76 @@ async def find_managed_comment(
         )
         if cached_comment is not None:
             if not comment_matches_kind(body=cached_comment.body, kind=kind):
-                return (
-                    None,
-                    CloseAction(
-                        kind=stack_comment_label(kind),
-                        body=(
-                            f"cannot delete saved {stack_comment_label(kind)} "
-                            f"#{cached_comment_id} because it does not belong to "
-                            "jj-review"
-                        ),
-                        status="blocked",
+                return ManagedCommentLookup(
+                    kind=kind,
+                    blocked_reason=(
+                        f"cannot delete saved {stack_comment_label(kind)} "
+                        f"#{cached_comment_id} because it does not belong to "
+                        "jj-review"
                     ),
                 )
-            return cached_comment, None
+            return ManagedCommentLookup(kind=kind, comment=cached_comment)
 
     matching_comments = [
         comment for comment in comments if comment_matches_kind(body=comment.body, kind=kind)
     ]
     if len(matching_comments) > 1:
-        return (
-            None,
-            CloseAction(
-                kind=stack_comment_label(kind),
-                body=(
-                    f"cannot delete {stack_comment_label(kind)}s because GitHub reports "
-                    f"multiple candidates on PR #{pull_request_number}"
-                ),
-                status="blocked",
+        return ManagedCommentLookup(
+            kind=kind,
+            blocked_reason=(
+                f"cannot delete {stack_comment_label(kind)}s because GitHub reports "
+                f"multiple candidates on PR #{pull_request_number}"
             ),
         )
     if not matching_comments:
-        return None, None
-    return matching_comments[0], None
+        return None
+    return ManagedCommentLookup(kind=kind, comment=matching_comments[0])
+
+
+async def _resolve_cached_managed_comments_after_404(
+    *,
+    cached_ids: dict[StackCommentKind, int | None],
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+) -> tuple[ManagedCommentLookup, ...]:
+    entries: list[ManagedCommentLookup] = []
+    for kind, cached_comment_id in cached_ids.items():
+        if cached_comment_id is None:
+            continue
+        try:
+            cached_comment = await github_client.get_issue_comment(
+                github_repository.owner,
+                github_repository.repo,
+                comment_id=cached_comment_id,
+            )
+        except GithubClientError as cached_comment_error:
+            if cached_comment_error.status_code == 404:
+                continue
+            entries.append(
+                ManagedCommentLookup(
+                    kind=kind,
+                    blocked_reason=(
+                        f"cannot inspect saved {stack_comment_label(kind)} "
+                        f"#{cached_comment_id}: "
+                        f"{summarize_github_error_reason(cached_comment_error)}"
+                    ),
+                )
+            )
+            continue
+        if not comment_matches_kind(body=cached_comment.body, kind=kind):
+            entries.append(
+                ManagedCommentLookup(
+                    kind=kind,
+                    blocked_reason=(
+                        f"cannot delete saved {stack_comment_label(kind)} "
+                        f"#{cached_comment_id} because it does not belong to "
+                        "jj-review"
+                    ),
+                )
+            )
+            continue
+        entries.append(ManagedCommentLookup(kind=kind, comment=cached_comment))
+    return tuple(entries)
 
 
 def emit_close_actions(

@@ -6,10 +6,12 @@ from types import SimpleNamespace
 from typing import cast
 
 from jj_review.bootstrap import CommandContext
+from jj_review.commands._close_actions import ManagedCommentLookup
 from jj_review.commands.cleanup import command as cleanup_module
 from jj_review.commands.cleanup.command import (
     _apply_stack_comment_cleanup_action,
     _plan_remote_branch_cleanup,
+    _plan_stack_comment_cleanup,
     _run_cleanup_async,
 )
 from jj_review.commands.cleanup.rebase import _stream_rebase
@@ -24,6 +26,7 @@ from jj_review.github.client import GithubClient
 from jj_review.github.resolution import ParsedGithubRepo
 from jj_review.jj import JjClient
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
+from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.change_status import classify_review_change_without_pull_request
 from jj_review.review.status import PreparedStatus
@@ -197,6 +200,68 @@ def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
     )
 
     assert recorded_actions == [blocked_action]
+
+
+def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks(
+    monkeypatch,
+) -> None:
+    blocked_reason = "cannot delete stack overview comments because GitHub reports duplicates"
+
+    async def fake_find_managed_comments(**kwargs):
+        return (
+            ManagedCommentLookup(
+                kind="navigation",
+                comment=GithubIssueComment(
+                    body="managed navigation",
+                    databaseId=12,
+                    url="https://api.github.test/comments/12",
+                ),
+            ),
+            ManagedCommentLookup(kind="overview", blocked_reason=blocked_reason),
+        )
+
+    monkeypatch.setattr(
+        cleanup_module,
+        "_find_managed_comments",
+        fake_find_managed_comments,
+    )
+
+    class FakeGithubClient:
+        async def get_pull_request(self, owner, repo, *, pull_number):
+            return SimpleNamespace(
+                head=SimpleNamespace(
+                    label="octo-org:review/other",
+                    ref="review/other",
+                )
+            )
+
+    plan = asyncio.run(
+        _plan_stack_comment_cleanup(
+            bookmark_state=BookmarkState(name="review/feature"),
+            cached_change=CachedChange(
+                link_state="unlinked",
+                navigation_comment_id=12,
+                overview_comment_id=13,
+                pr_number=1,
+            ),
+            github_client=cast(GithubClient, FakeGithubClient()),
+            github_repository=ParsedGithubRepo(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
+        )
+    )
+
+    assert plan == StackCommentCleanupPlan(
+        actions=(
+            CleanupAction(
+                kind="stack overview comment",
+                body=blocked_reason,
+                status="blocked",
+            ),
+        )
+    )
 
 
 def _status_revision(

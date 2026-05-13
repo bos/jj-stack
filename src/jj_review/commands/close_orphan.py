@@ -13,7 +13,7 @@ from jj_review.commands._close_actions import (
     CloseAction,
     apply_bookmark_cleanup,
     emit_close_actions,
-    find_managed_comment,
+    find_managed_comments,
     plan_bookmark_cleanup,
     retire_cached_change as _retire_cached_change,
 )
@@ -491,23 +491,28 @@ async def _preflight_orphaned_comment_cleanup(
     pull_request_number: int,
     recorder: ActionRecorder[CloseAction],
 ) -> tuple[_ResolvedOrphanedComment, ...]:
+    lookups = await find_managed_comments(
+        cached_navigation_comment_id=cached_change.navigation_comment_id,
+        cached_overview_comment_id=cached_change.overview_comment_id,
+        github_client=github_client,
+        github_repository=github_repository,
+        pull_request_number=pull_request_number,
+    )
     resolved_comments: list[_ResolvedOrphanedComment] = []
-    for kind, cached_comment_id in (
-        ("navigation", cached_change.navigation_comment_id),
-        ("overview", cached_change.overview_comment_id),
-    ):
-        comment, comment_error = await find_managed_comment(
-            cached_comment_id=cached_comment_id,
-            github_client=github_client,
-            github_repository=github_repository,
-            kind=kind,
-            pull_request_number=pull_request_number,
-        )
-        if comment_error is not None:
-            recorder.record(comment_error)
+    for lookup in lookups:
+        if lookup.blocked_reason is not None:
+            recorder.record(
+                CloseAction(
+                    kind=stack_comment_label(lookup.kind),
+                    body=lookup.blocked_reason,
+                    status="blocked",
+                )
+            )
             return ()
-        if comment is not None:
-            resolved_comments.append(_ResolvedOrphanedComment(comment=comment, kind=kind))
+        if lookup.comment is not None:
+            resolved_comments.append(
+                _ResolvedOrphanedComment(comment=lookup.comment, kind=lookup.kind)
+            )
     return tuple(resolved_comments)
 
 
