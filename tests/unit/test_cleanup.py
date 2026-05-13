@@ -30,6 +30,7 @@ from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.review.change_status import classify_review_change_without_pull_request
 from jj_review.review.status import PreparedStatus
+from jj_review.state.journal import OperationJournal
 from jj_review.state.store import ReviewStateStore
 
 
@@ -193,6 +194,7 @@ def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
                 owner="octo-org",
                 repo="stacked-review",
             ),
+            journal=OperationJournal.disabled(),
             next_changes={},
             prepared_cleanup=prepared_cleanup,
             record_action=recorded_actions.append,

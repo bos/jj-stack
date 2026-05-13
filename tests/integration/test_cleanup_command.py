@@ -801,4 +801,7 @@ def test_cleanup_logs_begin_after_failed_apply(
     cleanup_events = [
         event for event in read_operation_log(state_dir) if event.operation == "cleanup"
     ]
-    assert [event.event for event in cleanup_events] == ["begin"]
+    event_kinds = [event.event for event in cleanup_events]
+    assert event_kinds[0] == "begin"
+    assert "mutation_applied" not in event_kinds
+    assert "completed" not in event_kinds

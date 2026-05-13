@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from jj_review import console, ui
@@ -73,7 +73,10 @@ from jj_review.review.status import (
     prepare_status,
     stream_status,
 )
-from jj_review.state.journal import OperationJournal
+from jj_review.state.journal import (
+    OperationJournal,
+    record_saved_state_updates as _record_saved_state_updates,
+)
 from jj_review.state.operation_lock import acquire_operation_lock
 
 HELP = "Stop reviewing a jj stack on GitHub"
@@ -111,6 +114,7 @@ class _CloseExecutionState:
     current_state: ReviewState
     next_changes: dict[str, CachedChange]
     commit_ids_by_change_id: dict[str, str]
+    journal: OperationJournal = OperationJournal.disabled()
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +129,7 @@ class _CloseCleanupContext:
     remote_name: str | None
     revision: ReviewStatusRevision
     revision_label: CloseActionBody
+    journal: OperationJournal = OperationJournal.disabled()
 
     @property
     def bookmark_prefix(self) -> str:
@@ -514,6 +519,7 @@ async def _stream_close_async(
         close_journal = _start_close_operation_log(
             prepared_close=prepared_close,
         )
+        execution_state = replace(execution_state, journal=close_journal)
 
         if no_work:
             completed = True
@@ -546,6 +552,7 @@ async def _stream_close_async(
         _save_close_progress(
             execution_state=execution_state,
             prepared_close=prepared_close,
+            journal=close_journal,
         )
         completed = True
         return _close_result(
@@ -605,15 +612,22 @@ def _save_close_progress(
     *,
     execution_state: _CloseExecutionState,
     prepared_close: PreparedClose,
+    journal: OperationJournal,
 ) -> None:
     """Persist saved close state when a live run changed tracked metadata."""
 
     prepared = prepared_close.prepared_status.prepared
     current_state = execution_state.current_state
-    if not prepared_close.dry_run and execution_state.next_changes != current_state.changes:
-        prepared.state_store.save(
-            current_state.model_copy(update={"changes": execution_state.next_changes})
-        )
+    if prepared_close.dry_run or execution_state.next_changes == current_state.changes:
+        return
+    _record_saved_state_updates(
+        journal=journal,
+        before=current_state.changes,
+        after=execution_state.next_changes,
+    )
+    prepared.state_store.save(
+        current_state.model_copy(update={"changes": execution_state.next_changes})
+    )
 
 
 def _start_close_operation_log(
@@ -667,6 +681,7 @@ async def _process_close_revisions(
             current_state=execution_state.current_state,
             github_client=github_client,
             github_repository=github_repository,
+            journal=execution_state.journal,
             next_changes=execution_state.next_changes,
             prepared_close=prepared_close,
             record_action=recorder.record,
@@ -709,6 +724,7 @@ async def _process_close_revision(
     current_state,
     github_client: GithubClient,
     github_repository,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
@@ -740,6 +756,7 @@ async def _process_close_revision(
             commit_id=commit_id,
             github_client=github_client,
             github_repository=github_repository,
+            journal=journal,
             next_changes=next_changes,
             prepared_close=prepared_close,
             record_action=record_action,
@@ -780,6 +797,7 @@ async def _process_close_revision(
             commit_id=commit_id,
             github_client=github_client,
             github_repository=github_repository,
+            journal=journal,
             next_changes=next_changes,
             prepared_close=prepared_close,
             pull_request_number=lookup.pull_request.number,
@@ -797,6 +815,7 @@ async def _process_close_revision(
         commit_id=commit_id,
         github_client=github_client,
         github_repository=github_repository,
+        journal=journal,
         next_changes=next_changes,
         prepared_close=prepared_close,
         record_action=record_action,
@@ -812,6 +831,7 @@ async def _process_missing_close_revision(
     commit_id: str | None,
     github_client: GithubClient,
     github_repository,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
@@ -852,6 +872,7 @@ async def _process_missing_close_revision(
         commit_id=commit_id,
         github_client=github_client,
         github_repository=github_repository,
+        journal=journal,
         next_changes=next_changes,
         prepared_close=prepared_close,
         record_action=record_action,
@@ -867,6 +888,7 @@ async def _process_open_close_revision(
     commit_id: str | None,
     github_client: GithubClient,
     github_repository,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     pull_request_number: int,
@@ -882,11 +904,16 @@ async def _process_open_close_revision(
         )
     )
     if not prepared_close.dry_run:
-        await github_client.close_pull_request(
-            github_repository.owner,
-            github_repository.repo,
-            pull_number=pull_request_number,
-        )
+        with journal.mutation(
+            "close_pull_request",
+            change_id=revision.change_id,
+            pull_request_number=pull_request_number,
+        ):
+            await github_client.close_pull_request(
+                github_repository.owner,
+                github_repository.repo,
+                pull_number=pull_request_number,
+            )
 
     updated_change = _record_retired_cached_change(
         cached_change=cached_change,
@@ -902,6 +929,7 @@ async def _process_open_close_revision(
         commit_id=commit_id,
         github_client=github_client,
         github_repository=github_repository,
+        journal=journal,
         next_changes=next_changes,
         prepared_close=prepared_close,
         record_action=record_action,
@@ -917,6 +945,7 @@ async def _process_closed_close_revision(
     commit_id: str | None,
     github_client: GithubClient,
     github_repository,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
@@ -950,6 +979,7 @@ async def _process_closed_close_revision(
         commit_id=commit_id,
         github_client=github_client,
         github_repository=github_repository,
+        journal=journal,
         next_changes=next_changes,
         prepared_close=prepared_close,
         record_action=record_action,
@@ -987,6 +1017,7 @@ async def _cleanup_if_requested(
     commit_id: str | None,
     github_client: GithubClient,
     github_repository,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
@@ -1000,6 +1031,7 @@ async def _cleanup_if_requested(
     cleanup_context = _CloseCleanupContext(
         github_client=github_client,
         github_repository=github_repository,
+        journal=journal,
         next_changes=next_changes,
         prepared_close=prepared_close,
         record_action=record_action,
@@ -1035,6 +1067,7 @@ async def _cleanup_revision(
             bookmark=bookmark,
             cleanup_plan=cleanup_plan,
             commit_id=commit_id,
+            journal=context.journal,
             record_action=context.record_action,
             remote_name=context.remote_name,
             run=context,
@@ -1075,11 +1108,18 @@ async def _cleanup_revision(
             )
         )
         if not context.dry_run:
-            await context.github_client.delete_issue_comment(
-                context.github_repository.owner,
-                context.github_repository.repo,
+            with context.journal.mutation(
+                "delete_issue_comment",
+                change_id=context.revision.change_id,
                 comment_id=lookup.comment.id,
-            )
+                kind=lookup.kind,
+                pull_request_number=cached_change.pr_number,
+            ):
+                await context.github_client.delete_issue_comment(
+                    context.github_repository.owner,
+                    context.github_repository.repo,
+                    comment_id=lookup.comment.id,
+                )
 
     if (
         cached_change.navigation_comment_id is not None

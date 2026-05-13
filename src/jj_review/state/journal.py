@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -110,7 +112,40 @@ class OperationJournal:
                 output.flush()
                 os.fsync(output.fileno())
         if durable and created_log:
-            _fsync_directory(self.path.parent)
+            try:
+                fd = os.open(self.path.parent, os.O_RDONLY)
+            except OSError:
+                return
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+
+    @contextmanager
+    def mutation(self, mutation: str, /, **data: Any) -> Iterator[None]:
+        payload = {"mutation": mutation, **data}
+        self.append("planned_mutation", payload)
+        yield
+        self.append("mutation_applied", payload)
+
+
+def record_saved_state_updates(
+    *,
+    journal: OperationJournal,
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+) -> None:
+    """Emit one ``saved_state_update`` event per change whose record changed."""
+
+    for change_id in sorted({*before, *after}):
+        before_change = before.get(change_id)
+        after_change = after.get(change_id)
+        if before_change == after_change:
+            continue
+        journal.append(
+            "saved_state_update",
+            {"after": after_change, "before": before_change, "change_id": change_id},
+        )
 
 
 def read_operation_log(state_dir: Path) -> tuple[JournalEvent, ...]:
@@ -119,23 +154,8 @@ def read_operation_log(state_dir: Path) -> tuple[JournalEvent, ...]:
     path = state_dir / OPERATION_LOG_FILENAME
     if not path.exists():
         return ()
-    return _read_events(path)
-
-
-def _read_events(path: Path) -> tuple[JournalEvent, ...]:
     return tuple(
         JournalEvent.model_validate_json(line)
         for line in path.read_text(encoding="utf-8").splitlines()
         if line
     )
-
-
-def _fsync_directory(path: Path) -> None:
-    try:
-        fd = os.open(path, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)

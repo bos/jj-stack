@@ -22,6 +22,7 @@ from jj_review.models.github import GithubIssueComment
 from jj_review.models.review_state import CachedChange
 from jj_review.review.bookmarks import is_review_bookmark
 from jj_review.review.change_status import classify_review_change
+from jj_review.state.journal import OperationJournal
 from jj_review.ui import Message, plain_text
 
 CloseActionStatus = Literal["applied", "blocked", "planned"]
@@ -396,6 +397,7 @@ def apply_bookmark_cleanup(
     bookmark: str,
     cleanup_plan: BookmarkCleanupPlan,
     commit_id: str | None,
+    journal: OperationJournal,
     record_action: Callable[[CloseAction], None],
     remote_name: str | None,
     run: BookmarkCleanupRun,
@@ -415,10 +417,16 @@ def apply_bookmark_cleanup(
         if not dry_run:
             if remote_name is None or commit_id is None:
                 raise AssertionError("Planned remote branch deletion requires a target.")
-            run.jj_client.delete_remote_bookmarks(
+            with journal.mutation(
+                "delete_remote_bookmark",
+                bookmark=bookmark,
+                commit_id=commit_id,
                 remote=remote_name,
-                deletions=((bookmark, commit_id),),
-            )
+            ):
+                run.jj_client.delete_remote_bookmarks(
+                    remote=remote_name,
+                    deletions=((bookmark, commit_id),),
+                )
     if cleanup_plan.local_forget:
         record_action(
             CloseAction(
@@ -428,4 +436,5 @@ def apply_bookmark_cleanup(
             )
         )
         if not dry_run:
-            run.jj_client.forget_bookmarks((bookmark,))
+            with journal.mutation("forget_local_bookmark", bookmark=bookmark):
+                run.jj_client.forget_bookmarks((bookmark,))

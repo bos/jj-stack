@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from jj_review import console, ui
@@ -38,7 +38,7 @@ from jj_review.review.change_status import (
     classify_review_change,
     classify_saved_review_change,
 )
-from jj_review.state.journal import OperationJournal
+from jj_review.state.journal import OperationJournal, record_saved_state_updates
 from jj_review.ui import Message, plain_text
 
 OrphanedPullRequestState = Literal["closed", "open"]
@@ -66,6 +66,7 @@ class _OrphanCloseRun:
 
     context: CommandContext
     dry_run: bool
+    journal: OperationJournal = OperationJournal.disabled()
 
     @property
     def jj_client(self) -> JjClient:
@@ -229,6 +230,7 @@ async def run_orphan_close(
             pull_request_number=pull_request_number,
             run=run,
         )
+        run = replace(run, journal=close_journal)
 
         async with build_github_client(base_url=github_repository.api_base_url) as github_client:
             inspection, blocked_action = await _lookup_orphaned_pull_request(
@@ -291,14 +293,21 @@ async def run_orphan_close(
                     )
                 )
                 if not dry_run:
-                    try:
-                        await github_client.close_pull_request(
-                            github_repository.owner,
-                            github_repository.repo,
-                            pull_number=pull_request_number,
-                        )
-                    except GithubClientError as error:
-                        raise CliError(t"Could not close PR #{pull_request_number}.") from error
+                    with run.journal.mutation(
+                        "close_pull_request",
+                        change_id=change_id,
+                        pull_request_number=pull_request_number,
+                    ):
+                        try:
+                            await github_client.close_pull_request(
+                                github_repository.owner,
+                                github_repository.repo,
+                                pull_number=pull_request_number,
+                            )
+                        except GithubClientError as error:
+                            raise CliError(
+                                t"Could not close PR #{pull_request_number}."
+                            ) from error
 
             await _apply_orphaned_comment_cleanup(
                 github_client=github_client,
@@ -313,6 +322,7 @@ async def run_orphan_close(
                     bookmark=bookmark,
                     cleanup_plan=cleanup_plan,
                     commit_id=last_target,
+                    journal=run.journal,
                     record_action=recorder.record,
                     remote_name=remote.name,
                     run=run,
@@ -328,6 +338,11 @@ async def run_orphan_close(
         if not dry_run:
             next_changes = dict(state.changes)
             next_changes.pop(change_id, None)
+            record_saved_state_updates(
+                journal=run.journal,
+                before=state.changes,
+                after=next_changes,
+            )
             state_store.save(state.model_copy(update={"changes": next_changes}))
 
         completed = True
@@ -401,6 +416,11 @@ def _retire_blocked_orphan_close_tracking(
     if not dry_run:
         next_changes = dict(state.changes)
         next_changes[change_id] = updated_change
+        record_saved_state_updates(
+            journal=run.journal,
+            before=state.changes,
+            after=next_changes,
+        )
         run.context.state_store.save(state.model_copy(update={"changes": next_changes}))
 
 
@@ -538,18 +558,24 @@ async def _apply_orphaned_comment_cleanup(
             )
         )
         if not dry_run:
-            try:
-                await github_client.delete_issue_comment(
-                    github_repository.owner,
-                    github_repository.repo,
-                    comment_id=resolved.comment.id,
-                )
-            except GithubClientError as error:
-                if error.status_code != 404:
-                    raise CliError(
-                        t"Could not delete {stack_comment_label(resolved.kind)} "
-                        t"#{resolved.comment.id}."
-                    ) from error
+            with run.journal.mutation(
+                "delete_issue_comment",
+                comment_id=resolved.comment.id,
+                kind=resolved.kind,
+                pull_request_number=pull_request_number,
+            ):
+                try:
+                    await github_client.delete_issue_comment(
+                        github_repository.owner,
+                        github_repository.repo,
+                        comment_id=resolved.comment.id,
+                    )
+                except GithubClientError as error:
+                    if error.status_code != 404:
+                        raise CliError(
+                            t"Could not delete {stack_comment_label(resolved.kind)} "
+                            t"#{resolved.comment.id}."
+                        ) from error
 
 
 async def _lookup_orphaned_pull_request(

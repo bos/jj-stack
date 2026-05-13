@@ -221,6 +221,7 @@ async def _run_cleanup_async(
         ):
             prepared_cleanup = _load_cleanup_remote_context(prepared_cleanup=prepared_cleanup)
         prepared_changes = _run_local_cleanup_pass(
+            journal=journal,
             next_changes=next_changes,
             prepared_cleanup=prepared_cleanup,
             record_action=recorder.record,
@@ -253,6 +254,7 @@ async def _run_cleanup_async(
             await _run_stack_comment_cleanup_pass(
                 github_client=github_client,
                 github_repository=github_repository,
+                journal=journal,
                 next_changes=next_changes,
                 prepared_changes=prepared_changes,
                 prepared_cleanup=prepared_cleanup,
@@ -278,6 +280,7 @@ async def _run_cleanup_async(
 
 def _run_local_cleanup_pass(
     *,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
@@ -354,6 +357,7 @@ def _run_local_cleanup_pass(
 
     if not prepared_cleanup.dry_run:
         _apply_stale_cleanup_mutation_plans(
+            journal=journal,
             mutation_plans=tuple(mutation_plans),
             orphan_local_bookmark_plans=tuple(orphan_local_bookmark_plans),
             prepared_cleanup=prepared_cleanup,
@@ -449,6 +453,7 @@ def _process_stale_cleanup_change(
 
 def _apply_stale_cleanup_mutation_plans(
     *,
+    journal: OperationJournal,
     mutation_plans: tuple[_StaleCleanupMutationPlan, ...],
     orphan_local_bookmark_plans: tuple[OrphanLocalBookmarkCleanupPlan, ...] = (),
     prepared_cleanup: PreparedCleanup,
@@ -492,14 +497,26 @@ def _apply_stale_cleanup_mutation_plans(
     remote_deleted = False
     try:
         if remote_deletions and remote is not None:
-            jj_client.delete_remote_bookmarks(
+            with journal.mutation(
+                "delete_remote_bookmarks",
+                deletions=tuple(
+                    {"bookmark": bookmark, "expected_target": target}
+                    for bookmark, target in remote_deletions
+                ),
                 remote=remote.name,
-                deletions=tuple(remote_deletions),
-                fetch=False,
-            )
-            remote_deleted = True
+            ):
+                jj_client.delete_remote_bookmarks(
+                    remote=remote.name,
+                    deletions=tuple(remote_deletions),
+                    fetch=False,
+                )
+                remote_deleted = True
         if local_bookmarks:
-            jj_client.forget_bookmarks(tuple(local_bookmarks))
+            with journal.mutation(
+                "forget_local_bookmarks",
+                bookmarks=tuple(local_bookmarks),
+            ):
+                jj_client.forget_bookmarks(tuple(local_bookmarks))
     finally:
         if remote_deleted and remote is not None:
             jj_client.fetch_remote(remote=remote.name)
@@ -525,6 +542,7 @@ async def _run_stack_comment_cleanup_pass(
     *,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_changes: tuple[PreparedCleanupChange, ...],
     prepared_cleanup: PreparedCleanup,
@@ -562,6 +580,7 @@ async def _run_stack_comment_cleanup_pass(
             change_id=prepared_change.change_id,
             github_client=github_client,
             github_repository=github_repository,
+            journal=journal,
             next_changes=next_changes,
             prepared_cleanup=prepared_cleanup,
             record_action=record_action,
@@ -574,6 +593,7 @@ async def _apply_stack_comment_cleanup_action(
     change_id: str,
     github_client: GithubClient,
     github_repository: ParsedGithubRepo,
+    journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
@@ -587,16 +607,22 @@ async def _apply_stack_comment_cleanup_action(
     ):
         comment_action = action
         if not prepared_cleanup.dry_run and comment_action.status == "planned":
-            try:
-                await github_client.delete_issue_comment(
-                    github_repository.owner,
-                    github_repository.repo,
-                    comment_id=comment_id,
-                )
-            except GithubClientError as error:
-                raise CliError(
-                    f"Could not delete {stack_comment_label(kind)} #{comment_id}"
-                ) from error
+            with journal.mutation(
+                "delete_issue_comment",
+                change_id=change_id,
+                comment_id=comment_id,
+                kind=kind,
+            ):
+                try:
+                    await github_client.delete_issue_comment(
+                        github_repository.owner,
+                        github_repository.repo,
+                        comment_id=comment_id,
+                    )
+                except GithubClientError as error:
+                    raise CliError(
+                        f"Could not delete {stack_comment_label(kind)} #{comment_id}"
+                    ) from error
             applied_comments = True
             comment_action = replace(action, status="applied")
         record_action(comment_action)
