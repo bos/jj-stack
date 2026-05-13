@@ -8,6 +8,7 @@ import logging
 import time
 from collections.abc import Sequence
 from email.utils import parsedate_to_datetime
+from textwrap import dedent, indent
 from typing import Any
 
 import httpxyz
@@ -680,139 +681,173 @@ def _chunked[ChunkValue](
 
 
 def _pull_requests_by_number_query(numbers: Sequence[int]) -> str:
-    selections = "\n".join(
-        (
-            f"      pr_{number}: pullRequest(number: {number}) {{\n"
-            f"{_pull_request_graphql_selection(indent='        ')}\n"
-            "      }"
-        )
+    selections = "\n\n".join(
+        _graphql_document(
+            f"""
+            pr_{number}: pullRequest(number: {number}) {{
+              ...PullRequestFields
+            }}
+            """
+        ).strip()
         for number in numbers
     )
-    return (
-        "query PullRequestsByNumber($owner: String!, $repo: String!) {\n"
-        "  repository(owner: $owner, name: $repo) {\n"
-        f"{selections}\n"
-        "  }\n"
-        "}\n"
+    return _with_pull_request_fields_fragment(
+        _repository_graphql_query(
+            operation_name="PullRequestsByNumber",
+            selections=selections,
+        )
     )
 
 
 def _pull_requests_by_head_ref_query(aliases: dict[str, str]) -> str:
-    selections = "\n".join(
-        (
-            f"    {alias}: pullRequests("
-            f"first: 2, states: [OPEN, CLOSED], headRefName: {json.dumps(head_ref)}) {{\n"
-            "      nodes {\n"
-            f"{_pull_request_graphql_selection(indent='        ')}\n"
-            "      }\n"
-            "    }"
-        )
+    selections = "\n\n".join(
+        _graphql_document(
+            f"""
+            {alias}: pullRequests(
+              first: 2,
+              states: [OPEN, CLOSED],
+              headRefName: {json.dumps(head_ref)}
+            ) {{
+              nodes {{
+                ...PullRequestFields
+              }}
+            }}
+            """
+        ).strip()
         for alias, head_ref in aliases.items()
     )
-    return (
-        "query PullRequestsByHeadRef($owner: String!, $repo: String!) {\n"
-        "  repository(owner: $owner, name: $repo) {\n"
-        f"{selections}\n"
-        "  }\n"
-        "}\n"
+    return _with_pull_request_fields_fragment(
+        _repository_graphql_query(
+            operation_name="PullRequestsByHeadRef",
+            selections=selections,
+        )
     )
 
 
 def _pull_request_review_decisions_query(numbers: Sequence[int]) -> str:
-    selections = "\n".join(
-        (
-            f"      pr_{number}: pullRequest(number: {number}) {{\n"
-            "        latestOpinionatedReviews(first: 100) {\n"
-            "          nodes {\n"
-            "            state\n"
-            "            author {\n"
-            "              login\n"
-            "            }\n"
-            "          }\n"
-            "        }\n"
-            "      }"
-        )
+    selections = "\n\n".join(
+        _graphql_document(
+            f"""
+            pr_{number}: pullRequest(number: {number}) {{
+              latestOpinionatedReviews(first: 100) {{
+                nodes {{
+                  state
+                  author {{
+                    login
+                  }}
+                }}
+              }}
+            }}
+            """
+        ).strip()
         for number in numbers
     )
-    return (
-        "query PullRequestReviewDecisions($owner: String!, $repo: String!) {\n"
-        "  repository(owner: $owner, name: $repo) {\n"
-        f"{selections}\n"
-        "  }\n"
-        "}\n"
+    return _repository_graphql_query(
+        operation_name="PullRequestReviewDecisions",
+        selections=selections,
     )
 
 
 def _pull_request_issue_comments_query(numbers: Sequence[int]) -> str:
-    selections = "\n".join(
-        (
-            f"      pr_{number}: pullRequest(number: {number}) {{\n"
-            "        comments(first: 100) {\n"
-            "          nodes {\n"
-            "            databaseId\n"
-            "            body\n"
-            "            url\n"
-            "          }\n"
-            "          pageInfo {\n"
-            "            hasNextPage\n"
-            "          }\n"
-            "        }\n"
-            "      }"
-        )
+    selections = "\n\n".join(
+        _graphql_document(
+            f"""
+            pr_{number}: pullRequest(number: {number}) {{
+              comments(first: 100) {{
+                nodes {{
+                  databaseId
+                  body
+                  url
+                }}
+                pageInfo {{
+                  hasNextPage
+                }}
+              }}
+            }}
+            """
+        ).strip()
         for number in numbers
     )
-    return (
-        "query PullRequestIssueComments($owner: String!, $repo: String!) {\n"
-        "  repository(owner: $owner, name: $repo) {\n"
-        f"{selections}\n"
-        "  }\n"
-        "}\n"
+    return _repository_graphql_query(
+        operation_name="PullRequestIssueComments",
+        selections=selections,
     )
 
 
 def _mark_pull_request_ready_for_review_mutation() -> str:
-    return (
-        "mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {\n"
-        "  markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {\n"
-        "    pullRequest {\n"
-        f"{_pull_request_graphql_selection(indent='      ')}\n"
-        "    }\n"
-        "  }\n"
-        "}\n"
+    return _with_pull_request_fields_fragment(
+        _graphql_document(
+            """
+            mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+              markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+                pullRequest {
+                  ...PullRequestFields
+                }
+              }
+            }
+            """
+        )
     )
 
 
 def _convert_pull_request_to_draft_mutation() -> str:
-    return (
-        "mutation ConvertPullRequestToDraft($pullRequestId: ID!) {\n"
-        "  convertPullRequestToDraft(input: {pullRequestId: $pullRequestId}) {\n"
-        "    pullRequest {\n"
-        f"{_pull_request_graphql_selection(indent='      ')}\n"
-        "    }\n"
-        "  }\n"
-        "}\n"
+    return _with_pull_request_fields_fragment(
+        _graphql_document(
+            """
+            mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
+              convertPullRequestToDraft(input: {pullRequestId: $pullRequestId}) {
+                pullRequest {
+                  ...PullRequestFields
+                }
+              }
+            }
+            """
+        )
     )
 
 
-def _pull_request_graphql_selection(*, indent: str) -> str:
+def _pull_request_fields_fragment() -> str:
+    return _graphql_document(
+        """
+        fragment PullRequestFields on PullRequest {
+          id
+          number
+          state
+          isDraft
+          mergedAt
+          reviewDecision
+          url
+          title
+          body
+          baseRefName
+          headRefName
+          headRepositoryOwner {
+            login
+          }
+        }
+        """
+    )
+
+
+def _repository_graphql_query(*, operation_name: str, selections: str) -> str:
     return "\n".join(
         [
-            f"{indent}id",
-            f"{indent}number",
-            f"{indent}state",
-            f"{indent}isDraft",
-            f"{indent}mergedAt",
-            f"{indent}reviewDecision",
-            f"{indent}url",
-            f"{indent}title",
-            f"{indent}body",
-            f"{indent}baseRefName",
-            f"{indent}headRefName",
-            f"{indent}headRepositoryOwner {{",
-            f"{indent}  login",
-            f"{indent}}}",
+            f"query {operation_name}($owner: String!, $repo: String!) {{",
+            "  repository(owner: $owner, name: $repo) {",
+            indent(selections.rstrip(), "    "),
+            "  }",
+            "}",
+            "",
         ]
     )
+
+
+def _with_pull_request_fields_fragment(document: str) -> str:
+    return f"{document.rstrip()}\n\n{_pull_request_fields_fragment()}"
+
+
+def _graphql_document(document: str) -> str:
+    return dedent(document).strip() + "\n"
 
 
 def _pull_request_connection_from_graphql(
@@ -946,9 +981,7 @@ def _issue_comments_from_graphql(
         for comment in parsed.nodes or ()
         if comment is not None
     )
-    has_next_page = (
-        parsed.page_info is not None and parsed.page_info.get("hasNextPage") is True
-    )
+    has_next_page = parsed.page_info is not None and parsed.page_info.get("hasNextPage") is True
     return comments, has_next_page
 
 
