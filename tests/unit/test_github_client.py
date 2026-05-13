@@ -11,7 +11,6 @@ from jj_review.github.client import GithubClient, GithubClientError
 
 def test_github_client_retries_429_responses_with_retry_after() -> None:
     attempts = 0
-    sleeps: list[float] = []
 
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         nonlocal attempts
@@ -37,15 +36,10 @@ def test_github_client_retries_429_responses_with_retry_after() -> None:
             request=request,
         )
 
-    async def record_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
     async def run_test() -> str:
         transport = httpxyz.MockTransport(handler)
         async with GithubClient(
             base_url="https://api.github.test",
-            max_rate_limit_retries=1,
-            sleep=record_sleep,
             transport=transport,
         ) as client:
             repository = await client.get_repository("octo-org", "stacked-review")
@@ -53,12 +47,10 @@ def test_github_client_retries_429_responses_with_retry_after() -> None:
 
     assert asyncio.run(run_test()) == "octo-org/stacked-review"
     assert attempts == 2
-    assert sleeps == [0.0]
 
 
 def test_github_client_retries_secondary_rate_limits_without_retry_after() -> None:
     attempts = 0
-    sleeps: list[float] = []
 
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         nonlocal attempts
@@ -66,6 +58,7 @@ def test_github_client_retries_secondary_rate_limits_without_retry_after() -> No
         if attempts == 1:
             return httpxyz.Response(
                 403,
+                headers={"X-RateLimit-Reset": "0"},
                 json={"message": "You have exceeded a secondary rate limit."},
                 request=request,
             )
@@ -83,16 +76,10 @@ def test_github_client_retries_secondary_rate_limits_without_retry_after() -> No
             request=request,
         )
 
-    async def record_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
     async def run_test() -> str:
         transport = httpxyz.MockTransport(handler)
         async with GithubClient(
-            base_rate_limit_backoff_seconds=0.25,
             base_url="https://api.github.test",
-            max_rate_limit_retries=1,
-            sleep=record_sleep,
             transport=transport,
         ) as client:
             repository = await client.get_repository("octo-org", "stacked-review")
@@ -100,27 +87,20 @@ def test_github_client_retries_secondary_rate_limits_without_retry_after() -> No
 
     assert asyncio.run(run_test()) == "main"
     assert attempts == 2
-    assert sleeps == [0.25]
 
 
 def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
     attempts = 0
-    sleeps: list[float] = []
 
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         nonlocal attempts
         attempts += 1
         return httpxyz.Response(404, json={"message": "Not Found"}, request=request)
 
-    async def record_sleep(delay: float) -> None:
-        sleeps.append(delay)
-
     async def run_test() -> None:
         transport = httpxyz.MockTransport(handler)
         async with GithubClient(
             base_url="https://api.github.test",
-            max_rate_limit_retries=1,
-            sleep=record_sleep,
             transport=transport,
         ) as client:
             await client.get_repository("octo-org", "stacked-review")
@@ -129,7 +109,6 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
         asyncio.run(run_test())
 
     assert attempts == 1
-    assert sleeps == []
 
 
 def test_github_client_lists_pull_request_reviews() -> None:

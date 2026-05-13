@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -70,10 +70,6 @@ class GithubClient:
         self,
         *,
         base_url: str,
-        base_rate_limit_backoff_seconds: float = _DEFAULT_RATE_LIMIT_BACKOFF_SECONDS,
-        max_rate_limit_backoff_seconds: float = _DEFAULT_MAX_RATE_LIMIT_BACKOFF_SECONDS,
-        max_rate_limit_retries: int = _DEFAULT_RATE_LIMIT_RETRIES,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         token: str | None = None,
         transport: httpxyz.AsyncBaseTransport | None = None,
     ) -> None:
@@ -90,10 +86,6 @@ class GithubClient:
             timeout=30.0,
             transport=transport,
         )
-        self._base_rate_limit_backoff_seconds = base_rate_limit_backoff_seconds
-        self._max_rate_limit_backoff_seconds = max_rate_limit_backoff_seconds
-        self._max_rate_limit_retries = max_rate_limit_retries
-        self._sleep = sleep
 
     async def __aenter__(self) -> GithubClient:
         return self
@@ -495,7 +487,7 @@ class GithubClient:
         json: Any | None = None,
         params: dict[str, str] | None = None,
     ) -> httpxyz.Response:
-        for attempt in range(self._max_rate_limit_retries + 1):
+        for attempt in range(_DEFAULT_RATE_LIMIT_RETRIES + 1):
             try:
                 response = await self._client.request(
                     method,
@@ -522,7 +514,7 @@ class GithubClient:
                 attempt + 1,
                 retry_after_seconds,
             )
-            await self._sleep(retry_after_seconds)
+            await asyncio.sleep(retry_after_seconds)
 
         raise AssertionError("Rate-limit retry loop did not return a response.")
 
@@ -611,7 +603,7 @@ class GithubClient:
     ) -> float | None:
         if not _is_retryable_rate_limit(response):
             return None
-        if attempt >= self._max_rate_limit_retries:
+        if attempt >= _DEFAULT_RATE_LIMIT_RETRIES:
             return None
 
         retry_after_seconds = _parse_retry_after_header(response.headers.get("Retry-After"))
@@ -624,8 +616,8 @@ class GithubClient:
         if reset_after_seconds is not None:
             return reset_after_seconds
 
-        backoff_seconds = self._base_rate_limit_backoff_seconds * (2**attempt)
-        return min(backoff_seconds, self._max_rate_limit_backoff_seconds)
+        backoff_seconds = _DEFAULT_RATE_LIMIT_BACKOFF_SECONDS * (2**attempt)
+        return min(backoff_seconds, _DEFAULT_MAX_RATE_LIMIT_BACKOFF_SECONDS)
 
 
 def _is_retryable_rate_limit(response: httpxyz.Response) -> bool:
