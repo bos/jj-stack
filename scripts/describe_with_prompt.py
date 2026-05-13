@@ -8,6 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import readline as _readline
+except ImportError:
+    _readline = None
+
+if _readline is not None:
+    _readline.set_history_length(1000)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -66,19 +74,24 @@ def stack_defaults(revset: str) -> tuple[str, str]:
     return title, body
 
 
-def prompt_line(label: str, default: str) -> str:
-    suffix = f" [{default}]" if default else ""
+def prompt_line(label: str, default: str, default_label: str) -> str:
+    suffix = f" [return to use {default_label}]" if default else ""
     value = input(f"{label}{suffix}: ").strip()
     return value or default
 
 
-def prompt_body(default: str) -> str:
-    if default:
-        keep_default = input("Keep default body? [Y/n]: ").strip().lower()
-        if keep_default in {"", "y", "yes"}:
-            return default
-    print("Enter body content. Finish with a single `.` on its own line.")
-    lines: list[str] = []
+def prompt_body(default: str, default_label: str) -> str:
+    suffix = f" [return to use {default_label}]" if default else ""
+    first_line = input(f"Body{suffix}: ").rstrip()
+    if default and not first_line.strip():
+        return default
+    if not first_line:
+        return ""
+    if first_line == ".":
+        return ""
+
+    print("Enter remaining body content. Finish with a single `.` on its own line.")
+    lines = [first_line]
     while True:
         try:
             line = input()
@@ -105,21 +118,32 @@ def main() -> int:
 
     if mode == "pr":
         default_title, default_body = pr_defaults(revset)
+        default_source = "commit"
     else:
         default_title, default_body = stack_defaults(revset)
+        default_source = "stack"
 
-    print(f"Generating metadata for {mode} {revset!r}.")
+    description_kind = "pull request" if mode == "pr" else "stack"
+    print(f"Generating GitHub {description_kind} description for {revset!r}.")
     if default_title:
-        print(f"Default title: {default_title}")
+        print(f"{default_source.capitalize()} title: {default_title}")
     if default_body:
-        print("Default body:")
+        print(f"{default_source.capitalize()} body:")
         print(default_body)
 
-    title = prompt_line("Title", default_title)
-    body = prompt_body(default_body)
+    title = prompt_line("Title", default_title, f"{default_source} title")
+    body = prompt_body(default_body, f"{default_source} body")
     print(json.dumps({"title": title, "body": body}))
     return 0
 
 
+def run() -> int:
+    try:
+        return main()
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run())
