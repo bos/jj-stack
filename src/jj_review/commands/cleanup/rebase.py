@@ -217,7 +217,7 @@ def _stream_rebase(
             blocked=blocked,
         )
     finally:
-        if _rebase_succeeded and rebase_journal is not None:
+        if _rebase_succeeded:
             ordered_change_ids = tuple(
                 prepared_revision.revision.change_id
                 for prepared_revision in prepared.status_revisions
@@ -234,11 +234,11 @@ def _start_rebase_operation_log(
     prepared,
     prepared_rebase: PreparedRebase,
     selected_revset: str,
-) -> OperationJournal | None:
+) -> OperationJournal:
     """Write a rebase operation log entry before live rebases begin."""
 
     if blocked or prepared_rebase.dry_run:
-        return None
+        return OperationJournal.disabled()
 
     ordered_change_ids = tuple(
         str(prepared_revision.revision.change_id)

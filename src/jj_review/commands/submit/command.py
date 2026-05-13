@@ -449,7 +449,7 @@ async def _run_submit_async(
         stack=stack,
     )
     state_changes = dict(bookmark_result.state.changes)
-    journal = None
+    journal = OperationJournal.disabled()
     if not dry_run:
         state_dir = state_store.require_writable()
         journal = OperationJournal.begin(
@@ -621,7 +621,7 @@ async def _run_submit_async(
             trunk_branch=trunk_branch,
         )
     finally:
-        if succeeded and journal is not None:
+        if succeeded:
             completed_change_ids = tuple(revision.change_id for revision in stack.revisions)
             journal.append(
                 "completed",

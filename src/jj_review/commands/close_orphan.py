@@ -221,7 +221,7 @@ async def run_orphan_close(
         dry_run=dry_run,
     )
     completed = False
-    close_journal: OperationJournal | None = None
+    close_journal = OperationJournal.disabled()
     try:
         close_journal = _start_orphan_close_operation_log(
             cached_change=cached_change,
@@ -337,7 +337,7 @@ async def run_orphan_close(
             run=run,
         )
     finally:
-        if completed and close_journal is not None:
+        if completed:
             close_journal.append(
                 "completed",
                 {"ordered_change_ids": (change_id,)},
@@ -674,11 +674,11 @@ def _start_orphan_close_operation_log(
     change_id: str,
     pull_request_number: int,
     run: _OrphanCloseRun,
-) -> OperationJournal | None:
+) -> OperationJournal:
     """Write close operation log metadata for orphan cleanup runs."""
 
     if run.dry_run:
-        return None
+        return OperationJournal.disabled()
 
     state_store = run.context.state_store
     state_dir = state_store.require_writable()

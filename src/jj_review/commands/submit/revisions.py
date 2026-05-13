@@ -123,22 +123,21 @@ def sync_local_bookmarks(
     )
     if not bookmark_updates:
         return
-    if run.journal is not None:
-        run.journal.append(
-            "planned_mutation",
-            {
-                "bookmarks": tuple(
-                    {
-                        "action": prepared_revision.local_action,
-                        "bookmark": prepared_revision.bookmark,
-                        "change_id": prepared_revision.change_id,
-                        "commit_id": prepared_revision.revision.commit_id,
-                    }
-                    for prepared_revision in bookmark_updates
-                ),
-                "mutation": "sync_local_bookmarks",
-            },
-        )
+    run.journal.append(
+        "planned_mutation",
+        {
+            "bookmarks": tuple(
+                {
+                    "action": prepared_revision.local_action,
+                    "bookmark": prepared_revision.bookmark,
+                    "change_id": prepared_revision.change_id,
+                    "commit_id": prepared_revision.revision.commit_id,
+                }
+                for prepared_revision in bookmark_updates
+            ),
+            "mutation": "sync_local_bookmarks",
+        },
+    )
     if run.dry_run:
         return
 
@@ -169,14 +168,13 @@ def sync_local_bookmarks(
             }
         )
 
-    if run.journal is not None:
-        run.journal.append(
-            "mutation_applied",
-            {
-                "bookmarks": tuple(applied),
-                "mutation": "sync_local_bookmarks",
-            },
-        )
+    run.journal.append(
+        "mutation_applied",
+        {
+            "bookmarks": tuple(applied),
+            "mutation": "sync_local_bookmarks",
+        },
+    )
 
 
 def _remote_push_plan(
@@ -480,44 +478,41 @@ def sync_remote_bookmarks(
         if prepared_revision.push_operation == "batch"
     )
     if batch_push_bookmarks:
-        if run.journal is not None:
+        run.journal.append(
+            "planned_mutation",
+            {
+                "bookmarks": batch_push_bookmarks,
+                "mutation": "push_review_bookmarks",
+                "remote": remote.name,
+            },
+        )
+        if not run.dry_run:
+            client.push_bookmarks(
+                remote=remote.name,
+                bookmarks=batch_push_bookmarks,
+            )
             run.journal.append(
-                "planned_mutation",
+                "mutation_applied",
                 {
                     "bookmarks": batch_push_bookmarks,
                     "mutation": "push_review_bookmarks",
                     "remote": remote.name,
                 },
             )
-        if not run.dry_run:
-            client.push_bookmarks(
-                remote=remote.name,
-                bookmarks=batch_push_bookmarks,
-            )
-            if run.journal is not None:
-                run.journal.append(
-                    "mutation_applied",
-                    {
-                        "bookmarks": batch_push_bookmarks,
-                        "mutation": "push_review_bookmarks",
-                        "remote": remote.name,
-                    },
-                )
 
     for prepared_revision in prepared_revisions:
         if prepared_revision.push_operation != "git_update":
             continue
-        if run.journal is not None:
-            run.journal.append(
-                "planned_mutation",
-                {
-                    "bookmark": prepared_revision.bookmark,
-                    "change_id": prepared_revision.change_id,
-                    "commit_id": prepared_revision.revision.commit_id,
-                    "mutation": "update_untracked_remote_bookmark",
-                    "remote": remote.name,
-                },
-            )
+        run.journal.append(
+            "planned_mutation",
+            {
+                "bookmark": prepared_revision.bookmark,
+                "change_id": prepared_revision.change_id,
+                "commit_id": prepared_revision.revision.commit_id,
+                "mutation": "update_untracked_remote_bookmark",
+                "remote": remote.name,
+            },
+        )
         if not run.dry_run:
             if prepared_revision.expected_remote_target is None:
                 raise AssertionError("Git remote update requires an expected target.")
@@ -527,17 +522,16 @@ def sync_remote_bookmarks(
                 desired_target=prepared_revision.revision.commit_id,
                 expected_remote_target=prepared_revision.expected_remote_target,
             )
-            if run.journal is not None:
-                run.journal.append(
-                    "mutation_applied",
-                    {
-                        "bookmark": prepared_revision.bookmark,
-                        "change_id": prepared_revision.change_id,
-                        "commit_id": prepared_revision.revision.commit_id,
-                        "mutation": "update_untracked_remote_bookmark",
-                        "remote": remote.name,
-                    },
-                )
+            run.journal.append(
+                "mutation_applied",
+                {
+                    "bookmark": prepared_revision.bookmark,
+                    "change_id": prepared_revision.change_id,
+                    "commit_id": prepared_revision.revision.commit_id,
+                    "mutation": "update_untracked_remote_bookmark",
+                    "remote": remote.name,
+                },
+            )
 
 
 def ensure_change_is_not_unlinked(

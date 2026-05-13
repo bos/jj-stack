@@ -70,6 +70,14 @@ def test_operation_journal_uses_one_repo_log(tmp_path: Path) -> None:
     ]
 
 
+def test_disabled_operation_journal_drops_events(tmp_path: Path) -> None:
+    journal = OperationJournal.disabled()
+
+    journal.append("planned_mutation", {"mutation": "dry_run"})
+
+    assert read_operation_log(tmp_path) == ()
+
+
 def test_operation_journal_does_not_fsync_audit_events_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

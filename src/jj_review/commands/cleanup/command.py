@@ -197,7 +197,7 @@ async def _run_cleanup_async(
     dry_run = prepared_cleanup.dry_run
 
     # Write an operation journal before the first mutation on live runs only.
-    journal: OperationJournal | None = None
+    journal = OperationJournal.disabled()
     _cleanup_succeeded = False
     if not dry_run:
         state_dir = prepared_cleanup.context.state_store.require_writable()
@@ -270,7 +270,7 @@ async def _run_cleanup_async(
             actions=recorder.as_tuple(),
         )
     finally:
-        if _cleanup_succeeded and journal is not None:
+        if _cleanup_succeeded:
             journal.append(
                 "completed",
                 {"cached_change_ids": tuple(prepared_cleanup.state.changes)},

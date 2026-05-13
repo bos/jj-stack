@@ -509,7 +509,7 @@ async def _stream_close_async(
 
     execution_state = _prepare_close_execution_state(prepared_close=prepared_close)
     completed = False
-    close_journal: OperationJournal | None = None
+    close_journal = OperationJournal.disabled()
     try:
         close_journal = _start_close_operation_log(
             prepared_close=prepared_close,
@@ -556,7 +556,7 @@ async def _stream_close_async(
             prepared_close=prepared_close,
         )
     finally:
-        if completed and close_journal is not None:
+        if completed:
             completed_change_ids = tuple(
                 prepared_revision.revision.change_id
                 for prepared_revision in prepared_status.prepared.status_revisions
@@ -619,11 +619,11 @@ def _save_close_progress(
 def _start_close_operation_log(
     *,
     prepared_close: PreparedClose,
-) -> OperationJournal | None:
+) -> OperationJournal:
     """Write close operation log metadata for live runs."""
 
     if prepared_close.dry_run:
-        return None
+        return OperationJournal.disabled()
 
     prepared_status = prepared_close.prepared_status
     state_dir = prepared_status.prepared.state_store.require_writable()

@@ -148,7 +148,7 @@ class SubmitMutationRun:
     """Mutable submit state shared by mutation phases."""
 
     dry_run: bool
-    journal: OperationJournal | None
+    journal: OperationJournal
     state: ReviewState
     state_changes: dict[str, CachedChange]
     state_store: ReviewStateStore
@@ -166,7 +166,7 @@ class SubmitMutationRun:
         before: CachedChange | None,
         change_id: str,
     ) -> None:
-        if self.dry_run or self.journal is None or before == after:
+        if self.dry_run or before == after:
             return
         self.journal.append(
             "saved_state_update",
