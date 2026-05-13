@@ -113,18 +113,30 @@ _CHILD_B = _revision_line(
 )
 
 
-def test_discover_review_stack_returns_empty_revisions_when_head_is_trunk() -> None:
+def _client(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: dict[tuple[str, ...], str],
+) -> JjClient:
+    monkeypatch.setattr(subprocess, "run", _runner(responses))
+    return JjClient(Path("/repo"))
+
+
+def test_discover_review_stack_returns_empty_revisions_when_head_is_trunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("trunk"): _selection_scan_response((_TRUNK, True, True)),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack("trunk")
+    stack = _client(monkeypatch, responses).discover_review_stack("trunk")
 
     assert stack.revisions == ()
     assert stack.head.commit_id == "trunk"
 
 
-def test_discover_review_stack_uses_parent_of_empty_working_copy_as_default_selection() -> None:
+def test_discover_review_stack_uses_parent_of_empty_working_copy_as_default_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     trunk_scan = _revision_with_flag_line(_TRUNK, is_trunk=True)
     responses: dict[tuple[str, ...], str] = {
         (
@@ -156,13 +168,15 @@ def test_discover_review_stack_uses_parent_of_empty_working_copy_as_default_sele
         ),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack()
+    stack = _client(monkeypatch, responses).discover_review_stack()
 
     assert stack.selected_revset == "@-"
     assert [revision.subject for revision in stack.revisions] == ["parent", "head"]
 
 
-def test_discover_review_stack_uses_non_empty_working_copy_as_default_selection() -> None:
+def test_discover_review_stack_uses_non_empty_working_copy_as_default_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     working_copy_head = _revision_line(
         commit_id="head",
         parents=["parent"],
@@ -201,13 +215,15 @@ def test_discover_review_stack_uses_non_empty_working_copy_as_default_selection(
         ),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack()
+    stack = _client(monkeypatch, responses).discover_review_stack()
 
     assert stack.selected_revset == "@"
     assert [revision.subject for revision in stack.revisions] == ["parent", "head"]
 
 
-def test_discover_review_stack_default_head_includes_merged_side_branch_boundary() -> None:
+def test_discover_review_stack_default_head_includes_merged_side_branch_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     current_trunk = _revision_line(
         commit_id="current-trunk",
         parents=["old-trunk", "merged"],
@@ -275,7 +291,7 @@ def test_discover_review_stack_default_head_includes_merged_side_branch_boundary
         ),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack(
+    stack = _client(monkeypatch, responses).discover_review_stack(
         allow_immutable=True,
     )
 
@@ -283,7 +299,9 @@ def test_discover_review_stack_default_head_includes_merged_side_branch_boundary
     assert [revision.subject for revision in stack.revisions] == ["merged", "head 3"]
 
 
-def test_discover_review_stack_rejects_root_fallback_trunk() -> None:
+def test_discover_review_stack_rejects_root_fallback_trunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("head"): _selection_scan_response(
             (_ROOT, True, False),
@@ -291,7 +309,7 @@ def test_discover_review_stack_rejects_root_fallback_trunk() -> None:
         ),
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
     with pytest.raises(UnsupportedStackError) as exc:
         client.discover_review_stack("head")
 
@@ -299,7 +317,7 @@ def test_discover_review_stack_rejects_root_fallback_trunk() -> None:
     assert exc.value.hint is not None
 
 
-def test_discover_review_stack_rejects_merge_commits() -> None:
+def test_discover_review_stack_rejects_merge_commits(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("merge"): _selection_scan_response(
             (_TRUNK, True, False),
@@ -307,12 +325,12 @@ def test_discover_review_stack_rejects_merge_commits() -> None:
         ),
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
     with pytest.raises(UnsupportedStackError, match="merge commits are not supported"):
         client.discover_review_stack("merge")
 
 
-def test_discover_review_stack_rejects_divergent_changes() -> None:
+def test_discover_review_stack_rejects_divergent_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("divergent"): _selection_scan_response(
             (_TRUNK, True, False),
@@ -320,7 +338,7 @@ def test_discover_review_stack_rejects_divergent_changes() -> None:
         ),
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
     with pytest.raises(UnsupportedStackError, match="divergent changes are not supported") as exc:
         client.discover_review_stack("divergent")
 
@@ -328,7 +346,9 @@ def test_discover_review_stack_rejects_divergent_changes() -> None:
     assert exc.value.reason == "divergent_change"
 
 
-def test_discover_review_stack_allows_divergent_ancestor_for_inspection() -> None:
+def test_discover_review_stack_allows_divergent_ancestor_for_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     divergent_parent = _revision_line(
         commit_id="div-parent",
         parents=["parent"],
@@ -363,7 +383,7 @@ def test_discover_review_stack_allows_divergent_ancestor_for_inspection() -> Non
         ),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack(
+    stack = _client(monkeypatch, responses).discover_review_stack(
         "head-2",
         allow_divergent=True,
     )
@@ -375,7 +395,9 @@ def test_discover_review_stack_allows_divergent_ancestor_for_inspection() -> Non
     ]
 
 
-def test_discover_review_stack_rejects_immutable_revisions() -> None:
+def test_discover_review_stack_rejects_immutable_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("head"): _selection_scan_response(
             (_TRUNK, True, False),
@@ -397,12 +419,14 @@ def test_discover_review_stack_rejects_immutable_revisions() -> None:
         ),
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
     with pytest.raises(UnsupportedStackError, match="immutable commits are not reviewable"):
         client.discover_review_stack("head")
 
 
-def test_discover_review_stack_allows_immutable_ancestor_for_inspection() -> None:
+def test_discover_review_stack_allows_immutable_ancestor_for_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("head"): _selection_scan_response(
             (_TRUNK, True, False),
@@ -424,7 +448,7 @@ def test_discover_review_stack_allows_immutable_ancestor_for_inspection() -> Non
         ),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack(
+    stack = _client(monkeypatch, responses).discover_review_stack(
         "head",
         allow_immutable=True,
     )
@@ -435,7 +459,9 @@ def test_discover_review_stack_allows_immutable_ancestor_for_inspection() -> Non
     ]
 
 
-def test_discover_review_stack_excludes_revisions_already_reachable_from_trunk() -> None:
+def test_discover_review_stack_excludes_revisions_already_reachable_from_trunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     current_trunk = _revision_line(
         commit_id="current-trunk",
         parents=["old-trunk", "merged"],
@@ -486,15 +512,13 @@ def test_discover_review_stack_excludes_revisions_already_reachable_from_trunk()
             "'merged'::'head-3'",
             "-T",
             _template(),
-        ): (
-            head + merged
-        ),
+        ): (head + merged),
         ("jj", "log", "--no-graph", "-r", "old-trunk", "-T", _template(), "--limit", "2"): (
             old_trunk
         ),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack(
+    stack = _client(monkeypatch, responses).discover_review_stack(
         "head-3",
         allow_immutable=True,
     )
@@ -505,7 +529,9 @@ def test_discover_review_stack_excludes_revisions_already_reachable_from_trunk()
     ]
 
 
-def test_discover_review_stack_stops_at_recent_shared_trunk_ancestor() -> None:
+def test_discover_review_stack_stops_at_recent_shared_trunk_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     current_trunk = _revision_line(
         commit_id="current-trunk",
         parents=["old-trunk"],
@@ -546,7 +572,7 @@ def test_discover_review_stack_stops_at_recent_shared_trunk_ancestor() -> None:
         ),
     }
 
-    stack = JjClient(Path("/repo"), runner=_runner(responses)).discover_review_stack(
+    stack = _client(monkeypatch, responses).discover_review_stack(
         "head-4",
         allow_immutable=True,
     )
@@ -554,7 +580,9 @@ def test_discover_review_stack_stops_at_recent_shared_trunk_ancestor() -> None:
     assert [revision.subject for revision in stack.revisions] == ["head 4"]
 
 
-def test_discover_review_stack_rejects_root_shared_trunk_ancestor_without_merge() -> None:
+def test_discover_review_stack_rejects_root_shared_trunk_ancestor_without_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     current_trunk = _revision_line(
         commit_id="current-trunk",
         parents=["root"],
@@ -585,12 +613,12 @@ def test_discover_review_stack_rejects_root_shared_trunk_ancestor_without_merge(
         ): _ROOT,
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
     with pytest.raises(UnsupportedStackError, match=r"root commit before trunk\(\)"):
         client.discover_review_stack("head-4")
 
 
-def test_discover_review_stack_rejects_hidden_revisions() -> None:
+def test_discover_review_stack_rejects_hidden_revisions(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("hidden"): _selection_scan_response(
             (_TRUNK, True, False),
@@ -598,7 +626,7 @@ def test_discover_review_stack_rejects_hidden_revisions() -> None:
         ),
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
     with pytest.raises(UnsupportedStackError, match="hidden commits are not reviewable"):
         client.discover_review_stack("hidden")
 
@@ -613,7 +641,7 @@ def test_discover_review_stack_rejects_hidden_revisions() -> None:
         ),
         pytest.param(
             'NOT_JSON\t"commit-id"\t"desc"\t[]\tfalse\tfalse\tfalse\tfalse\tfalse'
-            '\tfalse\tfalse\ttrue\n',
+            "\tfalse\tfalse\ttrue\n",
             "invalid JSON",
             id="invalid-json",
         ),
@@ -631,6 +659,7 @@ def test_discover_review_stack_rejects_hidden_revisions() -> None:
 def test_discover_review_stack_raises_jj_command_error_on_malformed_output(
     malformed_line: str,
     expected_message: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     responses: dict[tuple[str, ...], str] = {
         _selection_scan_command("head"): (
@@ -639,13 +668,15 @@ def test_discover_review_stack_raises_jj_command_error_on_malformed_output(
         ),
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
     with pytest.raises(JjCommandError, match=expected_message):
         client.discover_review_stack("head")
 
 
-def test_discover_review_stack_surfaces_stale_workspace_errors() -> None:
-    def run(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def test_discover_review_stack_surfaces_stale_workspace_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert tuple(command) == (
             "jj",
             "log",
@@ -655,7 +686,7 @@ def test_discover_review_stack_surfaces_stale_workspace_errors() -> None:
             "-T",
             _selection_scan_template("head"),
         )
-        assert cwd == Path("/repo")
+        assert Path(kwargs["cwd"]) == Path("/repo")
         return subprocess.CompletedProcess(
             command,
             1,
@@ -666,12 +697,15 @@ def test_discover_review_stack_surfaces_stale_workspace_errors() -> None:
             ),
         )
 
-    client = JjClient(Path("/repo"), runner=run)
+    monkeypatch.setattr(subprocess, "run", run)
+    client = JjClient(Path("/repo"))
     with pytest.raises(StaleWorkspaceError, match="jj workspace update-stale"):
         client.discover_review_stack("head")
 
 
-def test_supported_review_stack_change_ids_allows_sibling_stacks() -> None:
+def test_supported_review_stack_change_ids_allows_sibling_stacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     child_a = LocalRevision(
         change_id="child-a-change",
         commit_id="child-a",
@@ -733,50 +767,51 @@ def test_supported_review_stack_change_ids_allows_sibling_stacks() -> None:
         ),
     }
 
-    supported = JjClient(
-        Path("/repo"),
-        runner=_runner(responses),
-    ).supported_review_stack_change_ids((child_a, child_b))
+    supported = _client(monkeypatch, responses).supported_review_stack_change_ids(
+        (child_a, child_b)
+    )
 
     assert supported == {"child-a-change", "child-b-change"}
 
 
-def test_resolve_color_when_honors_explicit_jj_config() -> None:
+def test_resolve_color_when_honors_explicit_jj_config(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         ("jj", "config", "get", "ui.color"): "debug\n",
     }
 
-    value = JjClient(Path("/repo"), runner=_runner(responses)).resolve_color_when(
-        stdout_is_tty=True
-    )
+    value = _client(monkeypatch, responses).resolve_color_when(stdout_is_tty=True)
 
     assert value == "debug"
 
 
-def test_resolve_color_when_maps_auto_to_terminal_capability() -> None:
-    def run(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def test_resolve_color_when_maps_auto_to_terminal_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert tuple(command) == ("jj", "config", "get", "ui.color")
+        assert Path(kwargs["cwd"]) == Path("/repo")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="no config\n")
 
-    client = JjClient(Path("/repo"), runner=run)
+    monkeypatch.setattr(subprocess, "run", run)
+    client = JjClient(Path("/repo"))
 
     assert client.resolve_color_when(stdout_is_tty=True) == "always"
     assert client.resolve_color_when(stdout_is_tty=False) == "never"
 
 
-def test_resolve_color_when_cli_override_beats_jj_config() -> None:
+def test_resolve_color_when_cli_override_beats_jj_config(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         ("jj", "config", "get", "ui.color"): "debug\n",
     }
 
-    client = JjClient(Path("/repo"), runner=_runner(responses))
+    client = _client(monkeypatch, responses)
 
     assert client.resolve_color_when(cli_color="never", stdout_is_tty=True) == "never"
     assert client.resolve_color_when(cli_color="auto", stdout_is_tty=False) == "never"
     assert client.resolve_color_when(cli_color="auto", stdout_is_tty=True) == "always"
 
 
-def test_find_private_commits_returns_matching_revisions() -> None:
+def test_find_private_commits_returns_matching_revisions(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         ("jj", "config", "get", "git.private-commits"): "description(private)\n",
         (
@@ -794,26 +829,26 @@ def test_find_private_commits_returns_matching_revisions() -> None:
         make_revision(commit_id="head", change_id="head-change", description="head\n"),
         make_revision(commit_id="parent", change_id="parent-change", description="parent\n"),
     )
-    result = JjClient(Path("/repo"), runner=_runner(responses)).find_private_commits(revisions)
+    result = _client(monkeypatch, responses).find_private_commits(revisions)
 
     assert len(result) == 1
     assert result[0].commit_id == "head"
 
 
-def test_find_private_commits_skips_empty_policy() -> None:
+def test_find_private_commits_skips_empty_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         ("jj", "config", "get", "git.private-commits"): "none()\n",
     }
-    revisions = (
-        make_revision(commit_id="head", change_id="head-change", description="head\n"),
-    )
+    revisions = (make_revision(commit_id="head", change_id="head-change", description="head\n"),)
 
-    result = JjClient(Path("/repo"), runner=_runner(responses)).find_private_commits(revisions)
+    result = _client(monkeypatch, responses).find_private_commits(revisions)
 
     assert result == ()
 
 
-def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation() -> None:
+def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen_commands: list[tuple[str, ...]] = []
     candidate_a = _revision_line(
         commit_id="cand-a", parents=["trunk"], change_id="a-change", description="a\n"
@@ -822,14 +857,15 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation() -
         commit_id="cand-b", parents=["cand-a"], change_id="b-change", description="b\n"
     )
 
-    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        assert cwd == Path("/repo")
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
         seen_commands.append(tuple(command))
         return subprocess.CompletedProcess(
             command, 0, stdout=candidate_a + candidate_b, stderr=""
         )
 
-    result = JjClient(Path("/repo"), runner=runner).query_paired_ancestor_membership(
+    monkeypatch.setattr(subprocess, "run", runner)
+    result = JjClient(Path("/repo")).query_paired_ancestor_membership(
         (("cand-a", "base-1"), ("cand-b", "base-2"), ("cand-c", "base-3")),
     )
 
@@ -843,15 +879,18 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation() -
     assert "('cand-c' & ::'base-3')" in revset
 
 
-def test_push_bookmarks_issues_one_atomic_jj_invocation_for_a_batch() -> None:
+def test_push_bookmarks_issues_one_atomic_jj_invocation_for_a_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen_commands: list[tuple[str, ...]] = []
 
-    def runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        assert cwd == Path("/repo")
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
         seen_commands.append(tuple(command))
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    JjClient(Path("/repo"), runner=runner).push_bookmarks(
+    monkeypatch.setattr(subprocess, "run", runner)
+    JjClient(Path("/repo")).push_bookmarks(
         remote="origin", bookmarks=("review/feat-1", "review/feat-2", "review/feat-3")
     )
 
@@ -930,12 +969,13 @@ def _selection_scan_response(*entries: tuple[str, bool, bool]) -> str:
     )
 
 
-def _runner(
-    responses: dict[tuple[str, ...], str],
-):
-    def run(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def _runner(responses: dict[tuple[str, ...], str]):
+    def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         key = tuple(command)
-        assert cwd == Path("/repo")
+        assert kwargs["capture_output"] is True
+        assert kwargs["check"] is False
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        assert kwargs["text"] is True
         if key not in responses and key == (
             "jj",
             "log",

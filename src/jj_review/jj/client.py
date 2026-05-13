@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -77,7 +77,6 @@ class StaleWorkspaceError(CliError):
     """Raised when `jj` refuses to run because the current workspace is stale."""
 
 
-JjRunner = Callable[[Sequence[str], Path], subprocess.CompletedProcess[str]]
 CliColorMode = Literal["always", "auto", "debug", "never"]
 JjColorWhen = Literal["always", "debug", "never"]
 
@@ -117,11 +116,9 @@ class JjClient:
         repo_root: Path,
         *,
         cli_args: JjCliArgs = _NO_CLI_ARGS,
-        runner: JjRunner | None = None,
     ) -> None:
         self._repo_root = repo_root
         self._cli_args = cli_args
-        self._runner = runner or _default_runner
 
     @property
     def repo_root(self) -> Path:
@@ -380,9 +377,7 @@ class JjClient:
 
         trunk_ancestor_commit_ids: set[str] = set()
         for chunk in _chunked(ordered_commit_ids):
-            revisions = self._query_revisions(
-                f"({_union_revset_symbols(chunk)}) & ::trunk()"
-            )
+            revisions = self._query_revisions(f"({_union_revset_symbols(chunk)}) & ::trunk()")
             for revision in revisions:
                 trunk_ancestor_commit_ids.add(revision.commit_id)
         return trunk_ancestor_commit_ids
@@ -1069,7 +1064,13 @@ class JjClient:
         detect_stale_workspace: bool,
     ) -> str:
         try:
-            completed = self._runner(command, self._repo_root)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                cwd=self._repo_root,
+                text=True,
+            )
         except FileNotFoundError as error:
             raise JjCommandError(missing_tool_message) from error
 
@@ -1123,16 +1124,6 @@ class JjClient:
                 "merge commits are not supported.",
                 reason="merge_commit",
             )
-
-
-def _default_runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        cwd=cwd,
-        text=True,
-    )
 
 
 _EXPECTED_FIELD_COUNT = 10
