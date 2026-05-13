@@ -188,23 +188,6 @@ def _collect_landable_prefix(
     return tuple(planned_revisions), None
 
 
-def _land_boundary_message(
-    *,
-    bypass_readiness: bool,
-    classify_divergence: Callable[[str, str | None], _DivergenceKind],
-    prepared_revision: PreparedRevision,
-    revision: ReviewStatusRevision,
-) -> Message | None:
-    return _landability_decision(
-        bypass_readiness=bypass_readiness,
-        classify_divergence=classify_divergence,
-        land_revision=_land_path_revision(
-            prepared_revision=prepared_revision,
-            revision=revision,
-        ),
-    ).boundary_message
-
-
 def _land_path_revision(
     *,
     prepared_revision: PreparedRevision,

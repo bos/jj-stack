@@ -14,7 +14,6 @@ from jj_review.commands.land.execute import (
 from jj_review.commands.land.plan import (
     _collect_landable_prefix,
     _DivergenceKind,
-    _land_boundary_message,
     _plan_review_bookmark_cleanup,
 )
 from jj_review.config import RepoConfig
@@ -49,6 +48,23 @@ def _fake_context() -> CommandContext:
         CommandContext,
         SimpleNamespace(config=RepoConfig()),
     )
+
+
+def _land_boundary_message(
+    *,
+    bypass_readiness: bool,
+    classify_divergence,
+    prepared_revision,
+    revision,
+):
+    _planned_revisions, boundary_action = _collect_landable_prefix(
+        bypass_readiness=bypass_readiness,
+        classify_divergence=classify_divergence,
+        path_revisions=((prepared_revision, revision),),
+    )
+    if boundary_action is None:
+        return None
+    return boundary_action.body
 
 
 def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -> None:
