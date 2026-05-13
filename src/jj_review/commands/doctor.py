@@ -20,8 +20,8 @@ from jj_review.bootstrap import CommandContext, bootstrap_context
 from jj_review.errors import CliError, error_message
 from jj_review.github.auth import github_token_for_base_url, github_token_from_env
 from jj_review.github.client import (
-    GithubClient,
     GithubClientError,
+    build_github_client,
 )
 from jj_review.github.error_messages import summarize_github_error_reason
 from jj_review.github.resolution import (
@@ -180,9 +180,7 @@ async def _check_github_connectivity(
     parsed_repo: ParsedGithubRepo,
     token: str,
 ) -> tuple[CheckResult, GithubRepository | None]:
-    # Use the token already resolved by the auth check rather than re-invoking
-    # the gh CLI. GithubClient is a module-level name so tests can patch it.
-    async with GithubClient(base_url=parsed_repo.api_base_url, token=token) as client:
+    async with build_github_client(base_url=parsed_repo.api_base_url, token=token) as client:
         try:
             github_repo = await client.get_repository(parsed_repo.owner, parsed_repo.repo)
         except GithubClientError as error:

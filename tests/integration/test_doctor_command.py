@@ -19,7 +19,7 @@ from .submit_command_helpers import run_main
 def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Path:
     """Set up a fake GitHub environment for doctor integration tests.
 
-    Patches GithubClient and parse_github_repo in the doctor module so that
+    Patches build_github_client and parse_github_repo in the doctor module so that
     connectivity checks go to the fake GitHub server instead of the real API.
     """
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state-home"))
@@ -28,10 +28,10 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    def fake_github_client(*, base_url: str, token: str | None = None, **kwargs) -> GithubClient:
+    def build_github_client(*, base_url: str, token: str | None = None) -> GithubClient:
         return GithubClient(base_url=base_url, transport=httpxyz.ASGITransport(app=app))
 
-    monkeypatch.setattr(doctor_mod, "GithubClient", fake_github_client)
+    monkeypatch.setattr(doctor_mod, "build_github_client", build_github_client)
     monkeypatch.setattr(
         doctor_mod,
         "parse_github_repo",
@@ -119,7 +119,11 @@ def test_doctor_reports_repo_access_failure_without_network_hint(
                 status_code=404,
             )
 
-    monkeypatch.setattr(doctor_mod, "GithubClient", FailingGithubClient)
+    monkeypatch.setattr(
+        doctor_mod,
+        "build_github_client",
+        lambda *, base_url, token=None: FailingGithubClient(base_url=base_url),
+    )
 
     exit_code = run_main(repo, config_path, "doctor")
     captured = capsys.readouterr()

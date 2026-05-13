@@ -874,10 +874,10 @@ def _pull_request_connection_from_graphql(
     return tuple(pull_requests)
 
 
-def build_github_client(*, base_url: str) -> GithubClient:
+def build_github_client(*, base_url: str, token: str | None = None) -> GithubClient:
     return GithubClient(
         base_url=base_url,
-        token=github_token_for_base_url(base_url),
+        token=token if token is not None else github_token_for_base_url(base_url),
     )
 
 
