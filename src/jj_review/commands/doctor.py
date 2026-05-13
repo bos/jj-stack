@@ -97,7 +97,6 @@ async def _run_checks(
     # Checks 4 & 5: Connectivity and trunk branch
     connectivity_result, github_repo = await _check_github_connectivity(
         parsed_repo=parsed_repo,
-        token=token,
     )
     results.append(connectivity_result)
 
@@ -178,9 +177,8 @@ def _check_github_auth(base_url: str) -> tuple[CheckResult, str | None]:
 async def _check_github_connectivity(
     *,
     parsed_repo: ParsedGithubRepo,
-    token: str,
 ) -> tuple[CheckResult, GithubRepository | None]:
-    async with build_github_client(base_url=parsed_repo.api_base_url, token=token) as client:
+    async with build_github_client(base_url=parsed_repo.api_base_url) as client:
         try:
             github_repo = await client.get_repository(parsed_repo.owner, parsed_repo.repo)
         except GithubClientError as error:

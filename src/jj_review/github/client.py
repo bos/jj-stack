@@ -66,26 +66,8 @@ class _GraphqlIssueCommentConnection(BaseModel):
 class GithubClient:
     """Thin async wrapper around the GitHub REST API."""
 
-    def __init__(
-        self,
-        *,
-        base_url: str,
-        token: str | None = None,
-        transport: httpxyz.AsyncBaseTransport | None = None,
-    ) -> None:
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "jj-review/dev",
-        }
-        if token is not None:
-            headers["Authorization"] = f"Bearer {token}"
-
-        self._client = httpxyz.AsyncClient(
-            base_url=base_url,
-            headers=headers,
-            timeout=30.0,
-            transport=transport,
-        )
+    def __init__(self, client: httpxyz.AsyncClient) -> None:
+        self._client = client
 
     async def __aenter__(self) -> GithubClient:
         return self
@@ -866,10 +848,20 @@ def _pull_request_connection_from_graphql(
     return tuple(pull_requests)
 
 
-def build_github_client(*, base_url: str, token: str | None = None) -> GithubClient:
+def build_github_client(*, base_url: str) -> GithubClient:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "jj-review/dev",
+    }
+    if token := github_token_for_base_url(base_url):
+        headers["Authorization"] = f"Bearer {token}"
+
     return GithubClient(
-        base_url=base_url,
-        token=token if token is not None else github_token_for_base_url(base_url),
+        httpxyz.AsyncClient(
+            base_url=base_url,
+            headers=headers,
+            timeout=30.0,
+        )
     )
 
 

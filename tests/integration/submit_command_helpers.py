@@ -101,7 +101,12 @@ def patch_github_client_builders(
     concurrency_limits: dict[str, int] | None = None,
 ) -> None:
     def build_github_client(*, base_url: str) -> GithubClient:
-        return client_type(base_url=base_url, transport=httpxyz.ASGITransport(app=app))
+        return client_type(
+            httpxyz.AsyncClient(
+                base_url=base_url,
+                transport=httpxyz.ASGITransport(app=app),
+            )
+        )
 
     def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:
         return ParsedGithubRepo(host="github.test", owner=fake_repo.owner, repo=fake_repo.name)

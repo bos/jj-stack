@@ -28,8 +28,13 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    def build_github_client(*, base_url: str, token: str | None = None) -> GithubClient:
-        return GithubClient(base_url=base_url, transport=httpxyz.ASGITransport(app=app))
+    def build_github_client(*, base_url: str) -> GithubClient:
+        return GithubClient(
+            httpxyz.AsyncClient(
+                base_url=base_url,
+                transport=httpxyz.ASGITransport(app=app),
+            )
+        )
 
     monkeypatch.setattr(doctor_mod, "build_github_client", build_github_client)
     monkeypatch.setattr(
@@ -122,7 +127,7 @@ def test_doctor_reports_repo_access_failure_without_network_hint(
     monkeypatch.setattr(
         doctor_mod,
         "build_github_client",
-        lambda *, base_url, token=None: FailingGithubClient(base_url=base_url),
+        lambda *, base_url: FailingGithubClient(httpxyz.AsyncClient(base_url=base_url)),
     )
 
     exit_code = run_main(repo, config_path, "doctor")

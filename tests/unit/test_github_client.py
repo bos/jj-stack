@@ -9,6 +9,15 @@ import pytest
 from jj_review.github.client import GithubClient, GithubClientError
 
 
+def _github_client(handler) -> GithubClient:
+    return GithubClient(
+        httpxyz.AsyncClient(
+            base_url="https://api.github.test",
+            transport=httpxyz.MockTransport(handler),
+        )
+    )
+
+
 def test_github_client_retries_429_responses_with_retry_after() -> None:
     attempts = 0
 
@@ -37,11 +46,7 @@ def test_github_client_retries_429_responses_with_retry_after() -> None:
         )
 
     async def run_test() -> str:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             repository = await client.get_repository("octo-org", "stacked-review")
         return repository.full_name
 
@@ -77,11 +82,7 @@ def test_github_client_retries_secondary_rate_limits_without_retry_after() -> No
         )
 
     async def run_test() -> str:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             repository = await client.get_repository("octo-org", "stacked-review")
         return repository.default_branch or ""
 
@@ -98,11 +99,7 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
         return httpxyz.Response(404, json={"message": "Not Found"}, request=request)
 
     async def run_test() -> None:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             await client.get_repository("octo-org", "stacked-review")
 
     with pytest.raises(GithubClientError, match="GitHub request failed: 404"):
@@ -145,11 +142,7 @@ def test_github_client_lists_pull_request_reviews() -> None:
         )
 
     async def run_test() -> tuple[str, str]:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             reviews = await client.list_pull_request_reviews(
                 "octo-org",
                 "stacked-review",
@@ -204,11 +197,7 @@ def test_github_client_paginates_pull_request_list() -> None:
         )
 
     async def run_test() -> tuple[int, int]:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             pull_requests = await client.list_pull_requests(
                 "octo-org",
                 "stacked-review",
@@ -260,11 +249,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
         )
 
     async def run_test() -> tuple[str, str, str | None]:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_numbers(
                 "octo-org",
                 "stacked-review",
@@ -293,11 +278,7 @@ def test_github_client_rejects_graphql_payload_missing_repository_data() -> None
         )
 
     async def run_test() -> None:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             await client.get_pull_requests_by_numbers(
                 "octo-org",
                 "stacked-review",
@@ -360,11 +341,7 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
         )
 
     async def run_test() -> tuple[str, str, str | None, str | None]:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_head_refs(
                 "octo-org",
                 "stacked-review",
@@ -431,11 +408,7 @@ def test_github_client_batches_review_decision_lookup_with_graphql() -> None:
         )
 
     async def run_test() -> tuple[str | None, str | None]:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             decisions = await client.get_review_decisions_by_pull_request_numbers(
                 "octo-org",
                 "stacked-review",
@@ -480,11 +453,7 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
         )
 
     async def run_test() -> tuple[int, str]:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             comments = await client.get_issue_comments_by_pull_request_numbers(
                 "octo-org",
                 "stacked-review",
@@ -528,11 +497,7 @@ def test_github_client_converts_pull_request_to_draft_via_graphql() -> None:
         )
 
     async def run_test() -> bool:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             pull_request = await client.convert_pull_request_to_draft(
                 pull_request_id="PR_kwDOA7",
             )
@@ -573,11 +538,7 @@ def test_github_client_marks_pull_request_ready_for_review_via_graphql() -> None
         )
 
     async def run_test() -> bool:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             pull_request = await client.mark_pull_request_ready_for_review(
                 pull_request_id="PR_kwDOA7",
             )
@@ -628,11 +589,7 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
         )
 
     async def run_test() -> list[int]:
-        transport = httpxyz.MockTransport(handler)
-        async with GithubClient(
-            base_url="https://api.github.test",
-            transport=transport,
-        ) as client:
+        async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_head_refs(
                 "octo-org",
                 "stacked-review",
