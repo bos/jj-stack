@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from jj_review import console, ui
@@ -48,6 +48,7 @@ from jj_review.review.change_status import (
 )
 from jj_review.state.journal import (
     OperationJournal,
+    record_saved_state_updates,
 )
 from jj_review.state.operation_lock import (
     acquire_operation_lock,
@@ -74,6 +75,28 @@ from .shared import (
 
 HELP = "Remove stale tracking data and review branches; optionally rebase one stack"
 _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
+
+
+@dataclass(slots=True)
+class _CleanupSaver:
+    """Persist cleanup state and emit saved_state_update events per disk write."""
+
+    journal: OperationJournal
+    last_persisted: dict[str, CachedChange]
+    prepared_cleanup: PreparedCleanup
+
+    def save_if_changed(self, next_changes: dict[str, CachedChange]) -> None:
+        if self.prepared_cleanup.dry_run or next_changes == self.last_persisted:
+            return
+        record_saved_state_updates(
+            journal=self.journal,
+            before=self.last_persisted,
+            after=next_changes,
+        )
+        self.prepared_cleanup.context.state_store.save(
+            self.prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
+        )
+        self.last_persisted = dict(next_changes)
 
 
 def cleanup(
@@ -209,6 +232,11 @@ async def _run_cleanup_async(
             },
         )
 
+    saver = _CleanupSaver(
+        journal=journal,
+        last_persisted=dict(prepared_cleanup.state.changes),
+        prepared_cleanup=prepared_cleanup,
+    )
     try:
         if stale_reasons is None:
             stale_reasons = _stale_change_reasons(
@@ -220,56 +248,37 @@ async def _run_cleanup_async(
             stale_reasons=stale_reasons,
         ):
             prepared_cleanup = _load_cleanup_remote_context(prepared_cleanup=prepared_cleanup)
+            saver.prepared_cleanup = prepared_cleanup
         prepared_changes = _run_local_cleanup_pass(
             journal=journal,
             next_changes=next_changes,
             prepared_cleanup=prepared_cleanup,
             record_action=recorder.record,
+            saver=saver,
             stale_reasons=stale_reasons,
         )
-        if prepared_cleanup.github_repository is None:
-            _save_cleanup_state_if_changed(
-                next_changes=next_changes,
-                prepared_cleanup=prepared_cleanup,
-            )
+        if (
+            prepared_cleanup.github_repository is not None
+            and any(prepared_change.inspect_stack_comment for prepared_change in prepared_changes)
+        ):
+            github_repository = prepared_cleanup.github_repository
+            async with build_github_client(
+                base_url=github_repository.api_base_url
+            ) as github_client:
+                await _run_stack_comment_cleanup_pass(
+                    github_client=github_client,
+                    github_repository=github_repository,
+                    journal=journal,
+                    next_changes=next_changes,
+                    prepared_changes=prepared_changes,
+                    prepared_cleanup=prepared_cleanup,
+                    record_action=recorder.record,
+                    saver=saver,
+                )
 
-            _cleanup_succeeded = True
-            return CleanupResult(
-                actions=recorder.as_tuple(),
-            )
-
-        if not any(prepared_change.inspect_stack_comment for prepared_change in prepared_changes):
-            _save_cleanup_state_if_changed(
-                next_changes=next_changes,
-                prepared_cleanup=prepared_cleanup,
-            )
-
-            _cleanup_succeeded = True
-            return CleanupResult(
-                actions=recorder.as_tuple(),
-            )
-
-        github_repository = prepared_cleanup.github_repository
-        async with build_github_client(base_url=github_repository.api_base_url) as github_client:
-            await _run_stack_comment_cleanup_pass(
-                github_client=github_client,
-                github_repository=github_repository,
-                journal=journal,
-                next_changes=next_changes,
-                prepared_changes=prepared_changes,
-                prepared_cleanup=prepared_cleanup,
-                record_action=recorder.record,
-            )
-
-        _save_cleanup_state_if_changed(
-            next_changes=next_changes,
-            prepared_cleanup=prepared_cleanup,
-        )
-
+        saver.save_if_changed(next_changes)
         _cleanup_succeeded = True
-        return CleanupResult(
-            actions=recorder.as_tuple(),
-        )
+        return CleanupResult(actions=recorder.as_tuple())
     finally:
         if _cleanup_succeeded:
             journal.append(
@@ -284,6 +293,7 @@ def _run_local_cleanup_pass(
     next_changes: dict[str, CachedChange],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
+    saver: _CleanupSaver,
     stale_reasons: dict[str, str | None],
 ) -> tuple[PreparedCleanupChange, ...]:
     prepared_changes: list[PreparedCleanupChange] = []
@@ -363,10 +373,7 @@ def _run_local_cleanup_pass(
             prepared_cleanup=prepared_cleanup,
             record_action=record_action,
         )
-        _save_cleanup_state_if_changed(
-            next_changes=next_changes,
-            prepared_cleanup=prepared_cleanup,
-        )
+        saver.save_if_changed(next_changes)
     return tuple(prepared_changes)
 
 
@@ -527,17 +534,6 @@ def _apply_stale_cleanup_mutation_plans(
         record_action(replace(local_action, status="applied"))
 
 
-def _save_cleanup_state_if_changed(
-    *,
-    next_changes: dict[str, CachedChange],
-    prepared_cleanup: PreparedCleanup,
-) -> None:
-    if not prepared_cleanup.dry_run and next_changes != prepared_cleanup.state.changes:
-        prepared_cleanup.context.state_store.save(
-            prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
-        )
-
-
 async def _run_stack_comment_cleanup_pass(
     *,
     github_client: GithubClient,
@@ -547,6 +543,7 @@ async def _run_stack_comment_cleanup_pass(
     prepared_changes: tuple[PreparedCleanupChange, ...],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
+    saver: _CleanupSaver,
 ) -> None:
     stack_comment_changes = tuple(
         prepared_change
@@ -584,6 +581,7 @@ async def _run_stack_comment_cleanup_pass(
             next_changes=next_changes,
             prepared_cleanup=prepared_cleanup,
             record_action=record_action,
+            saver=saver,
         )
 
 
@@ -597,6 +595,7 @@ async def _apply_stack_comment_cleanup_action(
     next_changes: dict[str, CachedChange],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
+    saver: _CleanupSaver,
 ) -> None:
     applied_comments = False
     targeted_actions = comment_plan.actions[: len(comment_plan.comments)]
@@ -630,10 +629,7 @@ async def _apply_stack_comment_cleanup_action(
         record_action(action)
     if applied_comments and change_id in next_changes:
         next_changes[change_id] = next_changes[change_id].with_cleared_comments()
-    if not prepared_cleanup.dry_run:
-        prepared_cleanup.context.state_store.save(
-            prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
-        )
+    saver.save_if_changed(next_changes)
 
 
 def _load_cleanup_remote_context(*, prepared_cleanup: PreparedCleanup) -> PreparedCleanup:

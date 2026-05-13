@@ -10,6 +10,7 @@ from jj_review.commands._close_actions import ManagedCommentLookup
 from jj_review.commands.cleanup import command as cleanup_module
 from jj_review.commands.cleanup.command import (
     _apply_stack_comment_cleanup_action,
+    _CleanupSaver,
     _plan_remote_branch_cleanup,
     _plan_stack_comment_cleanup,
     _run_cleanup_async,
@@ -52,10 +53,13 @@ def _fake_context(
     )
 
 
-def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
+def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """Stack-comment cleanup clears the cached id, and the local pass is persisted
+    before stack-comment cleanup starts so an interrupted run keeps the local work."""
+
     state = ReviewState.model_validate(
         {
             "changes": {
@@ -64,6 +68,11 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
                     pr_number=1,
                     pr_state="closed",
                     navigation_comment_id=12,
+                ).model_dump(exclude_none=True),
+                "change-stale": CachedChange(
+                    bookmark="review/stale",
+                    pr_number=99,
+                    pr_state="closed",
                 ).model_dump(exclude_none=True),
             }
         }
@@ -112,7 +121,9 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
         lambda **kwargs: FakeGithubClientContext(),
     )
 
-    async def fake_plan_stack_comment_cleanup(**kwargs):
+    async def fake_plan_stack_comment_cleanup(*, cached_change, **kwargs):
+        if cached_change.pr_number != 1:
+            return None
         return StackCommentCleanupPlan(
             actions=(
                 CleanupAction(
@@ -126,7 +137,7 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
 
     monkeypatch.setattr(
         "jj_review.commands.cleanup.command._stale_change_reasons",
-        lambda **kwargs: {change_id: None for change_id in kwargs["change_ids"]},
+        lambda **kwargs: {"change-1": None, "change-stale": "no live ref"},
     )
     monkeypatch.setattr(
         "jj_review.commands.cleanup.command._plan_stack_comment_cleanup",
@@ -140,16 +151,19 @@ def test_stream_cleanup_apply_clears_cached_stack_comment_after_deletion(
     )
 
     assert deleted_comment_ids == [12]
-    assert result.actions == (
-        CleanupAction(
-            kind="stack navigation comment",
-            body="delete stack navigation comment #12 from PR #1",
-            status="applied",
-        ),
+    assert any(
+        action.kind == "stack navigation comment" and action.status == "applied"
+        for action in result.actions
     )
-    assert [
-        saved_state.changes["change-1"].navigation_comment_id for saved_state in saved_states
-    ] == [None, None]
+    assert saved_states[-1].changes["change-1"].navigation_comment_id is None
+    assert "change-stale" not in saved_states[-1].changes
+    # The local pass commits before stack-comment cleanup begins, so a snapshot exists
+    # with the stale tracking already dropped but the managed comment still recorded.
+    assert any(
+        "change-stale" not in snapshot.changes
+        and snapshot.changes["change-1"].navigation_comment_id == 12
+        for snapshot in saved_states
+    )
 
 
 def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
@@ -198,6 +212,11 @@ def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
             next_changes={},
             prepared_cleanup=prepared_cleanup,
             record_action=recorded_actions.append,
+            saver=_CleanupSaver(
+                journal=OperationJournal.disabled(),
+                last_persisted={},
+                prepared_cleanup=prepared_cleanup,
+            ),
         )
     )
 
@@ -264,7 +283,6 @@ def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks
             ),
         )
     )
-
 
 def _status_revision(
     *,
