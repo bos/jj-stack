@@ -5,15 +5,18 @@ refreshes one pull request per change from bottom to top. Selected local
 changes must be free of unresolved conflicts before submit will mutate
 bookmarks, remotes, or GitHub state.
 
-Use `--describe-with HELPER` to delegate pull request titles and bodies plus
-stack-comment prose. `jj-review` invokes the helper as
-`helper --pr <change_id>` for each pull request and `helper --stack <revset>`
-for the selected stack; the helper must print JSON with string `title` and
+Use `--describe-with HELPER` to author pull request titles and bodies, and an overall
+description of a stack. The helper can be interactive, in which case you enter these yourself,
+or automated, such as invoking an LLM to generate these descriptions.
+
+ `jj-review` invokes the helper as `helper --pr <change_id>` for each pull request and `helper
+--stack <revset>` for the selected stack. The helper must output JSON with string `title` and
 `body` fields.
 
 The `--label`, `--reviewers`, `--team-reviewers`, and `--use-bookmarks` flags
 accept comma-separated values and may be repeated. When passed, they override
 the corresponding configured defaults for this run.
+
 """
 
 from __future__ import annotations
