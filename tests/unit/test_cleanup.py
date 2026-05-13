@@ -284,6 +284,40 @@ def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks
         )
     )
 
+
+def test_cleanup_command_exits_nonzero_when_cleanup_result_blocks(
+    monkeypatch,
+) -> None:
+    prepared_cleanup = PreparedCleanup(
+        context=_fake_context(),
+        bookmark_states={},
+        github_repository=None,
+        github_repository_error=None,
+        remote=None,
+        remote_error=None,
+        remote_context_loaded=False,
+        dry_run=False,
+        state=ReviewState(),
+    )
+    blocked_action = CleanupAction(
+        kind="stack navigation comment",
+        body="cannot inspect stack navigation comments for PR #1",
+        status="blocked",
+    )
+
+    async def fake_run_cleanup_async(**kwargs):
+        return cleanup_module.CleanupResult(actions=(blocked_action,))
+
+    monkeypatch.setattr(cleanup_module, "_prepare_cleanup", lambda **kwargs: prepared_cleanup)
+    monkeypatch.setattr(cleanup_module, "_stale_change_reasons", lambda **kwargs: {})
+    monkeypatch.setattr(cleanup_module, "_run_cleanup_async", fake_run_cleanup_async)
+
+    assert cleanup_module._run_cleanup_command(
+        context=_fake_context(),
+        dry_run=False,
+    ) == 1
+
+
 def _status_revision(
     *,
     change_id: str,

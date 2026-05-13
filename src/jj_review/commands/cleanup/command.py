@@ -175,7 +175,7 @@ def _run_cleanup_command(
         )
     )
     _emit_output_lines(_render_cleanup_postamble(result=result))
-    return 0
+    return 1 if any(action.status == "blocked" for action in result.actions) else 0
 
 
 def _prepare_cleanup(
