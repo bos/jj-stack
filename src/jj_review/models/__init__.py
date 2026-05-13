@@ -1,4 +1,4 @@
-"""Typed models used across the application and tests."""
+"""Typed models shared across the application."""
 
 from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_review.models.github import GithubRepository
