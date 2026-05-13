@@ -871,7 +871,7 @@ async def _inspect_revision_with_github(
     *,
     bookmark_states: dict[str, BookmarkState],
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     inspect_stack_comments: bool,
     prepared: PreparedStack,
     prepared_revision: PreparedRevision,
@@ -924,7 +924,7 @@ async def _inspect_revision_with_github(
 async def _resolve_pull_request_lookups(
     *,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     on_progress: Callable[[int], None] | None,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:
@@ -941,7 +941,7 @@ async def _resolve_pull_request_lookups(
 async def _discover_pull_request_lookups(
     *,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:
     prepared_revisions_by_bookmark = {
@@ -1129,7 +1129,7 @@ def _pull_request_lookup_from_remembered(
 async def _inspect_managed_comments(
     *,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     pull_request_number: int,
 ) -> ManagedCommentsLookup:
     try:

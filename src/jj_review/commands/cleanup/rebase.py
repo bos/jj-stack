@@ -16,8 +16,10 @@ from jj_review.review.change_status import (
 )
 from jj_review.review.selection import resolve_selected_revset
 from jj_review.review.status import (
+    PreparedStack,
     PreparedStatus,
     ReviewStatusRevision,
+    StatusResult,
     prepare_status,
     status_preparation_cli_error,
     stream_status,
@@ -231,7 +233,7 @@ def _stream_rebase(
 def _start_rebase_operation_log(
     *,
     blocked: bool,
-    prepared,
+    prepared: PreparedStack,
     prepared_rebase: PreparedRebase,
     selected_revset: str,
 ) -> OperationJournal:
@@ -293,7 +295,7 @@ def _record_rebase_policy_actions(
 def _resolve_rebase_path_revisions(
     *,
     prepared_status: PreparedStatus,
-    status_result,
+    status_result: StatusResult,
 ) -> tuple[ReviewStatusRevision, ...]:
     revisions_by_change_id = {
         revision.change_id: revision for revision in status_result.revisions

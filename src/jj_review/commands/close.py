@@ -70,6 +70,7 @@ from jj_review.review.status import (
     PreparedStack,
     PreparedStatus,
     ReviewStatusRevision,
+    StatusResult,
     prepare_status,
     stream_status,
 )
@@ -468,7 +469,7 @@ async def _stream_close_async(
     *,
     on_action: Callable[[CloseAction], None] | None,
     prepared_close: PreparedClose,
-    status_result,
+    status_result: StatusResult,
 ) -> CloseResult:
     prepared_status = prepared_close.prepared_status
     github_repository = prepared_status.github_repository
@@ -571,7 +572,7 @@ async def _stream_close_async(
             )
 
 
-def _inspected_close_has_no_work(*, revisions) -> bool:
+def _inspected_close_has_no_work(*, revisions: tuple[ReviewStatusRevision, ...]) -> bool:
     """Whether close has nothing to do for the inspected revisions.
 
     Both plain close and cleanup only act on changes jj-review tracks: closing
@@ -662,11 +663,11 @@ async def _process_close_revisions(
     *,
     execution_state: _CloseExecutionState,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     on_revision_complete: Callable[[], None] | None,
     prepared_close: PreparedClose,
     recorder: ActionRecorder[CloseAction],
-    revisions,
+    revisions: tuple[ReviewStatusRevision, ...],
 ) -> bool:
     """Process each revision in order, stopping on the first fail-closed block."""
 
@@ -696,7 +697,7 @@ def _close_result(
     applied: bool | None = None,
     blocked: bool,
     github_error: ErrorMessage | None,
-    github_repository,
+    github_repository: ParsedGithubRepo | None,
     prepared_close: PreparedClose,
 ) -> CloseResult:
     prepared = prepared_close.prepared_status.prepared
@@ -717,9 +718,9 @@ async def _process_close_revision(
     *,
     change_status: ReviewChangeStatus,
     commit_id: str | None,
-    current_state,
+    current_state: ReviewState,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
@@ -826,12 +827,12 @@ async def _process_missing_close_revision(
     cached_change: CachedChange | None,
     commit_id: str | None,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
-    revision,
+    revision: ReviewStatusRevision,
     revision_label: CloseActionBody,
 ) -> bool:
     if cached_change is not None and cached_change.pr_state == "open":
@@ -883,13 +884,13 @@ async def _process_open_close_revision(
     cached_change: CachedChange,
     commit_id: str | None,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     pull_request_number: int,
     record_action: Callable[[CloseAction], None],
-    revision,
+    revision: ReviewStatusRevision,
     revision_label: CloseActionBody,
 ) -> None:
     record_action(
@@ -940,12 +941,12 @@ async def _process_closed_close_revision(
     change_status: ReviewChangeStatus,
     commit_id: str | None,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
-    revision,
+    revision: ReviewStatusRevision,
     revision_label: CloseActionBody,
 ) -> None:
     lookup = revision.pull_request_lookup
@@ -991,7 +992,7 @@ def _record_retired_cached_change(
     pr_state: str,
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
-    revision,
+    revision: ReviewStatusRevision,
     revision_label: CloseActionBody,
 ) -> CachedChange:
     updated_change = _retire_cached_change(cached_change, pr_state=pr_state)
@@ -1012,12 +1013,12 @@ async def _cleanup_if_requested(
     cached_change: CachedChange,
     commit_id: str | None,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_close: PreparedClose,
     record_action: Callable[[CloseAction], None],
-    revision,
+    revision: ReviewStatusRevision,
     revision_label: CloseActionBody,
 ) -> None:
     if not prepared_close.cleanup:

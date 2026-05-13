@@ -44,7 +44,9 @@ from jj_review.review.bookmarks import (
 )
 from jj_review.review.change_status import classify_review_change_without_pull_request
 from jj_review.review.status import (
+    PreparedRevision,
     PreparedStatus,
+    ReviewStatusRevision,
     StatusResult,
     prepare_status,
     stream_status_async,
@@ -816,9 +818,9 @@ def _validate_bookmark_state(
 
 
 def _find_status_revision(
-    revisions: Sequence[_RevisionWithChangeId],
+    revisions: Sequence[ReviewStatusRevision],
     change_id: str,
-):
+) -> ReviewStatusRevision:
     for revision in revisions:
         if revision.change_id == change_id:
             return revision
@@ -829,7 +831,7 @@ def _update_cached_change_from_status(
     *,
     cached_change: CachedChange,
     bookmark: str,
-    status_revision,
+    status_revision: ReviewStatusRevision,
 ) -> CachedChange:
     updated_change = cached_change.model_copy(
         update={
@@ -937,7 +939,7 @@ def _resolve_import_bookmark(
     *,
     bookmark_by_change_id: dict[str, str],
     bookmark_states: dict[str, BookmarkState],
-    prepared_revision,
+    prepared_revision: PreparedRevision,
     selected_remote_name: str | None,
 ) -> str:
     exact_bookmark = bookmark_by_change_id.get(prepared_revision.revision.change_id)

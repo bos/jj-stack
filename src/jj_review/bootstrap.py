@@ -191,7 +191,7 @@ def _parse_jj_version(version_output: str) -> tuple[int, ...] | None:
         return None
 
 
-def _resolve_optional_path(raw_path: object) -> Path | None:
+def _resolve_optional_path(raw_path: Path | str | None) -> Path | None:
     if raw_path is None:
         return None
     if isinstance(raw_path, Path):

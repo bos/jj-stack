@@ -30,6 +30,7 @@ from jj_review.models.bookmarks import BookmarkState, GitRemote
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
 from jj_review.review.change_status import (
+    OrphanedRecord,
     ReviewChangeStatus,
     classify_review_status_revision,
     classify_saved_review_change,
@@ -212,7 +213,7 @@ def _run_list(
     return 1 if any(row.incomplete for row in rows) else 0
 
 
-def _build_orphan_row(orphan) -> OrphanRow:
+def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:
     pr_number = orphan.cached_change.pr_number
     return OrphanRow(
         change_id=orphan.change_id,

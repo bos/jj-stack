@@ -292,7 +292,7 @@ def retire_cached_change(
     # Closed changes remain "active" unless they were explicitly unlinked. The saved
     # jj-review data still needs the last known review identity so later cleanup or
     # status refresh can reason about the already-closed stack without reattaching it.
-    updates: dict[str, object] = {
+    updates = {
         "pr_review_decision": None,
         "pr_state": pr_state,
     }

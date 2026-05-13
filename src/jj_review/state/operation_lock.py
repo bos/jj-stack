@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
+from typing import BinaryIO
 
 from jj_review.errors import CliError
 from jj_review.system import pid_is_alive
@@ -145,7 +146,7 @@ def read_operation_lock_holder(state_dir: Path) -> OperationLockHolder | None:
         return None
 
 
-def _open_lock_file(lock_path: Path):
+def _open_lock_file(lock_path: Path) -> BinaryIO:
     lock_file = lock_path.open("a+b")
     if sys.platform == "win32":
         lock_file.seek(0, os.SEEK_END)
@@ -156,7 +157,7 @@ def _open_lock_file(lock_path: Path):
     return lock_file
 
 
-def _try_lock_file(lock_file) -> bool:
+def _try_lock_file(lock_file: BinaryIO) -> bool:
     if sys.platform == "win32":
         import msvcrt
 
@@ -181,7 +182,7 @@ def _try_lock_file(lock_file) -> bool:
         raise
 
 
-def _unlock_file(lock_file) -> None:
+def _unlock_file(lock_file: BinaryIO) -> None:
     if sys.platform == "win32":
         import msvcrt
 

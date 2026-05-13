@@ -986,7 +986,7 @@ async def _plan_stack_comment_cleanup(
     cached_change: CachedChange,
     bookmark_state: BookmarkState,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
 ) -> StackCommentCleanupPlan | None:
     pull_request_number = cached_change.pr_number
     if pull_request_number is None and cached_change.is_unlinked:
@@ -1069,7 +1069,7 @@ async def _resolve_unlinked_pull_request_number(
     *,
     bookmark_state: BookmarkState,
     github_client: GithubClient,
-    github_repository,
+    github_repository: ParsedGithubRepo,
 ) -> int | CleanupAction | None:
     if bookmark_state.name == "":
         return None

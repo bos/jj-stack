@@ -9,6 +9,13 @@ from typing import IO, Literal, Protocol
 from jj_review.console import RequestedColorMode, requested_color_mode
 
 
+class NativeRevision(Protocol):
+    """Revision-like value that can be rendered by commit ID."""
+
+    @property
+    def commit_id(self) -> str: ...
+
+
 class NativeRevisionRenderClient(Protocol):
     """Subset of the jj client interface used for native revision rendering."""
 
@@ -21,14 +28,14 @@ class NativeRevisionRenderClient(Protocol):
 
     def render_revision_log_lines(
         self,
-        revision,
+        revision: NativeRevision,
         *,
         color_when: Literal["always", "debug", "never"],
     ) -> tuple[str, ...]: ...
 
     def render_revision_log_blocks(
         self,
-        revisions,
+        revisions: tuple[NativeRevision, ...],
         *,
         color_when: Literal["always", "debug", "never"],
     ) -> dict[str, tuple[str, ...]]: ...
@@ -63,7 +70,7 @@ def format_pull_request_label(
 def render_revision_lines(
     *,
     client: NativeRevisionRenderClient,
-    revision,
+    revision: NativeRevision,
     bookmark: str | None = None,
     stdout: IO[str] | None = None,
     suffix: str | None = None,
@@ -96,7 +103,7 @@ def render_revision_lines(
 def render_revision_blocks(
     *,
     client: NativeRevisionRenderClient,
-    revisions,
+    revisions: tuple[NativeRevision, ...],
     stdout: IO[str] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Render several revisions using the active CLI/UI color policy."""

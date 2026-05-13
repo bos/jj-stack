@@ -343,7 +343,11 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
     lookups = asyncio.run(
         status_module._discover_pull_request_lookups(
             github_client=cast(Any, FakeGithubClient()),
-            github_repository=SimpleNamespace(owner="octo-org", repo="stacked-review"),
+            github_repository=ParsedGithubRepo(
+                host="github.test",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
             prepared_revisions=cast(Any, (prepared_revision,)),
         )
     )

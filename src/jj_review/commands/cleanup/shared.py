@@ -283,11 +283,11 @@ def _action_presentation(
     return ("  ?", None, None)
 
 
-def _revision_label_template(revision: ReviewStatusRevision):
+def _revision_label_template(revision: ReviewStatusRevision) -> ui.Message:
     return t"{revision.subject} ({ui.change_id(revision.change_id)})"
 
 
-def _rebase_destination_template(destination_change_id: str | None):
+def _rebase_destination_template(destination_change_id: str | None) -> ui.Message:
     if destination_change_id is None:
         return ui.revset("trunk()")
     return ui.change_id(destination_change_id)

@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal, Protocol
 
 from jj_review import ui
 from jj_review.errors import CliError, ErrorHint, ErrorMessage
@@ -75,6 +75,11 @@ class UnsupportedStackError(CliError):
 
 class StaleWorkspaceError(CliError):
     """Raised when `jj` refuses to run because the current workspace is stale."""
+
+
+class _NativeRevision(Protocol):
+    @property
+    def commit_id(self) -> str: ...
 
 
 CliColorMode = Literal["always", "auto", "debug", "never"]
@@ -657,7 +662,7 @@ class JjClient:
 
     def render_revision_log_lines(
         self,
-        revision: LocalRevision,
+        revision: _NativeRevision,
         *,
         color_when: JjColorWhen,
     ) -> tuple[str, ...]:
@@ -680,7 +685,7 @@ class JjClient:
 
     def render_revision_log_blocks(
         self,
-        revisions: Sequence[LocalRevision],
+        revisions: Sequence[_NativeRevision],
         *,
         color_when: JjColorWhen,
     ) -> dict[str, tuple[str, ...]]:
@@ -1246,7 +1251,7 @@ def _parse_revision_with_two_flag_line(line: str) -> tuple[LocalRevision, bool, 
         ) from error
 
 
-def _require_sequence(value: Any) -> Sequence[str]:
+def _require_sequence(value: object) -> Sequence[str]:
     if not isinstance(value, list | tuple):
         raise JjCommandError(
             t"Unexpected {ui.cmd('jj bookmark list')} payload: expected a sequence."

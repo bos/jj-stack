@@ -125,7 +125,7 @@ def _render_submit_revision_lines(
     return render_revision_lines(
         client=client,
         prerendered_lines=prerendered_lines,
-        revision=revision,
+        revision=revision.native_revision,
         bookmark=revision.bookmark,
         suffix=summary,
     )

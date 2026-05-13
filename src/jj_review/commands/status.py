@@ -20,6 +20,8 @@ from jj_review.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_review.config import RepoConfig
 from jj_review.errors import CliError, error_message
 from jj_review.formatting import (
+    NativeRevision,
+    NativeRevisionRenderClient,
     format_pull_request_label,
     render_revision_blocks,
     render_revision_lines,
@@ -44,6 +46,8 @@ from jj_review.review.selection import (
     resolve_selected_revset,
 )
 from jj_review.review.status import (
+    PreparedStack,
+    PreparedStatus,
     PullRequestLookup,
     ReviewStatusRevision,
     StatusResult,
@@ -318,7 +322,7 @@ def _prepare_status_for_revset(
     *,
     context: CommandContext,
     revset: str | None,
-):
+) -> PreparedStatus:
     try:
         return prepare_status(
             context=context,
@@ -334,7 +338,7 @@ def _prepare_status_with_spinner(
     *,
     context: CommandContext,
     revset: str | None,
-):
+) -> PreparedStatus:
     with console.spinner(description="Inspecting jj stack"):
         return _prepare_status_for_revset(
             context=context,
@@ -342,7 +346,7 @@ def _prepare_status_with_spinner(
         )
 
 
-def _prepared_status_identity(prepared_status) -> tuple[str, ...]:
+def _prepared_status_identity(prepared_status: PreparedStatus) -> tuple[str, ...]:
     change_ids = tuple(
         revision.revision.change_id for revision in prepared_status.prepared.status_revisions
     )
@@ -361,7 +365,7 @@ def _status_heading(selector: StatusSelector) -> ui.Message:
 def _render_prepared_status(
     *,
     context: CommandContext,
-    prepared_status,
+    prepared_status: PreparedStatus,
     verbose: bool,
 ) -> int:
     selection_lines = (
@@ -502,7 +506,7 @@ def render_status_summary_lines(
 
 def render_trunk_status_lines(
     *,
-    prepared,
+    prepared: PreparedStack,
     prerendered_blocks: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[str, ...]:
     """Render the trunk footer with native `jj log` formatting."""
@@ -519,7 +523,7 @@ def render_trunk_status_lines(
 
 def render_empty_status_lines(
     *,
-    prepared_status,
+    prepared_status: PreparedStatus,
 ) -> tuple[ui.Message, ...]:
     """Render the empty-stack footer and explanation."""
 
@@ -533,14 +537,14 @@ def render_empty_status_lines(
 
 def _prefetch_revision_log_blocks(
     *,
-    client,
-    revisions,
-    trunk,
+    client: NativeRevisionRenderClient,
+    revisions: tuple[ReviewStatusRevision, ...],
+    trunk: NativeRevision,
 ) -> dict[str, tuple[str, ...]]:
     """Render the `jj log` block for every revision we will print, in parallel."""
 
     seen: set[str] = set()
-    ordered: list[object] = []
+    ordered: list[NativeRevision] = []
     for revision in (*revisions, trunk):
         if revision.commit_id in seen:
             continue
