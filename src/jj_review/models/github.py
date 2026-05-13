@@ -1,6 +1,7 @@
 """GitHub API response models."""
 
-from typing import Any, Self
+from collections.abc import Mapping
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -52,12 +53,12 @@ class GithubPullRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_graphql_payload(cls, value: Any) -> Any:
+    def _normalize_graphql_payload(cls, value: object) -> object:
         if not isinstance(value, dict) or "baseRefName" not in value:
             return value
 
         head_ref = value.get("headRefName")
-        payload: dict[str, Any] = {
+        payload: dict[str, object] = {
             "base": {"ref": value.get("baseRefName")},
             "body": value.get("body"),
             "head": {
@@ -111,7 +112,7 @@ class GithubIssueComment(BaseModel):
     id: int = Field(alias="databaseId")
 
 
-def _graphql_head_label(raw_pull_request: dict[str, Any]) -> str | None:
+def _graphql_head_label(raw_pull_request: Mapping[str, object]) -> str | None:
     try:
         parts = _GraphqlHeadLabelParts.model_validate(raw_pull_request)
     except ValidationError as error:
@@ -137,7 +138,7 @@ class _GraphqlHeadLabelParts(BaseModel):
     )
 
 
-def _normalize_graphql_review_decision(value: Any) -> str | None:
+def _normalize_graphql_review_decision(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.upper()

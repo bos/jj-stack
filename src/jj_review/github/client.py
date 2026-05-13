@@ -9,10 +9,9 @@ import time
 from collections.abc import Sequence
 from email.utils import parsedate_to_datetime
 from textwrap import dedent, indent
-from typing import Any
 
 import httpxyz
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jj_review.github.auth import github_token_for_base_url
 from jj_review.models.github import (
@@ -47,7 +46,7 @@ class GithubClientError(RuntimeError):
 
 
 class _GraphqlPullRequestConnection(BaseModel):
-    nodes: tuple[object, ...] | None = None
+    nodes: tuple[GithubPullRequest, ...] | None = None
 
 
 class _GraphqlReview(BaseModel):
@@ -56,12 +55,29 @@ class _GraphqlReview(BaseModel):
 
 
 class _GraphqlReviewConnection(BaseModel):
-    nodes: tuple[object, ...] | None = None
+    nodes: tuple[_GraphqlReview, ...] | None = None
+
+
+class _GraphqlPageInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    has_next_page: bool = Field(default=False, alias="hasNextPage")
 
 
 class _GraphqlIssueCommentConnection(BaseModel):
-    nodes: tuple[object | None, ...] | None = None
-    page_info: dict[str, object] | None = Field(default=None, alias="pageInfo")
+    nodes: tuple[GithubIssueComment | None, ...] | None = None
+    page_info: _GraphqlPageInfo | None = Field(default=None, alias="pageInfo")
+
+
+class _GraphqlReviewDecisionPullRequest(BaseModel):
+    latest_opinionated_reviews: _GraphqlReviewConnection | None = Field(
+        default=None,
+        alias="latestOpinionatedReviews",
+    )
+
+
+class _GraphqlIssueCommentsPullRequest(BaseModel):
+    comments: _GraphqlIssueCommentConnection | None = None
 
 
 class GithubClient:
@@ -467,7 +483,7 @@ class GithubClient:
         method: str,
         path: str,
         *,
-        json: Any | None = None,
+        json: dict[str, object] | None = None,
         params: dict[str, str] | None = None,
     ) -> httpxyz.Response:
         for attempt in range(_DEFAULT_RATE_LIMIT_RETRIES + 1):
@@ -553,7 +569,7 @@ class GithubClient:
             raise GithubClientError(f"GitHub {response_name} response was missing `data`.")
         return data
 
-    def _expect_success(self, response: httpxyz.Response) -> Any:
+    def _expect_success(self, response: httpxyz.Response) -> object:
         try:
             response.raise_for_status()
         except httpxyz.HTTPStatusError as error:
@@ -869,14 +885,7 @@ def _pull_request_connection_from_graphql(
     if parsed.nodes is None:
         return ()
     pull_requests: list[GithubPullRequest] = []
-    for raw_node in parsed.nodes:
-        pull_request = _validate_graphql_model(
-            raw_node,
-            model=GithubPullRequest,
-            error_message=(
-                f"GitHub {response_name} response had invalid pull request payload for {alias}."
-            ),
-        )
+    for pull_request in parsed.nodes:
         if expected_head_label is not None and pull_request.head.label != expected_head_label:
             continue
         pull_requests.append(pull_request)
@@ -908,32 +917,19 @@ def _review_decision_from_graphql(
 ) -> str | None:
     if raw_pull_request is None:
         return None
-    if not isinstance(raw_pull_request, dict):
-        raise GithubClientError(
-            f"GitHub {response_name} response had invalid pull request payload for {alias}."
-        )
-    raw_latest_reviews = raw_pull_request.get("latestOpinionatedReviews")
-    if raw_latest_reviews is None:
-        return None
     parsed = _validate_graphql_model(
-        raw_latest_reviews,
-        model=_GraphqlReviewConnection,
+        raw_pull_request,
+        model=_GraphqlReviewDecisionPullRequest,
         error_message=(
-            f"GitHub {response_name} response had invalid latest reviews payload for {alias}."
+            f"GitHub {response_name} response had invalid pull request payload for {alias}."
         ),
     )
-    if parsed.nodes is None:
+    latest_reviews = parsed.latest_opinionated_reviews
+    if latest_reviews is None or latest_reviews.nodes is None:
         return None
 
     review_states: set[str] = set()
-    for raw_node in parsed.nodes:
-        review = _validate_graphql_model(
-            raw_node,
-            model=_GraphqlReview,
-            error_message=(
-                f"GitHub {response_name} response had invalid review payload for {alias}."
-            ),
-        )
+    for review in latest_reviews.nodes:
         if review.author is None:
             continue
         normalized_state = review.state.upper()
@@ -956,33 +952,19 @@ def _issue_comments_from_graphql(
 ) -> tuple[tuple[GithubIssueComment, ...], bool]:
     if raw_pull_request is None:
         return (), False
-    if not isinstance(raw_pull_request, dict):
-        raise GithubClientError(
-            f"GitHub {response_name} response had invalid pull request payload for {alias}."
-        )
-    raw_comments = raw_pull_request.get("comments")
-    if raw_comments is None:
-        return (), False
     parsed = _validate_graphql_model(
-        raw_comments,
-        model=_GraphqlIssueCommentConnection,
+        raw_pull_request,
+        model=_GraphqlIssueCommentsPullRequest,
         error_message=(
-            f"GitHub {response_name} response had invalid comments payload for {alias}."
+            f"GitHub {response_name} response had invalid pull request payload for {alias}."
         ),
     )
-    comments = tuple(
-        _validate_graphql_model(
-            comment,
-            model=GithubIssueComment,
-            error_message=(
-                f"GitHub {response_name} response had invalid comment payload for {alias}."
-            ),
-        )
-        for comment in parsed.nodes or ()
-        if comment is not None
-    )
-    has_next_page = parsed.page_info is not None and parsed.page_info.get("hasNextPage") is True
-    return comments, has_next_page
+    comments = parsed.comments
+    if comments is None:
+        return (), False
+    valid_comments = tuple(comment for comment in comments.nodes or () if comment is not None)
+    has_next_page = comments.page_info is not None and comments.page_info.has_next_page
+    return valid_comments, has_next_page
 
 
 def _validate_graphql_model[GraphqlModel: BaseModel](
