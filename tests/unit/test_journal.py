@@ -67,11 +67,49 @@ def test_operation_journal_uses_one_repo_log(tmp_path: Path) -> None:
     ]
 
 
+def test_operation_journal_records_saved_state_updates(tmp_path: Path) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="cleanup",
+        options={},
+        resolved_scope={},
+    )
+    unchanged = CachedChange(pr_number=2, pr_state="open")
+
+    journal.record_saved_state_updates(
+        before={
+            "change-a": CachedChange(pr_number=1, pr_state="open"),
+            "change-b": unchanged,
+            "change-c": CachedChange(pr_number=3, pr_state="closed"),
+        },
+        after={
+            "change-a": CachedChange(pr_number=1, pr_state="closed"),
+            "change-b": unchanged,
+            "change-d": CachedChange(pr_number=4, pr_state="open"),
+        },
+    )
+
+    events = [
+        event for event in read_operation_log(tmp_path) if event.event == "saved_state_update"
+    ]
+
+    assert [event.data["change_id"] for event in events] == [
+        "change-a",
+        "change-c",
+        "change-d",
+    ]
+    assert events[0].data["before"]["pr_state"] == "open"
+    assert events[0].data["after"]["pr_state"] == "closed"
+    assert events[1].data["before"]["pr_number"] == 3
+    assert events[1].data["after"] is None
+    assert events[2].data["before"] is None
+    assert events[2].data["after"]["pr_number"] == 4
+
+
 def test_disabled_operation_journal_drops_events(tmp_path: Path) -> None:
     journal = OperationJournal.disabled()
 
     journal.append("planned_mutation", {"mutation": "dry_run"})
 
     assert read_operation_log(tmp_path) == ()
-
 

@@ -128,24 +128,23 @@ class OperationJournal:
         yield
         self.append("mutation_applied", payload)
 
+    def record_saved_state_updates(
+        self,
+        *,
+        before: Mapping[str, Any],
+        after: Mapping[str, Any],
+    ) -> None:
+        """Emit one ``saved_state_update`` event per change whose record changed."""
 
-def record_saved_state_updates(
-    *,
-    journal: OperationJournal,
-    before: Mapping[str, Any],
-    after: Mapping[str, Any],
-) -> None:
-    """Emit one ``saved_state_update`` event per change whose record changed."""
-
-    for change_id in sorted({*before, *after}):
-        before_change = before.get(change_id)
-        after_change = after.get(change_id)
-        if before_change == after_change:
-            continue
-        journal.append(
-            "saved_state_update",
-            {"after": after_change, "before": before_change, "change_id": change_id},
-        )
+        for change_id in sorted({*before, *after}):
+            before_change = before.get(change_id)
+            after_change = after.get(change_id)
+            if before_change == after_change:
+                continue
+            self.append(
+                "saved_state_update",
+                {"after": after_change, "before": before_change, "change_id": change_id},
+            )
 
 
 def read_operation_log(state_dir: Path) -> tuple[JournalEvent, ...]:

@@ -38,7 +38,7 @@ from jj_review.review.change_status import (
     classify_review_change,
     classify_saved_review_change,
 )
-from jj_review.state.journal import OperationJournal, record_saved_state_updates
+from jj_review.state.journal import OperationJournal
 from jj_review.ui import Message, plain_text
 
 OrphanedPullRequestState = Literal["closed", "open"]
@@ -338,8 +338,7 @@ async def run_orphan_close(
         if not dry_run:
             next_changes = dict(state.changes)
             next_changes.pop(change_id, None)
-            record_saved_state_updates(
-                journal=run.journal,
+            run.journal.record_saved_state_updates(
                 before=state.changes,
                 after=next_changes,
             )
@@ -416,8 +415,7 @@ def _retire_blocked_orphan_close_tracking(
     if not dry_run:
         next_changes = dict(state.changes)
         next_changes[change_id] = updated_change
-        record_saved_state_updates(
-            journal=run.journal,
+        run.journal.record_saved_state_updates(
             before=state.changes,
             after=next_changes,
         )

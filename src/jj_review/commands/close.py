@@ -73,10 +73,7 @@ from jj_review.review.status import (
     prepare_status,
     stream_status,
 )
-from jj_review.state.journal import (
-    OperationJournal,
-    record_saved_state_updates as _record_saved_state_updates,
-)
+from jj_review.state.journal import OperationJournal
 from jj_review.state.operation_lock import acquire_operation_lock
 
 HELP = "Stop reviewing a jj stack on GitHub"
@@ -620,8 +617,7 @@ def _save_close_progress(
     current_state = execution_state.current_state
     if prepared_close.dry_run or execution_state.next_changes == current_state.changes:
         return
-    _record_saved_state_updates(
-        journal=journal,
+    journal.record_saved_state_updates(
         before=current_state.changes,
         after=execution_state.next_changes,
     )

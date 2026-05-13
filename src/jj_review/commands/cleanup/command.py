@@ -46,10 +46,7 @@ from jj_review.review.change_status import (
     classify_review_change_without_pull_request,
     is_open_pr_record,
 )
-from jj_review.state.journal import (
-    OperationJournal,
-    record_saved_state_updates,
-)
+from jj_review.state.journal import OperationJournal
 from jj_review.state.operation_lock import (
     acquire_operation_lock,
 )
@@ -88,8 +85,7 @@ class _CleanupSaver:
     def save_if_changed(self, next_changes: dict[str, CachedChange]) -> None:
         if self.prepared_cleanup.dry_run or next_changes == self.last_persisted:
             return
-        record_saved_state_updates(
-            journal=self.journal,
+        self.journal.record_saved_state_updates(
             before=self.last_persisted,
             after=next_changes,
         )
