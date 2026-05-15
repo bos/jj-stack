@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
@@ -77,20 +78,47 @@ def _build_stack_description_input(
     jj_client: JjClient,
     revisions: tuple[LocalRevision, ...],
 ) -> dict[str, object]:
+    diffstats = _describe_with_diffstats(jj_client=jj_client, revisions=revisions)
     return {
         "revisions": [
             {
                 "body": generated_descriptions[revision.change_id].body,
                 "change_id": revision.change_id,
-                "diffstat": _describe_with_diffstat(
-                    jj_client=jj_client,
-                    revset=revision.change_id,
-                ),
+                "diffstat": diffstats[revision.change_id],
                 "title": generated_descriptions[revision.change_id].title,
             }
             for revision in revisions
         ]
     }
+
+
+def _describe_with_diffstats(
+    *,
+    jj_client: JjClient,
+    revisions: tuple[LocalRevision, ...],
+) -> dict[str, str]:
+    if not revisions:
+        return {}
+    if len(revisions) == 1:
+        revision = revisions[0]
+        return {
+            revision.change_id: _describe_with_diffstat(
+                jj_client=jj_client,
+                revset=revision.change_id,
+            )
+        }
+
+    def describe_revision(revision: LocalRevision) -> tuple[str, str]:
+        return (
+            revision.change_id,
+            _describe_with_diffstat(
+                jj_client=jj_client,
+                revset=revision.change_id,
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=min(len(revisions), 10)) as pool:
+        return dict(pool.map(describe_revision, revisions))
 
 
 def _describe_with_diffstat(*, jj_client: JjClient, revset: str) -> str:
