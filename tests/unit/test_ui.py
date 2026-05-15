@@ -63,7 +63,7 @@ def test_semantic_style_uses_machine_readable_jj_config(
     )
 
     def fake_run(command, **kwargs):
-        assert command[:3] == ["jj", "config", "list"]
+        assert command[:4] == ["jj", "--ignore-working-copy", "config", "list"]
         assert "colors" in command
         assert kwargs["cwd"] == repository
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
@@ -140,5 +140,4 @@ def test_revset_uses_semantic_style(
 
     assert text.plain == "trunk()"
     assert text.spans == [import_module("rich.text").Span(0, 7, _style_cls()(color="blue"))]
-
 

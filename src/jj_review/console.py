@@ -633,6 +633,7 @@ def _load_semantic_styles(
             [
                 "jj",
                 *cli_args.to_argv(),
+                "--ignore-working-copy",
                 "config",
                 "list",
                 "--include-defaults",

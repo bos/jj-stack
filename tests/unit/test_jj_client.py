@@ -688,6 +688,7 @@ def test_discover_review_stack_surfaces_stale_workspace_errors(
     def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert tuple(command) == (
             "jj",
+            "--ignore-working-copy",
             "log",
             "--no-graph",
             "-r",
@@ -726,7 +727,13 @@ def test_resolve_color_when_maps_auto_to_terminal_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        assert tuple(command) == ("jj", "config", "get", "ui.color")
+        assert tuple(command) == (
+            "jj",
+            "--ignore-working-copy",
+            "config",
+            "get",
+            "ui.color",
+        )
         assert Path(kwargs["cwd"]) == Path("/repo")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="no config\n")
 
@@ -810,7 +817,7 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation(
     assert result == {"cand-a", "cand-b"}
     assert len(seen_commands) == 1, "all pairs must land in a single jj invocation"
     invocation = seen_commands[0]
-    assert invocation[:3] == ("jj", "log", "--no-graph")
+    assert invocation[:4] == ("jj", "--ignore-working-copy", "log", "--no-graph")
     revset = invocation[invocation.index("-r") + 1]
     assert "('cand-a' & ::'base-1')" in revset
     assert "('cand-b' & ::'base-2')" in revset
@@ -910,29 +917,34 @@ def _selection_scan_response(*entries: tuple[str, bool, bool]) -> str:
 def _runner(responses: dict[tuple[str, ...], str]):
     def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         key = tuple(command)
+        response_key = (
+            (key[0], *key[2:])
+            if len(key) > 1 and key[1] == "--ignore-working-copy"
+            else key
+        )
         assert kwargs["capture_output"] is True
         assert kwargs["check"] is False
         assert Path(kwargs["cwd"]) == Path("/repo")
         assert kwargs["text"] is True
         if (
-            key not in responses
-            and len(key) == 8
-            and key[:4] == ("jj", "log", "--no-graph", "-r")
-            and key[5] == "-T"
-            and key[6] == _template()
-            and key[7] == "--limit"
+            response_key not in responses
+            and len(response_key) == 8
+            and response_key[:4] == ("jj", "log", "--no-graph", "-r")
+            and response_key[5] == "-T"
+            and response_key[6] == _template()
+            and response_key[7] == "--limit"
         ):
             # Defensive guard; the boundary probe always includes the limit value.
             raise AssertionError(f"Unexpected truncated command: {key!r}")
         if (
-            key not in responses
-            and len(key) == 9
-            and key[:4] == ("jj", "log", "--no-graph", "-r")
-            and key[5] == "-T"
-            and key[6] == _template()
-            and key[7:] == ("--limit", "2")
+            response_key not in responses
+            and len(response_key) == 9
+            and response_key[:4] == ("jj", "log", "--no-graph", "-r")
+            and response_key[5] == "-T"
+            and response_key[6] == _template()
+            and response_key[7:] == ("--limit", "2")
         ):
-            boundary_revset = key[4]
+            boundary_revset = response_key[4]
             if boundary_revset.startswith("heads(first_ancestors(") and boundary_revset.endswith(
                 "& ::'trunk')"
             ):
@@ -955,16 +967,16 @@ def _runner(responses: dict[tuple[str, ...], str]):
                         stderr="",
                     )
         if (
-            key not in responses
-            and len(key) == 7
-            and key[:4] == ("jj", "log", "--no-graph", "-r")
-            and key[5:] == ("-T", _template())
+            response_key not in responses
+            and len(response_key) == 7
+            and response_key[:4] == ("jj", "log", "--no-graph", "-r")
+            and response_key[5:] == ("-T", _template())
         ):
-            revset = key[4]
+            revset = response_key[4]
             if revset.startswith("children(") and ") & merges() & ::" in revset:
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if key not in responses:
+        if response_key not in responses:
             raise AssertionError(f"Unexpected command: {key!r}")
-        return subprocess.CompletedProcess(command, 0, stdout=responses[key], stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout=responses[response_key], stderr="")
 
     return run

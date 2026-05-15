@@ -574,7 +574,7 @@ class JjClient:
         """Return the string value of a jj config key, or None if unset."""
 
         try:
-            value = self._run_jj(("config", "get", key))
+            value = self._run_jj(("config", "get", key), ignore_working_copy=True)
         except JjCommandError:
             return None
         stripped = value.strip()
@@ -589,6 +589,8 @@ class JjClient:
         responsible for parsing the TOML-dotted-key output.
         """
 
+        # Keep this as the initial repo-scoped jj command during bootstrap so jj
+        # snapshots the working copy once before later read-only calls ignore it.
         return self._run_jj(("config", "list", "jj-review"))
 
     def show_with_stat(self, revset: str) -> str:
@@ -599,7 +601,7 @@ class JjClient:
         error message.
         """
 
-        return self._run_jj(("show", "--stat", "-r", revset))
+        return self._run_jj(("show", "--stat", "-r", revset), ignore_working_copy=True)
 
     def resolve_color_when(
         self,
@@ -744,13 +746,14 @@ class JjClient:
                 "--no-pager",
                 "-r",
                 _quote_revset_symbol(revision),
-            )
+            ),
+            ignore_working_copy=True,
         )
 
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
         """List configured Git remotes for the repository."""
 
-        stdout = self._run_jj(("git", "remote", "list"))
+        stdout = self._run_jj(("git", "remote", "list"), ignore_working_copy=True)
         remotes: list[GitRemote] = []
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -775,7 +778,7 @@ class JjClient:
         if bookmarks:
             command.extend(bookmarks)
 
-        stdout = self._run_jj(command)
+        stdout = self._run_jj(command, ignore_working_copy=True)
         grouped: dict[str, _RawBookmarkState] = {}
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -959,7 +962,7 @@ class JjClient:
         if limit is not None:
             command.extend(["--limit", str(limit)])
 
-        stdout = self._run_jj(command)
+        stdout = self._run_jj(command, ignore_working_copy=True)
         revisions: list[LocalRevision] = []
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -972,7 +975,10 @@ class JjClient:
         self,
         revset: str,
     ) -> list[tuple[LocalRevision, bool]]:
-        stdout = self._run_jj(("log", "--no-graph", "-r", revset, "-T", _TRUNK_SCAN_TEMPLATE))
+        stdout = self._run_jj(
+            ("log", "--no-graph", "-r", revset, "-T", _TRUNK_SCAN_TEMPLATE),
+            ignore_working_copy=True,
+        )
         revisions: list[tuple[LocalRevision, bool]] = []
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -995,7 +1001,8 @@ class JjClient:
                 revset,
                 "-T",
                 _selection_scan_template(selection_revset),
-            )
+            ),
+            ignore_working_copy=True,
         )
         revisions: list[tuple[LocalRevision, bool, bool]] = []
         for line in stdout.splitlines():
@@ -1005,9 +1012,10 @@ class JjClient:
             revisions.append(_parse_revision_with_two_flag_line(stripped))
         return revisions
 
-    def _run_jj(self, args: Sequence[str]) -> str:
+    def _run_jj(self, args: Sequence[str], *, ignore_working_copy: bool = False) -> str:
+        extra_args = ("--ignore-working-copy",) if ignore_working_copy else ()
         return self._run_command(
-            ["jj", *self._cli_args.to_argv(), *args],
+            ["jj", *self._cli_args.to_argv(), *extra_args, *args],
             missing_tool_message=t"{ui.cmd('jj')} is not installed or is not on PATH.",
             detect_stale_workspace=True,
         )
