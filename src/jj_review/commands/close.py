@@ -1038,7 +1038,10 @@ async def _cleanup_if_requested(
         revision_label=revision_label,
     )
     await _cleanup_revision(
-        bookmark_state=prepared.client.get_bookmark_state(revision.bookmark),
+        bookmark_state=prepared.bookmark_states.get(
+            revision.bookmark,
+            BookmarkState(name=revision.bookmark),
+        ),
         cached_change=cached_change,
         commit_id=commit_id,
         context=cleanup_context,
