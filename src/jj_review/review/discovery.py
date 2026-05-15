@@ -133,6 +133,32 @@ def discover_connected_tracked_stacks(
     )
 
 
+def discover_stacks_from_revisions(
+    *,
+    jj_client: JjClient,
+    revisions: tuple[LocalRevision, ...],
+) -> tuple[LocalStack, ...]:
+    """Return supported review stacks connected to already-resolved revisions."""
+
+    reviewable_revisions = tuple(
+        revision
+        for revision in revisions
+        if revision.is_reviewable(allow_divergent=True, allow_immutable=True)
+    )
+    if not reviewable_revisions:
+        return ()
+
+    descendants = jj_client.query_descendant_revisions(
+        tuple(revision.commit_id for revision in reviewable_revisions)
+    )
+    trunk = jj_client.resolve_revision("trunk()")
+    return _discover_stacks_from_revisions(
+        jj_client=jj_client,
+        revisions=(*descendants, *reviewable_revisions),
+        trunk=trunk,
+    )
+
+
 def _saved_change_is_discoverable(cached_change: CachedChange) -> bool:
     review_status = classify_saved_review_change(cached_change, local="present")
     return review_status.saved_review_identity or review_status.link == "unlinked"

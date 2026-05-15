@@ -13,7 +13,6 @@ from jj_review.jj.client import (
     StaleWorkspaceError,
     UnsupportedStackError,
 )
-from jj_review.models.stack import LocalRevision
 from tests.support.revision_helpers import make_revision
 
 
@@ -105,14 +104,6 @@ _HIDDEN = _revision_line(
     description="hidden predecessor\n",
     hidden=True,
 )
-_CHILD_A = _revision_line(
-    commit_id="child-a", parents=["parent"], change_id="child-a-change", description="child a\n"
-)
-_CHILD_B = _revision_line(
-    commit_id="child-b", parents=["parent"], change_id="child-b-change", description="child b\n"
-)
-
-
 def _client(
     monkeypatch: pytest.MonkeyPatch,
     responses: dict[tuple[str, ...], str],
@@ -719,77 +710,6 @@ def test_discover_review_stack_surfaces_stale_workspace_errors(
     client = JjClient(Path("/repo"))
     with pytest.raises(StaleWorkspaceError, match="jj workspace update-stale"):
         client.discover_review_stack("head")
-
-
-def test_supported_review_stack_change_ids_allows_sibling_stacks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    child_a = LocalRevision(
-        change_id="child-a-change",
-        commit_id="child-a",
-        current_working_copy=False,
-        description="child a\n",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("parent",),
-    )
-    child_b = LocalRevision(
-        change_id="child-b-change",
-        commit_id="child-b",
-        current_working_copy=False,
-        description="child b\n",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("parent",),
-    )
-    responses: dict[tuple[str, ...], str] = {
-        _selection_scan_command("child-a"): _selection_scan_response(
-            (_TRUNK, True, False),
-            (_CHILD_A, False, True),
-        ),
-        _selection_scan_command("child-b"): _selection_scan_response(
-            (_TRUNK, True, False),
-            (_CHILD_B, False, True),
-        ),
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "heads(first_ancestors('child-a') & ::'trunk')",
-            "-T",
-            _template(),
-            "--limit",
-            "2",
-        ): _TRUNK,
-        ("jj", "log", "--no-graph", "-r", "'trunk'::'child-a'", "-T", _template()): (
-            _CHILD_A + _PARENT + _TRUNK
-        ),
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "heads(first_ancestors('child-b') & ::'trunk')",
-            "-T",
-            _template(),
-            "--limit",
-            "2",
-        ): _TRUNK,
-        ("jj", "log", "--no-graph", "-r", "'trunk'::'child-b'", "-T", _template()): (
-            _CHILD_B + _PARENT + _TRUNK
-        ),
-    }
-
-    supported = _client(monkeypatch, responses).supported_review_stack_change_ids(
-        (child_a, child_b)
-    )
-
-    assert supported == {"child-a-change", "child-b-change"}
 
 
 def test_resolve_color_when_honors_explicit_jj_config(monkeypatch: pytest.MonkeyPatch) -> None:

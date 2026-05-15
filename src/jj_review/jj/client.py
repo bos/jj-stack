@@ -429,28 +429,6 @@ class JjClient:
         revisions = self._query_revisions(terms)
         return {revision.commit_id for revision in revisions}
 
-    def supported_review_stack_change_ids(
-        self,
-        candidate_revisions: Sequence[LocalRevision],
-        *,
-        allow_divergent: bool = False,
-        allow_immutable: bool = False,
-    ) -> set[str]:
-        """Return change IDs whose selected-parent path remains a supported review stack."""
-
-        supported_change_ids: set[str] = set()
-        for revision in candidate_revisions:
-            try:
-                self.discover_review_stack(
-                    revision.commit_id,
-                    allow_divergent=allow_divergent,
-                    allow_immutable=allow_immutable,
-                )
-            except UnsupportedStackError:
-                continue
-            supported_change_ids.add(revision.change_id)
-        return supported_change_ids
-
     def query_children_by_parent_for_commit_ids(
         self,
         commit_ids: Sequence[str],

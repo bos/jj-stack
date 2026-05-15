@@ -33,6 +33,7 @@ from jj_review.review.change_status import classify_review_change_without_pull_r
 from jj_review.review.status import PreparedStatus
 from jj_review.state.journal import OperationJournal
 from jj_review.state.store import ReviewStateStore
+from tests.support.revision_helpers import make_revision
 
 
 def _fake_context(
@@ -316,6 +317,99 @@ def test_cleanup_command_exits_nonzero_when_cleanup_result_blocks(
         context=_fake_context(),
         dry_run=False,
     ) == 1
+
+
+def test_stale_change_reasons_reports_changes_outside_supported_stacks(monkeypatch) -> None:
+    live_revision = make_revision(
+        change_id="live-change",
+        commit_id="live-commit",
+        description="live\n",
+    )
+    stale_revision = make_revision(
+        change_id="stale-change",
+        commit_id="stale-commit",
+        description="stale\n",
+    )
+
+    class FakeJjClient:
+        def query_revisions_by_change_ids(self, change_ids):
+            assert change_ids == ("live-change", "stale-change")
+            return {
+                "live-change": (live_revision,),
+                "stale-change": (stale_revision,),
+            }
+
+    def fake_discover_stacks_from_revisions(*, jj_client, revisions):
+        return (SimpleNamespace(revisions=(live_revision,)),)
+
+    monkeypatch.setattr(
+        cleanup_module,
+        "discover_stacks_from_revisions",
+        fake_discover_stacks_from_revisions,
+    )
+
+    reasons = cleanup_module._stale_change_reasons(
+        change_ids=("live-change", "stale-change"),
+        context=_fake_context(jj_client=cast(JjClient, FakeJjClient())),
+    )
+
+    assert reasons["live-change"] is None
+    assert (
+        reasons["stale-change"]
+        == "local change no longer participates in a supported review stack"
+    )
+
+
+def test_orphan_local_bookmark_cleanup_keeps_supported_targets_only(monkeypatch) -> None:
+    live_revision = make_revision(
+        change_id="live-change",
+        commit_id="live-commit",
+        description="live\n",
+    )
+    stale_revision = make_revision(
+        change_id="stale-change",
+        commit_id="stale-commit",
+        description="stale\n",
+    )
+
+    class FakeJjClient:
+        def query_revisions_by_commit_ids(self, commit_ids):
+            return (live_revision, stale_revision)
+
+    def fake_discover_stacks_from_revisions(*, jj_client, revisions):
+        return (SimpleNamespace(revisions=(live_revision,)),)
+
+    monkeypatch.setattr(
+        cleanup_module,
+        "discover_stacks_from_revisions",
+        fake_discover_stacks_from_revisions,
+    )
+
+    plans = cleanup_module._plan_orphan_local_bookmark_cleanups(
+        bookmark_states={
+            "other/live": BookmarkState(name="other/live", local_targets=("skip",)),
+            "review/conflict": BookmarkState(
+                name="review/conflict",
+                local_targets=("left", "right"),
+            ),
+            "review/live": BookmarkState(
+                name="review/live",
+                local_targets=("live-commit",),
+            ),
+            "review/stale": BookmarkState(
+                name="review/stale",
+                local_targets=("stale-commit",),
+            ),
+        },
+        context=_fake_context(jj_client=cast(JjClient, FakeJjClient())),
+        tracked_bookmarks=set(),
+    )
+
+    actions_by_bookmark = {plan.bookmark: plan.action for plan in plans}
+    assert actions_by_bookmark["review/conflict"].status == "blocked"
+    assert actions_by_bookmark["review/stale"].status == "planned"
+    assert "review/live" not in actions_by_bookmark
+    assert "other/live" not in actions_by_bookmark
 
 
 def _status_revision(
