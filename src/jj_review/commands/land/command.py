@@ -258,8 +258,9 @@ async def _stream_land_async(
                 t"Could not load GitHub repository {github_repository.full_name}"
             ) from error
         with console.spinner(description="Loading bookmark state"):
+            bookmark_states = prepared.client.list_bookmark_states()
             trunk_branch = resolve_trunk_branch(
-                bookmark_states=prepared.client.list_bookmark_states(),
+                bookmark_states=bookmark_states,
                 github_repository_state=github_repository_state,
                 remote_name=remote.name,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
@@ -273,7 +274,7 @@ async def _stream_land_async(
 
         async def finish_plan(plan: LandPlan) -> LandResult:
             bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
-                client=prepared.client,
+                bookmark_states=bookmark_states,
                 prefix=prepared_land.context.config.bookmark_prefix,
                 cleanup_bookmarks=prepared_land.cleanup_bookmarks,
                 cleanup_user_bookmarks=prepared_land.context.config.cleanup_user_bookmarks,

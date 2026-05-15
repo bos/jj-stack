@@ -23,7 +23,6 @@ from jj_review.review.status import (
 from jj_review.ui import Message
 
 from .models import (
-    BookmarkStateReader,
     LandAction,
     LandPlan,
     LandRevision,
@@ -401,7 +400,7 @@ def _plan_review_bookmark_cleanup(
 
 def plan_review_bookmark_cleanup_for_revisions(
     *,
-    client: BookmarkStateReader,
+    bookmark_states: dict[str, BookmarkState],
     prefix: str,
     cleanup_bookmarks: bool,
     cleanup_user_bookmarks: bool,
@@ -418,7 +417,10 @@ def plan_review_bookmark_cleanup_for_revisions(
             bookmark_managed=landed_revision.bookmark_managed,
             cleanup_user_bookmarks=cleanup_user_bookmarks,
             prefix=prefix,
-            bookmark_state=client.get_bookmark_state(landed_revision.bookmark),
+            bookmark_state=bookmark_states.get(
+                landed_revision.bookmark,
+                BookmarkState(name=landed_revision.bookmark),
+            ),
             change_id=landed_revision.change_id,
             commit_id=landed_revision.commit_id,
         )
