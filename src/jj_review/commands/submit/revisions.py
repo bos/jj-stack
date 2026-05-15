@@ -141,6 +141,12 @@ def sync_local_bookmarks(
     if run.dry_run:
         return
 
+    local_target_change_ids = _resolve_local_target_change_ids_for_bookmark_updates(
+        bookmark_result=bookmark_result,
+        bookmark_states=bookmark_states,
+        client=client,
+        bookmark_updates=bookmark_updates,
+    )
     applied: list[dict[str, str]] = []
     for prepared_revision in bookmark_updates:
         bookmark_state = bookmark_states.get(
@@ -152,7 +158,7 @@ def sync_local_bookmarks(
             bookmark_state=bookmark_state,
             cached_change=bookmark_result.state.changes.get(prepared_revision.change_id),
             change_id=prepared_revision.change_id,
-            jj_client=client,
+            local_target_change_ids=local_target_change_ids,
         )
         client.set_bookmark(
             prepared_revision.bookmark,
@@ -175,6 +181,38 @@ def sync_local_bookmarks(
             "mutation": "sync_local_bookmarks",
         },
     )
+
+
+def _resolve_local_target_change_ids_for_bookmark_updates(
+    *,
+    bookmark_result: BookmarkResolutionResult,
+    bookmark_states: dict[str, BookmarkState],
+    client: JjClient,
+    bookmark_updates: tuple[PreparedSubmitRevision, ...],
+) -> dict[str, str]:
+    local_targets: list[str] = []
+    for prepared_revision in bookmark_updates:
+        cached_change = bookmark_result.state.changes.get(prepared_revision.change_id)
+        if _cached_change_manages_bookmark(
+            bookmark=prepared_revision.bookmark,
+            cached_change=cached_change,
+        ):
+            continue
+        bookmark_state = bookmark_states.get(
+            prepared_revision.bookmark,
+            BookmarkState(name=prepared_revision.bookmark),
+        )
+        local_target = bookmark_state.local_target
+        if local_target is not None:
+            local_targets.append(local_target)
+
+    if not local_targets:
+        return {}
+    revset = " | ".join(f"present('{target}')" for target in dict.fromkeys(local_targets))
+    return {
+        revision.commit_id: revision.change_id
+        for revision in client.query_revisions(revset)
+    }
 
 
 def _remote_push_plan(
@@ -345,7 +383,7 @@ def _bookmark_is_already_managed_for_change(
     bookmark_state: BookmarkState,
     cached_change: CachedChange | None,
     change_id: str,
-    jj_client: JjClient,
+    local_target_change_ids: dict[str, str],
 ) -> bool:
     """Whether `submit` is reasserting an already-managed bookmark for the same change.
 
@@ -359,23 +397,30 @@ def _bookmark_is_already_managed_for_change(
     case the default guard stays in effect so an unrelated bookmark cannot be silently
     retargeted.
 
-    A hidden `local_target` (e.g., abandoned by the user manually) returns False on the
-    same-change-id branch because `query_revisions` does not surface hidden revisions.
-    That keeps the default guard in effect, which is the safer behavior: forcing the
-    move would require recovering a hidden commit's identity that we cannot prove.
+    A hidden `local_target` (e.g., abandoned by the user manually) is absent from the
+    preloaded visible revision map. That keeps the default guard in effect, which is
+    the safer behavior: forcing the move would require recovering a hidden commit's
+    identity that we cannot prove.
     """
 
-    if (
-        cached_change is not None
-        and cached_change.manages_bookmark
-        and cached_change.bookmark == bookmark
-    ):
+    if _cached_change_manages_bookmark(bookmark=bookmark, cached_change=cached_change):
         return True
     local_target = bookmark_state.local_target
     if local_target is None:
         return False
-    revisions = jj_client.query_revisions(f"'{local_target}'")
-    return len(revisions) == 1 and revisions[0].change_id == change_id
+    return local_target_change_ids.get(local_target) == change_id
+
+
+def _cached_change_manages_bookmark(
+    *,
+    bookmark: str,
+    cached_change: CachedChange | None,
+) -> bool:
+    return (
+        cached_change is not None
+        and cached_change.manages_bookmark
+        and cached_change.bookmark == bookmark
+    )
 
 
 def _resolve_local_action(

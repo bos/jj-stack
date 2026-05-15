@@ -9,8 +9,10 @@ from jj_review.commands.submit.inputs import (
     preflight_private_commits as _preflight_private_commits,
 )
 from jj_review.commands.submit.models import (
+    LocalBookmarkAction,
     PreparedSubmitRevision,
     PushOperation,
+    SubmitMutationRun,
     SubmitOptions,
 )
 from jj_review.commands.submit.pull_requests import (
@@ -21,6 +23,7 @@ from jj_review.commands.submit.revisions import (
     _preflight_atomic_remote_push_plan,
     _resolve_local_action,
     prepare_submit_revisions as _prepare_submit_revisions,
+    sync_local_bookmarks as _sync_local_bookmarks,
 )
 from jj_review.errors import CliError
 from jj_review.jj.client import JjClient
@@ -29,6 +32,8 @@ from jj_review.models.github import GithubBranchRef, GithubPullRequest
 from jj_review.models.review_state import CachedChange, ReviewState
 from jj_review.models.stack import LocalRevision, LocalStack
 from jj_review.review.bookmarks import BookmarkResolutionResult, ResolvedBookmark
+from jj_review.state.journal import OperationJournal
+from jj_review.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
 
@@ -280,6 +285,82 @@ def test_pull_request_link_rejects_mismatched_pull_request_number() -> None:
         )
 
 
+def test_sync_local_bookmarks_allows_same_change_sideways_move_only() -> None:
+    client = _FakeSubmitMutationClient(
+        local_target_revisions={
+            "old-commit-1": make_revision(
+                commit_id="old-commit-1",
+                change_id="change-1",
+                description="old feature 1\n",
+            ),
+            "old-commit-2": make_revision(
+                commit_id="old-commit-2",
+                change_id="other-change",
+                description="old feature 2\n",
+            ),
+        }
+    )
+
+    _sync_local_bookmarks(
+        bookmark_result=BookmarkResolutionResult(
+            changed=False,
+            resolutions=(),
+            state=ReviewState(),
+        ),
+        bookmark_states={
+            "review/feature-1": BookmarkState(
+                local_targets=("old-commit-1",),
+                name="review/feature-1",
+            ),
+            "review/feature-2": BookmarkState(
+                local_targets=("old-commit-2",),
+                name="review/feature-2",
+            ),
+            "review/feature-3": BookmarkState(
+                local_targets=("old-missing-commit",),
+                name="review/feature-3",
+            ),
+        },
+        client=cast(JjClient, client),
+        prepared_revisions=(
+            _prepared_revision(
+                "review/feature-1",
+                "new-commit-1",
+                "batch",
+                change_id="change-1",
+                local_action="moved",
+            ),
+            _prepared_revision(
+                "review/feature-2",
+                "new-commit-2",
+                "batch",
+                change_id="change-2",
+                local_action="moved",
+            ),
+            _prepared_revision(
+                "review/feature-3",
+                "new-commit-3",
+                "batch",
+                change_id="change-3",
+                local_action="moved",
+            ),
+        ),
+        run=SubmitMutationRun(
+            dry_run=False,
+            journal=OperationJournal.disabled(),
+            state=ReviewState(),
+            state_changes={},
+            state_store=cast(ReviewStateStore, object()),
+        ),
+    )
+
+    assert client.set_bookmark_calls == [
+        ("review/feature-1", "new-commit-1", True),
+        ("review/feature-2", "new-commit-2", False),
+        ("review/feature-3", "new-commit-3", False),
+    ]
+
+
 class _FakeJjClientWithPrivateCommits:
     def __init__(self, private_revisions: tuple[LocalRevision, ...]) -> None:
         self._private_revisions = private_revisions
@@ -319,6 +400,27 @@ class _FakeSubmitPreparationClient:
         self.set_bookmark_calls.append((bookmark, revision))
 
 
+class _FakeSubmitMutationClient:
+    def __init__(self, *, local_target_revisions: dict[str, LocalRevision]) -> None:
+        self._local_target_revisions = local_target_revisions
+        self.set_bookmark_calls: list[tuple[str, str, bool]] = []
+
+    def query_revisions(
+        self,
+        _revset: str,
+    ) -> tuple[LocalRevision, ...]:
+        return tuple(self._local_target_revisions.values())
+
+    def set_bookmark(
+        self,
+        bookmark: str,
+        revision: str,
+        *,
+        allow_backwards: bool = False,
+    ) -> None:
+        self.set_bookmark_calls.append((bookmark, revision, allow_backwards))
+
+
 def _local_stack(*revisions: LocalRevision) -> LocalStack:
     trunk = make_revision(
         commit_id="trunk",
@@ -338,18 +440,22 @@ def _prepared_revision(
     bookmark: str,
     commit_id: str,
     push_operation: PushOperation,
+    *,
+    change_id: str | None = None,
+    local_action: LocalBookmarkAction = "unchanged",
 ) -> PreparedSubmitRevision:
+    resolved_change_id = change_id or f"{commit_id}-change"
     return PreparedSubmitRevision(
         bookmark=bookmark,
         bookmark_source="saved",
-        change_id=f"{commit_id}-change",
+        change_id=resolved_change_id,
         expected_remote_target="old-commit" if push_operation == "git_update" else None,
-        local_action="unchanged",
+        local_action=local_action,
         push_operation=push_operation,
         remote_action="pushed",
         revision=make_revision(
             commit_id=commit_id,
-            change_id=f"{commit_id}-change",
+            change_id=resolved_change_id,
             description=f"{bookmark}\n",
         ),
     )
