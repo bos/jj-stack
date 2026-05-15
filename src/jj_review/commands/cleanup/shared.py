@@ -9,6 +9,7 @@ from typing import Literal
 import jj_review.console as console
 import jj_review.ui as ui
 from jj_review.bootstrap import CommandContext
+from jj_review.commands._close_actions import emit_action_row
 from jj_review.errors import ErrorMessage
 from jj_review.github.error_messages import (
     github_unavailable_message,
@@ -217,18 +218,7 @@ def _build_action_streamer(
         if not header_printed:
             console.output(header)
             header_printed = True
-        prefix, prefix_style, body_style = _action_presentation(action.status)
-        body = action.body
-        if action.kind != "tracking":
-            body = (ui.semantic_text(action.kind, "prefix"), ": ", body)
-        console.output(
-            ui.prefixed_line(
-                f"{prefix} ",
-                body,
-                message_labels=body_style,
-                prefix_labels=prefix_style,
-            )
-        )
+        emit_action_row(kind=action.kind, status=action.status, body=action.body)
 
     return emit_action
 
@@ -252,36 +242,6 @@ def _render_remote_and_github_lines(
     if github_message is not None:
         lines.append(("warning", plain_text(github_message)))
     return tuple(lines)
-
-
-def _action_presentation(
-    status: CleanupActionStatus,
-) -> tuple[str, tuple[str, ...] | None, tuple[str, ...] | None]:
-    if status == "applied":
-        return (
-            "  ✓",
-            ("signature status good",),
-            None,
-        )
-    if status == "planned":
-        return (
-            "  ~",
-            ("hint heading",),
-            None,
-        )
-    if status == "blocked":
-        return (
-            "  ✗",
-            ("error heading",),
-            ("warning heading",),
-        )
-    if status == "skipped":
-        return (
-            "  -",
-            ("hint heading",),
-            None,
-        )
-    return ("  ?", None, None)
 
 
 def _revision_label_template(revision: ReviewStatusRevision) -> ui.Message:

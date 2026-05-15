@@ -26,6 +26,7 @@ from jj_review.review.change_status import classify_review_change
 from jj_review.state.journal import OperationJournal
 from jj_review.ui import Message, plain_text
 
+ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
 CloseActionStatus = Literal["applied", "blocked", "planned"]
 type CloseActionBody = Message
 
@@ -247,22 +248,31 @@ def emit_close_actions(
     )
     console.output(header)
     for action in actions:
-        prefix, prefix_style, body_style = _close_action_presentation(action.status)
-        body = action.body
-        if action.kind != "tracking":
-            body = (ui.semantic_text(action.kind, "prefix"), ": ", body)
-        console.output(
-            ui.prefixed_line(
-                f"{prefix} ",
-                body,
-                prefix_labels=prefix_style,
-                message_labels=body_style,
-            )
+        emit_action_row(kind=action.kind, status=action.status, body=action.body)
+
+
+def emit_action_row(
+    *,
+    kind: str,
+    status: ActionPresentationStatus,
+    body: Message,
+) -> None:
+    prefix, prefix_style, body_style = _action_presentation(status)
+    message = body
+    if kind != "tracking":
+        message = (ui.semantic_text(kind, "prefix"), ": ", body)
+    console.output(
+        ui.prefixed_line(
+            f"{prefix} ",
+            message,
+            prefix_labels=prefix_style,
+            message_labels=body_style,
         )
+    )
 
 
-def _close_action_presentation(
-    status: CloseActionStatus,
+def _action_presentation(
+    status: ActionPresentationStatus,
 ) -> tuple[str, tuple[str, ...] | None, tuple[str, ...] | None]:
     if status == "applied":
         return (
@@ -281,6 +291,12 @@ def _close_action_presentation(
             "  ✗",
             ("error heading",),
             ("warning heading",),
+        )
+    if status == "skipped":
+        return (
+            "  -",
+            ("hint heading",),
+            None,
         )
     return ("  ?", None, None)
 
