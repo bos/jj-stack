@@ -143,16 +143,9 @@ class JjClient:
         """Resolve the selected review stack plus its trunk and base-parent context."""
 
         if revset is None:
-            (
-                trunk,
-                head,
-                selected_revset,
-                merged_trunk_side_branch_commit_ids,
-            ) = self._resolve_default_head_and_trunk()
+            trunk, head, selected_revset = self._resolve_default_head_and_trunk()
         else:
-            trunk, head, merged_trunk_side_branch_commit_ids = (
-                self._resolve_selected_head_and_trunk(revset)
-            )
+            trunk, head = self._resolve_selected_head_and_trunk(revset)
             selected_revset = revset
             if head.current_working_copy and head.empty:
                 raise UnsupportedStackError(
@@ -179,7 +172,6 @@ class JjClient:
         boundary, include_boundary_in_stack = self._resolve_review_stack_boundary(
             head_commit_id=head.commit_id,
             trunk=trunk,
-            merged_trunk_side_branch_commit_ids=merged_trunk_side_branch_commit_ids,
         )
         ancestor_revisions = self._query_revisions(
             f"{_quote_revset_symbol(boundary.commit_id)}::{_quote_revset_symbol(head.commit_id)}"
@@ -238,15 +230,14 @@ class JjClient:
 
     def _resolve_default_head_and_trunk(
         self,
-    ) -> tuple[LocalRevision, LocalRevision, str, set[str]]:
-        """Resolve the default head, `trunk()`, and merged side-branch parents in one call."""
+    ) -> tuple[LocalRevision, LocalRevision, str]:
+        """Resolve the default head and `trunk()` in one call."""
 
         revisions_with_trunk_membership = self._query_revisions_with_trunk_membership(
-            "trunk() | @ | @- | (merges() & ::trunk())"
+            "trunk() | @ | @-"
         )
         trunk: LocalRevision | None = None
         working_copy: LocalRevision | None = None
-        merged_side_branch_commit_ids: set[str] = set()
         revisions_by_commit_id: dict[str, LocalRevision] = {}
         for revision, is_trunk in revisions_with_trunk_membership:
             revisions_by_commit_id[revision.commit_id] = revision
@@ -254,8 +245,6 @@ class JjClient:
                 trunk = revision
             if revision.current_working_copy:
                 working_copy = revision
-            if len(revision.parents) > 1:
-                merged_side_branch_commit_ids.update(revision.parents[1:])
         trunk = self._validate_trunk(trunk)
         if working_copy is None:
             raise CliError("Could not resolve the current working-copy revision.")
@@ -267,14 +256,9 @@ class JjClient:
                 else None
             )
             if parent is not None:
-                return trunk, parent, "@-", merged_side_branch_commit_ids
-            return (
-                trunk,
-                self.resolve_revision("@-"),
-                "@-",
-                merged_side_branch_commit_ids,
-            )
-        return trunk, working_copy, "@", merged_side_branch_commit_ids
+                return trunk, parent, "@-"
+            return trunk, self.resolve_revision("@-"), "@-"
+        return trunk, working_copy, "@"
 
     def resolve_revision(self, revset: str) -> LocalRevision:
         """Resolve a revset to exactly one revision."""
@@ -514,20 +498,13 @@ class JjClient:
         *,
         head_commit_id: str,
         trunk: LocalRevision,
-        merged_trunk_side_branch_commit_ids: set[str],
     ) -> tuple[LocalRevision, bool]:
         """Resolve the nearest stack boundary on the selected-parent path to `head`."""
 
-        candidate_revset = f"::{_quote_revset_symbol(trunk.commit_id)}"
-        if merged_trunk_side_branch_commit_ids:
-            candidate_revset = (
-                f"({candidate_revset} | "
-                f"{_union_revset_symbols(sorted(merged_trunk_side_branch_commit_ids))})"
-            )
         boundary_candidates = self._query_revisions(
             "heads("
             f"first_ancestors({_quote_revset_symbol(head_commit_id)}) & "
-            f"{candidate_revset}"
+            f"::{_quote_revset_symbol(trunk.commit_id)}"
             ")",
             limit=2,
         )
@@ -544,17 +521,20 @@ class JjClient:
                 t"selected-parent path reached the root commit before {ui.revset('trunk()')}",
                 reason="reached_root_before_trunk",
             )
-        return boundary, boundary.commit_id in merged_trunk_side_branch_commit_ids
+        return boundary, self._is_trunk_side_parent(
+            boundary_commit_id=boundary.commit_id,
+            trunk_commit_id=trunk.commit_id,
+        )
 
     def _resolve_selected_head_and_trunk(
         self,
         revset: str,
-    ) -> tuple[LocalRevision, LocalRevision, set[str]]:
-        """Resolve `revset`, `trunk()`, and merged side-branch parents in one call."""
+    ) -> tuple[LocalRevision, LocalRevision]:
+        """Resolve `revset` and `trunk()` in one call."""
 
         try:
             revisions = self._query_revisions_with_trunk_and_selection_membership(
-                f"trunk() | ({revset}) | (merges() & ::trunk())",
+                f"trunk() | ({revset})",
                 selection_revset=revset,
             )
         except JjCommandError as error:
@@ -565,21 +545,18 @@ class JjClient:
 
         trunk: LocalRevision | None = None
         selected: list[LocalRevision] = []
-        merged_side_branch_commit_ids: set[str] = set()
         for revision, is_trunk, is_selected in revisions:
             if is_trunk and trunk is None:
                 trunk = revision
             if is_selected:
                 selected.append(revision)
-            if len(revision.parents) > 1:
-                merged_side_branch_commit_ids.update(revision.parents[1:])
 
         if not selected:
             raise CliError(t"Revset {ui.revset(revset)} did not resolve to a visible revision.")
         if len(selected) > 1:
             raise CliError(t"Revset {ui.revset(revset)} resolved to more than one revision.")
 
-        return self._validate_trunk(trunk), selected[0], merged_side_branch_commit_ids
+        return self._validate_trunk(trunk), selected[0]
 
     def _query_children_by_parent(
         self,
@@ -594,23 +571,26 @@ class JjClient:
             parent_commit_id: tuple(children) for parent_commit_id, children in grouped.items()
         }
 
-    def _merged_trunk_side_branch_commit_ids(self, trunk_commit_id: str) -> set[str]:
-        """Return side-branch tips merged into trunk via non-first-parent merges.
+    def _is_trunk_side_parent(
+        self,
+        *,
+        boundary_commit_id: str,
+        trunk_commit_id: str,
+    ) -> bool:
+        """Return whether the boundary was merged into trunk as a non-first parent.
 
-        `status` only needs the merge-side parents that make a selected-parent
-        walk safely stop before reaching the root. Querying every trunk ancestor
-        and all of their children scales with total repo history, so in large
-        repos we derive the same stop-set from trunk merge commits directly.
+        Boundary discovery already found the nearest selected-parent commit that
+        reaches the current trunk. To decide whether that boundary itself still
+        belongs in the review stack, only its immediate trunk-merge children are
+        relevant; scanning every merge under `trunk()` would make routine stack
+        discovery scale with repository history.
         """
 
         merge_revisions = self._query_revisions(
-            f"(merges() & ::{_quote_revset_symbol(trunk_commit_id)})"
+            f"children({_quote_revset_symbol(boundary_commit_id)}) & "
+            f"merges() & ::{_quote_revset_symbol(trunk_commit_id)}"
         )
-        return {
-            parent_commit_id
-            for revision in merge_revisions
-            for parent_commit_id in revision.parents[1:]
-        }
+        return any(boundary_commit_id in revision.parents[1:] for revision in merge_revisions)
 
     def get_config_string(self, key: str) -> str | None:
         """Return the string value of a jj config key, or None if unset."""

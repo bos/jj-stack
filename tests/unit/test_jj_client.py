@@ -144,7 +144,7 @@ def test_discover_review_stack_uses_parent_of_empty_working_copy_as_default_sele
             "log",
             "--no-graph",
             "-r",
-            "trunk() | @ | @- | (merges() & ::trunk())",
+            "trunk() | @ | @-",
             "-T",
             _trunk_scan_template(),
         ): (
@@ -191,7 +191,7 @@ def test_discover_review_stack_uses_non_empty_working_copy_as_default_selection(
             "log",
             "--no-graph",
             "-r",
-            "trunk() | @ | @- | (merges() & ::trunk())",
+            "trunk() | @ | @-",
             "-T",
             _trunk_scan_template(),
         ): (
@@ -262,7 +262,7 @@ def test_discover_review_stack_default_head_includes_merged_side_branch_boundary
             "log",
             "--no-graph",
             "-r",
-            "trunk() | @ | @- | (merges() & ::trunk())",
+            "trunk() | @ | @-",
             "-T",
             _trunk_scan_template(),
         ): trunk_scan,
@@ -271,12 +271,21 @@ def test_discover_review_stack_default_head_includes_merged_side_branch_boundary
             "log",
             "--no-graph",
             "-r",
-            "heads(first_ancestors('head-3') & (::'current-trunk' | 'merged'))",
+            "heads(first_ancestors('head-3') & ::'current-trunk')",
             "-T",
             _template(),
             "--limit",
             "2",
         ): merged,
+        (
+            "jj",
+            "log",
+            "--no-graph",
+            "-r",
+            "children('merged') & merges() & ::'current-trunk'",
+            "-T",
+            _template(),
+        ): current_trunk,
         (
             "jj",
             "log",
@@ -498,12 +507,21 @@ def test_discover_review_stack_excludes_revisions_already_reachable_from_trunk(
             "log",
             "--no-graph",
             "-r",
-            "heads(first_ancestors('head-3') & (::'current-trunk' | 'merged'))",
+            "heads(first_ancestors('head-3') & ::'current-trunk')",
             "-T",
             _template(),
             "--limit",
             "2",
         ): merged,
+        (
+            "jj",
+            "log",
+            "--no-graph",
+            "-r",
+            "children('merged') & merges() & ::'current-trunk'",
+            "-T",
+            _template(),
+        ): current_trunk,
         (
             "jj",
             "log",
@@ -682,7 +700,7 @@ def test_discover_review_stack_surfaces_stale_workspace_errors(
             "log",
             "--no-graph",
             "-r",
-            "trunk() | (head) | (merges() & ::trunk())",
+            "trunk() | (head)",
             "-T",
             _selection_scan_template("head"),
         )
@@ -952,7 +970,7 @@ def _selection_scan_command(selection_revset: str) -> tuple[str, ...]:
         "log",
         "--no-graph",
         "-r",
-        f"trunk() | ({selection_revset}) | (merges() & ::trunk())",
+        f"trunk() | ({selection_revset})",
         "-T",
         _selection_scan_template(selection_revset),
     )
@@ -976,34 +994,6 @@ def _runner(responses: dict[tuple[str, ...], str]):
         assert kwargs["check"] is False
         assert Path(kwargs["cwd"]) == Path("/repo")
         assert kwargs["text"] is True
-        if key not in responses and key == (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "trunk() | (merges() & ::trunk())",
-            "-T",
-            _trunk_scan_template(),
-        ):
-            fallback_key = (
-                "jj",
-                "log",
-                "--no-graph",
-                "-r",
-                "trunk()",
-                "-T",
-                _template(),
-                "--limit",
-                "2",
-            )
-            if fallback_key in responses:
-                trunk_line = responses[fallback_key]
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=_revision_with_flag_line(trunk_line, is_trunk=True),
-                    stderr="",
-                )
         if (
             key not in responses
             and len(key) == 8
@@ -1044,6 +1034,15 @@ def _runner(responses: dict[tuple[str, ...], str]):
                         stdout=responses[fallback_key],
                         stderr="",
                     )
+        if (
+            key not in responses
+            and len(key) == 7
+            and key[:4] == ("jj", "log", "--no-graph", "-r")
+            and key[5:] == ("-T", _template())
+        ):
+            revset = key[4]
+            if revset.startswith("children(") and ") & merges() & ::" in revset:
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if key not in responses:
             raise AssertionError(f"Unexpected command: {key!r}")
         return subprocess.CompletedProcess(command, 0, stdout=responses[key], stderr="")
