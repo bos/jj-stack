@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Literal
 
@@ -115,8 +116,11 @@ def _classify_revision_divergence(
 
     if remote_target is None or remote_target == local_commit_id:
         return "in_sync"
-    local_diff = client.get_commit_diff(local_commit_id)
-    remote_diff = client.get_commit_diff(remote_target)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        local_future = pool.submit(client.get_commit_diff, local_commit_id)
+        remote_future = pool.submit(client.get_commit_diff, remote_target)
+        local_diff = local_future.result()
+        remote_diff = remote_future.result()
     if local_diff == remote_diff:
         return "diff_equivalent"
     return "content_divergent"
