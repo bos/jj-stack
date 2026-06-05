@@ -1,77 +1,11 @@
 # jj-review
 
-`jj-review` sends a linear stack of local `jj` changes to GitHub as a stack of
-small dependent pull requests.
+`jj-review` sends a linear stack of local `jj` changes to GitHub as a stack of dependent pull
+requests.
 
-It is built for a rewrite-heavy review workflow. Split a feature into a few local changes, keep
-editing those changes in `jj`, and let `jj-review` keep the matching GitHub PR stack up to date.
-
-## Why use it
-
-Vanilla GitHub review gets awkward once one feature really wants to be reviewed in a series of
-steps. For example:
-
-- first refactor the shared model
-- then add the API on top
-- then add the UI on top of that
-
-You can model that with plain Git branches, but the bookkeeping quickly becomes unwieldy.
-`jj-review` takes a different approach:
-
-- the local `jj` DAG is the source of truth for the stack
-- each change gets one review branch and one PR
-- mutable history stays in `jj`, not in a parallel branch-management layer
-
-Those review branches show up locally as `jj` bookmarks with a configurable prefix. By default
-they use `review/...`, but a repo can pick another prefix such as `bosullivan/...`. They are the
-GitHub PR head branches. `jj-review` manages them for you, so most of the time you do not need
-to think about them directly.
-
-If you already use `jj` and GitHub pull requests, and you often want a series of small PRs
-instead of one large one, this tool is likely a good fit.
-
-## Performance
-
-The GitHub API is *slow*; a single roundtrip takes hundreds of milliseconds. `jj-review` reduces
-its impact in the best ways I could find:
-- GraphQL batch requests where possible
-- Concurrent use of the GitHub REST API
-
-(Early versions started out naively using the REST API serially, and they were horrendously
-slow. The tool as it stands is now tens of times faster on stacks of even modest size.)
-
-## Why use it with coding agents?
-
-Like people, coding agents produce better, more reviewable work when a task is split into
-smaller, self-contained steps.
-
-Any reviewer, human or not, will have an easier time with a series of smaller, self-contained
-incremental changes. This matters even more when review feedback needs to be applied to one part
-of a stack without obscuring the rest of the work.
-
-- Agents work best when tasks are decomposed. A stacked review lets an agent revise only the
-  commits that are wrong (and their descendants as needed), then resubmit.
-
-- Smaller PRs are far easier for both humans and agents to re-read after feedback. Context
-  windows are bigger in 2026, but agent attention is still limited, and human attention is under
-  ever more strain.
-
-- Validation is more easily staged. It's easier to approve and land good-to-go changes while
-  others are still in flux.
-
-- Mutable local history is more valuable with agents. Agent-produced first drafts often need
-  reshaping, and `jj` is the best tool to rework changes and history before refreshing GitHub.
-
-## Development note
-
-This project has been developed with heavy agent assistance. Judge it by the behaviour it provides:
-
-- The user experience is treated as part of correctness
-- User-facing docs are managed separately from the generated implementation work
-- The test suite covers the main workflows, with around 520 tests and greater than 80% coverage
-  as of May 2026
-- Performance has been a major focus, with a lot of attention to concurrent and batched
-  operations when those are costly (e.g. roundtrips to the GitHub API)
+It is built for a rewrite-heavy review workflow made up of many small changes. Split a feature
+into a few local parts, keep editing your changes in `jj`, and let `jj-review` keep the matching
+GitHub PR stack up to date.
 
 ## Quick start
 
@@ -80,7 +14,7 @@ This project has been developed with heavy agent assistance. Judge it by the beh
 - Python 3.14 or newer
 - `uv`
 - `jj` 0.39.0 or newer
-- GitHub authentication via `gh auth login` or a `GITHUB_TOKEN`
+- GitHub authentication via `gh auth login`, `GH_TOKEN`, or `GITHUB_TOKEN`
 
 ### Install
 
@@ -100,29 +34,39 @@ If `jj-review` is not on your shell `PATH`, run:
 uv tool update-shell
 ```
 
-### Two-minute first run
+### Before your first submit
 
-Suppose you are already in a `jj` repo, and it's hooked up to GitHub, and you have a few local
-commits stacked on top of `main`. Getting started is super easy.
+The happy path is a local `jj` stack that is ready to become a set of GitHub PRs:
 
-Inspect your current stack:
+- you are in a `jj` repo with a GitHub remote
+- `trunk()` resolves to the branch you want the bottom PR to target, usually `main`
+- your stack is linear
+- the changes you want to submit are visible and mutable in `jj`
+- GitHub authentication works from this shell
+
+If you are unsure what `jj-review` will do, inspect first:
 
 ```bash
 jj-review
 ```
 
-This defaults to `jj-review status`.
-`status` also accepts the short alias `st`.
+This is a synonym for `jj-review status` (and also accepts the short alias `st`.)
 
-Inspect every locally tracked stack in the repo:
+### Two-minute first run
+
+Suppose you have a few local changes stacked on top of `trunk()`:
+
+- refactor the shared model
+- add the API
+- add the UI
+
+Preview the submit plan without changing anything:
 
 ```bash
-jj-review list
+jj-review submit --dry-run
 ```
 
-`list` also accepts the short alias `ls`.
-
-Submit that stack to GitHub:
+Submit the stack to GitHub:
 
 ```bash
 jj-review submit
@@ -130,9 +74,10 @@ jj-review submit
 
 `submit` also accepts the short alias `sub`.
 
-When you first submit a stack, this will create one review bookmark per change (by default
-`review/...`; these are managed automatically). Those bookmarks are user-visible in `jj`, and
-managed by `jj-review`.
+On first submit, `jj-review` creates one review bookmark per change. By default these bookmarks
+look like `review/...`. They are normal `jj` bookmarks, and they are also the GitHub PR
+branches. `jj-review` manages them for you, so most of the time you do not need to move or
+rename them yourself.
 
 Inspect your stack again:
 
@@ -140,45 +85,79 @@ Inspect your stack again:
 jj-review
 ```
 
-At that point you should have one PR per local change, in a stack (each one based on its
-predecessor). Edit your changes locally in `jj`, run `jj-review submit` again, and the PR stack
-will be refreshed.
+At this point you should have one GitHub PR per local change, with each PR based on the
+review branch below it. Edit your changes locally with `jj`, run `jj-review submit`
+again, and the PR stack will be refreshed.
+
+If you are juggling more than one local review stack in the same repo:
+
+```bash
+jj-review list
+```
+
+`list` also accepts the short alias `ls`.
+
+## Mental model
+
+The unit of review is one local `jj` change. The local `jj` DAG is the source of truth
+for which changes are in the stack and what order they are in.
+
+On GitHub:
+
+- each `jj` change gets one review branch
+- each review branch gets one PR
+- each PR targets the review branch below it, except the bottom PR, which targets trunk
+
+For example:
+
+```text
+review/add-ui-...        -> PR #3 (base: review/add-api-...)
+review/add-api-...       -> PR #2 (base: review/refactor-model-...)
+review/refactor-model... -> PR #1 (base: main)
+main                     -> trunk
+```
+
+When you rewrite an intermediate change in `jj`, `jj-review` updates the matching review branch
+and PR, along with the changes that depend on it, instead of asking you to maintain a stack of
+Git branches by hand.
 
 ## Core workflow
 
-Your typical author loop will be dead simple:
+Your typical author loop is:
 
 1. Write code as a series of local `jj` changes.
 2. Run `jj-review submit`.
 3. Revise those changes locally as reviews come in.
 4. Re-run `jj-review submit`.
-5. Once some PRs are approved, rebase if needed, then run `jj-review land` to push those exact
-   local commits to GitHub trunk and forget the local review bookmarks for the landed changes.
-6. Run `jj-review cleanup --rebase` only if lower changes were merged through different commit
-   IDs and your local stack still contains those merged ancestors. After that local rewrite, run
-   `jj-review submit` to refresh the surviving PRs on GitHub.
+5. Once the bottom changes are approved, run `jj-review land`.
+6. If lower changes were merged on GitHub instead of with `jj-review land`, run
+   `jj-review cleanup --rebase` when status says cleanup is needed.
 
-The key point is that you get to keep thinking in terms of local logical changes. `jj-review`
-manages those changes on GitHub, does some housekeeping for you locally, and that's it.
+`land` pushes the ready changes at the bottom of your stack to GitHub trunk and forgets
+the local review bookmarks for the landed changes. It stops before the first change that
+is not ready to land.
 
-When you are juggling more than one local review stack in the same repo, run
-`jj-review list` to see the locally tracked stacks at a glance before drilling
-into one of them with `jj-review status`.
+`cleanup --rebase` is helpful when some lower changes were merged on GitHub, for example with a
+squash merge, and your local stack still contains those old merged ancestors. It removes those
+merged ancestors from the local stack and rebases the remaining changes onto `trunk()`.
 
-`list` or `status` may say a tracked stack changed since its last submit. Run
-`jj-review status <head-change-id>` for the listed stack; that status output will
-show whether the next step is a plain submit or cleanup first.
+When `list` or `status` says a tracked stack changed since the last submit, inspect that
+stack directly:
 
-`list` may also show an `orphan` row. That means a PR is still open, but the
-local change it reviewed is no longer part of any current stack. When you are
-ready to retire that PR, run `jj-review close --cleanup --pull-request <pr>`.
+```bash
+jj-review status <head-change-id>
+```
 
-One piece of that housekeeping is the review bookmark set. Those bookmarks are the review
-branches pushed to GitHub for each change. You may see them in `jj log` or `jj bookmark list`,
-but you generally should not move or rename them by hand unless you are doing explicit repair
-work.
+The status output will show whether the next step is a plain submit or cleanup first.
 
-## Learn More
+If `list` shows an `orphan` row, a PR is still open but the local change it reviewed is
+no longer part of any current stack. When you are ready to retire that PR:
+
+```bash
+jj-review close --cleanup --pull-request <pr>
+```
+
+## Learn more
 
 User guides live under [docs](docs/README.md):
 
@@ -186,62 +165,124 @@ User guides live under [docs](docs/README.md):
 - [Daily workflow](docs/daily-workflow.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
-I've written what I hope is comprehensive built-in help.
+The built-in help is the flag reference:
 
 ```bash
 jj-review --help
 jj-review submit --help
 ```
 
-A few housekeeping commands are hidden by default.
+A few repair and housekeeping commands are hidden by default:
 
 ```bash
 jj-review help --all
 ```
 
-Like `jj`, `jj-review` also accepts `--color=always|never|debug|auto`. Without
-that flag, it follows your `jj` `ui.color` setting.
+Like `jj`, `jj-review` accepts `--color=always|never|debug|auto`. Without that flag, it
+follows your `jj` `ui.color` setting.
 
-## The lower bound of configuration is zero
+## Configuration
 
-For most use, `jj-review` needs no configuration. It derives `git`, `jj`, and GitHub information
-directly from `git`, `jj`, and `gh` whenever possible.
+For most use, `jj-review` needs no configuration. It derives `git`, `jj`, and GitHub
+information directly from `git`, `jj`, and `gh` whenever possible.
 
 Repo-level config can be helpful for defaults such as reviewers and labels:
 
 ```toml
 [jj-review]
-bookmark_prefix = "bosullivan"
+bookmark_prefix = "bos"
 reviewers = ["octocat"]
 labels = ["needs-review"]
 use_bookmarks = ["potato/*", "spam/eggs"]
 ```
 
-If you leave `bookmark_prefix` unset, `jj-review` keeps the default
-`review/...` prefix.
+If you leave `bookmark_prefix` unset, `jj-review` keeps the default `review/...` prefix.
 
-`jj-review submit` can override those defaults with `--reviewers`,
-`--team-reviewers`, `--label`, and `--use-bookmarks`.
+`jj-review submit` can override those defaults with `--reviewers`, `--team-reviewers`,
+`--label`, and `--use-bookmarks`.
 
-`cleanup_user_bookmarks` defaults to `false`. Leave it unset if bookmarks selected through
-`use_bookmarks` should be preserved during later cleanup. Set it to `true` only if you want
-`cleanup`, `close --cleanup`, and `land` to delete those reused bookmarks too when that cleanup
-is otherwise safe.
+`cleanup_user_bookmarks` defaults to `false`. Leave it unset if bookmarks selected
+through `use_bookmarks` should be preserved during later cleanup. Set it to `true` only
+if you want `cleanup`, `close --cleanup`, and `land` to delete those reused bookmarks too
+when that cleanup is otherwise safe.
 
-For authentication, `jj-review` checks `GH_TOKEN`, then `GITHUB_TOKEN`, then falls back to `gh
-auth token` if `gh`, the GitHub CLI, is installed and authenticated.
+For authentication, `jj-review` checks `GH_TOKEN`, then `GITHUB_TOKEN`, then falls back
+to `gh auth token` if `gh`, the GitHub CLI, is installed and authenticated.
 
-## Scope: narrow
+## Why use it
+
+The standard GitHub code review model gets awkward once a feature wants to be reviewed as a
+series of dependent steps, especially when intermediate steps need revision.
+
+While you could model that with plain Git branches, the bookkeeping quickly becomes unwieldy.
+`jj-review` takes a different approach:
+
+- your local `jj` DAG is the source of truth for the stack
+- history stays mutable in `jj`
+- GitHub gets the review branches and PRs it needs
+- when you modify an intermediate change, `jj-review` does the PR and branch wrangling
+
+The key point is that you get to keep thinking in terms of local logical changes. `jj-review`
+manages the GitHub projection and the local review bookmarks, and that's it.
+
+## Why use it with coding agents?
+
+Like people, coding agents produce better, more easily reviewed work when a task is split
+into smaller, self-contained steps.
+
+Any reviewer, human or not, will have an easier time with a series of incremental changes. This
+matters even more when review feedback needs to be applied to one part of a stack without
+obscuring the rest of the work.
+
+- Agents work best when tasks are decomposed. A stacked review lets an agent revise only
+  the commits that are wrong, and their descendants as needed, then resubmit.
+
+- Smaller PRs are far easier for both humans and agents to re-read after feedback.
+  Context windows are bigger in 2026, but agent attention is still limited, and human
+  attention feels under ever more strain.
+
+- Validation is more easily staged. It's easier to approve and land good changes while others
+  are still in flux.
+
+- Mutable local history is more valuable with agents. Agent-produced first drafts often need
+  reshaping, and `jj` is the best tool to rework changes and history before refreshing GitHub.
+
+## Performance
+
+Although `jj-review` is written in Python, this does not significantly affect its speed.
+The real determinants of its performance are the GitHub API and the `jj` command.
+
+The GitHub API is *slow*; a single roundtrip takes many hundreds of milliseconds. `jj-review`
+reduces its impact with:
+
+- GraphQL batch requests where possible
+- concurrent use of the GitHub REST API
+
+`jj-review` also batches calls to `jj` and minimizes the amount of work those calls must
+do.
+
+## Development note
+
+This project has been developed with heavy coding agent assistance; almost all code is
+agent-written. Nevertheless, I've provided heavy oversight.
+
+- quality of the user experience is paramount
+- user-facing docs are managed separately from generated implementation work
+- the test suite covers most workflows, with around 520 tests and greater than 80% coverage as
+  of June 2026
+- performance has been a major focus, with close attention to concurrent and batched
+  operations to hide costs such as roundtrips to the GitHub API
+
+## Focus and future
 
 `jj-review` is intentionally focused:
 
 - `jj` has best-in-class mutable history
-- `jj-review` is GitHub only (at least for now)
-- linear stacks only (ever tried reviewing a DAG of changes? no thx)
+- `jj-review` is GitHub only, at least for now
+- linear stacks only
 - one PR per change ID
 
-Other tools that layer stacked reviews on top of GitHub are either super minimal, or are based
-on `git` and have to add a ton of history mangling commands to their UIs.
-
-In late 2025, GitHub's CTO said they were working on stacked review support. If that ever
-launches, `jj-review` should be able to easily accommodate it.
+GitHub is developing its own stacked review support, currently in limited preview. That model
+appears compatible with `jj-review`'s current model. Once stacked review support launches more
+widely, I'll be able to test the API and server-side merge/rebase behaviour, and quickly support
+it in `jj-review` with minimal change to the CLI UX.
