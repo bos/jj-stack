@@ -18,7 +18,7 @@ intentionally focused on one linear stack at a time.
 `jj-review` will by default submit the current stack ending at `@-` (the most recent completed
 change below your working directory). In the common case, this is the stack you just built on
 top of `trunk()`. If `trunk()` has advanced since you last rebased, your stack instead starts
-from an older ancestor of `trunk()`. `jj-review status` will show the ancestor in the footer
+from an older ancestor of `trunk()`. `jj-review view` will show the ancestor in the footer
 beneath your stack, so you can see exactly what the stack is based on.
 
 You can easily check what the tool thinks that stack is:
@@ -27,7 +27,7 @@ You can easily check what the tool thinks that stack is:
 jj-review
 ```
 
-This is the same command as `jj-review status`. (`status` also accepts the short alias `st`.)
+This is the same command as `jj-review view`.
 
 This is a good go-to command whenever you are unsure what your stack looks like or what you have
 submitted for review.
@@ -84,7 +84,7 @@ This will notify reviewers who approved or asked for changes to a PR.
 
 ## 5. Check readiness
 
-Use `status` when you need to answer:
+Use `view` when you need to answer:
 
 - which changes already have PRs
 - which PRs are draft, approved, blocked, or need cleanup
@@ -95,7 +95,7 @@ first to start working on that stack locally.
 If you want to inspect the stack for one linked PR directly:
 
 ```bash
-jj-review status --pull-request 7
+jj-review view --pull-request 7
 ```
 
 (You can use `-p` as an alias for `--pull-request`.)
@@ -104,13 +104,13 @@ If you want to inspect several stacks in one run, pass several selectors in
 the order you want them shown:
 
 ```bash
-jj-review status foo --pull-request 7 bar
+jj-review view foo --pull-request 7 bar
 ```
 
 For more detail, pass `--verbose`:
 
 ```bash
-jj-review status --verbose
+jj-review view --verbose
 ```
 
 ## 6. Land the changes that are ready
@@ -214,7 +214,7 @@ jj-review close --cleanup --pull-request 7
 
 If `jj-review list` says another tracked stack changed since its last submit, either run
 `jj-review submit <head-change-id>` to refresh the PR branches or run
-`jj-review status <head-change-id>` to inspect first. `status` only emits this warning for another
+`jj-review view <head-change-id>` to inspect first. `view` only emits this warning for another
 stack when that stack is built on top of a change in the stack you are inspecting. Status calls
 out whether commit IDs, PR bases, or the stack head differ from the last successful submit, and
 it will also show if cleanup is needed first.
@@ -224,7 +224,7 @@ it will also show if cleanup is needed first.
 The steady-state loop is:
 
 ```bash
-jj-review status
+jj-review view
 jj-review submit
 # edit in jj
 jj-review submit
@@ -239,8 +239,8 @@ If a command is interrupted mid-way (crash, Ctrl-C, network failure), inspect th
 stack and rerun the command you were using with an explicit revset or change ID:
 
 ```bash
-jj-review status
-jj-review status <change-id>
+jj-review view
+jj-review view <change-id>
 jj-review submit <change-id>
 jj-review close --cleanup <change-id>
 ```

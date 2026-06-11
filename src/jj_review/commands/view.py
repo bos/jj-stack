@@ -63,19 +63,19 @@ _SUMMARY_SECTION_TAIL_COUNT = 3
 
 HELP = "Check the review status of one or more jj stacks"
 
-StatusSelectorKind = Literal["pull_request", "revset"]
+ViewSelectorKind = Literal["pull_request", "revset"]
 
 
 @dataclass(frozen=True, slots=True)
-class StatusSelector:
-    """One explicit selector from the `status` command line."""
+class ViewSelector:
+    """One explicit selector from the `view` command line."""
 
-    kind: StatusSelectorKind
+    kind: ViewSelectorKind
     value: str
 
 
 @dataclass(frozen=True, slots=True)
-class _ResolvedStatusSelector:
+class _ResolvedViewSelector:
     note: ui.Message | None
     revset: str | None
 
@@ -88,7 +88,7 @@ class _ClassifiedStatusRevision:
     status: ReviewChangeStatus
 
 
-def status(
+def view(
     *,
     cli_args: JjCliArgs,
     debug: bool,
@@ -96,10 +96,10 @@ def status(
     pull_request: str | Sequence[str] | None,
     repository: Path | None,
     revset: str | Sequence[str] | None,
-    selectors: Sequence[StatusSelector] | None = None,
+    selectors: Sequence[ViewSelector] | None = None,
     verbose: bool,
 ) -> int:
-    """CLI entrypoint for `status`."""
+    """CLI entrypoint for `view`."""
 
     context = bootstrap_context(
         repository=repository,
@@ -122,7 +122,7 @@ def _run_status(
     *,
     context: CommandContext,
     fetch: bool,
-    selectors: tuple[StatusSelector, ...],
+    selectors: tuple[ViewSelector, ...],
     verbose: bool,
 ) -> int:
     if fetch:
@@ -213,8 +213,8 @@ def _emit_connected_stale_stacks_advisory(
 ) -> None:
     """Hint that connected stacks changed since their last successful submit.
 
-    This intentionally walks only descendants of the stack(s) status rendered.
-    Repo-wide stale-stack warnings belong to `list`; plain `status` should not
+    This intentionally walks only descendants of the stack(s) view rendered.
+    Repo-wide stale-stack warnings belong to `list`; plain `view` should not
     inspect or warn about unrelated review work.
     """
 
@@ -271,47 +271,47 @@ def _normalize_status_selectors(
     *,
     pull_request: str | Sequence[str] | None,
     revset: str | Sequence[str] | None,
-    selectors: Sequence[StatusSelector] | None,
-) -> tuple[StatusSelector, ...]:
+    selectors: Sequence[ViewSelector] | None,
+) -> tuple[ViewSelector, ...]:
     if selectors is not None:
         return tuple(selectors)
 
-    ordered: list[StatusSelector] = []
+    ordered: list[ViewSelector] = []
     if pull_request is not None:
         if isinstance(pull_request, str):
-            ordered.append(StatusSelector(kind="pull_request", value=pull_request))
+            ordered.append(ViewSelector(kind="pull_request", value=pull_request))
         else:
             ordered.extend(
-                StatusSelector(kind="pull_request", value=value) for value in pull_request
+                ViewSelector(kind="pull_request", value=value) for value in pull_request
             )
     if revset is not None:
         if isinstance(revset, str):
-            ordered.append(StatusSelector(kind="revset", value=revset))
+            ordered.append(ViewSelector(kind="revset", value=revset))
         else:
-            ordered.extend(StatusSelector(kind="revset", value=value) for value in revset)
+            ordered.extend(ViewSelector(kind="revset", value=value) for value in revset)
     return tuple(ordered)
 
 
 def _resolve_status_selector(
     *,
     context: CommandContext,
-    selector: StatusSelector,
-) -> _ResolvedStatusSelector:
+    selector: ViewSelector,
+) -> _ResolvedViewSelector:
     if selector.kind == "pull_request":
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
-            action_name="status",
+            action_name="view",
             jj_client=context.jj_client,
             pull_request_reference=selector.value,
             revset=None,
         )
-        return _ResolvedStatusSelector(
+        return _ResolvedViewSelector(
             note=t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}",
             revset=resolved_revset,
         )
-    return _ResolvedStatusSelector(
+    return _ResolvedViewSelector(
         note=None,
         revset=resolve_selected_revset(
-            command_label="status",
+            command_label="view",
             default_revset=None,
             require_explicit=False,
             revset=selector.value,
@@ -357,7 +357,7 @@ def _prepared_status_identity(prepared_status: PreparedStatus) -> tuple[str, ...
     )
 
 
-def _status_heading(selector: StatusSelector) -> ui.Message:
+def _status_heading(selector: ViewSelector) -> ui.Message:
     if selector.kind == "pull_request":
         return f"Status for PR {selector.value}:"
     return t"Status for {ui.revset(selector.value)}:"
@@ -876,7 +876,7 @@ def _link_advisory_summary_row(
         detail = (
             "GitHub did not report a PR for the remembered review branch of "
             f"{change_phrase}. Run ",
-            ui.cmd("jj-review status --fetch <change>"),
+            ui.cmd("jj-review view --fetch <change>"),
             " if branch state may be stale. Relink an open PR if one exists; otherwise run ",
             restart_submit_command,
             " to create fresh PRs.",
@@ -887,7 +887,7 @@ def _link_advisory_summary_row(
         detail = (
             "GitHub reports multiple PRs for the remembered review branch of "
             f"{change_phrase}. Run ",
-            ui.cmd("jj-review status --fetch <change>"),
+            ui.cmd("jj-review view --fetch <change>"),
             " to refresh, then relink the intended open PR.",
         )
         return label, detail

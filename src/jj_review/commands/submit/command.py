@@ -385,7 +385,7 @@ def _reject_restart_pull_request_collisions(
             t"Cannot restart {ui.change_id(prepared_revision.change_id)} with "
             t"{ui.bookmark(prepared_revision.bookmark)} because GitHub already reports "
             t"PR #{pull_request.number} for that branch.",
-            hint=t"Run {ui.cmd('jj-review status --fetch')} and retry with current state.",
+            hint=t"Run {ui.cmd('jj-review view --fetch')} and retry with current state.",
         )
     details = ui.join(
         lambda item: t"{ui.change_id(item[0].change_id)} -> PR #{item[1].number}",
@@ -394,7 +394,7 @@ def _reject_restart_pull_request_collisions(
     raise CliError(
         t"Cannot restart with fresh PRs because GitHub already reports PRs for "
         t"the selected replacement branches: {details}.",
-        hint=t"Run {ui.cmd('jj-review status --fetch')} and retry with current state.",
+        hint=t"Run {ui.cmd('jj-review view --fetch')} and retry with current state.",
     )
 
 

@@ -4,7 +4,7 @@ from io import StringIO
 from types import SimpleNamespace
 from typing import cast
 
-import jj_review.commands.status as status_module
+import jj_review.commands.view as view_module
 import jj_review.console as console_module
 import jj_review.ui as ui_module
 from jj_review.config import RepoConfig
@@ -76,7 +76,7 @@ def _render_lines(*lines: ui_module.Renderable) -> tuple[str, ...]:
     return tuple(stdout.getvalue().splitlines())
 
 
-def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> None:
+def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> None:
     merged_revision = _status_revision(
         change_id="abcdefghijkl",
         pull_request_lookup=_lookup(
@@ -90,7 +90,7 @@ def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> 
     )
 
     lines = _render_lines(
-        *status_module.render_status_advisory_lines(
+        *view_module.render_status_advisory_lines(
             result=cast(
                 StatusResult,
                 SimpleNamespace(
@@ -111,9 +111,9 @@ def test_status_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> 
     assert "merged into team/feature-base" in normalized_lines
 
 
-def test_status_advises_submit_when_selected_stack_changed_since_submit() -> None:
+def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     lines = _render_lines(
-        *status_module.render_status_advisory_lines(
+        *view_module.render_status_advisory_lines(
             result=cast(
                 StatusResult,
                 SimpleNamespace(
@@ -146,7 +146,7 @@ def test_status_advises_submit_when_selected_stack_changed_since_submit() -> Non
     assert "New stack head bcdefghi" in normalized_lines
 
 
-def test_status_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
+def test_view_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
     revision = _status_revision(
         change_id="loqvlqrqabcdefghijkl",
         pull_request_lookup=_lookup(
@@ -156,7 +156,7 @@ def test_status_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
     )
 
     lines = _render_lines(
-        *status_module.render_status_advisory_lines(
+        *view_module.render_status_advisory_lines(
             result=cast(
                 StatusResult,
                 SimpleNamespace(
@@ -178,7 +178,7 @@ def test_status_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
     assert "changes below" not in normalized_lines
 
 
-def test_status_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
+def test_view_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
     revision = _status_revision(
         cached_change=CachedChange(
             bookmark="review/feature-8-abcdefgh",
@@ -192,7 +192,7 @@ def test_status_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
     )
 
     lines = _render_lines(
-        *status_module.render_status_advisory_lines(
+        *view_module.render_status_advisory_lines(
             result=cast(
                 StatusResult,
                 SimpleNamespace(
@@ -208,13 +208,13 @@ def test_status_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
 
     assert "Missing GitHub PR" in normalized_lines
     assert "GitHub did not report a PR for the remembered review branch" in normalized_lines
-    assert "jj-review status --fetch <change>" in normalized_lines
+    assert "jj-review view --fetch <change>" in normalized_lines
     assert "Relink an open PR if one exists" in normalized_lines
     assert "jj-review submit --restart @" in normalized_lines
     assert "GitHub did not report remembered PR #42 for this branch" in normalized_lines
 
 
-def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
+def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
     revision = _status_revision(
         bookmark="review/feature-8-abcdefgh",
         cached_change=CachedChange(
@@ -230,7 +230,7 @@ def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None
         subject="feature 8",
     )
 
-    lines = status_module.render_status_summary_lines(
+    lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
             render_revision_log_lines=lambda current_revision, *, color_when: (
@@ -252,7 +252,7 @@ def test_status_summary_does_not_call_tracked_missing_pr_not_submitted() -> None
     )
 
 
-def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fails() -> None:
+def test_view_summary_uses_cached_review_decision_when_live_decision_lookup_fails() -> None:
     revision = _status_revision(
         bookmark="review/feature-7-abcdefgh",
         cached_change=CachedChange(
@@ -276,7 +276,7 @@ def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fa
         subject="feature 7",
     )
 
-    lines = status_module.render_status_summary_lines(
+    lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
             render_revision_log_lines=lambda current_revision, *, color_when: (
@@ -294,7 +294,7 @@ def test_status_summary_uses_cached_review_decision_when_live_decision_lookup_fa
     assert "PR #7 approved" in normalized_lines
 
 
-def test_status_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
+def test_view_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
     revisions = tuple(
         _status_revision(
             bookmark=f"review/feature-{index}",
@@ -305,7 +305,7 @@ def test_status_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
         for index in range(8, 0, -1)
     )
 
-    lines = status_module.render_status_summary_lines(
+    lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
             render_revision_log_lines=lambda revision, *, color_when: (
@@ -338,7 +338,7 @@ def test_status_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
     )
 
 
-def test_status_verbose_keeps_managed_review_bookmark_in_native_log_output() -> None:
+def test_view_verbose_keeps_managed_review_bookmark_in_native_log_output() -> None:
     revision = _status_revision(
         bookmark="review/feature-8-abcdefgh",
         change_id="abcdefgh1234",
@@ -346,7 +346,7 @@ def test_status_verbose_keeps_managed_review_bookmark_in_native_log_output() -> 
         subject="feature 8",
     )
 
-    lines = status_module.render_status_summary_lines(
+    lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
             render_revision_log_lines=lambda current_revision, *, color_when: (

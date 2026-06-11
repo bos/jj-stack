@@ -4,7 +4,7 @@ import pytest
 
 import jj_review.ui as ui
 from jj_review.cli import main
-from jj_review.commands.status import StatusSelector
+from jj_review.commands.view import ViewSelector
 from jj_review.errors import CliError
 from tests.support.output_assertions import assert_output_contains
 
@@ -88,12 +88,12 @@ def test_main_renders_semantic_cli_errors_without_flattening_first(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fake_status(**kwargs) -> int:
+    def fake_view(**kwargs) -> int:
         raise CliError(("Problem at ", ui.change_id("abcdefgh1234")))
 
-    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
 
-    exit_code = main(["status"])
+    exit_code = main(["view"])
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -104,67 +104,67 @@ def test_main_renders_cli_error_hint_on_separate_line(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fake_status(**kwargs) -> int:
-        raise CliError("Problem at trunk.", hint="Run status --fetch and retry.")
+    def fake_view(**kwargs) -> int:
+        raise CliError("Problem at trunk.", hint="Run view --fetch and retry.")
 
-    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
 
-    exit_code = main(["status"])
+    exit_code = main(["view"])
     captured = capsys.readouterr()
 
     assert exit_code == 1
     err_lines = captured.err.splitlines()
     assert err_lines[0] == "Error: Problem at trunk."
-    assert "Hint: Run status --fetch and retry." in err_lines
+    assert "Hint: Run view --fetch and retry." in err_lines
 
 
-def test_main_preserves_status_selector_order(
+def test_main_preserves_view_selector_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: dict[str, object] = {}
 
-    def fake_status(**kwargs) -> int:
+    def fake_view(**kwargs) -> int:
         observed.update(kwargs)
         return 0
 
-    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
 
-    exit_code = main(["status", "foo", "--pull-request", "17", "bar"])
+    exit_code = main(["view", "foo", "--pull-request", "17", "bar"])
 
     assert exit_code == 0
     assert observed["selectors"] == (
-        StatusSelector(kind="revset", value="foo"),
-        StatusSelector(kind="pull_request", value="17"),
-        StatusSelector(kind="revset", value="bar"),
+        ViewSelector(kind="revset", value="foo"),
+        ViewSelector(kind="pull_request", value="17"),
+        ViewSelector(kind="revset", value="bar"),
     )
 
 
 @pytest.mark.parametrize(
     ("argv", "expected_revsets"),
     [
-        (["status", "--", "--pull-request", "7"], ["--pull-request", "7"]),
-        (["status", "foo", "--", "-f"], ["foo", "-f"]),
+        (["view", "--", "--pull-request", "7"], ["--pull-request", "7"]),
+        (["view", "foo", "--", "-f"], ["foo", "-f"]),
     ],
 )
-def test_main_preserves_status_positional_escape_for_dash_prefixed_revsets(
+def test_main_preserves_view_positional_escape_for_dash_prefixed_revsets(
     monkeypatch: pytest.MonkeyPatch,
     argv: list[str],
     expected_revsets: list[str],
 ) -> None:
     observed: dict[str, object] = {}
 
-    def fake_status(**kwargs) -> int:
+    def fake_view(**kwargs) -> int:
         observed.update(kwargs)
         return 0
 
-    monkeypatch.setattr("jj_review.cli.status_command.status", fake_status)
+    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
 
     exit_code = main(argv)
 
     assert exit_code == 0
     assert observed["revset"] == expected_revsets
     assert observed["selectors"] == tuple(
-        StatusSelector(kind="revset", value=value) for value in expected_revsets
+        ViewSelector(kind="revset", value=value) for value in expected_revsets
     )
 
 

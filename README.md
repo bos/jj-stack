@@ -50,7 +50,7 @@ If you are unsure what `jj-review` will do, inspect first:
 jj-review
 ```
 
-This is a synonym for `jj-review status` (and also accepts the short alias `st`.)
+This is a synonym for `jj-review view`.
 
 ### Two-minute first run
 
@@ -141,11 +141,11 @@ is not ready to land.
 squash merge, and your local stack still contains those old merged ancestors. It removes those
 merged ancestors from the local stack and rebases the remaining changes onto `trunk()`.
 
-When `list` or `status` says a tracked stack changed since the last submit, inspect that
+When `list` or `view` says a tracked stack changed since the last submit, inspect that
 stack directly:
 
 ```bash
-jj-review status <head-change-id>
+jj-review view <head-change-id>
 ```
 
 The status output will show whether the next step is a plain submit or cleanup first.

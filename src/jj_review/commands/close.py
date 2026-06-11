@@ -832,7 +832,7 @@ async def _process_missing_close_revision(
                 kind="close",
                 body=(
                     t"cannot close {revision_label} because GitHub no longer reports a "
-                    t"pull request for its branch; run {ui.cmd('status --fetch')} or "
+                    t"pull request for its branch; run {ui.cmd('view --fetch')} or "
                     t"{ui.cmd('relink')} before retrying"
                 ),
                 status="blocked",

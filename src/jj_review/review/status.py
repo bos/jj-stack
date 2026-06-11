@@ -202,7 +202,7 @@ def status_preparation_cli_error(error: UnsupportedStackError) -> CliError:
             hint=(
                 t"Inspect the divergent revisions with {ui.cmd('jj log -r')} "
                 t"{ui.revset(f'change_id({error.change_id})')} and reconcile them "
-                t"before retrying. This can happen after {ui.cmd('status --fetch')} "
+                t"before retrying. This can happen after {ui.cmd('view --fetch')} "
                 t"or another fetch imports remote bookmark updates for landed PRs."
             ),
         )
@@ -501,7 +501,7 @@ def _persist_status_cache_updates_with_optional_lock(
 
     lock = try_acquire_operation_lock(
         prepared.state_store.require_writable(),
-        command="status",
+        command="view",
     )
     if lock is None:
         return True

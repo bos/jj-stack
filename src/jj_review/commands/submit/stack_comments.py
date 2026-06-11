@@ -235,7 +235,7 @@ def _resolve_saved_managed_comment(
                     t"Saved {stack_comment_label(kind)} #{cached_comment_id} for pull request "
                     t"#{pull_request_number} does not belong to jj-review.",
                     hint=(
-                        t"Inspect the PR link with {ui.cmd('status --fetch')} or "
+                        t"Inspect the PR link with {ui.cmd('view --fetch')} or "
                         t"delete the saved comment ID before submitting again."
                     ),
                 )
@@ -264,7 +264,7 @@ def _discover_managed_comment(
             t"GitHub reports multiple jj-review {stack_comment_label(kind)}s for the same "
             t"pull request: {comment_ids}.",
             hint=(
-                t"Inspect the PR link with {ui.cmd('status --fetch')} or delete the "
+                t"Inspect the PR link with {ui.cmd('view --fetch')} or delete the "
                 t"extra {stack_comment_label(kind)}s before submitting again."
             ),
         )

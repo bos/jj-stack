@@ -67,7 +67,7 @@ Improve within that shape instead of forcing every command into a six-section te
 Highest-value commands should grow 2-3 short examples in long help:
 
 - `submit`
-- `status`
+- `view`
 - `land`
 - `close`
 - `import`
@@ -181,7 +181,7 @@ cover the cases users are likely to hit in real repos:
 
 - a bottom PR was squash-merged on GitHub and remaining changes now need local repair
 - a middle PR was closed or otherwise stopped being part of the live stack
-- a user pushed to a managed review bookmark manually and later `status` or `submit` fails
+- a user pushed to a managed review bookmark manually and later `view` or `submit` fails
   closed
 - `trunk()` advanced, but nothing landed, so the right answer is plain `jj rebase` rather than
   `cleanup --rebase`

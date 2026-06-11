@@ -16,7 +16,7 @@ from .submit_command_helpers import run_main
 @pytest.mark.parametrize(
     ("command", "args"),
     [
-        ("status", ()),
+        ("view", ()),
         ("submit", ()),
         ("cleanup", ()),
         ("land", ()),

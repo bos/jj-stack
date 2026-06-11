@@ -64,5 +64,5 @@ branches are a transport layer; the main authoring model is still local `jj` his
 When in doubt:
 
 - use `jj` to change the stack
-- use `jj-review status` to inspect the GitHub projection
+- use `jj-review view` to inspect the GitHub projection
 - use `jj-review submit` to refresh that projection

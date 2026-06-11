@@ -1580,7 +1580,7 @@ def test_submit_fails_closed_when_cached_pull_request_is_missing_on_github(
 
     assert exit_code == 1
     assert "Saved pull request link exists" in captured.err
-    assert "status --fetch" in captured.err
+    assert "view --fetch" in captured.err
     assert "relink" in captured.err
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
@@ -1616,7 +1616,7 @@ def test_submit_fails_closed_when_saved_pull_request_number_differs_for_head_bra
 
     assert exit_code == 1
     assert "Saved pull request #1 does not match" in captured.err
-    assert "status --fetch" in captured.err
+    assert "view --fetch" in captured.err
     assert "relink" in captured.err
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
@@ -1650,7 +1650,7 @@ def test_submit_fails_closed_when_github_reports_multiple_pull_requests(
 
     assert exit_code == 1
     assert "multiple pull requests" in captured.err
-    assert "status --fetch" in captured.err
+    assert "view --fetch" in captured.err
     assert "relink" in captured.err
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
@@ -1679,7 +1679,7 @@ def test_submit_fails_closed_when_github_reports_closed_pull_request_for_head_br
 
     assert exit_code == 1
     assert "in state closed" in captured.err
-    assert "status --fetch" in captured.err
+    assert "view --fetch" in captured.err
     assert "relink" in captured.err
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
@@ -1835,7 +1835,7 @@ def test_submit_preserves_cached_review_decision(
         state="APPROVED",
     )
 
-    assert run_main(repo, config_path, "status", change_id) == 0
+    assert run_main(repo, config_path, "view", change_id) == 0
     capsys.readouterr()
     assert state_store.load().changes[change_id].pr_review_decision == "approved"
 

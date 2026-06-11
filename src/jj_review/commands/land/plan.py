@@ -305,7 +305,7 @@ def _landability_decision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
                 t"GitHub no longer reports a pull request for its branch; run "
-                t"{ui.cmd('status --fetch')} or {ui.cmd('relink')} first"
+                t"{ui.cmd('view --fetch')} or {ui.cmd('relink')} first"
             )
         )
     if change_status.pr_lifecycle == "ambiguous":
@@ -313,7 +313,7 @@ def _landability_decision(
         return _LandabilityDecision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"{detail} Run {ui.cmd('status --fetch')} and repair the PR link with "
+                t"{detail} Run {ui.cmd('view --fetch')} and repair the PR link with "
                 t"{ui.cmd('relink')}."
             )
         )

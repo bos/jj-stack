@@ -26,7 +26,7 @@ _Benefit: medium — important when a previous jj-review bug, manual GitHub
 operation, or branch cleanup leaves local changes attached to closed or unusable
 PRs._
 
-`status` can now preserve and show remembered PR identity even when the saved
+`view` can now preserve and show remembered PR identity even when the saved
 review branch no longer has a matching PR, and `restart` gives users an explicit
 local repair command that clears stale PR identity, avoids reusing the old review
 branches, and leaves the next `submit` to create fresh PRs.
@@ -61,7 +61,7 @@ _Benefit: medium — useful for operators managing several stacks at once, but
 not blocking the core single-stack workflow._
 
 A future `import` design covers explicit stack materialization for one
-selected review stack, and `status --fetch` remains the read-only refresh
+selected review stack, and `view --fetch` remains the read-only refresh
 primitive.
 
 The remaining open question is whether the product should also grow a
@@ -108,7 +108,7 @@ Concrete follow-up questions:
   push to trunk, open a landing PR, or submit the ready prefix to a merge
   queue
 - how queue-backed landing should report queued, running, failed, and merged
-  states in `status` without introducing forge-owned stack metadata as a
+  states in `view` without introducing forge-owned stack metadata as a
   competing source of truth
 - how the queue or landing-PR path should preserve the current fail-closed
   behavior when the ready prefix changes locally while a queued landing is in

@@ -33,9 +33,9 @@ import jj_review.commands.land.command as land_command
 import jj_review.commands.list_ as list_command
 import jj_review.commands.relink as relink_command
 import jj_review.commands.restart as restart_command
-import jj_review.commands.status as status_command
 import jj_review.commands.submit.command as submit_command
 import jj_review.commands.unlink as unlink_command
+import jj_review.commands.view as view_command
 import jj_review.console as console
 import jj_review.ui as ui
 from jj_review import __version__
@@ -96,7 +96,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[_HelpCommand, ...]], ...] = (
         "Core commands",
         (
             _HelpCommand("submit", submit_command.HELP),
-            _HelpCommand("status", status_command.HELP),
+            _HelpCommand("view", view_command.HELP),
             _HelpCommand("list", list_command.HELP),
             _HelpCommand("land", land_command.HELP),
             _HelpCommand("close", close_command.HELP),
@@ -131,7 +131,6 @@ _PULL_REQUEST_OPTION_STRINGS = ("-p", "--pull-request")
 _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "submit": ("sub",),
     "list": ("ls",),
-    "status": ("st",),
 }
 _KNOWN_COMMANDS = frozenset(
     name
@@ -150,7 +149,7 @@ def _command_parameter_names(function: Callable[..., Any]) -> tuple[str, ...]:
     )
 
 
-_STATUS_HANDLER_ARGS = _command_parameter_names(status_command.status)
+_VIEW_HANDLER_ARGS = _command_parameter_names(view_command.view)
 
 
 class _TopLevelArgumentParser(ArgumentParser):
@@ -191,7 +190,7 @@ def build_parser() -> ArgumentParser:
         description=_normalized_help_text(_TOP_LEVEL_HELP_DESCRIPTION),
     )
     _add_common_options(parser, suppress_defaults=False)
-    parser.set_defaults(command="status", handler=_default_status_handler)
+    parser.set_defaults(command="view", handler=_default_view_handler)
     _normalize_help_action_text(parser)
     parser.add_argument(
         "--version",
@@ -298,16 +297,15 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Forget previous PR tracking for selected changes and create fresh PRs",
     )
-    status_parser = _add_revision_command(
+    view_parser = _add_revision_command(
         subcommands,
-        command="status",
-        aliases=_COMMAND_ALIASES["status"],
-        help_text=_normalized_help_text(status_command.HELP),
-        description_text=status_command.__doc__ or "",
+        command="view",
+        help_text=_normalized_help_text(view_command.HELP),
+        description_text=view_command.__doc__ or "",
         handler=_forward_handler(
-            status_command.status,
-            *_STATUS_HANDLER_ARGS,
-            selectors=_status_selectors_or_none,
+            view_command.view,
+            *_VIEW_HANDLER_ARGS,
+            selectors=_view_selectors_or_none,
         ),
         revset_help=(
             "Revsets to inspect; can be mixed with repeated --pull-request selectors; "
@@ -316,19 +314,19 @@ def build_parser() -> ArgumentParser:
         revset_nargs="*",
     )
     _add_help_argument(
-        status_parser,
+        view_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
         action="append",
         help="Inspect the stack for this PR number or URL; repeat to inspect several stacks",
     )
-    status_parser.add_argument(
+    view_parser.add_argument(
         "-f",
         "--fetch",
         action="store_true",
-        help="Fetch first so status uses current remote branch locations",
+        help="Fetch first so view uses current remote branch locations",
     )
-    status_parser.add_argument(
+    view_parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -912,13 +910,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     cli_args = JjCliArgs()
     normalized_argv = list(sys.argv[1:] if argv is None else argv)
-    status_args: _ParsedStatusCommandArgs | None = None
+    view_args: _ParsedViewCommandArgs | None = None
     try:
         cli_args, stripped_argv = _extract_config_overrides(normalized_argv)
         normalized_argv = _normalize_cli_args(stripped_argv)
-        status_args = _parse_status_command_args(normalized_argv)
-        if status_args is not None:
-            normalized_argv = list(status_args.argv)
+        view_args = _parse_view_command_args(normalized_argv)
+        if view_args is not None:
+            normalized_argv = list(view_args.argv)
         args = parser.parse_args(normalized_argv)
     except CliError as error:
         _print_early_cli_error(
@@ -929,8 +927,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return error.exit_code
     args.cli_args = cli_args
     args.normalized_argv = tuple(normalized_argv)
-    if args.command in {"status", "st"}:
-        args.status_selectors = () if status_args is None else status_args.selectors
+    if args.command == "view":
+        args.view_selectors = () if view_args is None else view_args.selectors
     _, effective_rich_color_mode = _resolve_rich_color_mode(
         cli_color=args.color,
         cli_args=cli_args,
@@ -955,10 +953,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 130
 
 
-def _default_status_handler(args: Namespace) -> int:
-    """Run bare `jj-review` as the default `status` command."""
+def _default_view_handler(args: Namespace) -> int:
+    """Run bare `jj-review` as the default `view` command."""
 
-    return status_command.status(
+    return view_command.view(
         cli_args=_global_cli_args(args),
         debug=args.debug,
         fetch=False,
@@ -971,23 +969,23 @@ def _default_status_handler(args: Namespace) -> int:
 
 
 @dataclass(frozen=True)
-class _ParsedStatusCommandArgs:
+class _ParsedViewCommandArgs:
     argv: tuple[str, ...]
-    selectors: tuple[status_command.StatusSelector, ...]
+    selectors: tuple[view_command.ViewSelector, ...]
 
 
-def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs | None:
-    """Rewrite `status` argv and preserve explicit selector order."""
+def _parse_view_command_args(argv: Sequence[str]) -> _ParsedViewCommandArgs | None:
+    """Rewrite `view` argv and preserve explicit selector order."""
 
     command_index = _find_subcommand_index(argv)
-    if command_index is None or argv[command_index] not in {"status", "st"}:
+    if command_index is None or argv[command_index] != "view":
         return None
 
     prefix = list(argv[: command_index + 1])
     command_argv = argv[command_index + 1 :]
     options: list[str] = []
     revsets: list[str] = []
-    selectors: list[status_command.StatusSelector] = []
+    selectors: list[view_command.ViewSelector] = []
     index = 0
     while index < len(command_argv):
         arg = command_argv[index]
@@ -995,7 +993,7 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
             trailing_revsets = command_argv[index + 1 :]
             revsets.extend(trailing_revsets)
             selectors.extend(
-                status_command.StatusSelector(kind="revset", value=value)
+                view_command.ViewSelector(kind="revset", value=value)
                 for value in trailing_revsets
             )
             break
@@ -1007,7 +1005,7 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
             options.extend((arg, value))
             if arg in _PULL_REQUEST_OPTION_STRINGS:
                 selectors.append(
-                    status_command.StatusSelector(
+                    view_command.ViewSelector(
                         kind="pull_request",
                         value=value,
                     )
@@ -1029,14 +1027,14 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
                 value = None
             if value is not None:
                 selectors.append(
-                    status_command.StatusSelector(
+                    view_command.ViewSelector(
                         kind="pull_request",
                         value=value,
                     )
                 )
             index += 1
             continue
-        if arg in _STATUS_SELECTOR_FLAGS or _is_grouped_status_flag(arg):
+        if arg in _VIEW_SELECTOR_FLAGS or _is_grouped_view_flag(arg):
             options.append(arg)
             index += 1
             continue
@@ -1045,15 +1043,15 @@ def _parse_status_command_args(argv: Sequence[str]) -> _ParsedStatusCommandArgs 
             index += 1
             continue
         revsets.append(arg)
-        selectors.append(status_command.StatusSelector(kind="revset", value=arg))
+        selectors.append(view_command.ViewSelector(kind="revset", value=arg))
         index += 1
     normalized = [*prefix, *options]
     if revsets:
         normalized.extend(["--", *revsets])
-    return _ParsedStatusCommandArgs(argv=tuple(normalized), selectors=tuple(selectors))
+    return _ParsedViewCommandArgs(argv=tuple(normalized), selectors=tuple(selectors))
 
 
-_STATUS_SELECTOR_FLAGS = frozenset(
+_VIEW_SELECTOR_FLAGS = frozenset(
     {"-f", "--fetch", "-v", "--verbose", "-h", "--help", "--debug", "--time-output"}
 )
 
@@ -1082,7 +1080,7 @@ def _find_subcommand_index(argv: Sequence[str]) -> int | None:
     return None
 
 
-def _is_grouped_status_flag(arg: str) -> bool:
+def _is_grouped_view_flag(arg: str) -> bool:
     return arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) <= {"f", "v", "h"}
 
 
@@ -1322,10 +1320,10 @@ def _global_cli_args(args: Namespace) -> JjCliArgs:
     return args.cli_args
 
 
-def _status_selectors_or_none(
+def _view_selectors_or_none(
     args: Namespace,
-) -> tuple[status_command.StatusSelector, ...] | None:
-    return args.status_selectors
+) -> tuple[view_command.ViewSelector, ...] | None:
+    return args.view_selectors
 
 
 def _forward_handler(

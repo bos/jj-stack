@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import jj_review.commands.status as status_module
+import jj_review.commands.view as view_module
 import jj_review.console as console_module
 from jj_review.jj.client import JjCliArgs
 from jj_review.models.review_state import CachedChange, ReviewState
@@ -13,16 +13,16 @@ from jj_review.models.review_state import CachedChange, ReviewState
 from .entrypoint_test_helpers import patch_bootstrap
 
 
-def test_status_updates_tty_progress_bar_while_streaming(
+def test_view_updates_tty_progress_bar_while_streaming(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    patch_bootstrap(monkeypatch, status_module, tmp_path)
+    patch_bootstrap(monkeypatch, view_module, tmp_path)
     progress_updates: list[int] = []
     progress_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        status_module,
+        view_module,
         "prepare_status",
         lambda **kwargs: SimpleNamespace(
             github_inspection_count=lambda: 2,
@@ -91,10 +91,10 @@ def test_status_updates_tty_progress_bar_while_streaming(
             submitted_state_disagreements=(),
         )
 
-    monkeypatch.setattr(status_module, "stream_status", fake_stream_status)
-    monkeypatch.setattr(status_module.console, "progress", fake_progress)
+    monkeypatch.setattr(view_module, "stream_status", fake_stream_status)
+    monkeypatch.setattr(view_module.console, "progress", fake_progress)
 
-    exit_code = status_module.status(
+    exit_code = view_module.view(
         cli_args=JjCliArgs(),
         debug=False,
         fetch=False,
@@ -109,15 +109,15 @@ def test_status_updates_tty_progress_bar_while_streaming(
     assert progress_calls == [{"description": "Inspecting GitHub", "total": 2}]
 
 
-def test_status_passes_cli_color_override_to_native_jj_rendering(
+def test_view_passes_cli_color_override_to_native_jj_rendering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    patch_bootstrap(monkeypatch, status_module, tmp_path)
+    patch_bootstrap(monkeypatch, view_module, tmp_path)
     observed: dict[str, object] = {}
     monkeypatch.setattr("jj_review.formatting.requested_color_mode", lambda: "debug")
     monkeypatch.setattr(
-        status_module,
+        view_module,
         "prepare_status",
         lambda **kwargs: SimpleNamespace(
             github_inspection_count=lambda: 0,
@@ -158,7 +158,7 @@ def test_status_passes_cli_color_override_to_native_jj_rendering(
         ),
     )
     monkeypatch.setattr(
-        status_module,
+        view_module,
         "stream_status",
         lambda **kwargs: SimpleNamespace(
             cache_update_skipped=False,
@@ -170,7 +170,7 @@ def test_status_passes_cli_color_override_to_native_jj_rendering(
         ),
     )
 
-    exit_code = status_module.status(
+    exit_code = view_module.view(
         cli_args=JjCliArgs(),
         debug=False,
         fetch=False,
@@ -184,16 +184,16 @@ def test_status_passes_cli_color_override_to_native_jj_rendering(
     assert observed["cli_color"] == "debug"
 
 
-def test_status_fetches_once_and_skips_duplicate_stack(
+def test_view_fetches_once_and_skips_duplicate_stack(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    patch_bootstrap(monkeypatch, status_module, tmp_path)
+    patch_bootstrap(monkeypatch, view_module, tmp_path)
     fetched: list[str] = []
     rendered: list[str] = []
 
     monkeypatch.setattr(
-        status_module,
+        view_module,
         "refresh_remote_state_for_status",
         lambda **kwargs: fetched.append("fetched"),
     )
@@ -224,13 +224,13 @@ def test_status_fetches_once_and_skips_duplicate_stack(
         return 0
 
     monkeypatch.setattr(
-        status_module,
+        view_module,
         "_prepare_status_for_revset",
         fake_prepare_status_for_revset,
     )
-    monkeypatch.setattr(status_module, "_render_prepared_status", fake_render_prepared_status)
+    monkeypatch.setattr(view_module, "_render_prepared_status", fake_render_prepared_status)
 
-    exit_code = status_module.status(
+    exit_code = view_module.view(
         cli_args=JjCliArgs(),
         debug=False,
         fetch=True,
@@ -238,9 +238,9 @@ def test_status_fetches_once_and_skips_duplicate_stack(
         repository=tmp_path,
         revset=None,
         selectors=(
-            status_module.StatusSelector(kind="revset", value="foo"),
-            status_module.StatusSelector(kind="revset", value="bar"),
-            status_module.StatusSelector(kind="revset", value="baz"),
+            view_module.ViewSelector(kind="revset", value="foo"),
+            view_module.ViewSelector(kind="revset", value="bar"),
+            view_module.ViewSelector(kind="revset", value="baz"),
         ),
         verbose=False,
     )
@@ -250,16 +250,16 @@ def test_status_fetches_once_and_skips_duplicate_stack(
     assert rendered == ["foo", "baz"]
 
 
-def test_status_continues_after_selector_error(
+def test_view_continues_after_selector_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    patch_bootstrap(monkeypatch, status_module, tmp_path)
+    patch_bootstrap(monkeypatch, view_module, tmp_path)
 
     def fake_prepare_status_for_revset(**kwargs):
         revset = kwargs["revset"]
         if revset == "bad":
-            raise status_module.CliError("bad selector")
+            raise view_module.CliError("bad selector")
         return SimpleNamespace(
             selected_revset=revset,
             prepared=SimpleNamespace(
@@ -279,16 +279,16 @@ def test_status_continues_after_selector_error(
         return 0
 
     monkeypatch.setattr(
-        status_module,
+        view_module,
         "_prepare_status_for_revset",
         fake_prepare_status_for_revset,
     )
-    monkeypatch.setattr(status_module, "_render_prepared_status", fake_render_prepared_status)
+    monkeypatch.setattr(view_module, "_render_prepared_status", fake_render_prepared_status)
 
     stdout = StringIO()
     stderr = StringIO()
     with console_module.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
-        exit_code = status_module.status(
+        exit_code = view_module.view(
             cli_args=JjCliArgs(),
             debug=False,
             fetch=False,
@@ -296,9 +296,9 @@ def test_status_continues_after_selector_error(
             repository=tmp_path,
             revset=None,
             selectors=(
-                status_module.StatusSelector(kind="revset", value="good"),
-                status_module.StatusSelector(kind="revset", value="bad"),
-                status_module.StatusSelector(kind="revset", value="later"),
+                view_module.ViewSelector(kind="revset", value="good"),
+                view_module.ViewSelector(kind="revset", value="bad"),
+                view_module.ViewSelector(kind="revset", value="later"),
             ),
             verbose=False,
         )

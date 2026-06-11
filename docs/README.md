@@ -30,4 +30,4 @@ jj-review <command> --help
 ```
 
 `jj-review help --all` also shows short command aliases where a command has one,
-such as `st` for `status` and `ls` for `list`.
+such as `ls` for `list`.

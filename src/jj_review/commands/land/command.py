@@ -428,7 +428,7 @@ def _ensure_logged_land_matches_saved_state(
         raise CliError(
             t"Cannot finish the interrupted land because saved review identity for "
             t"{ui.change_id(revision.change_id)} no longer matches the logged land.",
-            hint=t"Run {ui.cmd('status --fetch')} and inspect the stack before retrying.",
+            hint=t"Run {ui.cmd('view --fetch')} and inspect the stack before retrying.",
         )
 
 

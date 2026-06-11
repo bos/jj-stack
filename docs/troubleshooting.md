@@ -2,7 +2,7 @@
 
 This page is organized by symptom and what you should do.
 
-## `status` or `submit` says the stack selection is ambiguous
+## `view` or `submit` says the stack selection is ambiguous
 
 Possible causes:
 
@@ -13,20 +13,20 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review status
+jj-review view
 ```
 
 If needed, pass an explicit revset:
 
 ```bash
-jj-review status <revset>
+jj-review view <revset>
 jj-review submit <revset>
 ```
 
 For safety, `jj-review` always stops and reports what is ambiguous rather than guessing what you
 might have meant.
 
-## `status` says it cannot find a trunk bookmark
+## `view` says it cannot find a trunk bookmark
 
 Possible causes:
 
@@ -38,7 +38,7 @@ What to do:
 
 - If you are working in a new repo, make some initial commits, create a `main` bookmark, and
   push your changes to GitHub. Once you've done all of this, you should have a working `trunk()`
-  bookmark, and can rerun the `status` command.
+  bookmark, and can rerun the `view` command.
 - In an existing repo, configure `trunk()` to point to your trunk bookmark,
   such as `main`. For example:
 
@@ -46,7 +46,7 @@ What to do:
 jj config set --repo 'revset-aliases."trunk()"' main
 ```
 
-## GitHub shows different PR state than `status` reports
+## GitHub shows different PR state than `view` reports
 
 Possible causes:
 
@@ -57,17 +57,17 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review status --fetch
+jj-review view --fetch
 ```
 
-`status` already checks live GitHub state when GitHub is reachable. `status
+`view` already checks live GitHub state when GitHub is reachable. `view
 --fetch` also refreshes remembered remote bookmark state before reporting, so
 it is the safer read-only refresh when a PR link, branch state, or merged-base
 relationship may have changed elsewhere.
 
 If a change shows `submitted, no PR found for branch`, `jj-review` has tracking
 for a previous submit, but GitHub did not report a PR for the current review
-branch. Run `jj-review status --fetch <change>` first. If the PR is still open
+branch. Run `jj-review view --fetch <change>` first. If the PR is still open
 under a different branch or tracking record, use `jj-review relink <pr> <change>`.
 If no open PR exists and you want fresh PRs, run:
 
@@ -79,7 +79,7 @@ If GitHub reports a remembered PR as closed or merged, decide what outcome you
 want before choosing a command:
 
 - To keep reviewing the same PR, reopen it on GitHub and rerun `jj-review
-  status --fetch <change>`.
+  view --fetch <change>`.
 - To attach a different open PR to the change, use `jj-review relink <pr>
   <change>`.
 - To abandon the old review and make fresh PRs, run `jj-review submit
@@ -106,9 +106,9 @@ jj-review submit
 and rebases the remaining changes above the current `trunk()`. After that,
 `submit` refreshes the open PRs to reflect the new base.
 
-## `list` or `status` says another stack changed since its last submit
+## `list` or `view` says another stack changed since its last submit
 
-`list` checks every tracked stack in the repo. `status` only checks another stack when that stack
+`list` checks every tracked stack in the repo. `view` only checks another stack when that stack
 is built on top of a change in the stack you are inspecting.
 
 Possible causes:
@@ -127,7 +127,7 @@ jj-review submit <head-change-id>
 Use the head change ID printed in the warning. To inspect first, run:
 
 ```bash
-jj-review status <head-change-id>
+jj-review view <head-change-id>
 ```
 
 Status reports what changed since the last successful submit: local commits, review parents, or
@@ -224,13 +224,13 @@ Possible causes:
 First, inspect the stack:
 
 ```bash
-jj-review status
+jj-review view
 ```
 
 If you know which stack was being changed, inspect it directly:
 
 ```bash
-jj-review status <change-id>
+jj-review view <change-id>
 ```
 
 ### Finish what was started

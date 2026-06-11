@@ -30,7 +30,7 @@ def emit_stale_stacks_advisory(
         console.warning(
             (
                 f"{single_subject} has changed since its last submit; ",
-                t"inspect with {ui.cmd(f'jj-review status {head}')} or refresh with "
+                t"inspect with {ui.cmd(f'jj-review view {head}')} or refresh with "
                 t"{ui.cmd(f'jj-review submit {head}')}.",
             )
         )
@@ -39,7 +39,7 @@ def emit_stale_stacks_advisory(
     console.warning(
         (
             f"{plural_subject} have changed since their last submit; ",
-            t"inspect with {ui.cmd('jj-review status <head>')} or refresh with "
+            t"inspect with {ui.cmd('jj-review view <head>')} or refresh with "
             t"{ui.cmd('jj-review submit <head>')}: ",
             *heads_fragments,
         )

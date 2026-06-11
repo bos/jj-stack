@@ -317,7 +317,7 @@ def _select_discovered_pull_request(
             t"GitHub reports multiple pull requests for head branch "
             t"{ui.bookmark(head_label)}.",
             hint=(
-                t"Inspect the PR link with {ui.cmd('status --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -329,7 +329,7 @@ def _select_discovered_pull_request(
             t"GitHub reports pull request #{pull_request.number} for head branch "
             t"{ui.bookmark(head_label)} in state {pull_request.state}.",
             hint=(
-                t"Inspect the PR link with {ui.cmd('status --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -357,7 +357,7 @@ def _ensure_pull_request_link_is_consistent(
             t"Saved pull request link exists for bookmark {ui.bookmark(bookmark)}, "
             t"but GitHub no longer reports a PR for that head branch.",
             hint=(
-                t"Inspect the PR link with {ui.cmd('status --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -367,7 +367,7 @@ def _ensure_pull_request_link_is_consistent(
             t"GitHub reports for bookmark {ui.bookmark(bookmark)} "
             t"(#{discovered_pull_request.number}).",
             hint=(
-                t"Inspect the PR link with {ui.cmd('status --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -376,7 +376,7 @@ def _ensure_pull_request_link_is_consistent(
             t"Saved pull request URL for bookmark {ui.bookmark(bookmark)} does not "
             t"match GitHub.",
             hint=(
-                t"Inspect the PR link with {ui.cmd('status --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )

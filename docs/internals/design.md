@@ -224,7 +224,7 @@ A change can be in one of three link states:
 
 Even the PR link can usually be rediscovered by asking GitHub for the PR whose head
 branch matches the saved bookmark, but that rediscovery is an explicit recovery flow —
-plain `status` does not do it for never-tracked changes.
+plain `view` does not do it for never-tracked changes.
 
 User-authored settings (e.g. reviewer or label preferences, `use_bookmarks` patterns)
 live in `jj` config, not in the tracking-state file.
@@ -233,7 +233,7 @@ The tool also writes a stack-summary comment onto each PR (the navigation/overvi
 comments described in the submission algorithm). That summary is not a source of truth —
 it is regenerated on every `submit` from the current `jj` stack. `submit`, `close`,
 and `cleanup` may read comments to re-find or delete comments the tool previously wrote,
-but `status` does not inspect issue comments.
+but `view` does not inspect issue comments.
 
 ## Storage strategy
 
@@ -273,7 +273,7 @@ Mutating commands take a repo-scoped advisory operation lock in that same state
 directory before reading or writing state. The lock serializes cross-command mutation; its
 companion file records the owning command, PID, and start time for diagnostics. `list` and
 `doctor` do not take the lock.
-`status` does not lock for live inspection, but it tries the lock around its best-effort
+`view` does not lock for live inspection, but it tries the lock around its best-effort
 cache write and skips that write with a diagnostic if another operation is running.
 
 Mutating commands append operation events to the repo-level `operation-log.jsonl` audit log.
@@ -366,7 +366,7 @@ Given a chosen head revision:
      stack, require a local `jj rebase` before changing the PR base
    - create or update the PR for `head bookmark → base bookmark`
    - once `submit` finishes, render the stack top-to-bottom through the same native
-     `jj log` row formatting that `status` uses, with concise submit-result text
+     `jj log` row formatting that `view` uses, with concise submit-result text
      appended to the first line of each row, and the resolved trunk row beneath
    - draft handling stays conservative:
      - `submit --draft` / `submit --draft=new` opens new PRs as drafts
@@ -437,12 +437,12 @@ commands default to the stack headed by `@-`; repair commands (`restart`, `relin
 `unlink`) require an explicit `<revset>`; `@` is always explicit user intent and is
 never selected by an omitted argument.
 
-### `status`
+### `view`
 
 `jj review status [<revset> ...] [--pull-request <pr> ...]` shows the local stack(s) and
 any locally known review identity for them.
 
-It is local-first. If a change has never been locally attached to review, `status`
+It is local-first. If a change has never been locally attached to review, `view`
 reports it as not submitted and does not query GitHub for speculative PR matches based
 only on predicted bookmark names or fetched remote observations. It does not create
 local tracking for a never-tracked change, including bookmark-only saved entries.
@@ -451,30 +451,30 @@ local tracking for a never-tracked change, including bookmark-only saved entries
 but it refreshes remote bookmark observations first so the report reflects the latest
 remote state before checking already-known GitHub PR state.
 
-When more than one selector is given, `status` inspects them in command-line order,
+When more than one selector is given, `view` inspects them in command-line order,
 suppresses exact duplicate stack reports, continues past selector-local resolution
 failures, and exits non-zero if any individual stack would have done so.
 
 Fetched GitHub state often produces extra visible revisions for merged changes, so
-`status` does not insist that every visible revision still forms one supported review
+`view` does not insist that every visible revision still forms one supported review
 stack. It walks the parent chain, tolerates immutable or divergent side copies created
 by fetching merged PR branches, and reports the stack revision for each logical change.
-If a merged PR still appears on the stack, `status` continues and surfaces that row as
+If a merged PR still appears on the stack, `view` continues and surfaces that row as
 "cleanup needed" rather than calling the stack broken. If the local history no longer
-has any supported linear walk after refresh, `status` stops with a targeted diagnostic
+has any supported linear walk after refresh, `view` stops with a targeted diagnostic
 rather than a traceback or an unadorned subprocess error.
 
-Unlike `submit`, `status` may fall back to local-only output when the repo is not
+Unlike `submit`, `view` may fall back to local-only output when the repo is not
 configured well enough to resolve a remote or GitHub target. Default output stays
 concise — one effective summary per change rather than dumping saved-data and transport
 diagnostics inline.
 
-`status` may add a repo-level advisory for other tracked stacks when the saved
+`view` may add a repo-level advisory for other tracked stacks when the saved
 submitted state disagrees with the current DAG: either a tracked change's saved
 `last_submitted_commit_id` differs from its current commit, or the saved topology
 pointers (`last_submitted_parent_change_id`, `last_submitted_stack_head_change_id`)
 no longer match the live chain. The advisory names the stack heads and points the
-user at running `status` on each, because the correct follow-up depends on the cause.
+user at running `view` on each, because the correct follow-up depends on the cause.
 Stale comments alone do not trigger the advisory.
 
 The stack revisions and the footer row beneath them both render through the user's
@@ -482,14 +482,14 @@ native `jj log` formatting; status-specific suffixes (PR state, etc.) are append
 the first rendered line. The footer row shows the stack's `base_parent` (the immediate
 parent of the bottom change), which may or may not be the resolved `trunk()`.
 
-When GitHub data is available, `status`:
+When GitHub data is available, `view`:
 
 - distinguishes merged PRs from merely closed ones
 - surfaces a concise review-decision summary (approval, changes requested) for open PRs
 - renders open draft PRs differently from open published PRs
 - if GitHub is unreachable or misconfigured, reports that once at the repo level and
   falls back to conservative per-change summaries from tracking data rather than claiming a
-  PR is absent. Because the output is incomplete, `status` exits non-zero
+  PR is absent. Because the output is incomplete, `view` exits non-zero
 - if it finds an ambiguous PR match, surfaces that inline and exits non-zero rather
   than silently calling the stack healthy
 - if a saved PR link existed but GitHub reports no PR for that branch, looks up the
@@ -507,7 +507,7 @@ When GitHub data is available, `status`:
   reports a concrete PR; missing branch lookups preserve saved PR identity as recovery
   evidence
 
-When `status` reports `cleanup needed`, it explains why in plain language:
+When `view` reports `cleanup needed`, it explains why in plain language:
 
 - a merged PR still appears on the local stack
 - descendant `submit` operations will keep following that old ancestry until the user
@@ -532,8 +532,8 @@ PRs needing cleanup. If GitHub is unavailable or a saved PR link has gone stale,
 row surfaces that and `list` exits non-zero rather than reporting a healthy tracked
 stack from incomplete data.
 
-Like `status`, `list` may surface tracked stacks whose submitted state no longer
-matches the live DAG, naming the heads and pointing the user at `status` for the
+Like `view`, `list` may surface tracked stacks whose submitted state no longer
+matches the live DAG, naming the heads and pointing the user at `view` for the
 per-stack next step.
 
 `list` also surfaces orphaned PRs — saved tracking records whose change is no longer
@@ -554,7 +554,7 @@ exact stack and sets up tracking for it. It does not mutate GitHub.
 
 `import` is the explicit recovery and bootstrap path for review state that already
 exists remotely. If a stack already has PRs on GitHub but local tracking is missing on
-this machine, `import` is what you run. Plain `status` does not do this implicitly.
+this machine, `import` is what you run. Plain `view` does not do this implicitly.
 
 Selector handling stays unambiguous: a bare positional argument does not double as both
 revset and PR number, and omitting selector flags defaults to the stack headed by `@-`.
@@ -585,7 +585,7 @@ Failure guidance stays specific:
 - if the PR head branch is missing locally, point the user at `import --fetch`
 - if the PR head branch is missing on the remote, cross-repo, or ambiguous, stop and
   explain that the stack cannot be imported safely
-- if multiple PRs match the same head branch, point at `status --fetch` and `relink`
+- if multiple PRs match the same head branch, point at `view --fetch` and `relink`
 - if any imported revision would need a freshly generated bookmark instead of an exact
   discovered name, stop rather than inventing a local match
 - if the fetched stack shape is unsupported locally, point at `cleanup --rebase` only
@@ -598,7 +598,7 @@ Failure guidance stays specific:
   only when it is exact and unambiguous; otherwise stop and surface the conflicting
   identities rather than partially overwriting
 
-`status --fetch` stays the read-only refresh path; `import` is the explicit
+`view --fetch` stays the read-only refresh path; `import` is the explicit
 materialization path. A repo-scoped `sync` command remains a separate future question
 rather than being folded into either.
 
@@ -678,7 +678,7 @@ simply deleting the saved record would otherwise be reversed by later rediscover
 
 Unlinked state means:
 
-- `status --fetch` may still report a discovered remote bookmark or PR for the same
+- `view --fetch` may still report a discovered remote bookmark or PR for the same
   branch, but it labels them as unlinked rather than reactivating tracking
 - `import` may restore local bookmark state for the change, but keeps the unlinked
   marker; it does not restore active PR tracking
@@ -797,8 +797,8 @@ The same applies when one rewrite affects more than two stacks.
 Stacks the user has not yet resubmitted may still display old navigation or overview
 comments. That is expected — `submit` does not chase comments on stacks it isn't
 operating on, and `land` does not block on stale state outside the selected stack.
-`status` and `list` surface those stacks via the submitted-state rule, naming their
-heads and directing the user at `status` for the per-stack next step.
+`view` and `list` surface those stacks via the submitted-state rule, naming their
+heads and directing the user at `view` for the per-stack next step.
 Orphaned PRs left behind by a cross-stack rewrite need an explicit `close
 --cleanup --pull-request <pr>`.
 
@@ -835,8 +835,7 @@ The full command surface:
 - `jj review submit [--draft[=new|all] | --publish]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
   [--re-request] [--restart] [<revset>]`
-- `jj review status [--fetch] [{--pull-request <pr>} | {<revset>}] ...`
-- `jj review st [--fetch] [--pull-request <pr> | <revset>]`
+- `jj review view [--fetch] [{--pull-request <pr>} | {<revset>}] ...`
 - `jj review list [--fetch]`
 - `jj review ls [--fetch]`
 - `jj review restart [--dry-run] <revset>`
@@ -852,11 +851,11 @@ The full command surface:
 review-state command and does not inspect the repo, the tracking-state file, or
 GitHub.
 
-Run with no subcommand, the executable behaves the same as `jj review status` on the
+Run with no subcommand, the executable behaves the same as `jj review view` on the
 current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
-review lifecycle (`submit`, `status`, `land`, `close`) plus support commands
+review lifecycle (`submit`, `view`, `land`, `close`) plus support commands
 (`cleanup`, `import`). Repair commands (`restart`, `relink`, `unlink`) and
 shell-integration glue (`completion`) stay hidden by default and only appear in
 `jj review help --all`. The `help` command itself is hidden parser glue: `jj review help`
@@ -881,7 +880,7 @@ Target selection is conservative:
 - `restart`, `relink`, and `unlink` require one explicit `<revset>`
 - `import` accepts at most one explicit selector flag and otherwise defaults to the
   current stack headed by `@-`
-- `status` may omit `<revset>` and inspects the current stack
+- `view` may omit `<revset>` and inspects the current stack
 
 Notable absences:
 
@@ -1201,7 +1200,7 @@ merges of review branches.
 
 Recovery guidance stays case-specific:
 
-- if the PR link is missing or ambiguous, point at `status --fetch` and `relink`
+- if the PR link is missing or ambiguous, point at `view --fetch` and `relink`
 - if the landing scan stops at a closed-but-unmerged PR, say so directly and tell the
   user to close or clean up that stack before retrying
 - if the scan stops at a draft, unapproved, or changes-requested PR, say so directly

@@ -16,12 +16,12 @@ def test_main_reports_keyboard_interrupt_without_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        cli_module.status_command,
-        "status",
+        cli_module.view_command,
+        "view",
         lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
 
-    exit_code = main(["status"])
+    exit_code = main(["view"])
     captured = capsys.readouterr()
 
     assert exit_code == 130
@@ -34,13 +34,13 @@ def test_main_preserves_partial_handler_output_on_keyboard_interrupt(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fake_status(**kwargs) -> int:
+    def fake_view(**kwargs) -> int:
         print("before interrupt")
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(cli_module.status_command, "status", fake_status)
+    monkeypatch.setattr(cli_module.view_command, "view", fake_view)
 
-    exit_code = main(["status"])
+    exit_code = main(["view"])
     captured = capsys.readouterr()
 
     assert exit_code == 130
@@ -65,7 +65,7 @@ def test_config_overrides_preserve_argv_order_across_the_subcommand(
         [
             "--config-file",
             str(file_a),
-            "status",
+            "view",
             "--config",
             "revset-aliases.myhead=@-",
             "--repository",
@@ -79,7 +79,7 @@ def test_config_overrides_preserve_argv_order_across_the_subcommand(
         "--config",
         "revset-aliases.myhead=@-",
     )
-    assert remaining == ["status", "--repository", "."]
+    assert remaining == ["view", "--repository", "."]
 
 
 def test_config_file_paths_resolve_against_current_directory(
@@ -92,7 +92,7 @@ def test_config_file_paths_resolve_against_current_directory(
     config_file.write_text("", encoding="utf-8")
     monkeypatch.chdir(caller_cwd)
 
-    cli_args, _ = _extract_config_overrides(["--config-file", "jjr.toml", "status"])
+    cli_args, _ = _extract_config_overrides(["--config-file", "jjr.toml", "view"])
 
     assert cli_args.to_argv() == ("--config-file", str(config_file.resolve()))
 
@@ -104,20 +104,20 @@ def test_config_overrides_leave_malformed_flag_for_argparse_to_report() -> None:
     """
 
     cli_args, remaining = _extract_config_overrides(
-        ["--config", "--repository", ".", "status"]
+        ["--config", "--repository", ".", "view"]
     )
 
     assert cli_args.to_argv() == ()
-    assert remaining == ["--config", "--repository", ".", "status"]
+    assert remaining == ["--config", "--repository", ".", "view"]
 
 
 def test_config_overrides_stop_at_end_of_options_marker() -> None:
     """Tokens after ``--`` are positional and must not be pulled out as overrides."""
 
     cli_args, remaining = _extract_config_overrides(
-        ["status", "--", "--config", "x=1"]
+        ["view", "--", "--config", "x=1"]
     )
 
     assert cli_args.to_argv() == ()
-    assert remaining == ["status", "--", "--config", "x=1"]
+    assert remaining == ["view", "--", "--config", "x=1"]
 

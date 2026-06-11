@@ -20,7 +20,7 @@ from .submit_command_helpers import (
 )
 
 
-def test_status_can_select_a_stack_by_pull_request_number(
+def test_view_can_select_a_stack_by_pull_request_number(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -45,7 +45,7 @@ def test_status_can_select_a_stack_by_pull_request_number(
     exit_code = run_main(
         repo,
         config_path,
-        "status",
+        "view",
         "--pull-request",
         str(first_pr_number),
     )
@@ -59,7 +59,7 @@ def test_status_can_select_a_stack_by_pull_request_number(
     assert f"PR #{second_pr_number}" not in captured.out
 
 
-def test_status_does_not_warn_when_unrelated_stack_changed_since_last_submit(
+def test_view_does_not_warn_when_unrelated_stack_changed_since_last_submit(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -83,7 +83,7 @@ def test_status_does_not_warn_when_unrelated_stack_changed_since_last_submit(
     new_beta_head_change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
 
     run_command(["jj", "edit", alpha_head_change_id], repo)
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
@@ -91,10 +91,10 @@ def test_status_does_not_warn_when_unrelated_stack_changed_since_last_submit(
     assert new_beta_head_change_id[:8] not in captured.err
     assert alpha_head_change_id[:8] not in captured.err
     assert "changed since its last submit" not in captured.err
-    assert "jj-review status" not in normalized_err
+    assert "jj-review view" not in normalized_err
 
 
-def test_status_warns_when_other_stack_is_built_on_selected_stack(
+def test_view_warns_when_other_stack_is_built_on_selected_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -114,18 +114,18 @@ def test_status_warns_when_other_stack_is_built_on_selected_stack(
     commit_file(repo, "beta 2", "beta-2.txt")
     beta_head_change_id = JjClient(repo).discover_review_stack().head.change_id
 
-    exit_code = run_main(repo, config_path, "status", alpha_head_change_id)
+    exit_code = run_main(repo, config_path, "view", alpha_head_change_id)
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
     assert exit_code == 0
     assert beta_head_change_id[:8] in captured.err
     assert "changed since its last submit" in captured.err
-    assert f"jj-review status {beta_head_change_id[:8]}" in normalized_err
+    assert f"jj-review view {beta_head_change_id[:8]}" in normalized_err
     assert f"jj-review submit {beta_head_change_id[:8]}" in normalized_err
 
 
-def test_status_warns_after_middle_change_is_split_into_sibling_stack(
+def test_view_warns_after_middle_change_is_split_into_sibling_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -147,18 +147,18 @@ def test_status_warns_after_middle_change_is_split_into_sibling_stack(
     run_command(["jj", "rebase", "-s", change_c, "-d", change_a], repo)
     run_command(["jj", "edit", change_b], repo)
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
     assert exit_code == 0
     assert change_c[:8] in captured.err
     assert "changed since its last submit" in captured.err
-    assert f"jj-review status {change_c[:8]}" in normalized_err
+    assert f"jj-review view {change_c[:8]}" in normalized_err
     assert f"jj-review submit {change_c[:8]}" in normalized_err
 
 
-def test_status_pull_request_selector_requires_a_linked_local_change(
+def test_view_pull_request_selector_requires_a_linked_local_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -167,7 +167,7 @@ def test_status_pull_request_selector_requires_a_linked_local_change(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     resolve_state_path(repo).unlink()
 
-    exit_code = run_main(repo, config_path, "status", "--pull-request", "1")
+    exit_code = run_main(repo, config_path, "view", "--pull-request", "1")
     captured = capsys.readouterr()
     combined_output = " ".join((captured.out + " " + captured.err).split())
 
@@ -175,7 +175,7 @@ def test_status_pull_request_selector_requires_a_linked_local_change(
     assert "PR #1 is not linked to any local change." in combined_output
 
 
-def test_status_reports_missing_trunk_bookmark_in_empty_repo(
+def test_view_reports_missing_trunk_bookmark_in_empty_repo(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -186,7 +186,7 @@ def test_status_reports_missing_trunk_bookmark_in_empty_repo(
     config_path = tmp_path / "jj-review-config.toml"
     config_path.write_text("[jj-review]\n", encoding="utf-8")
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
     combined = " ".join((captured.out + captured.err).split())
 
@@ -194,7 +194,7 @@ def test_status_reports_missing_trunk_bookmark_in_empty_repo(
     assert "create a trunk bookmark" in combined.lower()
 
 
-def test_status_reports_missing_git_remote_for_local_only_repo(
+def test_view_reports_missing_git_remote_for_local_only_repo(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -204,7 +204,7 @@ def test_status_reports_missing_git_remote_for_local_only_repo(
     run_command(["jj", "config", "set", "--repo", 'revset-aliases."trunk()"', "main"], repo)
     commit_file(repo, "feature 1", "feature-1.txt")
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
     combined_err = " ".join(captured.err.split())
 
@@ -214,7 +214,7 @@ def test_status_reports_missing_git_remote_for_local_only_repo(
     assert "GitHub status unknown" in captured.out
 
 
-def test_status_renders_base_parent_for_stack_forked_from_trunk_ancestor(
+def test_view_renders_base_parent_for_stack_forked_from_trunk_ancestor(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -231,7 +231,7 @@ def test_status_renders_base_parent_for_stack_forked_from_trunk_ancestor(
     commit_file(repo, "feature 1", "feature-1.txt")
     stack = JjClient(repo).discover_review_stack(allow_immutable=True)
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
 
     assert exit_code == 0
@@ -244,7 +244,7 @@ def test_status_renders_base_parent_for_stack_forked_from_trunk_ancestor(
     assert stack.trunk.subject not in captured.out
 
 
-def test_status_ignores_off_path_reviewable_child(
+def test_view_ignores_off_path_reviewable_child(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -264,7 +264,7 @@ def test_status_ignores_off_path_reviewable_child(
     commit_file(repo, "feature side", "feature-side.txt")
     run_command(["jj", "new", feature_2_commit_id], repo)
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
 
     assert exit_code == 0
@@ -273,7 +273,7 @@ def test_status_ignores_off_path_reviewable_child(
     assert "feature side" not in captured.out
 
 
-def test_status_preserves_remote_observations_when_github_lookup_fails(
+def test_view_preserves_remote_observations_when_github_lookup_fails(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -298,7 +298,7 @@ def test_status_preserves_remote_observations_when_github_lookup_fails(
         client_type=FailingPullRequestLookupClient,
     )
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
@@ -309,7 +309,7 @@ def test_status_preserves_remote_observations_when_github_lookup_fails(
     assert "saved PR #1 (open)" in captured.out
 
 
-def test_status_stays_local_when_github_is_unavailable_and_no_cache_exists(
+def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -332,7 +332,7 @@ def test_status_stays_local_when_github_is_unavailable_and_no_cache_exists(
         client_type=OfflineGithubClient,
     )
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
@@ -342,7 +342,7 @@ def test_status_stays_local_when_github_is_unavailable_and_no_cache_exists(
     assert "GitHub status unknown" not in captured.out
 
 
-def test_status_exits_nonzero_when_pull_request_lookup_fails(
+def test_view_exits_nonzero_when_pull_request_lookup_fails(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -367,14 +367,14 @@ def test_status_exits_nonzero_when_pull_request_lookup_fails(
         client_type=FailingPullRequestLookupClient,
     )
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
 
     assert exit_code == 1
     assert "saved PR #1 (open), pull request lookup failed" in captured.out
 
 
-def test_status_exits_nonzero_when_github_reports_multiple_pull_requests(
+def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -394,13 +394,13 @@ def test_status_exits_nonzero_when_github_reports_multiple_pull_requests(
         title="feature 1 duplicate",
     )
 
-    exit_code = run_main(repo, config_path, "status", change_id)
+    exit_code = run_main(repo, config_path, "view", change_id)
 
     assert exit_code == 1
     assert state_store.load() == state_before
 
 
-def test_status_skips_stack_comment_github_reads(
+def test_view_skips_stack_comment_github_reads(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -427,7 +427,7 @@ def test_status_skips_stack_comment_github_reads(
         client_type=FailingCommentLookupClient,
     )
 
-    exit_code = run_main(repo, config_path, "status")
+    exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
 
     assert exit_code == 0
@@ -435,7 +435,7 @@ def test_status_skips_stack_comment_github_reads(
     assert "stack comment" not in captured.out
 
 
-def test_status_fetch_surfaces_unlinked_state_without_repopulating_link(
+def test_view_fetch_surfaces_unlinked_state_without_repopulating_link(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -447,7 +447,7 @@ def test_status_fetch_surfaces_unlinked_state_without_repopulating_link(
     assert run_main(repo, config_path, "unlink", change_id) == 0
     capsys.readouterr()
 
-    exit_code = run_main(repo, config_path, "status", "--fetch", change_id)
+    exit_code = run_main(repo, config_path, "view", "--fetch", change_id)
     captured = capsys.readouterr()
     unlinked_change = ReviewStateStore.for_repo(repo).load().changes[change_id]
 
@@ -461,7 +461,7 @@ def test_status_fetch_surfaces_unlinked_state_without_repopulating_link(
     assert unlinked_change.overview_comment_id is None
 
 
-def test_status_reports_unsubmitted_after_state_loss(
+def test_view_reports_unsubmitted_after_state_loss(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -473,7 +473,7 @@ def test_status_reports_unsubmitted_after_state_loss(
     change_id = stack.revisions[-1].change_id
     resolve_state_path(repo).unlink()
 
-    exit_code = run_main(repo, config_path, "status", change_id)
+    exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()
     refreshed_state = ReviewStateStore.for_repo(repo).load()
 
@@ -483,7 +483,7 @@ def test_status_reports_unsubmitted_after_state_loss(
     assert refreshed_state.changes == {}
 
 
-def test_status_stays_local_after_state_loss_even_if_github_is_unavailable(
+def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -495,7 +495,7 @@ def test_status_stays_local_after_state_loss_even_if_github_is_unavailable(
     change_id = stack.revisions[-1].change_id
     resolve_state_path(repo).unlink()
 
-    assert run_main(repo, config_path, "status", change_id) == 0
+    assert run_main(repo, config_path, "view", change_id) == 0
     capsys.readouterr()
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
@@ -512,7 +512,7 @@ def test_status_stays_local_after_state_loss_even_if_github_is_unavailable(
         client_type=OfflineGithubClient,
     )
 
-    exit_code = run_main(repo, config_path, "status", change_id)
+    exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
@@ -522,7 +522,7 @@ def test_status_stays_local_after_state_loss_even_if_github_is_unavailable(
     assert "saved PR #1" not in captured.out
 
 
-def test_status_preserves_cached_pull_request_metadata_when_github_reports_missing(
+def test_view_preserves_cached_pull_request_metadata_when_github_reports_missing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -540,7 +540,7 @@ def test_status_preserves_cached_pull_request_metadata_when_github_reports_missi
 
     del fake_repo.pull_requests[1]
 
-    exit_code = run_main(repo, config_path, "status", "--fetch", change_id)
+    exit_code = run_main(repo, config_path, "view", "--fetch", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
@@ -559,7 +559,7 @@ def test_status_preserves_cached_pull_request_metadata_when_github_reports_missi
     assert refreshed_state.changes[change_id].overview_comment_id is None
 
 
-def test_status_reports_merged_pull_request_state(
+def test_view_reports_merged_pull_request_state(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -573,7 +573,7 @@ def test_status_reports_merged_pull_request_state(
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
 
-    exit_code = run_main(repo, config_path, "status", change_id)
+    exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 

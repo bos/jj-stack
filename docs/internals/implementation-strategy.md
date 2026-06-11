@@ -80,7 +80,7 @@ The curated top-level help is part of that executable surface. `jj-review help -
 shows the full command list and includes any short command aliases so they stay
 discoverable without reading the README first.
 
-Current short aliases include `st` for `status`, `ls` for `list`, and `sub` for `submit`.
+Current short aliases include `ls` for `list` and `sub` for `submit`.
 Commands that select one linked pull request also accept `-p` as a short form for
 `--pull-request`.
 
@@ -259,7 +259,7 @@ The repo state directory also contains the operation lock files:
 - `operation-lock.json` is diagnostic companion metadata for the current holder
 - `operation-log.jsonl` is the repo-level chronological audit log
 
-Mutating commands hold the lock through their full command lifetime. `status` uses the
+Mutating commands hold the lock through their full command lifetime. `view` uses the
 non-blocking path only around its best-effort cache write, so live inspection still renders
 while another mutation is running. The operation lock replaces same-kind PID waits.
 
@@ -285,7 +285,7 @@ Unknown saved PR state is treated as open only when the record has a saved PR nu
 Records without a PR number are not actionable orphan PRs and can be pruned by cleanup.
 Remote branch cleanup still requires a saved PR number, because without one the tool
 cannot prove whether an open PR still uses the branch.
-When `status` cannot find a PR by the remembered review branch, it falls back to
+When `view` cannot find a PR by the remembered review branch, it falls back to
 the saved PR number before rendering the result. A missing branch lookup does not
 clear the saved PR identity; read-only status preserves that recovery evidence so
 the user can choose between reopening, relinking, or running `submit --restart` to
@@ -299,12 +299,12 @@ is another mutable review change, while still treating `trunk()` and its ancesto
 review parent.
 Repo-scoped stale-stack detection also compares each tracked change's saved
 `last_submitted_commit_id` against the live commit ID, so a rewrite in the same stack
-position still prompts the user to inspect and resubmit. `status` renders the same selected-stack
+position still prompts the user to inspect and resubmit. `view` renders the same selected-stack
 disagreement inline, including whether the saved submit baseline differs because of a local commit
 rewrite, a changed review parent, or changed stack membership.
-Plain `status` does not run repo-scoped stale-stack discovery. Its "other stack changed" advisory
+Plain `view` does not run repo-scoped stale-stack discovery. Its "other stack changed" advisory
 is limited to stacks built on top of the stack being rendered; use `list` for the repo-wide view.
-Plain `status` also does not inspect managed stack-summary comments. That keeps status from doing
+Plain `view` also does not inspect managed stack-summary comments. That keeps status from doing
 one issue-comment request per open PR; `submit`, `close`, and `cleanup` own stack-comment
 validation when they mutate those comments.
 

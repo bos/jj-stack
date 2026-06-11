@@ -126,7 +126,7 @@ def test_list_warns_when_tracked_stack_has_changed_since_last_submit(
     assert exit_code == 0
     assert new_alpha_head_change_id[:8] in captured.err
     assert "changed since its last submit" in captured.err
-    assert f"jj-review status {new_alpha_head_change_id[:8]}" in normalized_err
+    assert f"jj-review view {new_alpha_head_change_id[:8]}" in normalized_err
     assert f"jj-review submit {new_alpha_head_change_id[:8]}" in normalized_err
 
 
@@ -148,7 +148,7 @@ def test_list_warns_when_tracked_stack_was_rewritten_without_moving(
     assert exit_code == 0
     assert change_id[:8] in captured.err
     assert "changed since its last submit" in captured.err
-    assert f"jj-review status {change_id[:8]}" in normalized_err
+    assert f"jj-review view {change_id[:8]}" in normalized_err
     assert f"jj-review submit {change_id[:8]}" in normalized_err
 
 
@@ -180,7 +180,7 @@ def test_list_warns_when_untracked_change_is_inserted_below_tracked_stack(
 
     assert exit_code == 0
     assert head_change_id[:8] in captured.err
-    assert f"jj-review status {head_change_id[:8]}" in normalized_err
+    assert f"jj-review view {head_change_id[:8]}" in normalized_err
     assert f"jj-review submit {head_change_id[:8]}" in normalized_err
 
 
