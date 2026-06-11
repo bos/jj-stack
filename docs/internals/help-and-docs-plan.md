@@ -30,7 +30,7 @@ These are strengths worth preserving rather than replacing:
   `docs/internals/`
 - `troubleshooting.md` is already organized by symptom and next command
 - the product already has strong repair and diagnostic commands such as `doctor`,
-  `import`, `relink`, and `cleanup --rebase`
+  `checkout`, `relink`, and `cleanup --rebase`
 
 The biggest remaining gap is not "missing feature parity". It is that some important user
 questions still require reading several pages or inferring behavior from command output.
@@ -70,7 +70,7 @@ Highest-value commands should grow 2-3 short examples in long help:
 - `view`
 - `land`
 - `unstack`
-- `import`
+- `checkout`
 - `cleanup --rebase`
 
 Examples should come from real workflows already documented in `docs/`, not invented toy
@@ -122,7 +122,7 @@ The work should focus on content gaps first:
 
 - missing recovery scenarios
 - missing explanation of jj↔GitHub round trips
-- better examples of stack lifecycle after land / restack / import
+- better examples of stack lifecycle after land / restack / checkout
 
 ### 4b. Add one focused workflow page
 
@@ -186,7 +186,7 @@ cover the cases users are likely to hit in real repos:
 - `trunk()` advanced, but nothing landed, so the right answer is plain `jj rebase` rather than
   `cleanup --rebase`
 - `cleanup --rebase` encounters conflicts and the user needs to finish the rewrite in `jj`
-- review state exists on another machine or workspace and needs `import`
+- review state exists on another machine or workspace and needs `checkout`
 
 Each entry should stay in the existing pattern:
 

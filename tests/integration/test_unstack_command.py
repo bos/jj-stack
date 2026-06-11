@@ -1423,7 +1423,7 @@ def test_unstack_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(
     assert fake_repo.pull_requests[1].state == "closed"
 
 
-def test_unstack_apply_requires_import_after_sparse_state_loss(
+def test_unstack_apply_requires_checkout_after_sparse_state_loss(
     tmp_path: Path,
     monkeypatch,
     capsys,

@@ -89,7 +89,7 @@ Use `view` when you need to answer:
 - which changes already have PRs
 - which PRs are draft, approved, blocked, or need cleanup
 
-If review state already exists on another machine or only on GitHub, run `jj-review import`
+If review state already exists on another machine or only on GitHub, run `jj-review checkout`
 first to start working on that stack locally.
 
 If you want to inspect the stack for one linked PR directly:

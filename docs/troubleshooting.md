@@ -167,10 +167,10 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review import --pull-request <number-or-url> --fetch
+jj-review checkout --pull-request <number-or-url> --fetch
 ```
 
-Use `import` when the problem is "these PRs exist on GitHub but I can't manage them locally
+Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage them locally
 yet." This command is *not* for rewriting history or changing what is in the stack, only for
 telling `jj-review` which local changes go with which PRs.
 

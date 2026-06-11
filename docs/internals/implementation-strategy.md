@@ -189,7 +189,7 @@ the underlying tracking fields directly.
 The classifier migration is intentionally incremental. Read-side status summaries and
 advisories, status cache persistence decisions, cleanup stale-change and rebase planning,
 close cleanup planning, bookmark discovery and matching, unlink active-link checks, relink
-remote validation, import remote validation and branch refresh decisions, submit
+remote validation, checkout remote validation and branch refresh decisions, submit
 untracked-remote repair, submit metadata sync, failed-submit artifact observation, and
 land trunk/revision readiness checks consume these axes.
 Direct reads of `CachedChange`, `PullRequestLookup`, and bookmark target fields remain

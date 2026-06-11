@@ -15,13 +15,13 @@ from ..support.integration_helpers import (
 )
 
 
-def test_import_bootstraps_local_review_state_from_pull_request(
+def test_checkout_bootstraps_local_review_state_from_pull_request(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -39,7 +39,7 @@ def test_import_bootstraps_local_review_state_from_pull_request(
     resolve_state_path(repo).unlink()
     capsys.readouterr()
 
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
     captured = capsys.readouterr()
 
     assert exit_code == 0
@@ -59,13 +59,13 @@ def test_import_bootstraps_local_review_state_from_pull_request(
     )
 
 
-def test_import_current_rejects_remote_branches_without_pull_requests(
+def test_checkout_current_rejects_remote_branches_without_pull_requests(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -83,7 +83,7 @@ def test_import_current_rejects_remote_branches_without_pull_requests(
         run_command(["jj", "bookmark", "forget", bookmark], repo)
     resolve_state_path(repo).unlink()
 
-    exit_code = _main(repo, config_path, "import", "--fetch")
+    exit_code = _main(repo, config_path, "checkout", "--fetch")
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -92,13 +92,13 @@ def test_import_current_rejects_remote_branches_without_pull_requests(
     assert ReviewStateStore.for_repo(repo).load().changes == {}
 
 
-def test_import_pull_request_rejects_cross_repository_heads(
+def test_checkout_pull_request_rejects_cross_repository_heads(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -106,7 +106,7 @@ def test_import_pull_request_rejects_cross_repository_heads(
     state_before = ReviewStateStore.for_repo(repo).load()
     fake_repo.pull_requests[2].head_label = f"someone-else:{fake_repo.pull_requests[2].head_ref}"
 
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -115,20 +115,20 @@ def test_import_pull_request_rejects_cross_repository_heads(
     assert ReviewStateStore.for_repo(repo).load().changes == state_before.changes
 
 
-def test_import_reports_up_to_date_when_selected_stack_is_already_imported(
+def test_checkout_reports_up_to_date_when_selected_stack_is_already_imported(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
     assert _main(repo, config_path, "submit") == 0
     capsys.readouterr()
 
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
     captured = capsys.readouterr()
 
     assert exit_code == 0
@@ -136,16 +136,16 @@ def test_import_reports_up_to_date_when_selected_stack_is_already_imported(
     assert "no changes to review" not in captured.out
 
 
-def test_import_current_fails_closed_when_head_has_no_discoverable_remote_review_link(
+def test_checkout_current_fails_closed_when_head_has_no_discoverable_remote_review_link(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
 
-    exit_code = _main(repo, config_path, "import")
+    exit_code = _main(repo, config_path, "checkout")
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -158,18 +158,18 @@ def test_import_current_fails_closed_when_head_has_no_discoverable_remote_review
     }
 
 
-def test_import_revset_fails_closed_without_remote_bookmark_identity(
+def test_checkout_revset_fails_closed_without_remote_bookmark_identity(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path, with_remote=False)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
 
     change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
 
-    exit_code = _main(repo, config_path, "import", "--revset", change_id)
+    exit_code = _main(repo, config_path, "checkout", "--revset", change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -182,13 +182,13 @@ def test_import_revset_fails_closed_without_remote_bookmark_identity(
     }
 
 
-def test_import_pull_request_fails_closed_when_head_branch_matches_multiple_pull_requests(
+def test_checkout_pull_request_fails_closed_when_head_branch_matches_multiple_pull_requests(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -205,7 +205,7 @@ def test_import_pull_request_fails_closed_when_head_branch_matches_multiple_pull
         title="duplicate link",
     )
 
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -213,13 +213,13 @@ def test_import_pull_request_fails_closed_when_head_branch_matches_multiple_pull
     assert ReviewStateStore.for_repo(repo).load().changes == initial_state.changes
 
 
-def test_import_fails_closed_when_stack_would_need_generated_bookmarks(
+def test_checkout_fails_closed_when_stack_would_need_generated_bookmarks(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -248,7 +248,7 @@ def test_import_fails_closed_when_stack_would_need_generated_bookmarks(
         repo,
     )
 
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -260,13 +260,13 @@ def test_import_fails_closed_when_stack_would_need_generated_bookmarks(
     assert bookmark_states[top_bookmark].local_target is None
 
 
-def test_import_fails_closed_without_partial_local_bookmark_updates(
+def test_checkout_fails_closed_without_partial_local_bookmark_updates(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -285,7 +285,7 @@ def test_import_fails_closed_without_partial_local_bookmark_updates(
     main_target = JjClient(repo).resolve_revision("main").commit_id
     run_command(["jj", "bookmark", "set", top_bookmark, "--revision", "main"], repo)
 
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -295,12 +295,12 @@ def test_import_fails_closed_without_partial_local_bookmark_updates(
     assert bookmark_states[top_bookmark].local_target == main_target
 
 
-def test_import_prefers_exact_remote_bookmarks_over_stale_cached_names(
+def test_checkout_prefers_exact_remote_bookmarks_over_stale_cached_names(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -331,7 +331,7 @@ def test_import_prefers_exact_remote_bookmarks_over_stale_cached_names(
     for bookmark in (bottom_bookmark, top_bookmark):
         run_command(["jj", "bookmark", "forget", bookmark], repo)
 
-    exit_code = _main(repo, config_path, "import", "--fetch", "--pull-request", "2")
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
 
     assert exit_code == 0
     state_after = state_store.load()
@@ -341,12 +341,12 @@ def test_import_prefers_exact_remote_bookmarks_over_stale_cached_names(
     assert bookmark_states[stale_bookmark].local_target is None
 
 
-def test_import_current_rejects_cache_only_link(
+def test_checkout_current_rejects_cache_only_link(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
 
     assert _main(repo, config_path, "submit") == 0
@@ -370,16 +370,16 @@ def test_import_current_rejects_cache_only_link(
         repo,
     )
 
-    assert _main(repo, config_path, "import", "--fetch") == 1
+    assert _main(repo, config_path, "checkout", "--fetch") == 1
 
 
-def test_import_revset_rejects_generated_bookmarks_without_selected_remote(
+def test_checkout_revset_rejects_generated_bookmarks_without_selected_remote(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_import_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
@@ -398,7 +398,7 @@ def test_import_revset_rejects_generated_bookmarks_without_selected_remote(
     resolve_state_path(repo).unlink()
     run_command(["jj", "git", "remote", "remove", "origin"], repo)
 
-    exit_code = _main(repo, config_path, "import", "--revset", top_change_id)
+    exit_code = _main(repo, config_path, "checkout", "--revset", top_change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -409,7 +409,7 @@ def test_import_revset_rejects_generated_bookmarks_without_selected_remote(
     assert bookmark_states[top_bookmark].local_target is None
 
 
-def _configure_import_environment(
+def _configure_checkout_environment(
     monkeypatch,
     tmp_path: Path,
     fake_repo: FakeGithubRepository,
@@ -420,7 +420,7 @@ def _configure_import_environment(
         command_modules=(
             "jj_review.commands.submit.command",
             "jj_review.review.status",
-            "jj_review.commands.import_",
+            "jj_review.commands.checkout",
         ),
         extra_config_lines=extra_config_lines,
         fake_repo=fake_repo,

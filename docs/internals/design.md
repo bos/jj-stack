@@ -547,19 +547,19 @@ These commands are not sources of truth either. They are user-driven ways to rea
 GitHub state to a `jj`-derived stack after damage, cross-machine work, or manual edits
 on GitHub.
 
-### `import`
+### `checkout`
 
-`jj review import [--fetch] [--pull-request <pr> | --revset <revset>]` resolves one
+`jj review checkout [--fetch] [--pull-request <pr> | --revset <revset>]` resolves one
 exact stack and sets up tracking for it. It does not mutate GitHub.
 
-`import` is the explicit recovery and bootstrap path for review state that already
+`checkout` is the explicit recovery and bootstrap path for review state that already
 exists remotely. If a stack already has PRs on GitHub but local tracking is missing on
-this machine, `import` is what you run. Plain `view` does not do this implicitly.
+this machine, `checkout` is what you run. Plain `view` does not do this implicitly.
 
 Selector handling stays unambiguous: a bare positional argument does not double as both
 revset and PR number, and omitting selector flags defaults to the stack headed by `@-`.
 
-`import` sets up tracking, not workspace motion:
+`checkout` sets up tracking, not workspace motion:
 
 - without `--fetch`, use only commits and PR-backed state already available locally
 - resolve from an explicit PR or an explicit local stack
@@ -572,7 +572,7 @@ revset and PR number, and omitting selector flags defaults to the stack headed b
 - when `--fetch` pulls in a remote-selected stack, print the fetched tip rather than
   changing the workspace
 
-`import` does not:
+`checkout` does not:
 
 - rewrite commits
 - restack descendants
@@ -582,15 +582,15 @@ revset and PR number, and omitting selector flags defaults to the stack headed b
 
 Failure guidance stays specific:
 
-- if the PR head branch is missing locally, point the user at `import --fetch`
+- if the PR head branch is missing locally, point the user at `checkout --fetch`
 - if the PR head branch is missing on the remote, cross-repo, or ambiguous, stop and
-  explain that the stack cannot be imported safely
+  explain that the stack cannot be checked out safely
 - if multiple PRs match the same head branch, point at `view --fetch` and `relink`
-- if any imported revision would need a freshly generated bookmark instead of an exact
+- if any checked-out revision would need a freshly generated bookmark instead of an exact
   discovered name, stop rather than inventing a local match
 - if the fetched stack shape is unsupported locally, point at `cleanup --rebase` only
   when the issue is local ancestry rather than remote identity
-- if `import` defaulted to the current stack and that stack has no matching PR, say so
+- if `checkout` defaulted to the current stack and that stack has no matching PR, say so
   rather than silently doing nothing
 - if a local bookmark already points elsewhere, stop and explain the conflict rather
   than silently taking it over
@@ -598,7 +598,7 @@ Failure guidance stays specific:
   only when it is exact and unambiguous; otherwise stop and surface the conflicting
   identities rather than partially overwriting
 
-`view --fetch` stays the read-only refresh path; `import` is the explicit
+`view --fetch` stays the read-only refresh path; `checkout` is the explicit
 materialization path. A repo-scoped `sync` command remains a separate future question
 rather than being folded into either.
 
@@ -680,7 +680,7 @@ Unlinked state means:
 
 - `view --fetch` may still report a discovered remote bookmark or PR for the same
   branch, but it labels them as unlinked rather than reactivating tracking
-- `import` may restore local bookmark state for the change, but keeps the unlinked
+- `checkout` may restore local bookmark state for the change, but keeps the unlinked
   marker; it does not restore active PR tracking
 - a preserved local bookmark surfaces as an unlinked bookmark rather than as actively
   tracked
@@ -844,7 +844,7 @@ The full command surface:
 - `jj review unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj review delete [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj review cleanup [--dry-run] [--rebase [<revset>]]`
-- `jj review import [--fetch] [--pull-request <pr> | --revset <revset>]`
+- `jj review checkout [--fetch] [--pull-request <pr> | --revset <revset>]`
 - `jj review land [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj review completion <bash|zsh|fish>`
 
@@ -857,7 +857,7 @@ current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `view`, `land`, `unstack`) plus support commands
-(`cleanup`, `import`). Repair commands (`restart`, `relink`, `unlink`) and
+(`cleanup`, `checkout`). Repair commands (`restart`, `relink`, `unlink`) and
 shell-integration glue (`completion`) stay hidden by default and only appear in
 `jj review help --all`. The `help` command itself is hidden parser glue: `jj review help`
 is the same as
@@ -879,7 +879,7 @@ Target selection is conservative:
 - `submit --re-request` re-requests users whose latest review is `APPROVED` or
   `CHANGES_REQUESTED`; pending review requests stay in place
 - `restart`, `relink`, and `unlink` require one explicit `<revset>`
-- `import` accepts at most one explicit selector flag and otherwise defaults to the
+- `checkout` accepts at most one explicit selector flag and otherwise defaults to the
   current stack headed by `@-`
 - `view` may omit `<revset>` and inspects the current stack
 

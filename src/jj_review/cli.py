@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import jj_review.bootstrap as bootstrap
+import jj_review.commands.checkout as checkout_command
 import jj_review.commands.cleanup.command as cleanup_command
 import jj_review.commands.doctor as doctor_command
-import jj_review.commands.import_ as import_command
 import jj_review.commands.land.command as land_command
 import jj_review.commands.list_ as list_command
 import jj_review.commands.relink as relink_command
@@ -106,7 +106,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[_HelpCommand, ...]], ...] = (
         "Support commands",
         (
             _HelpCommand("cleanup", cleanup_command.HELP),
-            _HelpCommand("import", import_command.HELP),
+            _HelpCommand("checkout", checkout_command.HELP),
             _HelpCommand("doctor", doctor_command.HELP),
         ),
     ),
@@ -440,12 +440,12 @@ def build_parser() -> ArgumentParser:
             "an orphaned PR shown by list"
         ),
     )
-    _add_import_parser(
+    _add_checkout_parser(
         subcommands,
-        command="import",
-        help_text=_normalized_help_text(import_command.HELP),
-        description_text=import_command.__doc__ or "",
-        handler=_forward_handler(import_command.import_),
+        command="checkout",
+        help_text=_normalized_help_text(checkout_command.HELP),
+        description_text=checkout_command.__doc__ or "",
+        handler=_forward_handler(checkout_command.checkout),
     )
 
     cleanup_parser = _add_command_parser(
@@ -1152,7 +1152,7 @@ def _add_relink_parser(
     return parser
 
 
-def _add_import_parser(
+def _add_checkout_parser(
     subcommands: _SubParsersAction[Any],
     *,
     command: str,
@@ -1177,7 +1177,7 @@ def _add_import_parser(
     _add_help_argument(
         selector,
         "--revset",
-        help="Explicit revset whose exact stack should be imported",
+        help="Explicit revset whose exact stack should be checked out",
     )
     _add_help_argument(
         parser,

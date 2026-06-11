@@ -60,7 +60,7 @@ The remaining follow-up here is narrower:
 _Benefit: medium — useful for operators managing several stacks at once, but
 not blocking the core single-stack workflow._
 
-A future `import` design covers explicit stack materialization for one
+A future `checkout` design covers explicit stack materialization for one
 selected review stack, and `view --fetch` remains the read-only refresh
 primitive.
 
@@ -74,7 +74,7 @@ repo-scoped `sync` command that:
 
 ## Git Commit Change-ID Header
 
-_Benefit: unknown — potentially useful for recovery and import UX, but not needed for the
+_Benefit: unknown — potentially useful for recovery and checkout UX, but not needed for the
 current core workflow._
 
 Recent `jj` versions can write a `change-id` header into Git commit objects created by

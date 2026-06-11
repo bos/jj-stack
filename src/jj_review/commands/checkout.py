@@ -1,6 +1,6 @@
 """Connect jj-review to an existing stack of pull requests.
 
-By default, `import` tries to match the current stack headed by `@-` to the
+By default, `checkout` tries to match the current stack headed by `@-` to the
 existing pull requests for that stack.
 
 Use `--pull-request` to select a specific stack by PR number or URL, or
@@ -8,7 +8,7 @@ Use `--pull-request` to select a specific stack by PR number or URL, or
 branches are not available locally yet; this fetches them first and then sets
 up tracking.
 
-`import` does not rewrite commits, rebase changes, or modify GitHub.
+`checkout` does not rewrite commits, rebase changes, or modify GitHub.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ type ImportActionBody = Message
 
 @dataclass(frozen=True, slots=True)
 class ImportAction:
-    """One applied import action."""
+    """One applied checkout action."""
 
     kind: str
     body: ImportActionBody
@@ -78,8 +78,8 @@ class ImportAction:
 
 
 @dataclass(frozen=True, slots=True)
-class ImportResult:
-    """Rendered import result for the selected repository."""
+class CheckoutResult:
+    """Rendered checkout result for the selected repository."""
 
     actions: tuple[ImportAction, ...]
     fetched_tip_commit: str | None
@@ -102,7 +102,7 @@ class _Selection:
 
 
 @dataclass(frozen=True, slots=True)
-class _PlannedImport:
+class _PlannedCheckout:
     bookmark: str
     track_remote: bool
     update_local_bookmark: bool
@@ -110,8 +110,8 @@ class _PlannedImport:
 
 
 @dataclass(frozen=True, slots=True)
-class _PreparedImport:
-    """Resolved import inputs before local tracking state is updated."""
+class _PreparedCheckout:
+    """Resolved checkout inputs before local tracking state is updated."""
 
     bookmark_by_change_id: dict[str, str]
     bookmark_states: dict[str, BookmarkState]
@@ -125,7 +125,7 @@ class _RevisionWithChangeId(Protocol):
     def change_id(self) -> str: ...
 
 
-def import_(
+def checkout(
     *,
     cli_args: JjCliArgs,
     debug: bool,
@@ -134,27 +134,27 @@ def import_(
     repository: Path | None,
     revset: str | None,
 ) -> int:
-    """CLI entrypoint for `import`."""
+    """CLI entrypoint for `checkout`."""
 
     context = bootstrap_context(
         repository=repository,
         cli_args=cli_args,
         debug=debug,
     )
-    with acquire_operation_lock(context.state_store.require_writable(), command="import"):
+    with acquire_operation_lock(context.state_store.require_writable(), command="checkout"):
         result = asyncio.run(
-            _run_import_async(
+            _run_checkout_async(
                 context=context,
                 fetch=fetch,
                 pull_request_reference=pull_request,
                 revset=revset,
             )
         )
-    _print_import_result(result)
+    _print_checkout_result(result)
     return 0
 
 
-def _print_import_result(result: ImportResult) -> None:
+def _print_checkout_result(result: CheckoutResult) -> None:
     if result.fetched_tip_commit is not None:
         console.output(ui.prefixed_line("Fetched tip commit: ", result.fetched_tip_commit))
     if result.remote is None:
@@ -181,41 +181,41 @@ def _print_import_result(result: ImportResult) -> None:
             console.output("The selected stack has no changes to review.")
 
 
-async def _run_import_async(
+async def _run_checkout_async(
     *,
     context: CommandContext,
     fetch: bool,
     pull_request_reference: str | None,
     revset: str | None,
-) -> ImportResult:
-    prepared_import = await _prepare_import(
+) -> CheckoutResult:
+    prepared_checkout = await _prepare_checkout(
         context=context,
         fetch=fetch,
         pull_request_reference=pull_request_reference,
         revset=revset,
     )
-    actions = _import_local_state(
-        client=prepared_import.prepared_status.prepared.client,
-        prepared_status=prepared_import.prepared_status,
-        status_result=prepared_import.status_result,
-        bookmark_by_change_id=prepared_import.bookmark_by_change_id,
-        bookmark_states=prepared_import.bookmark_states,
+    actions = _checkout_local_state(
+        client=prepared_checkout.prepared_status.prepared.client,
+        prepared_status=prepared_checkout.prepared_status,
+        status_result=prepared_checkout.status_result,
+        bookmark_by_change_id=prepared_checkout.bookmark_by_change_id,
+        bookmark_states=prepared_checkout.bookmark_states,
     )
-    return _import_result(
+    return _checkout_result(
         actions=actions,
-        prepared_import=prepared_import,
+        prepared_checkout=prepared_checkout,
     )
 
 
-async def _prepare_import(
+async def _prepare_checkout(
     *,
     context: CommandContext,
     fetch: bool,
     pull_request_reference: str | None,
     revset: str | None,
-) -> _PreparedImport:
+) -> _PreparedCheckout:
     client = context.jj_client
-    with console.spinner(description="Resolving import selection"):
+    with console.spinner(description="Resolving checkout selection"):
         selection = await _resolve_selection(
             client=client,
             fetch=fetch,
@@ -229,10 +229,10 @@ async def _prepare_import(
         and not client.query_revisions(selection.selected_revset, limit=1)
     ):
         bookmark_token = ui.bookmark(selection.head_bookmark)
-        import_fetch_cmd = ui.cmd("import --fetch")
+        checkout_fetch_cmd = ui.cmd("checkout --fetch")
         raise CliError(
             t"Branch {bookmark_token} is not present locally.",
-            hint=t"Re-run {import_fetch_cmd} to fetch that stack before importing.",
+            hint=t"Re-run {checkout_fetch_cmd} to fetch that stack before checking out.",
         )
     with console.spinner(description="Inspecting jj stack"):
         prepared_status = prepare_status(
@@ -246,9 +246,9 @@ async def _prepare_import(
         and selection.head_bookmark is None
         and not _prepared_status_has_discoverable_remote_link(prepared_status)
     ):
-        import_cmd = ui.cmd("import")
+        checkout_cmd = ui.cmd("checkout")
         raise CliError(
-            t"{import_cmd} cannot proceed because the current stack has no matching "
+            t"{checkout_cmd} cannot proceed because the current stack has no matching "
             t"remote pull request."
         )
     progress_total = prepared_status.github_inspection_count(discover_remote_review=True)
@@ -300,7 +300,7 @@ async def _prepare_import(
         head_revision = prepared_status.prepared.status_revisions[-1]
         bookmark_by_change_id[head_revision.revision.change_id] = selection.head_bookmark
 
-    return _PreparedImport(
+    return _PreparedCheckout(
         bookmark_by_change_id=bookmark_by_change_id,
         bookmark_states=bookmark_states,
         prepared_status=prepared_status,
@@ -309,15 +309,15 @@ async def _prepare_import(
     )
 
 
-def _import_result(
+def _checkout_result(
     *,
     actions: tuple[ImportAction, ...],
-    prepared_import: _PreparedImport,
-) -> ImportResult:
-    prepared_status = prepared_import.prepared_status
-    selection = prepared_import.selection
-    status_result = prepared_import.status_result
-    return ImportResult(
+    prepared_checkout: _PreparedCheckout,
+) -> CheckoutResult:
+    prepared_status = prepared_checkout.prepared_status
+    selection = prepared_checkout.selection
+    status_result = prepared_checkout.status_result
+    return CheckoutResult(
         actions=actions,
         fetched_tip_commit=selection.fetched_tip_commit,
         github_error=status_result.github_error,
@@ -348,11 +348,11 @@ async def _resolve_selection(
         if present
     )
     if selector_count > 1:
-        import_cmd = ui.cmd("import")
+        checkout_cmd = ui.cmd("checkout")
         pull_request_flag = ui.cmd("--pull-request")
         revset_flag = ui.cmd("--revset")
         raise CliError(
-            t"{import_cmd} accepts at most one selector: {pull_request_flag} or {revset_flag}."
+            t"{checkout_cmd} accepts at most one selector: {pull_request_flag} or {revset_flag}."
         )
 
     if selector_count == 0:
@@ -410,7 +410,7 @@ async def _resolve_pull_request_selection(
                 t"GitHub no longer reports a pull request for head branch {head_branch}.",
                 hint=(
                     t"Inspect the PR link with {status_fetch_cmd} and repair it with "
-                    t"{relink_cmd} before importing again."
+                    t"{relink_cmd} before checking out again."
                 ),
             )
         numbers = ", ".join(str(pull_request.number) for pull_request in pull_requests)
@@ -418,16 +418,16 @@ async def _resolve_pull_request_selection(
             t"GitHub reports multiple pull requests for head branch {head_branch}: {numbers}.",
             hint=(
                 t"Inspect the PR link with {status_fetch_cmd} and repair it with "
-                t"{relink_cmd} before importing again."
+                t"{relink_cmd} before checking out again."
             ),
         )
     pull_request = pull_requests[0]
     if pull_request.head.label != f"{github_repository.owner}:{head}":
         pull_request_head = ui.bookmark(pull_request.head.label or pull_request.head.ref)
-        import_cmd = ui.cmd("import")
+        checkout_cmd = ui.cmd("checkout")
         raise CliError(
             t"Pull request #{pull_request.number} head {pull_request_head} does not belong to "
-            t"{github_repository.full_name}. {import_cmd} only supports same-repository pull "
+            t"{github_repository.full_name}. {checkout_cmd} only supports same-repository pull "
             t"request branches."
         )
 
@@ -492,7 +492,7 @@ def _fetch_selected_stack_bookmarks(
         )
         if len(candidates) > 1:
             raise CliError(
-                t"Could not safely import the selected stack because "
+                t"Could not safely check out the selected stack because "
                 t"{ui.change_id(change_id)} matches multiple review branches on "
                 t"{ui.bookmark(remote.name)}: "
                 t"{ui.join(ui.bookmark, candidates)}."
@@ -634,7 +634,8 @@ def _remote_bookmark_commit_id(
             raise CliError(
                 t"Remote bookmark {bookmark_token}@{remote_token} is not available in "
                 t"remembered local remote state.",
-                hint=t"Re-run {ui.cmd('import --fetch')} to fetch that branch before importing.",
+                hint=t"Re-run {ui.cmd('checkout --fetch')} to fetch that branch before "
+                t"checking out.",
             )
         raise CliError(
             t"Remote bookmark {bookmark_token}@{remote_token} does not exist.",
@@ -643,7 +644,7 @@ def _remote_bookmark_commit_id(
     if remote_status.remote_branch == "conflicted":
         raise CliError(
             t"Remote bookmark {bookmark_token}@{remote_token} is conflicted.",
-            hint="Resolve it before importing.",
+            hint="Resolve it before checking out.",
         )
     if remote_state is None:
         raise AssertionError("Classified remote bookmark must have an observed state.")
@@ -651,12 +652,12 @@ def _remote_bookmark_commit_id(
     if commit_id is None:
         raise CliError(
             t"Remote bookmark {bookmark_token}@{remote_token} is ambiguous. "
-            t"{ui.cmd('import')} requires one exact branch."
+            t"{ui.cmd('checkout')} requires one exact branch."
         )
     return commit_id
 
 
-def _import_local_state(
+def _checkout_local_state(
     *,
     client: JjClient,
     prepared_status: PreparedStatus,
@@ -670,11 +671,11 @@ def _import_local_state(
     next_changes = dict(current_state.changes)
     actions: list[ImportAction] = []
     selected_remote_name = prepared.remote.name if prepared.remote is not None else None
-    planned_imports: list[_PlannedImport] = []
+    planned_checkouts: list[_PlannedCheckout] = []
 
     seen_bookmarks: set[str] = set()
     for prepared_revision in prepared.status_revisions:
-        bookmark = _resolve_import_bookmark(
+        bookmark = _resolve_checkout_bookmark(
             bookmark_by_change_id=bookmark_by_change_id,
             bookmark_states=bookmark_states,
             prepared_revision=prepared_revision,
@@ -722,8 +723,8 @@ def _import_local_state(
         )
         if existing_change is None or updated_change != cached_change:
             next_changes[prepared_revision.revision.change_id] = updated_change
-        planned_imports.append(
-            _PlannedImport(
+        planned_checkouts.append(
+            _PlannedCheckout(
                 bookmark=bookmark,
                 track_remote=track_remote,
                 update_local_bookmark=(
@@ -733,7 +734,7 @@ def _import_local_state(
             )
         )
 
-    for planned in planned_imports:
+    for planned in planned_checkouts:
         if planned.update_local_bookmark:
             bookmark_token = ui.bookmark(planned.bookmark)
             short_target = planned.update_local_target[:_DISPLAY_CHANGE_ID_LENGTH]
@@ -782,7 +783,7 @@ def _validate_bookmark_state(
         bookmark_token = ui.bookmark(bookmark)
         raise CliError(
             t"Local bookmark {bookmark_token} is conflicted.",
-            hint="Resolve it before importing.",
+            hint="Resolve it before checking out.",
         )
     if (
         bookmark_state.local_target is not None
@@ -791,7 +792,7 @@ def _validate_bookmark_state(
         bookmark_token = ui.bookmark(bookmark)
         raise CliError(
             t"Local bookmark {bookmark_token} already points to a different revision.",
-            hint="Move or forget it explicitly before importing.",
+            hint="Move or forget it explicitly before checking out.",
         )
     if selected_remote_name is None:
         return
@@ -807,7 +808,7 @@ def _validate_bookmark_state(
         remote_bookmark_location = f"'{remote_bookmark}'@{selected_remote_name}"
         raise CliError(
             f"Remote bookmark {remote_bookmark_location} is conflicted.",
-            hint="Resolve it before importing.",
+            hint="Resolve it before checking out.",
         )
     if remote_status.remote_branch_matches_commit is not True:
         remote_bookmark = ui.bookmark(bookmark)
@@ -825,7 +826,7 @@ def _find_status_revision(
     for revision in revisions:
         if revision.change_id == change_id:
             return revision
-    raise AssertionError("Status revision for imported change was not found.")
+    raise AssertionError("Status revision for checked-out change was not found.")
 
 
 def _update_cached_change_from_status(
@@ -923,20 +924,20 @@ def _ensure_selected_head_has_pull_request(
         None,
     )
     if selected_head is None:
-        raise AssertionError("Selected import head is missing from the status result.")
+        raise AssertionError("Selected checkout head is missing from the status result.")
     lookup = selected_head.pull_request_lookup
     if lookup is not None and lookup.pull_request is not None:
         return
 
-    import_cmd = ui.cmd("import")
+    checkout_cmd = ui.cmd("checkout")
     selected_head_change_id = ui.change_id(selected_head.change_id)
     raise CliError(
-        t"{import_cmd} only supports stacks whose selected head already has a pull request. "
+        t"{checkout_cmd} only supports stacks whose selected head already has a pull request. "
         t"Missing pull request for: {selected_head.subject} ({selected_head_change_id})."
     )
 
 
-def _resolve_import_bookmark(
+def _resolve_checkout_bookmark(
     *,
     bookmark_by_change_id: dict[str, str],
     bookmark_states: dict[str, BookmarkState],
@@ -953,7 +954,7 @@ def _resolve_import_bookmark(
         if prepared_revision.bookmark_source == "generated":
             status_fetch_cmd = ui.cmd("status --fetch")
             raise CliError(
-                t"Could not safely import the selected stack because "
+                t"Could not safely check out the selected stack because "
                 t"{ui.change_id(prepared_revision.revision.change_id)} has no matching "
                 t"pull request on the selected remote. Refresh with {status_fetch_cmd} "
                 t"or select an exact pull request."
@@ -970,7 +971,7 @@ def _resolve_import_bookmark(
         bookmark_token = ui.bookmark(bookmark)
         status_fetch_cmd = ui.cmd("status --fetch")
         raise CliError(
-            t"Could not safely import the selected stack because saved branch "
+            t"Could not safely check out the selected stack because saved branch "
             t"{bookmark_token} for {ui.change_id(prepared_revision.revision.change_id)} "
             t"is not present on the selected remote.",
             hint=t"Refresh with {status_fetch_cmd} or select an exact pull request.",
@@ -979,12 +980,12 @@ def _resolve_import_bookmark(
         bookmark_token = ui.bookmark(bookmark)
         status_fetch_cmd = ui.cmd("status --fetch")
         raise CliError(
-            t"Could not safely import the selected stack because saved branch "
+            t"Could not safely check out the selected stack because saved branch "
             t"{bookmark_token} for {ui.change_id(prepared_revision.revision.change_id)} "
             t"points to a different revision on the selected remote.",
             hint=(
                 t"Refresh with {status_fetch_cmd} or repair the stale remote match "
-                t"before importing again."
+                t"before checking out again."
             ),
         )
     return bookmark

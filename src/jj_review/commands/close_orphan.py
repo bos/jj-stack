@@ -133,7 +133,7 @@ async def run_untracked_cleanup_pull_request(
         raise CliError(
             t"PR #{pull_request_number} is not tracked locally, and it is still open.",
             hint=(
-                t"Run {ui.cmd('import')} or {ui.cmd('relink')} if this PR should be "
+                t"Run {ui.cmd('checkout')} or {ui.cmd('relink')} if this PR should be "
                 t"attached locally, or close it on GitHub."
             ),
         )

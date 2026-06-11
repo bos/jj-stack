@@ -156,7 +156,7 @@ def resolve_linked_change_for_pull_request(
         raise CliError(
             t"PR #{pull_request_number} is not linked to any local change.",
             hint=(
-                t"Use an explicit revision instead, or run {ui.cmd('import')} or "
+                t"Use an explicit revision instead, or run {ui.cmd('checkout')} or "
                 t"{ui.cmd('relink')} first."
             ),
         )
