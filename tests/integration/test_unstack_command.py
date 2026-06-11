@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from jj_review.github.client import GithubClient, GithubClientError
 from jj_review.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
 from jj_review.jj.client import JjClient
@@ -33,7 +35,9 @@ def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
 
 
-def test_close_apply_closes_pull_request_and_retires_active_state(
+@pytest.mark.parametrize("command", ["unstack", "delete"])
+def test_unstack_apply_closes_pull_request_and_retires_active_state(
+    command: str,
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -45,7 +49,7 @@ def test_close_apply_closes_pull_request_and_retires_active_state(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
 
-    exit_code = run_main(repo, config_path, "close", change_id)
+    exit_code = run_main(repo, config_path, command, change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
@@ -59,7 +63,7 @@ def test_close_apply_closes_pull_request_and_retires_active_state(
     assert issue_comments(fake_repo, 1) == []
 
 
-def test_close_plain_skips_remote_fetch_but_cleanup_refreshes(
+def test_unstack_plain_skips_remote_fetch_but_cleanup_refreshes(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -79,20 +83,20 @@ def test_close_plain_skips_remote_fetch_but_cleanup_refreshes(
         tracking_fetch_remote,
     )
 
-    assert run_main(repo, config_path, "close", "--dry-run") == 0
+    assert run_main(repo, config_path, "unstack", "--dry-run") == 0
     capsys.readouterr()
     assert fetch_calls == []
 
-    assert run_main(repo, config_path, "close") == 0
+    assert run_main(repo, config_path, "unstack") == 0
     capsys.readouterr()
     assert fetch_calls == []
 
-    assert run_main(repo, config_path, "close", "--cleanup") == 0
+    assert run_main(repo, config_path, "unstack", "--cleanup") == 0
     capsys.readouterr()
     assert fetch_calls and fetch_calls[0] == "origin"
 
 
-def test_close_apply_can_select_a_stack_by_pull_request_number(
+def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -118,7 +122,7 @@ def test_close_apply_can_select_a_stack_by_pull_request_number(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--pull-request",
         str(first_pr_number),
     )
@@ -133,7 +137,7 @@ def test_close_apply_can_select_a_stack_by_pull_request_number(
     assert refreshed_state.changes[second_change_id].pr_state == "open"
 
 
-def test_close_cleanup_pull_request_without_saved_record_reports_open_pr_not_tracked(
+def test_unstack_cleanup_pull_request_without_saved_record_reports_open_pr_not_tracked(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -150,7 +154,7 @@ def test_close_cleanup_pull_request_without_saved_record_reports_open_pr_not_tra
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(pull_request.number),
@@ -163,7 +167,7 @@ def test_close_cleanup_pull_request_without_saved_record_reports_open_pr_not_tra
     assert "not linked to any local change" not in combined
 
 
-def test_close_noop_short_circuit_on_untracked_stack(
+def test_unstack_noop_short_circuit_on_untracked_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -172,7 +176,7 @@ def test_close_noop_short_circuit_on_untracked_stack(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
 
-    exit_code = run_main(repo, config_path, "close")
+    exit_code = run_main(repo, config_path, "unstack")
     captured = capsys.readouterr()
 
     assert exit_code == 0
@@ -182,7 +186,7 @@ def test_close_noop_short_circuit_on_untracked_stack(
     )
 
 
-def test_close_and_cleanup_match_dry_run_on_fully_untracked_stack(
+def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -203,7 +207,7 @@ def test_close_and_cleanup_match_dry_run_on_fully_untracked_stack(
 
     def fail_list_bookmark_states(*args, **kwargs):
         raise AssertionError(
-            "close should not inspect bookmark state for a fully untracked stack"
+            "unstack should not inspect bookmark state for a fully untracked stack"
         )
 
     monkeypatch.setattr(
@@ -211,15 +215,15 @@ def test_close_and_cleanup_match_dry_run_on_fully_untracked_stack(
         tracking_fetch_remote,
     )
     monkeypatch.setattr(
-        "jj_review.commands.close.JjClient.list_bookmark_states",
+        "jj_review.commands.unstack.JjClient.list_bookmark_states",
         fail_list_bookmark_states,
     )
 
-    dry_run_exit_code = run_main(repo, config_path, "close", "--dry-run")
+    dry_run_exit_code = run_main(repo, config_path, "unstack", "--dry-run")
     dry_run_captured = capsys.readouterr()
-    close_exit_code = run_main(repo, config_path, "close")
+    close_exit_code = run_main(repo, config_path, "unstack")
     close_captured = capsys.readouterr()
-    cleanup_exit_code = run_main(repo, config_path, "close", "--cleanup")
+    cleanup_exit_code = run_main(repo, config_path, "unstack", "--cleanup")
     cleanup_captured = capsys.readouterr()
 
     assert dry_run_exit_code == 0
@@ -232,7 +236,7 @@ def test_close_and_cleanup_match_dry_run_on_fully_untracked_stack(
     assert fetch_calls == []
 
 
-def test_close_dry_run_leaves_remote_state_unchanged_and_reports_planned_actions(
+def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actions(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -245,7 +249,7 @@ def test_close_dry_run_leaves_remote_state_unchanged_and_reports_planned_actions
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
 
-    exit_code = run_main(repo, config_path, "close", "--dry-run", change_id)
+    exit_code = run_main(repo, config_path, "unstack", "--dry-run", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
@@ -256,7 +260,7 @@ def test_close_dry_run_leaves_remote_state_unchanged_and_reports_planned_actions
     assert issue_comments(fake_repo, 1) == []
 
 
-def test_close_pull_request_selector_requires_a_linked_local_change(
+def test_unstack_pull_request_selector_requires_a_linked_local_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -265,7 +269,7 @@ def test_close_pull_request_selector_requires_a_linked_local_change(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     resolve_state_path(repo).unlink()
 
-    exit_code = run_main(repo, config_path, "close", "--pull-request", "1")
+    exit_code = run_main(repo, config_path, "unstack", "--pull-request", "1")
     captured = capsys.readouterr()
     combined_output = _combined_output(captured)
 
@@ -274,7 +278,7 @@ def test_close_pull_request_selector_requires_a_linked_local_change(
     assert fake_repo.pull_requests[1].state == "open"
 
 
-def test_close_apply_reports_blocked_when_github_is_unavailable(
+def test_unstack_apply_reports_blocked_when_github_is_unavailable(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -301,11 +305,11 @@ def test_close_apply_reports_blocked_when_github_is_unavailable(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.close", "jj_review.review.status"),
+        modules=("jj_review.commands.unstack", "jj_review.review.status"),
         client_type=OfflineGithubClient,
     )
 
-    exit_code = run_main(repo, config_path, "close", change_id)
+    exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
     combined_output = _combined_output(captured)
 
@@ -318,7 +322,7 @@ def test_close_apply_reports_blocked_when_github_is_unavailable(
     assert ReviewStateStore.for_repo(repo).load() == initial_state
 
 
-def test_close_apply_cleanup_deletes_owned_bookmarks_and_comments(
+def test_unstack_apply_cleanup_deletes_owned_bookmarks_and_comments(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -365,7 +369,7 @@ def test_close_apply_cleanup_deletes_owned_bookmarks_and_comments(
         tracking_forget_bookmarks,
     )
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", change_id)
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
     normalized_output = " ".join(captured.out.split())
@@ -383,7 +387,7 @@ def test_close_apply_cleanup_deletes_owned_bookmarks_and_comments(
     assert action_order == ["remote", "local"]
 
 
-def test_close_cleanup_pull_request_retires_orphaned_pr(
+def test_unstack_cleanup_pull_request_retires_orphaned_pr(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -411,7 +415,7 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -432,7 +436,7 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     rerun_exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -444,7 +448,7 @@ def test_close_cleanup_pull_request_retires_orphaned_pr(
     assert "not linked" not in _combined_output(rerun_captured)
 
 
-def test_close_cleanup_pull_request_closes_orphaned_pr(
+def test_unstack_cleanup_pull_request_closes_orphaned_pr(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -473,7 +477,7 @@ def test_close_cleanup_pull_request_closes_orphaned_pr(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -486,7 +490,7 @@ def test_close_cleanup_pull_request_closes_orphaned_pr(
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
 
 
-def test_close_cleanup_pull_request_blocks_when_saved_pr_head_is_from_fork(
+def test_unstack_cleanup_pull_request_blocks_when_saved_pr_head_is_from_fork(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -513,7 +517,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_pr_head_is_from_fork(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -530,7 +534,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_pr_head_is_from_fork(
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_refuses_when_orphan_bookmark_is_reclaimed(
+def test_unstack_cleanup_pull_request_refuses_when_orphan_bookmark_is_reclaimed(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -570,7 +574,7 @@ def test_close_cleanup_pull_request_refuses_when_orphan_bookmark_is_reclaimed(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -585,7 +589,7 @@ def test_close_cleanup_pull_request_refuses_when_orphan_bookmark_is_reclaimed(
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_blocks_when_saved_submitted_target_is_missing(
+def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_missing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -624,7 +628,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_submitted_target_is_missin
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -642,7 +646,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_submitted_target_is_missin
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_blocks_when_saved_submitted_target_drifted(
+def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_drifted(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -681,7 +685,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_submitted_target_drifted(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -699,7 +703,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_submitted_target_drifted(
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_blocks_when_saved_target_drifted(
+def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -730,7 +734,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_target_drifted(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -745,7 +749,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_target_drifted(
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_blocks_when_remote_branch_drifted_externally(
+def test_unstack_cleanup_pull_request_blocks_when_remote_branch_drifted_externally(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -785,7 +789,7 @@ def test_close_cleanup_pull_request_blocks_when_remote_branch_drifted_externally
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -802,7 +806,7 @@ def test_close_cleanup_pull_request_blocks_when_remote_branch_drifted_externally
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_blocks_when_saved_bookmark_drifted(
+def test_unstack_cleanup_pull_request_blocks_when_saved_bookmark_drifted(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -827,7 +831,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_bookmark_drifted(
     )
     run_command(["jj", "abandon", change_id], repo)
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", "--pull-request", "1")
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1")
     captured = capsys.readouterr()
     combined_output = _combined_output(captured)
 
@@ -841,7 +845,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_bookmark_drifted(
     )
 
 
-def test_close_cleanup_pull_request_blocks_when_branch_has_multiple_pull_requests(
+def test_unstack_cleanup_pull_request_blocks_when_branch_has_multiple_pull_requests(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -861,7 +865,7 @@ def test_close_cleanup_pull_request_blocks_when_branch_has_multiple_pull_request
     )
     run_command(["jj", "abandon", change_id], repo)
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", "--pull-request", "1")
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1")
     captured = capsys.readouterr()
     combined_output = _combined_output(captured)
 
@@ -871,7 +875,7 @@ def test_close_cleanup_pull_request_blocks_when_branch_has_multiple_pull_request
     assert fake_repo.pull_requests[1].state == "open"
 
 
-def test_close_cleanup_pull_request_blocks_when_saved_pr_is_no_longer_on_github(
+def test_unstack_cleanup_pull_request_blocks_when_saved_pr_is_no_longer_on_github(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -898,7 +902,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_pr_is_no_longer_on_github(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -913,7 +917,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_pr_is_no_longer_on_github(
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_blocks_when_saved_pr_head_has_been_retargeted(
+def test_unstack_cleanup_pull_request_blocks_when_saved_pr_head_has_been_retargeted(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -942,7 +946,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_pr_head_has_been_retargete
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -958,7 +962,7 @@ def test_close_cleanup_pull_request_blocks_when_saved_pr_head_has_been_retargete
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_retires_merged_orphan_via_saved_pr(
+def test_unstack_cleanup_pull_request_retires_merged_orphan_via_saved_pr(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -987,7 +991,7 @@ def test_close_cleanup_pull_request_retires_merged_orphan_via_saved_pr(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -1002,7 +1006,7 @@ def test_close_cleanup_pull_request_retires_merged_orphan_via_saved_pr(
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
 
 
-def test_close_cleanup_pull_request_reports_blocked_when_github_is_unavailable(
+def test_unstack_cleanup_pull_request_reports_blocked_when_github_is_unavailable(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1026,11 +1030,11 @@ def test_close_cleanup_pull_request_reports_blocked_when_github_is_unavailable(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.close", "jj_review.commands.close_orphan"),
+        modules=("jj_review.commands.unstack", "jj_review.commands.close_orphan"),
         client_type=OfflineGithubClient,
     )
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", "--pull-request", "1")
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1")
     captured = capsys.readouterr()
     combined_output = _combined_output(captured)
 
@@ -1043,7 +1047,7 @@ def test_close_cleanup_pull_request_reports_blocked_when_github_is_unavailable(
     assert fake_repo.pull_requests[1].state == "open"
 
 
-def test_close_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
+def test_unstack_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1062,7 +1066,7 @@ def test_close_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
     run_command(["jj", "bookmark", "set", bookmark, "-r", "main"], repo)
     run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", bookmark], repo)
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", "--pull-request", "1")
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1")
     captured = capsys.readouterr()
     combined_output = _combined_output(captured)
     refreshed_state = state_store.load()
@@ -1074,7 +1078,7 @@ def test_close_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
     assert refreshed_state.changes[change_id].pr_state == "closed"
 
 
-def test_close_cleanup_pull_request_dry_run_previews_orphan_close(
+def test_unstack_cleanup_pull_request_dry_run_previews_orphan_close(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1100,7 +1104,7 @@ def test_close_cleanup_pull_request_dry_run_previews_orphan_close(
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--dry-run",
         "--pull-request",
@@ -1119,7 +1123,7 @@ def test_close_cleanup_pull_request_dry_run_previews_orphan_close(
     assert bottom_change_id in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_orphan_close_is_idempotent_after_branch_already_gone(
+def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_already_gone(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1151,7 +1155,7 @@ def test_close_cleanup_pull_request_orphan_close_is_idempotent_after_branch_alre
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(bottom_pr_number),
@@ -1167,7 +1171,7 @@ def test_close_cleanup_pull_request_orphan_close_is_idempotent_after_branch_alre
     assert bottom_change_id not in state_store.load().changes
 
 
-def test_close_cleanup_pull_request_preserves_external_bookmark_without_user_opt_in(
+def test_unstack_cleanup_pull_request_preserves_external_bookmark_without_user_opt_in(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1198,7 +1202,7 @@ def test_close_cleanup_pull_request_preserves_external_bookmark_without_user_opt
     exit_code = run_main(
         repo,
         config_path,
-        "close",
+        "unstack",
         "--cleanup",
         "--pull-request",
         str(pr_number),
@@ -1216,7 +1220,7 @@ def test_close_cleanup_pull_request_preserves_external_bookmark_without_user_opt
     assert bottom_change_id not in state_store.load().changes
 
 
-def test_close_apply_rerun_is_idempotent(
+def test_unstack_apply_rerun_is_idempotent(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1228,12 +1232,12 @@ def test_close_apply_rerun_is_idempotent(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
 
-    first_exit_code = run_main(repo, config_path, "close", change_id)
+    first_exit_code = run_main(repo, config_path, "unstack", change_id)
     capsys.readouterr()
     first_state = state_store.load()
     del fake_repo.pull_requests[1]
 
-    second_exit_code = run_main(repo, config_path, "close", change_id)
+    second_exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
     second_state = state_store.load()
 
@@ -1245,7 +1249,7 @@ def test_close_apply_rerun_is_idempotent(
     assert 1 not in fake_repo.pull_requests
 
 
-def test_close_apply_cleanup_rerun_completes_after_prior_close_when_pr_is_missing(
+def test_unstack_apply_cleanup_rerun_completes_after_prior_close_when_pr_is_missing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1259,11 +1263,11 @@ def test_close_apply_cleanup_rerun_completes_after_prior_close_when_pr_is_missin
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    assert run_main(repo, config_path, "close", change_id) == 0
+    assert run_main(repo, config_path, "unstack", change_id) == 0
     capsys.readouterr()
     del fake_repo.pull_requests[1]
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", change_id)
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
@@ -1277,7 +1281,7 @@ def test_close_apply_cleanup_rerun_completes_after_prior_close_when_pr_is_missin
     assert JjClient(repo).get_bookmark_state(bookmark).local_target is None
 
 
-def test_close_apply_blocks_when_github_no_longer_reports_the_cached_pull_request(
+def test_unstack_apply_blocks_when_github_no_longer_reports_the_cached_pull_request(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1291,7 +1295,7 @@ def test_close_apply_blocks_when_github_no_longer_reports_the_cached_pull_reques
     initial_state = state_store.load()
     del fake_repo.pull_requests[1]
 
-    exit_code = run_main(repo, config_path, "close", change_id)
+    exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
     combined_output = _combined_output(captured)
 
@@ -1300,7 +1304,7 @@ def test_close_apply_blocks_when_github_no_longer_reports_the_cached_pull_reques
     assert state_store.load() == initial_state
 
 
-def test_close_apply_checkpoints_prior_progress_before_later_block(
+def test_unstack_apply_checkpoints_prior_progress_before_later_block(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1330,11 +1334,11 @@ def test_close_apply_checkpoints_prior_progress_before_later_block(
         title="feature 1 duplicate",
     )
 
-    first_exit_code = run_main(repo, config_path, "close", head_change_id)
+    first_exit_code = run_main(repo, config_path, "unstack", head_change_id)
     first_run = capsys.readouterr()
     checkpointed_state = state_store.load()
 
-    second_exit_code = run_main(repo, config_path, "close", head_change_id)
+    second_exit_code = run_main(repo, config_path, "unstack", head_change_id)
     second_run = capsys.readouterr()
 
     assert first_exit_code == 1
@@ -1348,7 +1352,7 @@ def test_close_apply_checkpoints_prior_progress_before_later_block(
     assert f"close PR #{head_pr_number}" not in second_run.out
 
 
-def test_close_apply_cleanup_rechecks_cached_comment_ownership_when_pr_is_missing(
+def test_unstack_apply_cleanup_rechecks_cached_comment_ownership_when_pr_is_missing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1360,7 +1364,7 @@ def test_close_apply_cleanup_rechecks_cached_comment_ownership_when_pr_is_missin
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
 
-    assert run_main(repo, config_path, "close", change_id) == 0
+    assert run_main(repo, config_path, "unstack", change_id) == 0
     capsys.readouterr()
 
     manual_comment = fake_repo.create_issue_comment(body="manual note", issue_number=1)
@@ -1380,7 +1384,7 @@ def test_close_apply_cleanup_rechecks_cached_comment_ownership_when_pr_is_missin
     )
     del fake_repo.pull_requests[1]
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", change_id)
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -1392,7 +1396,7 @@ def test_close_apply_cleanup_rechecks_cached_comment_ownership_when_pr_is_missin
     assert manual_comment in issue_comments(fake_repo, 1)
 
 
-def test_close_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(
+def test_unstack_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1407,7 +1411,7 @@ def test_close_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(
     initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
     run_command(["jj", "bookmark", "move", "--allow-backwards", bookmark, "--to", "main"], repo)
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", change_id)
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
     captured = capsys.readouterr()
     local_target = JjClient(repo).get_bookmark_state(bookmark).local_target
 
@@ -1419,7 +1423,7 @@ def test_close_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(
     assert fake_repo.pull_requests[1].state == "closed"
 
 
-def test_close_apply_requires_import_after_sparse_state_loss(
+def test_unstack_apply_requires_import_after_sparse_state_loss(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1431,7 +1435,7 @@ def test_close_apply_requires_import_after_sparse_state_loss(
     change_id = stack.revisions[-1].change_id
     resolve_state_path(repo).unlink()
 
-    exit_code = run_main(repo, config_path, "close", change_id)
+    exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
     refreshed_state = ReviewStateStore.for_repo(repo).load()
 
@@ -1444,7 +1448,7 @@ def test_close_apply_requires_import_after_sparse_state_loss(
     assert refreshed_state.changes == {}
 
 
-def test_close_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
+def test_unstack_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1476,7 +1480,7 @@ def test_close_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
         issue_number=2,
     )
 
-    exit_code = run_main(repo, config_path, "close", "--cleanup", change_id)
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1

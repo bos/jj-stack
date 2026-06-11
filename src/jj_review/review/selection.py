@@ -74,7 +74,7 @@ def resolve_orphaned_pull_request(
 
     Raises `CliError` when two or more active tracked records claim the same
     pull request number. The tracking data is ambiguous; the user must repair
-    it via `unlink` or `relink` before `close --cleanup --pull-request` can
+    it via `unlink` or `relink` before `unstack --cleanup --pull-request` can
     act, because there is no single orphan target to retire.
 
     The membership check matches what `list` renders as an `orphan` row: a

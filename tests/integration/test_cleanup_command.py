@@ -323,7 +323,7 @@ def test_cleanup_preserves_open_orphan_record_and_remote_branch(
     assert exit_code == 0
     assert "  - preserve open orphan" in captured.out
     assert "preserve open orphan" in normalized_output
-    assert f"close --cleanup --pull-request {pr_number}" in normalized_output
+    assert f"unstack --cleanup --pull-request {pr_number}" in normalized_output
     assert change_id in refreshed_state.changes
     assert refreshed_state.changes[change_id].bookmark == bookmark
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)

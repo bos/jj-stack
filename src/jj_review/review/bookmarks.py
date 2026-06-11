@@ -263,7 +263,7 @@ def find_changes_by_bookmark(
     """Return change_ids of any saved record whose bookmark matches.
 
     Used to detect cross-claim collisions before mutating remote state — for
-    example, when `close --cleanup --pull-request <pr>` is asked to delete an
+    example, when `unstack --cleanup --pull-request <pr>` is asked to delete an
     orphaned PR's branch but the same bookmark is now claimed by another live
     review record (typically through a `use_bookmarks` pattern).
 

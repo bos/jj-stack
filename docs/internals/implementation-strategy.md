@@ -80,7 +80,7 @@ The curated top-level help is part of that executable surface. `jj-review help -
 shows the full command list and includes any short command aliases so they stay
 discoverable without reading the README first.
 
-Current short aliases include `ls` for `list` and `sub` for `submit`.
+Current aliases include `ls` for `list`, `sub` for `submit`, and `delete` for `unstack`.
 Commands that select one linked pull request also accept `-p` as a short form for
 `--pull-request`.
 
@@ -263,8 +263,8 @@ Mutating commands hold the lock through their full command lifetime. `view` uses
 non-blocking path only around its best-effort cache write, so live inspection still renders
 while another mutation is running. The operation lock replaces same-kind PID waits.
 
-`land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `close`, and orphaned
-`close --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
+`land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `unstack`, and orphaned
+`unstack --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
 events to `operation-log.jsonl` for after-the-fact inspection. Retry behavior derives from
 the current jj DAG, saved tracking data, GitHub state, and explicit user selectors. The
 log is primarily audit evidence and is not a generic recovery model; the one carve-out is
@@ -305,10 +305,10 @@ rewrite, a changed review parent, or changed stack membership.
 Plain `view` does not run repo-scoped stale-stack discovery. Its "other stack changed" advisory
 is limited to stacks built on top of the stack being rendered; use `list` for the repo-wide view.
 Plain `view` also does not inspect managed stack-summary comments. That keeps status from doing
-one issue-comment request per open PR; `submit`, `close`, and `cleanup` own stack-comment
+one issue-comment request per open PR; `submit`, `unstack`, and `cleanup` own stack-comment
 validation when they mutate those comments.
 
-Orphaned `close --cleanup --pull-request` uses the same bookmark and stack-comment
+Orphaned `unstack --cleanup --pull-request` uses the same bookmark and stack-comment
 validation as regular close before it mutates GitHub state or prunes saved tracking.
 It verifies the saved PR identity by PR number, then verifies that the PR head is the
 saved branch on the configured GitHub repository before using head-branch lookup only
@@ -560,7 +560,7 @@ When possible, diagnostics point to the exact recovery action:
 - `jj review submit --restart`
 - `jj review restart`
 - `jj review relink`
-- `jj review close`
+- `jj review unstack`
 - `jj rebase`
 - `jj review cleanup`
 - `jj workspace update-stale`

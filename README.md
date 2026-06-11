@@ -154,7 +154,7 @@ If `list` shows an `orphan` row, a PR is still open but the local change it revi
 no longer part of any current stack. When you are ready to retire that PR:
 
 ```bash
-jj-review close --cleanup --pull-request <pr>
+jj-review unstack --cleanup --pull-request <pr>
 ```
 
 ## Learn more
@@ -203,7 +203,7 @@ If you leave `bookmark_prefix` unset, `jj-review` keeps the default `review/...`
 
 `cleanup_user_bookmarks` defaults to `false`. Leave it unset if bookmarks selected
 through `use_bookmarks` should be preserved during later cleanup. Set it to `true` only
-if you want `cleanup`, `close --cleanup`, and `land` to delete those reused bookmarks too
+if you want `cleanup`, `unstack --cleanup`, and `land` to delete those reused bookmarks too
 when that cleanup is otherwise safe.
 
 For authentication, `jj-review` checks `GH_TOKEN`, then `GITHUB_TOKEN`, then falls back

@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 import jj_review.ui as ui
-from jj_review.commands.close import (
+from jj_review.commands.unstack import (
     CloseAction,
     PreparedClose,
     _cleanup_revision,

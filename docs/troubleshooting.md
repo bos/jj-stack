@@ -178,7 +178,7 @@ telling `jj-review` which local changes go with which PRs.
 
 Possible causes:
 
-- your `land` or `close` succeeded, but the follow-up cleanup hasn't run yet
+- your `land` or `unstack` succeeded, but the follow-up cleanup hasn't run yet
 - you ran `land --skip-cleanup` to keep the review branches on purpose
 - something prevented `jj-review` from cleaning up automatically
 
@@ -201,13 +201,13 @@ Cause:
 What to do:
 
 ```bash
-jj-review close
+jj-review unstack
 ```
 
 If you already know the pull request number, you can use:
 
 ```bash
-jj-review close --pull-request 7
+jj-review unstack --pull-request 7
 ```
 
 This closes the stack's pull requests. Add `--cleanup` if you also want to delete the review
@@ -242,7 +242,7 @@ instead of replaying a retained recovery record.
 | Command that failed         | Re-run                                  |
 | --------------------------- | --------------------------------------- |
 | `submit`                    | `jj-review submit <revset>`             |
-| `close` / `close --cleanup` | `jj-review close [--cleanup] <revset>`  |
+| `unstack` / `unstack --cleanup` | `jj-review unstack [--cleanup] <revset>`  |
 | `cleanup --rebase`          | `jj-review cleanup --rebase <revset>`   |
 | `land`                      | `jj-review land <revset>`               |
 
@@ -254,10 +254,10 @@ finalization for the exact landed commits.
 ### Back out
 
 ```bash
-jj-review close --cleanup <change-id>
+jj-review unstack --cleanup <change-id>
 ```
 
 If a failed `submit` created PRs or review branches that you no longer want, run
-`close --cleanup` on the selected stack. If the change was abandoned and only tracking data
+`unstack --cleanup` on the selected stack. If the change was abandoned and only tracking data
 remains, use `jj-review list` to find the orphaned PR and then
-`jj-review close --cleanup --pull-request <pr>`.
+`jj-review unstack --cleanup --pull-request <pr>`.

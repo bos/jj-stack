@@ -69,7 +69,7 @@ Highest-value commands should grow 2-3 short examples in long help:
 - `submit`
 - `view`
 - `land`
-- `close`
+- `unstack`
 - `import`
 - `cleanup --rebase`
 

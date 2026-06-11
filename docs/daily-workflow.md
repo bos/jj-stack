@@ -192,13 +192,13 @@ jj-review submit
 If a stack should no longer be reviewed:
 
 ```bash
-jj-review close
+jj-review unstack
 ```
 
 If it's handier to identify your stack by PR number, you can specify that instead:
 
 ```bash
-jj-review close --pull-request 7
+jj-review unstack --pull-request 7
 ```
 
 Use `--cleanup` when you also want to remove the stack's old review branches and `jj-review`'s
@@ -209,7 +209,7 @@ If `jj-review list` shows an `orphan` row, the PR is still open but its local ch
 longer part of any current stack. When you are ready to retire that PR, close it explicitly:
 
 ```bash
-jj-review close --cleanup --pull-request 7
+jj-review unstack --cleanup --pull-request 7
 ```
 
 If `jj-review list` says another tracked stack changed since its last submit, either run
@@ -242,11 +242,11 @@ stack and rerun the command you were using with an explicit revset or change ID:
 jj-review view
 jj-review view <change-id>
 jj-review submit <change-id>
-jj-review close --cleanup <change-id>
+jj-review unstack --cleanup <change-id>
 ```
 
 Use explicit selectors after a failure, not a naked command that falls back to
 the default stack. If you want to undo review work that was partially created,
-use `close --cleanup` on the stack you want to retire.
+use `unstack --cleanup` on the stack you want to retire.
 
 See the [troubleshooting guide](troubleshooting.md) for more recovery scenarios.

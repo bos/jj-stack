@@ -26,7 +26,7 @@ To create a review branch, `jj-review` creates a bookmark with a well-defined pr
 that prefix is `review/`, but you can choose a different prefix such as `my-review-stack/`.
 These bookmarks are managed automatically, so you don't need to manage them yourself.
 `jj-review` creates them for review, forgets the local ones after `jj-review land` lands
-changes, and can also remove them later during `jj-review close --cleanup` or `jj-review
+changes, and can also remove them later during `jj-review unstack --cleanup` or `jj-review
 cleanup`.
 
 ## Source of truth

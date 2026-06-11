@@ -29,7 +29,7 @@ def configure_submit_environment(
         command_modules=(
             "jj_review.commands.submit.command",
             "jj_review.commands.relink",
-            "jj_review.commands.close",
+            "jj_review.commands.unstack",
             "jj_review.commands.close_orphan",
             "jj_review.commands.cleanup.command",
             "jj_review.commands.land.command",

@@ -26,7 +26,6 @@ from typing import Any, cast
 
 import jj_review.bootstrap as bootstrap
 import jj_review.commands.cleanup.command as cleanup_command
-import jj_review.commands.close as close_command
 import jj_review.commands.doctor as doctor_command
 import jj_review.commands.import_ as import_command
 import jj_review.commands.land.command as land_command
@@ -35,6 +34,7 @@ import jj_review.commands.relink as relink_command
 import jj_review.commands.restart as restart_command
 import jj_review.commands.submit.command as submit_command
 import jj_review.commands.unlink as unlink_command
+import jj_review.commands.unstack as unstack_command
 import jj_review.commands.view as view_command
 import jj_review.console as console
 import jj_review.ui as ui
@@ -99,7 +99,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[_HelpCommand, ...]], ...] = (
             _HelpCommand("view", view_command.HELP),
             _HelpCommand("list", list_command.HELP),
             _HelpCommand("land", land_command.HELP),
-            _HelpCommand("close", close_command.HELP),
+            _HelpCommand("unstack", unstack_command.HELP),
         ),
     ),
     (
@@ -131,6 +131,7 @@ _PULL_REQUEST_OPTION_STRINGS = ("-p", "--pull-request")
 _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "submit": ("sub",),
     "list": ("ls",),
+    "unstack": ("delete",),
 }
 _KNOWN_COMMANDS = frozenset(
     name
@@ -408,29 +409,30 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Keep landed local review bookmarks instead of forgetting them",
     )
-    close_parser = _add_revision_command(
+    unstack_parser = _add_revision_command(
         subcommands,
-        command="close",
-        help_text=_normalized_help_text(close_command.HELP),
-        description_text=close_command.__doc__ or "",
-        handler=_forward_handler(close_command.close),
+        command="unstack",
+        aliases=_COMMAND_ALIASES["unstack"],
+        help_text=_normalized_help_text(unstack_command.HELP),
+        description_text=unstack_command.__doc__ or "",
+        handler=_forward_handler(unstack_command.unstack),
         revset_help=(
-            t"Revision to close; defaults to {ui.revset('@-')} (the current stack head); "
+            t"Revision to unstack; defaults to {ui.revset('@-')} (the current stack head); "
             t"cannot be combined with {ui.cmd('--pull-request')}"
         ),
     )
-    close_parser.add_argument(
+    unstack_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the close plan without making any changes",
+        help="Print the unstack plan without making any changes",
     )
-    close_parser.add_argument(
+    unstack_parser.add_argument(
         "--cleanup",
         action="store_true",
         help="Delete jj-review-managed branches, bookmarks, and tracking data",
     )
     _add_help_argument(
-        close_parser,
+        unstack_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
         help=(

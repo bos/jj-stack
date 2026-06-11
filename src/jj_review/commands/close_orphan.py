@@ -1,4 +1,4 @@
-"""Orphan-close path for `close --cleanup --pull-request <pr>`."""
+"""Orphan-close path for `unstack --cleanup --pull-request <pr>`."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def _untracked_cleanup_verification_error(
         t"Could not verify whether PR #{pull_request_number} was already cleaned up.",
         hint=(
             t"{detail}. Restore GitHub access and retry "
-            t"{ui.cmd(f'close --cleanup --pull-request {pull_request_number}')}."
+            t"{ui.cmd(f'unstack --cleanup --pull-request {pull_request_number}')}."
         ),
     )
 
@@ -721,7 +721,7 @@ def _start_orphan_close_operation_log(
     )
     journal = OperationJournal.begin(
         state_dir,
-        operation="close",
+        operation="unstack",
         options={
             "cleanup": True,
             "pull_request_number": pull_request_number,

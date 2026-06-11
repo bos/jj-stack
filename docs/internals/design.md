@@ -231,7 +231,7 @@ live in `jj` config, not in the tracking-state file.
 
 The tool also writes a stack-summary comment onto each PR (the navigation/overview
 comments described in the submission algorithm). That summary is not a source of truth —
-it is regenerated on every `submit` from the current `jj` stack. `submit`, `close`,
+it is regenerated on every `submit` from the current `jj` stack. `submit`, `unstack`,
 and `cleanup` may read comments to re-find or delete comments the tool previously wrote,
 but `view` does not inspect issue comments.
 
@@ -538,7 +538,7 @@ per-stack next step.
 
 `list` also surfaces orphaned PRs — saved tracking records whose change is no longer
 present in any current stack — as their own rows, separate from the live stacks. Each
-row names the PR and points at `close --cleanup --pull-request <pr>` as the explicit
+row names the PR and points at `unstack --cleanup --pull-request <pr>` as the explicit
 closure path. Without this surfacing, common workflows (squashing two reviewed
 changes by emptying one and abandoning it) would leave PRs open without the user
 noticing.
@@ -602,26 +602,26 @@ Failure guidance stays specific:
 materialization path. A repo-scoped `sync` command remains a separate future question
 rather than being folded into either.
 
-### `close`
+### `unstack`
 
-`jj review close [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]` ends review
+`jj review unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]` ends review
 for one stack.
 
-`close` is stack-first. It looks at the local stack, finds the open PRs the tool is
+`unstack` is stack-first. It looks at the local stack, finds the open PRs the tool is
 already tracking there, and either runs or previews the actions needed to end review.
 
 `--pull-request <pr>` is usually an alternate selector for the local stack — it must
-resolve to one linked local change. The one exception is `close --cleanup
+resolve to one linked local change. The one exception is `unstack --cleanup
 --pull-request <pr>` for an orphaned PR (one whose local change has been abandoned
 or otherwise dropped from every current stack): saved tracking is the only available
-identity, so `close` acts from the exact saved PR and branch fields and still fails
+identity, so `unstack` acts from the exact saved PR and branch fields and still fails
 closed if either is missing or ambiguous. Before deleting a branch, it verifies that
 the saved PR still uses the saved branch name on the configured GitHub repository, not
 just a same-named branch from another owner. "Ambiguous" includes the case where the
 saved branch is now claimed by another tracked change (e.g. via `use_bookmarks`) —
 branch deletion in that mode would silently take a branch out from under a live review.
 
-Without `--cleanup`, `close`:
+Without `--cleanup`, `unstack`:
 
 - closes the open PRs the tool is already tracking for the stack
 - updates tracking so those changes are no longer treated as actively tracked
@@ -629,7 +629,7 @@ Without `--cleanup`, `close`:
   targets
 - leaves local bookmarks and remote PR branches in place
 
-With `--cleanup`, `close` also performs conservative post-close cleanup for review
+With `--cleanup`, `unstack` also performs conservative post-close cleanup for review
 artifacts the tool can verify belong to the stack:
 
 - delete remote PR branches on the configured remote, only when verified to belong to
@@ -649,11 +649,11 @@ branches. Preview output makes the difference clear so the user can choose betwe
 review identity, `--cleanup` refuses the deletion rather than falling back to
 branch-name heuristics.
 
-`close` is idempotent:
+`unstack` is idempotent:
 
-- rerunning `close` on an already-closed path succeeds as a no-op (or with a brief
+- rerunning `unstack` on an already-closed path succeeds as a no-op (or with a brief
   "nothing to close")
-- rerunning `close --cleanup` after an earlier `close` performs only the remaining safe
+- rerunning `unstack --cleanup` after an earlier `unstack` performs only the remaining safe
   cleanup, not another close
 
 ### `unlink`
@@ -799,17 +799,17 @@ comments. That is expected — `submit` does not chase comments on stacks it isn
 operating on, and `land` does not block on stale state outside the selected stack.
 `view` and `list` surface those stacks via the submitted-state rule, naming their
 heads and directing the user at `view` for the per-stack next step.
-Orphaned PRs left behind by a cross-stack rewrite need an explicit `close
---cleanup --pull-request <pr>`.
+Orphaned PRs left behind by a cross-stack rewrite need an explicit
+`unstack --cleanup --pull-request <pr>`.
 
-Records left behind by an interrupted command (`submit`, `close`, `cleanup --rebase`)
+Records left behind by an interrupted command (`submit`, `unstack`, `cleanup --rebase`)
 are diagnostic state, not a replay script for the original selector. A later run of the
 same command acts on the *current* stack, while keeping enough of the recorded stack
 identity to distinguish "exact continuation" from "stack has been rewritten since".
 Older records are retired once a later successful run clearly covers the same changes.
-One asymmetric case: `close --cleanup` is stronger than plain `close`, so a successful
-`close --cleanup` can retire an older interrupted `close`, but a later plain `close`
-does not silently retire an older interrupted `close --cleanup` whose branch or
+One asymmetric case: `unstack --cleanup` is stronger than plain `unstack`, so a successful
+`unstack --cleanup` can retire an older interrupted `unstack`, but a later plain `unstack`
+does not silently retire an older interrupted `unstack --cleanup` whose branch or
 metadata cleanup may still be outstanding.
 
 This is exactly the kind of rewrite-heavy flow `jj` is good at.
@@ -841,7 +841,8 @@ The full command surface:
 - `jj review restart [--dry-run] <revset>`
 - `jj review relink <pr> <revset>`
 - `jj review unlink <revset>`
-- `jj review close [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj review unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj review delete [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj review cleanup [--dry-run] [--rebase [<revset>]]`
 - `jj review import [--fetch] [--pull-request <pr> | --revset <revset>]`
 - `jj review land [--dry-run] [--pull-request <pr> | <revset>]`
@@ -855,7 +856,7 @@ Run with no subcommand, the executable behaves the same as `jj review view` on t
 current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
-review lifecycle (`submit`, `view`, `land`, `close`) plus support commands
+review lifecycle (`submit`, `view`, `land`, `unstack`) plus support commands
 (`cleanup`, `import`). Repair commands (`restart`, `relink`, `unlink`) and
 shell-integration glue (`completion`) stay hidden by default and only appear in
 `jj review help --all`. The `help` command itself is hidden parser glue: `jj review help`
@@ -870,7 +871,7 @@ readable.
 
 Target selection is conservative:
 
-- `submit`, `close`, `land`, and `cleanup --rebase` default to the stack headed by
+- `submit`, `unstack`, `land`, and `cleanup --rebase` default to the stack headed by
   `@-` when `<revset>` is omitted
 - `submit --draft[=new|all]` and `submit --publish` are mutually exclusive
 - `submit --reviewers` and `submit --team-reviewers` override configured reviewer
@@ -980,8 +981,8 @@ one before merging.
 
 - **Deletion of a remote review branch** (`jj git push --delete`, via
   `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the
-  deleted branch. Defense: branch deletion is invoked only by `cleanup`, `close`
-  (including the `close --pull-request <n>` orphan-close sub-mode), and only after
+  deleted branch. Defense: branch deletion is invoked only by `cleanup`, `unstack`
+  (including the `unstack --pull-request <n>` orphan-close sub-mode), and only after
   the corresponding PR is closed, merged, or absent. Open or orphaned PRs keep
   their branch.
 
@@ -1005,7 +1006,7 @@ one before merging.
   head before the child PR is created.
 
 - **`close_pull_request`**. Destructive by design. Defense: only invoked by
-  `close` (including the `close --pull-request <n>` orphan-close sub-mode) or
+  `unstack` (including the `unstack --pull-request <n>` orphan-close sub-mode) or
   `land`, each on explicit user instruction or after a successful merge.
 
 - **`convert_pull_request_to_draft`**. Repo policy may dismiss approvals on draft
@@ -1025,14 +1026,14 @@ one before merging.
 - **`delete_issue_comment`**. Deletes the targeted comment. Defense: every call
   site passes a comment id resolved from a cached managed-comment id (or from
   `find_managed_comment` matching the tool's content marker), never an id matched
-  by free-text alone. `submit`, `close`, `cleanup`, and `close-orphan` re-verify
+  by free-text alone. `submit`, `unstack`, `cleanup`, and `close-orphan` re-verify
   the body before deletion or only delete via marker-matched discovery. `land`
   trusts the cached navigation- and overview-comment ids without re-verifying the
   body, on the rationale that those ids were written by the same tool during the
   most recent successful submit. `cleanup` additionally limits deletion to managed
   comments that no longer represent a live linked review stack.
 
-This list is the bar `submit`, `close`, `land`, `cleanup`, and any future command
+This list is the bar `submit`, `unstack`, `land`, `cleanup`, and any future command
 must clear before introducing a new GitHub call.
 
 ### Cleanup semantics
@@ -1049,7 +1050,7 @@ must clear before introducing a new GitHub call.
   merged, or absent — not while it is still open but orphaned
 
 An orphan record must include a saved PR number to count as an open orphan; otherwise
-there is no concrete PR identity for `close --cleanup --pull-request <pr>` to retire.
+there is no concrete PR identity for `unstack --cleanup --pull-request <pr>` to retire.
 Cleanup may prune that saved record, but it must not delete the remote branch because
 it cannot prove whether an open PR still uses it.
 

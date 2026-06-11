@@ -131,7 +131,7 @@ depends heavily on knowing what to run next after a non-trivial state change.
 
 Useful follow-up work here includes:
 
-- richer "next command" guidance after `submit`, `land`, `close`, and
+- richer "next command" guidance after `submit`, `land`, `unstack`, and
   `cleanup --rebase`
 - clearer distinction between "inspect only", "safe retry", and "history
   rewrite" recovery paths when something is stale or ambiguous

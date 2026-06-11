@@ -7,9 +7,9 @@ If you asked `jj-review` to use your own bookmarks with `submit --use-bookmarks`
 preserved unless `cleanup_user_bookmarks = true`. Use `--pull-request` to close by PR number or
 URL.
 
-Use `close --cleanup --pull-request <pr>` to retire an orphaned PR shown by `list`.
+Use `unstack --cleanup --pull-request <pr>` to retire an orphaned PR shown by `list`.
 
-To preview the close plan without changing anything, use `--dry-run`.
+To preview the unstack plan without changing anything, use `--dry-run`.
 """
 
 from __future__ import annotations
@@ -189,7 +189,7 @@ type _CloseTarget = (
 )
 
 
-def close(
+def unstack(
     *,
     cleanup: bool,
     cli_args: JjCliArgs,
@@ -199,14 +199,14 @@ def close(
     repository: Path | None,
     revset: str | None,
 ) -> int:
-    """CLI entrypoint for `close`."""
+    """CLI entrypoint for `unstack`."""
 
     context = bootstrap_context(
         repository=repository,
         cli_args=cli_args,
         debug=debug,
     )
-    command = "close --cleanup" if cleanup else "close"
+    command = "unstack --cleanup" if cleanup else "unstack"
     with acquire_operation_lock(
         context.state_store.require_writable(),
         command=command,
@@ -305,7 +305,7 @@ def _resolve_close_target(
                     state=state,
                 )
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
-            action_name="close",
+            action_name="unstack",
             jj_client=context.jj_client,
             pull_request_reference=pull_request,
             revset=revset,
@@ -315,7 +315,7 @@ def _resolve_close_target(
 
     return _CloseSelectedStack(
         revset=resolve_selected_revset(
-            command_label=_close_command_label(cleanup=cleanup, dry_run=dry_run),
+            command_label=_unstack_command_label(cleanup=cleanup, dry_run=dry_run),
             default_revset="@-",
             require_explicit=False,
             revset=revset,
@@ -323,14 +323,14 @@ def _resolve_close_target(
     )
 
 
-def _close_command_label(*, cleanup: bool, dry_run: bool) -> str:
+def _unstack_command_label(*, cleanup: bool, dry_run: bool) -> str:
     if cleanup and dry_run:
-        return "close --cleanup --dry-run"
+        return "unstack --cleanup --dry-run"
     if cleanup:
-        return "close --cleanup"
+        return "unstack --cleanup"
     if dry_run:
-        return "close --dry-run"
-    return "close"
+        return "unstack --dry-run"
+    return "unstack"
 
 
 def print_close_result(result: CloseResult) -> None:
@@ -399,7 +399,7 @@ def _prepare_untracked_close_fast_path(
 ) -> PreparedStatus | None:
     """Build the no-op close path without bookmark discovery.
 
-    Both plain `close` and `close --cleanup` are true no-ops when the selected
+    Both plain `unstack` and `unstack --cleanup` are true no-ops when the selected
     stack has no saved review identity at all. In that case we can skip
     bookmark-state discovery and GitHub preparation while still preserving the
     normal remote diagnostics and stale-operation retirement behavior.
@@ -662,7 +662,7 @@ def _start_close_operation_log(
     )
     journal = OperationJournal.begin(
         state_dir,
-        operation="close",
+        operation="unstack",
         options={"cleanup": prepared_close.cleanup},
         resolved_scope={
             "ordered_change_ids": ordered_change_ids,

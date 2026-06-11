@@ -5,7 +5,7 @@ state, and description of the head commit.
 
 It also shows orphaned PRs: open PRs that `jj-review` still knows about, but whose local change
 is no longer part of any current review stack. Close those explicitly with
-`jj-review close --cleanup --pull-request <pr>`.
+`jj-review unstack --cleanup --pull-request <pr>`.
 
 `--fetch` runs a fetch first so the report uses current remote branch locations.
 """
