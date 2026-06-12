@@ -1,4 +1,4 @@
-"""Shared cleanup command models and rendering helpers."""
+"""Shared cleanup command models, persistence, and rendering helpers."""
 
 from __future__ import annotations
 
@@ -16,15 +16,14 @@ from jj_stack.github.error_messages import (
     remote_unavailable_message,
 )
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.github.stack_comments import StackCommentKind
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.review.change_status import ReviewChangeStatus
 from jj_stack.review.status import PreparedStatus, ReviewStatusRevision
+from jj_stack.state.journal import OperationJournal
 from jj_stack.ui import Message, plain_text
 
 CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
-type StackCommentCleanupEligibility = Literal["inspect", "needs-remote-check", "skip"]
 type CleanupBody = Message
 
 
@@ -65,12 +64,25 @@ class PreparedCleanup:
     state: ReviewState
 
 
-@dataclass(frozen=True, slots=True)
-class StackCommentCleanupPlan:
-    """Planned or blocked stack-comment cleanup details."""
+@dataclass(slots=True)
+class _CleanupSaver:
+    """Persist cleanup state and emit saved_state_update events per disk write."""
 
-    actions: tuple[CleanupAction, ...]
-    comments: tuple[tuple[int, StackCommentKind], ...] = ()
+    journal: OperationJournal
+    last_persisted: dict[str, CachedChange]
+    prepared_cleanup: PreparedCleanup
+
+    def save_if_changed(self, next_changes: dict[str, CachedChange]) -> None:
+        if self.prepared_cleanup.dry_run or next_changes == self.last_persisted:
+            return
+        self.journal.record_saved_state_updates(
+            before=self.last_persisted,
+            after=next_changes,
+        )
+        self.prepared_cleanup.context.state_store.save(
+            self.prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
+        )
+        self.last_persisted = dict(next_changes)
 
 
 @dataclass(frozen=True, slots=True)

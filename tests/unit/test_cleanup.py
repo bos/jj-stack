@@ -6,13 +6,12 @@ from types import SimpleNamespace
 from typing import cast
 
 import jj_stack.commands.cleanup.command as cleanup_module
+import jj_stack.commands.cleanup.stack_comments as stack_comments_module
+import jj_stack.commands.cleanup.stale as stale_module
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._close_actions import ManagedCommentLookup
 from jj_stack.commands.cleanup.command import (
-    _apply_stack_comment_cleanup_action,
-    _CleanupSaver,
     _plan_remote_branch_cleanup,
-    _plan_stack_comment_cleanup,
     _run_cleanup_async,
 )
 from jj_stack.commands.cleanup.rebase import _stream_rebase
@@ -20,7 +19,12 @@ from jj_stack.commands.cleanup.shared import (
     CleanupAction,
     PreparedCleanup,
     PreparedRebase,
+    _CleanupSaver,
+)
+from jj_stack.commands.cleanup.stack_comments import (
     StackCommentCleanupPlan,
+    _apply_stack_comment_cleanup_action,
+    _plan_stack_comment_cleanup,
 )
 from jj_stack.config import RepoConfig
 from jj_stack.github.client import GithubClient
@@ -139,7 +143,7 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
         lambda **kwargs: {"change-1": None, "change-stale": "no live ref"},
     )
     monkeypatch.setattr(
-        "jj_stack.commands.cleanup.command._plan_stack_comment_cleanup",
+        "jj_stack.commands.cleanup.stack_comments._plan_stack_comment_cleanup",
         fake_plan_stack_comment_cleanup,
     )
     result = asyncio.run(
@@ -236,7 +240,7 @@ def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks
         )
 
     monkeypatch.setattr(
-        cleanup_module,
+        stack_comments_module,
         "_find_managed_comments",
         fake_find_managed_comments,
     )
@@ -331,12 +335,12 @@ def test_stale_change_reasons_reports_changes_outside_supported_stacks(monkeypat
         return (SimpleNamespace(revisions=(live_revision,)),)
 
     monkeypatch.setattr(
-        cleanup_module,
+        stale_module,
         "discover_stacks_from_revisions",
         fake_discover_stacks_from_revisions,
     )
 
-    reasons = cleanup_module._stale_change_reasons(
+    reasons = stale_module._stale_change_reasons(
         change_ids=("live-change", "stale-change"),
         context=_fake_context(jj_client=cast(JjClient, FakeJjClient())),
     )
@@ -368,12 +372,12 @@ def test_orphan_local_bookmark_cleanup_keeps_supported_targets_only(monkeypatch)
         return (SimpleNamespace(revisions=(live_revision,)),)
 
     monkeypatch.setattr(
-        cleanup_module,
+        stale_module,
         "discover_stacks_from_revisions",
         fake_discover_stacks_from_revisions,
     )
 
-    plans = cleanup_module._plan_orphan_local_bookmark_cleanups(
+    plans = stale_module._plan_orphan_local_bookmark_cleanups(
         bookmark_states={
             "other/live": BookmarkState(name="other/live", local_targets=("skip",)),
             "review/conflict": BookmarkState(
