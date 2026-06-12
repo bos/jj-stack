@@ -111,7 +111,7 @@ expected product semantics are represented directly in the scenario model.
 ## Cross-Stack Split Harness
 
 Some ordinary `jj rebase -s ... -d ...` edits split one submitted stack into two live
-review stacks. Those scenarios need a separate oracle because the successful-submit
+stacks. Those scenarios need a separate oracle because the successful-submit
 invariant is no longer "every surviving submitted change is in the selected stack."
 
 Cross-stack split scenarios start from one submitted linear stack, move a suffix onto an

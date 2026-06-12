@@ -69,7 +69,7 @@ uv run jj-stack ...
 ```
 
 Users may also configure `jj` aliases that delegate to the standalone executable so
-`jj review ...` works ergonomically. That alias layer is convenience glue, not a
+`jj stack ...` works ergonomically. That alias layer is convenience glue, not a
 separate implementation surface.
 
 `completion <bash|zsh|fish>` is auxiliary CLI glue: it renders shell completion scripts
@@ -556,13 +556,13 @@ We distinguish between:
 
 When possible, diagnostics point to the exact recovery action:
 
-- `jj review status --fetch`
-- `jj review submit --restart`
-- `jj review restart`
-- `jj review relink`
-- `jj review unstack`
+- `jj stack view --fetch`
+- `jj stack submit --restart`
+- `jj stack restart`
+- `jj stack relink`
+- `jj stack unstack`
 - `jj rebase`
-- `jj review cleanup`
+- `jj stack cleanup`
 - `jj workspace update-stale`
 
 Unreadable or partially written tracking state is treated as missing data with one

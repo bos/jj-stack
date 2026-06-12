@@ -61,7 +61,7 @@ _Benefit: medium — useful for operators managing several stacks at once, but
 not blocking the core single-stack workflow._
 
 A future `checkout` design covers explicit stack materialization for one
-selected review stack, and `view --fetch` remains the read-only refresh
+selected stack, and `view --fetch` remains the read-only refresh
 primitive.
 
 The remaining open question is whether the product should also grow a

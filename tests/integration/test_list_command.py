@@ -100,7 +100,7 @@ def test_list_surfaces_orphaned_pull_request_when_no_live_stacks_remain(
     assert change_id[:8] in captured.out
     assert "PR #1" in captured.out
     assert "orphan" in captured.out
-    assert "No review stacks." not in captured.out
+    assert "No stacks." not in captured.out
 
 
 def test_list_warns_when_tracked_stack_has_changed_since_last_submit(
@@ -289,7 +289,7 @@ def test_list_keeps_current_tracked_stack_when_it_becomes_immutable(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "No review stacks." not in captured.out
+    assert "No stacks." not in captured.out
     assert f"@ {head_change_id[:8]}" in captured.out
     assert "feature 1" in captured.out
     assert "PR 1" in captured.out
@@ -429,7 +429,7 @@ def test_list_fails_closed_when_tracked_changes_share_bookmark(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Could not safely inspect review stacks" in captured.err
+    assert "Could not safely inspect stacks" in captured.err
     assert "same bookmark" in captured.err
 
 
@@ -445,7 +445,7 @@ def test_list_reports_no_stacks_when_state_is_empty(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "No review stacks." in captured.out
+    assert "No stacks." in captured.out
 
 
 def test_list_does_not_extend_through_modified_working_copy(

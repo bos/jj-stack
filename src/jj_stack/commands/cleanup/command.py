@@ -787,7 +787,7 @@ def _stale_change_reasons(
     for revision in candidate_revisions:
         if revision.commit_id not in supported_commit_ids:
             reasons[revision.change_id] = (
-                "local change no longer participates in a supported review stack"
+                "local change no longer participates in a supported stack"
             )
     return reasons
 
@@ -1008,7 +1008,7 @@ def _plan_orphan_local_bookmark_cleanup(
         if not revision.is_reviewable():
             stale_reason = "target is no longer reviewable"
         elif revision.commit_id not in supported_commit_ids:
-            stale_reason = "target no longer participates in a supported review stack"
+            stale_reason = "target no longer participates in a supported stack"
         else:
             return None
 

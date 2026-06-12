@@ -96,7 +96,7 @@ At this point you should have one GitHub PR per local change, with each PR based
 review branch below it. Edit your changes locally with `jj`, run `jj-stack submit`
 again, and the PR stack will be refreshed.
 
-If you are juggling more than one local review stack in the same repo:
+If you are juggling more than one local stack in the same repo:
 
 ```bash
 jj-stack list

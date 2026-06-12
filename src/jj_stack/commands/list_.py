@@ -1,10 +1,10 @@
-"""List review stacks in this repository.
+"""List stacks in this repository.
 
-Shows one row per review stack in this repo, including the head change ID, stack size, review
+Shows one row per stack in this repo, including the head change ID, stack size, review
 state, and description of the head commit.
 
 It also shows orphaned PRs: open PRs that `jj-stack` still knows about, but whose local change
-is no longer part of any current review stack. Close those explicitly with
+is no longer part of any current stack. Close those explicitly with
 `jj-stack unstack --cleanup --pull-request <pr>`.
 
 `--fetch` runs a fetch first so the report uses current remote branch locations.
@@ -50,7 +50,7 @@ from jj_stack.review.status import (
     refresh_remote_state_for_status,
 )
 
-HELP = "List review stacks in this repo"
+HELP = "List stacks in this repo"
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +132,7 @@ def _run_list(
     )
     if not ordered:
         if not orphan_rows:
-            console.output("No review stacks.")
+            console.output("No stacks.")
             return 0
         color_when = context.jj_client.resolve_color_when(
             cli_color=requested_color_mode(),
@@ -609,7 +609,7 @@ def _ensure_unique_repo_bookmarks(
         sorted(duplicates.items()),
     )
     raise CliError(
-        t"Could not safely inspect review stacks: multiple changes resolve to the same "
+        t"Could not safely inspect stacks: multiple changes resolve to the same "
         t"bookmark: {collisions}.",
         hint="Repair the saved bookmark linkage before retrying.",
     )

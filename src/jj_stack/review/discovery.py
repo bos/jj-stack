@@ -292,7 +292,7 @@ def _stack_revisions_from_root_to_head(
         parent = revisions_by_commit_id.get(parent_commit_id)
         if parent is None:
             raise CliError(
-                t"Could not safely inspect review stacks: missing ancestor "
+                t"Could not safely inspect stacks: missing ancestor "
                 t"{ui.commit_id(parent_commit_id)} for {ui.change_id(head.change_id)}."
             )
         current = parent

@@ -356,7 +356,7 @@ def test_stale_change_reasons_reports_changes_outside_supported_stacks(monkeypat
     assert reasons["live-change"] is None
     assert (
         reasons["stale-change"]
-        == "local change no longer participates in a supported review stack"
+        == "local change no longer participates in a supported stack"
     )
 
 

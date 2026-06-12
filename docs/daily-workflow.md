@@ -187,7 +187,7 @@ GitHub's view of your stack with:
 jj-stack submit
 ```
 
-## 8. Close abandoned review stacks
+## 8. Unstack abandoned stacks
 
 If a stack should no longer be reviewed:
 

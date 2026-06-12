@@ -8,7 +8,7 @@ without making side metadata the source of truth.
 The model is small:
 
 - one reviewable unit is one visible mutable `jj` change, identified by its full `change_id`
-- one review stack is a linear chain of those changes from a chosen head back to `trunk()`
+- one stack is a linear chain of those changes from a chosen head back to `trunk()`
 - each change gets one bookmark, used as that change's PR head branch
 - the local stack is rediscovered from the `jj` DAG on every run, not from a saved parent map
 
@@ -89,7 +89,7 @@ maintaining its own competing notion of what is safe to review or rewrite.
 
 ### Review stack
 
-A review stack is a linear chain of review changes from a chosen head back to `trunk()`.
+A stack is a linear chain of review changes from a chosen head back to `trunk()`.
 
 Commands that operate on a stack validate only that one parent chain. Other visible
 children elsewhere in the DAG are separate stacks, not an automatic error.
@@ -417,18 +417,18 @@ a new PR just because a saved link, bookmark, or GitHub state is missing or dama
 
 The recovery surface is explicit and narrow:
 
-- `jj review status --fetch [<revset>]` refreshes remembered remote-branch observations
+- `jj stack view --fetch [<revset>]` refreshes remembered remote-branch observations
   before inspecting GitHub PR state, then reports the stack and any saved or discovered
   PR state without mutating GitHub or local bookmarks
-- `jj review relink <pr> <revset>` is a repair command. It explicitly reattaches an
+- `jj stack relink <pr> <revset>` is a repair command. It explicitly reattaches an
   existing PR (and its same-repo head branch) to a specific `jj` change. It pins the
   branch locally and saves the PR identity so a later `submit` updates the relinked
   review rather than opening a replacement.
-- `jj review restart <revset>` is a repair command for abandoning stale or unusable
+- `jj stack restart <revset>` is a repair command for abandoning stale or unusable
   PR tracking on a selected stack. It keeps the `jj` changes, clears their previous PR
   identity, assigns fresh managed review bookmark names, and leaves the next `submit`
   to create replacement PRs explicitly.
-- `jj review submit --restart <revset>` is the user-facing one-step version of that
+- `jj stack submit --restart <revset>` is the user-facing one-step version of that
   repair. It computes the same fresh tracking state in memory, creates replacement
   PRs, and only persists the new PR identity as part of the successful submit path.
 
@@ -439,7 +439,7 @@ never selected by an omitted argument.
 
 ### `view`
 
-`jj review status [<revset> ...] [--pull-request <pr> ...]` shows the local stack(s) and
+`jj stack view [<revset> ...] [--pull-request <pr> ...]` shows the local stack(s) and
 any locally known review identity for them.
 
 It is local-first. If a change has never been locally attached to review, `view`
@@ -447,7 +447,7 @@ reports it as not submitted and does not query GitHub for speculative PR matches
 only on predicted bookmark names or fetched remote observations. It does not create
 local tracking for a never-tracked change, including bookmark-only saved entries.
 
-`jj review status --fetch [<revset> ...] [--pull-request <pr> ...]` is the same command,
+`jj stack view --fetch [<revset> ...] [--pull-request <pr> ...]` is the same command,
 but it refreshes remote bookmark observations first so the report reflects the latest
 remote state before checking already-known GitHub PR state.
 
@@ -512,7 +512,7 @@ When `view` reports `cleanup needed`, it explains why in plain language:
 - a merged PR still appears on the local stack
 - descendant `submit` operations will keep following that old ancestry until the user
   repairs it
-- the next command is `jj review cleanup --rebase [<revset>]`; add `--dry-run` first to
+- the next command is `jj stack cleanup --rebase [<revset>]`; add `--dry-run` first to
   inspect the rebase plan before mutating local history
 
 That guidance matters more than the internal distinction between "selected path",
@@ -521,7 +521,7 @@ concepts internally, but the user sees actionable wording, not a terse label.
 
 ### `list`
 
-`jj review list [--fetch]` gives one repo-scoped summary row per locally known stack. It
+`jj stack list [--fetch]` gives one repo-scoped summary row per locally known stack. It
 is local-first too: discover stacks from saved tracking plus any visible local
 descendants above those tracked changes; do not create tracking for remote-only state;
 do not speculate about GitHub-only stacks that have never been attached locally.
@@ -549,7 +549,7 @@ on GitHub.
 
 ### `checkout`
 
-`jj review checkout [--fetch] [--pull-request <pr> | --revset <revset>]` resolves one
+`jj stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]` resolves one
 exact stack and sets up tracking for it. It does not mutate GitHub.
 
 `checkout` is the explicit recovery and bootstrap path for review state that already
@@ -604,7 +604,7 @@ rather than being folded into either.
 
 ### `unstack`
 
-`jj review unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]` ends review
+`jj stack unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]` ends review
 for one stack.
 
 `unstack` is stack-first. It looks at the local stack, finds the open PRs the tool is
@@ -658,7 +658,7 @@ branch-name heuristics.
 
 ### `unlink`
 
-`jj review unlink <revset>` is the repair-oriented inverse of `relink`: it intentionally
+`jj stack unlink <revset>` is the repair-oriented inverse of `relink`: it intentionally
 detaches one change from active PR tracking without touching GitHub.
 
 `unlink` is an advanced repair command, not the normal way to end a review. Its unit of
@@ -712,12 +712,12 @@ resolves anywhere in visible history.
 
 ### `restart`
 
-`jj review restart <revset>` prepares the selected stack to be submitted as fresh PRs.
+`jj stack restart <revset>` prepares the selected stack to be submitted as fresh PRs.
 It is for cases where the local changes should continue, but the old PR tracking should
 not: closed PRs that should not be reopened, deleted PRs, or broken branch/PR links
 left by a tool bug or manual GitHub repair.
 
-Most users should reach this behavior through `jj review submit --restart <revset>`.
+Most users should reach this behavior through `jj stack submit --restart <revset>`.
 The standalone `restart` command remains the local repair primitive when the operator
 wants to inspect or stage the tracking reset separately.
 
@@ -832,37 +832,37 @@ graph.
 
 The full command surface:
 
-- `jj review submit [--draft[=new|all] | --publish]
+- `jj stack submit [--draft[=new|all] | --publish]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
   [--re-request] [--restart] [<revset>]`
-- `jj review view [--fetch] [{--pull-request <pr>} | {<revset>}] ...`
-- `jj review list [--fetch]`
-- `jj review ls [--fetch]`
-- `jj review restart [--dry-run] <revset>`
-- `jj review relink <pr> <revset>`
-- `jj review unlink <revset>`
-- `jj review unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
-- `jj review delete [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
-- `jj review cleanup [--dry-run] [--rebase [<revset>]]`
-- `jj review checkout [--fetch] [--pull-request <pr> | --revset <revset>]`
-- `jj review land [--dry-run] [--pull-request <pr> | <revset>]`
-- `jj review completion <bash|zsh|fish>`
+- `jj stack view [--fetch] [{--pull-request <pr>} | {<revset>}] ...`
+- `jj stack list [--fetch]`
+- `jj stack ls [--fetch]`
+- `jj stack restart [--dry-run] <revset>`
+- `jj stack relink <pr> <revset>`
+- `jj stack unlink <revset>`
+- `jj stack unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj stack delete [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj stack cleanup [--dry-run] [--rebase [<revset>]]`
+- `jj stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]`
+- `jj stack land [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj stack completion <bash|zsh|fish>`
 
 `completion` is auxiliary CLI glue. It prints shell completion scripts. It is not a
 review-state command and does not inspect the repo, the tracking-state file, or
 GitHub.
 
-Run with no subcommand, the executable behaves the same as `jj review view` on the
+Run with no subcommand, the executable behaves the same as `jj stack view` on the
 current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `view`, `land`, `unstack`) plus support commands
 (`cleanup`, `checkout`). Repair commands (`restart`, `relink`, `unlink`) and
 shell-integration glue (`completion`) stay hidden by default and only appear in
-`jj review help --all`. The `help` command itself is hidden parser glue: `jj review help`
+`jj stack help --all`. The `help` command itself is hidden parser glue: `jj stack help`
 is the same as
-`jj review --help`, and `jj review help <command>` is the same as
-`jj review <command> --help`. The default top-level help also keeps advanced global
+`jj stack --help`, and `jj stack help <command>` is the same as
+`jj stack <command> --help`. The default top-level help also keeps advanced global
 options (`--repository`, `--config`, `--config-file`, `--debug`, `--time-output`) out
 of view until `--all`.
 
@@ -1031,20 +1031,20 @@ one before merging.
   trusts the cached navigation- and overview-comment ids without re-verifying the
   body, on the rationale that those ids were written by the same tool during the
   most recent successful submit. `cleanup` additionally limits deletion to managed
-  comments that no longer represent a live linked review stack.
+  comments that no longer represent a live linked stack.
 
 This list is the bar `submit`, `unstack`, `land`, `cleanup`, and any future command
 must clear before introducing a new GitHub call.
 
 ### Cleanup semantics
 
-`jj review cleanup` has a concrete, conservative job:
+`jj stack cleanup` has a concrete, conservative job:
 
 - prune saved entries for changes that no longer exist or no longer participate in
-  any review stack, except keep the saved PR and branch identity for an open
+  any stack, except keep the saved PR and branch identity for an open
   orphaned PR until it is explicitly closed or unlinked
 - remove stale stack-summary comments only when they no longer represent a live
-  linked review stack (e.g. the PR is unlinked, or its head no longer matches the
+  linked stack (e.g. the PR is unlinked, or its head no longer matches the
   expected bookmark)
 - optionally delete remote PR branches only once the corresponding PR is closed,
   merged, or absent — not while it is still open but orphaned
@@ -1057,7 +1057,7 @@ it cannot prove whether an open PR still uses it.
 `cleanup` mutates by default; `cleanup --dry-run` shows the planned actions. Deleting
 open PRs or deleting branches in ambiguous cases still requires explicit user intent.
 
-`jj review cleanup --rebase` is the explicit local-history repair path for the common
+`jj stack cleanup --rebase` is the explicit local-history repair path for the common
 case where GitHub merges have been fetched and the local stack still contains merged
 changes.
 
@@ -1128,7 +1128,7 @@ or moved PR branches to merge commits.
 
 ### Landing and merge lifecycle
 
-`jj review land` is the terminal operation for a reviewed local stack, but it stays
+`jj stack land` is the terminal operation for a reviewed local stack, but it stays
 local-stack-first and `jj`-native.
 
 The local `jj` stack remains the source of truth. `land` does not silently repair
@@ -1245,7 +1245,7 @@ Broader cleanup remains the job of `cleanup`:
 The file is JSON, validated through typed models. TOML is reserved for human-authored
 config. If the file is unreadable or partially written, treat it as missing for recovery
 purposes, warn once, and fall back to rediscovery where safe. Deleting the file does not
-break the review stack model, though it may force rediscovery or manual reattachment of
+break the stack model, though it may force rediscovery or manual reattachment of
 bookmarks.
 
 Shape:
