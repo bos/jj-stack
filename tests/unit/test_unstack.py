@@ -11,14 +11,13 @@ from jj_stack.commands.unstack import (
     CloseAction,
     PreparedClose,
     _cleanup_revision,
-    _CloseCleanupContext,
+    _CloseMutationRun,
 )
 from jj_stack.config import RepoConfig
 from jj_stack.github.client import GithubClient
-from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.review.status import ReviewStatusRevision
 
 
@@ -36,9 +35,6 @@ def _stub_revision(*, change_id: str) -> ReviewStatusRevision:
         managed_comments_lookup=None,
         subject="",
     )
-
-
-_GITHUB_REPO = GithubRepoAddress(host="github.com", owner="octo-org", repo="stacked-review")
 
 
 @pytest.mark.parametrize(
@@ -159,7 +155,10 @@ def _prepared_close(
             ),
             dry_run=False,
             prepared_status=SimpleNamespace(
-                prepared=SimpleNamespace(client=cast(JjClient, jj_client))
+                prepared=SimpleNamespace(
+                    client=cast(JjClient, jj_client),
+                    remote=SimpleNamespace(name="origin"),
+                )
             ),
         ),
     )
@@ -172,14 +171,14 @@ async def _run_cleanup_revision(*, bookmark_state: BookmarkState) -> _CleanupRes
         bookmark_state=bookmark_state,
         cached_change=CachedChange(bookmark="review/feature-aaaaaaaa"),
         commit_id="commit-1",
-        context=_CloseCleanupContext(
+        revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
+        run=_CloseMutationRun(
+            commit_ids_by_change_id={},
+            current_state=ReviewState(),
             github_client=cast(GithubClient, SimpleNamespace()),
             next_changes={},
             prepared_close=_prepared_close(jj_client=jj_client),
             record_action=actions.append,
-            remote_name="origin",
-            revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
-            revision_label="feature 1 (aaaaaaaa)",
         ),
     )
     return _CleanupResult(actions=actions, jj_client=jj_client)
@@ -201,7 +200,10 @@ def test_cleanup_revision_deletes_external_bookmark_when_configured() -> None:
                 bookmark_ownership="external",
             ),
             commit_id="commit-1",
-            context=_CloseCleanupContext(
+            revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
+            run=_CloseMutationRun(
+                commit_ids_by_change_id={},
+                current_state=ReviewState(),
                 github_client=cast(GithubClient, SimpleNamespace()),
                 next_changes={},
                 prepared_close=_prepared_close(
@@ -209,9 +211,6 @@ def test_cleanup_revision_deletes_external_bookmark_when_configured() -> None:
                     jj_client=jj_client,
                 ),
                 record_action=actions.append,
-                remote_name="origin",
-                revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
-                revision_label="feature 1 (aaaaaaaa)",
             ),
         )
     )

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import jj_stack.console as console
@@ -24,7 +24,6 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.commands._close_actions import (
-    BookmarkCleanupPlan as _BookmarkCleanupPlan,
     CloseAction,
     CloseActionBody,
     apply_bookmark_cleanup,
@@ -104,38 +103,15 @@ class PreparedClose:
 
 
 @dataclass(frozen=True, slots=True)
-class _CloseExecutionState:
-    """Local tracking state and commit lookup used during close execution."""
-
-    current_state: ReviewState
-    next_changes: dict[str, CachedChange]
-    commit_ids_by_change_id: dict[str, str]
-    journal: OperationJournal = OperationJournal.disabled()
-
-
-@dataclass(frozen=True, slots=True)
 class _CloseMutationRun:
-    """Shared dependencies for close mutations on inspected revisions."""
+    """Shared dependencies for close mutations and cleanup on inspected revisions."""
 
+    commit_ids_by_change_id: dict[str, str]
     current_state: ReviewState
     github_client: GithubClient
-    journal: OperationJournal
     next_changes: dict[str, CachedChange]
     prepared_close: PreparedClose
     record_action: Callable[[CloseAction], None]
-
-
-@dataclass(frozen=True, slots=True)
-class _CloseCleanupContext:
-    """Shared dependencies for bookmark and stack-comment cleanup."""
-
-    github_client: GithubClient
-    next_changes: dict[str, CachedChange]
-    prepared_close: PreparedClose
-    record_action: Callable[[CloseAction], None]
-    remote_name: str | None
-    revision: ReviewStatusRevision
-    revision_label: CloseActionBody
     journal: OperationJournal = OperationJournal.disabled()
 
     @property
@@ -153,6 +129,11 @@ class _CloseCleanupContext:
     @property
     def jj_client(self) -> JjClient:
         return self.prepared_close.prepared_status.prepared.client
+
+    @property
+    def remote_name(self) -> str | None:
+        remote = self.prepared_close.prepared_status.prepared.remote
+        return remote.name if remote is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,6 +461,7 @@ async def _stream_close_async(
     status_result: StatusResult,
 ) -> CloseResult:
     prepared_status = prepared_close.prepared_status
+    prepared = prepared_status.prepared
     github_repository = prepared_status.github_repository
 
     recorder = ActionRecorder[CloseAction](
@@ -518,14 +500,13 @@ async def _stream_close_async(
             prepared_close=prepared_close,
         )
 
-    execution_state = _prepare_close_execution_state(prepared_close=prepared_close)
+    current_state = prepared.state_store.load() if not prepared_close.dry_run else prepared.state
     completed = False
     close_journal = OperationJournal.disabled()
     try:
         close_journal = _start_close_operation_log(
             prepared_close=prepared_close,
         )
-        execution_state = replace(execution_state, journal=close_journal)
 
         if no_work:
             completed = True
@@ -539,26 +520,38 @@ async def _stream_close_async(
             )
 
         assert github_repository is not None
+        blocked = False
         async with build_github_client(repository=github_repository) as github_client:
+            run = _CloseMutationRun(
+                commit_ids_by_change_id={
+                    prepared_revision.revision.change_id: prepared_revision.revision.commit_id
+                    for prepared_revision in prepared.status_revisions
+                },
+                current_state=current_state,
+                github_client=github_client,
+                journal=close_journal,
+                next_changes=dict(current_state.changes),
+                prepared_close=prepared_close,
+                record_action=recorder.record,
+            )
             progress_total = len(status_result.revisions) if on_action is None else 0
             with console.progress(
                 description="Processing close actions",
                 total=progress_total,
             ) as progress:
-                blocked = await _process_close_revisions(
-                    execution_state=execution_state,
-                    github_client=github_client,
-                    on_revision_complete=progress.advance,
-                    prepared_close=prepared_close,
-                    recorder=recorder,
-                    revisions=status_result.revisions,
-                )
+                # Process each revision in order, stopping on the first fail-closed block.
+                for revision in status_result.revisions:
+                    should_stop = await _process_close_revision(
+                        change_status=classify_review_status_revision(revision),
+                        revision=revision,
+                        run=run,
+                    )
+                    progress.advance()
+                    if should_stop:
+                        blocked = True
+                        break
 
-        _save_close_progress(
-            execution_state=execution_state,
-            prepared_close=prepared_close,
-            journal=close_journal,
-        )
+        _save_close_progress(run=run)
         completed = True
         return _close_result(
             actions=recorder.as_tuple(),
@@ -571,7 +564,7 @@ async def _stream_close_async(
         if completed:
             completed_change_ids = tuple(
                 prepared_revision.revision.change_id
-                for prepared_revision in prepared_status.prepared.status_revisions
+                for prepared_revision in prepared.status_revisions
             )
             close_journal.append(
                 "completed",
@@ -597,40 +590,17 @@ def _inspected_close_has_no_work(*, revisions: tuple[ReviewStatusRevision, ...])
     return True
 
 
-def _prepare_close_execution_state(*, prepared_close: PreparedClose) -> _CloseExecutionState:
-    """Load local tracking state and commit IDs once before close execution."""
-
-    prepared_status = prepared_close.prepared_status
-    prepared = prepared_status.prepared
-    current_state = prepared.state_store.load() if not prepared_close.dry_run else prepared.state
-    return _CloseExecutionState(
-        current_state=current_state,
-        next_changes=dict(current_state.changes),
-        commit_ids_by_change_id={
-            prepared_revision.revision.change_id: prepared_revision.revision.commit_id
-            for prepared_revision in prepared_status.prepared.status_revisions
-        },
-    )
-
-
-def _save_close_progress(
-    *,
-    execution_state: _CloseExecutionState,
-    prepared_close: PreparedClose,
-    journal: OperationJournal,
-) -> None:
+def _save_close_progress(*, run: _CloseMutationRun) -> None:
     """Persist saved close state when a live run changed tracked metadata."""
 
-    prepared = prepared_close.prepared_status.prepared
-    current_state = execution_state.current_state
-    if prepared_close.dry_run or execution_state.next_changes == current_state.changes:
+    if run.dry_run or run.next_changes == run.current_state.changes:
         return
-    journal.record_saved_state_updates(
-        before=current_state.changes,
-        after=execution_state.next_changes,
+    run.journal.record_saved_state_updates(
+        before=run.current_state.changes,
+        after=run.next_changes,
     )
-    prepared.state_store.save(
-        current_state.model_copy(update={"changes": execution_state.next_changes})
+    run.prepared_close.prepared_status.prepared.state_store.save(
+        run.current_state.model_copy(update={"changes": run.next_changes})
     )
 
 
@@ -666,39 +636,6 @@ def _start_close_operation_log(
     return journal
 
 
-async def _process_close_revisions(
-    *,
-    execution_state: _CloseExecutionState,
-    github_client: GithubClient,
-    on_revision_complete: Callable[[], None] | None,
-    prepared_close: PreparedClose,
-    recorder: ActionRecorder[CloseAction],
-    revisions: tuple[ReviewStatusRevision, ...],
-) -> bool:
-    """Process each revision in order, stopping on the first fail-closed block."""
-
-    run = _CloseMutationRun(
-        current_state=execution_state.current_state,
-        github_client=github_client,
-        journal=execution_state.journal,
-        next_changes=execution_state.next_changes,
-        prepared_close=prepared_close,
-        record_action=recorder.record,
-    )
-    for revision in revisions:
-        should_stop = await _process_close_revision(
-            change_status=classify_review_status_revision(revision),
-            commit_id=execution_state.commit_ids_by_change_id.get(revision.change_id),
-            revision=revision,
-            run=run,
-        )
-        if on_revision_complete is not None:
-            on_revision_complete()
-        if should_stop:
-            return True
-    return False
-
-
 def _close_result(
     *,
     actions: tuple[CloseAction, ...],
@@ -725,10 +662,14 @@ def _close_result(
 async def _process_close_revision(
     *,
     change_status: ReviewChangeStatus,
-    commit_id: str | None,
     revision: ReviewStatusRevision,
     run: _CloseMutationRun,
 ) -> bool:
+    """Close one revision's PR, retire its tracking, and clean up when requested.
+
+    Returns True when the revision fails closed and processing must stop.
+    """
+
     lookup = revision.pull_request_lookup
     if lookup is None and not change_status.has_pull_request_lookup_failure:
         return False
@@ -749,174 +690,83 @@ async def _process_close_revision(
 
     cached_change = revision.cached_change or run.current_state.changes.get(revision.change_id)
     revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
+
     if change_status.pr_lifecycle == "missing":
-        return await _process_missing_close_revision(
-            cached_change=cached_change,
-            commit_id=commit_id,
-            revision=revision,
-            revision_label=revision_label,
-            run=run,
-        )
-
-    if lookup is None:
-        return False
-
-    if cached_change is None:
-        if lookup.pull_request is None:
-            return False
-        cached_change = CachedChange(
-            bookmark=revision.bookmark,
-            bookmark_ownership=bookmark_ownership_for_source(revision.bookmark_source),
-            pr_number=lookup.pull_request.number,
-            pr_state=lookup.pull_request.state,
-            pr_url=lookup.pull_request.html_url,
-            navigation_comment_id=(
-                revision.managed_comments_lookup.navigation_comment.id
-                if revision.managed_comments_lookup is not None
-                and revision.managed_comments_lookup.state == "resolved"
-                and revision.managed_comments_lookup.navigation_comment is not None
-                else None
-            ),
-            overview_comment_id=(
-                revision.managed_comments_lookup.overview_comment.id
-                if revision.managed_comments_lookup is not None
-                and revision.managed_comments_lookup.state == "resolved"
-                and revision.managed_comments_lookup.overview_comment is not None
-                else None
-            ),
-        )
-    if change_status.pr_lifecycle == "open" and lookup.pull_request is not None:
-        await _process_open_close_revision(
-            cached_change=cached_change,
-            commit_id=commit_id,
-            pull_request_number=lookup.pull_request.number,
-            revision=revision,
-            revision_label=revision_label,
-            run=run,
-        )
-        return False
-    if change_status.pr_lifecycle not in {"closed", "merged"}:
-        return False
-
-    await _process_closed_close_revision(
-        cached_change=cached_change,
-        change_status=change_status,
-        commit_id=commit_id,
-        revision=revision,
-        revision_label=revision_label,
-        run=run,
-    )
-    return False
-
-
-async def _process_missing_close_revision(
-    *,
-    cached_change: CachedChange | None,
-    commit_id: str | None,
-    revision: ReviewStatusRevision,
-    revision_label: CloseActionBody,
-    run: _CloseMutationRun,
-) -> bool:
-    if cached_change is not None and cached_change.pr_state == "open":
-        run.record_action(
-            CloseAction(
-                kind="close",
-                body=(
-                    t"cannot close {revision_label} because GitHub no longer reports a "
-                    t"pull request for its branch; run {ui.cmd('view --fetch')} or "
-                    t"{ui.cmd('relink')} before retrying"
-                ),
-                status="blocked",
+        if cached_change is not None and cached_change.pr_state == "open":
+            run.record_action(
+                CloseAction(
+                    kind="close",
+                    body=(
+                        t"cannot close {revision_label} because GitHub no longer reports a "
+                        t"pull request for its branch; run {ui.cmd('view --fetch')} or "
+                        t"{ui.cmd('relink')} before retrying"
+                    ),
+                    status="blocked",
+                )
             )
-        )
-        return True
-    if (
-        not run.prepared_close.cleanup
-        or cached_change is None
-        or not _has_retirable_cached_review_identity(cached_change)
-    ):
-        return False
-
-    updated_change = _record_retired_cached_change(
-        cached_change=cached_change,
-        pr_state=cached_change.pr_state or "closed",
-        revision=revision,
-        revision_label=revision_label,
-        run=run,
-    )
-    await _cleanup_if_requested(
-        cached_change=updated_change,
-        commit_id=commit_id,
-        revision=revision,
-        revision_label=revision_label,
-        run=run,
-    )
-    return False
-
-
-async def _process_open_close_revision(
-    *,
-    cached_change: CachedChange,
-    commit_id: str | None,
-    pull_request_number: int,
-    revision: ReviewStatusRevision,
-    revision_label: CloseActionBody,
-    run: _CloseMutationRun,
-) -> None:
-    run.record_action(
-        CloseAction(
-            kind="pull request",
-            body=t"close PR #{pull_request_number} for {revision_label}",
-            status="planned" if run.prepared_close.dry_run else "applied",
-        )
-    )
-    if not run.prepared_close.dry_run:
-        with run.journal.mutation(
-            "close_pull_request",
-            change_id=revision.change_id,
-            pull_request_number=pull_request_number,
-        ):
-            await run.github_client.close_pull_request(
-                pull_number=pull_request_number,
-            )
-
-    updated_change = _record_retired_cached_change(
-        cached_change=cached_change,
-        pr_state="closed",
-        revision=revision,
-        revision_label=revision_label,
-        run=run,
-    )
-    await _cleanup_if_requested(
-        cached_change=updated_change,
-        commit_id=commit_id,
-        revision=revision,
-        revision_label=revision_label,
-        run=run,
-    )
-
-
-async def _process_closed_close_revision(
-    *,
-    cached_change: CachedChange,
-    change_status: ReviewChangeStatus,
-    commit_id: str | None,
-    revision: ReviewStatusRevision,
-    revision_label: CloseActionBody,
-    run: _CloseMutationRun,
-) -> None:
-    lookup = revision.pull_request_lookup
-    pr_state = (
-        "merged"
+            return True
         if (
-            lookup is not None
-            and lookup.pull_request is not None
-            and change_status.pr_lifecycle == "merged"
-        )
-        else "closed"
-    )
-    if cached_change.pr_state == "merged":
-        pr_state = "merged"
+            not run.prepared_close.cleanup
+            or cached_change is None
+            or not _has_retirable_cached_review_identity(cached_change)
+        ):
+            return False
+        pr_state = cached_change.pr_state or "closed"
+    else:
+        if lookup is None:
+            return False
+        if cached_change is None:
+            if lookup.pull_request is None:
+                return False
+            cached_change = CachedChange(
+                bookmark=revision.bookmark,
+                bookmark_ownership=bookmark_ownership_for_source(revision.bookmark_source),
+                pr_number=lookup.pull_request.number,
+                pr_state=lookup.pull_request.state,
+                pr_url=lookup.pull_request.html_url,
+                navigation_comment_id=(
+                    revision.managed_comments_lookup.navigation_comment.id
+                    if revision.managed_comments_lookup is not None
+                    and revision.managed_comments_lookup.state == "resolved"
+                    and revision.managed_comments_lookup.navigation_comment is not None
+                    else None
+                ),
+                overview_comment_id=(
+                    revision.managed_comments_lookup.overview_comment.id
+                    if revision.managed_comments_lookup is not None
+                    and revision.managed_comments_lookup.state == "resolved"
+                    and revision.managed_comments_lookup.overview_comment is not None
+                    else None
+                ),
+            )
+        if change_status.pr_lifecycle == "open" and lookup.pull_request is not None:
+            pull_request_number = lookup.pull_request.number
+            run.record_action(
+                CloseAction(
+                    kind="pull request",
+                    body=t"close PR #{pull_request_number} for {revision_label}",
+                    status="planned" if run.dry_run else "applied",
+                )
+            )
+            if not run.dry_run:
+                with run.journal.mutation(
+                    "close_pull_request",
+                    change_id=revision.change_id,
+                    pull_request_number=pull_request_number,
+                ):
+                    await run.github_client.close_pull_request(
+                        pull_number=pull_request_number,
+                    )
+            pr_state = "closed"
+        elif change_status.pr_lifecycle in {"closed", "merged"}:
+            github_merged = (
+                lookup.pull_request is not None and change_status.pr_lifecycle == "merged"
+            )
+            pr_state = (
+                "merged" if github_merged or cached_change.pr_state == "merged" else "closed"
+            )
+        else:
+            return False
 
     updated_change = _record_retired_cached_change(
         cached_change=cached_change,
@@ -925,13 +775,20 @@ async def _process_closed_close_revision(
         revision_label=revision_label,
         run=run,
     )
-    await _cleanup_if_requested(
+    if not run.prepared_close.cleanup:
+        return False
+    bookmark_states = run.prepared_close.prepared_status.prepared.bookmark_states
+    await _cleanup_revision(
+        bookmark_state=bookmark_states.get(
+            revision.bookmark,
+            BookmarkState(name=revision.bookmark),
+        ),
         cached_change=updated_change,
-        commit_id=commit_id,
+        commit_id=run.commit_ids_by_change_id.get(revision.change_id),
         revision=revision,
-        revision_label=revision_label,
         run=run,
     )
+    return False
 
 
 def _record_retired_cached_change(
@@ -949,43 +806,10 @@ def _record_retired_cached_change(
             CloseAction(
                 kind="tracking",
                 body=t"stop review tracking for {revision_label}",
-                status="planned" if run.prepared_close.dry_run else "applied",
+                status="planned" if run.dry_run else "applied",
             )
         )
     return updated_change
-
-
-async def _cleanup_if_requested(
-    *,
-    cached_change: CachedChange,
-    commit_id: str | None,
-    revision: ReviewStatusRevision,
-    revision_label: CloseActionBody,
-    run: _CloseMutationRun,
-) -> None:
-    if not run.prepared_close.cleanup:
-        return
-    prepared = run.prepared_close.prepared_status.prepared
-    remote = prepared.remote
-    cleanup_context = _CloseCleanupContext(
-        github_client=run.github_client,
-        journal=run.journal,
-        next_changes=run.next_changes,
-        prepared_close=run.prepared_close,
-        record_action=run.record_action,
-        remote_name=remote.name if remote is not None else None,
-        revision=revision,
-        revision_label=revision_label,
-    )
-    await _cleanup_revision(
-        bookmark_state=prepared.bookmark_states.get(
-            revision.bookmark,
-            BookmarkState(name=revision.bookmark),
-        ),
-        cached_change=cached_change,
-        commit_id=commit_id,
-        context=cleanup_context,
-    )
 
 
 async def _cleanup_revision(
@@ -993,25 +817,29 @@ async def _cleanup_revision(
     bookmark_state: BookmarkState,
     cached_change: CachedChange,
     commit_id: str | None,
-    context: _CloseCleanupContext,
+    revision: ReviewStatusRevision,
+    run: _CloseMutationRun,
 ) -> None:
     bookmark = cached_change.bookmark
-    cleanup_plan = _plan_review_bookmark_cleanup(
-        bookmark=bookmark,
-        cached_change=cached_change,
-        bookmark_state=bookmark_state,
-        commit_id=commit_id,
-        context=context,
-    )
     if bookmark is not None:
+        cleanup_plan = plan_bookmark_cleanup(
+            bookmark=bookmark,
+            bookmark_state=bookmark_state,
+            cached_change=cached_change,
+            cleanup_user_bookmarks=run.cleanup_user_bookmarks,
+            commit_id=commit_id,
+            prefix=run.bookmark_prefix,
+            record_action=run.record_action,
+            remote_name=run.remote_name,
+        )
         apply_bookmark_cleanup(
             bookmark=bookmark,
             cleanup_plan=cleanup_plan,
             commit_id=commit_id,
-            journal=context.journal,
-            record_action=context.record_action,
-            remote_name=context.remote_name,
-            run=context,
+            journal=run.journal,
+            record_action=run.record_action,
+            remote_name=run.remote_name,
+            run=run,
         )
 
     if cached_change.pr_number is None:
@@ -1020,13 +848,13 @@ async def _cleanup_revision(
     lookups = await _find_managed_comments(
         cached_navigation_comment_id=cached_change.navigation_comment_id,
         cached_overview_comment_id=cached_change.overview_comment_id,
-        github_client=context.github_client,
+        github_client=run.github_client,
         pull_request_number=cached_change.pr_number,
     )
     cleared_comment = False
     for lookup in lookups:
         if lookup.blocked_reason is not None:
-            context.record_action(
+            run.record_action(
                 CloseAction(
                     kind=stack_comment_label(lookup.kind),
                     body=lookup.blocked_reason,
@@ -1037,25 +865,25 @@ async def _cleanup_revision(
         if lookup.comment is None:
             continue
         cleared_comment = True
-        context.record_action(
+        run.record_action(
             CloseAction(
                 kind=stack_comment_label(lookup.kind),
                 body=(
                     f"delete {stack_comment_label(lookup.kind)} #{lookup.comment.id} from PR "
                     f"#{cached_change.pr_number}"
                 ),
-                status="planned" if context.dry_run else "applied",
+                status="planned" if run.dry_run else "applied",
             )
         )
-        if not context.dry_run:
-            with context.journal.mutation(
+        if not run.dry_run:
+            with run.journal.mutation(
                 "delete_issue_comment",
-                change_id=context.revision.change_id,
+                change_id=revision.change_id,
                 comment_id=lookup.comment.id,
                 kind=lookup.kind,
                 pull_request_number=cached_change.pr_number,
             ):
-                await context.github_client.delete_issue_comment(
+                await run.github_client.delete_issue_comment(
                     comment_id=lookup.comment.id,
                 )
 
@@ -1064,29 +892,7 @@ async def _cleanup_revision(
         or cached_change.overview_comment_id is not None
         or cleared_comment
     ):
-        context.next_changes[context.revision.change_id] = cached_change.with_cleared_comments()
-
-
-def _plan_review_bookmark_cleanup(
-    *,
-    bookmark: str | None,
-    cached_change: CachedChange,
-    bookmark_state: BookmarkState,
-    commit_id: str | None,
-    context: _CloseCleanupContext,
-) -> _BookmarkCleanupPlan:
-    if bookmark is None:
-        return _BookmarkCleanupPlan(local_forget=False, remote_delete=False)
-    return plan_bookmark_cleanup(
-        bookmark=bookmark,
-        bookmark_state=bookmark_state,
-        cached_change=cached_change,
-        cleanup_user_bookmarks=context.cleanup_user_bookmarks,
-        commit_id=commit_id,
-        prefix=context.bookmark_prefix,
-        record_action=context.record_action,
-        remote_name=context.remote_name,
-    )
+        run.next_changes[revision.change_id] = cached_change.with_cleared_comments()
 
 
 def _has_retirable_cached_review_identity(cached_change: CachedChange) -> bool:
