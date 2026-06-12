@@ -257,7 +257,6 @@ async def _prepare_checkout(
             discover_remote_review=True,
             persist_cache_updates=False,
             prepared_status=prepared_status,
-            on_github_status=None,
             on_revision=lambda _revision, _github_available: progress.advance(),
         )
     _ensure_selected_head_has_pull_request(

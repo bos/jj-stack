@@ -302,7 +302,6 @@ def stream_status(
     lock_cache_update: bool = False,
     persist_cache_updates: bool = True,
     prepared_status: PreparedStatus,
-    on_github_status: Callable[[str | None, ErrorMessage | None], None] | None = None,
     on_revision: Callable[[ReviewStatusRevision, bool], None] | None = None,
 ) -> StatusResult:
     """Inspect GitHub state for a prepared stack and optionally stream results out."""
@@ -312,7 +311,6 @@ def stream_status(
             discover_remote_review=discover_remote_review,
             inspect_stack_comments=inspect_stack_comments,
             lock_cache_update=lock_cache_update,
-            on_github_status=on_github_status,
             on_revision=on_revision,
             persist_cache_updates=persist_cache_updates,
             prepared_status=prepared_status,
@@ -325,7 +323,6 @@ async def stream_status_async(
     discover_remote_review: bool = False,
     inspect_stack_comments: bool = False,
     lock_cache_update: bool = False,
-    on_github_status: Callable[[str | None, ErrorMessage | None], None] | None,
     on_revision: Callable[[ReviewStatusRevision, bool], None] | None,
     persist_cache_updates: bool = True,
     prepared_status: PreparedStatus,
@@ -342,8 +339,6 @@ async def stream_status_async(
 
     if prepared.remote is None:
         display_revisions = tuple(reversed(build_status_revisions_for_prepared_stack(prepared)))
-        if on_github_status is not None:
-            on_github_status(None, None)
         for revision in display_revisions:
             if on_revision is not None:
                 on_revision(revision, False)
@@ -362,8 +357,6 @@ async def stream_status_async(
     if github_repository is None:
         logger.debug("status github target unavailable: %s", github_repository_error)
         display_revisions = tuple(reversed(build_status_revisions_for_prepared_stack(prepared)))
-        if on_github_status is not None:
-            on_github_status(None, github_repository_error)
         for revision in display_revisions:
             if on_revision is not None:
                 on_revision(revision, False)
@@ -379,19 +372,7 @@ async def stream_status_async(
             submitted_state_disagreements=submitted_disagreements,
         )
 
-    github_status_reported = False
-
-    def emit_github_status(github_error: ErrorMessage | None) -> None:
-        nonlocal github_status_reported
-        if github_status_reported:
-            return
-        github_status_reported = True
-        if on_github_status is not None:
-            on_github_status(github_repository.full_name, github_error)
-
     if not prepared.status_revisions:
-        if on_github_status is not None:
-            on_github_status(github_repository.full_name, None)
         return StatusResult(
             github_error=None,
             github_repository=github_repository.full_name,
@@ -431,7 +412,6 @@ async def stream_status_async(
         async for revision in _iter_status_revisions_with_github(
             github_repository=github_repository,
             inspect_stack_comments=inspect_stack_comments,
-            on_github_status=emit_github_status,
             prepared=prepared,
             prepared_revisions=prepared_revisions_for_github,
         ):
@@ -439,8 +419,6 @@ async def stream_status_async(
             if on_revision is not None:
                 on_revision(revision, True)
     except CliError as error:
-        if not github_status_reported:
-            emit_github_status(None)
         github_error = error_message(error)
         logger.debug("status github inspection failed: %s", github_error)
         streamed_change_ids = {revision.change_id for revision in revisions}
@@ -459,8 +437,6 @@ async def stream_status_async(
             submitted_state_disagreements=submitted_disagreements,
         )
 
-    if not github_status_reported:
-        emit_github_status(None)
     revisions_by_change_id = {revision.change_id: revision for revision in revisions}
     display_revisions = tuple(
         revisions_by_change_id.get(revision.change_id, revision)
@@ -793,7 +769,6 @@ async def _iter_status_revisions_with_github(
     *,
     github_repository: GithubRepoAddress,
     inspect_stack_comments: bool,
-    on_github_status: Callable[[str | None], None] | None,
     prepared: PreparedStack,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> AsyncIterator[ReviewStatusRevision]:
@@ -804,8 +779,6 @@ async def _iter_status_revisions_with_github(
             on_progress=None,
             prepared_revisions=ordered_prepared_revisions,
         )
-        if on_github_status is not None:
-            on_github_status(None)
         semaphore = asyncio.Semaphore(_GITHUB_INSPECTION_CONCURRENCY)
         tasks = tuple(
             asyncio.create_task(

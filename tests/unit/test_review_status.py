@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from jj_stack.bootstrap import CommandContext
 from jj_stack.config import RepoConfig
-from jj_stack.errors import CliError, ErrorMessage
+from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import GitRemote
@@ -83,7 +83,6 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
             subject="feature 2",
         ),
     )
-    github_status_calls: list[tuple[str | None, ErrorMessage | None]] = []
     streamed_revisions: list[tuple[str, bool]] = []
 
     async def fake_iter_status_revisions_with_github(**kwargs):
@@ -100,15 +99,8 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
         lambda prepared: local_only_revisions,
     )
 
-    def on_github_status(
-        github_repository: str | None,
-        github_error: ErrorMessage | None,
-    ) -> None:
-        github_status_calls.append((github_repository, github_error))
-
     result = asyncio.run(
         stream_status_async(
-            on_github_status=on_github_status,
             on_revision=lambda revision, github_available: streamed_revisions.append(
                 (revision.change_id, github_available)
             ),
@@ -116,7 +108,6 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
         )
     )
 
-    assert github_status_calls == [("octo-org/stacked-review", None)]
     assert streamed_revisions == [
         ("bbbbbbbbbbbb", False),
         ("aaaaaaaaaaaa", False),
@@ -195,7 +186,6 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
 
     result = asyncio.run(
         stream_status_async(
-            on_github_status=None,
             on_revision=None,
             prepared_status=prepared_status,
         )

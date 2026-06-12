@@ -110,7 +110,6 @@ async def _run_unlink_async(
         status_result = await stream_status_async(
             persist_cache_updates=False,
             prepared_status=prepared_status,
-            on_github_status=None,
             on_revision=lambda _revision, _github_available: progress.advance(),
         )
     prepared_revision = prepared.status_revisions[-1]
