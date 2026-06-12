@@ -3,9 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.models.stack import LocalRevision, LocalStack
-from jj_review.review.discovery import discover_connected_tracked_stacks, discover_tracked_stacks
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review.discovery import discover_connected_tracked_stacks, discover_tracked_stacks
 
 
 def _revision(

@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import jj_review.github.auth as github_auth_module
-from jj_review.github.auth import github_token_for_base_url, github_token_from_env
+import jj_stack.github.auth as github_auth_module
+from jj_stack.github.auth import github_token_for_base_url, github_token_from_env
 
 
 def test_github_token_from_env_prefers_github_token(

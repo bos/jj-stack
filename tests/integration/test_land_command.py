@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.jj.client import JjClient, JjCommandError
-from jj_review.state.journal import read_operation_log
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.jj.client import JjClient, JjCommandError
+from jj_stack.state.journal import read_operation_log
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -197,7 +197,7 @@ def test_land_rejects_stack_forked_from_trunk_ancestor(
         return original_fetch_remote(self, remote=remote, branches=branches)
 
     monkeypatch.setattr(
-        "jj_review.review.status.JjClient.fetch_remote",
+        "jj_stack.review.status.JjClient.fetch_remote",
         tracking_fetch_remote,
     )
 
@@ -481,7 +481,7 @@ def test_land_blocks_dismissed_approval_after_resubmit(
             review.state = "DISMISSED"
 
     monkeypatch.setattr(
-        "jj_review.jj.client.JjClient.push_bookmarks",
+        "jj_stack.jj.client.JjClient.push_bookmarks",
         dismissing_push,
     )
 
@@ -702,7 +702,7 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.land.command",),
+        modules=("jj_stack.commands.land.command",),
         client_type=FailOnFinalizeLoadClient,
     )
 
@@ -718,7 +718,7 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.land.command",),
+        modules=("jj_stack.commands.land.command",),
     )
 
     second_exit_code = run_main(repo, config_path, "land")

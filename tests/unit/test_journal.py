@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jj_review.models.review_state import CachedChange
-from jj_review.state.journal import (
+from jj_stack.models.review_state import CachedChange
+from jj_stack.state.journal import (
     OPERATION_LOG_FILENAME,
     OperationJournal,
     read_operation_log,
 )
-from jj_review.state.operation_lock import acquire_operation_lock
+from jj_stack.state.operation_lock import acquire_operation_lock
 
 
 def test_operation_journal_appends_jsonl_events(tmp_path: Path) -> None:

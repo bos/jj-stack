@@ -13,8 +13,8 @@ from pathlib import Path
 
 import httpxyz
 
-from jj_review.github.client import GithubClient
-from jj_review.github.resolution import ParsedGithubRepo
+from jj_stack.github.client import GithubClient
+from jj_stack.github.resolution import ParsedGithubRepo
 
 from .fake_github import (
     FakeGithubRepository,
@@ -28,13 +28,13 @@ _TEMPLATE_NAME = "stacked-review"
 _CACHED_TEMPLATE: Path | None = None
 _CACHED_SUBMITTED_FEATURE_TEMPLATE: Path | None = None
 _SUBMIT_CONFIG_MODULES = (
-    "jj_review.commands.submit.command",
-    "jj_review.commands.relink",
-    "jj_review.commands.unstack",
-    "jj_review.commands.close_orphan",
-    "jj_review.commands.cleanup.command",
-    "jj_review.commands.land.command",
-    "jj_review.review.status",
+    "jj_stack.commands.submit.command",
+    "jj_stack.commands.relink",
+    "jj_stack.commands.unstack",
+    "jj_stack.commands.close_orphan",
+    "jj_stack.commands.cleanup.command",
+    "jj_stack.commands.land.command",
+    "jj_stack.review.status",
 )
 
 
@@ -69,7 +69,7 @@ def configure_fake_github_environment(
             repo=fake_repo.name,
         )
 
-    resolution_module = importlib.import_module("jj_review.github.resolution")
+    resolution_module = importlib.import_module("jj_stack.github.resolution")
     monkeypatch.setattr(resolution_module, "parse_github_repo", parse_github_repo)
     for module in command_modules:
         module_object = importlib.import_module(module)
@@ -147,7 +147,7 @@ def init_fake_github_repo(
 
 
 def _build_submitted_feature_template(template_root: Path) -> None:
-    from jj_review.cli import main
+    from jj_stack.cli import main
 
     prior_state_home = os.environ.get("XDG_STATE_HOME")
     os.environ["XDG_STATE_HOME"] = str(template_root / "state-home")

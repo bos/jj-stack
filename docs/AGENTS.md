@@ -44,7 +44,7 @@ open this directory.
 
 The `--help` output for every command is held to the same standard as these
 docs. Command docstrings and flag descriptions live in
-`src/jj_review/commands/*.py` and in `src/jj_review/cli.py`. Apply the same
+`src/jj_stack/commands/*.py` and in `src/jj_stack/cli.py`. Apply the same
 vocabulary rules there: standard jj/git terms are fine; `jj-review` internal
 design-doc language is not.
 

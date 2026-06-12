@@ -4,12 +4,12 @@ from unittest.mock import patch
 
 import pytest
 
-from jj_review.bootstrap import (
+from jj_stack.bootstrap import (
     _parse_jj_version,
     check_jj_version,
     resolve_repo_root,
 )
-from jj_review.errors import CliError
+from jj_stack.errors import CliError
 
 
 def _fake_jj_version(version_string: str) -> subprocess.CompletedProcess[str]:

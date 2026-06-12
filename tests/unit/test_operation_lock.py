@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.state import operation_lock as operation_lock_module
-from jj_review.state.operation_lock import (
+from jj_stack.state import operation_lock as operation_lock_module
+from jj_stack.state.operation_lock import (
     HOLDER_FILENAME,
     LOCK_FILENAME,
     acquire_operation_lock,
@@ -33,8 +33,8 @@ def test_operation_lock_blocks_another_process_with_holder_diagnostic(tmp_path: 
             """
 from pathlib import Path
 import sys
-from jj_review.errors import CliError
-from jj_review.state.operation_lock import acquire_operation_lock
+from jj_stack.errors import CliError
+from jj_stack.state.operation_lock import acquire_operation_lock
 
 try:
     with acquire_operation_lock(
@@ -64,7 +64,7 @@ def test_operation_lock_try_acquire_reports_busy_across_processes(tmp_path: Path
             """
 from pathlib import Path
 import sys
-from jj_review.state.operation_lock import try_acquire_operation_lock
+from jj_stack.state.operation_lock import try_acquire_operation_lock
 
 lock = try_acquire_operation_lock(Path(sys.argv[1]), command="child")
 if lock is None:
@@ -123,7 +123,7 @@ def test_operation_lock_releases_file_lock_when_holder_write_fails(
         """
 from pathlib import Path
 import sys
-from jj_review.state.operation_lock import try_acquire_operation_lock
+from jj_stack.state.operation_lock import try_acquire_operation_lock
 
 lock = try_acquire_operation_lock(Path(sys.argv[1]), command="next")
 if lock is None:

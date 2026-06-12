@@ -4,9 +4,9 @@ from pathlib import Path
 
 import httpxyz
 
-import jj_review.commands.doctor as doctor_mod
-from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.github.resolution import ParsedGithubRepo
+import jj_stack.commands.doctor as doctor_mod
+from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.resolution import ParsedGithubRepo
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (

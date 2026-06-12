@@ -6,17 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.formatting import short_change_id
-from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.github.stack_comments import (
+from jj_stack.formatting import short_change_id
+from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.stack_comments import (
     STACK_NAVIGATION_COMMENT_MARKER,
     STACK_OVERVIEW_COMMENT_MARKER,
     is_navigation_comment,
     is_overview_comment,
 )
-from jj_review.jj.client import JjClient
-from jj_review.state.journal import read_operation_log
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.jj.client import JjClient
+from jj_stack.state.journal import read_operation_log
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
     FakeGithubState,
@@ -448,7 +448,7 @@ def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     run_command(["jj", "rebase", "-r", old_bottom_change_id, "-A", old_top_change_id], repo)
     reordered_stack = JjClient(repo).discover_review_stack()
 
-    from jj_review.commands.submit import auto_close as submit_auto_close
+    from jj_stack.commands.submit import auto_close as submit_auto_close
 
     monkeypatch.setattr(
         submit_auto_close,
@@ -998,7 +998,7 @@ def test_submit_batches_stack_comment_reads_with_graphql(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=CountingCommentLookupClient,
     )
 
@@ -1309,7 +1309,7 @@ def test_submit_reports_stack_comment_update_failures_without_traceback(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=FailingCommentUpdateClient,
     )
 
@@ -1490,7 +1490,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
         raise RuntimeError("Simulated failure after untracked remote update")
 
     monkeypatch.setattr(
-        "jj_review.commands.submit.command.JjClient.update_untracked_remote_bookmark",
+        "jj_stack.commands.submit.command.JjClient.update_untracked_remote_bookmark",
         update_untracked_remote_bookmark_then_fail,
     )
 
@@ -1504,7 +1504,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
     assert remote_state.is_tracked is True
 
     monkeypatch.setattr(
-        "jj_review.commands.submit.command.JjClient.update_untracked_remote_bookmark",
+        "jj_stack.commands.submit.command.JjClient.update_untracked_remote_bookmark",
         original_update_untracked_remote_bookmark,
     )
 
@@ -1923,7 +1923,7 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=FailSpecificPullRequestClient,
     )
 
@@ -1991,7 +1991,7 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=FlakyMetadataClient,
     )
 
@@ -2040,7 +2040,7 @@ def test_submit_unchanged_rerun_skips_pull_request_metadata_writes(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
     )
 
     assert run_main(repo, config_path, "submit") == 0
@@ -2069,7 +2069,7 @@ def test_submit_unchanged_rerun_skips_pull_request_metadata_writes(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=NoMetadataWritesClient,
     )
 
@@ -2100,7 +2100,7 @@ def test_submit_re_request_adds_prior_approved_and_changes_requested_reviewers(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
     )
 
     assert run_main(repo, config_path, "submit") == 0
@@ -2175,7 +2175,7 @@ def test_submit_cli_reviewers_override_configured_reviewers(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
     )
 
     exit_code = run_main(
@@ -2220,7 +2220,7 @@ def test_submit_cli_labels_override_configured_labels(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
     )
 
     exit_code = run_main(
@@ -2299,9 +2299,9 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=FlakyCommentClient,
-        concurrency_limits={"jj_review.commands.submit.command": 2},
+        concurrency_limits={"jj_stack.commands.submit.command": 2},
     )
 
     assert run_main(repo, config_path, "submit") == 1
@@ -2402,7 +2402,7 @@ def test_submit_logs_begin_after_failed_submit(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=FailOnFirstPRClient,
     )
 

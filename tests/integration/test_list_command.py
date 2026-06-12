@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.jj.client import JjClient
-from jj_review.state.store import ReviewStateStore
+from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.jj.client import JjClient
+from jj_stack.state.store import ReviewStateStore
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -382,7 +382,7 @@ def test_list_batches_github_lookup_across_repo_stacks(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.list_", "jj_review.review.status"),
+        modules=("jj_stack.commands.list_", "jj_stack.review.status"),
         client_type=CountingGithubClient,
     )
 
@@ -539,7 +539,7 @@ def test_list_falls_back_when_github_unavailable(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.list_", "jj_review.review.status"),
+        modules=("jj_stack.commands.list_", "jj_stack.review.status"),
         client_type=OfflineGithubClient,
     )
 

@@ -2,16 +2,16 @@ from pathlib import Path
 
 import pytest
 
-import jj_review.ui as ui
-from jj_review.cli import main
-from jj_review.commands.view import ViewSelector
-from jj_review.errors import CliError
+import jj_stack.ui as ui
+from jj_stack.cli import main
+from jj_stack.commands.view import ViewSelector
+from jj_stack.errors import CliError
 from tests.support.output_assertions import assert_output_contains
 
 
 @pytest.fixture(autouse=True)
 def no_configured_color(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("jj_review.cli._load_configured_jj_color", lambda **kwargs: None)
+    monkeypatch.setattr("jj_stack.cli._load_configured_jj_color", lambda **kwargs: None)
 
 
 def test_main_reports_invalid_config_without_traceback(
@@ -22,7 +22,7 @@ def test_main_reports_invalid_config_without_traceback(
     repo = _patch_fake_jj_workspace(
         monkeypatch,
         tmp_path,
-        jj_review_config_stdout='jj-review.bookmark_prefix = ""\n',
+        jj_stack_config_stdout='jj-review.bookmark_prefix = ""\n',
     )
 
     exit_code = main(["--repository", str(repo), "submit"])
@@ -57,7 +57,7 @@ def test_main_reports_invalid_logging_level_without_traceback(
     repo = _patch_fake_jj_workspace(
         monkeypatch,
         tmp_path,
-        jj_review_config_stdout='jj-review.logging.level = "DEBIG"\n',
+        jj_stack_config_stdout='jj-review.logging.level = "DEBIG"\n',
     )
 
     exit_code = main(["--repository", str(repo), "submit"])
@@ -91,7 +91,7 @@ def test_main_renders_semantic_cli_errors_without_flattening_first(
     def fake_view(**kwargs) -> int:
         raise CliError(("Problem at ", ui.change_id("abcdefgh1234")))
 
-    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
+    monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
 
     exit_code = main(["view"])
     captured = capsys.readouterr()
@@ -107,7 +107,7 @@ def test_main_renders_cli_error_hint_on_separate_line(
     def fake_view(**kwargs) -> int:
         raise CliError("Problem at trunk.", hint="Run view --fetch and retry.")
 
-    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
+    monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
 
     exit_code = main(["view"])
     captured = capsys.readouterr()
@@ -127,7 +127,7 @@ def test_main_preserves_view_selector_order(
         observed.update(kwargs)
         return 0
 
-    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
+    monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
 
     exit_code = main(["view", "foo", "--pull-request", "17", "bar"])
 
@@ -157,7 +157,7 @@ def test_main_preserves_view_positional_escape_for_dash_prefixed_revsets(
         observed.update(kwargs)
         return 0
 
-    monkeypatch.setattr("jj_review.cli.view_command.view", fake_view)
+    monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
 
     exit_code = main(argv)
 
@@ -187,7 +187,7 @@ def _patch_fake_jj_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     *,
-    jj_review_config_stdout: str,
+    jj_stack_config_stdout: str,
 ) -> Path:
     """Create a minimal .jj-marked directory and stub out the jj config read.
 
@@ -198,7 +198,7 @@ def _patch_fake_jj_workspace(
     repo = tmp_path / "repo"
     (repo / ".jj").mkdir(parents=True)
     monkeypatch.setattr(
-        "jj_review.jj.client.JjClient.read_jj_review_config_list_output",
-        lambda self: jj_review_config_stdout,
+        "jj_stack.jj.client.JjClient.read_jj_stack_config_list_output",
+        lambda self: jj_stack_config_stdout,
     )
     return repo

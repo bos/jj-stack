@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jj_review.models.stack import LocalRevision
+from jj_stack.models.stack import LocalRevision
 
 
 def make_revision(*, commit_id: str, change_id: str, description: str) -> LocalRevision:

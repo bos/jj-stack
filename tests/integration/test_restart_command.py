@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jj_review.formatting import short_change_id
-from jj_review.jj.client import JjClient
-from jj_review.models.review_state import CachedChange
-from jj_review.state.store import ReviewStateStore
+from jj_stack.formatting import short_change_id
+from jj_stack.jj.client import JjClient
+from jj_stack.models.review_state import CachedChange
+from jj_stack.state.store import ReviewStateStore
 
 from ..support.integration_helpers import commit_file, init_fake_github_repo
 from .submit_command_helpers import configure_submit_environment, run_main

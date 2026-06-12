@@ -6,11 +6,11 @@ from typing import cast
 
 import pytest
 
-from jj_review.bootstrap import CommandContext
-from jj_review.commands.checkout import _run_checkout_async
-from jj_review.config import RepoConfig
-from jj_review.errors import CliError
-from jj_review.jj.client import JjClient
+from jj_stack.bootstrap import CommandContext
+from jj_stack.commands.checkout import _run_checkout_async
+from jj_stack.config import RepoConfig
+from jj_stack.errors import CliError
+from jj_stack.jj.client import JjClient
 
 
 def test_run_checkout_current_rejects_before_github_inspection(
@@ -25,9 +25,9 @@ def test_run_checkout_current_rejects_before_github_inspection(
             selected_revset="@-",
         )
 
-    monkeypatch.setattr("jj_review.commands.checkout._resolve_selection", fake_resolve_selection)
+    monkeypatch.setattr("jj_stack.commands.checkout._resolve_selection", fake_resolve_selection)
     monkeypatch.setattr(
-        "jj_review.commands.checkout.prepare_status",
+        "jj_stack.commands.checkout.prepare_status",
         lambda **kwargs: SimpleNamespace(
             prepared=SimpleNamespace(
                 client=SimpleNamespace(list_bookmark_states=lambda bookmarks: {}),
@@ -51,7 +51,7 @@ def test_run_checkout_current_rejects_before_github_inspection(
         raise AssertionError("GitHub inspection should not run for this failure path.")
 
     monkeypatch.setattr(
-        "jj_review.commands.checkout.stream_status_async",
+        "jj_stack.commands.checkout.stream_status_async",
         fail_stream_status_async,
     )
 

@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.jj.client import JjClient
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.journal import read_operation_log
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.jj.client import JjClient
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.state.journal import read_operation_log
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
     commit_file,
@@ -211,7 +211,7 @@ def test_cleanup_restack_skips_inspection_on_fully_untracked_stack(
         return original_fetch_remote(self, remote=remote, branches=branches)
 
     monkeypatch.setattr(
-        "jj_review.review.status.JjClient.fetch_remote",
+        "jj_stack.review.status.JjClient.fetch_remote",
         tracking_fetch_remote,
     )
 
@@ -386,7 +386,7 @@ def test_cleanup_plans_local_bookmark_forget_before_remote_delete_when_safe(
 
     run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.command._stale_change_reasons",
+        "jj_stack.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -430,7 +430,7 @@ def test_cleanup_forgets_local_bookmark_before_deleting_remote_branch_when_safe(
 
     run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.command._stale_change_reasons",
+        "jj_stack.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -485,7 +485,7 @@ def test_cleanup_can_delete_user_bookmarks_when_configured(
     _mark_pr_state(state_store, change_id=tracked_change_id, pr_state="merged")
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.command._stale_change_reasons",
+        "jj_stack.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -533,7 +533,7 @@ def test_cleanup_apply_batches_remote_delete_local_forget_and_fetch(
         run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.command._stale_change_reasons",
+        "jj_stack.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {
             change_id: "local change is no longer reviewable"
             for change_id in kwargs["change_ids"]
@@ -569,15 +569,15 @@ def test_cleanup_apply_batches_remote_delete_local_forget_and_fetch(
         return original_fetch_remote(self, remote=remote, branches=branches)
 
     monkeypatch.setattr(
-        "jj_review.jj.client.JjClient.delete_remote_bookmarks",
+        "jj_stack.jj.client.JjClient.delete_remote_bookmarks",
         tracking_delete_remote_bookmarks,
     )
     monkeypatch.setattr(
-        "jj_review.jj.client.JjClient.forget_bookmarks",
+        "jj_stack.jj.client.JjClient.forget_bookmarks",
         tracking_forget_bookmarks,
     )
     monkeypatch.setattr(
-        "jj_review.jj.client.JjClient.fetch_remote",
+        "jj_stack.jj.client.JjClient.fetch_remote",
         tracking_fetch_remote,
     )
 
@@ -654,7 +654,7 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
         )
 
     monkeypatch.setattr(
-        "jj_review.jj.client.JjClient.delete_remote_bookmarks",
+        "jj_stack.jj.client.JjClient.delete_remote_bookmarks",
         delete_remote_bookmarks_with_race,
     )
 
@@ -789,7 +789,7 @@ def test_cleanup_logs_begin_after_failed_apply(
         raise RuntimeError("Simulated failure during live cleanup")
 
     monkeypatch.setattr(
-        "jj_review.jj.client.JjClient.delete_remote_bookmarks",
+        "jj_stack.jj.client.JjClient.delete_remote_bookmarks",
         failing_delete_remote_bookmarks,
     )
 

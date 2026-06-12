@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 _CHECK_PATH = Path(__file__).resolve().parents[2] / "check.py"
-_SPEC = importlib.util.spec_from_file_location("jj_review_check", _CHECK_PATH)
+_SPEC = importlib.util.spec_from_file_location("jj_stack_check", _CHECK_PATH)
 assert _SPEC is not None
 assert _SPEC.loader is not None
 check_script = importlib.util.module_from_spec(_SPEC)

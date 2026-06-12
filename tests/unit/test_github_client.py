@@ -6,7 +6,7 @@ import json
 import httpxyz
 import pytest
 
-from jj_review.github.client import GithubClient, GithubClientError
+from jj_stack.github.client import GithubClient, GithubClientError
 
 
 def _github_client(handler) -> GithubClient:

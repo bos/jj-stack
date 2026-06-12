@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from jj_review.errors import CliError
-from jj_review.github.resolution import (
+from jj_stack.errors import CliError
+from jj_stack.github.resolution import (
     parse_github_repo,
     remote_bookmarks_pointing_at_commit,
     resolve_trunk_branch,
     select_submit_remote,
 )
-from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_review.models.github import GithubRepository
+from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
+from jj_stack.models.github import GithubRepository
 
 
 def test_select_submit_remote_uses_origin_when_multiple_remotes_exist() -> None:

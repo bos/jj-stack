@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from jj_review.models.bookmarks import RemoteBookmarkState
-from jj_review.models.github import GithubBranchRef, GithubPullRequest
-from jj_review.models.review_state import CachedChange
-from jj_review.review.change_status import (
+from jj_stack.models.bookmarks import RemoteBookmarkState
+from jj_stack.models.github import GithubBranchRef, GithubPullRequest
+from jj_stack.models.review_state import CachedChange
+from jj_stack.review.change_status import (
     SubmittedStateDisagreement,
     classify_review_change,
 )
-from jj_review.review.status import PullRequestLookup
+from jj_stack.review.status import PullRequestLookup
 
 
 def _pull_request(*, draft: bool = False, state: str = "open") -> GithubPullRequest:

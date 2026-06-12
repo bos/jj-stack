@@ -6,20 +6,20 @@ from typing import cast
 
 import pytest
 
-import jj_review.ui as ui
-from jj_review.commands.unstack import (
+import jj_stack.ui as ui
+from jj_stack.commands.unstack import (
     CloseAction,
     PreparedClose,
     _cleanup_revision,
     _CloseCleanupContext,
 )
-from jj_review.config import RepoConfig
-from jj_review.github.client import GithubClient
-from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.jj.client import JjClient
-from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
-from jj_review.models.review_state import CachedChange
-from jj_review.review.status import ReviewStatusRevision
+from jj_stack.config import RepoConfig
+from jj_stack.github.client import GithubClient
+from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.jj.client import JjClient
+from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
+from jj_stack.models.review_state import CachedChange
+from jj_stack.review.status import ReviewStatusRevision
 
 
 def _stub_revision(*, change_id: str) -> ReviewStatusRevision:

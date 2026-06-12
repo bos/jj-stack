@@ -5,30 +5,30 @@ from typing import cast
 
 import pytest
 
-from jj_review.bootstrap import CommandContext
-from jj_review.commands.land.command import _stack_not_on_trunk_error
-from jj_review.commands.land.execute import (
+from jj_stack.bootstrap import CommandContext
+from jj_stack.commands.land.command import _stack_not_on_trunk_error
+from jj_stack.commands.land.execute import (
     _updated_landed_change,
     ensure_trunk_branch_matches_selected_trunk,
 )
-from jj_review.commands.land.plan import (
+from jj_stack.commands.land.plan import (
     _collect_landable_prefix,
     _plan_review_bookmark_cleanup,
 )
-from jj_review.config import RepoConfig
-from jj_review.errors import CliError
-from jj_review.jj.client import JjClient
-from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
-from jj_review.models.github import GithubBranchRef, GithubPullRequest
-from jj_review.models.review_state import CachedChange, LinkState
-from jj_review.review.status import (
+from jj_stack.config import RepoConfig
+from jj_stack.errors import CliError
+from jj_stack.jj.client import JjClient
+from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
+from jj_stack.models.github import GithubBranchRef, GithubPullRequest
+from jj_stack.models.review_state import CachedChange, LinkState
+from jj_stack.review.status import (
     PreparedStatus,
     PullRequestLookup,
     PullRequestLookupState,
     ReviewStatusRevision,
     StatusResult,
 )
-from jj_review.ui import plain_text
+from jj_stack.ui import plain_text
 
 
 class _FakeJjClient:

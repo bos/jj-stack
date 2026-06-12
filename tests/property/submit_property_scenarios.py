@@ -34,9 +34,9 @@ from tests.support.submit_property_scenarios import (
     submit_retry_scenarios_from_environment,
 )
 
-import jj_review.commands.submit.command as submit_command
-from jj_review.errors import CliError
-from jj_review.github.client import GithubClient, GithubClientError
+import jj_stack.commands.submit.command as submit_command
+from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient, GithubClientError
 
 STACK_EDIT_SCENARIOS = stack_edit_scenarios_from_environment()
 CROSS_STACK_SCENARIOS = cross_stack_scenarios_from_environment()
@@ -300,7 +300,7 @@ def _install_submit_retry_fault(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command",),
         client_type=FaultingGithubClient,
     )
 

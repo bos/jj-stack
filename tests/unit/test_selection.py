@@ -3,12 +3,12 @@ from typing import cast
 
 import pytest
 
-from jj_review.errors import CliError
-from jj_review.jj.client import JjClient
-from jj_review.models.bookmarks import GitRemote
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.models.stack import LocalRevision
-from jj_review.review.selection import (
+from jj_stack.errors import CliError
+from jj_stack.jj.client import JjClient
+from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.stack import LocalRevision
+from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
     resolve_selected_revset,
@@ -148,6 +148,6 @@ def _revision(
 
 def _patch_review_state(monkeypatch, state: ReviewState) -> None:
     monkeypatch.setattr(
-        "jj_review.review.selection.ReviewStateStore.for_repo",
+        "jj_stack.review.selection.ReviewStateStore.for_repo",
         lambda repo_root: _StateStoreStub(state),
     )

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jj_review.jj.client import JjClient
-from jj_review.state.journal import read_operation_log
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.jj.client import JjClient
+from jj_stack.state.journal import read_operation_log
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
     commit_file,

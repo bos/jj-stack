@@ -4,36 +4,36 @@ from typing import cast
 
 import pytest
 
-from jj_review.commands.submit.inputs import (
+from jj_stack.commands.submit.inputs import (
     preflight_conflicted_revisions as _preflight_conflicted_revisions,
     preflight_private_commits as _preflight_private_commits,
 )
-from jj_review.commands.submit.models import (
+from jj_stack.commands.submit.models import (
     LocalBookmarkAction,
     PreparedSubmitRevision,
     PushOperation,
     SubmitMutationRun,
     SubmitOptions,
 )
-from jj_review.commands.submit.pull_requests import (
+from jj_stack.commands.submit.pull_requests import (
     _ensure_pull_request_link_is_consistent,
 )
-from jj_review.commands.submit.revisions import (
+from jj_stack.commands.submit.revisions import (
     _ensure_remote_can_be_updated,
     _preflight_atomic_remote_push_plan,
     _resolve_local_action,
     prepare_submit_revisions as _prepare_submit_revisions,
     sync_local_bookmarks as _sync_local_bookmarks,
 )
-from jj_review.errors import CliError
-from jj_review.jj.client import JjClient
-from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_review.models.github import GithubBranchRef, GithubPullRequest
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.models.stack import LocalRevision, LocalStack
-from jj_review.review.bookmarks import BookmarkResolutionResult, ResolvedBookmark
-from jj_review.state.journal import OperationJournal
-from jj_review.state.store import ReviewStateStore
+from jj_stack.errors import CliError
+from jj_stack.jj.client import JjClient
+from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
+from jj_stack.models.github import GithubBranchRef, GithubPullRequest
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review.bookmarks import BookmarkResolutionResult, ResolvedBookmark
+from jj_stack.state.journal import OperationJournal
+from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
 

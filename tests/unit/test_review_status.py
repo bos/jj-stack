@@ -4,19 +4,19 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
-from jj_review.bootstrap import CommandContext
-from jj_review.config import RepoConfig
-from jj_review.errors import CliError, ErrorMessage
-from jj_review.github.resolution import (
+from jj_stack.bootstrap import CommandContext
+from jj_stack.config import RepoConfig
+from jj_stack.errors import CliError, ErrorMessage
+from jj_stack.github.resolution import (
     ParsedGithubRepo,
 )
-from jj_review.jj.client import JjClient
-from jj_review.models.bookmarks import GitRemote
-from jj_review.models.github import GithubPullRequest
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.models.stack import LocalRevision, LocalStack
-from jj_review.review import status as status_module
-from jj_review.review.status import (
+from jj_stack.jj.client import JjClient
+from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.github import GithubPullRequest
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review import status as status_module
+from jj_stack.review.status import (
     PreparedStack,
     PreparedStatus,
     ReviewStatusRevision,
@@ -24,7 +24,7 @@ from jj_review.review.status import (
     prepare_stack_for_status,
     stream_status_async,
 )
-from jj_review.state.store import ReviewStateStore
+from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
 
@@ -94,11 +94,11 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
         raise CliError("jj bookmark list failed")
 
     monkeypatch.setattr(
-        "jj_review.review.status._iter_status_revisions_with_github",
+        "jj_stack.review.status._iter_status_revisions_with_github",
         fake_iter_status_revisions_with_github,
     )
     monkeypatch.setattr(
-        "jj_review.review.status.build_status_revisions_for_prepared_stack",
+        "jj_stack.review.status.build_status_revisions_for_prepared_stack",
         lambda prepared: local_only_revisions,
     )
 
@@ -181,7 +181,7 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
         base_parent_subject="base",
     )
     monkeypatch.setattr(
-        "jj_review.review.status.build_status_revisions_for_prepared_stack",
+        "jj_stack.review.status.build_status_revisions_for_prepared_stack",
         lambda prepared: local_only_revisions,
     )
 
@@ -191,7 +191,7 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
         raise AssertionError("unexpected GitHub inspection for untracked stack")
 
     monkeypatch.setattr(
-        "jj_review.review.status._iter_status_revisions_with_github",
+        "jj_stack.review.status._iter_status_revisions_with_github",
         fail_iter_status_revisions_with_github,
     )
 
@@ -585,8 +585,8 @@ def _prepare_status_for_test(
     jj_client,
     state_store,
 ) -> PreparedStatus:
-    from jj_review.jj.client import JjClient
-    from jj_review.review.status import prepare_status
+    from jj_stack.jj.client import JjClient
+    from jj_stack.review.status import prepare_status
 
     return prepare_status(
         context=cast(

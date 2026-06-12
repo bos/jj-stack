@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from jj_review.concurrency import run_bounded_tasks
+from jj_stack.concurrency import run_bounded_tasks
 
 
 def test_run_bounded_tasks_preserves_result_order_while_bounding_concurrency() -> None:

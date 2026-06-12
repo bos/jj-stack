@@ -30,7 +30,7 @@ Repository = "https://github.com/bos/jj-review"
 Issues = "https://github.com/bos/jj-review/issues"
 
 [project.scripts]
-jj-review = "jj_review.cli:main"
+jj-review = "jj_stack.cli:main"
 
 [dependency-groups]
 dev = [
@@ -49,7 +49,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["jj_review"]
+source = ["jj_stack"]
 
 [tool.coverage.report]
 show_missing = true
@@ -70,7 +70,7 @@ combine-as-imports = true
 search_path = ["src", "."]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/jj_review"]
+packages = ["src/jj_stack"]
 
 [tool.uv]
 exclude-newer = "7 days"

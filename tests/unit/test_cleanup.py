@@ -5,34 +5,34 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-import jj_review.commands.cleanup.command as cleanup_module
-from jj_review.bootstrap import CommandContext
-from jj_review.commands._close_actions import ManagedCommentLookup
-from jj_review.commands.cleanup.command import (
+import jj_stack.commands.cleanup.command as cleanup_module
+from jj_stack.bootstrap import CommandContext
+from jj_stack.commands._close_actions import ManagedCommentLookup
+from jj_stack.commands.cleanup.command import (
     _apply_stack_comment_cleanup_action,
     _CleanupSaver,
     _plan_remote_branch_cleanup,
     _plan_stack_comment_cleanup,
     _run_cleanup_async,
 )
-from jj_review.commands.cleanup.rebase import _stream_rebase
-from jj_review.commands.cleanup.shared import (
+from jj_stack.commands.cleanup.rebase import _stream_rebase
+from jj_stack.commands.cleanup.shared import (
     CleanupAction,
     PreparedCleanup,
     PreparedRebase,
     StackCommentCleanupPlan,
 )
-from jj_review.config import RepoConfig
-from jj_review.github.client import GithubClient
-from jj_review.github.resolution import ParsedGithubRepo
-from jj_review.jj.client import JjClient
-from jj_review.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_review.models.github import GithubIssueComment
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.review.change_status import classify_review_change_without_pull_request
-from jj_review.review.status import PreparedStatus
-from jj_review.state.journal import OperationJournal
-from jj_review.state.store import ReviewStateStore
+from jj_stack.config import RepoConfig
+from jj_stack.github.client import GithubClient
+from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.jj.client import JjClient
+from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
+from jj_stack.models.github import GithubIssueComment
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.review.change_status import classify_review_change_without_pull_request
+from jj_stack.review.status import PreparedStatus
+from jj_stack.state.journal import OperationJournal
+from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
 
@@ -118,7 +118,7 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
         deleted_comment_ids.append(comment_id)
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.command.build_github_client",
+        "jj_stack.commands.cleanup.command.build_github_client",
         lambda **kwargs: FakeGithubClientContext(),
     )
 
@@ -137,11 +137,11 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
         )
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.command._stale_change_reasons",
+        "jj_stack.commands.cleanup.command._stale_change_reasons",
         lambda **kwargs: {"change-1": None, "change-stale": "no live ref"},
     )
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.command._plan_stack_comment_cleanup",
+        "jj_stack.commands.cleanup.command._plan_stack_comment_cleanup",
         fake_plan_stack_comment_cleanup,
     )
     result = asyncio.run(
@@ -514,7 +514,7 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
     )
 
     monkeypatch.setattr(
-        "jj_review.commands.cleanup.rebase.stream_status",
+        "jj_stack.commands.cleanup.rebase.stream_status",
         lambda **kwargs: SimpleNamespace(
             github_error=None,
             github_repository="octo-org/stacked-review",

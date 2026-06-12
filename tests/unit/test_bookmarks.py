@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from jj_review.errors import CliError
-from jj_review.models.bookmarks import BookmarkState, RemoteBookmarkState
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.models.stack import LocalRevision
-from jj_review.review.bookmarks import (
+from jj_stack.errors import CliError
+from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.stack import LocalRevision
+from jj_stack.review.bookmarks import (
     BookmarkResolver,
     ResolvedBookmark,
     discover_bookmarks_for_revisions,

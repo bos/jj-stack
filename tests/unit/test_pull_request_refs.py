@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from jj_review.errors import CliError
-from jj_review.github.pull_request_refs import (
+from jj_stack.errors import CliError
+from jj_stack.github.pull_request_refs import (
     ParsedPullRequestUrl,
     parse_pull_request_url,
     parse_repository_pull_request_reference,
 )
-from jj_review.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import ParsedGithubRepo
 
 
 def test_parse_pull_request_url_accepts_standard_pull_request_url() -> None:

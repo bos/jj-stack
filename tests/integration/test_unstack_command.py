@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
-from jj_review.jj.client import JjClient
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
+from jj_stack.jj.client import JjClient
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
     FakeGithubState,
@@ -79,7 +79,7 @@ def test_unstack_plain_skips_remote_fetch_but_cleanup_refreshes(
         return original_fetch_remote(self, remote=remote, branches=branches)
 
     monkeypatch.setattr(
-        "jj_review.review.status.JjClient.fetch_remote",
+        "jj_stack.review.status.JjClient.fetch_remote",
         tracking_fetch_remote,
     )
 
@@ -211,11 +211,11 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
         )
 
     monkeypatch.setattr(
-        "jj_review.review.status.JjClient.fetch_remote",
+        "jj_stack.review.status.JjClient.fetch_remote",
         tracking_fetch_remote,
     )
     monkeypatch.setattr(
-        "jj_review.commands.unstack.JjClient.list_bookmark_states",
+        "jj_stack.commands.unstack.JjClient.list_bookmark_states",
         fail_list_bookmark_states,
     )
 
@@ -305,7 +305,7 @@ def test_unstack_apply_reports_blocked_when_github_is_unavailable(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.unstack", "jj_review.review.status"),
+        modules=("jj_stack.commands.unstack", "jj_stack.review.status"),
         client_type=OfflineGithubClient,
     )
 
@@ -1030,7 +1030,7 @@ def test_unstack_cleanup_pull_request_reports_blocked_when_github_is_unavailable
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.commands.unstack", "jj_review.commands.close_orphan"),
+        modules=("jj_stack.commands.unstack", "jj_stack.commands.close_orphan"),
         client_type=OfflineGithubClient,
     )
 

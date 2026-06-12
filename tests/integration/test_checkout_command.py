@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jj_review.cli import main
-from jj_review.jj.client import JjClient
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.cli import main
+from jj_stack.jj.client import JjClient
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubRepository
 from ..support.integration_helpers import (
@@ -418,9 +418,9 @@ def _configure_checkout_environment(
 ) -> Path:
     return configure_fake_github_environment(
         command_modules=(
-            "jj_review.commands.submit.command",
-            "jj_review.review.status",
-            "jj_review.commands.checkout",
+            "jj_stack.commands.submit.command",
+            "jj_stack.review.status",
+            "jj_stack.commands.checkout",
         ),
         extra_config_lines=extra_config_lines,
         fake_repo=fake_repo,

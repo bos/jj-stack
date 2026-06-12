@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.jj.client import JjClient, UnsupportedStackError
+from jj_stack.jj.client import JjClient, UnsupportedStackError
 
 from ..support.integration_helpers import (
     commit_file,

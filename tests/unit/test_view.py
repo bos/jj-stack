@@ -4,15 +4,15 @@ from io import StringIO
 from types import SimpleNamespace
 from typing import cast
 
-import jj_review.commands.view as view_module
-import jj_review.console as console_module
-import jj_review.ui as ui_module
-from jj_review.config import RepoConfig
-from jj_review.models.bookmarks import RemoteBookmarkState
-from jj_review.models.github import GithubPullRequest
-from jj_review.models.review_state import CachedChange, LinkState
-from jj_review.review.change_status import SubmittedStateDisagreement
-from jj_review.review.status import (
+import jj_stack.commands.view as view_module
+import jj_stack.console as console_module
+import jj_stack.ui as ui_module
+from jj_stack.config import RepoConfig
+from jj_stack.models.bookmarks import RemoteBookmarkState
+from jj_stack.models.github import GithubPullRequest
+from jj_stack.models.review_state import CachedChange, LinkState
+from jj_stack.review.change_status import SubmittedStateDisagreement
+from jj_stack.review.status import (
     ManagedCommentsLookup,
     PullRequestLookup,
     PullRequestLookupSource,

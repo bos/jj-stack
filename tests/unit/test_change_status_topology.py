@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from jj_review.models.review_state import CachedChange, LinkState, ReviewState
-from jj_review.models.stack import LocalRevision, LocalStack
-from jj_review.review.change_status import (
+from jj_stack.models.review_state import CachedChange, LinkState, ReviewState
+from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review.change_status import (
     enumerate_orphaned_records,
     submitted_state_disagreement,
 )

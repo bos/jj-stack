@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.state.store import ReviewStateError, ReviewStateStore
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.state.store import ReviewStateError, ReviewStateStore
 
 
 def test_review_state_store_round_trips_and_creates_parent_directories(tmp_path: Path) -> None:

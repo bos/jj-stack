@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-import jj_review.cli as cli_module
-from jj_review.cli import _extract_config_overrides, main
+import jj_stack.cli as cli_module
+from jj_stack.cli import _extract_config_overrides, main
 
 
 @pytest.fixture(autouse=True)

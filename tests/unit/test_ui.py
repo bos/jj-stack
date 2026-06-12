@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import jj_review.console as console_module
-import jj_review.ui as ui_module
+import jj_stack.console as console_module
+import jj_stack.ui as ui_module
 
 
 def _style_cls():

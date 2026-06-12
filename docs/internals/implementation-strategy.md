@@ -113,7 +113,7 @@ to a single caller.
 pyproject.toml
 uv.lock
 src/
-  jj_review/
+  jj_stack/
     __init__.py
     cli.py
     config.py
@@ -138,7 +138,7 @@ docs/
   internals/
 ```
 
-The package name is `jj_review`.
+The package name is `jj_stack`.
 
 ## Components
 

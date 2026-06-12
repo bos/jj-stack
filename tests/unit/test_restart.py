@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from jj_review.config import RepoConfig
-from jj_review.formatting import short_change_id
-from jj_review.models.review_state import CachedChange, ReviewState
-from jj_review.models.stack import LocalRevision, LocalStack
-from jj_review.review.restart import (
+from jj_stack.config import RepoConfig
+from jj_stack.formatting import short_change_id
+from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review.restart import (
     RestartedChange,
     cached_change_needs_restart,
     restart_state_for_stack,

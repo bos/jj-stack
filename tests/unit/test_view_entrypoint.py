@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import jj_review.commands.view as view_module
-import jj_review.console as console_module
-from jj_review.jj.client import JjCliArgs
-from jj_review.models.review_state import CachedChange, ReviewState
+import jj_stack.commands.view as view_module
+import jj_stack.console as console_module
+from jj_stack.jj.client import JjCliArgs
+from jj_stack.models.review_state import CachedChange, ReviewState
 
 from .entrypoint_test_helpers import patch_bootstrap
 
@@ -115,7 +115,7 @@ def test_view_passes_cli_color_override_to_native_jj_rendering(
 ) -> None:
     patch_bootstrap(monkeypatch, view_module, tmp_path)
     observed: dict[str, object] = {}
-    monkeypatch.setattr("jj_review.formatting.requested_color_mode", lambda: "debug")
+    monkeypatch.setattr("jj_stack.formatting.requested_color_mode", lambda: "debug")
     monkeypatch.setattr(
         view_module,
         "prepare_status",

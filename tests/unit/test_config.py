@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from jj_review.config import load_config, parse_jj_review_config_toml
-from jj_review.errors import CliError
-from jj_review.jj.client import JjCliArgs, JjClient
+from jj_stack.config import load_config, parse_jj_stack_config_toml
+from jj_stack.errors import CliError
+from jj_stack.jj.client import JjCliArgs, JjClient
 
 
 def _patch_config_output(
@@ -40,7 +40,7 @@ def test_load_config_returns_defaults_when_no_keys_set(
     assert config.labels == []
 
 
-def test_load_config_parses_resolved_jj_review_section(
+def test_load_config_parses_resolved_jj_stack_section(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stdout = "\n".join(
@@ -67,7 +67,7 @@ def test_load_config_parses_resolved_jj_review_section(
     assert config.use_bookmarks == ["potato/*", "spam/eggs"]
 
 
-def test_load_config_ignores_unknown_keys_inside_jj_review_section(
+def test_load_config_ignores_unknown_keys_inside_jj_stack_section(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stdout = 'jj-review.potato = "round"\n'
@@ -109,7 +109,7 @@ def test_load_config_rejects_bookmark_prefix_with_slash(
         load_config(jj_client=JjClient(tmp_path))
 
 
-def test_parse_jj_review_config_toml_extracts_nested_tables() -> None:
+def test_parse_jj_stack_config_toml_extracts_nested_tables() -> None:
     stdout = "\n".join(
         [
             'jj-review.bookmark_prefix = "bos"',
@@ -117,7 +117,7 @@ def test_parse_jj_review_config_toml_extracts_nested_tables() -> None:
             "",
         ]
     )
-    parsed = parse_jj_review_config_toml(stdout)
+    parsed = parse_jj_stack_config_toml(stdout)
     assert parsed == {"bookmark_prefix": "bos", "logging": {"level": "INFO"}}
 
 

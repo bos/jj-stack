@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jj_review.jj.client import JjClient
-from jj_review.models.review_state import CachedChange
-from jj_review.state.store import ReviewStateStore
+from jj_stack.jj.client import JjClient
+from jj_stack.models.review_state import CachedChange
+from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jj_review.github.client import GithubClient, GithubClientError
-from jj_review.jj.client import JjClient
-from jj_review.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.jj.client import JjClient
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -294,7 +294,7 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.review.status",),
+        modules=("jj_stack.review.status",),
         client_type=FailingPullRequestLookupClient,
     )
 
@@ -328,7 +328,7 @@ def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.review.status",),
+        modules=("jj_stack.review.status",),
         client_type=OfflineGithubClient,
     )
 
@@ -363,7 +363,7 @@ def test_view_exits_nonzero_when_pull_request_lookup_fails(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.review.status",),
+        modules=("jj_stack.review.status",),
         client_type=FailingPullRequestLookupClient,
     )
 
@@ -423,7 +423,7 @@ def test_view_skips_stack_comment_github_reads(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.review.status",),
+        modules=("jj_stack.review.status",),
         client_type=FailingCommentLookupClient,
     )
 
@@ -508,7 +508,7 @@ def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_review.review.status",),
+        modules=("jj_stack.review.status",),
         client_type=OfflineGithubClient,
     )
 
