@@ -224,38 +224,16 @@ def prepare_status(
     state_store = context.state_store
     state = state_store.load()
     github_target = resolve_github_target(jj_client.list_git_remotes())
-    fetched_remote_state = False
 
-    stack: LocalStack | None = None
-    if (
-        github_target.remote is not None
-        and fetch_remote_state
-        and re_resolve_after_remote_refresh
-        and not fetch_only_when_tracked
-    ):
-        jj_client.fetch_remote(remote=github_target.remote.name)
-        fetched_remote_state = True
-    else:
-        stack = jj_client.discover_review_stack(
-            revset, allow_divergent=True, allow_immutable=True
-        )
-        if github_target.remote is not None and fetch_remote_state:
-            should_fetch = not fetch_only_when_tracked or any(
-                classify_saved_review_change(
-                    state.changes.get(revision.change_id),
-                    local="present",
-                ).saved_review_identity
-                for revision in stack.revisions
-            )
-            if should_fetch:
-                jj_client.fetch_remote(remote=github_target.remote.name)
-                fetched_remote_state = True
-                if re_resolve_after_remote_refresh:
-                    stack = None
-    if stack is None:
-        stack = jj_client.discover_review_stack(
-            revset, allow_divergent=True, allow_immutable=True
-        )
+    stack, fetched_remote_state = _resolve_selected_stack(
+        fetch_only_when_tracked=fetch_only_when_tracked,
+        fetch_remote_state=fetch_remote_state,
+        jj_client=jj_client,
+        re_resolve_after_remote_refresh=re_resolve_after_remote_refresh,
+        remote=github_target.remote,
+        revset=revset,
+        state=state,
+    )
     if fetched_remote_state:
         state = state_store.load()
 
@@ -280,6 +258,57 @@ def prepare_status(
         selected_revset=prepared.stack.selected_revset,
         base_parent_subject=prepared.stack.base_parent.subject,
     )
+
+
+def _resolve_selected_stack(
+    *,
+    fetch_only_when_tracked: bool,
+    fetch_remote_state: bool,
+    jj_client: JjClient,
+    re_resolve_after_remote_refresh: bool,
+    remote: GitRemote | None,
+    revset: str | None,
+    state: ReviewState,
+) -> tuple[LocalStack, bool]:
+    """Resolve the selected stack, fetching remote state first when requested.
+
+    Returns the resolved stack and whether a fetch ran. The fetch/resolve order
+    depends on the flags:
+
+    - an unconditional fetch with `re_resolve_after_remote_refresh` fetches
+      before the only resolution, so the stack reflects the refreshed remote
+      state
+    - `fetch_only_when_tracked` must resolve first to see whether any selected
+      change has saved review identity; the fetch is skipped otherwise
+    - after a post-resolution fetch, `re_resolve_after_remote_refresh` resolves
+      again so imported remote bookmarks become visible; without it the
+      pre-fetch resolution stands
+    """
+
+    def resolve() -> LocalStack:
+        return jj_client.discover_review_stack(
+            revset, allow_divergent=True, allow_immutable=True
+        )
+
+    if remote is None or not fetch_remote_state:
+        return resolve(), False
+    if re_resolve_after_remote_refresh and not fetch_only_when_tracked:
+        jj_client.fetch_remote(remote=remote.name)
+        return resolve(), True
+
+    stack = resolve()
+    if fetch_only_when_tracked and not any(
+        classify_saved_review_change(
+            state.changes.get(revision.change_id),
+            local="present",
+        ).saved_review_identity
+        for revision in stack.revisions
+    ):
+        return stack, False
+    jj_client.fetch_remote(remote=remote.name)
+    if re_resolve_after_remote_refresh:
+        stack = resolve()
+    return stack, True
 
 
 def refresh_remote_state_for_status(*, jj_client: JjClient) -> None:
@@ -661,18 +690,6 @@ def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:
     return False
 
 
-def _resolved_review_decision(
-    *,
-    cached_change: CachedChange | None,
-    pull_request_lookup: PullRequestLookup,
-) -> str | None:
-    if pull_request_lookup.review_decision_error is None:
-        return pull_request_lookup.review_decision
-    if cached_change is None:
-        return None
-    return cached_change.pr_review_decision
-
-
 def _persist_status_cache_updates(
     *,
     base_state: ReviewState | None = None,
@@ -715,6 +732,14 @@ def _persist_status_cache_updates(
                 if updated_change is None:
                     raise AssertionError("Pull request lookup must create cached state.")
                 pull_request = pull_request_lookup.pull_request
+                # Keep the saved review decision when the live lookup failed to
+                # resolve one.
+                if pull_request_lookup.review_decision_error is None:
+                    review_decision = pull_request_lookup.review_decision
+                else:
+                    review_decision = (
+                        None if cached_change is None else cached_change.pr_review_decision
+                    )
                 updated_change = updated_change.model_copy(
                     update={
                         "bookmark": revision.bookmark,
@@ -723,10 +748,7 @@ def _persist_status_cache_updates(
                         ),
                         "pr_is_draft": pull_request.is_draft,
                         "pr_number": pull_request.number,
-                        "pr_review_decision": _resolved_review_decision(
-                            cached_change=cached_change,
-                            pull_request_lookup=pull_request_lookup,
-                        ),
+                        "pr_review_decision": review_decision,
                         "pr_state": pull_request.state,
                         "pr_url": pull_request.html_url,
                     }
@@ -922,7 +944,11 @@ async def _discover_pull_request_lookups(
             head_refs=bookmarks,
         )
     except GithubClientError as error:
-        if _is_repository_level_github_lookup_error(error):
+        # Auth failures, missing repositories, server errors, and transport
+        # failures are repository-level: no per-branch lookup can succeed, so
+        # fail the whole inspection rather than reporting per-branch errors.
+        status_code = error.status_code
+        if status_code is None or status_code in {401, 403, 404} or status_code >= 500:
             raise CliError("") from error
         lookup_error = summarize_github_lookup_error(
             action="pull request lookup",
@@ -1135,11 +1161,3 @@ async def _inspect_managed_comments(
         overview_comment=overview_comments[0] if overview_comments else None,
         state="resolved",
     )
-
-
-def _is_repository_level_github_lookup_error(error: GithubClientError) -> bool:
-    if error.status_code is None:
-        return True
-    if error.status_code in {401, 403, 404}:
-        return True
-    return error.status_code >= 500
