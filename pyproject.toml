@@ -25,9 +25,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bos/jj-review"
-Repository = "https://github.com/bos/jj-review"
-Issues = "https://github.com/bos/jj-review/issues"
+Homepage = "https://github.com/bos/jj-stack"
+Repository = "https://github.com/bos/jj-stack"
+Issues = "https://github.com/bos/jj-stack/issues"
 
 [project.scripts]
 jj-stack = "jj_stack.cli:main"
