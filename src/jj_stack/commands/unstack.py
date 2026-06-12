@@ -40,10 +40,7 @@ from jj_stack.commands.close_orphan import (
 )
 from jj_stack.errors import ErrorMessage
 from jj_stack.github.client import GithubClient, build_github_client
-from jj_stack.github.error_messages import (
-    github_unavailable_message,
-    remote_unavailable_message,
-)
+from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
     GithubRepoAddress,
     resolve_github_target,
@@ -332,14 +329,13 @@ def _unstack_command_label(*, cleanup: bool, dry_run: bool) -> str:
 
 
 def print_close_result(result: CloseResult) -> None:
-    if result.remote is None:
-        console.warning(remote_unavailable_message(remote_error=result.remote_error))
-    github_message = github_unavailable_message(
+    for message in remote_and_github_unavailable_messages(
         github_error=result.github_error,
         github_repository=result.github_repository,
-    )
-    if github_message is not None:
-        console.warning(github_message)
+        remote=result.remote,
+        remote_error=result.remote_error,
+    ):
+        console.warning(message)
     if result.actions:
         emit_close_actions(
             actions=result.actions,

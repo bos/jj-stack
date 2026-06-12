@@ -20,10 +20,7 @@ from jj_stack.commands._close_actions import (
 )
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
-from jj_stack.github.error_messages import (
-    github_unavailable_message,
-    remote_unavailable_message,
-)
+from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
     resolve_github_target,
 )
@@ -196,14 +193,13 @@ async def run_orphan_close(
     remote = github_target.remote
     github_repository = github_target.github_repository
     if remote is None or github_repository is None:
-        if remote is None:
-            console.warning(remote_unavailable_message(remote_error=github_target.remote_error))
-        github_message = github_unavailable_message(
+        for message in remote_and_github_unavailable_messages(
             github_error=github_target.github_repository_error,
             github_repository=None,
-        )
-        if github_message is not None:
-            console.warning(github_message)
+            remote=remote,
+            remote_error=github_target.remote_error,
+        ):
+            console.warning(message)
         return 1
 
     label = ui.change_id(change_id)

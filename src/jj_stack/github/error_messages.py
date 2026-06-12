@@ -5,6 +5,7 @@ from __future__ import annotations
 from jj_stack.github.auth import github_token_from_env
 from jj_stack.github.client import GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.models.bookmarks import GitRemote
 from jj_stack.ui import Message, code
 
 
@@ -43,6 +44,27 @@ def remote_unavailable_message(
     if remote_error is None:
         return "No Git remote is configured."
     return remote_error
+
+
+def remote_and_github_unavailable_messages(
+    *,
+    github_error: Message | None,
+    github_repository: GithubRepoAddress | None,
+    remote: GitRemote | None,
+    remote_error: Message | None,
+) -> tuple[Message, ...]:
+    """Render the repo-level warning lines for an unavailable remote or GitHub target."""
+
+    messages: list[Message] = []
+    if remote is None:
+        messages.append(remote_unavailable_message(remote_error=remote_error))
+    github_message = github_unavailable_message(
+        github_error=github_error,
+        github_repository=github_repository,
+    )
+    if github_message is not None:
+        messages.append(github_message)
+    return tuple(messages)
 
 
 def _github_auth_failure_message(message: str) -> str:

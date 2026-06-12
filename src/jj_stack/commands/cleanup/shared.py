@@ -11,10 +11,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._close_actions import emit_action_row
 from jj_stack.errors import ErrorMessage
-from jj_stack.github.error_messages import (
-    github_unavailable_message,
-    remote_unavailable_message,
-)
+from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
@@ -238,18 +235,15 @@ def _render_remote_and_github_lines(
     github_repository: GithubRepoAddress | None,
     github_error: ErrorMessage | None,
 ) -> tuple[tuple[str, str], ...]:
-    lines: list[tuple[str, str]] = []
-    if remote is None:
-        lines.append(
-            ("warning", ui.plain_text(remote_unavailable_message(remote_error=remote_error)))
+    return tuple(
+        ("warning", plain_text(message))
+        for message in remote_and_github_unavailable_messages(
+            github_error=github_error,
+            github_repository=github_repository,
+            remote=remote,
+            remote_error=remote_error,
         )
-    github_message = github_unavailable_message(
-        github_error=github_error,
-        github_repository=github_repository,
     )
-    if github_message is not None:
-        lines.append(("warning", plain_text(github_message)))
-    return tuple(lines)
 
 
 def _revision_label_template(revision: ReviewStatusRevision) -> ui.Message:

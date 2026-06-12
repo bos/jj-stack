@@ -24,10 +24,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.errors import CliError, ErrorMessage
 from jj_stack.github.client import GithubClientError, build_github_client
-from jj_stack.github.error_messages import (
-    github_unavailable_message,
-    remote_unavailable_message,
-)
+from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
 from jj_stack.github.resolution import (
     GithubRepoAddress,
@@ -157,14 +154,13 @@ def checkout(
 def _print_checkout_result(result: CheckoutResult) -> None:
     if result.fetched_tip_commit is not None:
         console.output(ui.prefixed_line("Fetched tip commit: ", result.fetched_tip_commit))
-    if result.remote is None:
-        console.warning(remote_unavailable_message(remote_error=result.remote_error))
-    github_message = github_unavailable_message(
+    for message in remote_and_github_unavailable_messages(
         github_error=result.github_error,
         github_repository=result.github_repository,
-    )
-    if github_message is not None:
-        console.warning(github_message)
+        remote=result.remote,
+        remote_error=result.remote_error,
+    ):
+        console.warning(message)
     if result.actions:
         console.output("Updated local tracking:")
         for action in result.actions:
