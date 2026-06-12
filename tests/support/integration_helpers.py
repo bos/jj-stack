@@ -14,7 +14,7 @@ from pathlib import Path
 import httpxyz
 
 from jj_stack.github.client import GithubClient
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 
 from .fake_github import (
     FakeGithubRepository,
@@ -54,7 +54,7 @@ def configure_fake_github_environment(
     )
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
+    def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
         return GithubClient(
             httpxyz.AsyncClient(
                 base_url="https://api.github.test",
@@ -63,8 +63,8 @@ def configure_fake_github_environment(
             repository=repository,
         )
 
-    def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:
-        return ParsedGithubRepo(
+    def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
+        return GithubRepoAddress(
             host="github.test",
             owner=fake_repo.owner,
             repo=fake_repo.name,
@@ -162,7 +162,7 @@ def _build_submitted_feature_template(template_root: Path) -> None:
 
         app = create_app(FakeGithubState.single_repository(fake_repo))
 
-        def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
+        def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
             return GithubClient(
                 httpxyz.AsyncClient(
                     base_url="https://api.github.test",
@@ -171,8 +171,8 @@ def _build_submitted_feature_template(template_root: Path) -> None:
                 repository=repository,
             )
 
-        def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:
-            return ParsedGithubRepo(
+        def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
+            return GithubRepoAddress(
                 host="github.test", owner=fake_repo.owner, repo=fake_repo.name
             )
 

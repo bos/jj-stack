@@ -22,7 +22,7 @@ from jj_stack.github.error_messages import (
     summarize_github_lookup_error,
 )
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
+    GithubRepoAddress,
     resolve_github_target,
     select_submit_remote,
 )
@@ -141,7 +141,7 @@ class StatusResult:
 class PreparedStatus:
     """Locally prepared status inputs before any GitHub inspection."""
 
-    github_repository: ParsedGithubRepo | None
+    github_repository: GithubRepoAddress | None
     github_repository_error: ErrorMessage | None
     prepared: PreparedStack
     selected_revset: str
@@ -791,7 +791,7 @@ def _persist_status_cache_updates(
 
 async def _iter_status_revisions_with_github(
     *,
-    github_repository: ParsedGithubRepo,
+    github_repository: GithubRepoAddress,
     inspect_stack_comments: bool,
     on_github_status: Callable[[str | None], None] | None,
     prepared: PreparedStack,
@@ -833,7 +833,7 @@ async def _iter_status_revisions_with_github(
 
 def lookup_pull_request_lookups(
     *,
-    github_repository: ParsedGithubRepo,
+    github_repository: GithubRepoAddress,
     on_progress: Callable[[int], None] | None = None,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:
@@ -850,7 +850,7 @@ def lookup_pull_request_lookups(
 
 async def lookup_pull_request_lookups_async(
     *,
-    github_repository: ParsedGithubRepo,
+    github_repository: GithubRepoAddress,
     on_progress: Callable[[int], None] | None = None,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:

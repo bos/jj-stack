@@ -24,7 +24,7 @@ from jj_stack.commands.cleanup.shared import (
 )
 from jj_stack.config import RepoConfig
 from jj_stack.github.client import GithubClient
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubIssueComment
@@ -90,7 +90,7 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
     prepared_cleanup = PreparedCleanup(
         context=_fake_context(state_store=state_store),
         bookmark_states={},
-        github_repository=ParsedGithubRepo(
+        github_repository=GithubRepoAddress(
             host="github.com",
             owner="octo-org",
             repo="stacked-review",
@@ -178,7 +178,7 @@ def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
     prepared_cleanup = PreparedCleanup(
         context=_fake_context(state_store=state_store),
         bookmark_states={},
-        github_repository=ParsedGithubRepo(
+        github_repository=GithubRepoAddress(
             host="github.com",
             owner="octo-org",
             repo="stacked-review",

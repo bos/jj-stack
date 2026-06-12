@@ -17,7 +17,7 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
+    GithubRepoAddress,
     require_github_repo,
     select_submit_remote,
 )
@@ -213,7 +213,7 @@ async def _run_relink_async(
 
 def _parse_relink_pull_request_number(
     *,
-    github_repository: ParsedGithubRepo,
+    github_repository: GithubRepoAddress,
     pull_request_reference: str,
 ) -> int:
     return parse_repository_pull_request_reference(
@@ -236,7 +236,7 @@ def _parse_relink_pull_request_number(
 def _validated_relink_bookmark(
     *,
     client: JjClient,
-    github_repository: ParsedGithubRepo,
+    github_repository: GithubRepoAddress,
     pull_request: GithubPullRequest,
     remote: GitRemote,
     revision: LocalRevision,

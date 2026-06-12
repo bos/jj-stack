@@ -8,7 +8,7 @@ import httpxyz
 
 from jj_stack.cli import main
 from jj_stack.github.client import GithubClient
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 
 from ..support.fake_github import FakeGithubRepository
 from ..support.integration_helpers import (
@@ -100,7 +100,7 @@ def patch_github_client_builders(
     client_type: type[GithubClient] = GithubClient,
     concurrency_limits: dict[str, int] | None = None,
 ) -> None:
-    def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
+    def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
         return client_type(
             httpxyz.AsyncClient(
                 base_url="https://api.github.test",
@@ -109,8 +109,8 @@ def patch_github_client_builders(
             repository=repository,
         )
 
-    def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:
-        return ParsedGithubRepo(host="github.test", owner=fake_repo.owner, repo=fake_repo.name)
+    def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
+        return GithubRepoAddress(host="github.test", owner=fake_repo.owner, repo=fake_repo.name)
 
     resolution_module = importlib.import_module("jj_stack.github.resolution")
     monkeypatch.setattr(resolution_module, "parse_github_repo", parse_github_repo)

@@ -7,7 +7,7 @@ import httpxyz
 import pytest
 
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 
 
 def _github_client(handler) -> GithubClient:
@@ -16,7 +16,7 @@ def _github_client(handler) -> GithubClient:
             base_url="https://api.github.test",
             transport=httpxyz.MockTransport(handler),
         ),
-        repository=ParsedGithubRepo(
+        repository=GithubRepoAddress(
             host="github.test",
             owner="octo-org",
             repo="stacked-review",

@@ -25,7 +25,7 @@ from jj_stack.github.client import (
     build_github_client,
 )
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
+    GithubRepoAddress,
     parse_github_repo,
     select_submit_remote,
 )
@@ -138,7 +138,7 @@ def _check_git_remote(*, context: CommandContext) -> tuple[CheckResult, GitRemot
     return CheckResult("remote", "ok", ui.bookmark(remote.name)), remote
 
 
-def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, ParsedGithubRepo | None]:
+def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, GithubRepoAddress | None]:
     parsed = parse_github_repo(remote)
     if parsed is None:
         return (
@@ -176,7 +176,7 @@ def _check_github_auth(hostname: str) -> tuple[CheckResult, str | None]:
 
 async def _check_github_connectivity(
     *,
-    parsed_repo: ParsedGithubRepo,
+    parsed_repo: GithubRepoAddress,
 ) -> tuple[CheckResult, GithubRepository | None]:
     async with build_github_client(repository=parsed_repo) as client:
         try:

@@ -23,7 +23,7 @@ from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.console import requested_color_mode
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
+    GithubRepoAddress,
     resolve_github_target,
 )
 from jj_stack.jj.client import JjCliArgs, JjClient
@@ -85,7 +85,7 @@ class _PreparedDiscoveredStack:
 class _RepoInspectionContext:
     bookmark_states: dict[str, BookmarkState]
     github_error: ErrorMessage | None
-    github_repository: ParsedGithubRepo | None
+    github_repository: GithubRepoAddress | None
     remote: GitRemote | None
     remote_error: ErrorMessage | None
 
@@ -506,7 +506,7 @@ def _pull_request_range_from_revisions(revisions: tuple[ReviewStatusRevision, ..
 
 def _load_pull_request_lookups(
     *,
-    github_repository: ParsedGithubRepo | None,
+    github_repository: GithubRepoAddress | None,
     prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
 ) -> tuple[dict[str, PullRequestLookup], ErrorMessage | None]:
     if github_repository is None:

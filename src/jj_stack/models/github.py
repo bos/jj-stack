@@ -1,7 +1,6 @@
 """GitHub API response models."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -149,15 +148,3 @@ def _normalize_graphql_review_decision(value: object) -> str | None:
         return "changes_requested"
     return None
 
-
-@dataclass(frozen=True, slots=True)
-class ParsedGithubRepo:
-    """GitHub repository coordinates parsed from a Git remote URL."""
-
-    host: str
-    owner: str
-    repo: str
-
-    @property
-    def full_name(self) -> str:
-        return f"{self.owner}/{self.repo}"

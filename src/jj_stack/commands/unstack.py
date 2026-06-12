@@ -45,7 +45,7 @@ from jj_stack.github.error_messages import (
     remote_unavailable_message,
 )
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
+    GithubRepoAddress,
     resolve_github_target,
 )
 from jj_stack.github.stack_comments import stack_comment_label
@@ -709,7 +709,7 @@ def _close_result(
     applied: bool | None = None,
     blocked: bool,
     github_error: ErrorMessage | None,
-    github_repository: ParsedGithubRepo | None,
+    github_repository: GithubRepoAddress | None,
     prepared_close: PreparedClose,
 ) -> CloseResult:
     prepared = prepared_close.prepared_status.prepared

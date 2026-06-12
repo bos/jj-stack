@@ -8,7 +8,7 @@ from jj_stack.github.pull_request_refs import (
     parse_pull_request_url,
     parse_repository_pull_request_reference,
 )
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 
 
 def test_parse_pull_request_url_accepts_standard_pull_request_url() -> None:
@@ -30,7 +30,7 @@ def test_parse_repository_pull_request_reference_accepts_matching_url() -> None:
     assert (
         parse_repository_pull_request_reference(
             reference="https://github.test/octo-org/stacked-review/pull/17",
-            github_repository=ParsedGithubRepo(
+            github_repository=GithubRepoAddress(
                 host="github.test",
                 owner="octo-org",
                 repo="stacked-review",
@@ -45,7 +45,7 @@ def test_parse_repository_pull_request_reference_rejects_wrong_repository() -> N
     with pytest.raises(CliError, match="does not match configured repository"):
         parse_repository_pull_request_reference(
             reference="https://github.test/other-org/stacked-review/pull/17",
-            github_repository=ParsedGithubRepo(
+            github_repository=GithubRepoAddress(
                 host="github.test",
                 owner="octo-org",
                 repo="stacked-review",

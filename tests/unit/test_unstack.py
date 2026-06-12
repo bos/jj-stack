@@ -15,7 +15,7 @@ from jj_stack.commands.unstack import (
 )
 from jj_stack.config import RepoConfig
 from jj_stack.github.client import GithubClient
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange
@@ -38,7 +38,7 @@ def _stub_revision(*, change_id: str) -> ReviewStatusRevision:
     )
 
 
-_GITHUB_REPO = ParsedGithubRepo(host="github.com", owner="octo-org", repo="stacked-review")
+_GITHUB_REPO = GithubRepoAddress(host="github.com", owner="octo-org", repo="stacked-review")
 
 
 @pytest.mark.parametrize(

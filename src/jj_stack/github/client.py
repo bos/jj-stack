@@ -15,13 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jj_stack.errors import SummarizedError
 from jj_stack.github.auth import github_token_for_host, github_token_from_env
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import (
     GithubIssueComment,
     GithubPullRequest,
     GithubPullRequestReview,
     GithubPullRequestReviewUser,
     GithubRepository,
-    ParsedGithubRepo,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ class _GraphqlIssueCommentsPullRequest(BaseModel):
 class GithubClient:
     """Thin async wrapper around the GitHub API, bound to one repository."""
 
-    def __init__(self, client: httpxyz.AsyncClient, *, repository: ParsedGithubRepo) -> None:
+    def __init__(self, client: httpxyz.AsyncClient, *, repository: GithubRepoAddress) -> None:
         self._client = client
         self._repository = repository
         self._repo_path = f"/repos/{repository.owner}/{repository.repo}"
@@ -139,7 +139,7 @@ class GithubClient:
         }
 
     @property
-    def repository(self) -> ParsedGithubRepo:
+    def repository(self) -> GithubRepoAddress:
         """The GitHub repository every request targets."""
 
         return self._repository
@@ -912,7 +912,7 @@ def _pull_request_connection_from_graphql(
     return tuple(pull_requests)
 
 
-def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
+def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "jj-stack/dev",

@@ -9,7 +9,20 @@ from urllib.parse import urlparse
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.models.bookmarks import BookmarkState, GitRemote
-from jj_stack.models.github import GithubRepository, ParsedGithubRepo
+from jj_stack.models.github import GithubRepository
+
+
+@dataclass(frozen=True, slots=True)
+class GithubRepoAddress:
+    """GitHub repository coordinates parsed from a Git remote URL."""
+
+    host: str
+    owner: str
+    repo: str
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.owner}/{self.repo}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +31,7 @@ class ResolvedGithubTarget:
 
     remote: GitRemote | None
     remote_error: ErrorMessage | None
-    github_repository: ParsedGithubRepo | None
+    github_repository: GithubRepoAddress | None
     github_repository_error: ErrorMessage | None
 
 
@@ -36,7 +49,7 @@ def select_submit_remote(remotes: tuple[GitRemote, ...]) -> GitRemote:
     )
 
 
-def parse_github_repo(remote: GitRemote) -> ParsedGithubRepo | None:
+def parse_github_repo(remote: GitRemote) -> GithubRepoAddress | None:
     """Parse a GitHub repository target from a Git remote URL."""
 
     parsed = urlparse(remote.url)
@@ -54,7 +67,7 @@ def parse_github_repo(remote: GitRemote) -> ParsedGithubRepo | None:
     if len(parts) != 2:
         return None
     owner, repo = parts
-    return ParsedGithubRepo(host=host, owner=owner, repo=repo)
+    return GithubRepoAddress(host=host, owner=owner, repo=repo)
 
 
 def _looks_like_scp_remote(url: str) -> bool:
@@ -97,7 +110,7 @@ def resolve_github_target(remotes: tuple[GitRemote, ...]) -> ResolvedGithubTarge
     )
 
 
-def require_github_repo(remote: GitRemote) -> ParsedGithubRepo:
+def require_github_repo(remote: GitRemote) -> GithubRepoAddress:
     """Parse a GitHub repository target or raise a user-facing CLI error."""
 
     github_repository = parse_github_repo(remote)

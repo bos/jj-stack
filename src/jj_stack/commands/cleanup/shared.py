@@ -15,7 +15,7 @@ from jj_stack.github.error_messages import (
     github_unavailable_message,
     remote_unavailable_message,
 )
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.github.stack_comments import StackCommentKind
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
@@ -56,7 +56,7 @@ class PreparedCleanup:
 
     context: CommandContext
     bookmark_states: dict[str, BookmarkState]
-    github_repository: ParsedGithubRepo | None
+    github_repository: GithubRepoAddress | None
     github_repository_error: ErrorMessage | None
     remote: GitRemote | None
     remote_error: ErrorMessage | None

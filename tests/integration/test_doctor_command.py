@@ -6,7 +6,7 @@ import httpxyz
 
 import jj_stack.commands.doctor as doctor_mod
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.resolution import GithubRepoAddress
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -28,7 +28,7 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
+    def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
         return GithubClient(
             httpxyz.AsyncClient(
                 base_url="https://api.github.test",
@@ -41,7 +41,7 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
     monkeypatch.setattr(
         doctor_mod,
         "parse_github_repo",
-        lambda remote: ParsedGithubRepo(
+        lambda remote: GithubRepoAddress(
             host="github.test", owner=fake_repo.owner, repo=fake_repo.name
         ),
     )

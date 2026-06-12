@@ -30,7 +30,7 @@ from jj_stack.github.error_messages import (
 )
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
+    GithubRepoAddress,
     require_github_repo,
     select_submit_remote,
 )
@@ -569,7 +569,7 @@ def _apply_authoritative_remote_targets(
 
 async def _load_pull_request(
     *,
-    github_repository: ParsedGithubRepo,
+    github_repository: GithubRepoAddress,
     pull_request_reference: str,
 ) -> GithubPullRequest:
     pull_request_number = parse_repository_pull_request_reference(
@@ -596,7 +596,7 @@ async def _load_pull_request(
 
 async def _list_pull_requests_by_head(
     *,
-    github_repository: ParsedGithubRepo,
+    github_repository: GithubRepoAddress,
     head: str,
 ) -> tuple[GithubPullRequest, ...]:
     async with build_github_client(repository=github_repository) as github_client:
