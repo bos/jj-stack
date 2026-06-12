@@ -31,7 +31,7 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
     def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
         return GithubClient(
             httpxyz.AsyncClient(
-                base_url=repository.api_base_url,
+                base_url="https://api.github.test",
                 transport=httpxyz.ASGITransport(app=app),
             ),
             repository=repository,
@@ -97,7 +97,7 @@ def test_doctor_fails_when_github_token_missing(
     # Remove the token that _configure_doctor_environment sets.
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
-    monkeypatch.setattr(doctor_mod, "github_token_for_base_url", lambda base_url: None)
+    monkeypatch.setattr(doctor_mod, "github_token_for_host", lambda hostname: None)
 
     exit_code = run_main(repo, config_path, "doctor")
     captured = capsys.readouterr()
@@ -129,7 +129,7 @@ def test_doctor_reports_repo_access_failure_without_network_hint(
         doctor_mod,
         "build_github_client",
         lambda *, repository: FailingGithubClient(
-            httpxyz.AsyncClient(base_url=repository.api_base_url),
+            httpxyz.AsyncClient(base_url="https://api.github.test"),
             repository=repository,
         ),
     )

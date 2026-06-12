@@ -14,7 +14,7 @@ import httpxyz
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jj_stack.errors import SummarizedError
-from jj_stack.github.auth import github_token_for_base_url, github_token_from_env
+from jj_stack.github.auth import github_token_for_host, github_token_from_env
 from jj_stack.models.github import (
     GithubIssueComment,
     GithubPullRequest,
@@ -25,6 +25,7 @@ from jj_stack.models.github import (
 )
 
 logger = logging.getLogger(__name__)
+GITHUB_API_BASE_URL = "https://api.github.com"
 _GRAPHQL_PULL_REQUEST_BATCH_SIZE = 25
 
 _DEFAULT_RATE_LIMIT_RETRIES = 3
@@ -916,12 +917,12 @@ def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
         "Accept": "application/vnd.github+json",
         "User-Agent": "jj-stack/dev",
     }
-    if token := github_token_for_base_url(repository.api_base_url):
+    if token := github_token_for_host(repository.host):
         headers["Authorization"] = f"Bearer {token}"
 
     return GithubClient(
         httpxyz.AsyncClient(
-            base_url=repository.api_base_url,
+            base_url=GITHUB_API_BASE_URL,
             headers=headers,
             timeout=30.0,
         ),

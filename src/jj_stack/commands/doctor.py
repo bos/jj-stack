@@ -19,7 +19,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.errors import CliError, error_message
-from jj_stack.github.auth import github_token_for_base_url, github_token_from_env
+from jj_stack.github.auth import github_token_for_host, github_token_from_env
 from jj_stack.github.client import (
     GithubClientError,
     build_github_client,
@@ -87,7 +87,7 @@ async def _run_checks(
         return results
 
     # Check 3: GitHub auth
-    auth_result, token = _check_github_auth(parsed_repo.api_base_url)
+    auth_result, token = _check_github_auth(parsed_repo.host)
     results.append(auth_result)
 
     if token is None:
@@ -153,14 +153,14 @@ def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, ParsedGithubRe
     return CheckResult("GitHub remote", "ok", f"{parsed.host}/{parsed.full_name}"), parsed
 
 
-def _check_github_auth(base_url: str) -> tuple[CheckResult, str | None]:
+def _check_github_auth(hostname: str) -> tuple[CheckResult, str | None]:
     env_token = github_token_from_env()
     if env_token:
         env_var = "GITHUB_TOKEN" if os.environ.get("GITHUB_TOKEN") else "GH_TOKEN"
         return CheckResult("GitHub auth", "ok", f"token found ({env_var})"), env_token
 
     # Env vars not set — try the gh CLI
-    token = github_token_for_base_url(base_url)
+    token = github_token_for_host(hostname)
     if token:
         return CheckResult("GitHub auth", "ok", "token found (gh CLI)"), token
 

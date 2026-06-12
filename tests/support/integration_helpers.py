@@ -57,7 +57,7 @@ def configure_fake_github_environment(
     def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
         return GithubClient(
             httpxyz.AsyncClient(
-                base_url=repository.api_base_url,
+                base_url="https://api.github.test",
                 transport=httpxyz.ASGITransport(app=app),
             ),
             repository=repository,
@@ -165,7 +165,7 @@ def _build_submitted_feature_template(template_root: Path) -> None:
         def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
             return GithubClient(
                 httpxyz.AsyncClient(
-                    base_url=repository.api_base_url,
+                    base_url="https://api.github.test",
                     transport=httpxyz.ASGITransport(app=app),
                 ),
                 repository=repository,
