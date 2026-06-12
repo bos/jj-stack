@@ -42,7 +42,12 @@ from jj_stack.jj.client import JjCliArgs
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.bookmarks import is_review_bookmark
+from jj_stack.review.bookmarks import (
+    bookmark_cleanup_allowed,
+    classify_local_bookmark_forget,
+    is_review_bookmark,
+    local_bookmark_forget_blocked_body,
+)
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_change_without_pull_request,
@@ -836,10 +841,12 @@ def _plan_remote_branch_cleanup(
         return None
     if cached_change.pr_number is None:
         return None
-    if cached_change.manages_bookmark:
-        if not is_review_bookmark(bookmark, prefix=prefix):
-            return None
-    elif not cleanup_user_bookmarks:
+    if not bookmark_cleanup_allowed(
+        bookmark=bookmark,
+        bookmark_managed=cached_change.manages_bookmark,
+        cleanup_user_bookmarks=cleanup_user_bookmarks,
+        prefix=prefix,
+    ):
         return None
     if remote is None:
         return None
@@ -892,40 +899,31 @@ def _plan_local_bookmark_cleanup(
     bookmark = cached_change.bookmark
     if bookmark is None:
         return None
-    if cached_change.manages_bookmark:
-        if not is_review_bookmark(bookmark, prefix=prefix):
+    if not bookmark_cleanup_allowed(
+        bookmark=bookmark,
+        bookmark_managed=cached_change.manages_bookmark,
+        cleanup_user_bookmarks=cleanup_user_bookmarks,
+        prefix=prefix,
+    ):
+        return None
+    match classify_local_bookmark_forget(
+        bookmark_state=bookmark_state,
+        expected_commit_id=cached_change.last_submitted_commit_id,
+    ):
+        case "absent":
             return None
-    elif not cleanup_user_bookmarks:
-        return None
-    if not bookmark_state.local_targets:
-        return None
-    if len(bookmark_state.local_targets) > 1:
-        return CleanupAction(
-            kind="local bookmark",
-            status="blocked",
-            body=t"cannot forget {ui.bookmark(bookmark)} because it is conflicted",
-        )
-
-    local_target = bookmark_state.local_target
-    if local_target is None:
-        return None
-
-    expected_target = cached_change.last_submitted_commit_id
-    if expected_target is not None and local_target != expected_target:
-        return CleanupAction(
-            kind="local bookmark",
-            status="blocked",
-            body=(
-                t"cannot forget {ui.bookmark(bookmark)} because it already points "
-                t"to a different revision"
-            ),
-        )
-
-    return CleanupAction(
-        kind="local bookmark",
-        status="planned",
-        body=t"forget {ui.bookmark(bookmark)} ({stale_reason})",
-    )
+        case "conflicted" | "diverged" as safety:
+            return CleanupAction(
+                kind="local bookmark",
+                status="blocked",
+                body=local_bookmark_forget_blocked_body(bookmark, safety),
+            )
+        case _:
+            return CleanupAction(
+                kind="local bookmark",
+                status="planned",
+                body=t"forget {ui.bookmark(bookmark)} ({stale_reason})",
+            )
 
 
 def _plan_orphan_local_bookmark_cleanups(

@@ -7,6 +7,7 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import ParsedGithubRepo
+from jj_stack.github.stack_comments import StackCommentKind, delete_stack_comment
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import CachedChange
@@ -606,21 +607,19 @@ async def _finalize_landed_pull_request(
             raise CliError(t"Could not close PR #{pull_request.number} after landing") from error
         pull_request = pull_request.normalize_state()
     if cached_change is not None:
-        for comment_id, label in (
-            (cached_change.navigation_comment_id, "stack navigation comment"),
-            (cached_change.overview_comment_id, "stack overview comment"),
-        ):
+        comment_targets: tuple[tuple[int | None, StackCommentKind], ...] = (
+            (cached_change.navigation_comment_id, "navigation"),
+            (cached_change.overview_comment_id, "overview"),
+        )
+        for comment_id, kind in comment_targets:
             if comment_id is None:
                 continue
-            try:
-                await github_client.delete_issue_comment(
-                    github_repository.owner,
-                    github_repository.repo,
-                    comment_id=comment_id,
-                )
-            except GithubClientError as error:
-                if error.status_code != 404:
-                    raise CliError(t"Could not delete {label} #{comment_id}") from error
+            await delete_stack_comment(
+                comment_id=comment_id,
+                github_client=github_client,
+                github_repository=github_repository,
+                kind=kind,
+            )
     return pull_request
 
 

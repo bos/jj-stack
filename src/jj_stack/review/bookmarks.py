@@ -16,6 +16,7 @@ from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.review_state import BookmarkOwnership, CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.change_status import classify_review_change_without_pull_request
+from jj_stack.ui import Message
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _DEFAULT_SLUG = "change"
@@ -150,6 +151,60 @@ def is_review_bookmark(bookmark: str, *, prefix: str) -> bool:
     """Whether `bookmark` uses the configured managed review prefix."""
 
     return bookmark.startswith(f"{prefix}/")
+
+
+LocalBookmarkForgetSafety = Literal["absent", "conflicted", "diverged", "unverified", "safe"]
+
+
+def bookmark_cleanup_allowed(
+    *,
+    bookmark: str,
+    bookmark_managed: bool,
+    cleanup_user_bookmarks: bool,
+    prefix: str,
+) -> bool:
+    """Whether cleanup may touch this bookmark at all.
+
+    Managed bookmarks are cleanable only under the configured review prefix; external
+    bookmarks (e.g. matched through `use_bookmarks`) need the explicit
+    `cleanup_user_bookmarks` opt-in.
+    """
+
+    if bookmark_managed:
+        return is_review_bookmark(bookmark, prefix=prefix)
+    return cleanup_user_bookmarks
+
+
+def classify_local_bookmark_forget(
+    *,
+    bookmark_state: BookmarkState,
+    expected_commit_id: str | None,
+) -> LocalBookmarkForgetSafety:
+    """Classify whether forgetting one local bookmark is provably safe."""
+
+    if not bookmark_state.local_targets:
+        return "absent"
+    if len(bookmark_state.local_targets) > 1:
+        return "conflicted"
+    if expected_commit_id is None:
+        return "unverified"
+    if bookmark_state.local_target != expected_commit_id:
+        return "diverged"
+    return "safe"
+
+
+def local_bookmark_forget_blocked_body(
+    bookmark: str,
+    safety: Literal["conflicted", "diverged"],
+) -> Message:
+    """Return the standard action body for a blocked local bookmark forget."""
+
+    if safety == "conflicted":
+        return t"cannot forget {ui.bookmark(bookmark)} because it is conflicted"
+    return (
+        t"cannot forget {ui.bookmark(bookmark)} because it already points "
+        t"to a different revision"
+    )
 
 
 def generate_bookmark_name(

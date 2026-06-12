@@ -21,7 +21,11 @@ from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubIssueComment
 from jj_stack.models.review_state import CachedChange
-from jj_stack.review.bookmarks import is_review_bookmark
+from jj_stack.review.bookmarks import (
+    bookmark_cleanup_allowed,
+    classify_local_bookmark_forget,
+    local_bookmark_forget_blocked_body,
+)
 from jj_stack.review.change_status import classify_review_change
 from jj_stack.state.journal import OperationJournal
 from jj_stack.ui import Message, plain_text
@@ -329,40 +333,37 @@ def plan_bookmark_cleanup(
 ) -> BookmarkCleanupPlan:
     """Validate bookmark ownership and decide which cleanup mutations are safe."""
 
-    if cached_change.manages_bookmark:
-        if not is_review_bookmark(bookmark, prefix=prefix):
-            return BookmarkCleanupPlan(local_forget=False, remote_delete=False)
-    elif not cleanup_user_bookmarks:
+    if not bookmark_cleanup_allowed(
+        bookmark=bookmark,
+        bookmark_managed=cached_change.manages_bookmark,
+        cleanup_user_bookmarks=cleanup_user_bookmarks,
+        prefix=prefix,
+    ):
         return BookmarkCleanupPlan(local_forget=False, remote_delete=False)
 
     local_forget = False
     remote_delete = False
     local_conflict = False
     remote_conflict = False
-    local_target = bookmark_state.local_target
     branch_label = f"{bookmark}@{remote_name}" if remote_name is not None else bookmark
 
-    if len(bookmark_state.local_targets) > 1:
-        record_action(
-            CloseAction(
-                kind="local bookmark",
-                body=t"cannot forget {ui.bookmark(bookmark)} because it is conflicted",
-                status="blocked",
+    match classify_local_bookmark_forget(
+        bookmark_state=bookmark_state,
+        expected_commit_id=commit_id,
+    ):
+        case "conflicted" | "diverged" as local_safety:
+            record_action(
+                CloseAction(
+                    kind="local bookmark",
+                    body=local_bookmark_forget_blocked_body(bookmark, local_safety),
+                    status="blocked",
+                )
             )
-        )
-        local_conflict = True
-    elif commit_id is not None and local_target is not None and local_target != commit_id:
-        record_action(
-            CloseAction(
-                kind="local bookmark",
-                body=t"cannot forget {ui.bookmark(bookmark)} because it already points "
-                t"to a different revision",
-                status="blocked",
-            )
-        )
-        local_conflict = True
-    elif commit_id is not None and local_target == commit_id:
-        local_forget = True
+            local_conflict = True
+        case "safe":
+            local_forget = True
+        case _:
+            pass
 
     remote_state = bookmark_state.remote_target(remote_name) if remote_name is not None else None
     if commit_id is not None:

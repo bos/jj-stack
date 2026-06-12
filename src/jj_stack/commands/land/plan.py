@@ -10,7 +10,11 @@ import jj_stack.ui as ui
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.review.bookmarks import is_review_bookmark
+from jj_stack.review.bookmarks import (
+    bookmark_cleanup_allowed,
+    classify_local_bookmark_forget,
+    local_bookmark_forget_blocked_body,
+)
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
@@ -355,51 +359,41 @@ def _plan_review_bookmark_cleanup(
 ) -> ReviewBookmarkCleanupPlan | None:
     """Validate whether `land` can forget one landed local review bookmark."""
 
-    if bookmark_managed:
-        if not is_review_bookmark(bookmark, prefix=prefix):
-            return None
-    elif not cleanup_user_bookmarks:
-        return None
-    if not bookmark_state.local_targets:
-        return None
-    if len(bookmark_state.local_targets) > 1:
-        return ReviewBookmarkCleanupPlan(
-            action=LandAction(
-                kind="local bookmark",
-                body=t"cannot forget {ui.bookmark(bookmark)} because it is conflicted",
-                status="blocked",
-            ),
-            bookmark=bookmark,
-            can_forget=False,
-            change_id=change_id,
-        )
-    local_target = bookmark_state.local_target
-    if local_target is None:
-        return None
-    if local_target != commit_id:
-        return ReviewBookmarkCleanupPlan(
-            action=LandAction(
-                kind="local bookmark",
-                body=(
-                    t"cannot forget {ui.bookmark(bookmark)} because it already points "
-                    t"to a different revision"
-                ),
-                status="blocked",
-            ),
-            bookmark=bookmark,
-            can_forget=False,
-            change_id=change_id,
-        )
-    return ReviewBookmarkCleanupPlan(
-        action=LandAction(
-            kind="local bookmark",
-            body=t"forget {ui.bookmark(bookmark)}",
-            status="planned",
-        ),
+    if not bookmark_cleanup_allowed(
         bookmark=bookmark,
-        can_forget=True,
-        change_id=change_id,
-    )
+        bookmark_managed=bookmark_managed,
+        cleanup_user_bookmarks=cleanup_user_bookmarks,
+        prefix=prefix,
+    ):
+        return None
+    match classify_local_bookmark_forget(
+        bookmark_state=bookmark_state,
+        expected_commit_id=commit_id,
+    ):
+        case "absent":
+            return None
+        case "conflicted" | "diverged" as safety:
+            return ReviewBookmarkCleanupPlan(
+                action=LandAction(
+                    kind="local bookmark",
+                    body=local_bookmark_forget_blocked_body(bookmark, safety),
+                    status="blocked",
+                ),
+                bookmark=bookmark,
+                can_forget=False,
+                change_id=change_id,
+            )
+        case _:
+            return ReviewBookmarkCleanupPlan(
+                action=LandAction(
+                    kind="local bookmark",
+                    body=t"forget {ui.bookmark(bookmark)}",
+                    status="planned",
+                ),
+                bookmark=bookmark,
+                can_forget=True,
+                change_id=change_id,
+            )
 
 
 def plan_review_bookmark_cleanup_for_revisions(

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Literal
 
+from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.resolution import ParsedGithubRepo
+
 StackCommentKind = Literal["navigation", "overview"]
 
 STACK_NAVIGATION_COMMENT_MARKER = "<!-- jj-stack-navigation -->"
@@ -42,3 +46,26 @@ def is_stack_summary_comment(body: str) -> bool:
     """Return whether a GitHub comment body belongs to jj-stack."""
 
     return is_navigation_comment(body) or is_overview_comment(body)
+
+
+async def delete_stack_comment(
+    *,
+    comment_id: int,
+    github_client: GithubClient,
+    github_repository: ParsedGithubRepo,
+    kind: StackCommentKind,
+) -> None:
+    """Delete one managed stack comment, tolerating an already-deleted target."""
+
+    try:
+        await github_client.delete_issue_comment(
+            github_repository.owner,
+            github_repository.repo,
+            comment_id=comment_id,
+        )
+    except GithubClientError as error:
+        if error.status_code == 404:
+            return
+        raise CliError(
+            f"Could not delete {stack_comment_label(kind)} #{comment_id}"
+        ) from error

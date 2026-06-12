@@ -13,6 +13,7 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import ParsedGithubRepo
 from jj_stack.github.stack_comments import (
     StackCommentKind,
+    delete_stack_comment,
     stack_comment_label,
     stack_comment_marker,
 )
@@ -187,7 +188,7 @@ async def _sync_managed_comment(
         if existing_comment is None:
             return None
         if not dry_run:
-            await _delete_stack_comment(
+            await delete_stack_comment(
                 comment_id=existing_comment.id,
                 github_client=github_client,
                 github_repository=github_repository,
@@ -310,25 +311,6 @@ async def _update_stack_comment(
         )
     except GithubClientError as error:
         raise CliError(f"Could not update {stack_comment_label(kind)} #{comment_id}") from error
-
-
-async def _delete_stack_comment(
-    *,
-    comment_id: int,
-    github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
-    kind: StackCommentKind,
-) -> None:
-    try:
-        await github_client.delete_issue_comment(
-            github_repository.owner,
-            github_repository.repo,
-            comment_id=comment_id,
-        )
-    except GithubClientError as error:
-        if error.status_code == 404:
-            return
-        raise CliError(f"Could not delete {stack_comment_label(kind)} #{comment_id}") from error
 
 
 def _render_navigation_comment(

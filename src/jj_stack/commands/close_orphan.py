@@ -29,12 +29,16 @@ from jj_stack.github.resolution import (
     ParsedGithubRepo,
     resolve_github_target,
 )
-from jj_stack.github.stack_comments import StackCommentKind, stack_comment_label
+from jj_stack.github.stack_comments import (
+    StackCommentKind,
+    delete_stack_comment,
+    stack_comment_label,
+)
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
 from jj_stack.models.review_state import CachedChange, ReviewState
-from jj_stack.review.bookmarks import find_changes_by_bookmark, is_review_bookmark
+from jj_stack.review.bookmarks import bookmark_cleanup_allowed, find_changes_by_bookmark
 from jj_stack.review.change_status import (
     classify_review_change,
     classify_saved_review_change,
@@ -209,9 +213,9 @@ async def run_orphan_close(
     label = ui.change_id(change_id)
     revision_label = t"orphaned change {label}"
     last_target = cached_change.last_submitted_commit_id
-    cleanup_bookmark = _orphan_should_cleanup_bookmark(
+    cleanup_bookmark = bookmark_cleanup_allowed(
         bookmark=bookmark,
-        cached_change=cached_change,
+        bookmark_managed=cached_change.manages_bookmark,
         cleanup_user_bookmarks=config.cleanup_user_bookmarks,
         prefix=config.bookmark_prefix,
     )
@@ -358,18 +362,6 @@ async def run_orphan_close(
                 "completed",
                 {"ordered_change_ids": (change_id,)},
             )
-
-
-def _orphan_should_cleanup_bookmark(
-    *,
-    bookmark: str,
-    cached_change: CachedChange,
-    cleanup_user_bookmarks: bool,
-    prefix: str,
-) -> bool:
-    if cached_change.manages_bookmark:
-        return is_review_bookmark(bookmark, prefix=prefix)
-    return cleanup_user_bookmarks
 
 
 def _render_orphan_close_actions(
@@ -564,18 +556,12 @@ async def _apply_orphaned_comment_cleanup(
                 kind=resolved.kind,
                 pull_request_number=pull_request_number,
             ):
-                try:
-                    await github_client.delete_issue_comment(
-                        github_repository.owner,
-                        github_repository.repo,
-                        comment_id=resolved.comment.id,
-                    )
-                except GithubClientError as error:
-                    if error.status_code != 404:
-                        raise CliError(
-                            t"Could not delete {stack_comment_label(resolved.kind)} "
-                            t"#{resolved.comment.id}."
-                        ) from error
+                await delete_stack_comment(
+                    comment_id=resolved.comment.id,
+                    github_client=github_client,
+                    github_repository=github_repository,
+                    kind=resolved.kind,
+                )
 
 
 async def _lookup_orphaned_pull_request(
