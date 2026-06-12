@@ -23,6 +23,8 @@ from jj_stack.github.error_messages import (
 )
 from jj_stack.github.resolution import (
     GithubRepoAddress,
+    GithubTarget,
+    UnresolvedGithubTarget,
     resolve_github_target,
     select_submit_remote,
 )
@@ -141,11 +143,19 @@ class StatusResult:
 class PreparedStatus:
     """Locally prepared status inputs before any GitHub inspection."""
 
-    github_repository: GithubRepoAddress | None
-    github_repository_error: ErrorMessage | None
+    github_target: GithubTarget | UnresolvedGithubTarget
     prepared: PreparedStack
     selected_revset: str
     base_parent_subject: str
+
+    @property
+    def github_repository(self) -> GithubRepoAddress | None:
+        target = self.github_target
+        return target.repository if isinstance(target, GithubTarget) else None
+
+    @property
+    def github_repository_error(self) -> ErrorMessage | None:
+        return self.github_target.github_repository_error
 
     def github_inspection_count(self, *, discover_remote_review: bool = False) -> int:
         """Return how many selected revisions need live GitHub inspection."""
@@ -252,8 +262,7 @@ def prepare_status(
         prepared.remote.name if prepared.remote is not None else "unavailable",
     )
     return PreparedStatus(
-        github_repository=github_target.github_repository,
-        github_repository_error=github_target.github_repository_error,
+        github_target=github_target,
         prepared=prepared,
         selected_revset=prepared.stack.selected_revset,
         base_parent_subject=prepared.stack.base_parent.subject,

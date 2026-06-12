@@ -28,7 +28,7 @@ from jj_stack.commands.cleanup.stack_comments import (
 )
 from jj_stack.config import RepoConfig
 from jj_stack.github.client import GithubClient
-from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubIssueComment
@@ -94,15 +94,14 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
     prepared_cleanup = PreparedCleanup(
         context=_fake_context(state_store=state_store),
         bookmark_states={},
-        github_repository=GithubRepoAddress(
-            host="github.com",
-            owner="octo-org",
-            repo="stacked-review",
+        github_target=GithubTarget(
+            remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+            repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
         ),
-        github_repository_error=None,
-        remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
-        remote_error=None,
-        remote_context_loaded=True,
         dry_run=False,
         state=state,
     )
@@ -182,15 +181,14 @@ def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
     prepared_cleanup = PreparedCleanup(
         context=_fake_context(state_store=state_store),
         bookmark_states={},
-        github_repository=GithubRepoAddress(
-            host="github.com",
-            owner="octo-org",
-            repo="stacked-review",
+        github_target=GithubTarget(
+            remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+            repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
         ),
-        github_repository_error=None,
-        remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
-        remote_error=None,
-        remote_context_loaded=True,
         dry_run=True,
         state=ReviewState(),
     )
@@ -284,11 +282,7 @@ def test_cleanup_command_exits_nonzero_when_cleanup_result_blocks(
     prepared_cleanup = PreparedCleanup(
         context=_fake_context(),
         bookmark_states={},
-        github_repository=None,
-        github_repository_error=None,
-        remote=None,
-        remote_error=None,
-        remote_context_loaded=False,
+        github_target=None,
         dry_run=False,
         state=ReviewState(),
     )

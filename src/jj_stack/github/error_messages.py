@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from jj_stack.github.auth import github_token_from_env
 from jj_stack.github.client import GithubClientError
-from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.github.resolution import (
+    GithubRepoAddress,
+    GithubTarget,
+    UnresolvedGithubTarget,
+)
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.ui import Message, code
 
@@ -44,6 +48,21 @@ def remote_unavailable_message(
     if remote_error is None:
         return "No Git remote is configured."
     return remote_error
+
+
+def github_target_unavailable_messages(
+    target: GithubTarget | UnresolvedGithubTarget | None,
+) -> tuple[Message, ...]:
+    """Render the repo-level warning lines for an unresolved GitHub target."""
+
+    if not isinstance(target, UnresolvedGithubTarget):
+        return ()
+    return remote_and_github_unavailable_messages(
+        github_error=target.github_repository_error,
+        github_repository=None,
+        remote=target.remote,
+        remote_error=target.remote_error,
+    )
 
 
 def remote_and_github_unavailable_messages(

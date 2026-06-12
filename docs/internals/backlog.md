@@ -241,17 +241,3 @@ Possible follow-up work:
   available, keeping the overview comment only if it still adds value
 - decide how `checkout` should treat PRs that are linked into a native GitHub
   stack but have no local tracking data
-
-## GitHub Target Plumbing
-
-_Benefit: small — internal clarity only; nothing user-visible unless a drift bug traces back
-to these shapes._
-
-`ResolvedGithubTarget`, `PreparedStatus`, and `PreparedCleanup` model the resolved GitHub
-target as paired nullable fields (`github_repository` together with
-`github_repository_error`, and the same for `remote`). The pairs actually encode three
-states — resolved, absent without diagnosis (no git remotes), and failed with a reason —
-and the invariants live in scattered `None` checks and asserts at use sites. Do not fix
-this standalone: fold it into a future consolidation of the per-command selector-resolution
-and status-preparation flow (`view`, `unstack`, `checkout`, `list`), which will rework
-these types anyway, or fix it when a concrete bug traces to a missed invariant.

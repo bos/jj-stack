@@ -20,8 +20,9 @@ from jj_stack.commands._close_actions import (
 )
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
-from jj_stack.github.error_messages import remote_and_github_unavailable_messages
+from jj_stack.github.error_messages import github_target_unavailable_messages
 from jj_stack.github.resolution import (
+    UnresolvedGithubTarget,
     resolve_github_target,
 )
 from jj_stack.github.stack_comments import (
@@ -95,27 +96,19 @@ async def run_untracked_cleanup_pull_request(
     """Handle cleanup by PR number after saved tracking was already retired."""
 
     github_target = resolve_github_target(context.jj_client.list_git_remotes())
-    if github_target.remote is None and github_target.remote_error is None:
+    if isinstance(github_target, UnresolvedGithubTarget):
+        if github_target.remote is not None:
+            detail = f"remote {github_target.remote.name} is not a GitHub remote"
+        elif github_target.remote_error is not None:
+            detail = plain_text(github_target.remote_error)
+        else:
+            detail = "no GitHub remote is configured"
         raise _untracked_cleanup_verification_error(
-            detail="no GitHub remote is configured",
-            pull_request_number=pull_request_number,
-        )
-    if github_target.remote is None:
-        assert github_target.remote_error is not None
-        raise _untracked_cleanup_verification_error(
-            detail=plain_text(github_target.remote_error),
-            pull_request_number=pull_request_number,
-        )
-
-    remote = github_target.remote
-    github_repository = github_target.github_repository
-    if github_repository is None:
-        raise _untracked_cleanup_verification_error(
-            detail=f"remote {remote.name} is not a GitHub remote",
+            detail=detail,
             pull_request_number=pull_request_number,
         )
 
-    async with build_github_client(repository=github_repository) as github_client:
+    async with build_github_client(repository=github_target.repository) as github_client:
         try:
             pull_request = await github_client.get_pull_request(
                 pull_number=pull_request_number,
@@ -190,17 +183,12 @@ async def run_orphan_close(
         )
 
     github_target = resolve_github_target(jj_client.list_git_remotes())
-    remote = github_target.remote
-    github_repository = github_target.github_repository
-    if remote is None or github_repository is None:
-        for message in remote_and_github_unavailable_messages(
-            github_error=github_target.github_repository_error,
-            github_repository=None,
-            remote=remote,
-            remote_error=github_target.remote_error,
-        ):
+    if isinstance(github_target, UnresolvedGithubTarget):
+        for message in github_target_unavailable_messages(github_target):
             console.warning(message)
         return 1
+    remote = github_target.remote
+    github_repository = github_target.repository
 
     label = ui.change_id(change_id)
     revision_label = t"orphaned change {label}"

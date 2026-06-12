@@ -12,7 +12,11 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._close_actions import emit_action_row
 from jj_stack.errors import ErrorMessage
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
-from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.github.resolution import (
+    GithubRepoAddress,
+    GithubTarget,
+    UnresolvedGithubTarget,
+)
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.review.change_status import ReviewChangeStatus
@@ -52,13 +56,16 @@ class PreparedCleanup:
 
     context: CommandContext
     bookmark_states: dict[str, BookmarkState]
-    github_repository: GithubRepoAddress | None
-    github_repository_error: ErrorMessage | None
-    remote: GitRemote | None
-    remote_error: ErrorMessage | None
-    remote_context_loaded: bool
+    # None until plain cleanup proves it needs remote or GitHub state.
+    github_target: GithubTarget | UnresolvedGithubTarget | None
     dry_run: bool
     state: ReviewState
+
+    @property
+    def remote(self) -> GitRemote | None:
+        """The selected Git remote, once remote context is loaded and one resolved."""
+
+        return self.github_target.remote if self.github_target is not None else None
 
 
 @dataclass(slots=True)

@@ -27,7 +27,9 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.github.client import build_github_client
+from jj_stack.github.error_messages import github_target_unavailable_messages
 from jj_stack.github.resolution import (
+    GithubTarget,
     resolve_github_target,
 )
 from jj_stack.jj.client import JjCliArgs
@@ -48,6 +50,7 @@ from jj_stack.state.journal import OperationJournal
 from jj_stack.state.operation_lock import (
     acquire_operation_lock,
 )
+from jj_stack.ui import plain_text
 
 from .rebase import _run_cleanup_rebase_command
 from .shared import (
@@ -60,10 +63,8 @@ from .shared import (
     _build_action_streamer,
     _CleanupSaver,
     _emit_output_lines,
-    _emit_severity_lines,
     _render_cleanup_action_header,
     _render_cleanup_postamble,
-    _render_remote_and_github_lines,
     _StaleCleanupMutationPlan,
 )
 from .stack_comments import (
@@ -129,14 +130,8 @@ def _run_cleanup_command(
         stale_reasons=stale_reasons,
     ):
         prepared_cleanup = _load_cleanup_remote_context(prepared_cleanup=prepared_cleanup)
-        _emit_severity_lines(
-            _render_remote_and_github_lines(
-                remote=prepared_cleanup.remote,
-                remote_error=prepared_cleanup.remote_error,
-                github_repository=prepared_cleanup.github_repository,
-                github_error=prepared_cleanup.github_repository_error,
-            )
-        )
+        for message in github_target_unavailable_messages(prepared_cleanup.github_target):
+            console.warning(plain_text(message))
 
     result = asyncio.run(
         _run_cleanup_async(
@@ -171,11 +166,7 @@ def _prepare_cleanup(
     return PreparedCleanup(
         context=context,
         bookmark_states=bookmark_states,
-        github_repository=None,
-        github_repository_error=None,
-        remote=None,
-        remote_error=None,
-        remote_context_loaded=False,
+        github_target=None,
         dry_run=dry_run,
         state=state,
     )
@@ -230,12 +221,11 @@ async def _run_cleanup_async(
             saver=saver,
             stale_reasons=stale_reasons,
         )
-        if (
-            prepared_cleanup.github_repository is not None
-            and any(prepared_change.inspect_stack_comment for prepared_change in prepared_changes)
+        github_target = prepared_cleanup.github_target
+        if isinstance(github_target, GithubTarget) and any(
+            prepared_change.inspect_stack_comment for prepared_change in prepared_changes
         ):
-            github_repository = prepared_cleanup.github_repository
-            async with build_github_client(repository=github_repository) as github_client:
+            async with build_github_client(repository=github_target.repository) as github_client:
                 await _run_stack_comment_cleanup_pass(
                     github_client=github_client,
                     journal=journal,
@@ -500,20 +490,13 @@ def _apply_stale_cleanup_mutation_plans(
 def _load_cleanup_remote_context(*, prepared_cleanup: PreparedCleanup) -> PreparedCleanup:
     """Resolve remote and GitHub target details once plain cleanup actually needs them."""
 
-    if prepared_cleanup.remote_context_loaded:
+    if prepared_cleanup.github_target is not None:
         return prepared_cleanup
-
-    github_target = resolve_github_target(
-        prepared_cleanup.context.jj_client.list_git_remotes()
-    )
-
     return replace(
         prepared_cleanup,
-        github_repository=github_target.github_repository,
-        github_repository_error=github_target.github_repository_error,
-        remote=github_target.remote,
-        remote_error=github_target.remote_error,
-        remote_context_loaded=True,
+        github_target=resolve_github_target(
+            prepared_cleanup.context.jj_client.list_git_remotes()
+        ),
     )
 
 

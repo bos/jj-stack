@@ -26,13 +26,38 @@ class GithubRepoAddress:
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedGithubTarget:
-    """Optional GitHub target details for commands that can continue without GitHub."""
+class GithubTarget:
+    """A fully resolved GitHub target: the selected Git remote and its repository."""
 
-    remote: GitRemote | None
-    remote_error: ErrorMessage | None
-    github_repository: GithubRepoAddress | None
-    github_repository_error: ErrorMessage | None
+    remote: GitRemote
+    repository: GithubRepoAddress
+
+    # A resolved target carries no diagnostics. These mirror UnresolvedGithubTarget so
+    # degraded-mode consumers can read errors off either arm without narrowing.
+    @property
+    def remote_error(self) -> None:
+        return None
+
+    @property
+    def github_repository_error(self) -> None:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class UnresolvedGithubTarget:
+    """A GitHub target that could not be fully resolved.
+
+    Encodes three degraded states:
+
+    - no Git remotes exist at all: every field is None
+    - remote selection failed: only `remote_error` is set
+    - a remote resolved but is not a GitHub remote: `remote` and
+      `github_repository_error` are set
+    """
+
+    remote: GitRemote | None = None
+    remote_error: ErrorMessage | None = None
+    github_repository_error: ErrorMessage | None = None
 
 
 def select_submit_remote(remotes: tuple[GitRemote, ...]) -> GitRemote:
@@ -84,30 +109,28 @@ def _looks_like_scp_remote(url: str) -> bool:
     return True
 
 
-def resolve_github_target(remotes: tuple[GitRemote, ...]) -> ResolvedGithubTarget:
+def resolve_github_target(
+    remotes: tuple[GitRemote, ...],
+) -> GithubTarget | UnresolvedGithubTarget:
     """Resolve the optional remote/GitHub target used by read-mostly commands."""
 
-    remote: GitRemote | None = None
-    remote_error: ErrorMessage | None = None
-    if remotes:
-        try:
-            remote = select_submit_remote(remotes)
-        except CliError as error:
-            remote_error = error_message(error)
+    if not remotes:
+        return UnresolvedGithubTarget()
+    try:
+        remote = select_submit_remote(remotes)
+    except CliError as error:
+        return UnresolvedGithubTarget(remote_error=error_message(error))
 
-    github_repository = parse_github_repo(remote) if remote is not None else None
-    github_repository_error: ErrorMessage | None = None
-    if remote is not None and github_repository is None:
-        github_repository_error = (
-            t"Could not determine the GitHub repository for remote "
-            t"{ui.bookmark(remote.name)}. Use a GitHub remote URL."
+    github_repository = parse_github_repo(remote)
+    if github_repository is None:
+        return UnresolvedGithubTarget(
+            remote=remote,
+            github_repository_error=(
+                t"Could not determine the GitHub repository for remote "
+                t"{ui.bookmark(remote.name)}. Use a GitHub remote URL."
+            ),
         )
-    return ResolvedGithubTarget(
-        remote=remote,
-        remote_error=remote_error,
-        github_repository=github_repository,
-        github_repository_error=github_repository_error,
-    )
+    return GithubTarget(remote=remote, repository=github_repository)
 
 
 def require_github_repo(remote: GitRemote) -> GithubRepoAddress:

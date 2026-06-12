@@ -421,8 +421,7 @@ def _prepare_untracked_close_fast_path(
         status_revisions=tuple(status_revisions),
     )
     return PreparedStatus(
-        github_repository=github_target.github_repository,
-        github_repository_error=github_target.github_repository_error,
+        github_target=github_target,
         prepared=prepared,
         selected_revset=stack.selected_revset,
         base_parent_subject=stack.base_parent.subject,

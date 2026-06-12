@@ -23,11 +23,12 @@ from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.console import requested_color_mode
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.github.resolution import (
-    GithubRepoAddress,
+    GithubTarget,
+    UnresolvedGithubTarget,
     resolve_github_target,
 )
 from jj_stack.jj.client import JjCliArgs, JjClient
-from jj_stack.models.bookmarks import BookmarkState, GitRemote
+from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.change_status import (
@@ -84,10 +85,7 @@ class _PreparedDiscoveredStack:
 @dataclass(frozen=True, slots=True)
 class _RepoInspectionContext:
     bookmark_states: dict[str, BookmarkState]
-    github_error: ErrorMessage | None
-    github_repository: GithubRepoAddress | None
-    remote: GitRemote | None
-    remote_error: ErrorMessage | None
+    github_target: GithubTarget | UnresolvedGithubTarget
 
 
 def list_(
@@ -158,6 +156,7 @@ def _run_list(
             discovered=ordered,
             state=state,
         )
+    github_target = repo_inspection.github_target
     prepared_discovered = tuple(
         _PreparedDiscoveredStack(
             current=_stack_contains_commit_id(
@@ -168,8 +167,8 @@ def _run_list(
                 bookmark_states=repo_inspection.bookmark_states,
                 context=context,
                 persist_bookmarks=False,
-                remote=repo_inspection.remote,
-                remote_error=repo_inspection.remote_error,
+                remote=github_target.remote,
+                remote_error=github_target.remote_error,
                 stack=stack,
                 state=state,
             ),
@@ -178,12 +177,12 @@ def _run_list(
     )
     _ensure_unique_repo_bookmarks(prepared_discovered)
     pull_request_lookups, github_error = _load_pull_request_lookups(
-        github_repository=repo_inspection.github_repository,
+        github_target=github_target,
         prepared_discovered=prepared_discovered,
     )
     rows = tuple(
         _build_row(
-            github_error=repo_inspection.github_error or github_error,
+            github_error=github_target.github_repository_error or github_error,
             is_current=item.current,
             prepared_stack=item.prepared,
             pull_request_lookups=pull_request_lookups,
@@ -274,10 +273,7 @@ def _prepare_repo_inspection_context(
 
     return _RepoInspectionContext(
         bookmark_states=bookmark_states,
-        github_error=github_target.github_repository_error,
-        github_repository=github_target.github_repository,
-        remote=github_target.remote,
-        remote_error=github_target.remote_error,
+        github_target=github_target,
     )
 
 
@@ -506,10 +502,10 @@ def _pull_request_range_from_revisions(revisions: tuple[ReviewStatusRevision, ..
 
 def _load_pull_request_lookups(
     *,
-    github_repository: GithubRepoAddress | None,
+    github_target: GithubTarget | UnresolvedGithubTarget,
     prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
 ) -> tuple[dict[str, PullRequestLookup], ErrorMessage | None]:
-    if github_repository is None:
+    if not isinstance(github_target, GithubTarget):
         return {}, None
 
     prepared_revisions_by_bookmark = _tracked_prepared_revisions_by_bookmark(
@@ -525,7 +521,7 @@ def _load_pull_request_lookups(
         ) as progress:
             return (
                 lookup_pull_request_lookups(
-                    github_repository=github_repository,
+                    github_repository=github_target.repository,
                     on_progress=progress.advance,
                     prepared_revisions=tuple(prepared_revisions_by_bookmark.values()),
                 ),

@@ -7,7 +7,7 @@ from typing import Any, cast
 from jj_stack.bootstrap import CommandContext
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError
-from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubPullRequest
@@ -31,12 +31,14 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
 ) -> None:
     remote = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
     prepared_status = PreparedStatus(
-        github_repository=GithubRepoAddress(
-            host="github.com",
-            owner="octo-org",
-            repo="stacked-review",
+        github_target=GithubTarget(
+            remote=remote,
+            repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
         ),
-        github_repository_error=None,
         prepared=cast(
             PreparedStack,
             SimpleNamespace(
@@ -139,12 +141,14 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
         ),
     )
     prepared_status = PreparedStatus(
-        github_repository=GithubRepoAddress(
-            host="github.com",
-            owner="octo-org",
-            repo="stacked-review",
+        github_target=GithubTarget(
+            remote=remote,
+            repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
         ),
-        github_repository_error=None,
         prepared=cast(
             PreparedStack,
             SimpleNamespace(
