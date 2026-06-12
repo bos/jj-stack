@@ -7,6 +7,7 @@ import httpxyz
 import pytest
 
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.resolution import ParsedGithubRepo
 
 
 def _github_client(handler) -> GithubClient:
@@ -14,7 +15,12 @@ def _github_client(handler) -> GithubClient:
         httpxyz.AsyncClient(
             base_url="https://api.github.test",
             transport=httpxyz.MockTransport(handler),
-        )
+        ),
+        repository=ParsedGithubRepo(
+            host="github.test",
+            owner="octo-org",
+            repo="stacked-review",
+        ),
     )
 
 
@@ -47,7 +53,7 @@ def test_github_client_retries_429_responses_with_retry_after() -> None:
 
     async def run_test() -> str:
         async with _github_client(handler) as client:
-            repository = await client.get_repository("octo-org", "stacked-review")
+            repository = await client.get_repository()
         return repository.full_name
 
     assert asyncio.run(run_test()) == "octo-org/stacked-review"
@@ -83,7 +89,7 @@ def test_github_client_retries_secondary_rate_limits_without_retry_after() -> No
 
     async def run_test() -> str:
         async with _github_client(handler) as client:
-            repository = await client.get_repository("octo-org", "stacked-review")
+            repository = await client.get_repository()
         return repository.default_branch or ""
 
     assert asyncio.run(run_test()) == "main"
@@ -100,7 +106,7 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
 
     async def run_test() -> None:
         async with _github_client(handler) as client:
-            await client.get_repository("octo-org", "stacked-review")
+            await client.get_repository()
 
     with pytest.raises(GithubClientError, match="GitHub request failed: 404"):
         asyncio.run(run_test())
@@ -144,8 +150,6 @@ def test_github_client_lists_pull_request_reviews() -> None:
     async def run_test() -> tuple[str, str]:
         async with _github_client(handler) as client:
             reviews = await client.list_pull_request_reviews(
-                "octo-org",
-                "stacked-review",
                 pull_number=7,
             )
         if reviews[0].user is None:
@@ -199,8 +203,6 @@ def test_github_client_paginates_pull_request_list() -> None:
     async def run_test() -> tuple[int, int]:
         async with _github_client(handler) as client:
             pull_requests = await client.list_pull_requests(
-                "octo-org",
-                "stacked-review",
                 head="octo-org:review/one",
             )
         return pull_requests[0].number, pull_requests[1].number
@@ -251,8 +253,6 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
     async def run_test() -> tuple[str, str, str | None]:
         async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_numbers(
-                "octo-org",
-                "stacked-review",
                 pull_numbers=(7, 9),
             )
         pull_request_7 = pull_requests[7]
@@ -280,8 +280,6 @@ def test_github_client_rejects_graphql_payload_missing_repository_data() -> None
     async def run_test() -> None:
         async with _github_client(handler) as client:
             await client.get_pull_requests_by_numbers(
-                "octo-org",
-                "stacked-review",
                 pull_numbers=(7,),
             )
 
@@ -343,8 +341,6 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
     async def run_test() -> tuple[str, str, str | None, str | None]:
         async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_head_refs(
-                "octo-org",
-                "stacked-review",
                 head_refs=("review/seven", "review/nine"),
             )
         pull_request_7 = pull_requests["review/seven"][0]
@@ -410,8 +406,6 @@ def test_github_client_batches_review_decision_lookup_with_graphql() -> None:
     async def run_test() -> tuple[str | None, str | None]:
         async with _github_client(handler) as client:
             decisions = await client.get_review_decisions_by_pull_request_numbers(
-                "octo-org",
-                "stacked-review",
                 pull_numbers=(7, 9),
             )
         return decisions[7], decisions[9]
@@ -455,8 +449,6 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
     async def run_test() -> tuple[int, str]:
         async with _github_client(handler) as client:
             comments = await client.get_issue_comments_by_pull_request_numbers(
-                "octo-org",
-                "stacked-review",
                 pull_numbers=(7,),
             )
         return comments[7][0].id, comments[7][0].html_url
@@ -591,8 +583,6 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
     async def run_test() -> list[int]:
         async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_head_refs(
-                "octo-org",
-                "stacked-review",
                 head_refs=("review/seven",),
             )
         return [pull_request.number for pull_request in pull_requests["review/seven"]]

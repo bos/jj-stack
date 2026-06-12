@@ -9,28 +9,7 @@ from urllib.parse import urlparse
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.models.bookmarks import BookmarkState, GitRemote
-from jj_stack.models.github import GithubRepository
-
-_DEFAULT_GITHUB_HOST = "github.com"
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedGithubRepo:
-    """GitHub repository coordinates parsed from a Git remote URL."""
-
-    host: str
-    owner: str
-    repo: str
-
-    @property
-    def api_base_url(self) -> str:
-        if self.host == _DEFAULT_GITHUB_HOST:
-            return "https://api.github.com"
-        return f"https://api.{self.host}"
-
-    @property
-    def full_name(self) -> str:
-        return f"{self.owner}/{self.repo}"
+from jj_stack.models.github import GithubRepository, ParsedGithubRepo
 
 
 @dataclass(frozen=True, slots=True)

@@ -359,21 +359,17 @@ def test_list_batches_github_lookup_across_repo_stacks(
         pull_request_lookup_calls: ClassVar[list[tuple[str, ...]]] = []
         review_decision_calls: ClassVar[list[tuple[int, ...]]] = []
 
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             self.pull_request_lookup_calls.append(tuple(sorted(head_refs)))
-            return await super().get_pull_requests_by_head_refs(owner, repo, head_refs=head_refs)
+            return await super().get_pull_requests_by_head_refs(head_refs=head_refs)
 
         async def get_review_decisions_by_pull_request_numbers(
             self,
-            owner,
-            repo,
             *,
             pull_numbers,
         ):
             self.review_decision_calls.append(tuple(sorted(pull_numbers)))
             return await super().get_review_decisions_by_pull_request_numbers(
-                owner,
-                repo,
                 pull_numbers=pull_numbers,
             )
 
@@ -532,7 +528,7 @@ def test_list_falls_back_when_github_unavailable(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(

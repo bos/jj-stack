@@ -10,7 +10,6 @@ from jj_stack.commands._close_actions import (
 from jj_stack.concurrency import run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import ParsedGithubRepo
 from jj_stack.github.stack_comments import (
     StackCommentKind,
     delete_stack_comment,
@@ -33,7 +32,6 @@ async def sync_stack_comments(
     concurrency: int,
     generated_stack_description: GeneratedDescription | None,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     revisions: tuple[SubmittedRevision, ...],
     run: SubmitMutationRun,
     trunk_branch: str,
@@ -88,8 +86,6 @@ async def sync_stack_comments(
         try:
             comments_by_pull_request_number = (
                 await github_client.get_issue_comments_by_pull_request_numbers(
-                    github_repository.owner,
-                    github_repository.repo,
                     pull_numbers=tuple(
                         pending_sync.pull_request_number for pending_sync in pending
                     ),
@@ -118,7 +114,6 @@ async def sync_stack_comments(
             items=tuple(pending),
             run_item=lambda pending_sync: _sync_stack_comment_task(
                 github_client=github_client,
-                github_repository=github_repository,
                 comments=comments_by_pull_request_number[pending_sync.pull_request_number],
                 pending_sync=pending_sync,
                 run=run,
@@ -131,7 +126,6 @@ async def _sync_stack_comment_task(
     *,
     comments: tuple[GithubIssueComment, ...],
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pending_sync: PendingStackCommentSync,
     run: SubmitMutationRun,
 ) -> tuple[str, CachedChange]:
@@ -140,7 +134,6 @@ async def _sync_stack_comment_task(
         comment_body=pending_sync.navigation_comment_body,
         comments=comments,
         github_client=github_client,
-        github_repository=github_repository,
         kind="navigation",
         pull_request_number=pending_sync.pull_request_number,
         run=run,
@@ -150,7 +143,6 @@ async def _sync_stack_comment_task(
         comment_body=pending_sync.overview_comment_body,
         comments=comments,
         github_client=github_client,
-        github_repository=github_repository,
         kind="overview",
         pull_request_number=pending_sync.pull_request_number,
         run=run,
@@ -172,7 +164,6 @@ async def _sync_managed_comment(
     comment_body: str | None,
     comments: tuple[GithubIssueComment, ...],
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     kind: StackCommentKind,
     pull_request_number: int,
     run: SubmitMutationRun,
@@ -191,7 +182,6 @@ async def _sync_managed_comment(
             await delete_stack_comment(
                 comment_id=existing_comment.id,
                 github_client=github_client,
-                github_repository=github_repository,
                 kind=kind,
             )
         return None
@@ -204,7 +194,6 @@ async def _sync_managed_comment(
             comment_body=comment_body,
             comment_id=existing_comment.id,
             github_client=github_client,
-            github_repository=github_repository,
             kind=kind,
         )
     if dry_run:
@@ -212,7 +201,6 @@ async def _sync_managed_comment(
     return await _create_stack_comment(
         comment_body=comment_body,
         github_client=github_client,
-        github_repository=github_repository,
         kind=kind,
         pull_request_number=pull_request_number,
     )
@@ -276,14 +264,11 @@ async def _create_stack_comment(
     *,
     comment_body: str,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     kind: StackCommentKind,
     pull_request_number: int,
 ) -> GithubIssueComment:
     try:
         return await github_client.create_issue_comment(
-            github_repository.owner,
-            github_repository.repo,
             issue_number=pull_request_number,
             body=comment_body,
         )
@@ -299,13 +284,10 @@ async def _update_stack_comment(
     comment_body: str,
     comment_id: int,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     kind: StackCommentKind,
 ) -> GithubIssueComment:
     try:
         return await github_client.update_issue_comment(
-            github_repository.owner,
-            github_repository.repo,
             comment_id=comment_id,
             body=comment_body,
         )

@@ -179,9 +179,9 @@ async def _check_github_connectivity(
     *,
     parsed_repo: ParsedGithubRepo,
 ) -> tuple[CheckResult, GithubRepository | None]:
-    async with build_github_client(base_url=parsed_repo.api_base_url) as client:
+    async with build_github_client(repository=parsed_repo) as client:
         try:
-            github_repo = await client.get_repository(parsed_repo.owner, parsed_repo.repo)
+            github_repo = await client.get_repository()
         except GithubClientError as error:
             return (
                 CheckResult(

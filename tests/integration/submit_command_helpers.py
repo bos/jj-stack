@@ -100,12 +100,13 @@ def patch_github_client_builders(
     client_type: type[GithubClient] = GithubClient,
     concurrency_limits: dict[str, int] | None = None,
 ) -> None:
-    def build_github_client(*, base_url: str) -> GithubClient:
+    def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
         return client_type(
             httpxyz.AsyncClient(
-                base_url=base_url,
+                base_url=repository.api_base_url,
                 transport=httpxyz.ASGITransport(app=app),
-            )
+            ),
+            repository=repository,
         )
 
     def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:

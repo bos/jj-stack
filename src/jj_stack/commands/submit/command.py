@@ -507,17 +507,14 @@ async def _run_submit_async(
     succeeded = False
     submitted_revisions: tuple[SubmittedRevision, ...] = ()
     try:
-        async with build_github_client(base_url=github_repository.api_base_url) as github_client:
+        async with build_github_client(repository=github_repository) as github_client:
             with console.spinner(description="Inspecting GitHub"):
                 try:
                     github_repository_state, discovered_pull_requests = await asyncio.gather(
                         github_client.get_repository(
-                            github_repository.owner,
-                            github_repository.repo,
                         ),
                         discover_pull_requests_by_bookmark(
                             github_client=github_client,
-                            github_repository=github_repository,
                             bookmarks=tuple(
                                 resolution.bookmark
                                 for resolution in bookmark_result.resolutions
@@ -559,7 +556,6 @@ async def _run_submit_async(
                 await retarget_review_bases_before_branch_push(
                     bookmark_states=bookmark_states,
                     github_client=github_client,
-                    github_repository=github_repository,
                     jj_client=client,
                     pending_syncs=pending_syncs,
                     prepared_revisions=prepared_revisions,
@@ -586,7 +582,6 @@ async def _run_submit_async(
             ) as progress:
                 submitted_revisions = await sync_pull_requests(
                     github_client=github_client,
-                    github_repository=github_repository,
                     on_progress=progress.advance,
                     options=options,
                     pending_syncs=pending_syncs,
@@ -599,7 +594,6 @@ async def _run_submit_async(
                     concurrency=_GITHUB_INSPECTION_CONCURRENCY,
                     generated_stack_description=prepared_inputs.generated_stack_description,
                     github_client=github_client,
-                    github_repository=github_repository,
                     revisions=submitted_revisions,
                     run=mutation_run,
                     trunk_branch=trunk_branch,
@@ -607,7 +601,6 @@ async def _run_submit_async(
                 await verify_no_unexpected_pull_request_closures(
                     discovered_pull_requests=discovered_pull_requests,
                     github_client=github_client,
-                    github_repository=github_repository,
                 )
 
         if not dry_run:

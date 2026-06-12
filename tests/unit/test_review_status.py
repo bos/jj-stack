@@ -7,9 +7,7 @@ from typing import Any, cast
 from jj_stack.bootstrap import CommandContext
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, ErrorMessage
-from jj_stack.github.resolution import (
-    ParsedGithubRepo,
-)
+from jj_stack.github.resolution import ParsedGithubRepo
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubPullRequest
@@ -307,13 +305,17 @@ def test_pinned_bookmarks_for_revisions_uses_cached_bookmarks_and_dedupes() -> N
 
 def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_misses() -> None:
     class FakeGithubClient:
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
-            assert (owner, repo) == ("octo-org", "stacked-review")
+        repository = ParsedGithubRepo(
+            host="github.test",
+            owner="octo-org",
+            repo="stacked-review",
+        )
+
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             assert head_refs == ("review/old-branch",)
             return {"review/old-branch": ()}
 
-        async def get_pull_requests_by_numbers(self, owner, repo, *, pull_numbers):
-            assert (owner, repo) == ("octo-org", "stacked-review")
+        async def get_pull_requests_by_numbers(self, *, pull_numbers):
             assert pull_numbers == (7,)
             return {
                 7: GithubPullRequest.model_validate(
@@ -343,11 +345,6 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
     lookups = asyncio.run(
         status_module._discover_pull_request_lookups(
             github_client=cast(Any, FakeGithubClient()),
-            github_repository=ParsedGithubRepo(
-                host="github.test",
-                owner="octo-org",
-                repo="stacked-review",
-            ),
             prepared_revisions=cast(Any, (prepared_revision,)),
         )
     )

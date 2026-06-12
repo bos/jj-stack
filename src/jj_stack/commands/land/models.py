@@ -37,7 +37,6 @@ class LandResult:
     applied: bool
     bypass_readiness: bool
     blocked: bool
-    github_repository: str
     remote_name: str
     selected_revset: str
     trunk_branch: str

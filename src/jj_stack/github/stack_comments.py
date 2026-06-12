@@ -6,7 +6,6 @@ from typing import Literal
 
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import ParsedGithubRepo
 
 StackCommentKind = Literal["navigation", "overview"]
 
@@ -52,15 +51,12 @@ async def delete_stack_comment(
     *,
     comment_id: int,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     kind: StackCommentKind,
 ) -> None:
     """Delete one managed stack comment, tolerating an already-deleted target."""
 
     try:
         await github_client.delete_issue_comment(
-            github_repository.owner,
-            github_repository.repo,
             comment_id=comment_id,
         )
     except GithubClientError as error:

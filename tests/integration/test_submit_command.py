@@ -483,12 +483,8 @@ def test_submit_post_flight_check_catches_vanished_pull_request(
 
     original_get_pull_requests_by_numbers = GithubClient.get_pull_requests_by_numbers
 
-    async def get_pull_requests_by_numbers_with_vanish(
-        self, owner, repo, *, pull_numbers
-    ):
-        result = await original_get_pull_requests_by_numbers(
-            self, owner, repo, pull_numbers=pull_numbers
-        )
+    async def get_pull_requests_by_numbers_with_vanish(self, *, pull_numbers):
+        result = await original_get_pull_requests_by_numbers(self, pull_numbers=pull_numbers)
         if 2 in result:
             result[2] = None
         return result
@@ -970,22 +966,16 @@ def test_submit_batches_stack_comment_reads_with_graphql(
     class CountingCommentLookupClient(GithubClient):
         async def get_issue_comments_by_pull_request_numbers(
             self,
-            owner: str,
-            repo: str,
             *,
             pull_numbers: Sequence[int],
         ):
             comment_batch_calls.append(tuple(sorted(pull_numbers)))
             return await super().get_issue_comments_by_pull_request_numbers(
-                owner,
-                repo,
                 pull_numbers=pull_numbers,
             )
 
         async def list_issue_comments(
             self,
-            owner: str,
-            repo: str,
             *,
             issue_number: int,
         ):
@@ -1295,8 +1285,6 @@ def test_submit_reports_stack_comment_update_failures_without_traceback(
     class FailingCommentUpdateClient(GithubClient):
         async def update_issue_comment(
             self,
-            owner: str,
-            repo: str,
             *,
             comment_id: int,
             body: str,
@@ -1892,8 +1880,6 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
     class FailSpecificPullRequestClient(GithubClient):
         async def create_pull_request(
             self,
-            owner,
-            repo,
             *,
             base,
             body,
@@ -1910,8 +1896,6 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
             if title == "feature 1":
                 await asyncio.sleep(0.03)
             return await super().create_pull_request(
-                owner,
-                repo,
                 base=base,
                 body=body,
                 draft=draft,
@@ -1972,7 +1956,7 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
     metadata_failure_injected = False
 
     class FlakyMetadataClient(GithubClient):
-        async def add_labels(self, owner, repo, *, issue_number, labels):
+        async def add_labels(self, *, issue_number, labels):
             nonlocal metadata_failure_injected
             if not metadata_failure_injected:
                 metadata_failure_injected = True
@@ -1981,8 +1965,6 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
                     status_code=500,
                 )
             await super().add_labels(
-                owner,
-                repo,
                 issue_number=issue_number,
                 labels=labels,
             )
@@ -2051,8 +2033,6 @@ def test_submit_unchanged_rerun_skips_pull_request_metadata_writes(
     class NoMetadataWritesClient(GithubClient):
         async def request_reviewers(
             self,
-            owner,
-            repo,
             *,
             pull_number,
             reviewers,
@@ -2061,7 +2041,7 @@ def test_submit_unchanged_rerun_skips_pull_request_metadata_writes(
             metadata_write_calls.append("reviewers")
             raise AssertionError("unchanged rerun should not request reviewers")
 
-        async def add_labels(self, owner, repo, *, issue_number, labels) -> None:
+        async def add_labels(self, *, issue_number, labels) -> None:
             metadata_write_calls.append("labels")
             raise AssertionError("unchanged rerun should not add labels")
 
@@ -2278,7 +2258,7 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
     updated_comment_ids: list[int] = []
 
     class FlakyCommentClient(GithubClient):
-        async def update_issue_comment(self, owner, repo, *, comment_id, body):
+        async def update_issue_comment(self, *, comment_id, body):
             updated_comment_ids.append(comment_id)
             if comment_id == stale_comment_2.id:
                 await asyncio.sleep(0.01)
@@ -2289,8 +2269,6 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
             if comment_id == stale_comment_1.id:
                 await asyncio.sleep(0.03)
             return await super().update_issue_comment(
-                owner,
-                repo,
                 comment_id=comment_id,
                 body=body,
             )
@@ -2376,8 +2354,6 @@ def test_submit_logs_begin_after_failed_submit(
     class FailOnFirstPRClient(GithubClient):
         async def create_pull_request(
             self,
-            owner,
-            repo,
             *,
             base,
             body,
@@ -2389,8 +2365,6 @@ def test_submit_logs_begin_after_failed_submit(
             if call_count[0] >= 1:
                 raise GithubClientError("Simulated failure on first PR", status_code=500)
             return await super().create_pull_request(
-                owner,
-                repo,
                 base=base,
                 body=body,
                 draft=draft,

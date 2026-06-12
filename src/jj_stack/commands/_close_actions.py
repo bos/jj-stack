@@ -10,7 +10,6 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import summarize_github_error_reason
-from jj_stack.github.resolution import ParsedGithubRepo
 from jj_stack.github.stack_comments import (
     StackCommentKind,
     is_navigation_comment,
@@ -99,7 +98,6 @@ async def find_managed_comments(
     cached_navigation_comment_id: int | None,
     cached_overview_comment_id: int | None,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request_number: int,
 ) -> tuple[ManagedCommentLookup, ...]:
     """Resolve managed stack comments for one PR via a single list call.
@@ -115,8 +113,6 @@ async def find_managed_comments(
 
     try:
         comments = await github_client.list_issue_comments(
-            github_repository.owner,
-            github_repository.repo,
             issue_number=pull_request_number,
         )
     except GithubClientError as error:
@@ -135,7 +131,6 @@ async def find_managed_comments(
         return await _resolve_cached_managed_comments_after_404(
             cached_ids=cached_ids,
             github_client=github_client,
-            github_repository=github_repository,
         )
 
     return tuple(
@@ -197,7 +192,6 @@ async def _resolve_cached_managed_comments_after_404(
     *,
     cached_ids: dict[StackCommentKind, int | None],
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
 ) -> tuple[ManagedCommentLookup, ...]:
     entries: list[ManagedCommentLookup] = []
     for kind, cached_comment_id in cached_ids.items():
@@ -205,8 +199,6 @@ async def _resolve_cached_managed_comments_after_404(
             continue
         try:
             cached_comment = await github_client.get_issue_comment(
-                github_repository.owner,
-                github_repository.repo,
                 comment_id=cached_comment_id,
             )
         except GithubClientError as cached_comment_error:

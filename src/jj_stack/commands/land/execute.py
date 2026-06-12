@@ -6,7 +6,6 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import ParsedGithubRepo
 from jj_stack.github.stack_comments import StackCommentKind, delete_stack_comment
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubPullRequest
@@ -84,7 +83,6 @@ async def execute_land_plan(
     *,
     bookmark_cleanup_plans: tuple[ReviewBookmarkCleanupPlan, ...],
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     plan: LandPlan,
     prepared_land: PreparedLand,
     remote_name: str,
@@ -108,7 +106,6 @@ async def execute_land_plan(
             applied=applied,
             bypass_readiness=prepared_land.bypass_readiness,
             blocked=blocked,
-            github_repository=github_repository.full_name,
             remote_name=remote_name,
             selected_revset=selected_revset,
             trunk_branch=trunk_branch,
@@ -133,7 +130,7 @@ async def execute_land_plan(
             "selected_pr_number": prepared_land.selected_pr_number,
         },
         resolved_scope={
-            "github_repository": github_repository.full_name,
+            "github_repository": github_client.repository.full_name,
             "landed_change_ids": tuple(
                 revision.change_id for revision in execution_plan.planned_revisions
             ),
@@ -184,7 +181,6 @@ async def execute_land_plan(
         client=prepared.client,
         execution_plan=execution_plan,
         github_client=github_client,
-        github_repository=github_repository,
         journal=journal,
         prepared_land=prepared_land,
         remote_name=remote_name,
@@ -202,7 +198,6 @@ async def execute_land_plan(
         client=prepared.client,
         execution_plan=execution_plan,
         github_client=github_client,
-        github_repository=github_repository,
         journal=journal,
         mutation_run=mutation_run,
         trunk_branch=trunk_branch,
@@ -229,7 +224,6 @@ async def _apply_trunk_transition(
     client: JjClient,
     execution_plan: LandPlan,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     prepared_land: PreparedLand,
     remote_name: str,
@@ -252,7 +246,6 @@ async def _apply_trunk_transition(
         bypass_readiness=prepared_land.bypass_readiness,
         client=client,
         github_client=github_client,
-        github_repository=github_repository,
         resubmit_revisions=execution_plan.resubmit_revisions,
         remote_name=remote_name,
         trunk_branch=trunk_branch,
@@ -306,7 +299,6 @@ async def _refresh_rebased_review_branches(
     bypass_readiness: bool,
     client: JjClient,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     resubmit_revisions: tuple[LandRevision, ...],
     remote_name: str,
     trunk_branch: str,
@@ -342,7 +334,6 @@ async def _refresh_rebased_review_branches(
     dismissed_action = await _check_post_resubmit_approvals(
         bypass_readiness=bypass_readiness,
         github_client=github_client,
-        github_repository=github_repository,
         resubmit_revisions=resubmit_revisions,
         trunk_branch=trunk_branch,
     )
@@ -398,7 +389,6 @@ async def _finalize_planned_revisions(
     client: JjClient,
     execution_plan: LandPlan,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     mutation_run: LandMutationRun,
     trunk_branch: str,
@@ -425,7 +415,6 @@ async def _finalize_planned_revisions(
         final_pull_request = await _finalize_landed_pull_request(
             cached_change=mutation_run.state_changes.get(landed_revision.change_id),
             github_client=github_client,
-            github_repository=github_repository,
             landed_revision=landed_revision,
             trunk_branch=trunk_branch,
         )
@@ -522,7 +511,6 @@ async def _check_post_resubmit_approvals(
     *,
     bypass_readiness: bool,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     resubmit_revisions: tuple[LandRevision, ...],
     trunk_branch: str,
 ) -> LandAction | None:
@@ -532,8 +520,6 @@ async def _check_post_resubmit_approvals(
         return None
     try:
         decisions = await github_client.get_review_decisions_by_pull_request_numbers(
-            github_repository.owner,
-            github_repository.repo,
             pull_numbers=tuple(
                 revision.pull_request_number for revision in resubmit_revisions
             ),
@@ -560,14 +546,11 @@ async def _finalize_landed_pull_request(
     *,
     cached_change: CachedChange | None,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     landed_revision: LandRevision,
     trunk_branch: str,
 ) -> GithubPullRequest:
     try:
         pull_request = await github_client.get_pull_request(
-            github_repository.owner,
-            github_repository.repo,
             pull_number=landed_revision.pull_request_number,
         )
     except GithubClientError as error:
@@ -578,8 +561,6 @@ async def _finalize_landed_pull_request(
     if pull_request.state == "open" and pull_request.base.ref != trunk_branch:
         try:
             pull_request = await github_client.update_pull_request(
-                github_repository.owner,
-                github_repository.repo,
                 pull_number=pull_request.number,
                 base=trunk_branch,
                 body=pull_request.body or "",
@@ -594,13 +575,9 @@ async def _finalize_landed_pull_request(
     if pull_request.state == "open":
         try:
             await github_client.close_pull_request(
-                github_repository.owner,
-                github_repository.repo,
                 pull_number=pull_request.number,
             )
             pull_request = await github_client.get_pull_request(
-                github_repository.owner,
-                github_repository.repo,
                 pull_number=pull_request.number,
             )
         except GithubClientError as error:
@@ -617,7 +594,6 @@ async def _finalize_landed_pull_request(
             await delete_stack_comment(
                 comment_id=comment_id,
                 github_client=github_client,
-                github_repository=github_repository,
                 kind=kind,
             )
     return pull_request

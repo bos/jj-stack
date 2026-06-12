@@ -26,7 +26,6 @@ from jj_stack.github.error_messages import (
     summarize_github_error_reason,
 )
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
     resolve_github_target,
 )
 from jj_stack.github.stack_comments import (
@@ -120,11 +119,9 @@ async def run_untracked_cleanup_pull_request(
             pull_request_number=pull_request_number,
         )
 
-    async with build_github_client(base_url=github_repository.api_base_url) as github_client:
+    async with build_github_client(repository=github_repository) as github_client:
         try:
             pull_request = await github_client.get_pull_request(
-                github_repository.owner,
-                github_repository.repo,
                 pull_number=pull_request_number,
             )
         except GithubClientError as error:
@@ -238,11 +235,10 @@ async def run_orphan_close(
         )
         run = replace(run, journal=close_journal)
 
-        async with build_github_client(base_url=github_repository.api_base_url) as github_client:
+        async with build_github_client(repository=github_repository) as github_client:
             inspection, blocked_action = await _lookup_orphaned_pull_request(
                 cached_change=cached_change,
                 github_client=github_client,
-                github_repository=github_repository,
                 pull_request_number=pull_request_number,
             )
             if blocked_action is not None:
@@ -267,7 +263,6 @@ async def run_orphan_close(
                 resolved_comments = await _preflight_orphaned_comment_cleanup(
                     cached_change=cached_change,
                     github_client=github_client,
-                    github_repository=github_repository,
                     pull_request_number=pull_request_number,
                     recorder=recorder,
                 )
@@ -306,8 +301,6 @@ async def run_orphan_close(
                     ):
                         try:
                             await github_client.close_pull_request(
-                                github_repository.owner,
-                                github_repository.repo,
                                 pull_number=pull_request_number,
                             )
                         except GithubClientError as error:
@@ -317,7 +310,6 @@ async def run_orphan_close(
 
             await _apply_orphaned_comment_cleanup(
                 github_client=github_client,
-                github_repository=github_repository,
                 pull_request_number=pull_request_number,
                 recorder=recorder,
                 resolved_comments=resolved_comments,
@@ -499,7 +491,6 @@ async def _preflight_orphaned_comment_cleanup(
     *,
     cached_change: CachedChange,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request_number: int,
     recorder: ActionRecorder[CloseAction],
 ) -> tuple[_ResolvedOrphanedComment, ...]:
@@ -507,7 +498,6 @@ async def _preflight_orphaned_comment_cleanup(
         cached_navigation_comment_id=cached_change.navigation_comment_id,
         cached_overview_comment_id=cached_change.overview_comment_id,
         github_client=github_client,
-        github_repository=github_repository,
         pull_request_number=pull_request_number,
     )
     resolved_comments: list[_ResolvedOrphanedComment] = []
@@ -531,7 +521,6 @@ async def _preflight_orphaned_comment_cleanup(
 async def _apply_orphaned_comment_cleanup(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request_number: int,
     recorder: ActionRecorder[CloseAction],
     resolved_comments: tuple[_ResolvedOrphanedComment, ...],
@@ -559,7 +548,6 @@ async def _apply_orphaned_comment_cleanup(
                 await delete_stack_comment(
                     comment_id=resolved.comment.id,
                     github_client=github_client,
-                    github_repository=github_repository,
                     kind=resolved.kind,
                 )
 
@@ -568,7 +556,6 @@ async def _lookup_orphaned_pull_request(
     *,
     cached_change: CachedChange,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request_number: int,
 ) -> tuple[_OrphanedPullRequestInspection | None, CloseAction | None]:
     """Verify the saved PR identity and look for live duplicate branch claims."""
@@ -586,8 +573,6 @@ async def _lookup_orphaned_pull_request(
 
     try:
         pull_request = await github_client.get_pull_request(
-            github_repository.owner,
-            github_repository.repo,
             pull_number=pull_request_number,
         )
     except GithubClientError as error:
@@ -614,7 +599,7 @@ async def _lookup_orphaned_pull_request(
                 status="blocked",
             ),
         )
-    expected_head_label = f"{github_repository.owner}:{bookmark}"
+    expected_head_label = f"{github_client.repository.owner}:{bookmark}"
     if pull_request.head.label != expected_head_label:
         return (
             inspection,
@@ -631,8 +616,6 @@ async def _lookup_orphaned_pull_request(
 
     try:
         branch_matches = await github_client.get_pull_requests_by_head_refs(
-            github_repository.owner,
-            github_repository.repo,
             head_refs=(bookmark,),
         )
     except GithubClientError:

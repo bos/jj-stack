@@ -6,7 +6,6 @@ import jj_stack.ui as ui
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import ParsedGithubRepo
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
@@ -18,7 +17,6 @@ async def retarget_review_bases_before_branch_push(
     *,
     bookmark_states: dict[str, BookmarkState],
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     jj_client: JjClient,
     pending_syncs: tuple[PendingPullRequestSync, ...],
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
@@ -39,7 +37,6 @@ async def retarget_review_bases_before_branch_push(
         items=retarget_syncs,
         run_item=lambda pending_sync: _retarget_review_base_before_branch_push(
             github_client=github_client,
-            github_repository=github_repository,
             pending_sync=pending_sync,
             trunk_branch=trunk_branch,
         ),
@@ -118,7 +115,6 @@ def _resolve_post_push_commit(
 async def _retarget_review_base_before_branch_push(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pending_sync: PendingPullRequestSync,
     trunk_branch: str,
 ) -> None:
@@ -127,8 +123,6 @@ async def _retarget_review_base_before_branch_push(
         raise AssertionError("Pre-push retarget requires a discovered pull request.")
     try:
         await github_client.update_pull_request(
-            github_repository.owner,
-            github_repository.repo,
             pull_number=pull_request.number,
             base=trunk_branch,
             body=pull_request.body or "",
@@ -145,7 +139,6 @@ async def verify_no_unexpected_pull_request_closures(
     *,
     discovered_pull_requests: dict[str, GithubPullRequest | None],
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
 ) -> None:
     """Detect open→closed and open→missing transitions and raise loudly.
 
@@ -168,8 +161,6 @@ async def verify_no_unexpected_pull_request_closures(
         return
     try:
         refetched = await github_client.get_pull_requests_by_numbers(
-            github_repository.owner,
-            github_repository.repo,
             pull_numbers=initially_open_numbers,
         )
     except GithubClientError as error:

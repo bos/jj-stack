@@ -798,10 +798,9 @@ async def _iter_status_revisions_with_github(
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> AsyncIterator[ReviewStatusRevision]:
     ordered_prepared_revisions = tuple(reversed(prepared_revisions))
-    async with build_github_client(base_url=github_repository.api_base_url) as github_client:
+    async with build_github_client(repository=github_repository) as github_client:
         pull_request_lookups = await _resolve_pull_request_lookups(
             github_client=github_client,
-            github_repository=github_repository,
             on_progress=None,
             prepared_revisions=ordered_prepared_revisions,
         )
@@ -813,7 +812,6 @@ async def _iter_status_revisions_with_github(
                 _inspect_revision_with_github(
                     bookmark_states=prepared.bookmark_states,
                     github_client=github_client,
-                    github_repository=github_repository,
                     inspect_stack_comments=inspect_stack_comments,
                     prepared=prepared,
                     prepared_revision=prepared_revision,
@@ -858,10 +856,9 @@ async def lookup_pull_request_lookups_async(
 ) -> dict[str, PullRequestLookup]:
     """Return batched pull-request lookups keyed by bookmark."""
 
-    async with build_github_client(base_url=github_repository.api_base_url) as github_client:
+    async with build_github_client(repository=github_repository) as github_client:
         return await _resolve_pull_request_lookups(
             github_client=github_client,
-            github_repository=github_repository,
             on_progress=on_progress,
             prepared_revisions=prepared_revisions,
         )
@@ -871,7 +868,6 @@ async def _inspect_revision_with_github(
     *,
     bookmark_states: dict[str, BookmarkState],
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     inspect_stack_comments: bool,
     prepared: PreparedStack,
     prepared_revision: PreparedRevision,
@@ -893,7 +889,6 @@ async def _inspect_revision_with_github(
                 raise AssertionError("Open pull request lookup must include a pull request.")
             managed_comments_lookup = await _inspect_managed_comments(
                 github_client=github_client,
-                github_repository=github_repository,
                 pull_request_number=pull_request.number,
             )
         logger.debug(
@@ -924,13 +919,11 @@ async def _inspect_revision_with_github(
 async def _resolve_pull_request_lookups(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     on_progress: Callable[[int], None] | None,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:
     pull_request_lookups = await _discover_pull_request_lookups(
         github_client=github_client,
-        github_repository=github_repository,
         prepared_revisions=prepared_revisions,
     )
     if on_progress is not None and pull_request_lookups:
@@ -941,7 +934,6 @@ async def _resolve_pull_request_lookups(
 async def _discover_pull_request_lookups(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:
     prepared_revisions_by_bookmark = {
@@ -954,8 +946,6 @@ async def _discover_pull_request_lookups(
 
     try:
         discovered_pull_requests = await github_client.get_pull_requests_by_head_refs(
-            github_repository.owner,
-            github_repository.repo,
             head_refs=bookmarks,
         )
     except GithubClientError as error:
@@ -977,7 +967,7 @@ async def _discover_pull_request_lookups(
 
     lookups = {
         bookmark: _pull_request_lookup_from_discovered(
-            head_label=t"{github_repository.owner}:{ui.bookmark(bookmark)}",
+            head_label=t"{github_client.repository.owner}:{ui.bookmark(bookmark)}",
             pull_requests=discovered_pull_requests.get(bookmark, ()),
         )
         for bookmark in bookmarks
@@ -994,8 +984,6 @@ async def _discover_pull_request_lookups(
 
     try:
         remembered_pull_requests = await github_client.get_pull_requests_by_numbers(
-            github_repository.owner,
-            github_repository.repo,
             pull_numbers=remembered_numbers,
         )
     except GithubClientError as error:
@@ -1129,13 +1117,10 @@ def _pull_request_lookup_from_remembered(
 async def _inspect_managed_comments(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request_number: int,
 ) -> ManagedCommentsLookup:
     try:
         comments = await github_client.list_issue_comments(
-            github_repository.owner,
-            github_repository.repo,
             issue_number=pull_request_number,
         )
     except GithubClientError as error:

@@ -20,6 +20,7 @@ from jj_stack.models.github import (
     GithubPullRequestReview,
     GithubPullRequestReviewUser,
     GithubRepository,
+    ParsedGithubRepo,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,10 +82,22 @@ class _GraphqlIssueCommentsPullRequest(BaseModel):
 
 
 class GithubClient:
-    """Thin async wrapper around the GitHub REST API."""
+    """Thin async wrapper around the GitHub API, bound to one repository."""
 
-    def __init__(self, client: httpxyz.AsyncClient) -> None:
+    def __init__(self, client: httpxyz.AsyncClient, *, repository: ParsedGithubRepo) -> None:
         self._client = client
+        self._repository = repository
+        self._repo_path = f"/repos/{repository.owner}/{repository.repo}"
+        self._repository_variables: dict[str, object] = {
+            "owner": repository.owner,
+            "repo": repository.repo,
+        }
+
+    @property
+    def repository(self) -> ParsedGithubRepo:
+        """The GitHub repository every request targets."""
+
+        return self._repository
 
     async def __aenter__(self) -> GithubClient:
         return self
@@ -95,20 +108,18 @@ class GithubClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def get_repository(self, owner: str, repo: str) -> GithubRepository:
-        response = await self._request("GET", f"/repos/{owner}/{repo}")
+    async def get_repository(self) -> GithubRepository:
+        response = await self._request("GET", self._repo_path)
         return GithubRepository.model_validate(self._expect_success(response))
 
     async def list_pull_requests(
         self,
-        owner: str,
-        repo: str,
         *,
         head: str,
         state: str = "all",
     ) -> tuple[GithubPullRequest, ...]:
         payload = await self._get_paginated_json_array(
-            f"/repos/{owner}/{repo}/pulls",
+            f"{self._repo_path}/pulls",
             params={"head": head, "state": state},
             response_name="pull request list",
         )
@@ -116,21 +127,17 @@ class GithubClient:
 
     async def get_pull_request(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_number: int,
     ) -> GithubPullRequest:
         response = await self._request(
             "GET",
-            f"/repos/{owner}/{repo}/pulls/{pull_number}",
+            f"{self._repo_path}/pulls/{pull_number}",
         )
         return GithubPullRequest.model_validate(self._expect_success(response))
 
     async def get_pull_requests_by_numbers(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_numbers: Sequence[int],
     ) -> dict[int, GithubPullRequest | None]:
@@ -143,7 +150,7 @@ class GithubClient:
             query = _pull_requests_by_number_query(chunk)
             payload = await self._graphql_query(
                 query,
-                variables={"owner": owner, "repo": repo},
+                variables=self._repository_variables,
                 response_name="pull request batch lookup",
             )
             repository = _graphql_repository_payload(
@@ -168,8 +175,6 @@ class GithubClient:
 
     async def get_pull_requests_by_head_refs(
         self,
-        owner: str,
-        repo: str,
         *,
         head_refs: Sequence[str],
     ) -> dict[str, tuple[GithubPullRequest, ...]]:
@@ -183,7 +188,7 @@ class GithubClient:
             query = _pull_requests_by_head_ref_query(aliases)
             payload = await self._graphql_query(
                 query,
-                variables={"owner": owner, "repo": repo},
+                variables=self._repository_variables,
                 response_name="pull request head lookup",
             )
             repository = _graphql_repository_payload(
@@ -192,7 +197,7 @@ class GithubClient:
             )
             for alias, head_ref in aliases.items():
                 connection = repository.get(alias)
-                expected_head_label = f"{owner}:{head_ref}"
+                expected_head_label = f"{self._repository.owner}:{head_ref}"
                 results[head_ref] = _pull_request_connection_from_graphql(
                     alias=alias,
                     connection=connection,
@@ -203,8 +208,6 @@ class GithubClient:
 
     async def get_review_decisions_by_pull_request_numbers(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_numbers: Sequence[int],
     ) -> dict[int, str | None]:
@@ -217,7 +220,7 @@ class GithubClient:
             query = _pull_request_review_decisions_query(chunk)
             payload = await self._graphql_query(
                 query,
-                variables={"owner": owner, "repo": repo},
+                variables=self._repository_variables,
                 response_name="pull request review decision lookup",
             )
             repository = _graphql_repository_payload(
@@ -236,8 +239,6 @@ class GithubClient:
 
     async def create_pull_request(
         self,
-        owner: str,
-        repo: str,
         *,
         base: str,
         body: str,
@@ -247,7 +248,7 @@ class GithubClient:
     ) -> GithubPullRequest:
         response = await self._request(
             "POST",
-            f"/repos/{owner}/{repo}/pulls",
+            f"{self._repo_path}/pulls",
             json={
                 "base": base,
                 "body": body,
@@ -260,34 +261,28 @@ class GithubClient:
 
     async def list_pull_request_reviews(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_number: int,
     ) -> tuple[GithubPullRequestReview, ...]:
         payload = await self._get_paginated_json_array(
-            f"/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+            f"{self._repo_path}/pulls/{pull_number}/reviews",
             response_name="pull request reviews",
         )
         return tuple(GithubPullRequestReview.model_validate(item) for item in payload)
 
     async def list_issue_comments(
         self,
-        owner: str,
-        repo: str,
         *,
         issue_number: int,
     ) -> tuple[GithubIssueComment, ...]:
         payload = await self._get_paginated_json_array(
-            f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            f"{self._repo_path}/issues/{issue_number}/comments",
             response_name="issue comment list",
         )
         return tuple(GithubIssueComment.model_validate(item) for item in payload)
 
     async def get_issue_comments_by_pull_request_numbers(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_numbers: Sequence[int],
     ) -> dict[int, tuple[GithubIssueComment, ...]]:
@@ -301,7 +296,7 @@ class GithubClient:
             query = _pull_request_issue_comments_query(chunk)
             payload = await self._graphql_query(
                 query,
-                variables={"owner": owner, "repo": repo},
+                variables=self._repository_variables,
                 response_name="pull request issue comment lookup",
             )
             repository = _graphql_repository_payload(
@@ -321,73 +316,59 @@ class GithubClient:
                 results[number] = comments
 
         for number in fallback_numbers:
-            results[number] = await self.list_issue_comments(
-                owner,
-                repo,
-                issue_number=number,
-            )
+            results[number] = await self.list_issue_comments(issue_number=number)
         return results
 
     async def create_issue_comment(
         self,
-        owner: str,
-        repo: str,
         *,
         issue_number: int,
         body: str,
     ) -> GithubIssueComment:
         response = await self._request(
             "POST",
-            f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            f"{self._repo_path}/issues/{issue_number}/comments",
             json={"body": body},
         )
         return GithubIssueComment.model_validate(self._expect_success(response))
 
     async def update_issue_comment(
         self,
-        owner: str,
-        repo: str,
         *,
         comment_id: int,
         body: str,
     ) -> GithubIssueComment:
         response = await self._request(
             "PATCH",
-            f"/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            f"{self._repo_path}/issues/comments/{comment_id}",
             json={"body": body},
         )
         return GithubIssueComment.model_validate(self._expect_success(response))
 
     async def get_issue_comment(
         self,
-        owner: str,
-        repo: str,
         *,
         comment_id: int,
     ) -> GithubIssueComment:
         response = await self._request(
             "GET",
-            f"/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            f"{self._repo_path}/issues/comments/{comment_id}",
         )
         return GithubIssueComment.model_validate(self._expect_success(response))
 
     async def delete_issue_comment(
         self,
-        owner: str,
-        repo: str,
         *,
         comment_id: int,
     ) -> None:
         response = await self._request(
             "DELETE",
-            f"/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            f"{self._repo_path}/issues/comments/{comment_id}",
         )
         self._expect_no_content(response)
 
     async def request_reviewers(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_number: int,
         reviewers: list[str],
@@ -395,30 +376,26 @@ class GithubClient:
     ) -> None:
         response = await self._request(
             "POST",
-            f"/repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
+            f"{self._repo_path}/pulls/{pull_number}/requested_reviewers",
             json={"reviewers": reviewers, "team_reviewers": team_reviewers},
         )
         self._expect_success(response)
 
     async def add_labels(
         self,
-        owner: str,
-        repo: str,
         *,
         issue_number: int,
         labels: list[str],
     ) -> None:
         response = await self._request(
             "POST",
-            f"/repos/{owner}/{repo}/issues/{issue_number}/labels",
+            f"{self._repo_path}/issues/{issue_number}/labels",
             json={"labels": labels},
         )
         self._expect_success(response)
 
     async def update_pull_request(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_number: int,
         base: str,
@@ -427,7 +404,7 @@ class GithubClient:
     ) -> GithubPullRequest:
         response = await self._request(
             "PATCH",
-            f"/repos/{owner}/{repo}/pulls/{pull_number}",
+            f"{self._repo_path}/pulls/{pull_number}",
             json={"base": base, "body": body, "title": title},
         )
         return GithubPullRequest.model_validate(self._expect_success(response))
@@ -466,14 +443,12 @@ class GithubClient:
 
     async def close_pull_request(
         self,
-        owner: str,
-        repo: str,
         *,
         pull_number: int,
     ) -> None:
         response = await self._request(
             "PATCH",
-            f"/repos/{owner}/{repo}/issues/{pull_number}",
+            f"{self._repo_path}/issues/{pull_number}",
             json={"state": "closed"},
         )
         self._expect_success(response)
@@ -892,20 +867,21 @@ def _pull_request_connection_from_graphql(
     return tuple(pull_requests)
 
 
-def build_github_client(*, base_url: str) -> GithubClient:
+def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "jj-stack/dev",
     }
-    if token := github_token_for_base_url(base_url):
+    if token := github_token_for_base_url(repository.api_base_url):
         headers["Authorization"] = f"Bearer {token}"
 
     return GithubClient(
         httpxyz.AsyncClient(
-            base_url=base_url,
+            base_url=repository.api_base_url,
             headers=headers,
             timeout=30.0,
-        )
+        ),
+        repository=repository,
     )
 
 

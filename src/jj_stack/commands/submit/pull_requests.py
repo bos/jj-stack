@@ -8,7 +8,6 @@ import jj_stack.ui as ui
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import ParsedGithubRepo
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
 from jj_stack.models.review_state import CachedChange
 from jj_stack.review.bookmarks import BookmarkSource, bookmark_ownership_for_source
@@ -28,7 +27,6 @@ from .revisions import ensure_change_is_not_unlinked
 async def discover_pull_requests_by_bookmark(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     bookmarks: tuple[str, ...],
 ) -> dict[str, GithubPullRequest | None]:
     if not bookmarks:
@@ -36,8 +34,6 @@ async def discover_pull_requests_by_bookmark(
 
     try:
         discovered_pull_requests = await github_client.get_pull_requests_by_head_refs(
-            github_repository.owner,
-            github_repository.repo,
             head_refs=bookmarks,
         )
     except GithubClientError as error:
@@ -45,7 +41,7 @@ async def discover_pull_requests_by_bookmark(
 
     return {
         bookmark: _select_discovered_pull_request(
-            head_label=f"{github_repository.owner}:{bookmark}",
+            head_label=f"{github_client.repository.owner}:{bookmark}",
             pull_requests=discovered_pull_requests.get(bookmark, ()),
         )
         for bookmark in bookmarks
@@ -55,7 +51,6 @@ async def discover_pull_requests_by_bookmark(
 async def sync_pull_requests(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     options: SubmitOptions,
     pending_syncs: tuple[PendingPullRequestSync, ...],
     resolved_options: ResolvedSubmitOptions,
@@ -87,7 +82,6 @@ async def sync_pull_requests(
         items=pending_syncs,
         run_item=lambda pending_sync: _sync_pull_request(
             github_client=github_client,
-            github_repository=github_repository,
             options=options,
             pending_sync=pending_sync,
             resolved_options=resolved_options,
@@ -101,7 +95,6 @@ async def sync_pull_requests(
 async def _sync_pull_request(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     options: SubmitOptions,
     pending_sync: PendingPullRequestSync,
     resolved_options: ResolvedSubmitOptions,
@@ -130,7 +123,6 @@ async def _sync_pull_request(
                 body=body,
                 draft=(options.draft_mode in ("draft", "draft_all")),
                 github_client=github_client,
-                github_repository=github_repository,
                 head_branch=bookmark,
                 title=title,
             )
@@ -149,7 +141,6 @@ async def _sync_pull_request(
                 base_branch=pending_sync.base_branch,
                 body=body,
                 github_client=github_client,
-                github_repository=github_repository,
                 pull_request=discovered_pull_request,
                 title=title,
             )
@@ -160,7 +151,6 @@ async def _sync_pull_request(
             if not run.dry_run:
                 pull_request = await _mark_pull_request_ready_for_review(
                     github_client=github_client,
-                    github_repository=github_repository,
                     pull_request=pull_request,
                 )
             action = "updated"
@@ -168,7 +158,6 @@ async def _sync_pull_request(
             if not run.dry_run:
                 pull_request = await _convert_pull_request_to_draft(
                     github_client=github_client,
-                    github_repository=github_repository,
                     pull_request=pull_request,
                 )
             action = "updated"
@@ -183,7 +172,6 @@ async def _sync_pull_request(
     ):
         await _sync_pull_request_metadata(
             github_client=github_client,
-            github_repository=github_repository,
             labels=resolved_options.labels,
             pull_request_number=pull_request.number,
             reviewers=resolved_options.reviewers,
@@ -193,7 +181,6 @@ async def _sync_pull_request(
     if not run.dry_run and options.re_request and pull_request is not None:
         re_request_reviewers = await _load_re_request_reviewers(
             github_client=github_client,
-            github_repository=github_repository,
             pull_request_number=pull_request.number,
         )
         merged_reviewers = _merge_re_request_reviewers(
@@ -203,7 +190,6 @@ async def _sync_pull_request(
         if merged_reviewers != resolved_options.reviewers:
             await _sync_pull_request_metadata(
                 github_client=github_client,
-                github_repository=github_repository,
                 labels=[],
                 pull_request_number=pull_request.number,
                 reviewers=merged_reviewers,
@@ -252,13 +238,10 @@ async def _sync_pull_request(
 async def _load_re_request_reviewers(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request_number: int,
 ) -> list[str]:
     try:
         reviews = await github_client.list_pull_request_reviews(
-            github_repository.owner,
-            github_repository.repo,
             pull_number=pull_request_number,
         )
     except GithubClientError as error:
@@ -388,14 +371,11 @@ async def _create_pull_request(
     body: str,
     draft: bool,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     head_branch: str,
     title: str,
 ) -> GithubPullRequest:
     try:
         return await github_client.create_pull_request(
-            github_repository.owner,
-            github_repository.repo,
             base=base_branch,
             body=body,
             draft=draft,
@@ -411,7 +391,6 @@ async def _create_pull_request(
 async def _sync_pull_request_metadata(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     labels: list[str],
     pull_request_number: int,
     reviewers: list[str],
@@ -420,16 +399,12 @@ async def _sync_pull_request_metadata(
     try:
         if reviewers or team_reviewers:
             await github_client.request_reviewers(
-                github_repository.owner,
-                github_repository.repo,
                 pull_number=pull_request_number,
                 reviewers=reviewers,
                 team_reviewers=team_reviewers,
             )
         if labels:
             await github_client.add_labels(
-                github_repository.owner,
-                github_repository.repo,
                 issue_number=pull_request_number,
                 labels=labels,
             )
@@ -442,13 +417,12 @@ async def _sync_pull_request_metadata(
 async def _mark_pull_request_ready_for_review(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request: GithubPullRequest,
 ) -> GithubPullRequest:
     if pull_request.node_id is None:
         raise CliError(
             f"Could not publish draft pull request #{pull_request.number} for "
-            f"{github_repository.full_name}: GitHub did not return a node ID."
+            f"{github_client.repository.full_name}: GitHub did not return a node ID."
         )
     try:
         return await github_client.mark_pull_request_ready_for_review(
@@ -457,20 +431,19 @@ async def _mark_pull_request_ready_for_review(
     except GithubClientError as error:
         raise CliError(
             f"Could not publish draft pull request #{pull_request.number} for "
-            f"{github_repository.full_name}"
+            f"{github_client.repository.full_name}"
         ) from error
 
 
 async def _convert_pull_request_to_draft(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request: GithubPullRequest,
 ) -> GithubPullRequest:
     if pull_request.node_id is None:
         raise CliError(
             f"Could not return pull request #{pull_request.number} to draft for "
-            f"{github_repository.full_name}: GitHub did not return a node ID."
+            f"{github_client.repository.full_name}: GitHub did not return a node ID."
         )
     try:
         return await github_client.convert_pull_request_to_draft(
@@ -479,7 +452,7 @@ async def _convert_pull_request_to_draft(
     except GithubClientError as error:
         raise CliError(
             f"Could not return pull request #{pull_request.number} to draft for "
-            f"{github_repository.full_name}"
+            f"{github_client.repository.full_name}"
         ) from error
 
 
@@ -488,14 +461,11 @@ async def _update_pull_request(
     base_branch: str,
     body: str,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     pull_request: GithubPullRequest,
     title: str,
 ) -> GithubPullRequest:
     try:
         return await github_client.update_pull_request(
-            github_repository.owner,
-            github_repository.repo,
             pull_number=pull_request.number,
             base=base_branch,
             body=body,

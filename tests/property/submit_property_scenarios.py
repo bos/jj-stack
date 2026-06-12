@@ -238,11 +238,9 @@ def _install_submit_retry_fault(
     target_title = subject_for_label(scenario.failure_label)
 
     class FaultingGithubClient(GithubClient):
-        async def create_pull_request(self, owner, repo, *, base, body, draft=False, head, title):
+        async def create_pull_request(self, *, base, body, draft=False, head, title):
             nonlocal failed
             pull_request = await super().create_pull_request(
-                owner,
-                repo,
                 base=base,
                 body=body,
                 draft=draft,
@@ -261,11 +259,9 @@ def _install_submit_retry_fault(
                 )
             return pull_request
 
-        async def update_pull_request(self, owner, repo, *, pull_number, base, body, title):
+        async def update_pull_request(self, *, pull_number, base, body, title):
             nonlocal failed
             pull_request = await super().update_pull_request(
-                owner,
-                repo,
                 pull_number=pull_number,
                 base=base,
                 body=body,
@@ -280,11 +276,9 @@ def _install_submit_retry_fault(
                 raise GithubClientError("Simulated pull request update failure", status_code=500)
             return pull_request
 
-        async def add_labels(self, owner, repo, *, issue_number, labels):
+        async def add_labels(self, *, issue_number, labels):
             nonlocal failed
             await super().add_labels(
-                owner,
-                repo,
                 issue_number=issue_number,
                 labels=labels,
             )

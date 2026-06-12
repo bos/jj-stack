@@ -693,10 +693,10 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class FailOnFinalizeLoadClient(GithubClient):
-        async def get_pull_request(self, owner, repo, *, pull_number):
+        async def get_pull_request(self, *, pull_number):
             if pull_number == 1:
                 raise GithubClientError("Simulated finalization failure", status_code=500)
-            return await super().get_pull_request(owner, repo, pull_number=pull_number)
+            return await super().get_pull_request(pull_number=pull_number)
 
     patch_github_client_builders(
         monkeypatch,

@@ -31,7 +31,6 @@ from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.resolution import (
-    ParsedGithubRepo,
     resolve_github_target,
 )
 from jj_stack.github.stack_comments import (
@@ -266,12 +265,9 @@ async def _run_cleanup_async(
             and any(prepared_change.inspect_stack_comment for prepared_change in prepared_changes)
         ):
             github_repository = prepared_cleanup.github_repository
-            async with build_github_client(
-                base_url=github_repository.api_base_url
-            ) as github_client:
+            async with build_github_client(repository=github_repository) as github_client:
                 await _run_stack_comment_cleanup_pass(
                     github_client=github_client,
-                    github_repository=github_repository,
                     journal=journal,
                     next_changes=next_changes,
                     prepared_changes=prepared_changes,
@@ -534,7 +530,6 @@ def _apply_stale_cleanup_mutation_plans(
 async def _run_stack_comment_cleanup_pass(
     *,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_changes: tuple[PreparedCleanupChange, ...],
@@ -558,7 +553,6 @@ async def _run_stack_comment_cleanup_pass(
                 cached_change=prepared_change.cached_change,
                 bookmark_state=prepared_change.bookmark_state,
                 github_client=github_client,
-                github_repository=github_repository,
             ),
             on_success=lambda _index, _result: progress.advance(),
         )
@@ -573,7 +567,6 @@ async def _run_stack_comment_cleanup_pass(
             comment_plan=comment_plan,
             change_id=prepared_change.change_id,
             github_client=github_client,
-            github_repository=github_repository,
             journal=journal,
             next_changes=next_changes,
             prepared_cleanup=prepared_cleanup,
@@ -587,7 +580,6 @@ async def _apply_stack_comment_cleanup_action(
     comment_plan: StackCommentCleanupPlan,
     change_id: str,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
     journal: OperationJournal,
     next_changes: dict[str, CachedChange],
     prepared_cleanup: PreparedCleanup,
@@ -611,8 +603,6 @@ async def _apply_stack_comment_cleanup_action(
             ):
                 try:
                     await github_client.delete_issue_comment(
-                        github_repository.owner,
-                        github_repository.repo,
                         comment_id=comment_id,
                     )
                 except GithubClientError as error:
@@ -1045,14 +1035,12 @@ async def _plan_stack_comment_cleanup(
     cached_change: CachedChange,
     bookmark_state: BookmarkState,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
 ) -> StackCommentCleanupPlan | None:
     pull_request_number = cached_change.pr_number
     if pull_request_number is None and cached_change.is_unlinked:
         pull_request_number = await _resolve_unlinked_pull_request_number(
             bookmark_state=bookmark_state,
             github_client=github_client,
-            github_repository=github_repository,
         )
         if isinstance(pull_request_number, CleanupAction):
             return StackCommentCleanupPlan(actions=(pull_request_number,))
@@ -1062,8 +1050,6 @@ async def _plan_stack_comment_cleanup(
 
     try:
         pull_request = await github_client.get_pull_request(
-            github_repository.owner,
-            github_repository.repo,
             pull_number=pull_request_number,
         )
     except GithubClientError as error:
@@ -1075,7 +1061,7 @@ async def _plan_stack_comment_cleanup(
         bookmark = cached_change.bookmark
         if bookmark is None:
             return None
-        expected_label = f"{github_repository.owner}:{bookmark}"
+        expected_label = f"{github_client.repository.owner}:{bookmark}"
         if pull_request.head.ref == bookmark and pull_request.head.label == expected_label:
             return None
 
@@ -1083,7 +1069,6 @@ async def _plan_stack_comment_cleanup(
         cached_navigation_comment_id=cached_change.navigation_comment_id,
         cached_overview_comment_id=cached_change.overview_comment_id,
         github_client=github_client,
-        github_repository=github_repository,
         pull_request_number=pull_request_number,
     )
     if not lookups:
@@ -1128,16 +1113,13 @@ async def _resolve_unlinked_pull_request_number(
     *,
     bookmark_state: BookmarkState,
     github_client: GithubClient,
-    github_repository: ParsedGithubRepo,
 ) -> int | CleanupAction | None:
     if bookmark_state.name == "":
         return None
 
     try:
         pull_requests = await github_client.list_pull_requests(
-            github_repository.owner,
-            github_repository.repo,
-            head=f"{github_repository.owner}:{bookmark_state.name}",
+            head=f"{github_client.repository.owner}:{bookmark_state.name}",
             state="all",
         )
     except GithubClientError as error:

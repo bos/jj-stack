@@ -28,12 +28,13 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    def build_github_client(*, base_url: str) -> GithubClient:
+    def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
         return GithubClient(
             httpxyz.AsyncClient(
-                base_url=base_url,
+                base_url=repository.api_base_url,
                 transport=httpxyz.ASGITransport(app=app),
-            )
+            ),
+            repository=repository,
         )
 
     monkeypatch.setattr(doctor_mod, "build_github_client", build_github_client)
@@ -118,7 +119,7 @@ def test_doctor_reports_repo_access_failure_without_network_hint(
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
 
     class FailingGithubClient(GithubClient):
-        async def get_repository(self, owner: str, repo: str):
+        async def get_repository(self):
             raise GithubClientError(
                 'GitHub request failed: 404 {"message":"Not Found","documentation_url":"x"}',
                 status_code=404,
@@ -127,7 +128,10 @@ def test_doctor_reports_repo_access_failure_without_network_hint(
     monkeypatch.setattr(
         doctor_mod,
         "build_github_client",
-        lambda *, base_url: FailingGithubClient(httpxyz.AsyncClient(base_url=base_url)),
+        lambda *, repository: FailingGithubClient(
+            httpxyz.AsyncClient(base_url=repository.api_base_url),
+            repository=repository,
+        ),
     )
 
     exit_code = run_main(repo, config_path, "doctor")

@@ -292,13 +292,13 @@ def test_unstack_apply_reports_blocked_when_github_is_unavailable(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def list_pull_requests(self, owner, repo, *, head, state="all"):
+        async def list_pull_requests(self, *, head, state="all"):
             raise GithubClientError("Connection refused")
 
-        async def list_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def list_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(
@@ -1020,10 +1020,10 @@ def test_unstack_cleanup_pull_request_reports_blocked_when_github_is_unavailable
     run_command(["jj", "abandon", change_id], repo)
 
     class OfflineGithubClient(GithubClient):
-        async def get_pull_request(self, owner, repo, *, pull_number):
+        async def get_pull_request(self, *, pull_number):
             raise GithubClientError("Connection refused")
 
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(

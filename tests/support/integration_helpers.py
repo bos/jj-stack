@@ -54,12 +54,13 @@ def configure_fake_github_environment(
     )
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    def build_github_client(*, base_url: str) -> GithubClient:
+    def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
         return GithubClient(
             httpxyz.AsyncClient(
-                base_url=base_url,
+                base_url=repository.api_base_url,
                 transport=httpxyz.ASGITransport(app=app),
-            )
+            ),
+            repository=repository,
         )
 
     def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:
@@ -161,12 +162,13 @@ def _build_submitted_feature_template(template_root: Path) -> None:
 
         app = create_app(FakeGithubState.single_repository(fake_repo))
 
-        def build_github_client(*, base_url: str) -> GithubClient:
+        def build_github_client(*, repository: ParsedGithubRepo) -> GithubClient:
             return GithubClient(
                 httpxyz.AsyncClient(
-                    base_url=base_url,
+                    base_url=repository.api_base_url,
                     transport=httpxyz.ASGITransport(app=app),
-                )
+                ),
+                repository=repository,
             )
 
         def parse_github_repo(*_args, **_kwargs) -> ParsedGithubRepo:

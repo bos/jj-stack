@@ -105,11 +105,9 @@ async def _run_relink_async(
     )
 
     with console.spinner(description="Loading pull request"):
-        async with build_github_client(base_url=github_repository.api_base_url) as github_client:
+        async with build_github_client(repository=github_repository) as github_client:
             try:
                 pull_request = await github_client.get_pull_request(
-                    github_repository.owner,
-                    github_repository.repo,
                     pull_number=pull_request_number,
                 )
             except GithubClientError as error:

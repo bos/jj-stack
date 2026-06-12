@@ -106,9 +106,7 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
     class FakeGithubClientContext:
         async def __aenter__(self):
             return SimpleNamespace(
-                delete_issue_comment=lambda owner, repo, *, comment_id: _record_deleted_comment(
-                    comment_id
-                )
+                delete_issue_comment=lambda *, comment_id: _record_deleted_comment(comment_id)
             )
 
         async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -204,11 +202,6 @@ def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
             comment_plan=StackCommentCleanupPlan(actions=(blocked_action,)),
             change_id="change-1",
             github_client=cast(GithubClient, SimpleNamespace()),
-            github_repository=ParsedGithubRepo(
-                host="github.com",
-                owner="octo-org",
-                repo="stacked-review",
-            ),
             journal=OperationJournal.disabled(),
             next_changes={},
             prepared_cleanup=prepared_cleanup,
@@ -249,7 +242,7 @@ def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks
     )
 
     class FakeGithubClient:
-        async def get_pull_request(self, owner, repo, *, pull_number):
+        async def get_pull_request(self, *, pull_number):
             return SimpleNamespace(
                 head=SimpleNamespace(
                     label="octo-org:review/other",
@@ -267,11 +260,6 @@ def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks
                 pr_number=1,
             ),
             github_client=cast(GithubClient, FakeGithubClient()),
-            github_repository=ParsedGithubRepo(
-                host="github.com",
-                owner="octo-org",
-                repo="stacked-review",
-            ),
         )
     )
 

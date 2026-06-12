@@ -284,7 +284,7 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class FailingPullRequestLookupClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError(
                 'GitHub request failed: 404 {"message":"Not Found","documentation_url":"x"}',
                 status_code=404,
@@ -321,7 +321,7 @@ def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(
@@ -353,7 +353,7 @@ def test_view_exits_nonzero_when_pull_request_lookup_fails(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class FailingPullRequestLookupClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError(
                 'GitHub request failed: 422 {"message":"Validation Failed"}',
                 status_code=422,
@@ -416,7 +416,7 @@ def test_view_skips_stack_comment_github_reads(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class FailingCommentLookupClient(GithubClient):
-        async def list_issue_comments(self, owner, repo, *, issue_number):
+        async def list_issue_comments(self, *, issue_number):
             raise AssertionError("status should not inspect stack comments")
 
     patch_github_client_builders(
@@ -501,7 +501,7 @@ def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, owner, repo, *, head_refs):
+        async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(

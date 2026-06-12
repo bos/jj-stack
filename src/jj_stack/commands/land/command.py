@@ -247,11 +247,9 @@ async def _stream_land_async(
     if github_repository is None or remote is None:
         raise AssertionError("Prepared land requires resolved GitHub and remote targets.")
 
-    async with build_github_client(base_url=github_repository.api_base_url) as github_client:
+    async with build_github_client(repository=github_repository) as github_client:
         try:
             github_repository_state = await github_client.get_repository(
-                github_repository.owner,
-                github_repository.repo,
             )
         except GithubClientError as error:
             raise CliError(
@@ -288,7 +286,6 @@ async def _stream_land_async(
                     applied=False,
                     bypass_readiness=prepared_land.bypass_readiness,
                     blocked=plan.blocked,
-                    github_repository=github_repository.full_name,
                     remote_name=remote.name,
                     selected_revset=status_result.selected_revset,
                     trunk_branch=trunk_branch,
@@ -297,7 +294,6 @@ async def _stream_land_async(
             return await execute_land_plan(
                 bookmark_cleanup_plans=bookmark_cleanup_plans,
                 github_client=github_client,
-                github_repository=github_repository,
                 plan=plan,
                 prepared_land=prepared_land,
                 remote_name=remote.name,

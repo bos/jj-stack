@@ -174,7 +174,6 @@ async def _run_cleanup_revision(*, bookmark_state: BookmarkState) -> _CleanupRes
         commit_id="commit-1",
         context=_CloseCleanupContext(
             github_client=cast(GithubClient, SimpleNamespace()),
-            github_repository=_GITHUB_REPO,
             next_changes={},
             prepared_close=_prepared_close(jj_client=jj_client),
             record_action=actions.append,
@@ -204,7 +203,6 @@ def test_cleanup_revision_deletes_external_bookmark_when_configured() -> None:
             commit_id="commit-1",
             context=_CloseCleanupContext(
                 github_client=cast(GithubClient, SimpleNamespace()),
-                github_repository=_GITHUB_REPO,
                 next_changes={},
                 prepared_close=_prepared_close(
                     cleanup_user_bookmarks=True,
