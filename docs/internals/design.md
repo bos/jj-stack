@@ -2,7 +2,7 @@
 
 ## Summary
 
-`jj-review` turns a linear chain of `jj` changes into a stack of GitHub pull requests
+`jj-stack` turns a linear chain of `jj` changes into a stack of GitHub pull requests
 without making side metadata the source of truth.
 
 The model is small:
@@ -12,7 +12,7 @@ The model is small:
 - each change gets one bookmark, used as that change's PR head branch
 - the local stack is rediscovered from the `jj` DAG on every run, not from a saved parent map
 
-The only thing `jj-review` saves locally is a small per-change record holding the bookmark
+The only thing `jj-stack` saves locally is a small per-change record holding the bookmark
 name, the PR number/URL, and a couple of flags. Everything else is derived. That keeps the
 tool feeling like an extension of `jj` rather than a parallel stack manager.
 
@@ -36,7 +36,7 @@ The intended policy is:
 - PRs targeting `main` may be merged
 - PRs targeting `review/*` are review-only and must not be merged directly on GitHub
 
-When `jj-review` sees a merged PR whose base matches the review-branch prefix, it diagnoses
+When `jj-stack` sees a merged PR whose base matches the review-branch prefix, it diagnoses
 that as a repo policy problem and tells the user to fix the GitHub setting. It is not a
 mysterious stack failure.
 
@@ -84,7 +84,7 @@ base.
   `immutable_heads()`
 
 By default that means `trunk()`, tags, and untracked remote bookmarks define immutable
-history. If the repo customizes `immutable_heads()`, `jj-review` honors that rather than
+history. If the repo customizes `immutable_heads()`, `jj-stack` honors that rather than
 maintaining its own competing notion of what is safe to review or rewrite.
 
 ### Review stack
@@ -94,7 +94,7 @@ A review stack is a linear chain of review changes from a chosen head back to `t
 Commands that operate on a stack validate only that one parent chain. Other visible
 children elsewhere in the DAG are separate stacks, not an automatic error.
 
-`jj-review` only supports linear stacks. It rejects (or asks for manual help with):
+`jj-stack` only supports linear stacks. It rejects (or asks for manual help with):
 
 - merge commits inside the chain
 - divergent changes
@@ -115,7 +115,7 @@ bookmark name is readable to humans and stable for tooling.
 
 By default it is built from:
 
-- the configured prefix from `[jj-review] bookmark_prefix` (default `review`)
+- the configured prefix from `[jj-stack] bookmark_prefix` (default `review`)
 - a slug from the first line of the commit description
 - a short fixed-length `change_id` suffix (8 chars by default)
 
@@ -250,7 +250,7 @@ the wrong default for both:
 
 So storage splits in two:
 
-- human-authored config in `jj`'s normal config scopes under the `jj-review` namespace
+- human-authored config in `jj`'s normal config scopes under the `jj-stack` namespace
 - tracking state in `~/.local/state/jj-review/repos/<repo-id>/state.json`
 
 Repo defaults follow `jj`'s own precedence:
@@ -259,7 +259,7 @@ Repo defaults follow `jj`'s own precedence:
 - repo config (`jj config edit --repo`)
 - workspace config (`jj config edit --workspace`)
 
-That keeps `jj-review` aligned with `jj`'s config model rather than inventing a parallel
+That keeps `jj-stack` aligned with `jj`'s config model rather than inventing a parallel
 conditional-matching system.
 
 `<repo-id>` is derived from the canonical `.jj/repo` storage path. That keeps state
@@ -409,7 +409,7 @@ There is no meaningful stack metadata to add when the stack has only one PR.
 
 ## Recovery and repair
 
-When review identity is unclear, `jj-review` is conservative.
+When review identity is unclear, `jj-stack` is conservative.
 
 If `submit` cannot prove that a change still corresponds to the same review branch and
 PR, it stops with a targeted diagnostic rather than guessing. It does not silently open
@@ -640,7 +640,7 @@ artifacts the tool can verify belong to the stack:
 - preserve external bookmarks (e.g. ones reused via `use_bookmarks`) unless the user
   opts in to cleaning them up too
 
-That opt-in is `cleanup_user_bookmarks = true` under `[jj-review]`. The default is
+That opt-in is `cleanup_user_bookmarks = true` under `[jj-stack]`. The default is
 `false`.
 
 The opt-in stays explicit because closing PRs is less destructive than deleting
@@ -1272,11 +1272,11 @@ Shape:
 }
 ```
 
-Config goes under `[jj-review]` in the standard `jj` config scopes
+Config goes under `[jj-stack]` in the standard `jj` config scopes
 (`jj config edit --user|--repo|--workspace`), for example:
 
 ```toml
-[jj-review]
+[jj-stack]
 reviewers = ["octocat"]
 labels = ["needs-review"]
 ```

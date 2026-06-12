@@ -3,9 +3,9 @@
 Shows one row per review stack in this repo, including the head change ID, stack size, review
 state, and description of the head commit.
 
-It also shows orphaned PRs: open PRs that `jj-review` still knows about, but whose local change
+It also shows orphaned PRs: open PRs that `jj-stack` still knows about, but whose local change
 is no longer part of any current review stack. Close those explicitly with
-`jj-review unstack --cleanup --pull-request <pr>`.
+`jj-stack unstack --cleanup --pull-request <pr>`.
 
 `--fetch` runs a fetch first so the report uses current remote branch locations.
 """

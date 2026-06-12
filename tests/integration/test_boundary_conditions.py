@@ -154,8 +154,8 @@ def _add_github_like_remote(repo: Path) -> None:
 
 
 def _write_config(tmp_path: Path) -> Path:
-    config_path = tmp_path / "jj-review-config.toml"
-    config_path.write_text("[jj-review]\n", encoding="utf-8")
+    config_path = tmp_path / "jj-stack-config.toml"
+    config_path.write_text("[jj-stack]\n", encoding="utf-8")
     return config_path
 
 

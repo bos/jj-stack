@@ -1,4 +1,4 @@
-"""Persistence helpers for jj-review tracking data."""
+"""Persistence helpers for jj-stack tracking data."""
 
 from __future__ import annotations
 
@@ -21,14 +21,14 @@ class ReviewStateError(CliError):
 
 
 class ReviewStateStore:
-    """Load and save jj-review data in a user state directory."""
+    """Load and save jj-stack data in a user state directory."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
 
     @classmethod
     def for_repo(cls, repo_root: Path) -> ReviewStateStore:
-        """Build a jj-review data store for the supplied repository root."""
+        """Build a jj-stack data store for the supplied repository root."""
 
         return cls(resolve_state_path(repo_root))
 
@@ -43,7 +43,7 @@ class ReviewStateStore:
             self._path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as error:
             raise ReviewStateError(
-                f"Could not create jj-review data directory {self._path.parent}: {error}"
+                f"Could not create jj-stack data directory {self._path.parent}: {error}"
             ) from error
         return self._path.parent
 
@@ -53,10 +53,10 @@ class ReviewStateStore:
         try:
             return self._load_state()
         except ValidationError as error:
-            raise ReviewStateError(f"Invalid jj-review data in {self._path}: {error}") from error
+            raise ReviewStateError(f"Invalid jj-stack data in {self._path}: {error}") from error
 
     def save(self, state: ReviewState) -> None:
-        """Persist the supplied jj-review data."""
+        """Persist the supplied jj-stack data."""
 
         rendered = state.model_dump_json(exclude_none=True, indent=2) + "\n"
         try:
@@ -75,31 +75,31 @@ class ReviewStateStore:
                 raise
         except OSError as error:
             raise ReviewStateError(
-                f"Could not write jj-review data file {self._path}: {error}"
+                f"Could not write jj-stack data file {self._path}: {error}"
             ) from error
 
     def _load_state(self) -> ReviewState:
         if not self._path.exists():
             return ReviewState()
         if not self._path.is_file():
-            raise ReviewStateError(f"jj-review data path is not a file: {self._path}")
+            raise ReviewStateError(f"jj-stack data path is not a file: {self._path}")
         try:
             return ReviewState.model_validate_json(self._path.read_text(encoding="utf-8"))
         except OSError as error:
             raise ReviewStateError(
-                f"Could not read jj-review data file {self._path}: {error}"
+                f"Could not read jj-stack data file {self._path}: {error}"
             ) from error
 
 
 def resolve_state_path(repo_root: Path) -> Path:
-    """Return the machine-written jj-review data path for the repo."""
+    """Return the machine-written jj-stack data path for the repo."""
 
     repo_id = _repo_storage_id(repo_root)
     return default_state_root() / STATE_DIRNAME / "repos" / repo_id / STATE_FILENAME
 
 
 def default_state_root() -> Path:
-    """Return the base directory used for machine-written jj-review data."""
+    """Return the base directory used for machine-written jj-stack data."""
 
     configured = os.environ.get("XDG_STATE_HOME")
     if configured:

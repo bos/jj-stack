@@ -1,4 +1,4 @@
-"""CLI entrypoint for the standalone `jj-review` executable."""
+"""CLI entrypoint for the standalone `jj-stack` executable."""
 
 from __future__ import annotations
 
@@ -47,9 +47,9 @@ from jj_stack.jj.client import JjCliArgs
 
 logger = logging.getLogger(__name__)
 _COLOR_CHOICES: tuple[RequestedColorMode, ...] = ("always", "never", "debug", "auto")
-_TOP_LEVEL_HELP_USAGE = "jj-review [--help] [--color WHEN] [--version] [<command> ...]"
+_TOP_LEVEL_HELP_USAGE = "jj-stack [--help] [--color WHEN] [--version] [<command> ...]"
 _TOP_LEVEL_HELP_DESCRIPTION = """
-`jj-review` lets you review a series of `jj` changes on GitHub as stacked pull requests.
+`jj-stack` lets you review a series of `jj` changes on GitHub as stacked pull requests.
 
 Use it to submit and refresh changes for review, inspect pull request status, land ready
 changes, list locally known stacks, and clean up after a review.
@@ -187,7 +187,7 @@ def build_parser() -> ArgumentParser:
     """Build the top-level CLI parser and subcommands."""
 
     parser = _TopLevelArgumentParser(
-        prog="jj-review",
+        prog="jj-stack",
         description=_normalized_help_text(_TOP_LEVEL_HELP_DESCRIPTION),
     )
     _add_common_options(parser, suppress_defaults=False)
@@ -429,7 +429,7 @@ def build_parser() -> ArgumentParser:
     unstack_parser.add_argument(
         "--cleanup",
         action="store_true",
-        help="Delete jj-review-managed branches, bookmarks, and tracking data",
+        help="Delete jj-stack-managed branches, bookmarks, and tracking data",
     )
     _add_help_argument(
         unstack_parser,
@@ -590,7 +590,7 @@ def _action_help_body(action: Any) -> ui.Message | str:
 def _top_level_usage_message(*, include_hidden: bool) -> ui.Message:
     if include_hidden:
         return (
-            t"{ui.cmd('jj-review')} [{ui.cmd('--help')}] "
+            t"{ui.cmd('jj-stack')} [{ui.cmd('--help')}] "
             t"[{ui.cmd('--repository REPO')}] "
             t"[{ui.cmd('--config NAME=VALUE')}] [{ui.cmd('--config-file PATH')}] "
             t"[{ui.cmd('--debug')}] [{ui.cmd('--color WHEN')}] "
@@ -598,7 +598,7 @@ def _top_level_usage_message(*, include_hidden: bool) -> ui.Message:
             t"[{ui.cmd('<command>')} ...]"
         )
     return (
-        t"{ui.cmd('jj-review')} [{ui.cmd('--help')}] [{ui.cmd('--color WHEN')}] "
+        t"{ui.cmd('jj-stack')} [{ui.cmd('--help')}] [{ui.cmd('--color WHEN')}] "
         t"[{ui.cmd('--version')}] [{ui.cmd('<command>')} ...]"
     )
 
@@ -706,7 +706,7 @@ def _emit_top_level_help(parser: ArgumentParser, *, include_hidden: bool) -> Non
     if not include_hidden:
         console.output()
         console.output(
-            t"Run {ui.cmd('jj-review help --all')} to show advanced commands and options."
+            t"Run {ui.cmd('jj-stack help --all')} to show advanced commands and options."
         )
 
     option_actions = [
@@ -844,7 +844,7 @@ def _cli_parse_error(message: str) -> CliError:
 def _unknown_command_error(command_name: str) -> CliError:
     return CliError(
         t"Unknown command {ui.cmd(command_name)}.",
-        hint=t"Run {ui.cmd('jj-review help')} to list commands.",
+        hint=t"Run {ui.cmd('jj-stack help')} to list commands.",
     )
 
 
@@ -956,7 +956,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _default_view_handler(args: Namespace) -> int:
-    """Run bare `jj-review` as the default `view` command."""
+    """Run bare `jj-stack` as the default `view` command."""
 
     return view_command.view(
         cli_args=_global_cli_args(args),

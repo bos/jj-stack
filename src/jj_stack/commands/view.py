@@ -385,7 +385,7 @@ def _render_prepared_status(
             prepared_status=prepared_status,
         )
     if result.cache_update_skipped:
-        console.warning("Cache not refreshed: another jj-review operation is running.")
+        console.warning("Cache not refreshed: another jj-stack operation is running.")
 
     github_message = github_unavailable_message(
         github_error=result.github_error,
@@ -682,7 +682,7 @@ def render_status_advisory_lines(
                 (
                     "After cleanup",
                     (
-                        ui.cmd("jj-review submit"),
+                        ui.cmd("jj-stack submit"),
                         " ",
                         ui.revset(result.selected_revset),
                     ),
@@ -693,7 +693,7 @@ def render_status_advisory_lines(
                 (
                     "Next step",
                     (
-                        ui.cmd("jj-review submit"),
+                        ui.cmd("jj-stack submit"),
                         " ",
                         ui.revset(result.selected_revset),
                     ),
@@ -713,11 +713,11 @@ def render_status_advisory_lines(
             (
                 "Next step",
                 (
-                    ui.cmd("jj-review cleanup --rebase"),
+                    ui.cmd("jj-stack cleanup --rebase"),
                     " ",
                     ui.revset(result.selected_revset),
                     " or ",
-                    ui.cmd("jj-review cleanup --rebase --dry-run"),
+                    ui.cmd("jj-stack cleanup --rebase --dry-run"),
                     " ",
                     ui.revset(result.selected_revset),
                 ),
@@ -859,7 +859,7 @@ def _link_advisory_summary_row(
 ) -> tuple[ui.TableCell, ui.TableCell]:
     states = {_link_advisory_kind(revision) for revision in link_revisions}
     change_phrase = _link_advisory_change_phrase(link_revisions)
-    restart_submit_command = ui.cmd(f"jj-review submit --restart {selected_revset}")
+    restart_submit_command = ui.cmd(f"jj-stack submit --restart {selected_revset}")
     if states == {"closed"}:
         label = "Closed GitHub PR" if len(link_revisions) == 1 else "Closed GitHub PRs"
         closed_phrase = "a closed PR" if len(link_revisions) == 1 else "closed PRs"
@@ -876,7 +876,7 @@ def _link_advisory_summary_row(
         detail = (
             "GitHub did not report a PR for the remembered review branch of "
             f"{change_phrase}. Run ",
-            ui.cmd("jj-review view --fetch <change>"),
+            ui.cmd("jj-stack view --fetch <change>"),
             " if branch state may be stale. Relink an open PR if one exists; otherwise run ",
             restart_submit_command,
             " to create fresh PRs.",
@@ -887,7 +887,7 @@ def _link_advisory_summary_row(
         detail = (
             "GitHub reports multiple PRs for the remembered review branch of "
             f"{change_phrase}. Run ",
-            ui.cmd("jj-review view --fetch <change>"),
+            ui.cmd("jj-stack view --fetch <change>"),
             " to refresh, then relink the intended open PR.",
         )
         return label, detail

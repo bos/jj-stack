@@ -1,4 +1,4 @@
-"""Host system helpers used across jj-review."""
+"""Host system helpers used across jj-stack."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Repo-scoped operation lock for jj-review state mutations."""
+"""Repo-scoped operation lock for jj-stack state mutations."""
 
 from __future__ import annotations
 
@@ -226,7 +226,7 @@ def _clear_holder_if_owned(holder_path: Path, holder: OperationLockHolder) -> No
 
 def _operation_lock_busy_message(holder: OperationLockHolder | None) -> str:
     if holder is None:
-        return "Another jj-review operation is already running."
+        return "Another jj-stack operation is already running."
     if not pid_is_alive(holder.pid):
         return (
             f"Operation lock is held but the recorded {holder.command} holder "
@@ -234,6 +234,6 @@ def _operation_lock_busy_message(holder: OperationLockHolder | None) -> str:
             f"Wait for the previous process to exit or retry shortly."
         )
     return (
-        f"Another jj-review {holder.command} operation is already running "
+        f"Another jj-stack {holder.command} operation is already running "
         f"(PID {holder.pid}, started {holder.started_at})."
     )

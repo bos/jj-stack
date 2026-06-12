@@ -1,4 +1,4 @@
-"""Check jj-review's configuration and connectivity.
+"""Check jj-stack's configuration and connectivity.
 
 Runs a series of read-only checks and prints a status line for each. Nothing
 is changed. Exit status is 0 if all checks pass or warn; 1 if any check fails.

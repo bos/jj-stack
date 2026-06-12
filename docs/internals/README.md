@@ -1,10 +1,10 @@
 # Internal notes
 
 This directory contains design documents and implementation notes for the
-`jj-review` codebase. It is written primarily by and for agents working on
+`jj-stack` codebase. It is written primarily by and for agents working on
 the project. Most users of the tool will never need to read any of this.
 
-If you are looking for how to use `jj-review`, see the [user guide](../README.md).
+If you are looking for how to use `jj-stack`, see the [user guide](../README.md).
 
 ## Contents
 

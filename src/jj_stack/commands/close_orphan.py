@@ -692,7 +692,7 @@ def _blocked_orphaned_close_github_action() -> CloseAction:
     return CloseAction(
         kind="close",
         body=(
-            "cannot close pull requests tracked by jj-review without live GitHub state; "
+            "cannot close pull requests tracked by jj-stack without live GitHub state; "
             "fix GitHub access and retry"
         ),
         status="blocked",

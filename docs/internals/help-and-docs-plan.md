@@ -1,6 +1,6 @@
 # User-Facing Help and Docs Plan
 
-This file is the working plan for improving `jj-review`'s user-facing help and docs.
+This file is the working plan for improving `jj-stack`'s user-facing help and docs.
 
 The goal is a docs/help surface that fits this tool's actual model, teaches the right mental
 model to jj users, and makes recovery paths easy to find. Competitor parity is not the goal.
@@ -37,7 +37,7 @@ questions still require reading several pages or inferring behavior from command
 
 ## 2. Principles
 
-1. Teach `jj-review`, not competitor workflows.
+1. Teach `jj-stack`, not competitor workflows.
 2. Assume the reader already knows `jj` and `git`.
 3. Keep user docs and `--help` free of internal design-doc jargon.
 4. Describe what the user should do next, not how the implementation feels about itself.
@@ -157,7 +157,7 @@ Rules for the diagram:
 
 - identify revisions by `change_id`
 - show review bookmarks as `review/...` or another explicitly configured review prefix
-- do not teach user feature branches as if they were `jj-review`'s managed transport branches
+- do not teach user feature branches as if they were `jj-stack`'s managed transport branches
 - reuse the same diagram shape where it helps, rather than creating competing diagrams
 
 ### 4d. A glossary is optional, not mandatory
@@ -200,12 +200,12 @@ These ideas are out of scope unless the product direction changes:
 
 - do not use competitor parity as the success metric
 - do not promote `unlink` into the default help surface; it is an advanced repair command
-- do not add a `jj-review docs` command
+- do not add a `jj-stack docs` command
 - do not introduce a semantic exit-code taxonomy just for documentation symmetry
 - do not force a major docs tree rewrite before the content gaps are fixed
 - do not add user-facing jargon that `docs/AGENTS.md` already bans
 - do not teach `feat/*` or other ordinary feature branches as the review branches
-  `jj-review` manages
+  `jj-stack` manages
 
 ## 7. Sequencing
 

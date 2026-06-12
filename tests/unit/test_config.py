@@ -22,7 +22,7 @@ def _patch_config_output(
         assert kwargs["check"] is False
         assert Path(kwargs["cwd"]) == tmp_path
         assert kwargs["text"] is True
-        assert tuple(command[-3:]) == ("config", "list", "jj-review")
+        assert tuple(command[-3:]) == ("config", "list", "jj-stack")
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -45,13 +45,13 @@ def test_load_config_parses_resolved_jj_stack_section(
 ) -> None:
     stdout = "\n".join(
         [
-            'jj-review.bookmark_prefix = "bosullivan"',
-            "jj-review.cleanup_user_bookmarks = true",
-            'jj-review.reviewers = ["octocat"]',
-            'jj-review.team_reviewers = ["platform"]',
-            'jj-review.use_bookmarks = ["potato/*", "", "spam/eggs", "potato/*"]',
-            'jj-review.labels = ["needs-review"]',
-            'jj-review.logging.level = "info"',
+            'jj-stack.bookmark_prefix = "bosullivan"',
+            "jj-stack.cleanup_user_bookmarks = true",
+            'jj-stack.reviewers = ["octocat"]',
+            'jj-stack.team_reviewers = ["platform"]',
+            'jj-stack.use_bookmarks = ["potato/*", "", "spam/eggs", "potato/*"]',
+            'jj-stack.labels = ["needs-review"]',
+            'jj-stack.logging.level = "info"',
             "",
         ]
     )
@@ -70,7 +70,7 @@ def test_load_config_parses_resolved_jj_stack_section(
 def test_load_config_ignores_unknown_keys_inside_jj_stack_section(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stdout = 'jj-review.potato = "round"\n'
+    stdout = 'jj-stack.potato = "round"\n'
 
     _patch_config_output(monkeypatch, tmp_path, stdout)
     config = load_config(jj_client=JjClient(tmp_path))
@@ -82,17 +82,17 @@ def test_load_config_ignores_unknown_keys_inside_jj_stack_section(
 def test_load_config_rejects_likely_top_level_typo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stdout = 'jj-review.bookmark_prefx = "bos"\n'
+    stdout = 'jj-stack.bookmark_prefx = "bos"\n'
     _patch_config_output(monkeypatch, tmp_path, stdout)
 
-    with pytest.raises(CliError, match=r"Did you mean \[jj-review\]\.bookmark_prefix\?"):
+    with pytest.raises(CliError, match=r"Did you mean \[jj-stack\]\.bookmark_prefix\?"):
         load_config(jj_client=JjClient(tmp_path))
 
 
 def test_load_config_rejects_invalid_logging_level(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stdout = 'jj-review.logging.level = "DEBIG"\n'
+    stdout = 'jj-stack.logging.level = "DEBIG"\n'
     _patch_config_output(monkeypatch, tmp_path, stdout)
 
     with pytest.raises(CliError, match="Invalid logging level"):
@@ -102,7 +102,7 @@ def test_load_config_rejects_invalid_logging_level(
 def test_load_config_rejects_bookmark_prefix_with_slash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stdout = 'jj-review.bookmark_prefix = "bosullivan/review"\n'
+    stdout = 'jj-stack.bookmark_prefix = "bosullivan/review"\n'
     _patch_config_output(monkeypatch, tmp_path, stdout)
 
     with pytest.raises(CliError, match="bookmark_prefix"):
@@ -112,8 +112,8 @@ def test_load_config_rejects_bookmark_prefix_with_slash(
 def test_parse_jj_stack_config_toml_extracts_nested_tables() -> None:
     stdout = "\n".join(
         [
-            'jj-review.bookmark_prefix = "bos"',
-            'jj-review.logging.level = "INFO"',
+            'jj-stack.bookmark_prefix = "bos"',
+            'jj-stack.logging.level = "INFO"',
             "",
         ]
     )
@@ -141,7 +141,7 @@ def test_load_config_wraps_jj_command_failure_with_user_facing_message(
         load_config(jj_client=client)
 
     message = str(exc_info.value)
-    assert message.startswith("Could not load jj-review config:")
+    assert message.startswith("Could not load jj-stack config:")
     assert "Invalid config-file path" in message
 
 
@@ -157,14 +157,14 @@ def test_load_config_surfaces_cli_args_through_to_jj(
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout='jj-review.bookmark_prefix = "bos"\n',
+            stdout='jj-stack.bookmark_prefix = "bos"\n',
             stderr="",
         )
 
     monkeypatch.setattr(subprocess, "run", run)
     client = JjClient(
         tmp_path,
-        cli_args=JjCliArgs(argv=("--config", "jj-review.bookmark_prefix=bos")),
+        cli_args=JjCliArgs(argv=("--config", "jj-stack.bookmark_prefix=bos")),
     )
     config = load_config(jj_client=client)
 
@@ -173,9 +173,9 @@ def test_load_config_surfaces_cli_args_through_to_jj(
         (
             "jj",
             "--config",
-            "jj-review.bookmark_prefix=bos",
+            "jj-stack.bookmark_prefix=bos",
             "config",
             "list",
-            "jj-review",
+            "jj-stack",
         )
     ]

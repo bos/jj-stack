@@ -91,7 +91,7 @@ def test_view_does_not_warn_when_unrelated_stack_changed_since_last_submit(
     assert new_beta_head_change_id[:8] not in captured.err
     assert alpha_head_change_id[:8] not in captured.err
     assert "changed since its last submit" not in captured.err
-    assert "jj-review view" not in normalized_err
+    assert "jj-stack view" not in normalized_err
 
 
 def test_view_warns_when_other_stack_is_built_on_selected_stack(
@@ -121,8 +121,8 @@ def test_view_warns_when_other_stack_is_built_on_selected_stack(
     assert exit_code == 0
     assert beta_head_change_id[:8] in captured.err
     assert "changed since its last submit" in captured.err
-    assert f"jj-review view {beta_head_change_id[:8]}" in normalized_err
-    assert f"jj-review submit {beta_head_change_id[:8]}" in normalized_err
+    assert f"jj-stack view {beta_head_change_id[:8]}" in normalized_err
+    assert f"jj-stack submit {beta_head_change_id[:8]}" in normalized_err
 
 
 def test_view_warns_after_middle_change_is_split_into_sibling_stack(
@@ -154,8 +154,8 @@ def test_view_warns_after_middle_change_is_split_into_sibling_stack(
     assert exit_code == 0
     assert change_c[:8] in captured.err
     assert "changed since its last submit" in captured.err
-    assert f"jj-review view {change_c[:8]}" in normalized_err
-    assert f"jj-review submit {change_c[:8]}" in normalized_err
+    assert f"jj-stack view {change_c[:8]}" in normalized_err
+    assert f"jj-stack submit {change_c[:8]}" in normalized_err
 
 
 def test_view_pull_request_selector_requires_a_linked_local_change(
@@ -183,8 +183,8 @@ def test_view_reports_missing_trunk_bookmark_in_empty_repo(
     run_command(["jj", "git", "init", str(repo)], tmp_path)
     run_command(["jj", "config", "set", "--repo", "user.name", "Test User"], repo)
     run_command(["jj", "config", "set", "--repo", "user.email", "test@example.com"], repo)
-    config_path = tmp_path / "jj-review-config.toml"
-    config_path.write_text("[jj-review]\n", encoding="utf-8")
+    config_path = tmp_path / "jj-stack-config.toml"
+    config_path.write_text("[jj-stack]\n", encoding="utf-8")
 
     exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
@@ -547,7 +547,7 @@ def test_view_preserves_cached_pull_request_metadata_when_github_reports_missing
     assert exit_code == 1
     assert "Missing GitHub PR" in captured.out
     assert "remembered PR #1" in captured.out
-    assert "jj-review submit --restart" in captured.out
+    assert "jj-stack submit --restart" in captured.out
     assert change_id in captured.out
     assert refreshed_state.changes[change_id].pr_number == 1
     assert refreshed_state.changes[change_id].pr_state == "open"

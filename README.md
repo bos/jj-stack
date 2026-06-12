@@ -1,10 +1,10 @@
-# jj-review
+# jj-stack
 
-`jj-review` sends a linear stack of local `jj` changes to GitHub as a stack of dependent pull
+`jj-stack` sends a linear stack of local `jj` changes to GitHub as a stack of dependent pull
 requests.
 
 It is built for a rewrite-heavy review workflow made up of many small changes. Split a feature
-into a few local parts, keep editing your changes in `jj`, and let `jj-review` keep the matching
+into a few local parts, keep editing your changes in `jj`, and let `jj-stack` keep the matching
 GitHub PR stack up to date.
 
 ## Quick start
@@ -19,19 +19,26 @@ GitHub PR stack up to date.
 ### Install
 
 ```bash
-uv tool install jj-review
+uv tool install jj-stack
 ```
 
 To upgrade later:
 
 ```bash
-uv tool upgrade jj-review
+uv tool upgrade jj-stack
 ```
 
-If `jj-review` is not on your shell `PATH`, run:
+If `jj-stack` is not on your shell `PATH`, run:
 
 ```bash
 uv tool update-shell
+```
+
+To invoke it as `jj stack ...` — mirroring GitHub's `gh stack ...` — add a jj alias:
+
+```toml
+[aliases]
+stack = ["util", "exec", "--", "jj-stack"]
 ```
 
 ### Before your first submit
@@ -44,13 +51,13 @@ The happy path is a local `jj` stack that is ready to become a set of GitHub PRs
 - the changes you want to submit are visible and mutable in `jj`
 - GitHub authentication works from this shell
 
-If you are unsure what `jj-review` will do, inspect first:
+If you are unsure what `jj-stack` will do, inspect first:
 
 ```bash
-jj-review
+jj-stack
 ```
 
-This is a synonym for `jj-review view`.
+This is a synonym for `jj-stack view`.
 
 ### Two-minute first run
 
@@ -63,36 +70,36 @@ Suppose you have a few local changes stacked on top of `trunk()`:
 Preview the submit plan without changing anything:
 
 ```bash
-jj-review submit --dry-run
+jj-stack submit --dry-run
 ```
 
 Submit the stack to GitHub:
 
 ```bash
-jj-review submit
+jj-stack submit
 ```
 
 `submit` also accepts the short alias `sub`.
 
-On first submit, `jj-review` creates one review bookmark per change. By default these bookmarks
+On first submit, `jj-stack` creates one review bookmark per change. By default these bookmarks
 look like `review/...`. They are normal `jj` bookmarks, and they are also the GitHub PR
-branches. `jj-review` manages them for you, so most of the time you do not need to move or
+branches. `jj-stack` manages them for you, so most of the time you do not need to move or
 rename them yourself.
 
 Inspect your stack again:
 
 ```bash
-jj-review
+jj-stack
 ```
 
 At this point you should have one GitHub PR per local change, with each PR based on the
-review branch below it. Edit your changes locally with `jj`, run `jj-review submit`
+review branch below it. Edit your changes locally with `jj`, run `jj-stack submit`
 again, and the PR stack will be refreshed.
 
 If you are juggling more than one local review stack in the same repo:
 
 ```bash
-jj-review list
+jj-stack list
 ```
 
 `list` also accepts the short alias `ls`.
@@ -117,7 +124,7 @@ review/refactor-model... -> PR #1 (base: main)
 main                     -> trunk
 ```
 
-When you rewrite an intermediate change in `jj`, `jj-review` updates the matching review branch
+When you rewrite an intermediate change in `jj`, `jj-stack` updates the matching review branch
 and PR, along with the changes that depend on it, instead of asking you to maintain a stack of
 Git branches by hand.
 
@@ -126,12 +133,12 @@ Git branches by hand.
 Your typical author loop is:
 
 1. Write code as a series of local `jj` changes.
-2. Run `jj-review submit`.
+2. Run `jj-stack submit`.
 3. Revise those changes locally as reviews come in.
-4. Re-run `jj-review submit`.
-5. Once the bottom changes are approved, run `jj-review land`.
-6. If lower changes were merged on GitHub instead of with `jj-review land`, run
-   `jj-review cleanup --rebase` when status says cleanup is needed.
+4. Re-run `jj-stack submit`.
+5. Once the bottom changes are approved, run `jj-stack land`.
+6. If lower changes were merged on GitHub instead of with `jj-stack land`, run
+   `jj-stack cleanup --rebase` when status says cleanup is needed.
 
 `land` pushes the ready changes at the bottom of your stack to GitHub trunk and forgets
 the local review bookmarks for the landed changes. It stops before the first change that
@@ -145,7 +152,7 @@ When `list` or `view` says a tracked stack changed since the last submit, inspec
 stack directly:
 
 ```bash
-jj-review view <head-change-id>
+jj-stack view <head-change-id>
 ```
 
 The status output will show whether the next step is a plain submit or cleanup first.
@@ -154,7 +161,7 @@ If `list` shows an `orphan` row, a PR is still open but the local change it revi
 no longer part of any current stack. When you are ready to retire that PR:
 
 ```bash
-jj-review unstack --cleanup --pull-request <pr>
+jj-stack unstack --cleanup --pull-request <pr>
 ```
 
 ## Learn more
@@ -168,37 +175,37 @@ User guides live under [docs](docs/README.md):
 The built-in help is the flag reference:
 
 ```bash
-jj-review --help
-jj-review submit --help
+jj-stack --help
+jj-stack submit --help
 ```
 
 A few repair and housekeeping commands are hidden by default:
 
 ```bash
-jj-review help --all
+jj-stack help --all
 ```
 
-Like `jj`, `jj-review` accepts `--color=always|never|debug|auto`. Without that flag, it
+Like `jj`, `jj-stack` accepts `--color=always|never|debug|auto`. Without that flag, it
 follows your `jj` `ui.color` setting.
 
 ## Configuration
 
-For most use, `jj-review` needs no configuration. It derives `git`, `jj`, and GitHub
+For most use, `jj-stack` needs no configuration. It derives `git`, `jj`, and GitHub
 information directly from `git`, `jj`, and `gh` whenever possible.
 
 Repo-level config can be helpful for defaults such as reviewers and labels:
 
 ```toml
-[jj-review]
+[jj-stack]
 bookmark_prefix = "bos"
 reviewers = ["octocat"]
 labels = ["needs-review"]
 use_bookmarks = ["potato/*", "spam/eggs"]
 ```
 
-If you leave `bookmark_prefix` unset, `jj-review` keeps the default `review/...` prefix.
+If you leave `bookmark_prefix` unset, `jj-stack` keeps the default `review/...` prefix.
 
-`jj-review submit` can override those defaults with `--reviewers`, `--team-reviewers`,
+`jj-stack submit` can override those defaults with `--reviewers`, `--team-reviewers`,
 `--label`, and `--use-bookmarks`.
 
 `cleanup_user_bookmarks` defaults to `false`. Leave it unset if bookmarks selected
@@ -206,7 +213,7 @@ through `use_bookmarks` should be preserved during later cleanup. Set it to `tru
 if you want `cleanup`, `unstack --cleanup`, and `land` to delete those reused bookmarks too
 when that cleanup is otherwise safe.
 
-For authentication, `jj-review` checks `GH_TOKEN`, then `GITHUB_TOKEN`, then falls back
+For authentication, `jj-stack` checks `GH_TOKEN`, then `GITHUB_TOKEN`, then falls back
 to `gh auth token` if `gh`, the GitHub CLI, is installed and authenticated.
 
 ## Why use it
@@ -215,14 +222,14 @@ The standard GitHub code review model gets awkward once a feature wants to be re
 series of dependent steps, especially when intermediate steps need revision.
 
 While you could model that with plain Git branches, the bookkeeping quickly becomes unwieldy.
-`jj-review` takes a different approach:
+`jj-stack` takes a different approach:
 
 - your local `jj` DAG is the source of truth for the stack
 - history stays mutable in `jj`
 - GitHub gets the review branches and PRs it needs
-- when you modify an intermediate change, `jj-review` does the PR and branch wrangling
+- when you modify an intermediate change, `jj-stack` does the PR and branch wrangling
 
-The key point is that you get to keep thinking in terms of local logical changes. `jj-review`
+The key point is that you get to keep thinking in terms of local logical changes. `jj-stack`
 manages the GitHub projection and the local review bookmarks, and that's it.
 
 ## Why use it with coding agents?
@@ -249,16 +256,16 @@ obscuring the rest of the work.
 
 ## Performance
 
-Although `jj-review` is written in Python, this does not significantly affect its speed.
+Although `jj-stack` is written in Python, this does not significantly affect its speed.
 The real determinants of its performance are the GitHub API and the `jj` command.
 
-The GitHub API is *slow*; a single roundtrip takes many hundreds of milliseconds. `jj-review`
+The GitHub API is *slow*; a single roundtrip takes many hundreds of milliseconds. `jj-stack`
 reduces its impact with:
 
 - GraphQL batch requests where possible
 - concurrent use of the GitHub REST API
 
-`jj-review` also batches calls to `jj` and minimizes the amount of work those calls must
+`jj-stack` also batches calls to `jj` and minimizes the amount of work those calls must
 do.
 
 ## Development note
@@ -275,14 +282,14 @@ agent-written. Nevertheless, I've provided heavy oversight.
 
 ## Focus and future
 
-`jj-review` is intentionally focused:
+`jj-stack` is intentionally focused:
 
 - `jj` has best-in-class mutable history
-- `jj-review` is GitHub only, at least for now
+- `jj-stack` is GitHub only, at least for now
 - linear stacks only
 - one PR per change ID
 
 GitHub is developing its own stacked review support, currently in limited preview. That model
-appears compatible with `jj-review`'s current model. Once stacked review support launches more
+appears compatible with `jj-stack`'s current model. Once stacked review support launches more
 widely, I'll be able to test the API and server-side merge/rebase behaviour, and quickly support
-it in `jj-review` with minimal change to the CLI UX.
+it in `jj-stack` with minimal change to the CLI UX.

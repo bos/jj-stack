@@ -581,17 +581,17 @@ class JjClient:
         return stripped if stripped else None
 
     def read_jj_stack_config_list_output(self) -> str:
-        """Return raw stdout from ``jj config list 'jj-review'``.
+        """Return raw stdout from ``jj config list 'jj-stack'``.
 
         Delegates scope merging and override handling to jj itself, so the
         same ``--config`` / ``--config-file`` overrides that flow to every jj
-        invocation also shape jj-review's own configuration. The caller is
+        invocation also shape jj-stack's own configuration. The caller is
         responsible for parsing the TOML-dotted-key output.
         """
 
         # Keep this as the initial repo-scoped jj command during bootstrap so jj
         # snapshots the working copy once before later read-only calls ignore it.
-        return self._run_jj(("config", "list", "jj-review"))
+        return self._run_jj(("config", "list", "jj-stack"))
 
     def show_with_stat(self, revset: str) -> str:
         """Return raw stdout from ``jj show --stat -r <revset>``.

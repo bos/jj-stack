@@ -46,7 +46,7 @@ SCHEMA = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate jj-review metadata with Codex CLI. Prints JSON with "
+            "Generate jj-stack metadata with Codex CLI. Prints JSON with "
             "string `title` and `body` fields."
         )
     )
@@ -245,7 +245,7 @@ def main() -> int:
 
     prompt = build_prompt(mode, revset, build_context(mode, revset))
     codex_bin = os.environ.get("JJ_REVIEW_CODEX_BIN", "codex")
-    with tempfile.TemporaryDirectory(prefix="jj-review-codex-") as tempdir:
+    with tempfile.TemporaryDirectory(prefix="jj-stack-codex-") as tempdir:
         tempdir_path = Path(tempdir)
         schema_path = tempdir_path / "schema.json"
         output_path = tempdir_path / "output.json"

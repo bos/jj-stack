@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from _pytest.terminal import TerminalReporter
 
-_REPORT_DIR_NAME = "jj-review-concurrency"
-_PLUGIN_NAME = "jj-review-pytest-concurrency"
+_REPORT_DIR_NAME = "jj-stack-concurrency"
+_PLUGIN_NAME = "jj-stack-pytest-concurrency"
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class ConcurrencySummary:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    group = parser.getgroup("jj-review")
+    group = parser.getgroup("jj-stack")
     group.addoption(
         "--concurrency-report",
         action="store_true",

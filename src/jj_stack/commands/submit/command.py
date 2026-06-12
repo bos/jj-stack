@@ -9,7 +9,7 @@ Use `--describe-with HELPER` to author pull request titles and bodies, and an ov
 description of a stack. The helper can be interactive, in which case you enter these yourself,
 or automated, such as invoking an LLM to generate these descriptions.
 
- `jj-review` invokes the helper as `helper --pr <change_id>` for each pull request and `helper
+ `jj-stack` invokes the helper as `helper --pr <change_id>` for each pull request and `helper
 --stack <revset>` for the selected stack. The helper must output JSON with string `title` and
 `body` fields.
 
@@ -385,7 +385,7 @@ def _reject_restart_pull_request_collisions(
             t"Cannot restart {ui.change_id(prepared_revision.change_id)} with "
             t"{ui.bookmark(prepared_revision.bookmark)} because GitHub already reports "
             t"PR #{pull_request.number} for that branch.",
-            hint=t"Run {ui.cmd('jj-review view --fetch')} and retry with current state.",
+            hint=t"Run {ui.cmd('jj-stack view --fetch')} and retry with current state.",
         )
     details = ui.join(
         lambda item: t"{ui.change_id(item[0].change_id)} -> PR #{item[1].number}",
@@ -394,7 +394,7 @@ def _reject_restart_pull_request_collisions(
     raise CliError(
         t"Cannot restart with fresh PRs because GitHub already reports PRs for "
         t"the selected replacement branches: {details}.",
-        hint=t"Run {ui.cmd('jj-review view --fetch')} and retry with current state.",
+        hint=t"Run {ui.cmd('jj-stack view --fetch')} and retry with current state.",
     )
 
 

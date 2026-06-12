@@ -3,7 +3,7 @@ requires = ["hatchling>=1.29.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "jj-review"
+name = "jj-stack"
 version = "0.1.0"
 description = "JJ-native stacked GitHub review tooling"
 readme = "README.md"
@@ -30,7 +30,7 @@ Repository = "https://github.com/bos/jj-review"
 Issues = "https://github.com/bos/jj-review/issues"
 
 [project.scripts]
-jj-review = "jj_stack.cli:main"
+jj-stack = "jj_stack.cli:main"
 
 [dependency-groups]
 dev = [

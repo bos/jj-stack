@@ -57,7 +57,7 @@ def resolve_generated_descriptions(
             jj_client=jj_client,
             revisions=revisions,
         )
-        with tempfile.TemporaryDirectory(prefix="jj-review-describe-with-") as tempdir:
+        with tempfile.TemporaryDirectory(prefix="jj-stack-describe-with-") as tempdir:
             stack_input_path = Path(tempdir) / "stack-input.json"
             stack_input_path.write_text(json.dumps(stack_input), encoding="utf-8")
             generated_stack_description = _run_description_command(

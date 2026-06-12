@@ -13,17 +13,17 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review view
+jj-stack view
 ```
 
 If needed, pass an explicit revset:
 
 ```bash
-jj-review view <revset>
-jj-review submit <revset>
+jj-stack view <revset>
+jj-stack submit <revset>
 ```
 
-For safety, `jj-review` always stops and reports what is ambiguous rather than guessing what you
+For safety, `jj-stack` always stops and reports what is ambiguous rather than guessing what you
 might have meant.
 
 ## `view` says it cannot find a trunk bookmark
@@ -57,7 +57,7 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review view --fetch
+jj-stack view --fetch
 ```
 
 `view` already checks live GitHub state when GitHub is reachable. `view
@@ -65,24 +65,24 @@ jj-review view --fetch
 it is the safer read-only refresh when a PR link, branch state, or merged-base
 relationship may have changed elsewhere.
 
-If a change shows `submitted, no PR found for branch`, `jj-review` has tracking
+If a change shows `submitted, no PR found for branch`, `jj-stack` has tracking
 for a previous submit, but GitHub did not report a PR for the current review
-branch. Run `jj-review view --fetch <change>` first. If the PR is still open
-under a different branch or tracking record, use `jj-review relink <pr> <change>`.
+branch. Run `jj-stack view --fetch <change>` first. If the PR is still open
+under a different branch or tracking record, use `jj-stack relink <pr> <change>`.
 If no open PR exists and you want fresh PRs, run:
 
 ```bash
-jj-review submit --restart <stack-head>
+jj-stack submit --restart <stack-head>
 ```
 
 If GitHub reports a remembered PR as closed or merged, decide what outcome you
 want before choosing a command:
 
-- To keep reviewing the same PR, reopen it on GitHub and rerun `jj-review
+- To keep reviewing the same PR, reopen it on GitHub and rerun `jj-stack
   view --fetch <change>`.
-- To attach a different open PR to the change, use `jj-review relink <pr>
+- To attach a different open PR to the change, use `jj-stack relink <pr>
   <change>`.
-- To abandon the old review and make fresh PRs, run `jj-review submit
+- To abandon the old review and make fresh PRs, run `jj-stack submit
   --restart <stack-head>`. `relink` is not the right command for that case
   because it attaches an existing open PR.
 
@@ -98,8 +98,8 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review cleanup --rebase
-jj-review submit
+jj-stack cleanup --rebase
+jj-stack submit
 ```
 
 `cleanup --rebase` drops those merged ancestors from the active local stack
@@ -121,13 +121,13 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review submit <head-change-id>
+jj-stack submit <head-change-id>
 ```
 
 Use the head change ID printed in the warning. To inspect first, run:
 
 ```bash
-jj-review view <head-change-id>
+jj-stack view <head-change-id>
 ```
 
 Status reports what changed since the last successful submit: local commits, review parents, or
@@ -145,19 +145,19 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review submit
+jj-stack submit
 ```
 
 If you want to notify prior reviewers again after updating the PR, follow with:
 
 ```bash
-jj-review submit --re-request
+jj-stack submit --re-request
 ```
 
 A pure rebase with the same diff does not need this. In that case, `land` will refresh the review
 branch automatically before pushing `trunk()`.
 
-## PRs for this stack exist on GitHub but `jj-review` doesn't know about them
+## PRs for this stack exist on GitHub but `jj-stack` doesn't know about them
 
 Possible causes:
 
@@ -167,12 +167,12 @@ Possible causes:
 What to do:
 
 ```bash
-jj-review checkout --pull-request <number-or-url> --fetch
+jj-stack checkout --pull-request <number-or-url> --fetch
 ```
 
 Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage them locally
 yet." This command is *not* for rewriting history or changing what is in the stack, only for
-telling `jj-review` which local changes go with which PRs.
+telling `jj-stack` which local changes go with which PRs.
 
 ## Old review branches are still around after landing or closing
 
@@ -180,13 +180,13 @@ Possible causes:
 
 - your `land` or `unstack` succeeded, but the follow-up cleanup hasn't run yet
 - you ran `land --skip-cleanup` to keep the review branches on purpose
-- something prevented `jj-review` from cleaning up automatically
+- something prevented `jj-stack` from cleaning up automatically
 
 What to do:
 
 ```bash
-jj-review cleanup --dry-run # optional
-jj-review cleanup
+jj-stack cleanup --dry-run # optional
+jj-stack cleanup
 ```
 
 Use `--dry-run` if you want first, to preview what it plans to remove. Then run plain `cleanup`
@@ -201,13 +201,13 @@ Cause:
 What to do:
 
 ```bash
-jj-review unstack
+jj-stack unstack
 ```
 
 If you already know the pull request number, you can use:
 
 ```bash
-jj-review unstack --pull-request 7
+jj-stack unstack --pull-request 7
 ```
 
 This closes the stack's pull requests. Add `--cleanup` if you also want to delete the review
@@ -224,40 +224,40 @@ Possible causes:
 First, inspect the stack:
 
 ```bash
-jj-review view
+jj-stack view
 ```
 
 If you know which stack was being changed, inspect it directly:
 
 ```bash
-jj-review view <change-id>
+jj-stack view <change-id>
 ```
 
 ### Finish what was started
 
 Re-run the same command, passing the change ID or revset so you don't accidentally operate on a
-different stack. `jj-review` derives the current state from jj, tracking data, and GitHub
+different stack. `jj-stack` derives the current state from jj, tracking data, and GitHub
 instead of replaying a retained recovery record.
 
 | Command that failed         | Re-run                                  |
 | --------------------------- | --------------------------------------- |
-| `submit`                    | `jj-review submit <revset>`             |
-| `unstack` / `unstack --cleanup` | `jj-review unstack [--cleanup] <revset>`  |
-| `cleanup --rebase`          | `jj-review cleanup --rebase <revset>`   |
-| `land`                      | `jj-review land <revset>`               |
+| `submit`                    | `jj-stack submit <revset>`             |
+| `unstack` / `unstack --cleanup` | `jj-stack unstack [--cleanup] <revset>`  |
+| `cleanup --rebase`          | `jj-stack cleanup --rebase <revset>`   |
+| `land`                      | `jj-stack land <revset>`               |
 
 For an interrupted `land` specifically: if the trunk push already succeeded before a later
-failure, the landed commits are already on `trunk()`. Rerun `jj-review land <revset>`;
-`jj-review` will skip the trunk push it can already prove happened and finish PR/state/bookmark
+failure, the landed commits are already on `trunk()`. Rerun `jj-stack land <revset>`;
+`jj-stack` will skip the trunk push it can already prove happened and finish PR/state/bookmark
 finalization for the exact landed commits.
 
 ### Back out
 
 ```bash
-jj-review unstack --cleanup <change-id>
+jj-stack unstack --cleanup <change-id>
 ```
 
 If a failed `submit` created PRs or review branches that you no longer want, run
 `unstack --cleanup` on the selected stack. If the change was abandoned and only tracking data
-remains, use `jj-review list` to find the orphaned PR and then
-`jj-review unstack --cleanup --pull-request <pr>`.
+remains, use `jj-stack list` to find the orphaned PR and then
+`jj-stack unstack --cleanup --pull-request <pr>`.

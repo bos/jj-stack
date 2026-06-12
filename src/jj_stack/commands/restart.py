@@ -110,5 +110,5 @@ def _render_restart_result(result: RestartResult) -> None:
             t"{ui.bookmark(item.new_bookmark)}"
         )
     console.output(
-        t"Run {ui.cmd(f'jj-review submit {result.selected_revset}')} to create fresh PRs."
+        t"Run {ui.cmd(f'jj-stack submit {result.selected_revset}')} to create fresh PRs."
     )

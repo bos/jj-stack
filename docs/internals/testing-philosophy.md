@@ -34,7 +34,7 @@ When reviewing coverage, ask first:
 
 - what happens if the repo is already in a bad state?
 - what happens if config is missing, invalid, contradictory, or only partially applied?
-- what happens if `jj-review`, `jj`, GitHub, local persistence, or subprocess state disagree?
+- what happens if `jj-stack`, `jj`, GitHub, local persistence, or subprocess state disagree?
 - what happens if the DAG shape is unusual because of rewrites, relinks, divergence, non-linear
   history, or deleted changes?
 - what happens if an operation is interrupted, retried, or followed by another command before
@@ -50,7 +50,7 @@ Examples of high-value test scenarios:
 - surprising DAG topology or stack selection edge cases
 - interrupted operations and partial cleanup
 - stale, missing, or contradictory tracking state
-- drift or surprising interleaving across `jj-review`, `jj`, GitHub, and
+- drift or surprising interleaving across `jj-stack`, `jj`, GitHub, and
   subprocess-visible state
 - recovery paths after a command discovers inconsistent state
 

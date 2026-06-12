@@ -22,7 +22,7 @@ Possible follow-up work:
 
 ## Start-Fresh Review Repair
 
-_Benefit: medium — important when a previous jj-review bug, manual GitHub
+_Benefit: medium — important when a previous jj-stack bug, manual GitHub
 operation, or branch cleanup leaves local changes attached to closed or unusable
 PRs._
 
@@ -79,17 +79,17 @@ current core workflow._
 
 Recent `jj` versions can write a `change-id` header into Git commit objects created by
 `jj`. That header is not shown by normal Git or GitHub commit views, and it should not become
-a new source of truth for jj-review. Still, it may be useful evidence in future recovery
+a new source of truth for jj-stack. Still, it may be useful evidence in future recovery
 flows where the user experience should follow a logical `jj` change rather than one exact
 commit object.
 
 High-level cases where this might help:
 
 - importing or rediscovering an existing PR stack when review branch names no longer follow
-  jj-review's generated naming convention
+  jj-stack's generated naming convention
 - explaining branch drift when a review branch points at a different commit that may still
   belong to the same logical `jj` change
-- reducing unnecessary manual relinking when jj-review can tell that a GitHub PR branch and
+- reducing unnecessary manual relinking when jj-stack can tell that a GitHub PR branch and
   a local change probably share the same underlying `jj` change identity
 
 ## Landing Transports and Merge Queues

@@ -8,7 +8,7 @@ compatibility code, migration code, or the like.
 - This is a `jj` repo. Do not use `git` to work on the repo itself.
 - Do not use git worktree-based agent isolation in this repo. For isolated parallel work, use
   `jj workspace` instead.
-- Run the CLI locally with `uv run jj-review ...` instead of invoking the module or virtualenv
+- Run the CLI locally with `uv run jj-stack ...` instead of invoking the module or virtualenv
   path directly.
 - Hard-wrap code and markdown files at 98 columns unless a file uses a different convention.
 
@@ -27,7 +27,7 @@ compatibility code, migration code, or the like.
 
 - User-facing docs live in `docs/`. See [docs/AGENTS.md](docs/AGENTS.md) for the vocabulary
   rules and the public/internal split. Built-in `--help` text is held to the same standard as
-  the user docs: assume jj/git familiarity, avoid `jj-review` internal design jargon.
+  the user docs: assume jj/git familiarity, avoid `jj-stack` internal design jargon.
 
 # Behaviour changes
 

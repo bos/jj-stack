@@ -168,7 +168,7 @@ def _resolve_managed_comment_from_listed(
                     blocked_reason=(
                         f"cannot delete saved {stack_comment_label(kind)} "
                         f"#{cached_comment_id} because it does not belong to "
-                        "jj-review"
+                        "jj-stack"
                     ),
                 )
             return ManagedCommentLookup(kind=kind, comment=cached_comment)
@@ -226,7 +226,7 @@ async def _resolve_cached_managed_comments_after_404(
                     blocked_reason=(
                         f"cannot delete saved {stack_comment_label(kind)} "
                         f"#{cached_comment_id} because it does not belong to "
-                        "jj-review"
+                        "jj-stack"
                     ),
                 )
             )
@@ -307,7 +307,7 @@ def retire_cached_change(
     pr_state: str,
 ) -> CachedChange:
     # Closed changes remain "active" unless they were explicitly unlinked. The saved
-    # jj-review data still needs the last known review identity so later cleanup or
+    # jj-stack data still needs the last known review identity so later cleanup or
     # status refresh can reason about the already-closed stack without reattaching it.
     updates = {
         "pr_review_decision": None,

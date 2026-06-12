@@ -39,6 +39,6 @@ def is_overview_comment(body: str) -> bool:
 
 
 def is_stack_summary_comment(body: str) -> bool:
-    """Return whether a GitHub comment body belongs to jj-review."""
+    """Return whether a GitHub comment body belongs to jj-stack."""
 
     return is_navigation_comment(body) or is_overview_comment(body)

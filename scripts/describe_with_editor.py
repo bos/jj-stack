@@ -13,8 +13,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-COMMENT_BLOCK_RE = re.compile(r"<!--\s*jj-review:.*?-->", re.DOTALL)
-COMMENT_START = "<!-- jj-review:"
+COMMENT_BLOCK_RE = re.compile(r"<!--\s*jj-stack:.*?-->", re.DOTALL)
+COMMENT_START = "<!-- jj-stack:"
 COMMENT_END = "-->"
 STACK_INPUT_ENV = "JJ_REVIEW_STACK_INPUT_FILE"
 
@@ -22,7 +22,7 @@ STACK_INPUT_ENV = "JJ_REVIEW_STACK_INPUT_FILE"
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Interactively author jj-review metadata with $EDITOR. Prints JSON "
+            "Interactively author jj-stack metadata with $EDITOR. Prints JSON "
             "with string `title` and `body` fields."
         )
     )
@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         context_lines = stack_context_lines(revset)
 
-    with tempfile.TemporaryDirectory(prefix="jj-review-editor-") as tempdir:
+    with tempfile.TemporaryDirectory(prefix="jj-stack-editor-") as tempdir:
         description_path = Path(tempdir) / f"{mode}-description.md"
         description_path.write_text(
             initial_editor_text(context_lines=context_lines, mode=mode, revset=revset),

@@ -24,7 +24,7 @@ def test_initial_editor_text_uses_readable_helper_comment_block() -> None:
         revset="abc",
     )
 
-    assert "<!-- jj-review:\n" in text
+    assert "<!-- jj-stack:\n" in text
     assert "Commit description for abc:\ncommit title\n\ncommit body\n-->" in text
 
 
@@ -32,14 +32,14 @@ def test_parse_edited_description_ignores_helper_comment_blocks() -> None:
     parsed = describe_with_editor.parse_edited_description(
         "\n".join(
             [
-                "<!-- jj-review:",
+                "<!-- jj-stack:",
                 "commit context",
                 "-->",
                 "",
                 "# Markdown title",
                 "",
                 "Body with **formatting**.",
-                "<!-- jj-review: more context -->",
+                "<!-- jj-stack: more context -->",
             ]
         )
     )
@@ -52,7 +52,7 @@ def test_parse_edited_description_returns_none_when_only_comments_remain() -> No
         "\n".join(
             [
                 "",
-                "<!-- jj-review:",
+                "<!-- jj-stack:",
                 "write a title",
                 "",
                 "commit context",
@@ -78,7 +78,7 @@ def test_main_emits_json_from_editor_content(
                 "import sys",
                 "",
                 "Path(sys.argv[-1]).write_text(",
-                "    'Edited title\\n\\nEdited body\\n<!-- jj-review:\\ncontext\\n-->\\n',",
+                "    'Edited title\\n\\nEdited body\\n<!-- jj-stack:\\ncontext\\n-->\\n',",
                 "    encoding='utf-8',",
                 ")",
             ]

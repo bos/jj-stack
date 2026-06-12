@@ -1,7 +1,7 @@
-"""Stop tracking one local change with jj-review while leaving the rest of the
+"""Stop tracking one local change with jj-stack while leaving the rest of the
 stack alone.
 
-Later jj-review commands will ignore that change unless you link it again.
+Later jj-stack commands will ignore that change unless you link it again.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# jj-review implementation strategy
+# jj-stack implementation strategy
 
 This document covers the implementation choices that follow from
 [design.md](./design.md): repository layout, component boundaries, tooling, test strategy,
@@ -65,7 +65,7 @@ network or subprocess side effects.
 The tool ships as a standalone executable. During development, the default invocation is:
 
 ```text
-uv run jj-review ...
+uv run jj-stack ...
 ```
 
 Users may also configure `jj` aliases that delegate to the standalone executable so
@@ -76,7 +76,7 @@ separate implementation surface.
 from the argparse surface and does not require repo bootstrap, tracking state, or
 GitHub access.
 
-The curated top-level help is part of that executable surface. `jj-review help --all`
+The curated top-level help is part of that executable surface. `jj-stack help --all`
 shows the full command list and includes any short command aliases so they stay
 discoverable without reading the README first.
 
@@ -242,10 +242,10 @@ It does not decide stack topology or branch naming.
 
 ### Config and tracking state
 
-- config lives in `jj`'s config scopes under the `jj-review` namespace
+- config lives in `jj`'s config scopes under the `jj-stack` namespace
 - repo-specific defaults use `jj`'s built-in user/repo/workspace precedence
 - we do not duplicate `jj`'s config resolution in Python: reads go through
-  `jj config list 'jj-review'`, which inherits user/repo/workspace precedence plus
+  `jj config list 'jj-stack'`, which inherits user/repo/workspace precedence plus
   effective `--config` / `--config-file` overrides on every `jj` invocation
 - tracking state lives in `~/.local/state/jj-review/repos/<repo-id>/state.json`
 - `<repo-id>` is derived from the canonical `.jj/repo` storage path so every workspace

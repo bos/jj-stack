@@ -1,6 +1,6 @@
 # Property-based stack testing
 
-`jj-review` has a distributed state boundary: the local `jj` DAG, local review
+`jj-stack` has a distributed state boundary: the local `jj` DAG, local review
 tracking, remote Git branches, and GitHub PR state can temporarily disagree. The most
 expensive failures are not wrong text output; they are cases where a normal stack edit
 causes GitHub to close, merge, replace, or misbase an existing review. Property-based

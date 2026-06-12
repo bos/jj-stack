@@ -895,7 +895,7 @@ def _pull_request_connection_from_graphql(
 def build_github_client(*, base_url: str) -> GithubClient:
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "jj-review/dev",
+        "User-Agent": "jj-stack/dev",
     }
     if token := github_token_for_base_url(base_url):
         headers["Authorization"] = f"Bearer {token}"

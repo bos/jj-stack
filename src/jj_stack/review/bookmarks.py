@@ -291,7 +291,7 @@ def bookmark_matches_generated_change_id(
 
 
 def bookmark_ownership_for_source(source: BookmarkSource) -> BookmarkOwnership:
-    """Return whether jj-review should clean up a bookmark from this source."""
+    """Return whether jj-stack should clean up a bookmark from this source."""
 
     return "external" if source == "matched" else "managed"
 

@@ -13,10 +13,10 @@ Use `--dry-run` to inspect the landing plan without changing jj or GitHub state.
 
 Use `--pull-request` to select the top of the stack to land by PR number or URL.
 
-After a successful land, `jj-review` forgets the bookmarks it was managing for the changes that
+After a successful land, `jj-stack` forgets the bookmarks it was managing for the changes that
 landed, unless they've been moved or become conflicted. If you used your own bookmarks with
 `submit --use-bookmarks`, they will not be cleaned up by default (override with `--config
-jj-review.cleanup_user_bookmarks=true`). Use `--skip-cleanup` to keep even `jj-review`'s own
+jj-stack.cleanup_user_bookmarks=true`). Use `--skip-cleanup` to keep even `jj-stack`'s own
 review bookmarks.
 
 `land` does not touch changes above the first that could not be landed. In the usual direct-push

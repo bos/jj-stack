@@ -163,13 +163,13 @@ def check_jj_version() -> None:
     if version is None:
         raise CliError(
             t"Could not parse {ui.cmd('jj --version')} output: {completed.stdout.strip()!r}. "
-            t"jj-review requires jj {_MINIMUM_JJ_VERSION_STRING} or later."
+            t"jj-stack requires jj {_MINIMUM_JJ_VERSION_STRING} or later."
         )
     if version < _MINIMUM_JJ_VERSION:
         installed = ".".join(str(x) for x in version)
         raise CliError(
             f"jj {installed} is too old. "
-            f"jj-review requires jj {_MINIMUM_JJ_VERSION_STRING} or later. "
+            f"jj-stack requires jj {_MINIMUM_JJ_VERSION_STRING} or later. "
             "Please upgrade jj."
         )
 

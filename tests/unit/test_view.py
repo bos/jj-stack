@@ -105,8 +105,8 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 
     assert "Advisories:" in lines
-    assert "jj-review cleanup --rebase @" in normalized_lines
-    assert "jj-review cleanup --rebase --dry-run @" in normalized_lines
+    assert "jj-stack cleanup --rebase @" in normalized_lines
+    assert "jj-stack cleanup --rebase --dry-run @" in normalized_lines
     assert "PR #5 is merged" in normalized_lines
     assert "merged into team/feature-base" in normalized_lines
 
@@ -140,7 +140,7 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     assert "Advisories:" in lines
     assert "PR branches are behind the current local stack" in normalized_lines
     assert "Submit will push the current commit IDs and PR bases" in normalized_lines
-    assert "jj-review submit ulxwxsqw" in normalized_lines
+    assert "jj-stack submit ulxwxsqw" in normalized_lines
     assert "New commit IDs abcdefgh" in normalized_lines
     assert "New PR bases bcdefghi" in normalized_lines
     assert "New stack head bcdefghi" in normalized_lines
@@ -174,7 +174,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
     assert "GitHub reports a closed PR for the change shown above" in normalized_lines
     assert "Reopen the PR on GitHub to continue that review" in normalized_lines
     assert "relink an open replacement" in normalized_lines
-    assert "jj-review submit --restart @" in normalized_lines
+    assert "jj-stack submit --restart @" in normalized_lines
     assert "changes below" not in normalized_lines
 
 
@@ -208,9 +208,9 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
 
     assert "Missing GitHub PR" in normalized_lines
     assert "GitHub did not report a PR for the remembered review branch" in normalized_lines
-    assert "jj-review view --fetch <change>" in normalized_lines
+    assert "jj-stack view --fetch <change>" in normalized_lines
     assert "Relink an open PR if one exists" in normalized_lines
-    assert "jj-review submit --restart @" in normalized_lines
+    assert "jj-stack submit --restart @" in normalized_lines
     assert "GitHub did not report remembered PR #42 for this branch" in normalized_lines
 
 

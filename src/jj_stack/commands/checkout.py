@@ -1,4 +1,4 @@
-"""Connect jj-review to an existing stack of pull requests.
+"""Connect jj-stack to an existing stack of pull requests.
 
 By default, `checkout` tries to match the current stack headed by `@-` to the
 existing pull requests for that stack.
@@ -55,7 +55,7 @@ from jj_stack.review.status import (
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message, plain_text
 
-HELP = "Connect jj-review to an existing stack of pull requests"
+HELP = "Connect jj-stack to an existing stack of pull requests"
 
 _DISPLAY_CHANGE_ID_LENGTH = 8
 ImportActionStatus = Literal["applied"]

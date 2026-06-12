@@ -20,7 +20,7 @@ if _readline is not None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Interactively generate jj-review metadata. Prints JSON with "
+            "Interactively generate jj-stack metadata. Prints JSON with "
             "string `title` and `body` fields."
         )
     )

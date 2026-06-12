@@ -1,4 +1,4 @@
-"""Shell completion generation for the standalone `jj-review` executable."""
+"""Shell completion generation for the standalone `jj-stack` executable."""
 
 from __future__ import annotations
 
@@ -276,7 +276,7 @@ def _render_bash_completion(spec: CompletionSpec) -> str:
             '    COMPREPLY=( $(compgen -W "$options $positional_choices" -- "$cur") )',
             "}",
             "",
-            "complete -F _jj_stack jj-review",
+            "complete -F _jj_stack jj-stack",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -284,7 +284,7 @@ def _render_bash_completion(spec: CompletionSpec) -> str:
 
 def _render_zsh_completion(spec: CompletionSpec) -> str:
     return (
-        "#compdef jj-review\n"
+        "#compdef jj-stack\n"
         "\n"
         "autoload -U +X bashcompinit || return 1\n"
         "bashcompinit || return 1\n"
@@ -294,25 +294,25 @@ def _render_zsh_completion(spec: CompletionSpec) -> str:
 
 
 def _render_fish_completion(spec: CompletionSpec) -> str:
-    lines = ["complete -c jj-review -f"]
+    lines = ["complete -c jj-stack -f"]
     top_level_condition = "__fish_use_subcommand"
     for option in spec.top_level_options:
         lines.append(_fish_option_line(option, condition=top_level_condition))
     for command in spec.commands:
         if command.visible:
-            lines.append(f"complete -c jj-review -n '{top_level_condition}' -a '{command.name}'")
+            lines.append(f"complete -c jj-stack -n '{top_level_condition}' -a '{command.name}'")
     for command in spec.commands:
         condition = f"__fish_seen_subcommand_from {command.name}"
         for option in command.options:
             lines.append(_fish_option_line(option, condition=condition))
         if command.positional_choices:
             choices = _join_words(command.positional_choices)
-            lines.append(f"complete -c jj-review -n '{condition}' -a '{choices}'")
+            lines.append(f"complete -c jj-stack -n '{condition}' -a '{choices}'")
     return "\n".join(lines) + "\n"
 
 
 def _fish_option_line(option: CompletionOption, *, condition: str) -> str:
-    pieces = ["complete", "-c", "jj-review", "-n", f"'{condition}'"]
+    pieces = ["complete", "-c", "jj-stack", "-n", f"'{condition}'"]
     short_flag = next((flag[1:] for flag in option.flags if flag.startswith("-")), None)
     long_flag = next((flag[2:] for flag in option.flags if flag.startswith("--")), None)
     if short_flag is not None and len(short_flag) == 1:

@@ -2,7 +2,7 @@
 
 ## What this directory is
 
-`docs/` is the user-facing documentation set for `jj-review`. These files are
+`docs/` is the user-facing documentation set for `jj-stack`. These files are
 read by real users — people (and agents) who are learning the tool, looking up
 a workflow step, or troubleshooting a problem. Write them accordingly.
 
@@ -11,7 +11,7 @@ a workflow step, or troubleshooting a problem. Write them accordingly.
 Readers know `jj` and `git`. Standard jj terms are fine: revset, bookmark,
 `@-`, `trunk()`, change ID, working copy. Don't over-explain those.
 
-What to avoid is vocabulary that comes from `jj-review`'s own design docs and
+What to avoid is vocabulary that comes from `jj-stack`'s own design docs and
 implementation — terms a jj user would not know without reading the source:
 
 - Not "ready prefix" → "the changes at the bottom of your stack that are ready"
@@ -19,14 +19,14 @@ implementation — terms a jj user would not know without reading the source:
   still based on the old history"
 - Not "materialized locally" → "set up local tracking for"
 - When mentioning persisted records, say "tracking data" or describe the
-  effect, e.g. "jj-review doesn't know about these PRs yet"
+  effect, e.g. "jj-stack doesn't know about these PRs yet"
 - Not "local-history repair path" → just say what the command does
 - Not "remote review branches" → "review branches" is fine; "remote review
   branches" is an internal double-noun
 - Not "outstanding incomplete operation" → "failed command" or "interrupted command"
 
 The distinction is between standard jj/git vocabulary (fine) and
-`jj-review`-specific design prose that leaked into the wrong layer (not fine).
+`jj-stack`-specific design prose that leaked into the wrong layer (not fine).
 
 ## What belongs here vs. docs/internals/
 
@@ -45,7 +45,7 @@ open this directory.
 The `--help` output for every command is held to the same standard as these
 docs. Command docstrings and flag descriptions live in
 `src/jj_stack/commands/*.py` and in `src/jj_stack/cli.py`. Apply the same
-vocabulary rules there: standard jj/git terms are fine; `jj-review` internal
+vocabulary rules there: standard jj/git terms are fine; `jj-stack` internal
 design-doc language is not.
 
 Specific patterns to watch for in help text:
@@ -54,7 +54,7 @@ Specific patterns to watch for in help text:
 - Say "readiness checks" or describe the checks directly
 - Say "what would be undone" when previewing cleanup or reset behavior
 - For persisted records, say "tracking data" or describe the effect
-- Say "tracking" rather than naming jj-review's local tracking implementation
+- Say "tracking" rather than naming jj-stack's local tracking implementation
 
 ## Updating user docs after implementing something
 

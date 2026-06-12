@@ -316,7 +316,7 @@ def test_unstack_apply_reports_blocked_when_github_is_unavailable(
     assert exit_code == 1
     assert "Close blocked:" in captured.out
     assert "Applied close actions:" not in captured.out
-    assert "cannot close pull requests tracked by jj-review without live GitHub state" in (
+    assert "cannot close pull requests tracked by jj-stack without live GitHub state" in (
         combined_output
     )
     assert ReviewStateStore.for_repo(repo).load() == initial_state
@@ -1040,7 +1040,7 @@ def test_unstack_cleanup_pull_request_reports_blocked_when_github_is_unavailable
 
     assert exit_code == 1
     assert "Close blocked:" in captured.out
-    assert "cannot close pull requests tracked by jj-review without live GitHub state" in (
+    assert "cannot close pull requests tracked by jj-stack without live GitHub state" in (
         combined_output
     )
     assert ReviewStateStore.for_repo(repo).load() == initial_state
@@ -1391,7 +1391,7 @@ def test_unstack_apply_cleanup_rechecks_cached_comment_ownership_when_pr_is_miss
     assert_output_contains(
         captured.out,
         "cannot delete saved stack navigation comment",
-        "does not belong to jj-review",
+        "does not belong to jj-stack",
     )
     assert manual_comment in issue_comments(fake_repo, 1)
 

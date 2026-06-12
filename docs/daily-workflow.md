@@ -1,6 +1,6 @@
 # Daily workflow
 
-This is the normal author loop `jj-review` is designed around.
+This is the normal author loop `jj-stack` is designed around.
 
 ## 1. Build your local stack with `jj`
 
@@ -10,24 +10,24 @@ Create some local changes that you want reviewed. For example:
 - add the API
 - add the UI
 
-Keep your stack linear (or rewrite it to be linear prior to review). `jj-review` is
+Keep your stack linear (or rewrite it to be linear prior to review). `jj-stack` is
 intentionally focused on one linear stack at a time.
 
 ## 2. Inspect before submitting
 
-`jj-review` will by default submit the current stack ending at `@-` (the most recent completed
+`jj-stack` will by default submit the current stack ending at `@-` (the most recent completed
 change below your working directory). In the common case, this is the stack you just built on
 top of `trunk()`. If `trunk()` has advanced since you last rebased, your stack instead starts
-from an older ancestor of `trunk()`. `jj-review view` will show the ancestor in the footer
+from an older ancestor of `trunk()`. `jj-stack view` will show the ancestor in the footer
 beneath your stack, so you can see exactly what the stack is based on.
 
 You can easily check what the tool thinks that stack is:
 
 ```bash
-jj-review
+jj-stack
 ```
 
-This is the same command as `jj-review view`.
+This is the same command as `jj-stack view`.
 
 This is a good go-to command whenever you are unsure what your stack looks like or what you have
 submitted for review.
@@ -37,12 +37,12 @@ repo-wide inventory of the stacks you have in flight, use the `list` command (or
 `ls`):
 
 ```bash
-jj-review list
+jj-stack list
 ```
 
 When you run `jj log` directly, you may also notice review bookmarks. These bookmark names are
 generated automatically. (By default they start with `review/...`, but you can configure a
-different prefix for your repo.) These bookmarks get turned into git branches that `jj-review`
+different prefix for your repo.) These bookmarks get turned into git branches that `jj-stack`
 uses for GitHub PRs.
 
 ## 3. Submit the stack
@@ -50,16 +50,16 @@ uses for GitHub PRs.
 Create or refresh the GitHub pull requests for the current stack:
 
 ```bash
-jj-review submit
+jj-stack submit
 ```
 
 If you want to first inspect what `submit` *would* do, without making any changes:
 
 ```bash
-jj-review submit --dry-run
+jj-stack submit --dry-run
 ```
 
-If a change does not already have its review branch and PR set up, `jj-review submit` creates
+If a change does not already have its review branch and PR set up, `jj-stack submit` creates
 the matching review bookmark for it. After that, it reuses that bookmark as the stable GitHub PR
 head branch while you revise your local change.
 
@@ -71,13 +71,13 @@ locally as needed.
 Once the local stack looks right again, refresh GitHub:
 
 ```bash
-jj-review submit
+jj-stack submit
 ```
 
 If you want to ask prior reviewers to take another look after you've addressed feedback, run:
 
 ```bash
-jj-review submit --re-request
+jj-stack submit --re-request
 ```
 
 This will notify reviewers who approved or asked for changes to a PR.
@@ -89,13 +89,13 @@ Use `view` when you need to answer:
 - which changes already have PRs
 - which PRs are draft, approved, blocked, or need cleanup
 
-If review state already exists on another machine or only on GitHub, run `jj-review checkout`
+If review state already exists on another machine or only on GitHub, run `jj-stack checkout`
 first to start working on that stack locally.
 
 If you want to inspect the stack for one linked PR directly:
 
 ```bash
-jj-review view --pull-request 7
+jj-stack view --pull-request 7
 ```
 
 (You can use `-p` as an alias for `--pull-request`.)
@@ -104,13 +104,13 @@ If you want to inspect several stacks in one run, pass several selectors in
 the order you want them shown:
 
 ```bash
-jj-review view foo --pull-request 7 bar
+jj-stack view foo --pull-request 7 bar
 ```
 
 For more detail, pass `--verbose`:
 
 ```bash
-jj-review view --verbose
+jj-stack view --verbose
 ```
 
 ## 6. Land the changes that are ready
@@ -118,7 +118,7 @@ jj-review view --verbose
 When the bottom part of the stack is ready to land:
 
 ```bash
-jj-review land
+jj-stack land
 ```
 
 What does it mean for a change to be "ready"? Its state on GitHub must be:
@@ -139,13 +139,13 @@ another look.
 If you want to preview the landing plan without actually landing your changes:
 
 ```bash
-jj-review land --dry-run
+jj-stack land --dry-run
 ```
 
 If you want to land only up through one specific pull request:
 
 ```bash
-jj-review land --pull-request 7
+jj-stack land --pull-request 7
 ```
 
 By default, a successful `land` forgets the local review bookmarks for the changes that actually
@@ -163,13 +163,13 @@ need to rebase; read on.
 
 ## 7. Rebase remaining work
 
-`jj-review cleanup --rebase` is specifically about removing merged ancestors from your local
+`jj-stack cleanup --rebase` is specifically about removing merged ancestors from your local
 stack and rebasing surviving descendants onto `trunk()`. Use it when some lower changes were
 merged on GitHub through different commit IDs and your local stack still contains those
 now-merged ancestors:
 
 ```bash
-jj-review cleanup --rebase
+jj-stack cleanup --rebase
 ```
 
 `cleanup --rebase` does not otherwise rewrite history. If your stack simply drifted because
@@ -184,7 +184,7 @@ GitHub that still point at old branch targets, old parent PRs, or old diffs. You
 GitHub's view of your stack with:
 
 ```bash
-jj-review submit
+jj-stack submit
 ```
 
 ## 8. Close abandoned review stacks
@@ -192,29 +192,29 @@ jj-review submit
 If a stack should no longer be reviewed:
 
 ```bash
-jj-review unstack
+jj-stack unstack
 ```
 
 If it's handier to identify your stack by PR number, you can specify that instead:
 
 ```bash
-jj-review unstack --pull-request 7
+jj-stack unstack --pull-request 7
 ```
 
-Use `--cleanup` when you also want to remove the stack's old review branches and `jj-review`'s
-tracking data after the PRs are closed. If `jj-review` created local review bookmarks for those
+Use `--cleanup` when you also want to remove the stack's old review branches and `jj-stack`'s
+tracking data after the PRs are closed. If `jj-stack` created local review bookmarks for those
 branches, this will forget those too.
 
-If `jj-review list` shows an `orphan` row, the PR is still open but its local change is no
+If `jj-stack list` shows an `orphan` row, the PR is still open but its local change is no
 longer part of any current stack. When you are ready to retire that PR, close it explicitly:
 
 ```bash
-jj-review unstack --cleanup --pull-request 7
+jj-stack unstack --cleanup --pull-request 7
 ```
 
-If `jj-review list` says another tracked stack changed since its last submit, either run
-`jj-review submit <head-change-id>` to refresh the PR branches or run
-`jj-review view <head-change-id>` to inspect first. `view` only emits this warning for another
+If `jj-stack list` says another tracked stack changed since its last submit, either run
+`jj-stack submit <head-change-id>` to refresh the PR branches or run
+`jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another
 stack when that stack is built on top of a change in the stack you are inspecting. Status calls
 out whether commit IDs, PR bases, or the stack head differ from the last successful submit, and
 it will also show if cleanup is needed first.
@@ -224,13 +224,13 @@ it will also show if cleanup is needed first.
 The steady-state loop is:
 
 ```bash
-jj-review view
-jj-review submit
+jj-stack view
+jj-stack submit
 # edit in jj
-jj-review submit
-jj-review land
-jj-review cleanup --rebase
-jj-review submit
+jj-stack submit
+jj-stack land
+jj-stack cleanup --rebase
+jj-stack submit
 ```
 
 ## When something goes wrong
@@ -239,10 +239,10 @@ If a command is interrupted mid-way (crash, Ctrl-C, network failure), inspect th
 stack and rerun the command you were using with an explicit revset or change ID:
 
 ```bash
-jj-review view
-jj-review view <change-id>
-jj-review submit <change-id>
-jj-review unstack --cleanup <change-id>
+jj-stack view
+jj-stack view <change-id>
+jj-stack submit <change-id>
+jj-stack unstack --cleanup <change-id>
 ```
 
 Use explicit selectors after a failure, not a naked command that falls back to

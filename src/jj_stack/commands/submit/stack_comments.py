@@ -233,7 +233,7 @@ def _resolve_saved_managed_comment(
             if not _managed_comment_matches_kind(body=cached_comment.body, kind=kind):
                 raise CliError(
                     t"Saved {stack_comment_label(kind)} #{cached_comment_id} for pull request "
-                    t"#{pull_request_number} does not belong to jj-review.",
+                    t"#{pull_request_number} does not belong to jj-stack.",
                     hint=(
                         t"Inspect the PR link with {ui.cmd('view --fetch')} or "
                         t"delete the saved comment ID before submitting again."
@@ -261,7 +261,7 @@ def _discover_managed_comment(
     if len(matching_comments) > 1:
         comment_ids = ", ".join(str(comment.id) for comment in matching_comments)
         raise CliError(
-            t"GitHub reports multiple jj-review {stack_comment_label(kind)}s for the same "
+            t"GitHub reports multiple jj-stack {stack_comment_label(kind)}s for the same "
             t"pull request: {comment_ids}.",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} or delete the "
@@ -340,7 +340,7 @@ def _render_navigation_comment(
     lines = [stack_comment_marker("navigation")]
     lines.extend(
         [
-            "This pull request is part of a stack tracked by `jj-review`.",
+            "This pull request is part of a stack tracked by `jj-stack`.",
             "",
             "Stack:",
         ]

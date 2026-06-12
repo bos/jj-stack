@@ -1,9 +1,9 @@
 """Close the GitHub pull requests for the selected stack.
 
-Passing `--cleanup` also removes `jj-review`'s own review branches, forgets any local bookmarks
+Passing `--cleanup` also removes `jj-stack`'s own review branches, forgets any local bookmarks
 that still point at those branches, and clears saved tracking data for the selected stack.
 
-If you asked `jj-review` to use your own bookmarks with `submit --use-bookmarks`, those are
+If you asked `jj-stack` to use your own bookmarks with `submit --use-bookmarks`, those are
 preserved unless `cleanup_user_bookmarks = true`. Use `--pull-request` to close by PR number or
 URL.
 
@@ -509,7 +509,7 @@ async def _stream_close_async(
             CloseAction(
                 kind="close",
                 body=(
-                    "cannot close pull requests tracked by jj-review without live "
+                    "cannot close pull requests tracked by jj-stack without live "
                     "GitHub state; "
                     "fix GitHub access and retry"
                 ),
@@ -589,7 +589,7 @@ async def _stream_close_async(
 def _inspected_close_has_no_work(*, revisions: tuple[ReviewStatusRevision, ...]) -> bool:
     """Whether close has nothing to do for the inspected revisions.
 
-    Both plain close and cleanup only act on changes jj-review tracks: closing
+    Both plain close and cleanup only act on changes jj-stack tracks: closing
     a linked pull request, forgetting a bookmark we saved, deleting a remote
     branch we pushed. None of those exist for a change without review
     identity, so either variant is a true no-op on such a stack. A

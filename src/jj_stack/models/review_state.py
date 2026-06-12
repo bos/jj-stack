@@ -1,4 +1,4 @@
-"""Typed models for jj-review tracking data."""
+"""Typed models for jj-stack tracking data."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ class CachedChange(BaseModel):
 
     @property
     def manages_bookmark(self) -> bool:
-        """Whether jj-review should clean up this bookmark automatically."""
+        """Whether jj-stack should clean up this bookmark automatically."""
 
         return self.bookmark_ownership == "managed"
 

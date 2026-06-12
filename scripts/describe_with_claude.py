@@ -47,7 +47,7 @@ SCHEMA = json.dumps(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate jj-review metadata with Claude Code. Prints JSON with "
+            "Generate jj-stack metadata with Claude Code. Prints JSON with "
             "string `title` and `body` fields."
         )
     )

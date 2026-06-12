@@ -1155,13 +1155,13 @@ async def _inspect_managed_comments(
     if len(navigation_comments) > 1:
         comment_ids = ", ".join(str(comment.id) for comment in navigation_comments)
         messages.append(
-            "GitHub reports multiple jj-review stack navigation comments for the same "
+            "GitHub reports multiple jj-stack stack navigation comments for the same "
             f"request: {comment_ids}."
         )
     if len(overview_comments) > 1:
         comment_ids = ", ".join(str(comment.id) for comment in overview_comments)
         messages.append(
-            "GitHub reports multiple jj-review stack overview comments for the same "
+            "GitHub reports multiple jj-stack stack overview comments for the same "
             f"request: {comment_ids}."
         )
     if messages:

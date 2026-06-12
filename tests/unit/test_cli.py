@@ -22,7 +22,7 @@ def test_main_reports_invalid_config_without_traceback(
     repo = _patch_fake_jj_workspace(
         monkeypatch,
         tmp_path,
-        jj_stack_config_stdout='jj-review.bookmark_prefix = ""\n',
+        jj_stack_config_stdout='jj-stack.bookmark_prefix = ""\n',
     )
 
     exit_code = main(["--repository", str(repo), "submit"])
@@ -30,7 +30,7 @@ def test_main_reports_invalid_config_without_traceback(
 
     assert exit_code == 1
     assert captured.err.startswith("Error: ")
-    assert "Invalid jj-review config" in captured.err
+    assert "Invalid jj-stack config" in captured.err
     assert "Traceback" not in captured.err
 
 
@@ -57,7 +57,7 @@ def test_main_reports_invalid_logging_level_without_traceback(
     repo = _patch_fake_jj_workspace(
         monkeypatch,
         tmp_path,
-        jj_stack_config_stdout='jj-review.logging.level = "DEBIG"\n',
+        jj_stack_config_stdout='jj-stack.logging.level = "DEBIG"\n',
     )
 
     exit_code = main(["--repository", str(repo), "submit"])
@@ -180,7 +180,7 @@ def test_main_reports_unknown_command_with_short_recovery_hint(
     assert_output_contains(captured.err, "Unknown command pants.")
     err_lines = captured.err.splitlines()
     assert err_lines[0] == "Error: Unknown command pants."
-    assert "Hint: Run jj-review help to list commands." in err_lines
+    assert "Hint: Run jj-stack help to list commands." in err_lines
 
 
 def _patch_fake_jj_workspace(
@@ -191,7 +191,7 @@ def _patch_fake_jj_workspace(
 ) -> Path:
     """Create a minimal .jj-marked directory and stub out the jj config read.
 
-    Lets unit tests reach the jj-review config validation path without
+    Lets unit tests reach the jj-stack config validation path without
     requiring a real jj workspace or subprocess call.
     """
 

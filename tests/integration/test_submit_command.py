@@ -858,7 +858,7 @@ def test_submit_describe_with_generates_pull_request_and_stack_metadata(
         f"AI {stack.revisions[0].change_id[:8]} -> AI {stack.revisions[1].change_id[:8]} | "
         "feature-1.txt" in _overview_comments(fake_repo, 2)[0].body
     )
-    assert "This pull request is part of a stack tracked by `jj-review`." in (
+    assert "This pull request is part of a stack tracked by `jj-stack`." in (
         _navigation_comments(fake_repo, 2)[0].body
     )
 
@@ -1230,7 +1230,7 @@ def test_submit_rejects_cached_stack_comment_id_for_non_stack_comment(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "does not belong to jj-review" in captured.err
+    assert "does not belong to jj-stack" in captured.err
     assert manual_comment in issue_comments(fake_repo, 2)
 
 
@@ -1272,7 +1272,7 @@ def test_submit_rejects_ambiguous_discovered_stack_comments(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "multiple jj-review stack navigation comments" in captured.err
+    assert "multiple jj-stack stack navigation comments" in captured.err
 
 
 def test_submit_reports_stack_comment_update_failures_without_traceback(

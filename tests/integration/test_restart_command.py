@@ -43,7 +43,7 @@ def test_restart_prepares_submitted_stack_for_fresh_pull_requests(
 
     assert exit_code == 0
     assert "Prepared fresh review tracking for 2 changes" in captured.out
-    assert f"jj-review submit {head_change_id}" in captured.out
+    assert f"jj-stack submit {head_change_id}" in captured.out
     for change_id in change_ids:
         restarted = restarted_state.changes[change_id]
         assert restarted.bookmark is not None

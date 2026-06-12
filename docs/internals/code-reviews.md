@@ -1,6 +1,6 @@
 # Code review guidelines
 
-Use this when reviewing `jj-review` changes or when asking a subagent to do a code review pass.
+Use this when reviewing `jj-stack` changes or when asking a subagent to do a code review pass.
 
 ## Primary goal
 
@@ -35,7 +35,7 @@ Also remember current project reality:
 Many bugs here come from interactions between loosely coupled systems. Pay extra attention to:
 
 - interrupted operations that leave work half-applied or hard to recover
-- mismatch or drift between `jj-review` tracking state, `jj`, GitHub
+- mismatch or drift between `jj-stack` tracking state, `jj`, GitHub
 - states where recovery paths fail and the user can no longer get back to something sane
 - unusual DAG topology, including rewrites, relinks, local deletions, and non-linear history
 - cases where only one selected stack should matter, but surrounding history can interfere
@@ -108,7 +108,7 @@ Pay extra attention when a change touches:
 - broken repo state or recovery paths
 - bad, missing, contradictory, or partially applied config
 - unusual DAG topology or stack-selection edge cases
-- consistency across `jj-review`, `jj`, GitHub, local persistence, and
+- consistency across `jj-stack`, `jj`, GitHub, local persistence, and
   subprocess-visible state
 - interrupted operations or surprising command interleavings
 

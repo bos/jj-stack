@@ -279,9 +279,9 @@ def init_repo(
 def write_fake_github_config(
     tmp_path: Path, _fake_repo: FakeGithubRepository, *, extra_lines: list[str] | None = None
 ) -> Path:
-    config_path = tmp_path / "jj-review-config.toml"
+    config_path = tmp_path / "jj-stack-config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["[jj-review]"]
+    lines = ["[jj-stack]"]
     if extra_lines:
         lines.append("")
         lines.extend(extra_lines)

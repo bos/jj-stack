@@ -211,6 +211,6 @@ async def verify_no_unexpected_pull_request_closures(
     message_parts.append(" ")
     message_parts.append(
         t"Once the affected pull requests are restored, rerunning "
-        t"{ui.cmd('jj-review submit')} is safe and will restore the stacked bases."
+        t"{ui.cmd('jj-stack submit')} is safe and will restore the stacked bases."
     )
     raise CliError(tuple(message_parts))

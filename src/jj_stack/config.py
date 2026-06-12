@@ -1,4 +1,4 @@
-"""Configuration loading for `jj-review`."""
+"""Configuration loading for `jj-stack`."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient, JjCommandError
 
-CONFIG_SECTION = "jj-review"
+CONFIG_SECTION = "jj-stack"
 DEFAULT_BOOKMARK_PREFIX = "review"
 _TYPO_CUTOFF = 0.75
 
@@ -83,18 +83,18 @@ class AppConfig(RepoConfig):
 
 
 def load_config(*, jj_client: JjClient) -> AppConfig:
-    """Load `jj-review` config by delegating resolution to `jj` itself.
+    """Load `jj-stack` config by delegating resolution to `jj` itself.
 
-    `jj config list 'jj-review'` respects user/repo/workspace scopes plus any
+    `jj config list 'jj-stack'` respects user/repo/workspace scopes plus any
     `--config` / `--config-file` overrides already attached to `jj_client`, so
-    jj-review and every downstream `jj` invocation see the same resolved view.
+    jj-stack and every downstream `jj` invocation see the same resolved view.
     """
 
     try:
         stdout = jj_client.read_jj_stack_config_list_output()
     except JjCommandError as error:
         raise CliError(
-            f"Could not load jj-review config: {_jj_error_detail(error)}"
+            f"Could not load jj-stack config: {_jj_error_detail(error)}"
         ) from error
     raw = parse_jj_stack_config_toml(stdout)
     _raise_on_likely_config_typos(config_data=raw, source="jj config")
@@ -113,9 +113,9 @@ def _jj_error_detail(error: JjCommandError) -> str:
 
 
 def parse_jj_stack_config_toml(text: str) -> dict[str, object]:
-    """Parse the TOML-formatted output of `jj config list 'jj-review'`.
+    """Parse the TOML-formatted output of `jj config list 'jj-stack'`.
 
-    Returns the contents of the ``[jj-review]`` table as a mapping, or an empty
+    Returns the contents of the ``[jj-stack]`` table as a mapping, or an empty
     mapping when jj has no matching keys set.
     """
 
@@ -126,12 +126,12 @@ def parse_jj_stack_config_toml(text: str) -> dict[str, object]:
         parsed = tomllib.loads(stripped)
     except tomllib.TOMLDecodeError as error:
         raise CliError(
-            f"Could not parse jj-review config from jj: {error}"
+            f"Could not parse jj-stack config from jj: {error}"
         ) from error
     section = parsed.get(CONFIG_SECTION, {})
     if not isinstance(section, Mapping):
         raise CliError(
-            f"Invalid jj-review config from jj: [{CONFIG_SECTION}] must be a table."
+            f"Invalid jj-stack config from jj: [{CONFIG_SECTION}] must be a table."
         )
     return dict(section)
 
@@ -169,7 +169,7 @@ def _raise_on_likely_unknown_keys(
         if not suggestion:
             continue
         raise CliError(
-            f"Invalid jj-review config in {source}: unknown key {table_path}.{key}. "
+            f"Invalid jj-stack config in {source}: unknown key {table_path}.{key}. "
             f"Did you mean {table_path}.{suggestion[0]}?"
         )
 
@@ -186,7 +186,7 @@ def _format_validation_error(*, source: str, error: ValidationError) -> str:
         _format_validation_issue(tuple(str(part) for part in issue["loc"]), str(issue["msg"]))
         for issue in error.errors(include_url=False)
     ]
-    return f"Invalid jj-review config in {source}: {'; '.join(details)}"
+    return f"Invalid jj-stack config in {source}: {'; '.join(details)}"
 
 
 def _format_validation_issue(location: tuple[str, ...], message: str) -> str:
