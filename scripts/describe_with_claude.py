@@ -12,7 +12,7 @@ from pathlib import Path
 
 CLAUDE_MODEL = "haiku"
 MAX_PR_CONTEXT_BYTES = 900_000
-STACK_INPUT_ENV = "JJ_REVIEW_STACK_INPUT_FILE"
+STACK_INPUT_ENV = "JJ_STACK_INPUT_FILE"
 
 PROMPT_TEMPLATE = """\
 {task}
@@ -261,7 +261,7 @@ def main() -> int:
         raise AssertionError("argparse should guarantee a revset.")
 
     prompt = build_prompt(mode, revset, build_context(mode, revset))
-    claude_bin = os.environ.get("JJ_REVIEW_CLAUDE_BIN", "claude")
+    claude_bin = os.environ.get("JJ_STACK_CLAUDE_BIN", "claude")
     completed = subprocess.run(
         [
             claude_bin,

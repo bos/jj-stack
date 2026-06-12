@@ -798,7 +798,7 @@ def test_submit_describe_with_generates_pull_request_and_stack_metadata(
                 "from pathlib import Path",
                 "import sys",
                 "",
-                "stack_input_env = 'JJ_REVIEW_STACK_INPUT_FILE'",
+                "stack_input_env = 'JJ_STACK_INPUT_FILE'",
                 "kind, revset = sys.argv[1], sys.argv[2]",
                 "if kind == '--pr':",
                 "    payload = {",

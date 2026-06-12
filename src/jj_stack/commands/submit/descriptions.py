@@ -17,7 +17,7 @@ from jj_stack.models.stack import LocalRevision
 
 from .models import GeneratedDescription
 
-_DESCRIBE_WITH_STACK_INPUT_ENV = "JJ_REVIEW_STACK_INPUT_FILE"
+_DESCRIBE_WITH_STACK_INPUT_ENV = "JJ_STACK_INPUT_FILE"
 
 
 def resolve_generated_descriptions(

@@ -16,7 +16,7 @@ from typing import Any
 COMMENT_BLOCK_RE = re.compile(r"<!--\s*jj-stack:.*?-->", re.DOTALL)
 COMMENT_START = "<!-- jj-stack:"
 COMMENT_END = "-->"
-STACK_INPUT_ENV = "JJ_REVIEW_STACK_INPUT_FILE"
+STACK_INPUT_ENV = "JJ_STACK_INPUT_FILE"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

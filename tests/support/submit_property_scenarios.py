@@ -432,13 +432,13 @@ def stack_edit_scenarios_from_environment() -> tuple[StackEditScenario, ...]:
 
     count = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_SCENARIOS",
+            "JJ_STACK_SUBMIT_PROPERTY_SCENARIOS",
             str(DEFAULT_STACK_EDIT_SCENARIO_COUNT),
         )
     )
     seed = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            "JJ_STACK_SUBMIT_PROPERTY_SEED",
             str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
         )
     )
@@ -450,13 +450,13 @@ def cross_stack_scenarios_from_environment() -> tuple[CrossStackSplitScenario, .
 
     count = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS",
+            "JJ_STACK_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS",
             str(DEFAULT_CROSS_STACK_SCENARIO_COUNT),
         )
     )
     seed = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            "JJ_STACK_SUBMIT_PROPERTY_SEED",
             str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
         )
     )
@@ -468,13 +468,13 @@ def stack_merge_scenarios_from_environment() -> tuple[StackMergeScenario, ...]:
 
     count = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS",
+            "JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS",
             str(DEFAULT_STACK_MERGE_SCENARIO_COUNT),
         )
     )
     seed = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            "JJ_STACK_SUBMIT_PROPERTY_SEED",
             str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
         )
     )
@@ -486,13 +486,13 @@ def stack_move_scenarios_from_environment() -> tuple[StackMoveScenario, ...]:
 
     count = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS",
+            "JJ_STACK_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS",
             str(DEFAULT_STACK_MOVE_SCENARIO_COUNT),
         )
     )
     seed = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            "JJ_STACK_SUBMIT_PROPERTY_SEED",
             str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
         )
     )
@@ -504,13 +504,13 @@ def submit_retry_scenarios_from_environment() -> tuple[SubmitRetryScenario, ...]
 
     count = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_RETRY_SCENARIOS",
+            "JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS",
             str(DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT),
         )
     )
     seed = int(
         os.environ.get(
-            "JJ_REVIEW_SUBMIT_PROPERTY_SEED",
+            "JJ_STACK_SUBMIT_PROPERTY_SEED",
             str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
         )
     )

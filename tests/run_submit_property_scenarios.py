@@ -87,25 +87,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             return completed.returncode
 
     env = _command_env()
-    env["JJ_REVIEW_SUBMIT_PROPERTY_SCENARIOS"] = str(args.scenarios)
+    env["JJ_STACK_SUBMIT_PROPERTY_SCENARIOS"] = str(args.scenarios)
     cross_stack_scenarios = args.cross_stack_scenarios
     if cross_stack_scenarios is None:
         cross_stack_scenarios = max(4, args.scenarios // 10)
-    env["JJ_REVIEW_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS"] = str(cross_stack_scenarios)
+    env["JJ_STACK_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS"] = str(cross_stack_scenarios)
     stack_merge_scenarios = args.stack_merge_scenarios
     if stack_merge_scenarios is None:
         stack_merge_scenarios = max(4, args.scenarios // 10)
-    env["JJ_REVIEW_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS"] = str(stack_merge_scenarios)
+    env["JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS"] = str(stack_merge_scenarios)
     stack_move_scenarios = args.stack_move_scenarios
     if stack_move_scenarios is None:
         stack_move_scenarios = max(4, args.scenarios // 10)
-    env["JJ_REVIEW_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS"] = str(stack_move_scenarios)
+    env["JJ_STACK_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS"] = str(stack_move_scenarios)
     retry_scenarios = args.retry_scenarios
     if retry_scenarios is None:
         retry_scenarios = max(4, args.scenarios // 10)
-    env["JJ_REVIEW_SUBMIT_PROPERTY_RETRY_SCENARIOS"] = str(retry_scenarios)
+    env["JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS"] = str(retry_scenarios)
     if args.seed is not None:
-        env["JJ_REVIEW_SUBMIT_PROPERTY_SEED"] = str(args.seed)
+        env["JJ_STACK_SUBMIT_PROPERTY_SEED"] = str(args.seed)
 
     command = [
         _venv_python(),

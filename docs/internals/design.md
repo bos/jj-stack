@@ -326,7 +326,7 @@ Given a chosen head revision:
      below is a specialization of the same rule.
    - for stack helpers, `submit` writes a temporary input file with the per-PR title/body
      pairs and a compact diffstat for each PR, and points the helper at it via
-     `JJ_REVIEW_STACK_INPUT_FILE`. Helpers can summarize from PR-level metadata rather
+     `JJ_STACK_INPUT_FILE`. Helpers can summarize from PR-level metadata rather
      than replaying the full patch history.
    - helper output must be structured. Invalid output aborts `submit` before any local,
      remote, or GitHub mutation.

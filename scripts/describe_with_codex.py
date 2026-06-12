@@ -13,7 +13,7 @@ from pathlib import Path
 
 CODEX_MODEL = "gpt-5.4-mini"
 MAX_PR_CONTEXT_BYTES = 900_000
-STACK_INPUT_ENV = "JJ_REVIEW_STACK_INPUT_FILE"
+STACK_INPUT_ENV = "JJ_STACK_INPUT_FILE"
 
 PROMPT_TEMPLATE = """\
 {task}
@@ -244,7 +244,7 @@ def main() -> int:
         raise AssertionError("argparse should guarantee a revset.")
 
     prompt = build_prompt(mode, revset, build_context(mode, revset))
-    codex_bin = os.environ.get("JJ_REVIEW_CODEX_BIN", "codex")
+    codex_bin = os.environ.get("JJ_STACK_CODEX_BIN", "codex")
     with tempfile.TemporaryDirectory(prefix="jj-stack-codex-") as tempdir:
         tempdir_path = Path(tempdir)
         schema_path = tempdir_path / "schema.json"
