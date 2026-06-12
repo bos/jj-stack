@@ -221,3 +221,23 @@ Remaining work:
 
 Docs should teach the workflow first and enumerate commands second. The primary
 risk is writing reference prose before the task-oriented guides are complete.
+
+## Native GitHub Stack Metadata via `gh stack link`
+
+_Benefit: medium — replaces tool-managed PR comments with GitHub's first-class
+stacked-PR UI, but depends on a GitHub feature that is still rolling out._
+
+GitHub's `gh stack` CLI ships a `link` subcommand designed for external branch
+managers (jj, Sapling, git-town): it registers an ordered set of PRs as a
+server-side stack so GitHub renders native stack navigation in the PR UI.
+jj-stack currently projects the same information into PR comments via the
+hidden `<!-- jj-stack-navigation -->` and `<!-- jj-stack-overview -->` markers.
+
+Possible follow-up work:
+
+- on submit, register or update the stack via the API behind `gh stack link`
+  instead of (or in addition to) writing navigation comments
+- drop the navigation comment path entirely once native stacks are broadly
+  available, keeping the overview comment only if it still adds value
+- decide how `checkout` should treat PRs that are linked into a native GitHub
+  stack but have no local tracking data
