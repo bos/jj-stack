@@ -6,8 +6,8 @@ from typing import Literal
 
 StackCommentKind = Literal["navigation", "overview"]
 
-STACK_NAVIGATION_COMMENT_MARKER = "<!-- jj-review-navigation -->"
-STACK_OVERVIEW_COMMENT_MARKER = "<!-- jj-review-overview -->"
+STACK_NAVIGATION_COMMENT_MARKER = "<!-- jj-stack-navigation -->"
+STACK_OVERVIEW_COMMENT_MARKER = "<!-- jj-stack-overview -->"
 
 
 def stack_comment_marker(kind: StackCommentKind) -> str:

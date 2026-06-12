@@ -438,7 +438,7 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
                             "comments": {
                                 "nodes": [
                                     {
-                                        "body": "<!-- jj-review-navigation -->",
+                                        "body": "<!-- jj-stack-navigation -->",
                                         "databaseId": 70,
                                         "url": "https://github.test/comment/70",
                                     }
