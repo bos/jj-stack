@@ -24,7 +24,6 @@ from jj_stack.github.client import (
     GithubClientError,
     build_github_client,
 )
-from jj_stack.github.error_messages import summarize_github_error_reason
 from jj_stack.github.resolution import (
     ParsedGithubRepo,
     parse_github_repo,
@@ -188,7 +187,7 @@ async def _check_github_connectivity(
                     "connectivity",
                     "fail",
                     f"{parsed_repo.host}/{parsed_repo.full_name}: "
-                    f"{summarize_github_error_reason(error)}",
+                    f"{error.user_facing_reason()}",
                 ),
                 None,
             )

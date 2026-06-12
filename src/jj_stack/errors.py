@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from jj_stack.github.client import GithubClientError
-from jj_stack.github.error_messages import summarize_github_error_reason
 from jj_stack.ui import Message, plain_text
 
 type ErrorMessage = Message
 type ErrorHint = Message
+
+
+class SummarizedError(RuntimeError):
+    """Errors that carry their own one-line user-facing reason.
+
+    Adapter errors (e.g. the GitHub client) subclass this so `error_message`
+    can render a concise reason without depending on the adapter module.
+    """
+
+    def user_facing_reason(self) -> str:
+        raise NotImplementedError
 
 
 def error_message(error: BaseException) -> ErrorMessage:
@@ -15,8 +24,8 @@ def error_message(error: BaseException) -> ErrorMessage:
 
     if isinstance(error, CliError):
         cause = error.__cause__
-        if isinstance(cause, GithubClientError):
-            reason = summarize_github_error_reason(cause)
+        if isinstance(cause, SummarizedError):
+            reason = cause.user_facing_reason()
             if plain_text(error.message).strip():
                 return (error.message, ": ", reason)
             return reason

@@ -23,7 +23,6 @@ from jj_stack.github.client import GithubClient, GithubClientError, build_github
 from jj_stack.github.error_messages import (
     github_unavailable_message,
     remote_unavailable_message,
-    summarize_github_error_reason,
 )
 from jj_stack.github.resolution import (
     resolve_github_target,
@@ -126,7 +125,7 @@ async def run_untracked_cleanup_pull_request(
             )
         except GithubClientError as error:
             raise _untracked_cleanup_verification_error(
-                detail=summarize_github_error_reason(error),
+                detail=error.user_facing_reason(),
                 pull_request_number=pull_request_number,
             ) from error
 

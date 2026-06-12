@@ -23,7 +23,7 @@ def test_error_message_appends_github_cause_reason() -> None:
 def test_error_message_uses_github_cause_reason_when_message_is_empty(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("jj_stack.github.error_messages.github_token_from_env", lambda: "token")
+    monkeypatch.setattr("jj_stack.github.client.github_token_from_env", lambda: "token")
 
     cause = GithubClientError(
         'GitHub request failed: 404 {"message":"Not Found"}',

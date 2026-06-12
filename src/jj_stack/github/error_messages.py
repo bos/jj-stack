@@ -7,18 +7,6 @@ from jj_stack.github.client import GithubClientError
 from jj_stack.ui import Message, code
 
 
-def summarize_github_error_reason(error: GithubClientError) -> str:
-    """Render a concise GitHub failure reason suitable after an action prefix."""
-
-    if error.status_code == 401:
-        return "auth failed - check GITHUB_TOKEN"
-    if error.status_code == 403:
-        return "access denied - check GITHUB_TOKEN and repo access"
-    if is_repository_not_found_error(error):
-        return _github_auth_failure_message("repo not found or inaccessible")
-    return f"request failed ({_request_failure_detail(error)})"
-
-
 def summarize_github_lookup_error(*, action: str, error: GithubClientError) -> str:
     """Render a concise GitHub lookup failure for `status`-style output."""
 
@@ -26,9 +14,9 @@ def summarize_github_lookup_error(*, action: str, error: GithubClientError) -> s
         return "GitHub authentication failed - check GITHUB_TOKEN"
     if error.status_code == 403:
         return "GitHub access was denied - check GITHUB_TOKEN and repo access"
-    if is_repository_not_found_error(error):
+    if error.is_repository_not_found():
         return _github_auth_failure_message("GitHub repository not found or inaccessible")
-    return f"{action} failed ({_request_failure_detail(error)})"
+    return f"{action} failed ({error.request_failure_detail()})"
 
 
 def github_unavailable_message(
@@ -54,37 +42,6 @@ def remote_unavailable_message(
     if remote_error is None:
         return "No Git remote is configured."
     return remote_error
-
-
-def github_error_detail(error: GithubClientError) -> str:
-    """Return a concise detail string from a GitHub client error."""
-
-    message = str(error).strip()
-    for prefix in (
-        "GitHub request failed: ",
-        "GitHub pull request head lookup failed: ",
-        "GitHub pull request batch lookup failed: ",
-        "GitHub pull request review decision lookup failed: ",
-        "GitHub issue comment list failed: ",
-    ):
-        if message.startswith(prefix):
-            return message.removeprefix(prefix).strip()
-    return message
-
-
-def is_repository_not_found_error(error: GithubClientError) -> bool:
-    """Return whether the error indicates the repository is missing or inaccessible."""
-
-    detail = github_error_detail(error)
-    if "Could not resolve to a Repository with the name" in detail:
-        return True
-    return error.status_code == 404
-
-
-def _request_failure_detail(error: GithubClientError) -> str:
-    if error.status_code is None:
-        return github_error_detail(error)
-    return f"GitHub {error.status_code}"
 
 
 def _github_auth_failure_message(message: str) -> str:

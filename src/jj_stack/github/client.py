@@ -13,7 +13,8 @@ from textwrap import dedent, indent
 import httpxyz
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from jj_stack.github.auth import github_token_for_base_url
+from jj_stack.errors import SummarizedError
+from jj_stack.github.auth import github_token_for_base_url, github_token_from_env
 from jj_stack.models.github import (
     GithubIssueComment,
     GithubPullRequest,
@@ -31,7 +32,7 @@ _DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 1.0
 _DEFAULT_MAX_RATE_LIMIT_BACKOFF_SECONDS = 8.0
 
 
-class GithubClientError(RuntimeError):
+class GithubClientError(SummarizedError):
     """Raised when GitHub returns a non-success response."""
 
     def __init__(
@@ -44,6 +45,49 @@ class GithubClientError(RuntimeError):
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
         self.status_code = status_code
+
+    def detail(self) -> str:
+        """Return the transport detail with known request prefixes stripped."""
+
+        message = str(self).strip()
+        for prefix in (
+            "GitHub request failed: ",
+            "GitHub pull request head lookup failed: ",
+            "GitHub pull request batch lookup failed: ",
+            "GitHub pull request review decision lookup failed: ",
+            "GitHub issue comment list failed: ",
+        ):
+            if message.startswith(prefix):
+                return message.removeprefix(prefix).strip()
+        return message
+
+    def is_repository_not_found(self) -> bool:
+        """Whether the error indicates the repository is missing or inaccessible."""
+
+        if "Could not resolve to a Repository with the name" in self.detail():
+            return True
+        return self.status_code == 404
+
+    def request_failure_detail(self) -> str:
+        """Return the status code if known, otherwise the transport detail."""
+
+        if self.status_code is None:
+            return self.detail()
+        return f"GitHub {self.status_code}"
+
+    def user_facing_reason(self) -> str:
+        """Render a concise failure reason suitable after an action prefix."""
+
+        if self.status_code == 401:
+            return "auth failed - check GITHUB_TOKEN"
+        if self.status_code == 403:
+            return "access denied - check GITHUB_TOKEN and repo access"
+        if self.is_repository_not_found():
+            message = "repo not found or inaccessible"
+            if github_token_from_env() is None:
+                return f"{message} - check GITHUB_TOKEN or gh auth"
+            return message
+        return f"request failed ({self.request_failure_detail()})"
 
 
 class _GraphqlPullRequestConnection(BaseModel):

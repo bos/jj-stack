@@ -9,7 +9,6 @@ from typing import Literal, Protocol
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.error_messages import summarize_github_error_reason
 from jj_stack.github.stack_comments import (
     StackCommentKind,
     is_navigation_comment,
@@ -117,7 +116,7 @@ async def find_managed_comments(
         )
     except GithubClientError as error:
         if error.status_code != 404:
-            reason = summarize_github_error_reason(error)
+            reason = error.user_facing_reason()
             return tuple(
                 ManagedCommentLookup(
                     kind=kind,
@@ -210,7 +209,7 @@ async def _resolve_cached_managed_comments_after_404(
                     blocked_reason=(
                         f"cannot inspect saved {stack_comment_label(kind)} "
                         f"#{cached_comment_id}: "
-                        f"{summarize_github_error_reason(cached_comment_error)}"
+                        f"{cached_comment_error.user_facing_reason()}"
                     ),
                 )
             )
