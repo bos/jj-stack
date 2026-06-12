@@ -113,7 +113,7 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
         ("aaaaaaaaaaaa", False),
     ]
     assert result.github_error == "jj bookmark list failed"
-    assert result.github_repository == "octo-org/stacked-review"
+    assert result.github_repository == prepared_status.github_repository
     assert result.incomplete is True
     assert result.revisions == (
         local_only_revisions[1],
@@ -192,7 +192,7 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
     )
 
     assert result.github_error is None
-    assert result.github_repository == "octo-org/stacked-review"
+    assert result.github_repository == prepared_status.github_repository
     assert result.incomplete is False
     assert result.revisions == local_only_revisions
 

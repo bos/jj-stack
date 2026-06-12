@@ -159,11 +159,7 @@ def _run_cleanup_command(
             _render_remote_and_github_lines(
                 remote=prepared_cleanup.remote,
                 remote_error=prepared_cleanup.remote_error,
-                github_repository=(
-                    prepared_cleanup.github_repository.full_name
-                    if prepared_cleanup.github_repository is not None
-                    else None
-                ),
+                github_repository=prepared_cleanup.github_repository,
                 github_error=prepared_cleanup.github_repository_error,
             )
         )

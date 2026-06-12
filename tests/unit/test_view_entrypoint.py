@@ -7,6 +7,7 @@ import pytest
 
 import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjCliArgs
 from jj_stack.models.review_state import CachedChange, ReviewState
 
@@ -85,7 +86,11 @@ def test_view_updates_tty_progress_bar_while_streaming(
         return SimpleNamespace(
             cache_update_skipped=False,
             github_error=None,
-            github_repository="octo-org/stacked-review",
+            github_repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
             incomplete=False,
             revisions=(),
             submitted_state_disagreements=(),
@@ -163,7 +168,11 @@ def test_view_passes_cli_color_override_to_native_jj_rendering(
         lambda **kwargs: SimpleNamespace(
             cache_update_skipped=False,
             github_error=None,
-            github_repository="octo-org/stacked-review",
+            github_repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
             incomplete=False,
             revisions=(),
             submitted_state_disagreements=(),

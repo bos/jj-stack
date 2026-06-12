@@ -84,7 +84,7 @@ class CheckoutResult:
     actions: tuple[ImportAction, ...]
     fetched_tip_commit: str | None
     github_error: ErrorMessage | None
-    github_repository: str | None
+    github_repository: GithubRepoAddress | None
     remote: GitRemote | None
     remote_error: ErrorMessage | None
     reviewable_revision_count: int
@@ -320,9 +320,7 @@ def _checkout_result(
         actions=actions,
         fetched_tip_commit=selection.fetched_tip_commit,
         github_error=status_result.github_error,
-        github_repository=prepared_status.github_repository.full_name
-        if prepared_status.github_repository is not None
-        else None,
+        github_repository=prepared_status.github_repository,
         remote=prepared_status.prepared.remote,
         remote_error=prepared_status.prepared.remote_error,
         reviewable_revision_count=len(prepared_status.prepared.status_revisions),

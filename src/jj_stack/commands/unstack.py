@@ -90,7 +90,7 @@ class CloseResult:
     blocked: bool
     cleanup: bool
     github_error: ErrorMessage | None
-    github_repository: str | None
+    github_repository: GithubRepoAddress | None
     remote: GitRemote | None
     remote_error: ErrorMessage | None
     selected_revset: str
@@ -719,7 +719,7 @@ def _close_result(
         blocked=blocked,
         cleanup=prepared_close.cleanup,
         github_error=github_error,
-        github_repository=github_repository.full_name if github_repository else None,
+        github_repository=github_repository,
         remote=prepared.remote,
         remote_error=prepared.remote_error,
         selected_revset=prepared_close.prepared_status.selected_revset,

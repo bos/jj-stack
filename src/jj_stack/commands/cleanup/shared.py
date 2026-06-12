@@ -169,11 +169,7 @@ def _render_rebase_preamble(*, prepared_rebase: PreparedRebase) -> tuple[tuple[s
     return _render_remote_and_github_lines(
         remote=prepared.remote,
         remote_error=prepared.remote_error,
-        github_repository=(
-            prepared_status.github_repository.full_name
-            if prepared_status.github_repository is not None
-            else None
-        ),
+        github_repository=prepared_status.github_repository,
         github_error=prepared_status.github_repository_error,
     )
 
@@ -227,7 +223,7 @@ def _render_remote_and_github_lines(
     *,
     remote: GitRemote | None,
     remote_error: ErrorMessage | None,
-    github_repository: str | None,
+    github_repository: GithubRepoAddress | None,
     github_error: ErrorMessage | None,
 ) -> tuple[tuple[str, str], ...]:
     lines: list[tuple[str, str]] = []

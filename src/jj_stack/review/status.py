@@ -126,7 +126,7 @@ class StatusResult:
     """Status result for one selected local stack."""
 
     github_error: ErrorMessage | None
-    github_repository: str | None
+    github_repository: GithubRepoAddress | None
     incomplete: bool
     remote: GitRemote | None
     remote_error: ErrorMessage | None
@@ -375,7 +375,7 @@ async def stream_status_async(
     if not prepared.status_revisions:
         return StatusResult(
             github_error=None,
-            github_repository=github_repository.full_name,
+            github_repository=github_repository,
             incomplete=False,
             remote=prepared.remote,
             remote_error=None,
@@ -397,7 +397,7 @@ async def stream_status_async(
     if not prepared_revisions_for_github:
         return StatusResult(
             github_error=None,
-            github_repository=github_repository.full_name,
+            github_repository=github_repository,
             incomplete=_status_is_incomplete(fallback_revisions),
             remote=prepared.remote,
             remote_error=None,
@@ -427,7 +427,7 @@ async def stream_status_async(
                 on_revision(revision, False)
         return StatusResult(
             github_error=github_error,
-            github_repository=github_repository.full_name,
+            github_repository=github_repository,
             incomplete=True,
             remote=prepared.remote,
             remote_error=None,
@@ -452,7 +452,7 @@ async def stream_status_async(
     return StatusResult(
         cache_update_skipped=cache_update_skipped,
         github_error=None,
-        github_repository=github_repository.full_name,
+        github_repository=github_repository,
         incomplete=_status_is_incomplete(display_revisions),
         remote=prepared.remote,
         remote_error=None,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from jj_stack.github.auth import github_token_from_env
 from jj_stack.github.client import GithubClientError
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.ui import Message, code
 
 
@@ -22,7 +23,7 @@ def summarize_github_lookup_error(*, action: str, error: GithubClientError) -> s
 def github_unavailable_message(
     *,
     github_error: Message | None,
-    github_repository: str | None,
+    github_repository: GithubRepoAddress | None,
 ) -> Message | None:
     """Render a concise warning when GitHub-backed work could not proceed."""
 
@@ -30,7 +31,7 @@ def github_unavailable_message(
         return None
     if github_repository is None:
         return ("GitHub unavailable: ", github_error)
-    return ("GitHub unavailable for ", code(github_repository), ": ", github_error)
+    return ("GitHub unavailable for ", code(github_repository.full_name), ": ", github_error)
 
 
 def remote_unavailable_message(
