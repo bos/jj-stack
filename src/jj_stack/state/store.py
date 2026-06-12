@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from jj_stack.errors import CliError
 from jj_stack.models.review_state import ReviewState
 
-STATE_DIRNAME = "jj-review"
+STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
 
 

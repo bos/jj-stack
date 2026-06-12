@@ -247,7 +247,7 @@ It does not decide stack topology or branch naming.
 - we do not duplicate `jj`'s config resolution in Python: reads go through
   `jj config list 'jj-stack'`, which inherits user/repo/workspace precedence plus
   effective `--config` / `--config-file` overrides on every `jj` invocation
-- tracking state lives in `~/.local/state/jj-review/repos/<repo-id>/state.json`
+- tracking state lives in `~/.local/state/jj-stack/repos/<repo-id>/state.json`
 - `<repo-id>` is derived from the canonical `.jj/repo` storage path so every workspace
   for the same repo shares one state location
 - reads treat a missing state file as empty state; writes create parent directories on

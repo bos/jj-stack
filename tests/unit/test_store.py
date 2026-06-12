@@ -9,7 +9,7 @@ from jj_stack.state.store import ReviewStateError, ReviewStateStore
 
 
 def test_review_state_store_round_trips_and_creates_parent_directories(tmp_path: Path) -> None:
-    state_path = tmp_path / "state" / "jj-review" / "repos" / "repo-id" / "state.json"
+    state_path = tmp_path / "state" / "jj-stack" / "repos" / "repo-id" / "state.json"
     store = ReviewStateStore(state_path)
 
     store.save(
@@ -62,7 +62,7 @@ def test_review_state_store_rejects_unknown_fields(tmp_path: Path) -> None:
 
 
 def test_require_writable_creates_missing_parent_directories(tmp_path: Path) -> None:
-    state_path = tmp_path / "state" / "jj-review" / "repos" / "repo-id" / "state.json"
+    state_path = tmp_path / "state" / "jj-stack" / "repos" / "repo-id" / "state.json"
     store = ReviewStateStore(state_path)
 
     writable_dir = store.require_writable()

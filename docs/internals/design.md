@@ -251,7 +251,7 @@ the wrong default for both:
 So storage splits in two:
 
 - human-authored config in `jj`'s normal config scopes under the `jj-stack` namespace
-- tracking state in `~/.local/state/jj-review/repos/<repo-id>/state.json`
+- tracking state in `~/.local/state/jj-stack/repos/<repo-id>/state.json`
 
 Repo defaults follow `jj`'s own precedence:
 

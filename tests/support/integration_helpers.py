@@ -239,7 +239,7 @@ def init_fake_github_repo_with_submitted_feature(
     test_state_home = tmp_path / "state-home"
     if template_state_home.exists():
         shutil.copytree(template_state_home, test_state_home, dirs_exist_ok=True)
-        template_repos_root = test_state_home / "jj-review" / "repos"
+        template_repos_root = test_state_home / "jj-stack" / "repos"
         template_hash = _repo_state_hash(template_repo)
         test_hash = _repo_state_hash(repo)
         if template_hash != test_hash:
