@@ -48,22 +48,34 @@ class ResolvedSubmitOptions:
 
 
 @dataclass(frozen=True, slots=True)
-class SubmittedRevision:
-    """Remote bookmark and GitHub result for one revision in the submitted stack."""
+class PreparedSubmitRevision:
+    """Local submit state gathered before remote and GitHub mutation."""
 
     bookmark: str
     bookmark_source: BookmarkSource
-    change_id: str
-    commit_id: str
+    expected_remote_target: str | None
     local_action: LocalBookmarkAction
-    native_revision: LocalRevision
+    push_operation: PushOperation
+    remote_action: RemoteBookmarkAction
+    revision: LocalRevision
+
+
+@dataclass(frozen=True, slots=True)
+class SubmittedRevision:
+    """GitHub pull request result for one prepared revision in the submitted stack."""
+
+    prepared: PreparedSubmitRevision
     pull_request_action: PullRequestAction
     pull_request_is_draft: bool | None
     pull_request_number: int | None
     pull_request_title: str | None
     pull_request_url: str | None
-    remote_action: RemoteBookmarkAction
-    subject: str
+
+    @property
+    def change_id(self) -> str:
+        """The submitted revision's change ID."""
+
+        return self.prepared.revision.change_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,20 +104,6 @@ class GeneratedDescription:
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedSubmitRevision:
-    """Local submit state gathered before remote and GitHub mutation."""
-
-    bookmark: str
-    bookmark_source: BookmarkSource
-    change_id: str
-    expected_remote_target: str | None
-    local_action: LocalBookmarkAction
-    push_operation: PushOperation
-    remote_action: RemoteBookmarkAction
-    revision: LocalRevision
-
-
-@dataclass(frozen=True, slots=True)
 class PendingPullRequestSync:
     """One queued PR sync task."""
 
@@ -113,7 +111,7 @@ class PendingPullRequestSync:
     discovered_pull_request: GithubPullRequest | None
     generated_description: GeneratedDescription
     parent_change_id: str | None
-    prepared_revision: PreparedSubmitRevision
+    prepared: PreparedSubmitRevision
     stack_head_change_id: str | None
 
 

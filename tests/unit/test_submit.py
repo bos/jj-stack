@@ -19,6 +19,7 @@ from jj_stack.commands.submit.pull_requests import (
     _ensure_pull_request_link_is_consistent,
 )
 from jj_stack.commands.submit.revisions import (
+    _ClassifiedRevision,
     _ensure_remote_can_be_updated,
     _preflight_atomic_remote_push_plan,
     _resolve_local_action,
@@ -31,7 +32,15 @@ from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkSt
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.bookmarks import BookmarkResolutionResult, ResolvedBookmark
+from jj_stack.review.bookmarks import (
+    BookmarkResolutionResult,
+    BookmarkSource,
+    ResolvedBookmark,
+)
+from jj_stack.review.change_status import (
+    classify_review_change_without_pull_request,
+    classify_saved_review_change,
+)
 from jj_stack.state.journal import OperationJournal
 from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
@@ -60,24 +69,51 @@ def test_resolve_local_action_rejects_conflicted_bookmark() -> None:
         _resolve_local_action("review/foo", ("abc123", "def456"), "abc123")
 
 
+def _classified_revision(
+    *,
+    bookmark: str,
+    bookmark_source: BookmarkSource,
+    cached_change: CachedChange | None,
+    commit_id: str,
+    remote_state: RemoteBookmarkState | None,
+) -> _ClassifiedRevision:
+    return _ClassifiedRevision(
+        bookmark=bookmark,
+        bookmark_source=bookmark_source,
+        bookmark_state=BookmarkState(name=bookmark),
+        cached_change=cached_change,
+        remote_state=remote_state,
+        review_status=classify_review_change_without_pull_request(
+            cached_change=cached_change,
+            commit_id=commit_id,
+            remote_state=remote_state,
+        ),
+        revision=make_revision(
+            commit_id=commit_id,
+            change_id="change-a",
+            description=f"{bookmark}\n",
+        ),
+    )
+
+
 def test_ensure_remote_can_be_updated_rejects_conflicted_remote_bookmark() -> None:
     with pytest.raises(
         CliError,
         match="Remote bookmark review/foo@origin is conflicted",
     ):
         _ensure_remote_can_be_updated(
-            bookmark="review/foo",
-            bookmark_source="saved",
-            bookmark_state=BookmarkState(name="review/foo"),
-            change_id="change-a",
-            desired_target="zzz999",
-            remote="origin",
-            remote_state=RemoteBookmarkState(
-                remote="origin",
-                targets=("abc123", "def456"),
-                tracking_targets=("abc123", "def456"),
+            _classified_revision(
+                bookmark="review/foo",
+                bookmark_source="saved",
+                cached_change=CachedChange(bookmark="review/foo"),
+                commit_id="zzz999",
+                remote_state=RemoteBookmarkState(
+                    remote="origin",
+                    targets=("abc123", "def456"),
+                    tracking_targets=("abc123", "def456"),
+                ),
             ),
-            state=ReviewState(changes={"change-a": CachedChange(bookmark="review/foo")}),
+            remote="origin",
         )
 
 
@@ -87,27 +123,27 @@ def test_ensure_remote_can_be_updated_rejects_unproven_existing_remote_branch() 
         match="already exists and points elsewhere",
     ):
         _ensure_remote_can_be_updated(
-            bookmark="review/foo",
-            bookmark_source="generated",
-            bookmark_state=BookmarkState(name="review/foo"),
-            change_id="change-a",
-            desired_target="def456",
+            _classified_revision(
+                bookmark="review/foo",
+                bookmark_source="generated",
+                cached_change=None,
+                commit_id="def456",
+                remote_state=RemoteBookmarkState(remote="origin", targets=("abc123",)),
+            ),
             remote="origin",
-            remote_state=RemoteBookmarkState(remote="origin", targets=("abc123",)),
-            state=ReviewState(),
         )
 
 
 def test_ensure_remote_can_be_updated_allows_matching_untracked_remote_branch() -> None:
     _ensure_remote_can_be_updated(
-        bookmark="review/foo",
-        bookmark_source="generated",
-        bookmark_state=BookmarkState(name="review/foo"),
-        change_id="change-a",
-        desired_target="abc123",
+        _classified_revision(
+            bookmark="review/foo",
+            bookmark_source="generated",
+            cached_change=None,
+            commit_id="abc123",
+            remote_state=RemoteBookmarkState(remote="origin", targets=("abc123",)),
+        ),
         remote="origin",
-        remote_state=RemoteBookmarkState(remote="origin", targets=("abc123",)),
-        state=ReviewState(),
     )
 
 
@@ -256,32 +292,36 @@ def test_preflight_atomic_remote_push_plan_allows_one_untracked_remote_update() 
 
 
 def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
+    cached_change = CachedChange(
+        bookmark="review/foo",
+        pr_number=17,
+        pr_url="https://github.test/octo-org/repo/pull/17",
+    )
     with pytest.raises(
         CliError,
         match="Saved pull request link exists",
     ):
         _ensure_pull_request_link_is_consistent(
             bookmark="review/foo",
-            cached_change=CachedChange(
-                bookmark="review/foo",
-                pr_number=17,
-                pr_url="https://github.test/octo-org/repo/pull/17",
-            ),
+            cached_change=cached_change,
             change_id="change-17",
             discovered_pull_request=None,
+            saved_status=classify_saved_review_change(cached_change, local="present"),
         )
 
 
 def test_pull_request_link_rejects_mismatched_pull_request_number() -> None:
+    cached_change = CachedChange(bookmark="review/foo", pr_number=17)
     with pytest.raises(
         CliError,
         match="Saved pull request #17 does not match",
     ):
         _ensure_pull_request_link_is_consistent(
             bookmark="review/foo",
-            cached_change=CachedChange(bookmark="review/foo", pr_number=17),
+            cached_change=cached_change,
             change_id="change-17",
             discovered_pull_request=_github_pull_request(number=21),
+            saved_status=classify_saved_review_change(cached_change, local="present"),
         )
 
 
@@ -448,7 +488,6 @@ def _prepared_revision(
     return PreparedSubmitRevision(
         bookmark=bookmark,
         bookmark_source="saved",
-        change_id=resolved_change_id,
         expected_remote_target="old-commit" if push_operation == "git_update" else None,
         local_action=local_action,
         push_operation=push_operation,

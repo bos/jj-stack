@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
-from jj_stack.models.stack import LocalStack
-from jj_stack.review.bookmarks import BookmarkResolutionResult, BookmarkSource
+from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review.bookmarks import (
+    BookmarkResolutionResult,
+    BookmarkSource,
+    ResolvedBookmark,
+)
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_change_without_pull_request,
@@ -24,6 +30,48 @@ from .models import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _ClassifiedRevision:
+    """One stack revision with its resolved bookmark and review classification."""
+
+    bookmark: str
+    bookmark_source: BookmarkSource
+    bookmark_state: BookmarkState
+    cached_change: CachedChange | None
+    remote_state: RemoteBookmarkState | None
+    review_status: ReviewChangeStatus
+    revision: LocalRevision
+
+
+def _classify_revision(
+    *,
+    bookmark_states: dict[str, BookmarkState],
+    remote: GitRemote,
+    resolution: ResolvedBookmark,
+    revision: LocalRevision,
+    state: ReviewState,
+) -> _ClassifiedRevision:
+    bookmark_state = bookmark_states.get(
+        resolution.bookmark,
+        BookmarkState(name=resolution.bookmark),
+    )
+    cached_change = state.changes.get(revision.change_id)
+    remote_state = bookmark_state.remote_target(remote.name)
+    return _ClassifiedRevision(
+        bookmark=resolution.bookmark,
+        bookmark_source=resolution.source,
+        bookmark_state=bookmark_state,
+        cached_change=cached_change,
+        remote_state=remote_state,
+        review_status=classify_review_change_without_pull_request(
+            cached_change=cached_change,
+            commit_id=revision.commit_id,
+            remote_state=remote_state,
+        ),
+        revision=revision,
+    )
+
+
 def prepare_submit_revisions(
     *,
     bookmark_result: BookmarkResolutionResult,
@@ -34,72 +82,61 @@ def prepare_submit_revisions(
 ) -> tuple[PreparedSubmitRevision, ...]:
     """Resolve bookmark mutations and push strategy for each stack revision."""
 
-    prepared_revisions: list[PreparedSubmitRevision] = []
-    actual_remote_targets = _load_actual_remote_targets_for_saved_bookmarks(
-        bookmark_result=bookmark_result,
-        client=client,
-        remote=remote,
-        stack=stack,
-    )
-    _preflight_actual_remote_targets(
-        actual_remote_targets=actual_remote_targets,
-        bookmark_result=bookmark_result,
-        remote=remote,
-        stack=stack,
-    )
-    for resolution, revision in zip(
-        bookmark_result.resolutions,
-        stack.revisions,
-        strict=True,
-    ):
-        ensure_change_is_not_unlinked(
-            cached_change=bookmark_result.state.changes.get(revision.change_id),
-            change_id=revision.change_id,
-        )
-        bookmark_state = bookmark_states.get(
-            resolution.bookmark,
-            BookmarkState(name=resolution.bookmark),
-        )
-        local_action = _resolve_local_action(
-            resolution.bookmark,
-            bookmark_state.local_targets,
-            revision.commit_id,
-        )
-        cached_change = bookmark_result.state.changes.get(revision.change_id)
-        remote_state = bookmark_state.remote_target(remote.name)
-        review_status = classify_review_change_without_pull_request(
-            cached_change=cached_change,
-            commit_id=revision.commit_id,
-            remote_state=remote_state,
-        )
-        _ensure_remote_can_be_updated(
-            bookmark=resolution.bookmark,
-            bookmark_source=resolution.source,
-            bookmark_state=bookmark_state,
-            change_id=revision.change_id,
-            desired_target=revision.commit_id,
-            remote=remote.name,
-            remote_state=remote_state,
-            review_status=review_status,
+    classified = tuple(
+        _classify_revision(
+            bookmark_states=bookmark_states,
+            remote=remote,
+            resolution=resolution,
+            revision=revision,
             state=bookmark_result.state,
         )
+        for resolution, revision in zip(
+            bookmark_result.resolutions,
+            stack.revisions,
+            strict=True,
+        )
+    )
+    actual_remote_targets = _load_actual_remote_targets_for_saved_bookmarks(
+        classified=classified,
+        client=client,
+        remote=remote,
+    )
+    for entry in classified:
+        _ensure_actual_remote_target_is_safe(
+            actual_remote_targets=actual_remote_targets,
+            entry=entry,
+            remote=remote.name,
+        )
+
+    prepared_revisions: list[PreparedSubmitRevision] = []
+    for entry in classified:
+        ensure_change_is_not_unlinked(
+            change_id=entry.revision.change_id,
+            review_status=entry.review_status,
+        )
+        local_action = _resolve_local_action(
+            entry.bookmark,
+            entry.bookmark_state.local_targets,
+            entry.revision.commit_id,
+        )
+        _ensure_remote_can_be_updated(entry, remote=remote.name)
 
         push_operation, remote_action, expected_remote_target = _remote_push_plan(
-            remote_state=remote_state,
-            review_status=review_status,
+            remote_state=entry.remote_state,
+            review_status=entry.review_status,
         )
 
-        prepared_revision = PreparedSubmitRevision(
-            bookmark=resolution.bookmark,
-            bookmark_source=resolution.source,
-            change_id=revision.change_id,
-            expected_remote_target=expected_remote_target,
-            local_action=local_action,
-            push_operation=push_operation,
-            remote_action=remote_action,
-            revision=revision,
+        prepared_revisions.append(
+            PreparedSubmitRevision(
+                bookmark=entry.bookmark,
+                bookmark_source=entry.bookmark_source,
+                expected_remote_target=expected_remote_target,
+                local_action=local_action,
+                push_operation=push_operation,
+                remote_action=remote_action,
+                revision=entry.revision,
+            )
         )
-        prepared_revisions.append(prepared_revision)
 
     prepared = tuple(prepared_revisions)
     _preflight_atomic_remote_push_plan(prepared_revisions=prepared, remote=remote)
@@ -130,7 +167,7 @@ def sync_local_bookmarks(
                 {
                     "action": prepared_revision.local_action,
                     "bookmark": prepared_revision.bookmark,
-                    "change_id": prepared_revision.change_id,
+                    "change_id": prepared_revision.revision.change_id,
                     "commit_id": prepared_revision.revision.commit_id,
                 }
                 for prepared_revision in bookmark_updates
@@ -156,8 +193,8 @@ def sync_local_bookmarks(
         allow_backwards = _bookmark_is_already_managed_for_change(
             bookmark=prepared_revision.bookmark,
             bookmark_state=bookmark_state,
-            cached_change=bookmark_result.state.changes.get(prepared_revision.change_id),
-            change_id=prepared_revision.change_id,
+            cached_change=bookmark_result.state.changes.get(prepared_revision.revision.change_id),
+            change_id=prepared_revision.revision.change_id,
             local_target_change_ids=local_target_change_ids,
         )
         client.set_bookmark(
@@ -169,7 +206,7 @@ def sync_local_bookmarks(
             {
                 "action": prepared_revision.local_action,
                 "bookmark": prepared_revision.bookmark,
-                "change_id": prepared_revision.change_id,
+                "change_id": prepared_revision.revision.change_id,
                 "commit_id": prepared_revision.revision.commit_id,
             }
         )
@@ -192,7 +229,7 @@ def _resolve_local_target_change_ids_for_bookmark_updates(
 ) -> dict[str, str]:
     local_targets: list[str] = []
     for prepared_revision in bookmark_updates:
-        cached_change = bookmark_result.state.changes.get(prepared_revision.change_id)
+        cached_change = bookmark_result.state.changes.get(prepared_revision.revision.change_id)
         if _cached_change_manages_bookmark(
             bookmark=prepared_revision.bookmark,
             cached_change=cached_change,
@@ -274,25 +311,13 @@ def _preflight_atomic_remote_push_plan(
 
 def _load_actual_remote_targets_for_saved_bookmarks(
     *,
-    bookmark_result: BookmarkResolutionResult,
+    classified: tuple[_ClassifiedRevision, ...],
     client: JjClient,
     remote: GitRemote,
-    stack: LocalStack,
 ) -> dict[str, str]:
     bookmarks = tuple(
         sorted(
-            {
-                resolution.bookmark
-                for resolution, revision in zip(
-                    bookmark_result.resolutions,
-                    stack.revisions,
-                    strict=True,
-                )
-                if _cached_change_has_saved_remote_target(
-                    bookmark_result.state.changes.get(revision.change_id),
-                    resolution.bookmark,
-                )
-            }
+            {entry.bookmark for entry in classified if _saved_remote_target(entry) is not None}
         )
     )
     if not bookmarks:
@@ -303,62 +328,31 @@ def _load_actual_remote_targets_for_saved_bookmarks(
     )
 
 
-def _preflight_actual_remote_targets(
-    *,
-    actual_remote_targets: dict[str, str],
-    bookmark_result: BookmarkResolutionResult,
-    remote: GitRemote,
-    stack: LocalStack,
-) -> None:
-    for resolution, revision in zip(
-        bookmark_result.resolutions,
-        stack.revisions,
-        strict=True,
+def _saved_remote_target(entry: _ClassifiedRevision) -> str | None:
+    """The submitted commit the saved record expects the remote branch to hold."""
+
+    cached_change = entry.cached_change
+    if (
+        cached_change is None
+        or entry.review_status.link != "active"
+        or cached_change.bookmark != entry.bookmark
     ):
-        _ensure_actual_remote_target_is_safe(
-            actual_remote_targets=actual_remote_targets,
-            bookmark=resolution.bookmark,
-            cached_change=bookmark_result.state.changes.get(revision.change_id),
-            desired_target=revision.commit_id,
-            remote=remote.name,
-        )
-
-
-def _cached_change_has_saved_remote_target(
-    cached_change: CachedChange | None,
-    bookmark: str,
-) -> bool:
-    if cached_change is None:
-        return False
-    review_status = classify_review_change_without_pull_request(
-        cached_change=cached_change,
-        commit_id=None,
-        remote_state=None,
-    )
-    return (
-        review_status.link == "active"
-        and cached_change.bookmark == bookmark
-        and cached_change.last_submitted_commit_id is not None
-    )
+        return None
+    return cached_change.last_submitted_commit_id
 
 
 def _ensure_actual_remote_target_is_safe(
     *,
     actual_remote_targets: dict[str, str],
-    bookmark: str,
-    cached_change: CachedChange | None,
-    desired_target: str,
+    entry: _ClassifiedRevision,
     remote: str,
 ) -> None:
-    if not _cached_change_has_saved_remote_target(cached_change, bookmark):
-        return
-    if cached_change is None:
-        raise AssertionError("Checked cached change must exist.")
-    saved_target = cached_change.last_submitted_commit_id
+    saved_target = _saved_remote_target(entry)
     if saved_target is None:
-        raise AssertionError("Checked cached change must have a saved submitted commit.")
+        return
+    bookmark = entry.bookmark
     actual_target = actual_remote_targets.get(bookmark)
-    if actual_target in {saved_target, desired_target}:
+    if actual_target in {saved_target, entry.revision.commit_id}:
         return
     if actual_target is None:
         raise CliError(
@@ -442,72 +436,39 @@ def _resolve_local_action(
     return "moved"
 
 
-def _ensure_remote_can_be_updated(
-    *,
-    bookmark: str,
-    bookmark_source: BookmarkSource,
-    bookmark_state: BookmarkState,
-    change_id: str,
-    desired_target: str,
-    remote: str,
-    remote_state: RemoteBookmarkState | None,
-    state: ReviewState,
-    review_status: ReviewChangeStatus | None = None,
-) -> None:
-    if review_status is None:
-        review_status = classify_review_change_without_pull_request(
-            cached_change=state.changes.get(change_id),
-            commit_id=desired_target,
-            remote_state=remote_state,
-        )
+def _ensure_remote_can_be_updated(entry: _ClassifiedRevision, *, remote: str) -> None:
+    review_status = entry.review_status
     if review_status.remote_branch == "absent":
         return
     if review_status.remote_branch == "conflicted":
         raise CliError(
-            t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} is conflicted. "
+            t"Remote bookmark {ui.bookmark(f'{entry.bookmark}@{remote}')} is conflicted. "
             t"Resolve it with {ui.cmd('jj git fetch')} and retry."
         )
     if review_status.remote_branch_matches_commit is True:
         return
-    if _bookmark_link_is_proven(
-        bookmark=bookmark,
-        bookmark_source=bookmark_source,
-        bookmark_state=bookmark_state,
-        change_id=change_id,
-        state=state,
-    ):
+    if _bookmark_link_is_proven(entry):
         return
     raise CliError(
-        t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} already exists and "
+        t"Remote bookmark {ui.bookmark(f'{entry.bookmark}@{remote}')} already exists and "
         t"points elsewhere. Submit will not take over an existing remote branch "
         t"unless its link is already proven by local state, tracking data, or "
         t"explicit relinking."
     )
 
 
-def _bookmark_link_is_proven(
-    *,
-    bookmark: str,
-    bookmark_source: BookmarkSource,
-    bookmark_state: BookmarkState,
-    change_id: str,
-    state: ReviewState,
-) -> bool:
-    if bookmark_state.local_target is not None:
+def _bookmark_link_is_proven(entry: _ClassifiedRevision) -> bool:
+    if entry.bookmark_state.local_target is not None:
         return True
-    if bookmark_source == "discovered":
+    if entry.bookmark_source == "discovered":
         return True
-    if bookmark_source != "saved":
+    if entry.bookmark_source != "saved":
         return False
-    cached_change = state.changes.get(change_id)
-    if cached_change is None:
-        return False
-    review_status = classify_review_change_without_pull_request(
-        cached_change=cached_change,
-        commit_id=None,
-        remote_state=None,
+    return (
+        entry.review_status.link == "active"
+        and entry.cached_change is not None
+        and entry.cached_change.bookmark == entry.bookmark
     )
-    return review_status.link == "active" and cached_change.bookmark == bookmark
 
 
 def sync_remote_bookmarks(
@@ -552,7 +513,7 @@ def sync_remote_bookmarks(
             "planned_mutation",
             {
                 "bookmark": prepared_revision.bookmark,
-                "change_id": prepared_revision.change_id,
+                "change_id": prepared_revision.revision.change_id,
                 "commit_id": prepared_revision.revision.commit_id,
                 "mutation": "update_untracked_remote_bookmark",
                 "remote": remote.name,
@@ -571,7 +532,7 @@ def sync_remote_bookmarks(
                 "mutation_applied",
                 {
                     "bookmark": prepared_revision.bookmark,
-                    "change_id": prepared_revision.change_id,
+                    "change_id": prepared_revision.revision.change_id,
                     "commit_id": prepared_revision.revision.commit_id,
                     "mutation": "update_untracked_remote_bookmark",
                     "remote": remote.name,
@@ -581,14 +542,9 @@ def sync_remote_bookmarks(
 
 def ensure_change_is_not_unlinked(
     *,
-    cached_change: CachedChange | None,
     change_id: str,
+    review_status: ReviewChangeStatus,
 ) -> None:
-    review_status = classify_review_change_without_pull_request(
-        cached_change=cached_change,
-        commit_id=None,
-        remote_state=None,
-    )
     if review_status.link != "unlinked":
         return
     raise CliError(

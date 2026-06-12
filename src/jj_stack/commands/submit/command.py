@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 import jj_stack.console as console
@@ -120,8 +119,6 @@ def submit(
         team_reviewers=team_reviewers,
         use_bookmarks=use_bookmarks,
     )
-    selection_emitter = _SubmitSelectionEmitter(enabled=revset is None)
-
     with acquire_operation_lock(
         context.state_store.require_writable(),
         command="submit",
@@ -129,44 +126,23 @@ def submit(
         result = asyncio.run(
             _run_submit_async(
                 context=context,
-                on_prepared=selection_emitter.emit_prepared,
+                # The selected line is only rendered when submit picked the
+                # default head for the user.
+                on_prepared=_print_selected_line if revset is None else None,
                 options=options,
             ),
         )
-    selection_emitter.emit_fallback(result)
     print_submit_result(result)
     return 0
 
 
-@dataclass(slots=True)
-class _SubmitSelectionEmitter:
-    """Render the default selected line exactly once."""
-
-    enabled: bool
-    emitted: bool = False
-
-    def emit_prepared(
-        self,
-        selected_change_id: str,
-        selected_subject: str,
-    ) -> None:
-        if self.enabled:
-            console.output(
-                render_selected_line(
-                    selected_change_id=selected_change_id,
-                    selected_subject=selected_subject,
-                )
-            )
-        self.emitted = True
-
-    def emit_fallback(self, result: SubmitResult) -> None:
-        if self.enabled and not self.emitted:
-            console.output(
-                render_selected_line(
-                    selected_change_id=result.selected_change_id,
-                    selected_subject=result.selected_subject,
-                )
-            )
+def _print_selected_line(selected_change_id: str, selected_subject: str) -> None:
+    console.output(
+        render_selected_line(
+            selected_change_id=selected_change_id,
+            selected_subject=selected_subject,
+        )
+    )
 
 
 def _submit_options_from_cli(
@@ -293,7 +269,7 @@ def _build_local_only_dry_run_result(
 
     revisions: list[SubmittedRevision] = []
     for prepared_revision in prepared_revisions:
-        cached_change = bookmark_result.state.changes.get(prepared_revision.change_id)
+        cached_change = bookmark_result.state.changes.get(prepared_revision.revision.change_id)
         if classify_saved_review_change(
             cached_change,
             local="present",
@@ -309,19 +285,12 @@ def _build_local_only_dry_run_result(
             return None
         revisions.append(
             SubmittedRevision(
-                bookmark=prepared_revision.bookmark,
-                bookmark_source=prepared_revision.bookmark_source,
-                change_id=prepared_revision.change_id,
-                commit_id=prepared_revision.revision.commit_id,
-                local_action=prepared_revision.local_action,
-                native_revision=prepared_revision.revision,
+                prepared=prepared_revision,
                 pull_request_action="created",
                 pull_request_is_draft=None,
                 pull_request_number=None,
                 pull_request_title=None,
                 pull_request_url=None,
-                remote_action=prepared_revision.remote_action,
-                subject=prepared_revision.revision.subject,
             )
         )
 
@@ -344,16 +313,18 @@ def _pending_pull_request_syncs(
 ) -> tuple[PendingPullRequestSync, ...]:
     """Build the desired pull-request sync plan for the submitted stack."""
 
-    stack_head_change_id = prepared_revisions[-1].change_id if prepared_revisions else None
+    stack_head_change_id = (
+        prepared_revisions[-1].revision.change_id if prepared_revisions else None
+    )
     return tuple(
         PendingPullRequestSync(
             base_branch=prepared_revisions[index - 1].bookmark if index > 0 else trunk_branch,
             discovered_pull_request=discovered_pull_requests[prepared_revision.bookmark],
-            generated_description=generated_descriptions[prepared_revision.change_id],
+            generated_description=generated_descriptions[prepared_revision.revision.change_id],
             parent_change_id=(
-                prepared_revisions[index - 1].change_id if index > 0 else None
+                prepared_revisions[index - 1].revision.change_id if index > 0 else None
             ),
-            prepared_revision=prepared_revision,
+            prepared=prepared_revision,
             stack_head_change_id=stack_head_change_id,
         )
         for index, prepared_revision in enumerate(prepared_revisions)
@@ -372,7 +343,7 @@ def _reject_restart_pull_request_collisions(
         return
     collisions: list[tuple[PreparedSubmitRevision, GithubPullRequest]] = []
     for prepared_revision in prepared_revisions:
-        if prepared_revision.change_id not in restarted_change_ids:
+        if prepared_revision.revision.change_id not in restarted_change_ids:
             continue
         pull_request = discovered_pull_requests.get(prepared_revision.bookmark)
         if pull_request is not None:
@@ -382,13 +353,13 @@ def _reject_restart_pull_request_collisions(
     if len(collisions) == 1:
         prepared_revision, pull_request = collisions[0]
         raise CliError(
-            t"Cannot restart {ui.change_id(prepared_revision.change_id)} with "
+            t"Cannot restart {ui.change_id(prepared_revision.revision.change_id)} with "
             t"{ui.bookmark(prepared_revision.bookmark)} because GitHub already reports "
             t"PR #{pull_request.number} for that branch.",
             hint=t"Run {ui.cmd('jj-stack view --fetch')} and retry with current state.",
         )
     details = ui.join(
-        lambda item: t"{ui.change_id(item[0].change_id)} -> PR #{item[1].number}",
+        lambda item: t"{ui.change_id(item[0].revision.change_id)} -> PR #{item[1].number}",
         collisions,
     )
     raise CliError(

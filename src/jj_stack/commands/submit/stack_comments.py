@@ -310,7 +310,7 @@ def _render_navigation_comment(
         ]
     )
     for revision in reversed(revisions):
-        title = revision.pull_request_title or revision.subject
+        title = revision.pull_request_title or revision.prepared.revision.subject
         if revision.change_id == current.change_id:
             lines.append(f"**{title} (this PR)**")
         elif revision.pull_request_url is None:

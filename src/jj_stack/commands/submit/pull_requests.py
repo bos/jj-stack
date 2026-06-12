@@ -11,7 +11,7 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
 from jj_stack.models.review_state import CachedChange
 from jj_stack.review.bookmarks import BookmarkSource, bookmark_ownership_for_source
-from jj_stack.review.change_status import classify_saved_review_change
+from jj_stack.review.change_status import ReviewChangeStatus, classify_saved_review_change
 
 from .models import (
     PendingPullRequestSync,
@@ -100,9 +100,9 @@ async def _sync_pull_request(
     resolved_options: ResolvedSubmitOptions,
     run: SubmitMutationRun,
 ) -> tuple[SubmittedRevision, CachedChange | None]:
-    prepared_revision = pending_sync.prepared_revision
+    prepared_revision = pending_sync.prepared
     bookmark = prepared_revision.bookmark
-    change_id = prepared_revision.change_id
+    change_id = prepared_revision.revision.change_id
     discovered_pull_request = pending_sync.discovered_pull_request
     cached_change = run.state.changes.get(change_id)
     saved_status = classify_saved_review_change(cached_change, local="present")
@@ -111,6 +111,7 @@ async def _sync_pull_request(
         cached_change=cached_change,
         change_id=change_id,
         discovered_pull_request=discovered_pull_request,
+        saved_status=saved_status,
     )
 
     title = pending_sync.generated_description.title
@@ -209,12 +210,7 @@ async def _sync_pull_request(
         )
     return (
         SubmittedRevision(
-            bookmark=prepared_revision.bookmark,
-            bookmark_source=prepared_revision.bookmark_source,
-            change_id=prepared_revision.change_id,
-            commit_id=prepared_revision.revision.commit_id,
-            local_action=prepared_revision.local_action,
-            native_revision=prepared_revision.revision,
+            prepared=prepared_revision,
             pull_request_action=action,
             pull_request_is_draft=(
                 pull_request.is_draft if pull_request is not None else None
@@ -228,8 +224,6 @@ async def _sync_pull_request(
             pull_request_url=(
                 pull_request.html_url if pull_request is not None else None
             ),
-            remote_action=prepared_revision.remote_action,
-            subject=prepared_revision.revision.subject,
         ),
         next_cached_change,
     )
@@ -325,13 +319,13 @@ def _ensure_pull_request_link_is_consistent(
     cached_change: CachedChange | None,
     change_id: str,
     discovered_pull_request: GithubPullRequest | None,
+    saved_status: ReviewChangeStatus,
 ) -> None:
     ensure_change_is_not_unlinked(
-        cached_change=cached_change,
         change_id=change_id,
+        review_status=saved_status,
     )
-    review_status = classify_saved_review_change(cached_change, local="present")
-    if not review_status.saved_pull_request_identity:
+    if not saved_status.saved_pull_request_identity:
         return
     if cached_change is None:
         raise AssertionError("Saved pull request identity requires cached state.")

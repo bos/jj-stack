@@ -25,7 +25,7 @@ def print_submit_result(result: SubmitResult) -> None:
         with console.spinner(description="Rendering jj log"):
             prerendered_blocks = render_revision_blocks(
                 client=client,
-                revisions=tuple(revision.native_revision for revision in result.revisions)
+                revisions=tuple(revision.prepared.revision for revision in result.revisions)
                 + (result.trunk,),
             )
     if not result.revisions:
@@ -49,7 +49,7 @@ def print_submit_result(result: SubmitResult) -> None:
     for revision in reversed(result.revisions):
         for line in _render_submit_revision_lines(
             client=client,
-            prerendered_lines=prerendered_blocks.get(revision.commit_id),
+            prerendered_lines=prerendered_blocks.get(revision.prepared.revision.commit_id),
             revision=revision,
         ):
             _print_submit_line(line, client=client)
@@ -93,7 +93,7 @@ def _render_submit_revision_lines(
 ) -> tuple[ui.Renderable, ...]:
     parts: list[str] = []
     if revision.pull_request_action != "created":
-        if revision.remote_action == "up to date":
+        if revision.prepared.remote_action == "up to date":
             parts.append("already pushed")
         else:
             parts.append("pushed")
@@ -120,14 +120,15 @@ def _render_submit_revision_lines(
         return (
             ui.prefixed_line(
                 "- ",
-                t"{revision.subject} ({ui.change_id(revision.change_id)}): {summary}",
+                t"{revision.prepared.revision.subject} "
+                t"({ui.change_id(revision.change_id)}): {summary}",
             ),
         )
     return render_revision_lines(
         client=client,
         prerendered_lines=prerendered_lines,
-        revision=revision.native_revision,
-        bookmark=revision.bookmark,
+        revision=revision.prepared.revision,
+        bookmark=revision.prepared.bookmark,
         suffix=summary,
     )
 
