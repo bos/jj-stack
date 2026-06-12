@@ -8,7 +8,6 @@ import logging
 import re
 import subprocess
 import sys
-import textwrap
 import time
 from argparse import (
     SUPPRESS,
@@ -40,8 +39,15 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack import __version__
 from jj_stack.bootstrap import APP_START
+from jj_stack.cli_help import (
+    HelpCommand,
+    add_help_argument,
+    emit_command_help,
+    emit_top_level_help,
+    normalized_help_text,
+)
 from jj_stack.completion import emit_shell_completion
-from jj_stack.console import ColorMode, RequestedColorMode, configured_console, rich_color_mode
+from jj_stack.console import RequestedColorMode, configured_console, rich_color_mode
 from jj_stack.errors import CliError, error_hint, error_message
 from jj_stack.jj.client import JjCliArgs
 
@@ -54,21 +60,6 @@ _TOP_LEVEL_HELP_DESCRIPTION = """
 Use it to submit and refresh changes for review, inspect pull request status, land ready
 changes, list locally known stacks, and clean up after a review.
 """
-_TOP_LEVEL_HIDDEN_OPTION_STRINGS = frozenset(
-    {"--repository", "--config", "--config-file", "--debug", "--time-output"}
-)
-_COMMON_OPTION_STRINGS = frozenset(
-    {
-        "-h",
-        "--help",
-        "--repository",
-        "--config",
-        "--config-file",
-        "--debug",
-        "--color",
-        "--time-output",
-    }
-)
 _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
 _REORDERABLE_GLOBAL_OPTIONS_WITH_VALUES = frozenset({"--repository", "--color"})
 _HELP_FLAGS = frozenset({"-h", "--help"})
@@ -84,47 +75,40 @@ show the advanced repair commands and hidden global options.
 """
 
 
-@dataclass(frozen=True)
-class _HelpCommand:
-    name: str
-    summary: str
-    hidden: bool = False
-
-
-_TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[_HelpCommand, ...]], ...] = (
+_TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
     (
         "Core commands",
         (
-            _HelpCommand("submit", submit_command.HELP),
-            _HelpCommand("view", view_command.HELP),
-            _HelpCommand("list", list_command.HELP),
-            _HelpCommand("land", land_command.HELP),
-            _HelpCommand("unstack", unstack_command.HELP),
+            HelpCommand("submit", submit_command.HELP),
+            HelpCommand("view", view_command.HELP),
+            HelpCommand("list", list_command.HELP),
+            HelpCommand("land", land_command.HELP),
+            HelpCommand("unstack", unstack_command.HELP),
         ),
     ),
     (
         "Support commands",
         (
-            _HelpCommand("cleanup", cleanup_command.HELP),
-            _HelpCommand("checkout", checkout_command.HELP),
-            _HelpCommand("doctor", doctor_command.HELP),
+            HelpCommand("cleanup", cleanup_command.HELP),
+            HelpCommand("checkout", checkout_command.HELP),
+            HelpCommand("doctor", doctor_command.HELP),
         ),
     ),
     (
         "Advanced repair",
         (
-            _HelpCommand("restart", restart_command.HELP, hidden=True),
-            _HelpCommand("relink", relink_command.HELP, hidden=True),
-            _HelpCommand("unlink", unlink_command.HELP, hidden=True),
+            HelpCommand("restart", restart_command.HELP, hidden=True),
+            HelpCommand("relink", relink_command.HELP, hidden=True),
+            HelpCommand("unlink", unlink_command.HELP, hidden=True),
         ),
     ),
     (
         "Configuration",
-        (_HelpCommand("completion", _COMPLETION_HELP, hidden=True),),
+        (HelpCommand("completion", _COMPLETION_HELP, hidden=True),),
     ),
     (
         "Help",
-        (_HelpCommand("help", _HELP_HELP, hidden=True),),
+        (HelpCommand("help", _HELP_HELP, hidden=True),),
     ),
 )
 _PULL_REQUEST_OPTION_STRINGS = ("-p", "--pull-request")
@@ -142,15 +126,11 @@ _KNOWN_COMMANDS = frozenset(
 type _ArgSource = str | Callable[[Namespace], Any]
 
 
-def _command_parameter_names(function: Callable[..., Any]) -> tuple[str, ...]:
-    return tuple(
-        name
-        for name, parameter in signature(function).parameters.items()
-        if parameter.kind is not parameter.VAR_KEYWORD
-    )
-
-
-_VIEW_HANDLER_ARGS = _command_parameter_names(view_command.view)
+_VIEW_HANDLER_ARGS = tuple(
+    name
+    for name, parameter in signature(view_command.view).parameters.items()
+    if parameter.kind is not parameter.VAR_KEYWORD
+)
 
 
 class _TopLevelArgumentParser(ArgumentParser):
@@ -188,7 +168,7 @@ def build_parser() -> ArgumentParser:
 
     parser = _TopLevelArgumentParser(
         prog="jj-stack",
-        description=_normalized_help_text(_TOP_LEVEL_HELP_DESCRIPTION),
+        description=normalized_help_text(_TOP_LEVEL_HELP_DESCRIPTION),
     )
     _add_common_options(parser, suppress_defaults=False)
     parser.set_defaults(command="view", handler=_default_view_handler)
@@ -208,20 +188,20 @@ def build_parser() -> ArgumentParser:
         subcommands,
         command="submit",
         aliases=_COMMAND_ALIASES["submit"],
-        help_text=_normalized_help_text(submit_command.HELP),
+        help_text=normalized_help_text(submit_command.HELP),
         description_text=submit_command.__doc__ or "",
         handler=_forward_handler(submit_command.submit),
         revset_help=(
             t"Revision to submit; defaults to {ui.revset('@-')} (the current stack head)"
         ),
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "--dry-run",
         action="store_true",
         help="Print the submit plan without making any changes",
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "-d",
         "--describe-with",
@@ -229,7 +209,7 @@ def build_parser() -> ArgumentParser:
         help="Delegate pull request and stack-comment text generation to HELPER",
     )
     submit_draft_mode = submit_parser.add_mutually_exclusive_group()
-    _add_help_argument(
+    add_help_argument(
         submit_draft_mode,
         "--draft",
         action="store_true",
@@ -248,14 +228,14 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Mark existing draft pull requests ready for review on submit",
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "--label",
         dest="labels",
         action="append",
         help="Apply GitHub labels to submitted pull requests",
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "--reviewers",
         dest="reviewers",
@@ -263,7 +243,7 @@ def build_parser() -> ArgumentParser:
         metavar="USERS",
         help="Request reviews from GitHub users on submitted pull requests",
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "--team-reviewers",
         dest="team_reviewers",
@@ -271,7 +251,7 @@ def build_parser() -> ArgumentParser:
         metavar="TEAMS",
         help="Ask for reviews from GitHub teams on submitted pull requests",
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "--use-bookmarks",
         dest="use_bookmarks",
@@ -283,7 +263,7 @@ def build_parser() -> ArgumentParser:
             "is true"
         ),
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "--re-request",
         action="store_true",
@@ -292,7 +272,7 @@ def build_parser() -> ArgumentParser:
             "pull request approved it or requested changes"
         ),
     )
-    _add_help_argument(
+    add_help_argument(
         submit_parser,
         "--restart",
         action="store_true",
@@ -301,12 +281,12 @@ def build_parser() -> ArgumentParser:
     view_parser = _add_revision_command(
         subcommands,
         command="view",
-        help_text=_normalized_help_text(view_command.HELP),
+        help_text=normalized_help_text(view_command.HELP),
         description_text=view_command.__doc__ or "",
         handler=_forward_handler(
             view_command.view,
             *_VIEW_HANDLER_ARGS,
-            selectors=_view_selectors_or_none,
+            selectors=lambda args: args.view_selectors,
         ),
         revset_help=(
             "Revsets to inspect; can be mixed with repeated --pull-request selectors; "
@@ -314,7 +294,7 @@ def build_parser() -> ArgumentParser:
         ),
         revset_nargs="*",
     )
-    _add_help_argument(
+    add_help_argument(
         view_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
@@ -337,7 +317,7 @@ def build_parser() -> ArgumentParser:
         subcommands,
         command="list",
         aliases=list(_COMMAND_ALIASES["list"]),
-        help_text=_normalized_help_text(list_command.HELP),
+        help_text=normalized_help_text(list_command.HELP),
         description_text=list_command.__doc__ or "",
         handler=_forward_handler(list_command.list_),
     )
@@ -350,14 +330,14 @@ def build_parser() -> ArgumentParser:
     _add_relink_parser(
         subcommands,
         command="relink",
-        help_text=_normalized_help_text(relink_command.HELP),
+        help_text=normalized_help_text(relink_command.HELP),
         description_text=relink_command.__doc__ or "",
         handler=_forward_handler(relink_command.relink),
     )
     restart_parser = _add_revision_command(
         subcommands,
         command="restart",
-        help_text=_normalized_help_text(restart_command.HELP),
+        help_text=normalized_help_text(restart_command.HELP),
         description_text=restart_command.__doc__ or "",
         handler=_forward_handler(restart_command.restart),
         revset_nargs=None,
@@ -371,7 +351,7 @@ def build_parser() -> ArgumentParser:
     _add_revision_command(
         subcommands,
         command="unlink",
-        help_text=_normalized_help_text(unlink_command.HELP),
+        help_text=normalized_help_text(unlink_command.HELP),
         description_text=unlink_command.__doc__ or "",
         handler=_forward_handler(unlink_command.unlink),
         revset_nargs=None,
@@ -380,7 +360,7 @@ def build_parser() -> ArgumentParser:
     land_parser = _add_revision_command(
         subcommands,
         command="land",
-        help_text=_normalized_help_text(land_command.HELP),
+        help_text=normalized_help_text(land_command.HELP),
         description_text=land_command.__doc__ or "",
         handler=_forward_handler(land_command.land),
         revset_help=(
@@ -393,7 +373,7 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Print the landing plan without making any changes",
     )
-    _add_help_argument(
+    add_help_argument(
         land_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
@@ -413,7 +393,7 @@ def build_parser() -> ArgumentParser:
         subcommands,
         command="unstack",
         aliases=_COMMAND_ALIASES["unstack"],
-        help_text=_normalized_help_text(unstack_command.HELP),
+        help_text=normalized_help_text(unstack_command.HELP),
         description_text=unstack_command.__doc__ or "",
         handler=_forward_handler(unstack_command.unstack),
         revset_help=(
@@ -431,7 +411,7 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Delete jj-stack-managed branches, bookmarks, and tracking data",
     )
-    _add_help_argument(
+    add_help_argument(
         unstack_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
@@ -443,7 +423,7 @@ def build_parser() -> ArgumentParser:
     _add_checkout_parser(
         subcommands,
         command="checkout",
-        help_text=_normalized_help_text(checkout_command.HELP),
+        help_text=normalized_help_text(checkout_command.HELP),
         description_text=checkout_command.__doc__ or "",
         handler=_forward_handler(checkout_command.checkout),
     )
@@ -451,7 +431,7 @@ def build_parser() -> ArgumentParser:
     cleanup_parser = _add_command_parser(
         subcommands,
         command="cleanup",
-        help_text=_normalized_help_text(cleanup_command.HELP),
+        help_text=normalized_help_text(cleanup_command.HELP),
         description_text=cleanup_command.__doc__ or "",
         handler=_forward_handler(
             cleanup_command.cleanup,
@@ -463,7 +443,7 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Print cleanup actions without making any changes",
     )
-    _add_help_argument(
+    add_help_argument(
         cleanup_parser,
         "--rebase",
         nargs="?",
@@ -478,7 +458,7 @@ def build_parser() -> ArgumentParser:
     _add_command_parser(
         subcommands,
         command="doctor",
-        help_text=_normalized_help_text(doctor_command.HELP),
+        help_text=normalized_help_text(doctor_command.HELP),
         description_text=doctor_command.__doc__ or "",
         handler=_forward_handler(doctor_command.doctor),
     )
@@ -504,7 +484,7 @@ def build_parser() -> ArgumentParser:
         handler=_help_handler,
         common_options=False,
     )
-    _add_help_argument(
+    add_help_argument(
         help_parser,
         "--all",
         action="store_true",
@@ -518,269 +498,21 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def _format_option_label(action) -> str:
-    if action.nargs == 0:
-        return ", ".join(action.option_strings)
-    metavar = action.metavar or action.dest.upper()
-    return f"{', '.join(action.option_strings)} {metavar}"
-
-
-def _normalized_help_text(content: ui.Message | str) -> str:
-    return textwrap.dedent(ui.plain_text(content)).strip()
-
-
-def _help_paragraphs(text: str) -> tuple[str, ...]:
-    normalized = _normalized_help_text(text)
-    if not normalized:
-        return ()
-    return tuple(" ".join(paragraph.split()) for paragraph in re.split(r"\n\s*\n", normalized))
-
-
-def _help_inline_code(text: str) -> ui.SemanticText:
-    if text.startswith("review/"):
-        return ui.bookmark(text)
-    if text.startswith("@") or ("(" in text and text.endswith(")")):
-        return ui.revset(text)
-    return ui.cmd(text)
-
-
-def _help_rich_text(text: str) -> ui.Message:
-    parts: list[ui.Message] = []
-    last_index = 0
-    for match in re.finditer(r"`([^`]+)`", text):
-        start, end = match.span()
-        if start > last_index:
-            parts.append(text[last_index:start])
-        parts.append(_help_inline_code(match.group(1)))
-        last_index = end
-    if last_index == 0:
-        return text
-    if last_index < len(text):
-        parts.append(text[last_index:])
-    return tuple(parts)
-
-
-def _help_heading(text: str) -> ui.SemanticText:
-    return ui.semantic_text(text, "hint", "heading")
-
-
-_ACTION_HELP_RENDERABLES: dict[int, ui.Message] = {}
-
-
-def _add_help_argument(
-    parser: Any,
-    *name_or_flags: str,
-    help: ui.Message | str,
-    **kwargs: Any,
-) -> Any:
-    action = parser.add_argument(*name_or_flags, **kwargs)
-    action.help = _normalized_help_text(help)
-    if not isinstance(help, str):
-        _ACTION_HELP_RENDERABLES[id(action)] = help
-    return action
-
-
-def _action_help_body(action: Any) -> ui.Message | str:
-    content = _ACTION_HELP_RENDERABLES.get(id(action))
-    if content is not None:
-        return content
-    return "\n\n".join(_help_paragraphs(action.help or ""))
-
-
-def _top_level_usage_message(*, include_hidden: bool) -> ui.Message:
-    if include_hidden:
-        return (
-            t"{ui.cmd('jj-stack')} [{ui.cmd('--help')}] "
-            t"[{ui.cmd('--repository REPO')}] "
-            t"[{ui.cmd('--config NAME=VALUE')}] [{ui.cmd('--config-file PATH')}] "
-            t"[{ui.cmd('--debug')}] [{ui.cmd('--color WHEN')}] "
-            t"[{ui.cmd('--time-output')}] [{ui.cmd('--version')}] "
-            t"[{ui.cmd('<command>')} ...]"
-        )
-    return (
-        t"{ui.cmd('jj-stack')} [{ui.cmd('--help')}] [{ui.cmd('--color WHEN')}] "
-        t"[{ui.cmd('--version')}] [{ui.cmd('<command>')} ...]"
-    )
-
-
-def _usage_body_from_parser(parser: ArgumentParser) -> str:
-    usage = " ".join(parser.format_usage().split())
-    usage = re.sub(r"^(?:[Uu]sage:\s*)+", "", usage)
-    usage = re.sub(r"\[-h\]", "[--help]", usage)
-    return usage
-
-
-def _command_usage_message(parser: ArgumentParser) -> ui.Message | str:
-    body = _usage_body_from_parser(parser)
-    if body.startswith(parser.prog):
-        return (ui.cmd(parser.prog), body.removeprefix(parser.prog))
-    return body
-
-
-def _action_label_message(action) -> ui.Message:
-    if action.option_strings:
-        return ui.cmd(_format_option_label(action))
-    return ui.cmd(str(action.metavar or action.dest))
-
-
-def _help_table(
-    rows: Sequence[tuple[ui.Message, ui.TableCell]],
-) -> ui.DataTable:
-    label_width = max(len(ui.plain_text(label)) for label, _ in rows) + 2
-    return ui.DataTable(
-        columns=(
-            ui.TableColumn("", no_wrap=True, width=label_width),
-            ui.TableColumn(""),
-        ),
-        rows=tuple(rows),
-        box="",
-        show_header=False,
-    )
-
-
-def _action_rows_for_actions(
-    actions: Sequence[Any],
-) -> tuple[tuple[ui.Message, ui.TableCell], ...]:
-    return tuple(
-        (
-            _action_label_message(action),
-            _action_help_body(action),
-        )
-        for action in actions
-    )
-
-
-def _emit_help_table_section(title: str, rows: Sequence[tuple[ui.Message, ui.TableCell]]) -> None:
-    console.output(_help_heading(f"{title}:"))
-    console.output(_help_table(rows))
-
-
-def _is_common_option_action(action: Any) -> bool:
-    return bool(action.option_strings) and all(
-        option in _COMMON_OPTION_STRINGS for option in action.option_strings
-    )
-
-
-def _action_rows(actions: Sequence[Any]) -> tuple[tuple[ui.Message, ui.TableCell], ...] | None:
-    visible_actions = [action for action in actions if action.help is not SUPPRESS]
-    if not visible_actions:
-        return None
-    return _action_rows_for_actions(visible_actions)
-
-
-def _emit_help_paragraphs(text: str) -> None:
-    for index, paragraph in enumerate(_help_paragraphs(text)):
-        if index:
-            console.output()
-        console.output(_help_rich_text(paragraph))
-
-
-def _emit_top_level_help(parser: ArgumentParser, *, include_hidden: bool) -> None:
-    console.output(
-        ui.prefixed_line(
-            _help_heading("Usage: "),
-            _top_level_usage_message(include_hidden=include_hidden),
-        )
-    )
-
-    if parser.description:
-        console.output()
-        _emit_help_paragraphs(parser.description)
-
-    for title, entries in _TOP_LEVEL_HELP_GROUPS:
-        visible_entries = [entry for entry in entries if include_hidden or not entry.hidden]
-        if not visible_entries:
-            continue
-        console.output()
-        _emit_help_table_section(
-            title,
-            tuple(
-                (
-                    ui.cmd(_top_level_command_label(entry, include_aliases=include_hidden)),
-                    _normalized_help_text(entry.summary),
-                )
-                for entry in visible_entries
-            ),
-        )
-
-    if not include_hidden:
-        console.output()
-        console.output(
-            t"Run {ui.cmd('jj-stack help --all')} to show advanced commands and options."
-        )
-
-    option_actions = [
-        action
-        for action in parser._actions
-        if action.option_strings
-        and action.help is not SUPPRESS
-        and (
-            include_hidden
-            or not any(
-                option in _TOP_LEVEL_HIDDEN_OPTION_STRINGS for option in action.option_strings
-            )
-        )
-    ]
-    option_rows = _action_rows(option_actions)
-    if option_rows is not None:
-        console.output()
-        _emit_help_table_section("Options", option_rows)
-
-
-def _top_level_command_label(entry: _HelpCommand, *, include_aliases: bool) -> str:
-    aliases = _COMMAND_ALIASES.get(entry.name, ())
-    if not include_aliases or not aliases:
-        return entry.name
-    return ", ".join((entry.name, *aliases))
-
-
 def _help_handler(args: Namespace) -> int:
     parser = build_parser()
     if args.command is None:
-        _emit_top_level_help(parser, include_hidden=args.all)
+        emit_top_level_help(
+            parser,
+            groups=_TOP_LEVEL_HELP_GROUPS,
+            aliases=_COMMAND_ALIASES,
+            include_hidden=args.all,
+        )
         return 0
 
     command_parser = _find_subcommand_parser(parser, args.command)
     if command_parser is None:
         raise _unknown_command_error(args.command)
-
-    console.output(
-        ui.prefixed_line(
-            _help_heading("Usage: "),
-            _command_usage_message(command_parser),
-        )
-    )
-
-    if command_parser.description:
-        console.output()
-        _emit_help_paragraphs(command_parser.description)
-
-    positional_rows = _action_rows(command_parser._positionals._group_actions)
-    if positional_rows is not None:
-        console.output()
-        _emit_help_table_section(
-            command_parser._positionals.title or "Positional Arguments",
-            positional_rows,
-        )
-
-    option_actions = [
-        action
-        for action in command_parser._optionals._group_actions
-        if action.help is not SUPPRESS
-    ]
-    command_option_rows = _action_rows(
-        [action for action in option_actions if not _is_common_option_action(action)]
-    )
-    global_option_rows = _action_rows(
-        [action for action in option_actions if _is_common_option_action(action)]
-    )
-    if command_option_rows is not None:
-        console.output()
-        title = "Command Options" if global_option_rows is not None else "Options"
-        _emit_help_table_section(title, command_option_rows)
-    if global_option_rows is not None:
-        console.output()
-        _emit_help_table_section("Global Options", global_option_rows)
+    emit_command_help(command_parser)
     return 0
 
 
@@ -894,18 +626,6 @@ def _load_configured_jj_color(
     return None
 
 
-def _resolve_rich_color_mode(
-    *,
-    cli_color: RequestedColorMode | None,
-    cli_args: JjCliArgs,
-    repository: Path | None,
-) -> tuple[RequestedColorMode | None, ColorMode]:
-    raw_color = cli_color
-    if raw_color is None:
-        raw_color = _load_configured_jj_color(repository=repository, cli_args=cli_args)
-    return raw_color, rich_color_mode(raw_color)
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit code."""
 
@@ -931,14 +651,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.normalized_argv = tuple(normalized_argv)
     if args.command == "view":
         args.view_selectors = () if view_args is None else view_args.selectors
-    _, effective_rich_color_mode = _resolve_rich_color_mode(
-        cli_color=args.color,
-        cli_args=cli_args,
-        repository=args.repository,
-    )
+    effective_color = args.color
+    if effective_color is None:
+        effective_color = _load_configured_jj_color(
+            repository=args.repository,
+            cli_args=cli_args,
+        )
     with configured_console(
         cli_args=cli_args,
-        color_mode=effective_rich_color_mode,
+        color_mode=rich_color_mode(effective_color),
         repository=args.repository,
         requested_color_mode=args.color,
         time_output=args.time_output,
@@ -959,7 +680,7 @@ def _default_view_handler(args: Namespace) -> int:
     """Run bare `jj-stack` as the default `view` command."""
 
     return view_command.view(
-        cli_args=_global_cli_args(args),
+        cli_args=args.cli_args,
         debug=args.debug,
         fetch=False,
         pull_request=None,
@@ -1100,7 +821,7 @@ def _add_command_parser(
         command,
         aliases=list(aliases),
         help=help_text,
-        description=_normalized_help_text(description_text),
+        description=normalized_help_text(description_text),
     )
     if common_options:
         _add_common_options(parser)
@@ -1128,7 +849,7 @@ def _add_revision_command(
         description_text=description_text,
         handler=handler,
     )
-    _add_help_argument(parser, "revset", nargs=revset_nargs, help=revset_help)
+    add_help_argument(parser, "revset", nargs=revset_nargs, help=revset_help)
     return parser
 
 
@@ -1147,8 +868,8 @@ def _add_relink_parser(
         description_text=description_text,
         handler=handler,
     )
-    _add_help_argument(parser, "pull_request", help="Pull request number or URL")
-    _add_help_argument(parser, "revset", help="Revision to reassociate with the pull request")
+    add_help_argument(parser, "pull_request", help="Pull request number or URL")
+    add_help_argument(parser, "revset", help="Revision to reassociate with the pull request")
     return parser
 
 
@@ -1168,18 +889,18 @@ def _add_checkout_parser(
         handler=handler,
     )
     selector = parser.add_mutually_exclusive_group(required=False)
-    _add_help_argument(
+    add_help_argument(
         selector,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
         help="Pull request number or URL",
     )
-    _add_help_argument(
+    add_help_argument(
         selector,
         "--revset",
         help="Explicit revset whose exact stack should be checked out",
     )
-    _add_help_argument(
+    add_help_argument(
         parser,
         "--fetch",
         action="store_true",
@@ -1320,12 +1041,6 @@ def _extract_config_overrides(argv: Sequence[str]) -> tuple[JjCliArgs, list[str]
 
 def _global_cli_args(args: Namespace) -> JjCliArgs:
     return args.cli_args
-
-
-def _view_selectors_or_none(
-    args: Namespace,
-) -> tuple[view_command.ViewSelector, ...] | None:
-    return args.view_selectors
 
 
 def _forward_handler(
