@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import jj_stack.console as console_module
+import jj_stack.jj.colors as jj_colors_module
 import jj_stack.ui as ui_module
 
 
@@ -24,7 +25,7 @@ def test_time_output_prefix_uses_prefix_and_timestamp_semantic_style(
     def fake_run(command, **kwargs):
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(console_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
     monkeypatch.setattr(console_module.time, "perf_counter", lambda: 0.0)
 
     console_cls = import_module("rich.console").Console
@@ -68,7 +69,7 @@ def test_semantic_style_uses_machine_readable_jj_config(
         assert kwargs["cwd"] == repository
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(console_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
 
     with console_module.configured_console(
         stdout=StringIO(),
@@ -97,7 +98,7 @@ def test_rich_text_renders_template_semantics(
     def fake_run(command, **kwargs):
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(console_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
 
     with console_module.configured_console(
         stdout=StringIO(),
@@ -128,7 +129,7 @@ def test_revset_uses_semantic_style(
     def fake_run(command, **kwargs):
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(console_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
 
     with console_module.configured_console(
         stdout=StringIO(),

@@ -19,17 +19,14 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
 import time
-import tomllib
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from string.templatelib import Template
-from typing import IO, Any, Literal, Protocol, TypeGuard, cast
+from typing import IO, Literal, Protocol, TypeGuard
 
 from rich import box as rich_box
 from rich.console import Console, ConsoleRenderable, Group, NewLine, RenderableType, RichCast
@@ -49,6 +46,7 @@ from rich.text import Text
 
 import jj_stack.ui as ui
 from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.colors import SemanticStyles, load_semantic_styles
 
 _NO_CLI_ARGS = JjCliArgs()
 
@@ -56,13 +54,6 @@ SIMPLE = rich_box.SIMPLE
 
 ColorMode = Literal["auto", "always", "never"]
 RequestedColorMode = Literal["always", "auto", "debug", "never"]
-_JJ_COLORS_TEMPLATE = r'name ++ "\0" ++ json(value) ++ "\n"'
-_JJ_STYLE_ATTRIBUTES = frozenset({"bg", "bold", "dim", "fg", "italic", "reverse", "underline"})
-_SEMANTIC_STYLE_FALLBACKS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
-    (frozenset({"command"}), ("config_list", "name")),
-    (frozenset({"revset"}), ("bookmark",)),
-    (frozenset({"code"}), ("config_list", "value")),
-)
 StyleArg = Style | str
 type ConsoleObject = (
     ui.Renderable | ConsoleRenderable | RichCast
@@ -79,55 +70,6 @@ class SpinnerLike(Protocol):
     """Minimal spinner-handle protocol used by command helpers."""
 
     def update(self, description: str) -> None: ...
-
-
-@dataclass(frozen=True, slots=True)
-class _SemanticStyleRule:
-    labels: frozenset[str]
-    style: Style
-
-
-class _SemanticStyles:
-    """Resolve jj color-label sets into Rich styles."""
-
-    def __init__(self, rules: tuple[_SemanticStyleRule, ...]) -> None:
-        self._rules = tuple(
-            sorted(
-                rules,
-                key=lambda rule: (len(rule.labels), tuple(sorted(rule.labels))),
-            )
-        )
-
-    def for_labels(self, labels: tuple[str, ...]) -> Style | None:
-        normalized_labels = _normalize_semantic_labels(labels)
-        if not normalized_labels:
-            return None
-
-        style, matched_labels = self._resolve_direct_style(normalized_labels)
-        matched = style != Style.null()
-        for trigger_labels, fallback_labels in _SEMANTIC_STYLE_FALLBACKS:
-            if not trigger_labels.issubset(normalized_labels):
-                continue
-            if trigger_labels.issubset(matched_labels):
-                continue
-            fallback_style, _ = self._resolve_direct_style(frozenset(fallback_labels))
-            if fallback_style == Style.null():
-                continue
-            style += fallback_style
-            matched = True
-        return style if matched else None
-
-    def _resolve_direct_style(
-        self,
-        normalized_labels: frozenset[str],
-    ) -> tuple[Style, frozenset[str]]:
-        style = Style.null()
-        matched_labels: set[str] = set()
-        for rule in self._rules:
-            if rule.labels.issubset(normalized_labels):
-                style += rule.style
-                matched_labels.update(rule.labels)
-        return style, frozenset(matched_labels)
 
 
 @dataclass(slots=True)
@@ -351,7 +293,7 @@ def _build_console(
     stream: IO[str],
     *,
     color_mode: ColorMode,
-    semantic_styles: _SemanticStyles | None,
+    semantic_styles: SemanticStyles | None,
     time_output: bool,
     start: float | None,
 ) -> _ConfiguredConsole:
@@ -377,11 +319,11 @@ def _build_consoles(
     stderr: IO[str] | None = None,
     stdout: IO[str] | None = None,
     time_output: bool = False,
-) -> tuple[_ConfiguredConsole, _ConfiguredConsole, _SemanticStyles | None]:
+) -> tuple[_ConfiguredConsole, _ConfiguredConsole, SemanticStyles | None]:
     start = time.perf_counter() if time_output else None
     stdout_stream = sys.stdout if stdout is None else stdout
     stderr_stream = sys.stderr if stderr is None else stderr
-    semantic_styles = _load_semantic_styles(repository=repository, cli_args=cli_args)
+    semantic_styles = load_semantic_styles(repository=repository, cli_args=cli_args)
     return (
         _build_console(
             stdout_stream,
@@ -403,7 +345,7 @@ def _build_consoles(
 
 _STDOUT_CONSOLE: _ConfiguredConsole
 _STDERR_CONSOLE: _ConfiguredConsole
-_SEMANTIC_STYLES: _SemanticStyles | None
+_SEMANTIC_STYLES: SemanticStyles | None
 _REQUESTED_COLOR_MODE: RequestedColorMode | None = None
 _ACTIVE_COLOR_MODE: ColorMode = "auto"
 _STDERR_STREAM: IO[str] = sys.stderr
@@ -616,140 +558,7 @@ def progress(*, description: str, total: int) -> Generator[ProgressLike]:
         yield _RichProgressHandle(progress=progress_render, task_id=task_id)
 
 
-def _load_semantic_styles(
-    *,
-    repository: Path | None,
-    cli_args: JjCliArgs,
-) -> _SemanticStyles | None:
-    """Load effective jj semantic color styles for Rich-authored output."""
-
-    cwd = (
-        repository
-        if repository is not None and repository.exists() and repository.is_dir()
-        else Path.cwd()
-    )
-    try:
-        completed = subprocess.run(
-            [
-                "jj",
-                *cli_args.to_argv(),
-                "--ignore-working-copy",
-                "config",
-                "list",
-                "--include-defaults",
-                "colors",
-                "-T",
-                _JJ_COLORS_TEMPLATE,
-            ],
-            capture_output=True,
-            check=False,
-            cwd=cwd,
-            text=True,
-        )
-    except (FileNotFoundError, OSError):
-        return None
-
-    if completed.returncode != 0:
-        return None
-
-    rules = _semantic_style_rules_from_config_list(completed.stdout)
-    return _SemanticStyles(rules) if rules else None
-
-
-def _semantic_style_rules_from_config_list(stdout: str) -> tuple[_SemanticStyleRule, ...]:
-    """Parse `jj config list colors` output into Rich style rules."""
-
-    grouped_style_kwargs: dict[frozenset[str], dict[str, object]] = {}
-    for raw_line in stdout.splitlines():
-        if not raw_line:
-            continue
-        try:
-            raw_name, raw_value = raw_line.split("\0", maxsplit=1)
-        except ValueError:
-            continue
-        label_name, attribute = _parse_color_config_name(raw_name)
-        if label_name is None:
-            continue
-        label_set = _normalize_semantic_labels((label_name,))
-        if not label_set:
-            continue
-
-        style_kwargs = grouped_style_kwargs.setdefault(label_set, {})
-        try:
-            value = json.loads(raw_value)
-        except json.JSONDecodeError:
-            continue
-        if attribute is None:
-            rich_color = _normalize_jj_color_value(value)
-            if rich_color is not None:
-                style_kwargs["color"] = rich_color
-            continue
-        if attribute == "fg":
-            rich_color = _normalize_jj_color_value(value)
-            if rich_color is not None:
-                style_kwargs["color"] = rich_color
-            continue
-        if attribute == "bg":
-            rich_color = _normalize_jj_color_value(value)
-            if rich_color is not None:
-                style_kwargs["bgcolor"] = rich_color
-            continue
-        if isinstance(value, bool):
-            style_kwargs[attribute] = value
-
-    rules: list[_SemanticStyleRule] = []
-    for labels, style_kwargs in grouped_style_kwargs.items():
-        if not style_kwargs:
-            continue
-        rules.append(_SemanticStyleRule(labels=labels, style=Style(**cast(Any, style_kwargs))))
-    return tuple(rules)
-
-
-def _parse_color_config_name(name: str) -> tuple[str | None, str | None]:
-    """Extract a jj color label name and optional style attribute."""
-
-    try:
-        parsed = tomllib.loads(f"{name} = 0\n")
-    except tomllib.TOMLDecodeError:
-        return None, None
-
-    colors = parsed.get("colors")
-    if not isinstance(colors, dict) or len(colors) != 1:
-        return None, None
-
-    label_name, value = next(iter(colors.items()))
-    if not isinstance(label_name, str):
-        return None, None
-    if not isinstance(value, dict):
-        return label_name, None
-    if len(value) != 1:
-        return None, None
-
-    attribute = next(iter(value))
-    if attribute not in _JJ_STYLE_ATTRIBUTES:
-        return None, None
-    return label_name, attribute
-
-
-def _normalize_semantic_labels(labels: tuple[str, ...]) -> frozenset[str]:
-    normalized: set[str] = set()
-    for label in labels:
-        normalized.update(part for part in label.split() if part)
-    return frozenset(normalized)
-
-
-def _normalize_jj_color_value(value: object) -> str | None:
-    if not isinstance(value, str) or not value:
-        return None
-    if value.startswith("ansi-color-"):
-        index = value.removeprefix("ansi-color-")
-        return f"color({index})" if index.isdigit() else None
-    if value.startswith("bright "):
-        return value.replace(" ", "_", 1)
-    return value
-
-
-def _time_output_prefix_style(*, semantic_styles: _SemanticStyles | None) -> Style | None:
+def _time_output_prefix_style(*, semantic_styles: SemanticStyles | None) -> Style | None:
     if semantic_styles is None:
         return None
     return semantic_styles.for_labels(("prefix", "timestamp"))
