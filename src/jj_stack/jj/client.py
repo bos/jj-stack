@@ -24,7 +24,6 @@ _COMMIT_TEMPLATE = (
     r'json(immutable) ++ "\t" ++ json(self.conflict()) ++ "\n"'
 )
 _SCAN_TEMPLATE_PREFIX = _COMMIT_TEMPLATE.removesuffix(r'"\n"') + r'"\t" ++ '
-_TRUNK_SCAN_TEMPLATE = _SCAN_TEMPLATE_PREFIX + r'json(self.contained_in("trunk()")) ++ "\n"'
 _BOOKMARK_TEMPLATE = r'json(self) ++ "\n"'
 
 
@@ -233,13 +232,13 @@ class JjClient:
     ) -> tuple[LocalRevision, LocalRevision, str]:
         """Resolve the default head and `trunk()` in one call."""
 
-        revisions_with_trunk_membership = self._query_revisions_with_trunk_membership(
-            "trunk() | @ | @-"
+        revisions_with_trunk_membership = self._query_revisions_with_membership(
+            "trunk() | @ | @-", membership_revsets=("trunk()",)
         )
         trunk: LocalRevision | None = None
         working_copy: LocalRevision | None = None
         revisions_by_commit_id: dict[str, LocalRevision] = {}
-        for revision, is_trunk in revisions_with_trunk_membership:
+        for revision, (is_trunk,) in revisions_with_trunk_membership:
             revisions_by_commit_id[revision.commit_id] = revision
             if is_trunk and trunk is None:
                 trunk = revision
@@ -305,12 +304,7 @@ class JjClient:
             change_id: [] for change_id in ordered_change_ids
         }
         for chunk in _chunked(ordered_change_ids):
-            revisions = self._query_revisions(
-                _union_revset_symbols(
-                    tuple(f"present({_quote_revset_symbol(change_id)})" for change_id in chunk),
-                    quote=False,
-                )
-            )
+            revisions = self._query_revisions(_present_change_ids_revset(chunk))
             for revision in revisions:
                 grouped.setdefault(revision.change_id, []).append(revision)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
@@ -330,10 +324,7 @@ class JjClient:
         ancestor_revset = f"({_union_revset_symbols(ordered_ancestor_commit_ids)})::"
         revisions_by_commit_id: dict[str, LocalRevision] = {}
         for chunk in _chunked(ordered_change_ids):
-            change_ids_revset = _union_revset_symbols(
-                tuple(f"present({_quote_revset_symbol(change_id)})" for change_id in chunk),
-                quote=False,
-            )
+            change_ids_revset = _present_change_ids_revset(chunk)
             for revision in self._query_revisions(f"({change_ids_revset}) & {ancestor_revset}"):
                 revisions_by_commit_id.setdefault(revision.commit_id, revision)
         return tuple(revisions_by_commit_id.values())
@@ -511,9 +502,9 @@ class JjClient:
         """Resolve `revset` and `trunk()` in one call."""
 
         try:
-            revisions = self._query_revisions_with_trunk_and_selection_membership(
+            revisions = self._query_revisions_with_membership(
                 f"trunk() | ({revset})",
-                selection_revset=revset,
+                membership_revsets=("trunk()", revset),
             )
         except JjCommandError as error:
             friendly_error = _revset_resolution_error(revset, error)
@@ -523,7 +514,7 @@ class JjClient:
 
         trunk: LocalRevision | None = None
         selected: list[LocalRevision] = []
-        for revision, is_trunk, is_selected in revisions:
+        for revision, (is_trunk, is_selected) in revisions:
             if is_trunk and trunk is None:
                 trunk = revision
             if is_selected:
@@ -694,10 +685,7 @@ class JjClient:
         rendered: dict[str, str] = {}
         template = _short_change_id_render_template(min_len=min_len)
         for chunk in _chunked(ordered_change_ids):
-            revset = _union_revset_symbols(
-                tuple(f"present({_quote_revset_symbol(change_id)})" for change_id in chunk),
-                quote=False,
-            )
+            revset = _present_change_ids_revset(chunk)
             stdout = self._run_jj(
                 (
                     "--ignore-working-copy",
@@ -958,59 +946,32 @@ class JjClient:
         self._run_jj(("rebase", "-s", source, "-d", destination))
 
     def _query_revisions(self, revset: str, *, limit: int | None = None) -> list[LocalRevision]:
-        command = ["log", "--no-graph", "-r", revset, "-T", _COMMIT_TEMPLATE]
-        if limit is not None:
-            command.extend(["--limit", str(limit)])
+        lines = self._query_template_lines(revset, _COMMIT_TEMPLATE, limit=limit)
+        return [_parse_revision_line(line) for line in lines]
 
-        stdout = self._run_jj(command, ignore_working_copy=True)
-        revisions: list[LocalRevision] = []
-        for line in stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            revisions.append(_parse_revision_line(stripped))
-        return revisions
-
-    def _query_revisions_with_trunk_membership(
-        self,
-        revset: str,
-    ) -> list[tuple[LocalRevision, bool]]:
-        stdout = self._run_jj(
-            ("log", "--no-graph", "-r", revset, "-T", _TRUNK_SCAN_TEMPLATE),
-            ignore_working_copy=True,
-        )
-        revisions: list[tuple[LocalRevision, bool]] = []
-        for line in stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            revisions.append(_parse_revision_with_flag_line(stripped))
-        return revisions
-
-    def _query_revisions_with_trunk_and_selection_membership(
+    def _query_revisions_with_membership(
         self,
         revset: str,
         *,
-        selection_revset: str,
-    ) -> list[tuple[LocalRevision, bool, bool]]:
-        stdout = self._run_jj(
-            (
-                "log",
-                "--no-graph",
-                "-r",
-                revset,
-                "-T",
-                _selection_scan_template(selection_revset),
-            ),
-            ignore_working_copy=True,
-        )
-        revisions: list[tuple[LocalRevision, bool, bool]] = []
-        for line in stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            revisions.append(_parse_revision_with_two_flag_line(stripped))
-        return revisions
+        membership_revsets: Sequence[str],
+    ) -> list[tuple[LocalRevision, tuple[bool, ...]]]:
+        """Query revisions plus one containment flag per membership revset."""
+
+        lines = self._query_template_lines(revset, _membership_scan_template(membership_revsets))
+        return [_parse_revision_with_flags_line(line, len(membership_revsets)) for line in lines]
+
+    def _query_template_lines(
+        self,
+        revset: str,
+        template: str,
+        *,
+        limit: int | None = None,
+    ) -> list[str]:
+        command = ["log", "--no-graph", "-r", revset, "-T", template]
+        if limit is not None:
+            command.extend(["--limit", str(limit)])
+        stdout = self._run_jj(command, ignore_working_copy=True)
+        return [stripped for line in stdout.splitlines() if (stripped := line.strip())]
 
     def _run_jj(self, args: Sequence[str], *, ignore_working_copy: bool = False) -> str:
         extra_args = ("--ignore-working-copy",) if ignore_working_copy else ()
@@ -1098,8 +1059,6 @@ class JjClient:
 
 
 _EXPECTED_FIELD_COUNT = 10
-_EXPECTED_FIELD_COUNT_WITH_FLAG = 11
-_EXPECTED_FIELD_COUNT_WITH_TWO_FLAGS = 12
 
 
 def _is_missing_revision_error(message: str) -> bool:
@@ -1171,50 +1130,26 @@ def _parse_revision_line(line: str) -> LocalRevision:
         ) from error
 
 
-def _parse_revision_with_flag_line(line: str) -> tuple[LocalRevision, bool]:
+def _parse_revision_with_flags_line(
+    line: str,
+    flag_count: int,
+) -> tuple[LocalRevision, tuple[bool, ...]]:
+    expected_field_count = _EXPECTED_FIELD_COUNT + flag_count
     parts = line.split("\t")
-    if len(parts) != _EXPECTED_FIELD_COUNT_WITH_FLAG:
+    if len(parts) != expected_field_count:
         raise JjCommandError(
             t"{ui.cmd('jj log')} output has unexpected format: expected "
-            t"{_EXPECTED_FIELD_COUNT_WITH_FLAG} tab-separated fields, got {len(parts)}. "
+            t"{expected_field_count} tab-separated fields, got {len(parts)}. "
             t"Raw line: {line!r}"
         )
     revision = _parse_revision_line("\t".join(parts[:_EXPECTED_FIELD_COUNT]))
     try:
-        return revision, bool(json.loads(parts[_EXPECTED_FIELD_COUNT]))
+        flags = tuple(bool(json.loads(part)) for part in parts[_EXPECTED_FIELD_COUNT:])
     except json.JSONDecodeError as error:
         raise JjCommandError(
             t"{ui.cmd('jj log')} output contains invalid JSON: {error}. Raw line: {line!r}"
         ) from error
-    except (TypeError, ValueError) as error:
-        raise JjCommandError(
-            t"{ui.cmd('jj log')} output has unexpected field types: {error}. Raw line: {line!r}"
-        ) from error
-
-
-def _parse_revision_with_two_flag_line(line: str) -> tuple[LocalRevision, bool, bool]:
-    parts = line.split("\t")
-    if len(parts) != _EXPECTED_FIELD_COUNT_WITH_TWO_FLAGS:
-        raise JjCommandError(
-            t"{ui.cmd('jj log')} output has unexpected format: expected "
-            t"{_EXPECTED_FIELD_COUNT_WITH_TWO_FLAGS} tab-separated fields, got {len(parts)}. "
-            t"Raw line: {line!r}"
-        )
-    revision = _parse_revision_line("\t".join(parts[:_EXPECTED_FIELD_COUNT]))
-    try:
-        return (
-            revision,
-            bool(json.loads(parts[_EXPECTED_FIELD_COUNT])),
-            bool(json.loads(parts[_EXPECTED_FIELD_COUNT + 1])),
-        )
-    except json.JSONDecodeError as error:
-        raise JjCommandError(
-            t"{ui.cmd('jj log')} output contains invalid JSON: {error}. Raw line: {line!r}"
-        ) from error
-    except (TypeError, ValueError) as error:
-        raise JjCommandError(
-            t"{ui.cmd('jj log')} output has unexpected field types: {error}. Raw line: {line!r}"
-        ) from error
+    return revision, flags
 
 
 def _require_sequence(value: object) -> Sequence[str]:
@@ -1225,14 +1160,11 @@ def _require_sequence(value: object) -> Sequence[str]:
     return tuple(str(item) for item in value if item is not None)
 
 
-def _selection_scan_template(selection_revset: str) -> str:
-    return (
-        _SCAN_TEMPLATE_PREFIX
-        + r'json(self.contained_in("trunk()")) ++ "\t" ++ '
-        + r"json(self.contained_in("
-        + json.dumps(selection_revset)
-        + r')) ++ "\n"'
+def _membership_scan_template(membership_revsets: Sequence[str]) -> str:
+    flags = r' ++ "\t" ++ '.join(
+        f"json(self.contained_in({json.dumps(revset)}))" for revset in membership_revsets
     )
+    return _SCAN_TEMPLATE_PREFIX + flags + r' ++ "\n"'
 
 
 def _short_change_id_render_template(*, min_len: int) -> str:
@@ -1248,6 +1180,15 @@ def _short_change_id_render_template(*, min_len: int) -> str:
 
 def _quote_revset_symbol(symbol: str) -> str:
     return f"'{symbol}'"
+
+
+def _present_change_ids_revset(change_ids: Sequence[str]) -> str:
+    """Union the change IDs as `present(...)` terms so hidden ones do not fail the query."""
+
+    return _union_revset_symbols(
+        tuple(f"present({_quote_revset_symbol(change_id)})" for change_id in change_ids),
+        quote=False,
+    )
 
 
 def _union_revset_symbols(symbols: Sequence[str], *, quote: bool = True) -> str:
