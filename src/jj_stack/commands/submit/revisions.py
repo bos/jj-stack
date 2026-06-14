@@ -260,17 +260,13 @@ def _remote_push_plan(
     if review_status.remote_branch_matches_commit is True:
         return "up_to_date", "up to date", None
     if review_status.remote_branch == "untracked":
-        return "git_update", "pushed", _single_remote_target(remote_state)
+        if remote_state is None or len(remote_state.targets) != 1:
+            raise AssertionError("Checked remote target must be unambiguous.")
+        target = remote_state.target
+        if target is None:
+            raise AssertionError("Checked remote target must exist.")
+        return "git_update", "pushed", target
     return "batch", "pushed", None
-
-
-def _single_remote_target(remote_state: RemoteBookmarkState | None) -> str:
-    if remote_state is None or len(remote_state.targets) != 1:
-        raise AssertionError("Checked remote target must be unambiguous.")
-    target = remote_state.target
-    if target is None:
-        raise AssertionError("Checked remote target must exist.")
-    return target
 
 
 def _preflight_atomic_remote_push_plan(

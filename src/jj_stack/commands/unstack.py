@@ -289,24 +289,22 @@ def _resolve_close_target(
         console.note(t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}")
         return _CloseSelectedStack(revset=resolved_revset)
 
+    command_label = "unstack"
+    if cleanup and dry_run:
+        command_label = "unstack --cleanup --dry-run"
+    elif cleanup:
+        command_label = "unstack --cleanup"
+    elif dry_run:
+        command_label = "unstack --dry-run"
+
     return _CloseSelectedStack(
         revset=resolve_selected_revset(
-            command_label=_unstack_command_label(cleanup=cleanup, dry_run=dry_run),
+            command_label=command_label,
             default_revset="@-",
             require_explicit=False,
             revset=revset,
         )
     )
-
-
-def _unstack_command_label(*, cleanup: bool, dry_run: bool) -> str:
-    if cleanup and dry_run:
-        return "unstack --cleanup --dry-run"
-    if cleanup:
-        return "unstack --cleanup"
-    if dry_run:
-        return "unstack --dry-run"
-    return "unstack"
 
 
 def print_close_result(result: CloseResult) -> None:
@@ -707,7 +705,10 @@ async def _process_close_revision(
         if (
             not run.prepared_close.cleanup
             or cached_change is None
-            or not _has_retirable_cached_review_identity(cached_change)
+            or not classify_saved_review_change(
+                cached_change,
+                local="present",
+            ).saved_review_identity
         ):
             return False
         pr_state = cached_change.pr_state or "closed"
@@ -892,12 +893,3 @@ async def _cleanup_revision(
         or cleared_comment
     ):
         run.next_changes[revision.change_id] = cached_change.with_cleared_comments()
-
-
-def _has_retirable_cached_review_identity(cached_change: CachedChange) -> bool:
-    """Return True when tracking state proves prior review identity."""
-
-    return classify_saved_review_change(
-        cached_change,
-        local="present",
-    ).saved_review_identity

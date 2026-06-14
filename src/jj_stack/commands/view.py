@@ -174,7 +174,11 @@ def _run_status(
             printed_blocks += 1
             continue
 
-        stack_key = _prepared_status_identity(prepared_status)
+        change_ids = tuple(
+            revision.revision.change_id
+            for revision in prepared_status.prepared.status_revisions
+        )
+        stack_key = (prepared_status.prepared.stack.base_parent.commit_id, *change_ids)
         if stack_key in rendered_stack_keys:
             continue
         rendered_stack_keys.add(stack_key)
@@ -345,16 +349,6 @@ def _prepare_status_with_spinner(
             context=context,
             revset=revset,
         )
-
-
-def _prepared_status_identity(prepared_status: PreparedStatus) -> tuple[str, ...]:
-    change_ids = tuple(
-        revision.revision.change_id for revision in prepared_status.prepared.status_revisions
-    )
-    return (
-        prepared_status.prepared.stack.base_parent.commit_id,
-        *change_ids,
-    )
 
 
 def _status_heading(selector: ViewSelector) -> ui.Message:
@@ -858,7 +852,11 @@ def _link_advisory_summary_row(
     selected_revset: str,
 ) -> tuple[ui.TableCell, ui.TableCell]:
     states = {_link_advisory_kind(revision) for revision in link_revisions}
-    change_phrase = _link_advisory_change_phrase(link_revisions)
+    change_phrase = (
+        "the change shown above"
+        if len(link_revisions) == 1
+        else "one or more changes shown above"
+    )
     restart_submit_command = ui.cmd(f"jj-stack submit --restart {selected_revset}")
     if states == {"closed"}:
         label = "Closed GitHub PR" if len(link_revisions) == 1 else "Closed GitHub PRs"
@@ -908,12 +906,6 @@ def _link_advisory_summary_row(
         " as appropriate.",
     )
     return "GitHub PRs need repair", detail
-
-
-def _link_advisory_change_phrase(link_revisions: tuple[_ClassifiedStatusRevision, ...]) -> str:
-    if len(link_revisions) == 1:
-        return "the change shown above"
-    return "one or more changes shown above"
 
 
 def _link_advisory_kind(classified: _ClassifiedStatusRevision) -> str:

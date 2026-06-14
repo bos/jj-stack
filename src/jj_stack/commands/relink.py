@@ -67,7 +67,10 @@ def relink(
                 revset=revset,
             )
         )
-    _print_relink_result(result)
+    console.output(
+        t"Relinked PR #{result.pull_request_number} for {result.subject} "
+        t"({ui.change_id(result.change_id)}) -> {ui.bookmark(result.bookmark)}"
+    )
     return 0
 
 
@@ -288,13 +291,6 @@ def _validated_relink_bookmark(
             hint="Resolve it before relinking.",
         )
     return bookmark
-
-
-def _print_relink_result(result: RelinkResult) -> None:
-    console.output(
-        t"Relinked PR #{result.pull_request_number} for {result.subject} "
-        t"({ui.change_id(result.change_id)}) -> {ui.bookmark(result.bookmark)}"
-    )
 
 
 def _ensure_relinkable_cached_link(
