@@ -303,6 +303,12 @@ def build_parser() -> ArgumentParser:
         help="Inspect the stack for this PR number or URL; repeat to inspect several stacks",
     )
     view_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output stack status as JSON",
+    )
+    view_parser.add_argument(
         "-f",
         "--fetch",
         action="store_true",
@@ -327,6 +333,12 @@ def build_parser() -> ArgumentParser:
         "--fetch",
         action="store_true",
         help="Fetch first so list uses current remote branch locations",
+    )
+    list_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output stack list as JSON",
     )
     _add_relink_parser(
         subcommands,
@@ -683,6 +695,7 @@ def _default_view_handler(args: Namespace) -> int:
     return view_command.view(
         cli_args=args.cli_args,
         debug=args.debug,
+        as_json=False,
         fetch=False,
         pull_request=None,
         repository=args.repository,

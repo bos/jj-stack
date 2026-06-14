@@ -100,6 +100,7 @@ def test_view_updates_tty_progress_bar_while_streaming(
     monkeypatch.setattr(view_module.console, "progress", fake_progress)
 
     exit_code = view_module.view(
+        as_json=False,
         cli_args=JjCliArgs(),
         debug=False,
         fetch=False,
@@ -180,6 +181,7 @@ def test_view_passes_cli_color_override_to_native_jj_rendering(
     )
 
     exit_code = view_module.view(
+        as_json=False,
         cli_args=JjCliArgs(),
         debug=False,
         fetch=False,
@@ -240,6 +242,7 @@ def test_view_fetches_once_and_skips_duplicate_stack(
     monkeypatch.setattr(view_module, "_render_prepared_status", fake_render_prepared_status)
 
     exit_code = view_module.view(
+        as_json=False,
         cli_args=JjCliArgs(),
         debug=False,
         fetch=True,
@@ -298,6 +301,7 @@ def test_view_continues_after_selector_error(
     stderr = StringIO()
     with console_module.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
         exit_code = view_module.view(
+            as_json=False,
             cli_args=JjCliArgs(),
             debug=False,
             fetch=False,

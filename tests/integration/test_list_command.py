@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import ClassVar
 
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -20,6 +21,39 @@ from .submit_command_helpers import (
     patch_github_client_builders,
     run_main,
 )
+
+
+def test_list_json_reports_public_stack_rows(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack(allow_immutable=True).head.change_id
+
+    exit_code = run_main(repo, config_path, "list", "--json")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert set(payload) == {"rows"}
+
+    row = payload["rows"][0]
+    assert row["type"] == "stack"
+    assert row["status"] == "open"
+    assert row["subject"] == "feature 1"
+    assert len(row["changes"]) == 1
+
+    change = row["changes"][0]
+    assert change["change_id"] == change_id
+    assert change["bookmark"].startswith("review/feature-1-")
+    assert change["pull_request"]["number"] == 1
+    assert change["status"] == "open"
+    assert "head_change_id" not in row
+    assert "pull_requests" not in row
+    assert "review" not in row
+    assert "size" not in row
 
 
 def test_list_reports_multiple_locally_tracked_stacks(
@@ -563,5 +597,3 @@ def test_list_marks_stale_saved_pull_request_link_and_exits_nonzero(
     assert exit_code == 1
     assert "stale link" in captured.out
     assert "PR 1" in captured.out
-
-

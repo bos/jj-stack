@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -18,6 +19,50 @@ from .submit_command_helpers import (
     patch_github_client_builders,
     run_main,
 )
+
+
+def test_view_json_reports_public_stack_status(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+
+    exit_code = run_main(repo, config_path, "view", "--json")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert set(payload) == {"stacks"}
+
+    stack = payload["stacks"][0]
+    assert set(stack) == {"changes"}
+
+    revision = stack["changes"][0]
+    assert {
+        "bookmark",
+        "change_id",
+        "pull_request",
+        "status",
+        "subject",
+    } <= set(revision)
+    assert set(revision) <= {
+        "bookmark",
+        "change_id",
+        "current",
+        "pull_request",
+        "status",
+        "subject",
+    }
+    assert revision["change_id"] == change_id
+    assert revision["bookmark"].startswith("review/feature-1-")
+    assert revision["status"] == "open"
+    assert revision["subject"] == "feature 1"
+    assert revision["pull_request"]["number"] == 1
+    assert "remote_branch" not in revision
+    assert "saved_pull_request" not in revision
 
 
 def test_view_can_select_a_stack_by_pull_request_number(
@@ -581,4 +626,3 @@ def test_view_reports_merged_pull_request_state(
     assert "PR #1 merged into main, cleanup needed" in captured.out
     assert refreshed_state.changes[change_id].pr_state == "merged"
     assert refreshed_state.changes[change_id].pr_review_decision is None
-

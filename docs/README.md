@@ -11,6 +11,8 @@ GitHub head branch for one review change.
   Understand what stays in `jj` and what `jj-stack` owns on GitHub.
 - [Daily Workflow](daily-workflow.md)
   The normal author loop for submit, review, land, and cleanup.
+- [JSON Output](json-output.md)
+  The structured output schema for `view --json` and `list --json`.
 - [Troubleshooting](troubleshooting.md)
   Common symptoms, likely causes, and the next command to run.
 

@@ -12,6 +12,7 @@ is no longer part of any current stack. Close those explicitly with
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,10 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._json_status import (
+    cached_pull_request_json,
+    review_change_json,
+)
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.console import requested_color_mode
 from jj_stack.errors import CliError, ErrorMessage, error_message
@@ -56,7 +61,9 @@ HELP = "List stacks in this repo"
 
 @dataclass(frozen=True, slots=True)
 class StackRow:
+    changes: tuple[ReviewStatusRevision, ...]
     current: bool
+    current_change_ids: frozenset[str]
     head_change_id: str
     incomplete: bool
     review: str
@@ -69,8 +76,10 @@ class StackRow:
 class OrphanRow:
     """One orphaned PR — its local change has left every current stack."""
 
+    bookmark: str | None
     change_id: str
     hint: str | None
+    pull_request: dict[str, object] | None
     review: str
     state: ui.Message
     subject: str
@@ -90,6 +99,7 @@ class _RepoInspectionContext:
 
 def list_(
     *,
+    as_json: bool,
     cli_args: JjCliArgs,
     debug: bool,
     fetch: bool,
@@ -103,6 +113,7 @@ def list_(
         debug=debug,
     )
     return _run_list(
+        as_json=as_json,
         context=context,
         fetch=fetch,
     )
@@ -110,6 +121,7 @@ def list_(
 
 def _run_list(
     *,
+    as_json: bool,
     context: CommandContext,
     fetch: bool,
 ) -> int:
@@ -129,6 +141,14 @@ def _run_list(
         _build_orphan_row(orphan) for orphan in enumerate_orphaned_records(state, ordered)
     )
     if not ordered:
+        if as_json:
+            console.output(
+                json.dumps(
+                    _json_list_payload(orphan_rows=orphan_rows, rows=()),
+                    indent=2,
+                )
+            )
+            return 0
         if not orphan_rows:
             console.output("No stacks.")
             return 0
@@ -189,6 +209,14 @@ def _run_list(
         )
         for item in prepared_discovered
     )
+    if as_json:
+        console.output(
+            json.dumps(
+                _json_list_payload(orphan_rows=orphan_rows, rows=rows),
+                indent=2,
+            )
+        )
+        return 1 if any(row.incomplete for row in rows) else 0
     color_when = context.jj_client.resolve_color_when(
         cli_color=requested_color_mode(),
         stdout_is_tty=sys.stdout.isatty(),
@@ -216,12 +244,59 @@ def _run_list(
 def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:
     pr_number = orphan.cached_change.pr_number
     return OrphanRow(
+        bookmark=orphan.cached_change.bookmark,
         change_id=orphan.change_id,
         hint=(f"close --cleanup --pull-request {pr_number}" if pr_number is not None else None),
+        pull_request=cached_pull_request_json(orphan.cached_change),
         review=f"PR #{pr_number}" if pr_number is not None else "(no PR number)",
         state=ui.semantic_text("orphan", "warning", "heading"),
         subject="local change missing",
     )
+
+
+def _json_list_payload(
+    *,
+    orphan_rows: tuple[OrphanRow, ...],
+    rows: tuple[StackRow, ...],
+) -> dict[str, object]:
+    return {
+        "rows": [
+            *(_json_stack_row(row) for row in rows),
+            *(_json_orphan_row(row) for row in orphan_rows),
+        ],
+    }
+
+
+def _json_stack_row(row: StackRow) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "changes": [
+            review_change_json(
+                change,
+                current=change.change_id in row.current_change_ids,
+            )
+            for change in row.changes
+        ],
+        "status": ui.plain_text(row.state),
+        "subject": row.subject,
+        "type": "stack",
+    }
+    if row.current:
+        payload["current"] = True
+    return payload
+
+
+def _json_orphan_row(row: OrphanRow) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "change_id": row.change_id,
+        "status": ui.plain_text(row.state),
+        "subject": row.subject,
+        "type": "orphan",
+    }
+    if row.bookmark is not None:
+        payload["bookmark"] = row.bookmark
+    if row.pull_request is not None:
+        payload["pull_request"] = row.pull_request
+    return payload
 
 
 def _emit_orphan_hints(orphan_rows: tuple[OrphanRow, ...]) -> None:
@@ -323,7 +398,8 @@ def _build_row(
         pull_request_lookups=pull_request_lookups,
     )
     statuses = tuple(classify_review_status_revision(revision) for revision in revisions)
-    review = _pull_request_range_from_revisions(revisions)
+    pull_request_numbers = _pull_request_numbers_from_revisions(revisions)
+    review = _format_pull_request_range(pull_request_numbers)
     local_fragments: list[ui.Message] = []
     if any(revision.divergent for revision in stack.revisions):
         local_fragments.append(ui.semantic_text("divergent", "error", "heading"))
@@ -337,7 +413,11 @@ def _build_row(
         statuses=statuses,
     )
     return StackRow(
+        changes=revisions,
         current=is_current,
+        current_change_ids=frozenset(
+            revision.change_id for revision in stack.revisions if revision.current_working_copy
+        ),
         head_change_id=stack.head.change_id,
         incomplete=_status_is_incomplete(
             github_error=github_error,
@@ -482,7 +562,9 @@ def _status_is_incomplete(
     )
 
 
-def _pull_request_range_from_revisions(revisions: tuple[ReviewStatusRevision, ...]) -> str:
+def _pull_request_numbers_from_revisions(
+    revisions: tuple[ReviewStatusRevision, ...],
+) -> tuple[int, ...]:
     numbers: list[int] = []
     for revision in revisions:
         lookup = revision.pull_request_lookup
@@ -492,7 +574,7 @@ def _pull_request_range_from_revisions(revisions: tuple[ReviewStatusRevision, ..
         cached_change = revision.cached_change
         if cached_change is not None and cached_change.pr_number is not None:
             numbers.append(cached_change.pr_number)
-    return _format_pull_request_range(tuple(numbers))
+    return tuple(sorted(dict.fromkeys(numbers)))
 
 
 def _load_pull_request_lookups(
@@ -544,14 +626,13 @@ def _tracked_prepared_revisions_by_bookmark(
 
 
 def _format_pull_request_range(numbers: tuple[int, ...]) -> str:
-    unique = tuple(sorted(dict.fromkeys(numbers)))
-    if not unique:
+    if not numbers:
         return ""
-    if len(unique) == 1:
-        return f"PR {unique[0]}"
-    if unique == tuple(range(unique[0], unique[-1] + 1)):
-        return f"PRs {unique[0]}-{unique[-1]}"
-    return "PRs " + ", ".join(f"{number}" for number in unique)
+    if len(numbers) == 1:
+        return f"PR {numbers[0]}"
+    if numbers == tuple(range(numbers[0], numbers[-1] + 1)):
+        return f"PRs {numbers[0]}-{numbers[-1]}"
+    return "PRs " + ", ".join(f"{number}" for number in numbers)
 
 
 def _tracked_pinned_bookmarks_for_repo_inspection(

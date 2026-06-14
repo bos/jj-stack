@@ -9,6 +9,7 @@ revsets and `--pull-request` selectors to inspect several stacks in one run.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import Literal
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._json_status import review_change_json
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, error_message
@@ -33,7 +35,7 @@ from jj_stack.github.error_messages import (
 )
 from jj_stack.jj.client import JjCliArgs, UnsupportedStackError
 from jj_stack.models.review_state import ReviewState
-from jj_stack.models.stack import LocalStack
+from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
@@ -90,6 +92,7 @@ class _ClassifiedStatusRevision:
 
 def view(
     *,
+    as_json: bool,
     cli_args: JjCliArgs,
     debug: bool,
     fetch: bool,
@@ -114,12 +117,14 @@ def view(
             revset=revset,
             selectors=selectors,
         ),
+        as_json=as_json,
         verbose=verbose,
     )
 
 
 def _run_status(
     *,
+    as_json: bool,
     context: CommandContext,
     fetch: bool,
     selectors: tuple[ViewSelector, ...],
@@ -133,6 +138,12 @@ def _run_status(
             context=context,
             revset=None,
         )
+        if as_json:
+            rendered, incomplete = _json_prepared_status(
+                prepared_status=prepared_status,
+            )
+            console.output(json.dumps(_view_json_payload(stacks=(rendered,)), indent=2))
+            return 1 if incomplete else 0
         exit_code = _render_prepared_status(
             context=context,
             prepared_status=prepared_status,
@@ -149,6 +160,7 @@ def _run_status(
     multi_selector = len(selectors) > 1
     rendered_stack_keys: set[tuple[str, ...]] = set()
     rendered_stacks: list[LocalStack] = []
+    json_stacks: list[dict[str, object]] = []
     state: ReviewState | None = None
     printed_blocks = 0
     for selector in selectors:
@@ -162,6 +174,8 @@ def _run_status(
                 revset=resolved_selector.revset,
             )
         except CliError as error:
+            if as_json:
+                raise
             if printed_blocks:
                 console.output("")
             if multi_selector:
@@ -185,6 +199,15 @@ def _run_status(
         rendered_stacks.append(prepared_status.prepared.stack)
         state = prepared_status.prepared.state
 
+        if as_json:
+            rendered, incomplete = _json_prepared_status(
+                prepared_status=prepared_status,
+                selector=selector,
+            )
+            json_stacks.append(rendered)
+            exit_code = max(exit_code, 1 if incomplete else 0)
+            continue
+
         if printed_blocks:
             console.output("")
         if multi_selector:
@@ -200,6 +223,16 @@ def _run_status(
             ),
         )
         printed_blocks += 1
+    if as_json:
+        console.output(
+            json.dumps(
+                _view_json_payload(
+                    stacks=tuple(json_stacks),
+                ),
+                indent=2,
+            )
+        )
+        return exit_code
     if state is not None:
         _emit_connected_stale_stacks_advisory(
             context=context,
@@ -355,6 +388,73 @@ def _status_heading(selector: ViewSelector) -> ui.Message:
     if selector.kind == "pull_request":
         return f"Status for PR {selector.value}:"
     return t"Status for {ui.revset(selector.value)}:"
+
+
+def _json_prepared_status(
+    *,
+    prepared_status: PreparedStatus,
+    selector: ViewSelector | None = None,
+) -> tuple[dict[str, object], bool]:
+    progress_total = prepared_status.github_inspection_count()
+    with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
+        result = stream_status(
+            lock_cache_update=True,
+            on_revision=lambda _revision, _github_available: progress.advance(),
+            prepared_status=prepared_status,
+        )
+    return (
+        _json_status_result(
+            prepared_status=prepared_status,
+            result=result,
+            selector=selector,
+        ),
+        result.incomplete,
+    )
+
+
+def _view_json_payload(
+    *,
+    stacks: tuple[dict[str, object], ...],
+) -> dict[str, object]:
+    return {
+        "stacks": list(stacks),
+    }
+
+
+def _json_status_result(
+    *,
+    prepared_status: PreparedStatus,
+    result: StatusResult,
+    selector: ViewSelector | None,
+) -> dict[str, object]:
+    stack_model = prepared_status.prepared.stack
+    local_revisions_by_change_id = {
+        revision.change_id: revision for revision in stack_model.revisions
+    }
+    stack: dict[str, object] = {
+        "changes": [
+            review_change_json(
+                revision,
+                current=_is_current_json_change(
+                    local_revisions_by_change_id.get(revision.change_id)
+                ),
+            )
+            for revision in result.revisions
+        ],
+    }
+    if selector is not None:
+        stack["selector"] = _json_selector(selector)
+    return stack
+
+
+def _is_current_json_change(revision: LocalRevision | None) -> bool:
+    return False if revision is None else revision.current_working_copy
+
+
+def _json_selector(selector: ViewSelector) -> str:
+    if selector.kind == "pull_request":
+        return f"PR {selector.value}"
+    return selector.value
 
 
 def _render_prepared_status(

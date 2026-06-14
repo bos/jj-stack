@@ -469,6 +469,12 @@ configured well enough to resolve a remote or GitHub target. Default output stay
 concise — one effective summary per change rather than dumping saved-data and transport
 diagnostics inline.
 
+With `--json`, `view` prints a structured version of that same per-change summary. The
+payload includes the selected stacks, their changes, review bookmark names, PR identity,
+and concise review status. It does not expose cache state, raw remote bookmark targets,
+or saved tracking records; command failures and incomplete inspection still use stderr
+and the process exit status.
+
 `view` may add a repo-level advisory for other tracked stacks when the saved
 submitted state disagrees with the current DAG: either a tracked change's saved
 `last_submitted_commit_id` differs from its current commit, or the saved topology
@@ -542,6 +548,11 @@ row names the PR and points at `unstack --cleanup --pull-request <pr>` as the ex
 closure path. Without this surfacing, common workflows (squashing two reviewed
 changes by emptying one and abandoning it) would leave PRs open without the user
 noticing.
+
+With `--json`, `list` prints the same row model as the text table. Stack rows include
+their changes so clients can derive stack length, head change, and PR list directly
+from the structured changes. Orphaned PRs remain rows with `type: "orphan"` rather than
+a separate internal bucket.
 
 These commands are not sources of truth either. They are user-driven ways to reattach
 GitHub state to a `jj`-derived stack after damage, cross-machine work, or manual edits
@@ -835,9 +846,9 @@ The full command surface:
 - `jj stack submit [--draft[=new|all] | --open]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
   [--re-request] [--restart] [<revset>]`
-- `jj stack view [--fetch] [{--pull-request <pr>} | {<revset>}] ...`
-- `jj stack list [--fetch]`
-- `jj stack ls [--fetch]`
+- `jj stack view [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
+- `jj stack list [--fetch] [--json]`
+- `jj stack ls [--fetch] [--json]`
 - `jj stack restart [--dry-run] <revset>`
 - `jj stack relink <pr> <revset>`
 - `jj stack unlink <revset>`
