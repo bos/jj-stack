@@ -94,7 +94,8 @@ class ReviewStateStore:
 def resolve_state_path(repo_root: Path) -> Path:
     """Return the machine-written jj-stack data path for the repo."""
 
-    repo_id = _repo_storage_id(repo_root)
+    repo_storage_root = (repo_root / ".jj" / "repo").resolve()
+    repo_id = hashlib.sha256(str(repo_storage_root).encode("utf-8")).hexdigest()
     return default_state_root() / STATE_DIRNAME / "repos" / repo_id / STATE_FILENAME
 
 
@@ -106,7 +107,3 @@ def default_state_root() -> Path:
         return Path(configured).expanduser().resolve()
     return Path("~", ".local", "state").expanduser().resolve()
 
-
-def _repo_storage_id(repo_root: Path) -> str:
-    repo_storage_root = (repo_root / ".jj" / "repo").resolve()
-    return hashlib.sha256(str(repo_storage_root).encode("utf-8")).hexdigest()

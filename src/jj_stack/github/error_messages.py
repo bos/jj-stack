@@ -21,7 +21,10 @@ def summarize_github_lookup_error(*, action: str, error: GithubClientError) -> s
     if error.status_code == 403:
         return "GitHub access was denied - check GITHUB_TOKEN and repo access"
     if error.is_repository_not_found():
-        return _github_auth_failure_message("GitHub repository not found or inaccessible")
+        message = "GitHub repository not found or inaccessible"
+        if github_token_from_env() is None:
+            return f"{message} - check GITHUB_TOKEN or gh auth"
+        return message
     return f"{action} failed ({error.request_failure_detail()})"
 
 
@@ -85,8 +88,3 @@ def remote_and_github_unavailable_messages(
         messages.append(github_message)
     return tuple(messages)
 
-
-def _github_auth_failure_message(message: str) -> str:
-    if github_token_from_env() is None:
-        return f"{message} - check GITHUB_TOKEN or gh auth"
-    return message

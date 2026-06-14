@@ -68,7 +68,9 @@ class OperationLock:
         if self._released:
             return
         self._released = True
-        _clear_holder_if_owned(self._holder_path, self.holder)
+        current = read_operation_lock_holder(self._holder_path.parent)
+        if current == self.holder:
+            self._holder_path.unlink(missing_ok=True)
         _unlock_file(self._file)
         self._file.close()
 
@@ -114,7 +116,9 @@ def try_acquire_operation_lock(
         return None
 
     try:
-        _cleanup_dead_holder(holder_path)
+        stale_holder = read_operation_lock_holder(holder_path.parent)
+        if stale_holder is not None and not pid_is_alive(stale_holder.pid):
+            holder_path.unlink(missing_ok=True)
         holder = OperationLockHolder(
             command=command,
             pid=os.getpid(),
@@ -210,18 +214,6 @@ def _write_holder(holder_path: Path, holder: OperationLockHolder) -> None:
     except OSError:
         Path(tmp_path_str).unlink(missing_ok=True)
         raise
-
-
-def _cleanup_dead_holder(holder_path: Path) -> None:
-    holder = read_operation_lock_holder(holder_path.parent)
-    if holder is not None and not pid_is_alive(holder.pid):
-        holder_path.unlink(missing_ok=True)
-
-
-def _clear_holder_if_owned(holder_path: Path, holder: OperationLockHolder) -> None:
-    current = read_operation_lock_holder(holder_path.parent)
-    if current == holder:
-        holder_path.unlink(missing_ok=True)
 
 
 def _operation_lock_busy_message(holder: OperationLockHolder | None) -> str:

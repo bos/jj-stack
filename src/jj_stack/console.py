@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from string.templatelib import Template
-from typing import IO, Literal, Protocol, TypeGuard
+from typing import IO, Literal, Protocol
 
 from rich import box as rich_box
 from rich.console import Console, ConsoleRenderable, Group, NewLine, RenderableType, RichCast
@@ -305,7 +305,11 @@ def _build_console(
         console = Console(file=stream)
     return _ConfiguredConsole(
         console,
-        prefix_style=_time_output_prefix_style(semantic_styles=semantic_styles),
+        prefix_style=(
+            None
+            if semantic_styles is None
+            else semantic_styles.for_labels(("prefix", "timestamp"))
+        ),
         start=start,
         time_output=time_output,
     )
@@ -466,10 +470,6 @@ def style_time_prefix(text: str) -> str:
     return capture.get()
 
 
-def _is_semantic_message_object(value: object) -> TypeGuard[ui.Message]:
-    return isinstance(value, str | Template | ui.SemanticText | tuple)
-
-
 def _coerce_renderable(value: ConsoleObject) -> RenderableType:
     if isinstance(value, str) and "\x1b[" in value:
         return ansi_text(value)
@@ -479,7 +479,7 @@ def _coerce_renderable(value: ConsoleObject) -> RenderableType:
         return _render_prefixed_line(value)
     if isinstance(value, ui.DataTable):
         return _render_data_table(value)
-    if _is_semantic_message_object(value):
+    if isinstance(value, str | Template | ui.SemanticText | tuple):
         return rich_text(value)
     if isinstance(value, str | ConsoleRenderable | RichCast):
         return value
@@ -556,12 +556,6 @@ def progress(*, description: str, total: int) -> Generator[ProgressLike]:
     ) as progress_render:
         task_id = progress_render.add_task(description, total=total)
         yield _RichProgressHandle(progress=progress_render, task_id=task_id)
-
-
-def _time_output_prefix_style(*, semantic_styles: SemanticStyles | None) -> Style | None:
-    if semantic_styles is None:
-        return None
-    return semantic_styles.for_labels(("prefix", "timestamp"))
 
 
 def _stream_supports_live_progress(stream: IO[str]) -> bool:
