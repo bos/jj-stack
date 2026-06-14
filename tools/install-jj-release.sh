@@ -17,8 +17,22 @@ Examples:
 EOF
 }
 
+python_command() {
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return
+  fi
+  echo "python3 or python is required" >&2
+  exit 1
+}
+
 sha256_file() {
-  python3 - "$1" <<'PY'
+  python_bin="$(python_command)"
+  "$python_bin" - "$1" <<'PY'
 import hashlib
 import pathlib
 import sys
@@ -32,13 +46,33 @@ print(digest.hexdigest())
 PY
 }
 
+extract_zip() {
+  python_bin="$(python_command)"
+  "$python_bin" - "$1" "$2" <<'PY'
+import pathlib
+import sys
+import zipfile
+
+archive_path = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+with zipfile.ZipFile(archive_path) as archive:
+    archive.extractall(destination)
+PY
+}
+
 expected_sha256() {
   case "$1/$2" in
     v0.39.0/aarch64-apple-darwin)
       printf '%s\n' "525ee96fd1eda1be925b3827a964c58a9f14bc2bae411bd7d8422fe1af40ea19"
       ;;
+    v0.39.0/aarch64-pc-windows-msvc)
+      printf '%s\n' "c3da2f7bec13dd2f5360d60b479436f70908152ec348673360154399cf06ad70"
+      ;;
     v0.39.0/x86_64-apple-darwin)
       printf '%s\n' "cdf0eb6f457165bfe5edc3afc16a5d10b3ea89cd682ebe333dabdec626373104"
+      ;;
+    v0.39.0/x86_64-pc-windows-msvc)
+      printf '%s\n' "53be7e277e5f0396621ccdda509904e4f88fe8e517b78ce20176269b7e97d378"
       ;;
     v0.39.0/aarch64-unknown-linux-musl)
       printf '%s\n' "15bbb0199adf57929d1e3cd90ae0b47356858cbe374814769815a1fb87d5ad1d"
@@ -49,8 +83,14 @@ expected_sha256() {
     v0.40.0/aarch64-apple-darwin)
       printf '%s\n' "8a1d713103bb968c771617c9b2c48b0b5982193090ee74dec935bff710af2082"
       ;;
+    v0.40.0/aarch64-pc-windows-msvc)
+      printf '%s\n' "662e6f0887b0bb4c3d8e9175491dd09595952ee814c0a113ac7128254a4d5e0e"
+      ;;
     v0.40.0/x86_64-apple-darwin)
       printf '%s\n' "ce62cf26e3c6c72a295f5917056e33cfa972874f882a2d15b5a3687b3ddce1e5"
+      ;;
+    v0.40.0/x86_64-pc-windows-msvc)
+      printf '%s\n' "63922bd257f9616553dec0869e2de99c1c0bf8d951c774d230af09eaeb2f5951"
       ;;
     v0.40.0/aarch64-unknown-linux-musl)
       printf '%s\n' "b26f24ff7a34838fbafe8788e6a94a9cdcf51601ef8c9af8fab4fa22c06ddbee"
@@ -99,20 +139,33 @@ case "$platform/$arch" in
   Linux/x86_64)
     target="x86_64-unknown-linux-musl"
     ;;
+  MINGW*_NT*/aarch64 | MINGW*_NT*/arm64 | MSYS*_NT*/aarch64 | MSYS*_NT*/arm64)
+    target="aarch64-pc-windows-msvc"
+    ;;
+  MINGW*_NT*/x86_64 | MSYS*_NT*/x86_64)
+    target="x86_64-pc-windows-msvc"
+    ;;
   *)
     echo "unsupported platform for release binaries: $platform/$arch" >&2
     exit 1
     ;;
 esac
 
+archive_extension="tar.gz"
+exe_name="jj"
+if [[ "$target" == *-pc-windows-msvc ]]; then
+  archive_extension="zip"
+  exe_name="jj.exe"
+fi
+
 bin_dir="$install_dir/bin"
-jj_path="$bin_dir/jj"
+jj_path="$bin_dir/$exe_name"
 if [[ -x "$jj_path" ]]; then
   printf '%s\n' "$bin_dir"
   exit 0
 fi
 
-asset="jj-$version-$target.tar.gz"
+asset="jj-$version-$target.$archive_extension"
 url="https://github.com/jj-vcs/jj/releases/download/$version/$asset"
 expected_sha="$(expected_sha256 "$version" "$target")"
 tmp_dir="$(mktemp -d)"
@@ -128,7 +181,14 @@ if [[ "$actual_sha" != "$expected_sha" ]]; then
   echo "actual:   $actual_sha" >&2
   exit 1
 fi
-tar -xzf "$archive_path" -C "$tmp_dir"
-install -m 0755 "$tmp_dir/jj" "$jj_path"
+case "$archive_extension" in
+  tar.gz)
+    tar -xzf "$archive_path" -C "$tmp_dir"
+    ;;
+  zip)
+    extract_zip "$archive_path" "$tmp_dir"
+    ;;
+esac
+install -m 0755 "$tmp_dir/$exe_name" "$jj_path"
 
 printf '%s\n' "$bin_dir"
