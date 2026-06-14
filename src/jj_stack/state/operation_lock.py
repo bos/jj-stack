@@ -172,18 +172,18 @@ def _try_lock_file(lock_file: BinaryIO) -> bool:
             if error.errno in (errno.EACCES, errno.EAGAIN):
                 return False
             raise
+    else:
+        import fcntl
 
-    import fcntl
-
-    try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
-    except BlockingIOError:
-        return False
-    except OSError as error:
-        if error.errno in (errno.EACCES, errno.EAGAIN):
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
             return False
-        raise
+        except OSError as error:
+            if error.errno in (errno.EACCES, errno.EAGAIN):
+                return False
+            raise
 
 
 def _unlock_file(lock_file: BinaryIO) -> None:
@@ -192,11 +192,10 @@ def _unlock_file(lock_file: BinaryIO) -> None:
 
         lock_file.seek(0)
         msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-        return
+    else:
+        import fcntl
 
-    import fcntl
-
-    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _write_holder(holder_path: Path, holder: OperationLockHolder) -> None:

@@ -8,13 +8,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import readline as _readline
-except ImportError:
-    _readline = None
-
-if _readline is not None:
-    _readline.set_history_length(1000)
+if sys.platform != "win32":
+    import readline
+    readline.set_history_length(1000)
 
 
 def parse_args() -> argparse.Namespace:
