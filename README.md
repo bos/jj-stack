@@ -41,6 +41,26 @@ To invoke it as `jj stack ...` — mirroring GitHub's `gh stack ...` — add a j
 stack = ["util", "exec", "--", "jj-stack"]
 ```
 
+### AI agent integration
+
+If you use coding agents, install the bundled `jj-stack` skill so they know how
+to work with a `jj`-native stack:
+
+```bash
+gh skill install bos/jj-stack jj-stack
+```
+
+For a specific agent or install scope, pass the relevant `gh skill install`
+flags. For example, to install it for Codex at user scope:
+
+```bash
+gh skill install bos/jj-stack jj-stack --agent codex --scope user
+```
+
+The skill tells agents to use `jj` for local stack edits, `jj-stack view --json`
+and `jj-stack list --json` for machine-readable status, and `jj-stack submit`
+to refresh GitHub.
+
 ### Before your first submit
 
 The happy path is a local `jj` stack that is ready to become a set of GitHub PRs:
@@ -230,7 +250,7 @@ While you could model that with plain Git branches, the bookkeeping quickly beco
 - when you modify an intermediate change, `jj-stack` does the PR and branch wrangling
 
 The key point is that you get to keep thinking in terms of local logical changes. `jj-stack`
-manages the GitHub projection and the local review bookmarks, and that's it.
+manages the GitHub branches, pull requests, and local review bookmarks, and that's it.
 
 ## Why use it with coding agents?
 

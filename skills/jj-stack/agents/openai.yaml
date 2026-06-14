@@ -1,0 +1,4 @@
+interface:
+  display_name: "JJ Stack"
+  short_description: "Work with jj-stack review stacks"
+  default_prompt: "Use $jj-stack to inspect and refresh my jj-stack pull request stack."
