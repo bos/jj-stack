@@ -371,7 +371,7 @@ Given a chosen head revision:
    - draft handling stays conservative:
      - `submit --draft` / `submit --draft=new` opens new PRs as drafts
      - `submit --draft=all` also returns existing published PRs to draft
-     - `submit --publish` marks existing draft PRs ready for review and creates new PRs
+     - `submit --open` marks existing draft PRs ready for review and creates new PRs
        as published
      - plain `submit` preserves the draft state of already-open PRs
      - plain `submit --draft` does not turn a published PR back into a draft
@@ -832,7 +832,7 @@ graph.
 
 The full command surface:
 
-- `jj stack submit [--draft[=new|all] | --publish]
+- `jj stack submit [--draft[=new|all] | --open]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
   [--re-request] [--restart] [<revset>]`
 - `jj stack view [--fetch] [{--pull-request <pr>} | {<revset>}] ...`
@@ -873,7 +873,7 @@ Target selection is conservative:
 
 - `submit`, `unstack`, `land`, and `cleanup --rebase` default to the stack headed by
   `@-` when `<revset>` is omitted
-- `submit --draft[=new|all]` and `submit --publish` are mutually exclusive
+- `submit --draft[=new|all]` and `submit --open` are mutually exclusive
 - `submit --reviewers` and `submit --team-reviewers` override configured reviewer
   defaults for the current invocation only
 - `submit --re-request` re-requests users whose latest review is `APPROVED` or
@@ -1015,7 +1015,7 @@ one before merging.
 
 - **`mark_pull_request_ready_for_review`**. Repo policy may trigger required-CI
   runs and other ready-for-review workflows. Defense: only invoked when
-  `--publish` is passed and the existing PR is currently a draft. New PRs are
+  `--open` is passed and the existing PR is currently a draft. New PRs are
   created directly through `create_pull_request(draft=…)` and never round-trip
   through this API.
 

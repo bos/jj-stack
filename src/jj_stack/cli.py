@@ -190,7 +190,7 @@ def build_parser() -> ArgumentParser:
         aliases=_COMMAND_ALIASES["submit"],
         help_text=normalized_help_text(submit_command.HELP),
         description_text=submit_command.__doc__ or "",
-        handler=_forward_handler(submit_command.submit),
+        handler=_forward_handler(submit_command.submit, open_="open"),
         revset_help=(
             t"Revision to submit; defaults to {ui.revset('@-')} (the current stack head)"
         ),
@@ -224,7 +224,8 @@ def build_parser() -> ArgumentParser:
         help=SUPPRESS,
     )
     submit_draft_mode.add_argument(
-        "--publish",
+        "--open",
+        dest="open",
         action="store_true",
         help="Mark existing draft pull requests ready for review on submit",
     )

@@ -148,7 +148,7 @@ async def _sync_pull_request(
         action = "updated"
 
     if pull_request is not None and pull_request.state == "open":
-        if options.draft_mode == "publish" and pull_request.is_draft:
+        if options.draft_mode == "open" and pull_request.is_draft:
             if not run.dry_run:
                 pull_request = await _mark_pull_request_ready_for_review(
                     github_client=github_client,
@@ -415,7 +415,7 @@ async def _mark_pull_request_ready_for_review(
 ) -> GithubPullRequest:
     if pull_request.node_id is None:
         raise CliError(
-            f"Could not publish draft pull request #{pull_request.number} for "
+            f"Could not mark draft pull request #{pull_request.number} ready for review for "
             f"{github_client.repository.full_name}: GitHub did not return a node ID."
         )
     try:
@@ -424,7 +424,7 @@ async def _mark_pull_request_ready_for_review(
         )
     except GithubClientError as error:
         raise CliError(
-            f"Could not publish draft pull request #{pull_request.number} for "
+            f"Could not mark draft pull request #{pull_request.number} ready for review for "
             f"{github_client.repository.full_name}"
         ) from error
 

@@ -83,6 +83,8 @@ discoverable without reading the README first.
 Current aliases include `ls` for `list`, `sub` for `submit`, and `delete` for `unstack`.
 Commands that select one linked pull request also accept `-p` as a short form for
 `--pull-request`.
+When an option has the same user-facing meaning as `gh stack`, prefer the same spelling;
+for example, `submit --open` marks draft pull requests ready for review.
 
 Command entrypoints bootstrap a `CommandContext` containing config, the `jj` client,
 repo root, runtime options, and the repo state store. CLI boundary code should preserve

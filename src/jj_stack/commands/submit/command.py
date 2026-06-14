@@ -89,7 +89,7 @@ def submit(
     draft_all: bool,
     dry_run: bool,
     labels: Sequence[str] | None,
-    publish: bool,
+    open_: bool,
     re_request: bool,
     repository: Path | None,
     restart: bool,
@@ -111,7 +111,7 @@ def submit(
         draft_all=draft_all,
         dry_run=dry_run,
         labels=labels,
-        publish=publish,
+        open_=open_,
         re_request=re_request,
         restart=restart,
         reviewers=reviewers,
@@ -152,7 +152,7 @@ def _submit_options_from_cli(
     draft_all: bool,
     dry_run: bool,
     labels: Sequence[str] | None,
-    publish: bool,
+    open_: bool,
     re_request: bool,
     restart: bool,
     reviewers: Sequence[str] | None,
@@ -171,7 +171,7 @@ def _submit_options_from_cli(
         draft_mode=_submit_draft_mode(
             draft=draft,
             draft_all=draft_all,
-            publish=publish,
+            open_=open_,
         ),
         dry_run=dry_run,
         labels=parse_comma_separated_flag_values(labels),
@@ -188,14 +188,14 @@ def _submit_draft_mode(
     *,
     draft: bool,
     draft_all: bool,
-    publish: bool,
+    open_: bool,
 ) -> SubmitDraftMode:
     if draft_all:
         return "draft_all"
     if draft:
         return "draft"
-    if publish:
-        return "publish"
+    if open_:
+        return "open"
     return "default"
 
 

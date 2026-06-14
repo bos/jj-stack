@@ -1835,7 +1835,7 @@ def test_submit_preserves_cached_review_decision(
     assert refreshed_state.changes[change_id].pr_state == "open"
 
 
-def test_submit_publish_marks_existing_draft_pull_requests_ready_for_review(
+def test_submit_open_marks_existing_draft_pull_requests_ready_for_review(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1851,7 +1851,7 @@ def test_submit_publish_marks_existing_draft_pull_requests_ready_for_review(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
 
-    exit_code = run_main(repo, config_path, "submit", "--publish", change_id)
+    exit_code = run_main(repo, config_path, "submit", "--open", change_id)
     captured = capsys.readouterr()
     refreshed_state = ReviewStateStore.for_repo(repo).load()
 

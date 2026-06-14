@@ -16,7 +16,7 @@ from jj_stack.state.store import ReviewStateStore
 
 LocalBookmarkAction = Literal["created", "moved", "unchanged"]
 PullRequestAction = Literal["created", "unchanged", "updated"]
-SubmitDraftMode = Literal["default", "draft", "draft_all", "publish"]
+SubmitDraftMode = Literal["default", "draft", "draft_all", "open"]
 RemoteBookmarkAction = Literal["pushed", "up to date"]
 PushOperation = Literal["batch", "git_update", "up_to_date"]
 
