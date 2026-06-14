@@ -103,6 +103,9 @@ selected stack or revision, GitHub and remote observations, parsed options, and 
 `CommandContext` when later phases need shared dependencies. Mutating phases that need
 dry-run mode, journal state, or interim saves use a small run object such as
 `SubmitMutationRun`, `LandMutationRun`, `_OrphanCloseRun`, or `AbortRun`.
+Purely local mutations should stay out of GitHub inspection paths when they can resolve
+their target from `jj` and saved state alone; for example, `unstack --local` only removes
+saved tracking records for the selected stack and does not enter the close/cleanup stream.
 
 Do not append command-by-command wiring notes here as new helpers are converted. The rule
 is the stable part: keep argparse values, shared dependencies, selected targets, and live

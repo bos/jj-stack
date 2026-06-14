@@ -63,6 +63,52 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     assert issue_comments(fake_repo, 1) == []
 
 
+def test_unstack_local_forgets_tracking_without_closing_pull_request(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    stack = JjClient(repo).discover_review_stack()
+    change_id = stack.revisions[-1].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    bookmark = state_store.load().changes[change_id].bookmark
+    assert bookmark is not None
+
+    exit_code = run_main(repo, config_path, "unstack", "--local", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Applied local unstack actions:" in captured.out
+    assert "forget local review tracking for feature 1" in captured.out
+    assert fake_repo.pull_requests[1].state == "open"
+    assert change_id not in state_store.load().changes
+    assert JjClient(repo).get_bookmark_state(bookmark).local_target is not None
+
+
+def test_unstack_local_dry_run_leaves_tracking_and_pull_request_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+
+    exit_code = run_main(repo, config_path, "unstack", "--local", "--dry-run", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Planned local unstack actions:" in captured.out
+    assert fake_repo.pull_requests[1].state == "open"
+    assert state_store.load() == initial_state
+
+
 def test_unstack_plain_skips_remote_fetch_but_cleanup_refreshes(
     tmp_path: Path,
     monkeypatch,

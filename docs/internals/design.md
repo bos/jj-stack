@@ -640,6 +640,12 @@ Without `--cleanup`, `unstack`:
   targets
 - leaves local bookmarks and remote PR branches in place
 
+With `--local`, `unstack` removes only the saved local tracking records for the selected
+stack. It does not close PRs, delete remote branches, delete local bookmarks, or inspect
+GitHub. The local `jj` changes remain in place. This mode is for checkouts that should
+stop treating the stack as locally tracked while leaving the GitHub review stack alone.
+It cannot be combined with `--cleanup`.
+
 With `--cleanup`, `unstack` also performs conservative post-close cleanup for review
 artifacts the tool can verify belong to the stack:
 
@@ -852,8 +858,8 @@ The full command surface:
 - `jj stack restart [--dry-run] <revset>`
 - `jj stack relink <pr> <revset>`
 - `jj stack unlink <revset>`
-- `jj stack unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
-- `jj stack delete [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj stack unstack [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj stack delete [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack cleanup [--dry-run] [--rebase [<revset>]]`
 - `jj stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]`
 - `jj stack land [--dry-run] [--pull-request <pr> | <revset>]`

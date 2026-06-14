@@ -205,6 +205,13 @@ Use `--cleanup` when you also want to remove the stack's old review branches and
 tracking data after the PRs are closed. If `jj-stack` created local review bookmarks for those
 branches, this will forget those too.
 
+Use `--local` when you only want this checkout to stop tracking the stack. It leaves the PRs,
+review branches, and local bookmarks alone:
+
+```bash
+jj-stack unstack --local
+```
+
 If `jj-stack list` shows an `orphan` row, the PR is still open but its local change is no
 longer part of any current stack. When you are ready to retire that PR, close it explicitly:
 

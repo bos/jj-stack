@@ -424,6 +424,11 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Delete jj-stack-managed branches, bookmarks, and tracking data",
     )
+    unstack_parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Forget local review tracking without closing PRs or deleting bookmarks",
+    )
     add_help_argument(
         unstack_parser,
         *_PULL_REQUEST_OPTION_STRINGS,

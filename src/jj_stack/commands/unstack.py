@@ -1,4 +1,4 @@
-"""Close the GitHub pull requests for the selected stack.
+"""Close or locally forget the selected stack.
 
 Passing `--cleanup` also removes `jj-stack`'s own review branches, forgets any local bookmarks
 that still point at those branches, and clears saved tracking data for the selected stack.
@@ -8,6 +8,8 @@ preserved unless `cleanup_user_bookmarks = true`. Use `--pull-request` to close 
 URL.
 
 Use `unstack --cleanup --pull-request <pr>` to retire an orphaned PR shown by `list`.
+Use `unstack --local` to forget local review tracking without closing PRs or deleting
+bookmarks.
 
 To preview the unstack plan without changing anything, use `--dry-run`.
 """
@@ -37,7 +39,7 @@ from jj_stack.commands.close_orphan import (
     run_untracked_cleanup_pull_request,
     state_has_pull_request_record,
 )
-from jj_stack.errors import ErrorMessage
+from jj_stack.errors import CliError, ErrorMessage
 from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
@@ -100,6 +102,23 @@ class PreparedClose:
     context: CommandContext
     dry_run: bool
     prepared_status: PreparedStatus
+
+
+@dataclass(frozen=True, slots=True)
+class LocalUnstackAction:
+    """One local tracking record forgotten by `unstack --local`."""
+
+    bookmark: str | None
+    change_id: str
+    subject: str
+
+
+@dataclass(frozen=True, slots=True)
+class LocalUnstackResult:
+    """Rendered result for a local-only unstack."""
+
+    actions: tuple[LocalUnstackAction, ...]
+    dry_run: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +190,7 @@ def unstack(
     cli_args: JjCliArgs,
     debug: bool,
     dry_run: bool,
+    local: bool,
     pull_request: str | None,
     repository: Path | None,
     revset: str | None,
@@ -182,11 +202,22 @@ def unstack(
         cli_args=cli_args,
         debug=debug,
     )
-    command = "unstack --cleanup" if cleanup else "unstack"
+    if local and cleanup:
+        raise CliError("unstack --local cannot be combined with --cleanup.")
+    command = "unstack --local" if local else ("unstack --cleanup" if cleanup else "unstack")
     with acquire_operation_lock(
         context.state_store.require_writable(),
         command=command,
     ):
+        if local:
+            result = _run_local_unstack(
+                context=context,
+                dry_run=dry_run,
+                pull_request=pull_request,
+                revset=revset,
+            )
+            _print_local_unstack_result(result)
+            return 0
         return _run_close(
             context=context,
             cleanup=cleanup,
@@ -194,6 +225,92 @@ def unstack(
             pull_request=pull_request,
             revset=revset,
         )
+
+
+def _run_local_unstack(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    pull_request: str | None,
+    revset: str | None,
+) -> LocalUnstackResult:
+    selected_revset = _resolve_local_unstack_revset(
+        context=context,
+        dry_run=dry_run,
+        pull_request=pull_request,
+        revset=revset,
+    )
+    with console.spinner(description="Inspecting jj stack"):
+        stack = context.jj_client.discover_review_stack(
+            selected_revset,
+            allow_divergent=True,
+            allow_immutable=True,
+        )
+    state = context.state_store.load()
+    next_changes = dict(state.changes)
+    actions: list[LocalUnstackAction] = []
+    for revision in stack.revisions:
+        cached_change = next_changes.pop(revision.change_id, None)
+        if cached_change is None:
+            continue
+        actions.append(
+            LocalUnstackAction(
+                bookmark=cached_change.bookmark,
+                change_id=revision.change_id,
+                subject=revision.subject,
+            )
+        )
+    if actions and not dry_run:
+        context.state_store.save(state.model_copy(update={"changes": next_changes}))
+    return LocalUnstackResult(actions=tuple(actions), dry_run=dry_run)
+
+
+def _resolve_local_unstack_revset(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    pull_request: str | None,
+    revset: str | None,
+) -> str | None:
+    if pull_request is not None:
+        pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
+            action_name="unstack --local",
+            jj_client=context.jj_client,
+            pull_request_reference=pull_request,
+            revset=revset,
+        )
+        console.note(t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}")
+        return resolved_revset
+
+    command_label = "unstack --local --dry-run" if dry_run else "unstack --local"
+    return resolve_selected_revset(
+        command_label=command_label,
+        default_revset="@-",
+        require_explicit=False,
+        revset=revset,
+    )
+
+
+def _print_local_unstack_result(result: LocalUnstackResult) -> None:
+    if not result.actions:
+        console.output("No local review tracking was found for the selected stack.")
+        return
+    if result.dry_run:
+        console.output("Planned local unstack actions:")
+    else:
+        console.output("Applied local unstack actions:")
+    icon = "~" if result.dry_run else "✓"
+    for action in result.actions:
+        revision_label = t"{action.subject} ({ui.change_id(action.change_id)})"
+        if action.bookmark is not None:
+            console.output(
+                t"  {icon} tracking: forget local review tracking for {revision_label}, "
+                t"preserving {ui.bookmark(action.bookmark)}"
+            )
+        else:
+            console.output(
+                t"  {icon} tracking: forget local review tracking for {revision_label}"
+            )
 
 
 def _run_close(
