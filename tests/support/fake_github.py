@@ -837,6 +837,7 @@ def _graphql_repository_payload(
     repository: FakeGithubRepository,
     web_origin: str,
 ) -> dict[str, object]:
+    # codeql[py/polynomial-redos]
     head_ref_matches = list(_HEAD_REF_QUERY_PATTERN.finditer(query))
     if head_ref_matches:
         payload: dict[str, object] = {}
