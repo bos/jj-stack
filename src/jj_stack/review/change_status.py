@@ -135,9 +135,10 @@ def classify_review_change(
             commit_id=commit_id,
             remote_state=remote_state,
         ),
-        remote_branch_matches_commit=_remote_branch_matches_commit(
-            commit_id=commit_id,
-            remote_state=remote_state,
+        remote_branch_matches_commit=(
+            None
+            if commit_id is None or remote_state is None or len(remote_state.targets) != 1
+            else remote_state.target == commit_id
         ),
         pr_lifecycle=lifecycle,
         pr_draft=_pull_request_draft(
@@ -153,8 +154,11 @@ def classify_review_change(
         pr_review_decision_error=(
             None if pull_request_lookup is None else pull_request_lookup.review_decision_error
         ),
-        saved_review_identity=_has_saved_review_identity(cached_change),
-        saved_pull_request_identity=_has_saved_pull_request_identity(cached_change),
+        saved_review_identity=cached_change is not None and cached_change.has_review_identity,
+        saved_pull_request_identity=(
+            cached_change is not None
+            and (cached_change.pr_number is not None or cached_change.pr_url is not None)
+        ),
     )
 
 
@@ -256,10 +260,8 @@ def submitted_state_disagreements(
             cached = state.changes.get(revision.change_id)
             if cached is None or cached.is_unlinked:
                 continue
-            commit_changed = _submitted_commit_disagrees(
-                cached,
-                revision_commit_id=revision.commit_id,
-            )
+            saved_commit_id = cached.last_submitted_commit_id
+            commit_changed = saved_commit_id is not None and saved_commit_id != revision.commit_id
             saved_parent = cached.last_submitted_parent_change_id
             saved_head = cached.last_submitted_stack_head_change_id
             parent_changed = False
@@ -309,16 +311,6 @@ def _remote_branch_state(
     if commit_id is not None and remote_state.target == commit_id:
         return "current"
     return "drifted"
-
-
-def _remote_branch_matches_commit(
-    *,
-    commit_id: str | None,
-    remote_state: RemoteBookmarkState | None,
-) -> bool | None:
-    if commit_id is None or remote_state is None or len(remote_state.targets) != 1:
-        return None
-    return remote_state.target == commit_id
 
 
 def _pull_request_lifecycle(
@@ -386,25 +378,6 @@ def _baseline_flags(
     if disagreement.stack_head_changed:
         flags.add("stack_head_changed")
     return frozenset(flags)
-
-
-def _has_saved_pull_request_identity(cached_change: CachedChange | None) -> bool:
-    return cached_change is not None and (
-        cached_change.pr_number is not None or cached_change.pr_url is not None
-    )
-
-
-def _has_saved_review_identity(cached_change: CachedChange | None) -> bool:
-    return cached_change is not None and cached_change.has_review_identity
-
-
-def _submitted_commit_disagrees(
-    cached_change: CachedChange,
-    *,
-    revision_commit_id: str,
-) -> bool:
-    saved_commit_id = cached_change.last_submitted_commit_id
-    return saved_commit_id is not None and saved_commit_id != revision_commit_id
 
 
 def _live_parent_change_id(stack: LocalStack, *, index: int) -> str | None:

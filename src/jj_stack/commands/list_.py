@@ -435,7 +435,9 @@ def _status_fragments(
         fragments.append(ui.semantic_text(label, "hint", "heading"))
 
     open_non_draft_decisions = tuple(
-        status.pr_review_decision for status in statuses if _is_open_published(status)
+        status.pr_review_decision
+        for status in statuses
+        if status.pr_lifecycle == "open" and status.pr_draft is False
     )
     changes_requested = sum(
         1 for decision in open_non_draft_decisions if decision == "changes_requested"
@@ -472,19 +474,12 @@ def _status_is_incomplete(
 ) -> bool:
     if github_error is not None or remote_error is not None:
         return True
-    return any(_status_is_incomplete_change(status) for status in statuses)
-
-
-def _status_is_incomplete_change(status: ReviewChangeStatus) -> bool:
-    return (
+    return any(
         status.has_stale_pull_request_link
         or status.has_pull_request_lookup_failure
         or status.pr_lifecycle == "ambiguous"
+        for status in statuses
     )
-
-
-def _is_open_published(status: ReviewChangeStatus) -> bool:
-    return status.pr_lifecycle == "open" and status.pr_draft is False
 
 
 def _pull_request_range_from_revisions(revisions: tuple[ReviewStatusRevision, ...]) -> str:
