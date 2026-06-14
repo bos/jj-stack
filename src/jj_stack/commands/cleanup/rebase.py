@@ -82,7 +82,7 @@ def _prepare_cleanup_rebase(
     rebase_revset: str,
 ) -> PreparedRebase:
     selected_revset = resolve_selected_revset(
-        command_label=_cleanup_rebase_command_label(dry_run=dry_run),
+        command_label="cleanup --rebase --dry-run" if dry_run else "cleanup --rebase",
         default_revset="@-",
         require_explicit=False,
         revset=rebase_revset,
@@ -97,10 +97,6 @@ def _prepare_cleanup_rebase(
             revset=selected_revset,
         ),
     )
-
-
-def _cleanup_rebase_command_label(*, dry_run: bool) -> str:
-    return "cleanup --rebase --dry-run" if dry_run else "cleanup --rebase"
 
 
 def _prepared_rebase_has_potential_work(*, prepared_status: PreparedStatus) -> bool:
@@ -393,9 +389,10 @@ def _plan_rebase_operations(
         for classified in classified_path_revisions
         if classified.status.pr_lifecycle == "closed"
     )
-    classified_revisions_by_change_id = _classified_cleanup_revisions_by_change_id(
-        classified_path_revisions
-    )
+    classified_revisions_by_change_id = {
+        classified.revision.change_id: classified
+        for classified in classified_path_revisions
+    }
     current_commit_id_by_change_id = {
         prepared_revision.revision.change_id: prepared_revision.revision.commit_id
         for prepared_revision in prepared_status.prepared.status_revisions
@@ -422,12 +419,6 @@ def _plan_rebase_operations(
         pre_actions=tuple(actions),
         rebase_plans=tuple(rebase_plans),
     )
-
-
-def _classified_cleanup_revisions_by_change_id(
-    revisions: tuple[_ClassifiedCleanupRebaseRevision, ...],
-) -> dict[str, _ClassifiedCleanupRebaseRevision]:
-    return {classified.revision.change_id: classified for classified in revisions}
 
 
 def _collect_rebase_pre_actions(
