@@ -11,16 +11,6 @@ from jj_stack.bootstrap import (
 )
 from jj_stack.errors import CliError
 
-
-def _fake_jj_version(version_string: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(
-        args=["jj", "--version"],
-        returncode=0,
-        stdout=f"jj {version_string}\n",
-        stderr="",
-    )
-
-
 # --- _parse_jj_version ---
 
 
@@ -38,7 +28,13 @@ def test_parse_jj_version_returns_none_for_unexpected_format() -> None:
 
 
 def test_check_jj_version_rejects_older_version() -> None:
-    with patch("subprocess.run", return_value=_fake_jj_version("0.38.0")):
+    old_version = subprocess.CompletedProcess(
+        args=["jj", "--version"],
+        returncode=0,
+        stdout="jj 0.38.0\n",
+        stderr="",
+    )
+    with patch("subprocess.run", return_value=old_version):
         with pytest.raises(CliError, match="0.38.0 is too old"):
             check_jj_version()
 

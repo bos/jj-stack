@@ -107,8 +107,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.seed is not None:
         env["JJ_STACK_SUBMIT_PROPERTY_SEED"] = str(args.seed)
 
+    venv_python = REPO_ROOT / ".venv" / (
+        Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+    )
     command = [
-        _venv_python(),
+        str(venv_python),
         "-m",
         "pytest",
         "-n",
@@ -150,11 +153,6 @@ def _validate_jobs(value: str, parser: ArgumentParser) -> None:
         parser.error("--jobs must be a positive integer or 'auto'")
     if parsed < 1:
         parser.error("--jobs must be a positive integer or 'auto'")
-
-
-def _venv_python() -> str:
-    relative = Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
-    return str(REPO_ROOT / ".venv" / relative)
 
 
 def _command_env() -> dict[str, str]:

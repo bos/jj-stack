@@ -27,9 +27,10 @@ def test_resolve_selected_revset_requires_explicit_selection() -> None:
 def test_resolve_linked_change_for_pull_request_uses_action_specific_guidance(
     monkeypatch,
 ) -> None:
-    _patch_review_state(
-        monkeypatch,
-        ReviewState(changes={"change-1": CachedChange(pr_number=17)}),
+    state = ReviewState(changes={"change-1": CachedChange(pr_number=17)})
+    monkeypatch.setattr(
+        "jj_stack.review.selection.ReviewStateStore.for_repo",
+        lambda repo_root: _StateStoreStub(state),
     )
     jj_client = _JjClientStub(_REPO_ROOT, revisions_by_change_id={"change-1": ()})
 
@@ -145,9 +146,3 @@ def _revision(
         parents=parents,
     )
 
-
-def _patch_review_state(monkeypatch, state: ReviewState) -> None:
-    monkeypatch.setattr(
-        "jj_stack.review.selection.ReviewStateStore.for_repo",
-        lambda repo_root: _StateStoreStub(state),
-    )

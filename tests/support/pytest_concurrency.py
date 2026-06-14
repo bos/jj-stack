@@ -278,11 +278,18 @@ class _ConcurrencyReporter:
         self._is_worker = hasattr(config, "workerinput")
         self._requested_slots = _requested_slots(config)
         self._report_root = _report_root_for(config)
-        self._report_dir = _report_dir_for(config)
+        run_id = getattr(config.option, "testrunuid", None)
+        if not isinstance(run_id, str) or not run_id:
+            run_id = os.environ.get("PYTEST_XDIST_TESTRUNUID") or "local"
+        self._report_dir = self._report_root / run_id
         if not self._is_worker:
             shutil.rmtree(self._report_root, ignore_errors=True)
         self._report_dir.mkdir(parents=True, exist_ok=True)
-        self._worker_id = _worker_id(config)
+        self._worker_id = "main"
+        if hasattr(config, "workerinput"):
+            worker_id = config.workerinput.get("workerid")
+            if worker_id:
+                self._worker_id = str(worker_id)
         self._file_path = self._report_dir / f"{self._worker_id}.jsonl"
         self._writer = self._file_path.open("a", encoding="utf-8")
 
@@ -342,11 +349,6 @@ class _ConcurrencyReporter:
         self._writer.flush()
 
 
-def _report_dir_for(config: pytest.Config) -> Path:
-    run_id = _test_run_id(config)
-    return _report_root_for(config) / run_id
-
-
 def _requested_slots(config: pytest.Config) -> int:
     if hasattr(config, "workerinput"):
         worker_count = config.workerinput.get("workercount")
@@ -366,22 +368,6 @@ def _requested_slots(config: pytest.Config) -> int:
     return 1
 
 
-def _worker_id(config: pytest.Config) -> str:
-    if hasattr(config, "workerinput"):
-        worker_id = config.workerinput.get("workerid")
-        if worker_id:
-            return str(worker_id)
-    return "main"
-
-
-def _test_run_id(config: pytest.Config) -> str:
-    run_id = getattr(config.option, "testrunuid", None)
-    if isinstance(run_id, str) and run_id:
-        return run_id
-    env_value = os.environ.get("PYTEST_XDIST_TESTRUNUID")
-    if env_value:
-        return env_value
-    return "local"
 
 
 def _report_root_for(config: pytest.Config) -> Path:

@@ -12,15 +12,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
-
-def _venv_python_relative_path() -> Path:
-    if os.name == "nt":
-        return Path("Scripts/python.exe")
-    return Path("bin/python")
-
-
 REPO_ROOT = Path(__file__).resolve().parent
-VENV_PYTHON = REPO_ROOT / ".venv" / _venv_python_relative_path()
+VENV_PYTHON = REPO_ROOT / ".venv" / (
+    Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+)
 PytestJobs = int | Literal["auto"]
 _FRAGILE_TEST_OUTPUT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (

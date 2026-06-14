@@ -30,7 +30,7 @@ def test_discover_review_stack_ignores_off_path_reviewable_child(tmp_path: Path)
     feature_1 = _current_parent_commit_id(repo)
     commit_file(repo, "feature 2", "feature-2.txt")
     feature_2 = _current_parent_commit_id(repo)
-    _new_child(repo, feature_1)
+    run_command(["jj", "new", feature_1], repo)
     commit_file(repo, "feature side", "feature-side.txt")
 
     stack = JjClient(repo).discover_review_stack(feature_2)
@@ -80,6 +80,3 @@ def _current_parent_commit_id(repo: Path) -> str:
     )
     return completed.stdout.strip()
 
-
-def _new_child(repo: Path, parent_commit_id: str) -> None:
-    run_command(["jj", "new", parent_commit_id], repo)
