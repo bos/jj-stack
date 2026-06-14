@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 env:
-  JJ_VERSION: v0.39.0
+  JJ_VERSION: v0.42.0
 
 jobs:
   build:

@@ -11,9 +11,9 @@ without building from source. Prints the directory containing the installed
 `jj` binary on stdout.
 
 Examples:
-  tools/install-jj-release.sh v0.39.0
+  tools/install-jj-release.sh v0.42.0
   PATH="$(tools/install-jj-release.sh v0.28.2):$PATH" ./check.py
-  tools/install-jj-release.sh 0.39.0 .tmp/jj/v0.39.0
+  tools/install-jj-release.sh 0.42.0 .tmp/jj/v0.42.0
 EOF
 }
 
@@ -97,6 +97,42 @@ expected_sha256() {
       ;;
     v0.40.0/x86_64-unknown-linux-musl)
       printf '%s\n' "5c8979f46873e052f59bdd9535636dca6e6f9f70571b73f6d63c3b92acfaa037"
+      ;;
+    v0.41.0/aarch64-apple-darwin)
+      printf '%s\n' "e84883b4fb42d1e0cb665efae95b44f387603c1280c893f8cbc7bbac7149ea30"
+      ;;
+    v0.41.0/aarch64-pc-windows-msvc)
+      printf '%s\n' "9fce194dbce7393752ad562bba430027d7857ffb3e3f12c08e763c58b204c0c3"
+      ;;
+    v0.41.0/x86_64-apple-darwin)
+      printf '%s\n' "b40d238bf9de4379be9bfd629cff92cd3ec14e2d072a8f7f7bbb929dac9d22f6"
+      ;;
+    v0.41.0/x86_64-pc-windows-msvc)
+      printf '%s\n' "1c5ac3015caf0b15ae81cbafa1d94024dbd17b5dff933204d489787dfb95f835"
+      ;;
+    v0.41.0/aarch64-unknown-linux-musl)
+      printf '%s\n' "cd75d0f920b2674147a48eac84ee4594f476fc8f98cd7e358b25750a51622d91"
+      ;;
+    v0.41.0/x86_64-unknown-linux-musl)
+      printf '%s\n' "42181a80d316ac157874c817c9945e104275114fb461d99e06e2312502f08f99"
+      ;;
+    v0.42.0/aarch64-apple-darwin)
+      printf '%s\n' "98764966f22b599dc0b19bb9bd00d21df86156aeca5827f8274900356768db08"
+      ;;
+    v0.42.0/aarch64-pc-windows-msvc)
+      printf '%s\n' "0c6d6676a763f3a0514f83f45806f1df5b5af66e8e92ce38cdd8e6c136d99fc6"
+      ;;
+    v0.42.0/x86_64-apple-darwin)
+      printf '%s\n' "ec04669e9b8decb4b0d63dc050a4275d2b5422efea502a0c208ebd4e53e7d053"
+      ;;
+    v0.42.0/x86_64-pc-windows-msvc)
+      printf '%s\n' "866461102d87fb49fc67e6e76682635683963eb9fdd05264edda5f1c894d85a6"
+      ;;
+    v0.42.0/aarch64-unknown-linux-musl)
+      printf '%s\n' "bc962ac57ec264541a62ed8492f080898380a277222b115e1ed96163196e6fc8"
+      ;;
+    v0.42.0/x86_64-unknown-linux-musl)
+      printf '%s\n' "2d91e81d649e617a81608e7401ad1106029c15ece01ac928c4a351abef42be6a"
       ;;
     *)
       echo "unsupported jj version for checksum verification: $1" >&2
