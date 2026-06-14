@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from inspect import signature
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import jj_stack.bootstrap as bootstrap
 import jj_stack.commands.checkout as checkout_command
@@ -139,7 +139,7 @@ class _TopLevelArgumentParser(ArgumentParser):
     def format_usage(self) -> str:
         return f"usage: {_TOP_LEVEL_HELP_USAGE}\n"
 
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise _cli_parse_error(message)
 
 
@@ -159,7 +159,7 @@ class _CommandArgumentParser(ArgumentParser):
         self._positionals.title = "Positional Arguments"
         self._optionals.title = "Options"
 
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise _cli_parse_error(message)
 
 

@@ -87,6 +87,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return completed.returncode
 
     env = _command_env()
+    env.setdefault("JJ_USER", "Test User")
+    env.setdefault("JJ_EMAIL", "test@example.com")
     env["JJ_STACK_SUBMIT_PROPERTY_SCENARIOS"] = str(args.scenarios)
     cross_stack_scenarios = args.cross_stack_scenarios
     if cross_stack_scenarios is None:
