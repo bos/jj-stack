@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jj-stack.dev/schemas/json-output.schema.json",
+  "title": "jj-stack JSON command output",
+  "description": "Public JSON output for jj-stack view --json and list --json.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/viewOutput"
+    },
+    {
+      "$ref": "#/$defs/listOutput"
+    }
+  ],
+  "$defs": {
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_id",
+        "bookmark",
+        "subject",
+        "status"
+      ],
+      "properties": {
+        "change_id": {
+          "type": "string"
+        },
+        "bookmark": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/changeStatus"
+        },
+        "current": {
+          "const": true
+        },
+        "pull_request": {
+          "$ref": "#/$defs/pullRequest"
+        }
+      }
+    },
+    "changeStatus": {
+      "type": "string",
+      "enum": [
+        "unsubmitted",
+        "submitted",
+        "open",
+        "draft",
+        "approved",
+        "changes_requested",
+        "commented",
+        "merged",
+        "closed",
+        "missing",
+        "ambiguous",
+        "unlinked",
+        "divergent",
+        "unknown"
+      ]
+    },
+    "listOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rows"
+      ],
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/listRow"
+          }
+        }
+      }
+    },
+    "listRow": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/stackRow"
+        },
+        {
+          "$ref": "#/$defs/orphanRow"
+        }
+      ]
+    },
+    "orphanRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "change_id",
+        "subject",
+        "status"
+      ],
+      "properties": {
+        "type": {
+          "const": "orphan"
+        },
+        "change_id": {
+          "type": "string"
+        },
+        "bookmark": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "status": {
+          "const": "orphan"
+        },
+        "pull_request": {
+          "$ref": "#/$defs/pullRequest"
+        }
+      }
+    },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "number"
+          ]
+        },
+        {
+          "required": [
+            "url"
+          ]
+        }
+      ],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "stackRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "subject",
+        "status",
+        "changes"
+      ],
+      "properties": {
+        "type": {
+          "const": "stack"
+        },
+        "current": {
+          "const": true
+        },
+        "subject": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/change"
+          }
+        }
+      }
+    },
+    "viewOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stacks"
+      ],
+      "properties": {
+        "stacks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/viewStack"
+          }
+        }
+      }
+    },
+    "viewStack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changes"
+      ],
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/change"
+          }
+        }
+      }
+    }
+  }
+}

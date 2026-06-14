@@ -4,6 +4,9 @@
 normal command output. The JSON schema uses the same user-facing concepts as the text
 output: stacks, rows, changes, review bookmarks, pull requests, and status.
 
+The checked-in schema is [json-output.schema.json](json-output.schema.json).
+Integration tests validate real command output against that file.
+
 Command failures and incomplete GitHub inspection still use the normal CLI contract:
 stderr explains the problem and the process exits non-zero. The JSON payload is not an
 error-reporting format.

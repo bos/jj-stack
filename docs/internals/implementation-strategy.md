@@ -283,6 +283,11 @@ directory on platforms that support directory fsync.
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
 
+Public `--json` command output is a separate user-facing contract. Its schema lives in
+`docs/json-output.schema.json`, and integration tests validate actual `view --json` and
+`list --json` payloads against that file so the emitters cannot accidentally expose tracking-state
+or GitHub-client internals.
+
 Repo-scoped inspection treats orphan-only tracking as first-class output. `list` can
 render those saved orphan rows directly without loading bookmark state when no live
 stacks remain.

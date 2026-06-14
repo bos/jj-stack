@@ -14,6 +14,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     run_command,
 )
+from ..support.json_schema import assert_json_output_matches_schema
 from .submit_command_helpers import (
     configure_submit_environment,
     patch_github_client_builders,
@@ -35,6 +36,7 @@ def test_view_json_reports_public_stack_status(
 
     assert exit_code == 0
     payload = json.loads(captured.out)
+    assert_json_output_matches_schema(payload, "view")
     assert set(payload) == {"stacks"}
 
     stack = payload["stacks"][0]

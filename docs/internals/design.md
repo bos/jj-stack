@@ -473,7 +473,8 @@ With `--json`, `view` prints a structured version of that same per-change summar
 payload includes the selected stacks, their changes, review bookmark names, PR identity,
 and concise review status. It does not expose cache state, raw remote bookmark targets,
 or saved tracking records; command failures and incomplete inspection still use stderr
-and the process exit status.
+and the process exit status. The machine-readable schema for the public output lives in
+[`docs/json-output.schema.json`](../json-output.schema.json).
 
 `view` may add a repo-level advisory for other tracked stacks when the saved
 submitted state disagrees with the current DAG: either a tracked change's saved
@@ -552,7 +553,8 @@ noticing.
 With `--json`, `list` prints the same row model as the text table. Stack rows include
 their changes so clients can derive stack length, head change, and PR list directly
 from the structured changes. Orphaned PRs remain rows with `type: "orphan"` rather than
-a separate internal bucket.
+a separate internal bucket. The same schema file covers both `view --json` and
+`list --json`.
 
 These commands are not sources of truth either. They are user-driven ways to reattach
 GitHub state to a `jj`-derived stack after damage, cross-machine work, or manual edits

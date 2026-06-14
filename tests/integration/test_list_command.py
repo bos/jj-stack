@@ -15,6 +15,7 @@ from ..support.integration_helpers import (
     run_command,
     write_file,
 )
+from ..support.json_schema import assert_json_output_matches_schema
 from .submit_command_helpers import (
     approve_pull_requests,
     configure_submit_environment,
@@ -37,6 +38,7 @@ def test_list_json_reports_public_stack_rows(
 
     assert exit_code == 0
     payload = json.loads(captured.out)
+    assert_json_output_matches_schema(payload, "list")
     assert set(payload) == {"rows"}
 
     row = payload["rows"][0]
@@ -114,6 +116,44 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     assert f"PR #{middle_pr_number}" in captured.out
     assert "local change missing" in captured.out
     assert f"close --cleanup --pull-request {middle_pr_number}" in captured.out
+
+
+def test_list_json_reports_public_orphan_rows(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    commit_file(repo, "alpha 1", "alpha-1.txt")
+    commit_file(repo, "alpha 2", "alpha-2.txt")
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    stack = JjClient(repo).discover_review_stack()
+    middle_change_id = stack.revisions[0].change_id
+    state = ReviewStateStore.for_repo(repo).load()
+    middle_pr_number = state.changes[middle_change_id].pr_number
+    assert middle_pr_number is not None
+
+    run_command(["jj", "abandon", middle_change_id], repo)
+
+    exit_code = run_main(repo, config_path, "list", "--json")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert_json_output_matches_schema(payload, "list")
+
+    orphan_rows = [row for row in payload["rows"] if row["type"] == "orphan"]
+    assert len(orphan_rows) == 1
+    orphan = orphan_rows[0]
+    assert orphan["change_id"] == middle_change_id
+    assert orphan["subject"] == "local change missing"
+    assert orphan["status"] == "orphan"
+    assert orphan["pull_request"]["number"] == middle_pr_number
+    assert "hint" not in orphan
 
 
 def test_list_surfaces_orphaned_pull_request_when_no_live_stacks_remain(
