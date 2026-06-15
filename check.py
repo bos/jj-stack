@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 from argparse import ArgumentParser
 from collections.abc import Sequence
 from pathlib import Path
@@ -58,7 +59,7 @@ def _build_checks(
     coverage: bool,
     concurrency_report: bool,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    pytest_command: tuple[str, ...] = ("-m", "pytest")
+    pytest_command: tuple[str, ...] = ("-m", "pytest", *_pytest_basetemp_args())
     if pytest_jobs in (None, "auto"):
         pytest_command = (*pytest_command, "-n", "auto")
     elif isinstance(pytest_jobs, int) and pytest_jobs > 1:
@@ -78,6 +79,13 @@ def _build_checks(
         ("pyrefly", ("-m", "pyrefly", "check")),
         ("pytest", pytest_command),
     )
+
+
+def _pytest_basetemp_args() -> tuple[str, ...]:
+    if os.name != "nt":
+        return ()
+    base_temp_root = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir()))
+    return ("--basetemp", str(base_temp_root / "pt"))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
