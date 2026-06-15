@@ -135,7 +135,7 @@ def run_editor(path: Path) -> int:
         print("EDITOR environment variable is not set.", file=sys.stderr)
         return 1
     try:
-        command = [*shlex.split(editor), str(path)]
+        command = [*split_editor_command(editor), str(path)]
     except ValueError as error:
         print(f"Could not parse EDITOR: {error}", file=sys.stderr)
         return 1
@@ -148,6 +148,22 @@ def run_editor(path: Path) -> int:
             return run_editor_command(command, stdin=tty, stdout=tty, stderr=tty)
     except OSError:
         return run_editor_command(command, stdin=None, stdout=None, stderr=None)
+
+
+def split_editor_command(editor: str) -> list[str]:
+    """Split $EDITOR while preserving Windows path separators."""
+
+    windows = os.name == "nt"
+    command = shlex.split(editor, posix=not windows)
+    if not windows:
+        return command
+    return [_strip_surrounding_quotes(part) for part in command]
+
+
+def _strip_surrounding_quotes(text: str) -> str:
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        return text[1:-1]
+    return text
 
 
 def run_editor_command(

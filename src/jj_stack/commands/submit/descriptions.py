@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -148,9 +149,12 @@ def _run_description_command(
     repo_root: Path,
     revset: str,
 ) -> GeneratedDescription:
+    command_args = [command, f"--{kind}", revset]
+    if os.name == "nt" and Path(command).suffix.lower() == ".py":
+        command_args = [sys.executable, command, f"--{kind}", revset]
     try:
         completed = subprocess.run(
-            [command, f"--{kind}", revset],
+            command_args,
             capture_output=True,
             check=False,
             cwd=repo_root,

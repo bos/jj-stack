@@ -15,6 +15,7 @@ from ..support.integration_helpers import (
     run_command,
 )
 from ..support.json_schema import assert_json_output_matches_schema
+from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     configure_submit_environment,
     patch_github_client_builders,
@@ -594,7 +595,7 @@ def test_view_preserves_cached_pull_request_metadata_when_github_reports_missing
     assert exit_code == 1
     assert "Missing GitHub PR" in captured.out
     assert "remembered PR #1" in captured.out
-    assert "jj-stack submit --restart" in captured.out
+    assert_output_contains(captured.out, "jj-stack submit --restart")
     assert change_id in captured.out
     assert refreshed_state.changes[change_id].pr_number == 1
     assert refreshed_state.changes[change_id].pr_state == "open"
