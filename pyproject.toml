@@ -36,14 +36,14 @@ jj-stack = "jj_stack.cli:main"
 
 [dependency-groups]
 dev = [
-  "fastapi>=0.136.0,<0.137",
+  "fastapi>=0.138.0,<0.139",
   "jsonschema>=4.25.1,<5",
-  "pyrefly>=1.0.0,<1.1",
-  "pytest>=9.0.3,<10",
+  "pyrefly>=1.1.1,<1.2",
+  "pytest>=9.1.1,<10",
   "pytest-cov>=7.1.0,<8",
   "pytest-randomly>=4.1.0,<5",
   "pytest-xdist>=3.8.0,<4",
-  "ruff>=0.15.11,<0.16",
+  "ruff>=0.15.18,<0.16",
 ]
 
 [tool.pytest.ini_options]
