@@ -201,9 +201,17 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Print the submit plan without making any changes",
     )
+    submit_description_mode = submit_parser.add_mutually_exclusive_group()
     add_help_argument(
-        submit_parser,
-        "-d",
+        submit_description_mode,
+        "--describe",
+        dest="descriptions",
+        metavar="TARGET=FILE",
+        action="append",
+        help="Read Markdown body text from FILE for CHANGE or stack",
+    )
+    add_help_argument(
+        submit_description_mode,
         "--describe-with",
         metavar="HELPER",
         help="Delegate pull request and stack-comment text generation to HELPER",

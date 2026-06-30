@@ -309,6 +309,13 @@ Given a chosen head revision:
    - by default, the PR title comes from the commit subject and the PR body from the
      remaining commit description; if there is no body, fall back to the subject so the
      opening comment is not blank
+   - `submit --describe <change>=<file>` replaces one PR body with Markdown read from
+     `<file>`, while keeping the PR title from the change subject. The `<change>` selector
+     must resolve to exactly one change in the selected stack.
+   - `submit --describe stack=<file>` uses Markdown read from `<file>` as the head PR's
+     stack overview comment for a multi-change stack.
+   - `--describe` may be repeated. Relative file paths are resolved from the current
+     directory where `jj-stack` was invoked, not from the selected repository.
    - `submit --describe-with <helper>` replaces that default by invoking the helper once
      per change (`helper --pr <change_id>`), and once per stack
      (`helper --stack <revset>`) for stack-level prose
@@ -853,6 +860,7 @@ The full command surface:
 
 - `jj stack submit [--draft[=new|all] | --open]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
+  [--describe <change>=<file> | --describe stack=<file> | --describe-with <helper>]
   [--re-request] [--restart] [<revset>]`
 - `jj stack view [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
 - `jj stack list [--fetch] [--json]`

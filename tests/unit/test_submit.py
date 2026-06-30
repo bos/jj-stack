@@ -48,6 +48,7 @@ from tests.support.revision_helpers import make_revision
 
 def _submit_options(*, dry_run: bool = False) -> SubmitOptions:
     return SubmitOptions(
+        descriptions=(),
         describe_with=None,
         draft_mode="default",
         dry_run=dry_run,

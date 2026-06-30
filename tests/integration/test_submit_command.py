@@ -775,6 +775,76 @@ def test_submit_persists_topology_pointers_for_each_change(
         assert state.changes[change_id].last_submitted_stack_head_change_id == top_change_id
 
 
+def test_submit_describe_reads_pull_request_and_stack_bodies_from_files(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    stack = JjClient(repo).discover_review_stack()
+    first_description = tmp_path / "feature-1-pr.md"
+    second_description = tmp_path / "feature-2-pr.md"
+    stack_description = tmp_path / "stack.md"
+    write_file(first_description, "First PR body\n\n- from file\n")
+    write_file(second_description, "Second PR body\n\n- from file\n")
+    write_file(stack_description, "Stack overview body\n\n- from file\n")
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "submit",
+        "--describe",
+        f"{stack.revisions[0].change_id}={first_description.name}",
+        "--describe",
+        f"{stack.revisions[1].commit_id}={second_description.name}",
+        "--describe",
+        f"stack={stack_description.name}",
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Submitted changes:" in captured.out
+    assert fake_repo.pull_requests[1].title == "feature 1"
+    assert fake_repo.pull_requests[1].body == "First PR body\n\n- from file"
+    assert fake_repo.pull_requests[2].title == "feature 2"
+    assert fake_repo.pull_requests[2].body == "Second PR body\n\n- from file"
+    assert len(_overview_comments(fake_repo, 2)) == 1
+    assert STACK_OVERVIEW_COMMENT_MARKER in _overview_comments(fake_repo, 2)[0].body
+    assert "Stack overview body\n\n- from file" in _overview_comments(fake_repo, 2)[0].body
+
+
+def test_submit_describe_rejects_target_outside_selected_stack_before_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    description = tmp_path / "description.md"
+    write_file(description, "Body that should not be submitted\n")
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "submit",
+        "--describe",
+        f"trunk()={description}",
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "--describe target trunk() is not in the selected stack" in captured.err
+    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
+    assert fake_repo.pull_requests == {}
+    assert issue_comments(fake_repo, 1) == []
+
+
 def test_submit_describe_with_generates_pull_request_and_stack_metadata(
     tmp_path: Path,
     monkeypatch,

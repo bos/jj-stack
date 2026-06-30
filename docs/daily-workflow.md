@@ -59,6 +59,15 @@ If you want to first inspect what `submit` *would* do, without making any change
 jj-stack submit --dry-run
 ```
 
+If you already have a PR body in a Markdown file, attach it while submitting:
+
+```bash
+jj-stack submit --describe <change-id>=pr-body.md
+```
+
+For a multi-change stack, `--describe stack=stack-summary.md` adds stack overview text
+to the head PR's stack comment.
+
 If a change does not already have its review branch and PR set up, `jj-stack submit` creates
 the matching review bookmark for it. After that, it reuses that bookmark as the stable GitHub PR
 head branch while you revise your local change.

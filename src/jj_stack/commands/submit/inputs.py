@@ -84,6 +84,7 @@ def prepare_submit_inputs(
         generated_pull_request_descriptions,
         generated_stack_description,
     ) = resolve_generated_descriptions(
+        descriptions=options.descriptions,
         describe_with=options.describe_with,
         jj_client=client,
         selected_revset=stack.selected_revset,

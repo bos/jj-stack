@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
@@ -23,6 +24,7 @@ _DESCRIBE_WITH_STACK_INPUT_ENV = "JJ_STACK_INPUT_FILE"
 
 def resolve_generated_descriptions(
     *,
+    descriptions: Sequence[str],
     describe_with: str | None,
     jj_client: JjClient,
     revisions: tuple[LocalRevision, ...],
@@ -30,17 +32,26 @@ def resolve_generated_descriptions(
 ) -> tuple[dict[str, GeneratedDescription], GeneratedDescription | None]:
     """Resolve pull request descriptions and an optional stack description."""
 
-    if describe_with is None:
+    if descriptions and describe_with is not None:
+        raise CliError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
+
+    default_descriptions = _default_pull_request_descriptions(revisions)
+    if descriptions:
+        file_descriptions, stack_description = _resolve_description_files(
+            descriptions=descriptions,
+            jj_client=jj_client,
+            revisions=revisions,
+        )
         return (
             {
-                revision.change_id: GeneratedDescription(
-                    body=_pull_request_body(revision.description),
-                    title=revision.subject,
-                )
-                for revision in revisions
+                **default_descriptions,
+                **file_descriptions,
             },
-            None,
+            stack_description,
         )
+
+    if describe_with is None:
+        return default_descriptions, None
 
     generated_descriptions = {
         revision.change_id: _run_description_command(
@@ -71,6 +82,110 @@ def resolve_generated_descriptions(
                 revset=selected_revset,
             )
     return generated_descriptions, generated_stack_description
+
+
+def _default_pull_request_descriptions(
+    revisions: tuple[LocalRevision, ...],
+) -> dict[str, GeneratedDescription]:
+    return {
+        revision.change_id: GeneratedDescription(
+            body=_pull_request_body(revision.description),
+            title=revision.subject,
+        )
+        for revision in revisions
+    }
+
+
+def _resolve_description_files(
+    *,
+    descriptions: Sequence[str],
+    jj_client: JjClient,
+    revisions: tuple[LocalRevision, ...],
+) -> tuple[dict[str, GeneratedDescription], GeneratedDescription | None]:
+    generated_descriptions: dict[str, GeneratedDescription] = {}
+    generated_stack_description: GeneratedDescription | None = None
+    for description in descriptions:
+        target, path_text = _parse_description_file_spec(description)
+        if target == "stack":
+            if len(revisions) <= 1:
+                raise CliError(
+                    t"{ui.cmd('--describe stack=FILE')} is only used when the selected "
+                    t"stack has more than one change.",
+                    hint=t"Use {ui.cmd('--describe CHANGE=FILE')} to set one PR body.",
+                )
+            if generated_stack_description is not None:
+                raise CliError(t"{ui.cmd('--describe')} specified the stack more than once.")
+            generated_stack_description = GeneratedDescription(
+                body=_read_description_file(path_text),
+                title="",
+            )
+            continue
+
+        revision = _resolve_description_target(
+            jj_client=jj_client,
+            revisions=revisions,
+            target=target,
+        )
+        if revision.change_id in generated_descriptions:
+            raise CliError(
+                t"{ui.cmd('--describe')} specified {ui.change_id(revision.change_id)} "
+                t"more than once."
+            )
+        generated_descriptions[revision.change_id] = GeneratedDescription(
+            body=_read_description_file(path_text),
+            title=revision.subject,
+        )
+    return generated_descriptions, generated_stack_description
+
+
+def _parse_description_file_spec(description: str) -> tuple[str, str]:
+    target, separator, path_text = description.partition("=")
+    target = target.strip()
+    path_text = path_text.strip()
+    if not separator or not target or not path_text:
+        raise CliError(
+            t"Expected {ui.cmd('--describe')} value in the form "
+            t"{ui.cmd('CHANGE=FILE')} or {ui.cmd('stack=FILE')}."
+        )
+    return target, path_text
+
+
+def _resolve_description_target(
+    *,
+    jj_client: JjClient,
+    revisions: tuple[LocalRevision, ...],
+    target: str,
+) -> LocalRevision:
+    try:
+        target_revision = jj_client.resolve_revision(target)
+    except CliError as error:
+        raise CliError(
+            t"Could not resolve {ui.cmd('--describe')} target {ui.revset(target)}: {error}"
+        ) from error
+
+    matching_revision = next(
+        (
+            revision
+            for revision in revisions
+            if revision.change_id == target_revision.change_id
+        ),
+        None,
+    )
+    if matching_revision is None:
+        raise CliError(
+            t"{ui.cmd('--describe')} target {ui.revset(target)} is not in the selected stack."
+        )
+    return matching_revision
+
+
+def _read_description_file(path_text: str) -> str:
+    path = Path(path_text).expanduser()
+    try:
+        return path.read_text(encoding="utf-8").rstrip()
+    except (OSError, UnicodeDecodeError) as error:
+        raise CliError(
+            t"Could not read description file {ui.cmd(str(path))}: {error}"
+        ) from error
 
 
 def _build_stack_description_input(

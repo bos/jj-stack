@@ -101,6 +101,15 @@ jj-stack submit
 
 `submit` also accepts the short alias `sub`.
 
+If you have already written a PR body in a Markdown file, pass it when submitting:
+
+```bash
+jj-stack submit --describe <change-id>=pr-body.md
+```
+
+For a multi-change stack, `--describe stack=stack-summary.md` adds stack overview text
+to the head PR.
+
 On first submit, `jj-stack` creates one review bookmark per change. By default these bookmarks
 look like `review/...`. They are normal `jj` bookmarks, and they are also the GitHub PR
 branches. `jj-stack` manages them for you, so most of the time you do not need to move or

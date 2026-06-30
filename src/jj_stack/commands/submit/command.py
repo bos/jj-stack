@@ -5,6 +5,10 @@ refreshes one pull request per change from bottom to top. Selected local
 changes must be free of unresolved conflicts before submit will mutate
 bookmarks, remotes, or GitHub state.
 
+Use `--describe CHANGE=FILE` to read a prepared pull request body from a Markdown file,
+or `--describe stack=FILE` to read prepared overview text for a multi-change stack.
+Relative file paths are read from the current directory where `jj-stack` was invoked.
+
 Use `--describe-with HELPER` to author pull request titles and bodies, and an overall
 description of a stack. The helper can be interactive, in which case you enter these yourself,
 or automated, such as invoking an LLM to generate these descriptions.
@@ -84,6 +88,7 @@ def submit(
     *,
     cli_args: JjCliArgs,
     debug: bool,
+    descriptions: Sequence[str] | None,
     describe_with: str | None,
     draft: bool,
     draft_all: bool,
@@ -106,6 +111,7 @@ def submit(
         debug=debug,
     )
     options = _submit_options_from_cli(
+        descriptions=descriptions,
         describe_with=describe_with,
         draft=draft,
         draft_all=draft_all,
@@ -147,6 +153,7 @@ def _print_selected_line(selected_change_id: str, selected_subject: str) -> None
 
 def _submit_options_from_cli(
     *,
+    descriptions: Sequence[str] | None,
     describe_with: str | None,
     draft: bool,
     draft_all: bool,
@@ -167,6 +174,7 @@ def _submit_options_from_cli(
         revset=revset,
     )
     return SubmitOptions(
+        descriptions=tuple(descriptions or ()),
         describe_with=describe_with,
         draft_mode=_submit_draft_mode(
             draft=draft,

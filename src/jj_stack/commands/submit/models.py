@@ -25,6 +25,7 @@ PushOperation = Literal["batch", "git_update", "up_to_date"]
 class SubmitOptions:
     """Parsed submit options after CLI normalization."""
 
+    descriptions: tuple[str, ...]
     describe_with: str | None
     draft_mode: SubmitDraftMode
     dry_run: bool

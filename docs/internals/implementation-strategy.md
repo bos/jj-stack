@@ -103,6 +103,9 @@ selected stack or revision, GitHub and remote observations, parsed options, and 
 `CommandContext` when later phases need shared dependencies. Mutating phases that need
 dry-run mode, journal state, or interim saves use a small run object such as
 `SubmitMutationRun`, `LandMutationRun`, `_OrphanCloseRun`, or `AbortRun`.
+Submit resolves prepared PR and stack descriptions while loading local inputs, before
+bookmark, remote, or GitHub mutation, so bad revsets, duplicate targets, and unreadable
+files fail closed.
 Purely local mutations should stay out of GitHub inspection paths when they can resolve
 their target from `jj` and saved state alone; for example, `unstack --local` only removes
 saved tracking records for the selected stack and does not enter the close/cleanup stream.
