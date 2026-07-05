@@ -395,14 +395,14 @@ async def _resolve_pull_request_selection(
         head=head,
     )
     if len(pull_requests) != 1:
-        status_fetch_cmd = ui.cmd("status --fetch")
+        view_fetch_cmd = ui.cmd("view --fetch")
         relink_cmd = ui.cmd("relink")
         head_branch = ui.bookmark(f"{github_repository.owner}:{head}")
         if not pull_requests:
             raise CliError(
                 t"GitHub no longer reports a pull request for head branch {head_branch}.",
                 hint=(
-                    t"Inspect the PR link with {status_fetch_cmd} and repair it with "
+                    t"Inspect the PR link with {view_fetch_cmd} and repair it with "
                     t"{relink_cmd} before checking out again."
                 ),
             )
@@ -410,7 +410,7 @@ async def _resolve_pull_request_selection(
         raise CliError(
             t"GitHub reports multiple pull requests for head branch {head_branch}: {numbers}.",
             hint=(
-                t"Inspect the PR link with {status_fetch_cmd} and repair it with "
+                t"Inspect the PR link with {view_fetch_cmd} and repair it with "
                 t"{relink_cmd} before checking out again."
             ),
         )
@@ -941,11 +941,11 @@ def _resolve_checkout_bookmark(
     else:
         bookmark = prepared_revision.bookmark
         if prepared_revision.bookmark_source == "generated":
-            status_fetch_cmd = ui.cmd("status --fetch")
+            view_fetch_cmd = ui.cmd("view --fetch")
             raise CliError(
                 t"Could not safely check out the selected stack because "
                 t"{ui.change_id(prepared_revision.revision.change_id)} has no matching "
-                t"pull request on the selected remote. Refresh with {status_fetch_cmd} "
+                t"pull request on the selected remote. Refresh with {view_fetch_cmd} "
                 t"or select an exact pull request."
             )
     if selected_remote_name is None:
@@ -958,22 +958,22 @@ def _resolve_checkout_bookmark(
     )
     if remote_status.remote_branch in {"absent", "conflicted"}:
         bookmark_token = ui.bookmark(bookmark)
-        status_fetch_cmd = ui.cmd("status --fetch")
+        view_fetch_cmd = ui.cmd("view --fetch")
         raise CliError(
             t"Could not safely check out the selected stack because saved branch "
             t"{bookmark_token} for {ui.change_id(prepared_revision.revision.change_id)} "
             t"is not present on the selected remote.",
-            hint=t"Refresh with {status_fetch_cmd} or select an exact pull request.",
+            hint=t"Refresh with {view_fetch_cmd} or select an exact pull request.",
         )
     if remote_status.remote_branch_matches_commit is not True:
         bookmark_token = ui.bookmark(bookmark)
-        status_fetch_cmd = ui.cmd("status --fetch")
+        view_fetch_cmd = ui.cmd("view --fetch")
         raise CliError(
             t"Could not safely check out the selected stack because saved branch "
             t"{bookmark_token} for {ui.change_id(prepared_revision.revision.change_id)} "
             t"points to a different revision on the selected remote.",
             hint=(
-                t"Refresh with {status_fetch_cmd} or repair the stale remote match "
+                t"Refresh with {view_fetch_cmd} or repair the stale remote match "
                 t"before checking out again."
             ),
         )

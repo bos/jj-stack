@@ -321,7 +321,7 @@ def _resolve_selected_stack(
 
 
 def refresh_remote_state_for_status(*, jj_client: JjClient) -> None:
-    """Refresh remembered remote state once for `status --fetch` when possible."""
+    """Refresh remembered remote state once for `view --fetch` when possible."""
 
     remotes = jj_client.list_git_remotes()
     if not remotes:

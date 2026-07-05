@@ -210,6 +210,8 @@ def test_checkout_pull_request_fails_closed_when_head_branch_matches_multiple_pu
 
     assert exit_code == 1
     assert "multiple pull requests" in captured.err
+    assert "view --fetch" in captured.err
+    assert "status --fetch" not in captured.err
     assert ReviewStateStore.for_repo(repo).load().changes == initial_state.changes
 
 
@@ -254,6 +256,8 @@ def test_checkout_fails_closed_when_stack_would_need_generated_bookmarks(
     assert exit_code == 1
     assert "saved branch" in captured.err
     assert "is not present on the selected remote" in captured.err
+    assert "view --fetch" in captured.err
+    assert "status --fetch" not in captured.err
     assert ReviewStateStore.for_repo(repo).load().changes == {}
     bookmark_states = JjClient(repo).list_bookmark_states((bottom_bookmark, top_bookmark))
     assert bookmark_states[bottom_bookmark].local_target is None

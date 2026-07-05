@@ -115,7 +115,7 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     assert "orphan" in captured.out
     assert f"PR #{middle_pr_number}" in captured.out
     assert "local change missing" in captured.out
-    assert f"close --cleanup --pull-request {middle_pr_number}" in captured.out
+    assert f"unstack --cleanup --pull-request {middle_pr_number}" in captured.out
 
 
 def test_list_json_reports_public_orphan_rows(

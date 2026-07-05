@@ -246,7 +246,7 @@ def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:
     return OrphanRow(
         bookmark=orphan.cached_change.bookmark,
         change_id=orphan.change_id,
-        hint=(f"close --cleanup --pull-request {pr_number}" if pr_number is not None else None),
+        hint=(f"unstack --cleanup --pull-request {pr_number}" if pr_number is not None else None),
         pull_request=cached_pull_request_json(orphan.cached_change),
         review=f"PR #{pr_number}" if pr_number is not None else "(no PR number)",
         state=ui.semantic_text("orphan", "warning", "heading"),

@@ -789,7 +789,7 @@ This design behaves well under normal `jj` rewrite-heavy workflows:
 - **Abandon**: the change leaves every current local stack and descendants reattach
   to its parent. Its PR becomes *orphaned* — surviving stacks never close, reuse, or
   retarget it, and `cleanup` keeps the saved PR and branch identity until the PR is
-  closed, merged, or absent. Explicit closure goes through `close --cleanup
+  closed, merged, or absent. Explicit closure goes through `unstack --cleanup
   --pull-request <pr>`.
 - **Split**: new logical review changes get new change IDs and usually become new
   PRs. The original keeps its `change_id` and PR and is updated normally on next
@@ -1009,8 +1009,8 @@ one before merging.
 - **Deletion of a remote review branch** (`jj git push --delete`, via
   `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the
   deleted branch. Defense: branch deletion is invoked only by `cleanup`, `unstack`
-  (including the `unstack --pull-request <n>` orphan-close sub-mode), and only after
-  the corresponding PR is closed, merged, or absent. Open or orphaned PRs keep
+  (including the `unstack --cleanup --pull-request <n>` orphan sub-mode), and only
+  after the corresponding PR is closed, merged, or absent. Open or orphaned PRs keep
   their branch.
 
 - **`update_pull_request(base=…)`**. Setting a PR base to a branch that already
@@ -1033,8 +1033,8 @@ one before merging.
   head before the child PR is created.
 
 - **`close_pull_request`**. Destructive by design. Defense: only invoked by
-  `unstack` (including the `unstack --pull-request <n>` orphan-close sub-mode) or
-  `land`, each on explicit user instruction or after a successful merge.
+  `unstack` (including the `unstack --cleanup --pull-request <n>` orphan sub-mode)
+  or `land`, each on explicit user instruction or after a successful merge.
 
 - **`convert_pull_request_to_draft`**. Repo policy may dismiss approvals on draft
   conversion. Defense: only invoked for an existing open PR when `--draft=all` is
@@ -1053,8 +1053,9 @@ one before merging.
 - **`delete_issue_comment`**. Deletes the targeted comment. Defense: every call
   site passes a comment id resolved from a cached managed-comment id (or from
   `find_managed_comment` matching the tool's content marker), never an id matched
-  by free-text alone. `submit`, `unstack`, `cleanup`, and `close-orphan` re-verify
-  the body before deletion or only delete via marker-matched discovery. `land`
+  by free-text alone. `submit`, `unstack`, `cleanup`, and orphaned
+  `unstack --cleanup --pull-request` re-verify the body before deletion or only
+  delete via marker-matched discovery. `land`
   trusts the cached navigation- and overview-comment ids without re-verifying the
   body, on the rationale that those ids were written by the same tool during the
   most recent successful submit. `cleanup` additionally limits deletion to managed
