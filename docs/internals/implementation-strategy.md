@@ -251,9 +251,12 @@ oracle exercises moving one change between independently submitted stacks, provi
 destination stack adopts that change's existing PR while the source remainder is left
 untouched. A failed-submit retry oracle injects one-shot failures after remote branch
 push, PR creation, PR update, and metadata label sync, then proves a rerun
-converges without duplicate PRs. The property coverage also includes representative
-fail-closed replay for external drift, remote review-branch drift, conflicted rebases,
-and merge commits selected after an initial submit.
+converges without duplicate PRs. An external-drift oracle generates scenarios from the
+typed transition vocabulary in [distributed-state.md](distributed-state.md): after an
+initial submit and an optional stack edit, it perturbs GitHub PR state, remote refs,
+saved tracking, or the local `jj` view through user-reachable transitions, then asserts
+the model-predicted outcome — fail closed with every boundary untouched, or full
+success — and that `view` still reports on the drifted state.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page

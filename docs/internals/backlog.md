@@ -243,6 +243,33 @@ markers. The render path already overlaps its subprocess spawns with a
 thread pool, so the win is modest relative to the fragility. Revisit only if
 per-revision rendering shows up as real CLI latency.
 
+## External-Drift Model Follow-ups
+
+_Benefit: medium — the drift family covers the reachable single- and dual-drift
+combinations for `submit` plus a `view` report smoke; these extensions deepen the
+same model rather than change it._
+
+The transition vocabulary and required behaviors live in
+[distributed-state.md](distributed-state.md). Deferred extensions:
+
+- drifts targeting orphaned PRs (close or delete-branch on an orphan while
+  submitting the surviving stack should stay a success-class scenario with
+  adjusted orphan expectations)
+- `view --fetch` in the drift replay, which pulls foreign refs into the local
+  view and exercises the fetch-artifact tolerance paths
+- drift replay against `land`, `cleanup --rebase`, and `unstack`, which have
+  their own mutation surfaces and fail-closed obligations
+- a tracking-store-loss drift (fresh machine, deleted state file with live PRs)
+  once the product decides which proofs let `submit` adopt existing PRs versus
+  requiring `checkout`
+- an exhaustive enumeration mode for drift pairs at small stack sizes; the
+  space is small enough to enumerate outright instead of sampling
+- a TLA+ sketch of the transition lattice for oracle-completeness checking was
+  considered and deferred: the current vocabulary is shallow, and the valuable
+  check is agreement between the model and the real `jj`/CLI/fake-GitHub
+  boundary, which a spec cannot replay. Revisit if concurrent commands or
+  multi-remote support make interleavings first-class.
+
 ## Property Harness Cost Trims
 
 _Benefit: small — the property suite is opt-in, so this only affects the CI

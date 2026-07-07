@@ -17,6 +17,11 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
   regressions, user surprise, and missing test evidence.
 - **[testing-philosophy.md](testing-philosophy.md)** — what tests to write
   and how to evaluate them.
+- **[distributed-state.md](distributed-state.md)** — the four independently
+  moving state-holders (local `jj`, remote refs, GitHub PRs, tracking store),
+  their legal transitions, and required behavior per drift class.
+- **[property-testing.md](property-testing.md)** — the opt-in property
+  harness: scenario families, invariants, and the runner.
 - **[backlog.md](backlog.md)** — deferred features, open design questions,
   and non-blocking follow-up items.
 - **[help-and-docs-plan.md](help-and-docs-plan.md)** — plan for bringing

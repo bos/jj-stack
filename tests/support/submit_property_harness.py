@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,9 @@ from jj_stack.state.store import ReviewStateStore
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
 from .submit_property_scenarios import (
-    BoundaryDriftKind,
-    BoundaryDriftScenario,
     CrossStackSplitScenario,
+    DriftOperation,
+    ExternalDriftScenario,
     StackEditOperation,
     StackEditScenario,
     StackMergeScenario,
@@ -30,7 +31,14 @@ from .submit_property_scenarios import (
 )
 
 SubmitRunner = Callable[[str | None], int]
+CliRunner = Callable[[tuple[str, ...]], int]
 OutputDiscarder = Callable[[], Any]
+
+# `view` must always produce a report or a targeted diagnostic for a drifted
+# state: a healthy report (0), an unsupported-stack diagnostic (2), or an
+# incomplete/needs-attention report (10). Anything else is a crash or an
+# unclassified error leaking through the report path.
+VIEW_REPORT_EXIT_CODES = frozenset({0, 2, 10})
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,42 +98,91 @@ def replay_successful_stack_edit_scenario(
     )
 
 
-def replay_boundary_drift_scenario(
+def replay_external_drift_scenario(
     *,
     discard_output: OutputDiscarder,
     fake_repo: FakeGithubRepository,
     repo: Path,
-    scenario: BoundaryDriftScenario,
-    submit: SubmitRunner,
+    run_cli: CliRunner,
+    scenario: ExternalDriftScenario,
 ) -> None:
-    """Replay one generated boundary-drift scenario and assert fail-closed behavior."""
+    """Replay one external-drift scenario and assert the model-predicted outcome.
+
+    Fail-closed scenarios must leave every boundary untouched: remote refs,
+    the PR database, and the saved review identity of every submitted change.
+    Success scenarios must converge on the normal post-submit contract. Both
+    end with a `view` report on the drifted selection, which must never crash.
+    """
 
     labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
 
-    assert submit(None) == 0
+    assert run_cli(("submit",)) == 0
     discard_output()
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
+    _approve_initial_pull_requests(fake_repo, baseline)
 
-    submit_revset = _apply_boundary_drift(
-        fake_repo=fake_repo,
-        labels_to_change_ids=labels_to_change_ids,
-        repo=repo,
-        baseline=baseline,
-        label=scenario.label,
-        drift_kind=scenario.drift_kind,
-    )
-    before_refs = _remote_refs(fake_repo.git_dir)
-    before_pr_count = len(fake_repo.pull_requests)
-    before_pull_requests = _pull_request_snapshots(fake_repo)
-    fake_repo.pull_request_events.clear()
+    live_labels = list(initial_label(index) for index in range(1, scenario.initial_size + 1))
+    for operation in scenario.edit_operations:
+        live_labels = _apply_stack_edit_operation(
+            repo=repo,
+            labels_to_change_ids=labels_to_change_ids,
+            live_labels=live_labels,
+            operation=operation,
+        )
+    assert tuple(live_labels) == scenario.final_live_labels
 
-    assert submit(submit_revset) != 0
+    submit_revset = labels_to_change_ids[scenario.final_live_labels[-1]]
+    for drift in scenario.drifts:
+        revset_override = _apply_drift_operation(
+            baseline=baseline,
+            drift=drift,
+            fake_repo=fake_repo,
+            labels_to_change_ids=labels_to_change_ids,
+            repo=repo,
+            run_cli=run_cli,
+        )
+        discard_output()
+        if revset_override is not None:
+            submit_revset = revset_override
+
+    if scenario.expected_outcome == "fail_closed":
+        before_refs = _remote_refs(fake_repo.git_dir)
+        before_pull_requests = _pull_request_snapshots(fake_repo)
+        before_identity = _saved_review_identity(repo, baseline)
+        fake_repo.pull_request_events.clear()
+
+        exit_code = run_cli(("submit", submit_revset))
+        discard_output()
+
+        assert exit_code in scenario.expected_exit_codes, (exit_code, scenario.trace)
+        assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
+        assert _pull_request_snapshots(fake_repo) == before_pull_requests, scenario.trace
+        assert fake_repo.pull_request_events == [], scenario.trace
+        assert _saved_review_identity(repo, baseline) == before_identity, scenario.trace
+    else:
+        stack = _discover_stack_for_labels(
+            repo=repo,
+            labels=scenario.final_live_labels,
+            labels_to_change_ids=labels_to_change_ids,
+        )
+        fake_repo.pull_request_events.clear()
+
+        assert run_cli(("submit", stack.head.change_id)) == 0, scenario.trace
+        discard_output()
+
+        _assert_successful_submit_invariants(
+            baseline=baseline,
+            fake_repo=fake_repo,
+            invariants=scenario.invariants,
+            labels_to_change_ids=labels_to_change_ids,
+            repo=repo,
+            stack=stack,
+            strict_base_events=False,
+        )
+
+    view_exit_code = run_cli(("view", submit_revset))
     discard_output()
-
-    assert _remote_refs(fake_repo.git_dir) == before_refs
-    assert len(fake_repo.pull_requests) == before_pr_count
-    assert _pull_request_snapshots(fake_repo) == before_pull_requests
-    assert fake_repo.pull_request_events == []
+    assert view_exit_code in VIEW_REPORT_EXIT_CODES, (view_exit_code, scenario.trace)
 
 
 def replay_failed_submit_retry_scenario(
@@ -879,43 +936,66 @@ def _assert_retry_metadata(fake_repo: FakeGithubRepository) -> None:
         assert "platform" in pull_request.requested_team_reviewers
 
 
-def _apply_boundary_drift(
+def _apply_drift_operation(
     *,
+    baseline: dict[str, SubmittedBaseline],
+    drift: DriftOperation,
     fake_repo: FakeGithubRepository,
     labels_to_change_ids: dict[str, str],
     repo: Path,
-    baseline: dict[str, SubmittedBaseline],
-    label: str,
-    drift_kind: BoundaryDriftKind,
-) -> str:
+    run_cli: CliRunner,
+) -> str | None:
+    """Apply one external-actor transition; return a submit revset override if any."""
+
+    if drift.kind == "trunk_advanced":
+        _advance_remote_trunk(fake_repo)
+        return None
+
+    label = drift.label
+    assert label is not None, drift.trace
     submitted = baseline[label]
-    if drift_kind == "closed_pr":
+
+    if drift.kind == "closed_pr":
         fake_repo.update_pull_request_state(
             fake_repo.pull_requests[submitted.pr_number],
             state="closed",
-            reason="test_drift",
+            reason="external_close",
         )
-        return labels_to_change_ids[label]
-    if drift_kind == "conflicted_rebase":
-        conflicted_label = initial_label(1)
-        run_command(["jj", "new", "main"], repo)
-        write_file(repo / filename_for_label(conflicted_label), "trunk conflicting edit\n")
-        run_command(["jj", "commit", "-m", "trunk conflicting edit"], repo)
-        run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
-        run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "main"], repo)
-        run_command(
-            ["jj", "rebase", "-s", labels_to_change_ids[conflicted_label], "-d", "main"],
-            repo,
+        return None
+    if drift.kind == "merged_pr":
+        pull_request = fake_repo.pull_requests[submitted.pr_number]
+        pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        fake_repo.update_pull_request_state(
+            pull_request,
+            state="closed",
+            reason="external_merge",
         )
-        return labels_to_change_ids[label]
-    if drift_kind == "merge_commit":
-        run_command(["jj", "new", "main"], repo)
-        commit_file(repo, "side branch", "side-branch.txt")
-        side_change_id = JjClient(repo).resolve_revision("@-").change_id
-        run_command(["jj", "new", labels_to_change_ids[label], side_change_id], repo)
-        commit_file(repo, "merge commit", "merge-commit.txt")
-        return JjClient(repo).resolve_revision("@-").change_id
-    if drift_kind == "wrong_saved_pr_number":
+        return None
+    if drift.kind == "pr_replaced":
+        old_pull_request = fake_repo.pull_requests[submitted.pr_number]
+        fake_repo.update_pull_request_state(
+            old_pull_request,
+            state="closed",
+            reason="external_close",
+        )
+        fake_repo.create_pull_request(
+            base_ref=old_pull_request.base_ref,
+            body="recreated outside jj-stack",
+            head_ref=old_pull_request.head_ref,
+            title=f"recreated {subject_for_label(label)}",
+        )
+        return None
+    if drift.kind == "pr_base_retargeted":
+        fake_repo.update_pull_request_base(
+            fake_repo.pull_requests[submitted.pr_number],
+            base_ref="main",
+            reason="external_retarget",
+        )
+        return None
+    if drift.kind == "pr_draft_toggled":
+        fake_repo.pull_requests[submitted.pr_number].is_draft = True
+        return None
+    if drift.kind == "wrong_saved_pr_number":
         state_store = ReviewStateStore.for_repo(repo)
         state = state_store.load()
         state_store.save(
@@ -930,29 +1010,218 @@ def _apply_boundary_drift(
                 }
             )
         )
-        return labels_to_change_ids[label]
-    if drift_kind == "remote_branch_drift":
+        return None
+    if drift.kind == "unlinked_change":
+        assert run_cli(("unlink", submitted.change_id)) == 0, drift.trace
+        return None
+    if drift.kind == "remote_branch_drift":
         drift_target = next(
             candidate.remote_target
             for candidate_label, candidate in reversed(baseline.items())
             if candidate_label != label
         )
+        _update_remote_ref(fake_repo, branch=submitted.bookmark, target=drift_target)
+        return None
+    if drift.kind == "remote_branch_deleted":
+        # GitHub closes a pull request when its head branch is deleted, so the
+        # faithful transition is branch deletion plus PR closure.
         run_command(
             [
                 "git",
                 "--git-dir",
                 str(fake_repo.git_dir),
                 "update-ref",
+                "-d",
                 f"refs/heads/{submitted.bookmark}",
-                drift_target,
             ],
             fake_repo.git_dir.parent,
         )
+        fake_repo.update_pull_request_state(
+            fake_repo.pull_requests[submitted.pr_number],
+            state="closed",
+            reason="head_branch_deleted",
+        )
+        return None
+    if drift.kind == "foreign_branch_fetched":
+        # A copy of the submitted commit arrives on the remote under a foreign
+        # branch name (an agent or teammate pushed it), and the user fetches.
+        # The untracked remote bookmark makes the commit immutable; if the
+        # change was rewritten since submit, the resurrected predecessor makes
+        # it divergent instead. Either way the stack stops being reviewable.
+        _update_remote_ref(
+            fake_repo,
+            branch=f"agent/copy-{label}",
+            target=submitted.remote_target,
+        )
+        run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
+        return None
+    if drift.kind == "conflicted_rebase":
+        conflicted_label = initial_label(1)
+        run_command(["jj", "new", "main"], repo)
+        write_file(repo / filename_for_label(conflicted_label), "trunk conflicting edit\n")
+        run_command(["jj", "commit", "-m", "trunk conflicting edit"], repo)
+        run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
+        run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "main"], repo)
+        run_command(
+            ["jj", "rebase", "-s", labels_to_change_ids[conflicted_label], "-d", "main"],
+            repo,
+        )
         return labels_to_change_ids[label]
-    raise AssertionError(f"unsupported boundary drift kind: {drift_kind}")
+    if drift.kind == "merge_commit":
+        run_command(["jj", "new", "main"], repo)
+        commit_file(repo, "side branch", "side-branch.txt")
+        side_change_id = JjClient(repo).resolve_revision("@-").change_id
+        run_command(["jj", "new", labels_to_change_ids[label], side_change_id], repo)
+        commit_file(repo, "merge commit", "merge-commit.txt")
+        return JjClient(repo).resolve_revision("@-").change_id
+    if drift.kind == "agent_recreated_change":
+        new_label = drift.new_label
+        assert new_label is not None, drift.trace
+        _recreate_change_outside_jj_stack(
+            fake_repo=fake_repo,
+            labels_to_change_ids=labels_to_change_ids,
+            new_label=new_label,
+            repo=repo,
+            replaced=submitted,
+        )
+        return None
+    raise AssertionError(f"unsupported drift kind: {drift.kind}")
 
 
-def _pull_request_snapshots(fake_repo: FakeGithubRepository) -> dict[int, tuple[str, ...]]:
+def _recreate_change_outside_jj_stack(
+    *,
+    fake_repo: FakeGithubRepository,
+    labels_to_change_ids: dict[str, str],
+    new_label: str,
+    repo: Path,
+    replaced: SubmittedBaseline,
+) -> None:
+    """Replace a reviewed change's PR and branch with `gh`-style equivalents.
+
+    The replacement local change must already exist (the scenario's edit
+    operations abandon the original and insert the recreation). This applies
+    the external half: close the original PR, delete its review branch, push
+    the recreated commit with plain git, open a replacement PR, and fetch.
+    """
+
+    fake_repo.update_pull_request_state(
+        fake_repo.pull_requests[replaced.pr_number],
+        state="closed",
+        reason="external_close",
+    )
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(fake_repo.git_dir),
+            "update-ref",
+            "-d",
+            f"refs/heads/{replaced.bookmark}",
+        ],
+        fake_repo.git_dir.parent,
+    )
+    recreated_commit_id = JjClient(repo).resolve_revision(
+        labels_to_change_ids[new_label]
+    ).commit_id
+    recreated_branch = f"agent/recreated-{new_label}"
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(_jj_backing_git_dir(repo)),
+            "push",
+            str(fake_repo.git_dir),
+            f"{recreated_commit_id}:refs/heads/{recreated_branch}",
+        ],
+        repo,
+    )
+    fake_repo.create_pull_request(
+        base_ref="main",
+        body="recreated with gh",
+        head_ref=recreated_branch,
+        title=subject_for_label(new_label),
+    )
+    run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
+
+
+def _jj_backing_git_dir(repo: Path) -> Path:
+    store = repo / ".jj" / "repo" / "store"
+    git_target = store / "git_target"
+    if git_target.is_file():
+        return (store / git_target.read_text(encoding="utf-8").strip()).resolve()
+    return store / "git"
+
+
+def _advance_remote_trunk(fake_repo: FakeGithubRepository) -> None:
+    """Land unrelated external work on the remote default branch."""
+
+    git_dir = str(fake_repo.git_dir)
+    cwd = fake_repo.git_dir.parent
+    head = run_command(
+        ["git", "--git-dir", git_dir, "rev-parse", "refs/heads/main"], cwd
+    ).stdout.strip()
+    tree = run_command(
+        ["git", "--git-dir", git_dir, "rev-parse", "refs/heads/main^{tree}"], cwd
+    ).stdout.strip()
+    new_commit = run_command(
+        [
+            "git",
+            "-c",
+            "user.name=External User",
+            "-c",
+            "user.email=external@example.com",
+            "--git-dir",
+            git_dir,
+            "commit-tree",
+            tree,
+            "-p",
+            head,
+            "-m",
+            "external trunk commit",
+        ],
+        cwd,
+    ).stdout.strip()
+    _update_remote_ref(fake_repo, branch="main", target=new_commit)
+
+
+def _update_remote_ref(fake_repo: FakeGithubRepository, *, branch: str, target: str) -> None:
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(fake_repo.git_dir),
+            "update-ref",
+            f"refs/heads/{branch}",
+            target,
+        ],
+        fake_repo.git_dir.parent,
+    )
+
+
+def _saved_review_identity(
+    repo: Path,
+    baseline: dict[str, SubmittedBaseline],
+) -> dict[str, tuple[str | None, int | None, str | None]]:
+    """The stored review identity of every originally submitted change."""
+
+    state = ReviewStateStore.for_repo(repo).load()
+    identity: dict[str, tuple[str | None, int | None, str | None]] = {}
+    for label, submitted in baseline.items():
+        cached_change = state.changes.get(submitted.change_id)
+        if cached_change is None:
+            identity[label] = (None, None, None)
+            continue
+        identity[label] = (
+            cached_change.bookmark,
+            cached_change.pr_number,
+            cached_change.pr_url,
+        )
+    return identity
+
+
+def _pull_request_snapshots(
+    fake_repo: FakeGithubRepository,
+) -> dict[int, tuple[object, ...]]:
     return {
         number: (
             pull_request.base_ref,
@@ -961,6 +1230,10 @@ def _pull_request_snapshots(fake_repo: FakeGithubRepository) -> dict[int, tuple[
             pull_request.merged_at or "",
             pull_request.title,
             pull_request.body,
+            pull_request.is_draft,
+            tuple(pull_request.labels),
+            tuple(pull_request.requested_reviewers),
+            tuple(pull_request.requested_team_reviewers),
         )
         for number, pull_request in fake_repo.pull_requests.items()
     }

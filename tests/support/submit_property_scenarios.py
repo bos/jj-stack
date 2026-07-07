@@ -17,13 +17,23 @@ StackEditOperationKind = Literal[
     "rewrite",
     "squash_into_previous",
 ]
-BoundaryDriftKind = Literal[
+DriftKind = Literal[
+    "agent_recreated_change",
     "closed_pr",
     "conflicted_rebase",
+    "foreign_branch_fetched",
     "merge_commit",
+    "merged_pr",
+    "pr_base_retargeted",
+    "pr_draft_toggled",
+    "pr_replaced",
+    "remote_branch_deleted",
     "remote_branch_drift",
+    "trunk_advanced",
+    "unlinked_change",
     "wrong_saved_pr_number",
 ]
+DriftOutcome = Literal["fail_closed", "success"]
 SubmitRetryFailurePoint = Literal[
     "after_remote_push",
     "create_pull_request",
@@ -124,13 +134,218 @@ class StackEditScenario:
 
 
 @dataclass(frozen=True, slots=True)
-class BoundaryDriftScenario:
-    """A fail-closed scenario with one perturbed external boundary."""
+class DriftKindSpec:
+    """Transition metadata for one external-drift kind.
+
+    `boundary` names the state-holder the drift mutates: `github_prs` (the PR
+    database), `remote_refs` (the remote Git branch namespace), `tracking_store`
+    (jj-stack's saved beliefs), or `local_jj` (the local DAG and bookmark view).
+    `expected_outcome` is the model's verdict for a submit issued after the
+    drift. Fail-closed kinds carry the contractual exit codes the CLI may use.
+    Non-composable kinds change the stack shape or selection and only appear in
+    hand-written fixed scenarios.
+    """
+
+    boundary: Literal["github_prs", "local_jj", "remote_refs", "tracking_store"]
+    expected_outcome: DriftOutcome
+    exit_codes: tuple[int, ...]
+    composable: bool
+    needs_label: bool
+
+
+DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
+    "agent_recreated_change": DriftKindSpec(
+        boundary="local_jj",
+        expected_outcome="fail_closed",
+        exit_codes=(2,),
+        composable=False,
+        needs_label=True,
+    ),
+    "closed_pr": DriftKindSpec(
+        boundary="github_prs",
+        expected_outcome="fail_closed",
+        exit_codes=(1,),
+        composable=True,
+        needs_label=True,
+    ),
+    "conflicted_rebase": DriftKindSpec(
+        boundary="local_jj",
+        expected_outcome="fail_closed",
+        exit_codes=(3,),
+        composable=False,
+        needs_label=True,
+    ),
+    "foreign_branch_fetched": DriftKindSpec(
+        boundary="local_jj",
+        expected_outcome="fail_closed",
+        exit_codes=(2,),
+        composable=True,
+        needs_label=True,
+    ),
+    "merge_commit": DriftKindSpec(
+        boundary="local_jj",
+        expected_outcome="fail_closed",
+        exit_codes=(2,),
+        composable=False,
+        needs_label=True,
+    ),
+    "merged_pr": DriftKindSpec(
+        boundary="github_prs",
+        expected_outcome="fail_closed",
+        exit_codes=(1,),
+        composable=True,
+        needs_label=True,
+    ),
+    "pr_base_retargeted": DriftKindSpec(
+        boundary="github_prs",
+        expected_outcome="success",
+        exit_codes=(),
+        composable=True,
+        needs_label=True,
+    ),
+    "pr_draft_toggled": DriftKindSpec(
+        boundary="github_prs",
+        expected_outcome="success",
+        exit_codes=(),
+        composable=True,
+        needs_label=True,
+    ),
+    "pr_replaced": DriftKindSpec(
+        boundary="github_prs",
+        expected_outcome="fail_closed",
+        exit_codes=(1,),
+        composable=True,
+        needs_label=True,
+    ),
+    "remote_branch_deleted": DriftKindSpec(
+        boundary="remote_refs",
+        expected_outcome="fail_closed",
+        exit_codes=(1,),
+        composable=True,
+        needs_label=True,
+    ),
+    "remote_branch_drift": DriftKindSpec(
+        boundary="remote_refs",
+        expected_outcome="fail_closed",
+        exit_codes=(1,),
+        composable=True,
+        needs_label=True,
+    ),
+    "trunk_advanced": DriftKindSpec(
+        boundary="remote_refs",
+        expected_outcome="success",
+        exit_codes=(),
+        composable=True,
+        needs_label=False,
+    ),
+    "unlinked_change": DriftKindSpec(
+        boundary="tracking_store",
+        expected_outcome="fail_closed",
+        exit_codes=(1,),
+        composable=True,
+        needs_label=True,
+    ),
+    "wrong_saved_pr_number": DriftKindSpec(
+        boundary="tracking_store",
+        expected_outcome="fail_closed",
+        exit_codes=(1,),
+        composable=True,
+        needs_label=True,
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class DriftOperation:
+    """One external-actor transition applied to one boundary after submit."""
+
+    kind: DriftKind
+    label: str | None = None
+    new_label: str | None = None
+
+    @property
+    def spec(self) -> DriftKindSpec:
+        return DRIFT_KIND_SPECS[self.kind]
+
+    @property
+    def trace(self) -> str:
+        parts: list[str] = [self.kind]
+        if self.label is not None:
+            parts.append(self.label)
+        if self.new_label is not None:
+            parts.append(self.new_label)
+        return ":".join(parts)
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalDriftScenario:
+    """A submitted stack, an optional local edit, and one or more boundary drifts.
+
+    The scenario model predicts the submit outcome: fail-closed drifts must
+    leave every boundary untouched, success drifts must converge on the normal
+    post-submit contract. Every scenario also asserts that `view` still
+    produces a report for the drifted state instead of crashing.
+    """
 
     name: str
-    drift_kind: BoundaryDriftKind
+    hazard_class: str
     initial_size: int
-    label: str
+    edit_operations: tuple[StackEditOperation, ...]
+    drifts: tuple[DriftOperation, ...]
+    final_live_labels: tuple[str, ...]
+    orphaned_labels: tuple[str, ...]
+    rewritten_initial_labels: tuple[str, ...]
+
+    @property
+    def expected_outcome(self) -> DriftOutcome:
+        if any(drift.spec.expected_outcome == "fail_closed" for drift in self.drifts):
+            return "fail_closed"
+        return "success"
+
+    @property
+    def expected_exit_codes(self) -> tuple[int, ...]:
+        codes: set[int] = set()
+        for drift in self.drifts:
+            codes.update(drift.spec.exit_codes)
+        return tuple(sorted(codes))
+
+    @property
+    def trace(self) -> str:
+        parts = [operation.trace for operation in self.edit_operations]
+        parts.extend(drift.trace for drift in self.drifts)
+        return ",".join(parts)
+
+    @property
+    def invariants(self) -> SubmitInvariants:
+        return SubmitInvariants(
+            final_live_labels=self.final_live_labels,
+            initial_size=self.initial_size,
+            orphaned_labels=self.orphaned_labels,
+            trace=self.trace,
+        )
+
+    @property
+    def canonical_key(
+        self,
+    ) -> tuple[
+        str,
+        str,
+        tuple[str, ...],
+        tuple[str, ...],
+        tuple[str, ...],
+        tuple[str, ...],
+    ]:
+        return (
+            self.hazard_class,
+            self.expected_outcome,
+            tuple(sorted(drift.trace for drift in self.drifts)),
+            self.final_live_labels,
+            self.orphaned_labels,
+            self.rewritten_initial_labels,
+        )
+
+    def __str__(self) -> str:
+        return f"{self.name}: {self.trace}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -743,41 +958,293 @@ def generate_cross_stack_split_scenarios(
     return tuple(scenarios)
 
 
-def boundary_drift_scenarios() -> tuple[BoundaryDriftScenario, ...]:
-    """Representative fail-closed boundary-drift scenarios."""
+def external_drift_scenarios_from_environment() -> tuple[ExternalDriftScenario, ...]:
+    """Return deterministic external-drift scenarios for the pytest adapter."""
 
+    count = int(
+        os.environ.get(
+            "JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS",
+            str(DEFAULT_EXTERNAL_DRIFT_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_STACK_SUBMIT_PROPERTY_SEED",
+            str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
+        )
+    )
+    return generate_external_drift_scenarios(count=count, seed=seed)
+
+
+def generate_external_drift_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[ExternalDriftScenario, ...]:
+    """Generate scenarios that perturb one or two boundaries after submit."""
+
+    if count < 1:
+        return ()
+
+    scenarios: list[ExternalDriftScenario] = []
+    seen: set[
+        tuple[
+            str,
+            str,
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+        ]
+    ] = set()
+    for scenario in _fixed_external_drift_scenarios():
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+
+    rng = random.Random(seed + 5)
+    max_attempts = count * MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER
+    attempts = 0
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        scenario = _random_external_drift_scenario(rng, attempts=attempts)
+        if scenario is None or scenario.canonical_key in seen:
+            continue
+        seen.add(scenario.canonical_key)
+        scenarios.append(scenario)
+
+    return tuple(scenarios)
+
+
+_COMPOSABLE_DRIFT_KINDS: tuple[DriftKind, ...] = tuple(
+    sorted(kind for kind, spec in DRIFT_KIND_SPECS.items() if spec.composable)
+)
+
+
+def _fixed_external_drift_scenarios() -> tuple[ExternalDriftScenario, ...]:
     return (
-        BoundaryDriftScenario(
-            drift_kind="closed_pr",
-            initial_size=3,
-            label="c2",
+        _drift_scenario(
+            drifts=(DriftOperation(kind="closed_pr", label="c2"),),
+            hazard_class="github-external-close",
             name="closed-pr",
         ),
-        BoundaryDriftScenario(
-            drift_kind="conflicted_rebase",
-            initial_size=3,
-            label="c3",
-            name="conflicted-rebase",
+        _drift_scenario(
+            drifts=(DriftOperation(kind="merged_pr", label="c1"),),
+            hazard_class="github-external-merge",
+            name="merged-pr",
         ),
-        BoundaryDriftScenario(
-            drift_kind="merge_commit",
-            initial_size=3,
-            label="c3",
-            name="merge-commit",
+        _drift_scenario(
+            drifts=(DriftOperation(kind="pr_replaced", label="c2"),),
+            hazard_class="github-replaced-pr",
+            name="pr-replaced",
         ),
-        BoundaryDriftScenario(
-            drift_kind="wrong_saved_pr_number",
-            initial_size=3,
-            label="c2",
+        _drift_scenario(
+            drifts=(DriftOperation(kind="wrong_saved_pr_number", label="c2"),),
+            hazard_class="store-wrong-pr-number",
             name="wrong-saved-pr-number",
         ),
-        BoundaryDriftScenario(
-            drift_kind="remote_branch_drift",
-            initial_size=3,
-            label="c2",
+        _drift_scenario(
+            drifts=(DriftOperation(kind="wrong_saved_pr_number", label="c2"),),
+            edit_operations=(StackEditOperation(kind="rewrite", label="c2"),),
+            hazard_class="store-wrong-pr-number",
+            name="wrong-saved-pr-number-after-rewrite",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="unlinked_change", label="c2"),),
+            hazard_class="store-unlinked",
+            name="unlinked-change",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="remote_branch_drift", label="c2"),),
+            hazard_class="remote-branch-drift",
             name="remote-branch-drift",
         ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="remote_branch_deleted", label="c3"),),
+            hazard_class="remote-branch-deleted",
+            name="remote-branch-deleted",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="foreign_branch_fetched", label="c2"),),
+            hazard_class="local-foreign-fetch",
+            name="foreign-branch-fetched",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="foreign_branch_fetched", label="c2"),),
+            edit_operations=(StackEditOperation(kind="rewrite", label="c2"),),
+            hazard_class="local-foreign-fetch-divergent",
+            name="foreign-branch-fetched-after-rewrite",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="conflicted_rebase", label="c3"),),
+            hazard_class="local-conflicted-rebase",
+            name="conflicted-rebase",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="merge_commit", label="c3"),),
+            hazard_class="local-merge-commit",
+            name="merge-commit",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="closed_pr", label="c2"),),
+            edit_operations=(StackEditOperation(kind="move_to_top", label="c1"),),
+            hazard_class="github-external-close",
+            initial_size=4,
+            name="closed-pr-after-reorder",
+        ),
+        _drift_scenario(
+            drifts=(
+                DriftOperation(kind="closed_pr", label="c1"),
+                DriftOperation(kind="remote_branch_deleted", label="c3"),
+            ),
+            hazard_class="multi-boundary",
+            name="closed-pr-and-deleted-branch",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="trunk_advanced"),),
+            hazard_class="remote-trunk-advance",
+            name="trunk-advanced",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="trunk_advanced"),),
+            edit_operations=(StackEditOperation(kind="move_to_top", label="c1"),),
+            hazard_class="remote-trunk-advance",
+            name="trunk-advanced-after-reorder",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="pr_base_retargeted", label="c2"),),
+            hazard_class="github-base-retarget",
+            name="pr-base-retargeted",
+        ),
+        _drift_scenario(
+            drifts=(DriftOperation(kind="pr_draft_toggled", label="c3"),),
+            hazard_class="github-draft-toggle",
+            name="pr-draft-toggled",
+        ),
+        _agent_recreated_change_scenario(),
     )
+
+
+def _agent_recreated_change_scenario() -> ExternalDriftScenario:
+    """The observed incident: a PR and its jj change replaced outside jj-stack.
+
+    An agent closed a reviewed PR, deleted its review branch, abandoned the
+    local change, recreated the same work as a new change, pushed it with plain
+    git, opened a replacement PR with `gh`, and fetched. The fetch imports the
+    replacement branch as an untracked remote bookmark, which makes the
+    recreated change immutable, so the stack is no longer reviewable. `submit`
+    must refuse without touching any boundary, and `view` must still report.
+    """
+
+    return _drift_scenario(
+        drifts=(
+            DriftOperation(
+                kind="agent_recreated_change",
+                label="c2",
+                new_label="i1",
+            ),
+        ),
+        edit_operations=(
+            StackEditOperation(kind="abandon", label="c2"),
+            StackEditOperation(kind="insert_after", label="c1", new_label="i1"),
+        ),
+        hazard_class="incident-recreated-pr",
+        name="agent-recreated-pr",
+    )
+
+
+def _drift_scenario(
+    *,
+    drifts: tuple[DriftOperation, ...],
+    hazard_class: str,
+    name: str,
+    edit_operations: tuple[StackEditOperation, ...] = (),
+    initial_size: int = 3,
+) -> ExternalDriftScenario:
+    model = _model(initial_size)
+    for operation in edit_operations:
+        model = model.append(operation)
+    return ExternalDriftScenario(
+        drifts=drifts,
+        edit_operations=edit_operations,
+        final_live_labels=model.live_labels,
+        hazard_class=hazard_class,
+        initial_size=initial_size,
+        name=name,
+        orphaned_labels=model.orphaned_labels,
+        rewritten_initial_labels=model.rewritten_initial_labels,
+    )
+
+
+def _random_external_drift_scenario(
+    rng: random.Random,
+    *,
+    attempts: int,
+) -> ExternalDriftScenario | None:
+    initial_size = rng.randint(2, 5)
+    model = _model(initial_size)
+    edit_operations: tuple[StackEditOperation, ...] = ()
+    if rng.random() < 0.5:
+        operations = _available_operations(model, rng)
+        if operations:
+            operation = rng.choice(operations)
+            model = model.append(operation)
+            edit_operations = (operation,)
+
+    drifts = _random_drift_operations(rng, model=model)
+    if not drifts:
+        return None
+    return ExternalDriftScenario(
+        drifts=drifts,
+        edit_operations=edit_operations,
+        final_live_labels=model.live_labels,
+        hazard_class="random",
+        initial_size=initial_size,
+        name=f"drift-random-{attempts:03d}",
+        orphaned_labels=model.orphaned_labels,
+        rewritten_initial_labels=model.rewritten_initial_labels,
+    )
+
+
+def _random_drift_operations(
+    rng: random.Random,
+    *,
+    model: _ScenarioModel,
+) -> tuple[DriftOperation, ...]:
+    live_initial_labels = [
+        label for label in model.live_labels if label.startswith("c")
+    ]
+    drift_count = rng.choice((1, 1, 2))
+    kinds = rng.sample(
+        _COMPOSABLE_DRIFT_KINDS,
+        k=min(drift_count, len(_COMPOSABLE_DRIFT_KINDS)),
+    )
+    drifts: list[DriftOperation] = []
+    available_labels = list(live_initial_labels)
+    for kind in kinds:
+        if not DRIFT_KIND_SPECS[kind].needs_label:
+            drifts.append(DriftOperation(kind=kind))
+            continue
+        candidates = [
+            label
+            for label in available_labels
+            if _drift_label_is_valid(kind, label=label, model=model)
+        ]
+        if not candidates:
+            continue
+        label = rng.choice(candidates)
+        available_labels.remove(label)
+        drifts.append(DriftOperation(kind=kind, label=label))
+    return tuple(drifts)
+
+
+def _drift_label_is_valid(kind: DriftKind, *, label: str, model: _ScenarioModel) -> bool:
+    if kind == "pr_base_retargeted":
+        # The drift retargets the PR base to trunk, so the PR must have had a
+        # stacked base originally and must still be expected to have one.
+        return label != "c1" and model.live_labels.index(label) > 0
+    return True
 
 
 def _fixed_submit_retry_scenarios() -> tuple[SubmitRetryScenario, ...]:
@@ -1321,3 +1788,8 @@ def _move_before_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, st
 
 def _label_sort_key(label: str) -> tuple[str, int]:
     return (label[0], int(label[1:]))
+
+
+# The default must cover the whole fixed corpus so an unconfigured run never
+# silently drops a hazard representative (such as the incident scenario).
+DEFAULT_EXTERNAL_DRIFT_SCENARIO_COUNT = len(_fixed_external_drift_scenarios())

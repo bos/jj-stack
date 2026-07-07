@@ -29,10 +29,14 @@ testing should spend its budget on those cross-system invariants.
 - Catch transient damage, not only final state. The fake GitHub server should record PR
   state-transition events, and property tests should fail if a selected-stack PR ever
   transitions closed or merged during a successful resubmit.
-- Include fail-closed boundary-drift coverage. A separate scenario family should perturb
-  one boundary after initial submit, such as GitHub PR state, saved PR identity, or remote
-  branch state, and assert that `submit` refuses to mutate unsafe state rather than
-  opening replacement reviews.
+- Include external-drift coverage driven by an explicit transition model. A separate
+  scenario family perturbs the boundaries after initial submit — GitHub PR state, remote
+  branch state, saved tracking state, and the local `jj` view — using only transitions an
+  ordinary user, teammate, or agent can perform. The model predicts whether `submit` must
+  fail closed without mutating any boundary or succeed with the normal contract, and every
+  drifted state must still produce a `view` report instead of a crash. See
+  [distributed-state.md](distributed-state.md) for the state-holder model behind the
+  vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
   compact operation trace that can be copied into a deterministic regression test.
 - Keep the default suite fast. Property scenarios are opt-in and must not run from the
@@ -178,29 +182,41 @@ The fixed scenario family covers moving a middle, head, bottom, and single-stack
 change, with insertion before and after destination revisions. Random scenarios vary both
 stack sizes, source direction, source index, target index, and insertion side.
 
-## Boundary-drift Harness
+## External-drift Harness
 
 Stack-edit scenarios cover successful repair after supported local DAG rewrites. They do
-not cover fail-closed behavior when one external boundary is already inconsistent. A
-second, smaller scenario family should start from a submitted stack, optionally apply a
-local edit, perturb one boundary, and assert that `submit` fails without unsafe mutation.
+not cover behavior when another state-holder has moved independently. The external-drift
+family starts from a submitted, approved stack, optionally applies one local stack edit
+from the stack-edit vocabulary, then applies one or two drift operations from a typed
+transition vocabulary. Each drift kind is data: the boundary it mutates, whether it is
+composable with other drifts, whether it targets one submitted change, and the modeled
+`submit` outcome. [distributed-state.md](distributed-state.md) describes the state-holder
+model and lists every drift kind with its expected outcome and recovery path.
 
-Initial perturbations should stay representative rather than exhaustive. Start with:
+Fail-closed kinds (for example an externally closed, merged, or replaced PR, a corrupted
+saved PR number, an explicitly unlinked change, a drifted or deleted remote review branch,
+or a foreign branch fetch that makes a stack change immutable or divergent) must produce a
+contractual exit code while leaving every boundary untouched: no remote ref changes, no PR
+mutations or PR state events, and unchanged saved review identity for every submitted
+change. Success kinds (external trunk advance, an externally retargeted PR base, an
+external draft toggle) must converge on the full successful-submit contract.
 
-- GitHub reports a saved PR head branch in a closed state
-- saved tracking points a change at a different PR number than GitHub reports
-- a saved review branch on the selected remote points at an unexpected commit
-- the selected stack has unresolved conflicts after a real `jj rebase`
-- the selected revision is a merge commit, which is outside the supported review-stack
-  shape
+Drift transitions stay faithful to the platform: deleting a remote review branch also
+closes its PR because GitHub does, and a replacement PR created outside the tool shares
+the original head branch. The generator composes drifts only in reachable combinations —
+label-targeted drifts pick distinct live submitted changes, and shape-changing kinds
+(conflicted rebase, merge commit, the recreated-change incident) stay in fixed scenarios.
 
-Later perturbations can add cases such as:
+Every drift scenario, fail-closed or successful, ends by running `view` on the drifted
+selection and requiring a report exit (`0`, `2`, or `10`) rather than a crash or an
+unclassified error. Exact diagnostic wording stays out of scope.
 
-- a saved review branch is missing from the selected remote
-
-The invariant is negative: no new PRs, no closed/reopened selected-stack PRs, no remote
-branch updates for the protected stack, and a non-zero command result. Exact diagnostic
-wording is out of scope.
+The fixed corpus includes one composite incident scenario, `agent-recreated-pr`: an agent
+closes a reviewed PR, deletes its review branch, abandons the local change, recreates the
+same work as a new change, pushes it with plain git, opens a replacement PR outside the
+tool, and fetches. The fetched untracked remote bookmark makes the recreated change
+immutable, so `submit` must refuse with the unsupported-stack diagnostic and `view` must
+still report.
 
 ## Interrupted-Submit Retry Harness
 
@@ -282,8 +298,8 @@ $ tests/run_submit_property_scenarios.py 500
 
 The runner accepts the scenario count as a positional argument. It also supports
 `--seed <int>`, `--cross-stack-scenarios <N>`, `--stack-merge-scenarios <N>`,
-`--stack-move-scenarios <N>`, `--retry-scenarios <N>`, `--jobs <N|auto>`,
-`--no-sync`, and additional pytest arguments after `--`.
+`--stack-move-scenarios <N>`, `--retry-scenarios <N>`, `--drift-scenarios <N>`,
+`--jobs <N|auto>`, `--no-sync`, and additional pytest arguments after `--`.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:
@@ -312,6 +328,8 @@ The opt-in runner sets these environment variables for the pytest adapter:
   single-change move scenarios
 - `JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS`: target number of unique failed-submit
   retry scenarios
+- `JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS`: target number of unique external-drift
+  scenarios
 - `JJ_STACK_SUBMIT_PROPERTY_SEED`: deterministic random seed
 
 Those variables configure the adapter; they are not part of the core harness contract.
