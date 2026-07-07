@@ -94,10 +94,14 @@ async def _run_unlink_async(
         require_explicit=True,
         revset=revset,
     )
+    # Unlink is a local-only repair command: it must not refresh remote
+    # observations, because a fetch imports whatever the remote now holds —
+    # moved review branches, resurrected predecessors — into the local view
+    # mid-repair. Saved tracking and remembered observations decide link state.
     with console.spinner(description="Inspecting jj stack"):
         prepared_status = prepare_status(
             context=context,
-            fetch_remote_state=True,
+            fetch_remote_state=False,
             persist_bookmarks=False,
             revset=revset,
         )

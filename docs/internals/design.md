@@ -728,6 +728,9 @@ By default `unlink` is local-only:
 - it does not close PRs
 - it does not delete PR branches
 - it does not delete stack-summary comments
+- it does not refresh remote bookmark observations: a fetch imports whatever the
+  remote now holds into the local view mid-repair, and saved tracking plus
+  remembered observations already decide link state
 
 It may preserve the local bookmark, but once the unlinked marker exists that bookmark
 no longer counts as proof that the change is still being tracked. That precedence rule
