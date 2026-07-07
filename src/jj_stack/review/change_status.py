@@ -42,9 +42,6 @@ PullRequestReviewDecision = Literal[
     "commented",
     "unknown",
 ]
-BaselineFlag = Literal["commit_changed", "parent_changed", "stack_head_changed"]
-
-
 @dataclass(frozen=True, slots=True)
 class ReviewChangeStatus:
     """Orthogonal review state axes for one logical change."""
@@ -56,7 +53,6 @@ class ReviewChangeStatus:
     pr_lifecycle: PullRequestLifecycle
     pr_draft: bool | None
     pr_review_decision: PullRequestReviewDecision
-    baseline: frozenset[BaselineFlag] = frozenset()
     pr_lookup_error: bool = False
     pr_review_decision_error: str | None = None
     saved_review_identity: bool = False
@@ -98,14 +94,11 @@ _OPEN_PR_STATES_FOR_ORPHANS = frozenset({"open", "draft"})
 
 def classify_review_status_revision(
     revision: ReviewStatusRevision,
-    *,
-    baseline_disagreement: SubmittedStateDisagreement | None = None,
 ) -> ReviewChangeStatus:
     """Classify a rendered status revision without performing I/O."""
 
     local: LocalReviewState = "divergent" if revision.local_divergent else "present"
     return classify_review_change(
-        baseline_disagreement=baseline_disagreement,
         cached_change=revision.cached_change,
         commit_id=revision.commit_id,
         link_state=revision.link_state,
@@ -123,7 +116,6 @@ def classify_review_change(
     pull_request_lookup: PullRequestLookup | None,
     remote_state: RemoteBookmarkState | None,
     link_state: str | None = None,
-    baseline_disagreement: SubmittedStateDisagreement | None = None,
 ) -> ReviewChangeStatus:
     """Derive review status axes from already-loaded observations."""
 
@@ -149,7 +141,6 @@ def classify_review_change(
             lifecycle=lifecycle,
             pull_request_lookup=pull_request_lookup,
         ),
-        baseline=_baseline_flags(baseline_disagreement),
         pr_lookup_error=pr_lookup_error,
         pr_review_decision_error=(
             None if pull_request_lookup is None else pull_request_lookup.review_decision_error
@@ -363,21 +354,6 @@ def _pull_request_review_decision(
     if decision in {"approved", "changes_requested", "commented"}:
         return decision
     return "unknown"
-
-
-def _baseline_flags(
-    disagreement: SubmittedStateDisagreement | None,
-) -> frozenset[BaselineFlag]:
-    if disagreement is None:
-        return frozenset()
-    flags: set[BaselineFlag] = set()
-    if disagreement.commit_changed:
-        flags.add("commit_changed")
-    if disagreement.parent_changed:
-        flags.add("parent_changed")
-    if disagreement.stack_head_changed:
-        flags.add("stack_head_changed")
-    return frozenset(flags)
 
 
 def _live_parent_change_id(stack: LocalStack, *, index: int) -> str | None:

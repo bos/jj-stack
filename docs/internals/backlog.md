@@ -243,16 +243,6 @@ markers. The render path already overlaps its subprocess spawns with a
 thread pool, so the win is modest relative to the fragility. Revisit only if
 per-revision rendering shows up as real CLI latency.
 
-## Dead `ReviewChangeStatus.baseline` Axis
-
-_Benefit: small — dead code that misleads readers of the classifier._
-
-`classify_review_status_revision` / `classify_review_change` accept a
-`baseline_disagreement` parameter and populate a `ReviewChangeStatus.baseline`
-frozenset, but no production caller passes the parameter and nothing reads the
-field (disagreement warnings consume `SubmittedStateDisagreement` objects
-directly). Remove the axis or wire it to a real consumer.
-
 ## Property Harness Cost Trims
 
 _Benefit: small — the property suite is opt-in, so this only affects the CI
