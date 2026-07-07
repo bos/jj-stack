@@ -9,6 +9,7 @@ import pickle
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import httpxyz
@@ -25,8 +26,8 @@ from .fake_github import (
 
 _TEMPLATE_OWNER = "octo-org"
 _TEMPLATE_NAME = "stacked-review"
-_CACHED_TEMPLATE: Path | None = None
-_CACHED_SUBMITTED_FEATURE_TEMPLATE: Path | None = None
+_SHARED_TEMPLATE_ROOT: Path | None = None
+_TEMPLATE_MEMO: dict[str, Path] = {}
 _SUBMIT_CONFIG_MODULES = (
     "jj_stack.commands.submit.command",
     "jj_stack.commands.relink",
@@ -126,14 +127,55 @@ def _init_fake_github_repo_fresh(
     return repo, fake_repo
 
 
-def _get_cached_template() -> Path:
-    global _CACHED_TEMPLATE
-    if _CACHED_TEMPLATE is None:
-        template_root = Path(tempfile.mkdtemp(prefix="jjr_tpl_"))
+def set_shared_template_root(root: Path) -> None:
+    """Point template caching at a directory shared by all xdist workers.
+
+    Configured once per session from a conftest fixture. Without it, each
+    worker process falls back to building its own private template copies.
+    """
+
+    global _SHARED_TEMPLATE_ROOT
+    _SHARED_TEMPLATE_ROOT = root
+
+
+def _template_dir(name: str, build: Callable[[Path], None]) -> Path:
+    """Return a cached template directory, building it at most once per session.
+
+    With a shared root configured, workers coordinate through the filesystem:
+    a template is built in a process-private directory and atomically renamed
+    into place, so concurrent builders waste at most one redundant build and
+    readers only ever observe complete templates.
+    """
+
+    cached = _TEMPLATE_MEMO.get(name)
+    if cached is not None:
+        return cached
+    root = _SHARED_TEMPLATE_ROOT
+    if root is None:
+        template_root = Path(tempfile.mkdtemp(prefix=f"jjr_tpl_{name}_"))
         atexit.register(lambda: shutil.rmtree(template_root, ignore_errors=True))
-        _init_fake_github_repo_fresh(template_root, with_remote=True)
-        _CACHED_TEMPLATE = template_root
-    return _CACHED_TEMPLATE
+        build(template_root)
+        _TEMPLATE_MEMO[name] = template_root
+        return template_root
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / name
+    if not (target / ".template-ready").is_file():
+        build_dir = root / f"{name}.build-{os.getpid()}"
+        build(build_dir)
+        (build_dir / ".template-ready").touch()
+        try:
+            os.rename(build_dir, target)
+        except OSError:
+            shutil.rmtree(build_dir, ignore_errors=True)
+    _TEMPLATE_MEMO[name] = target
+    return target
+
+
+def _get_cached_template() -> Path:
+    def build(root: Path) -> None:
+        _init_fake_github_repo_fresh(root, with_remote=True)
+
+    return _template_dir("base", build)
 
 
 def init_fake_github_repo(
@@ -147,7 +189,7 @@ def init_fake_github_repo(
     return _copy_fake_github_repo_from_template(tmp_path, template_root)
 
 
-def _build_submitted_feature_template(template_root: Path) -> None:
+def _build_submitted_stack_template(template_root: Path, size: int) -> None:
     from jj_stack.cli import main
 
     prior_state_home = os.environ.get("XDG_STATE_HOME")
@@ -158,7 +200,8 @@ def _build_submitted_feature_template(template_root: Path) -> None:
         repo, fake_repo = _copy_fake_github_repo_from_template(
             template_root, _get_cached_template()
         )
-        commit_file(repo, "feature 1", "feature-1.txt")
+        for index in range(1, size + 1):
+            commit_file(repo, f"feature {index}", f"feature-{index}.txt")
 
         app = create_app(FakeGithubState.single_repository(fake_repo))
 
@@ -200,9 +243,14 @@ def _build_submitted_feature_template(template_root: Path) -> None:
                 ["--config-file", str(config_path), "--repository", str(repo), "submit"]
             )
         if exit_code != 0:
-            raise RuntimeError(f"submitted-feature template build failed: exit {exit_code}")
+            raise RuntimeError(f"submitted-stack template build failed: exit {exit_code}")
 
         (template_root / "fake_repo.pkl").write_bytes(pickle.dumps(fake_repo))
+        # The template directory may be renamed after the build completes, so
+        # the state-home key derived from the build path must be recorded now.
+        (template_root / "repo-state-hash").write_text(
+            _repo_state_hash(repo), encoding="utf-8"
+        )
     finally:
         for mod, attr, original in saved_attrs:
             setattr(mod, attr, original)
@@ -212,28 +260,28 @@ def _build_submitted_feature_template(template_root: Path) -> None:
             os.environ["XDG_STATE_HOME"] = prior_state_home
 
 
-def _get_cached_submitted_feature_template() -> Path:
-    global _CACHED_SUBMITTED_FEATURE_TEMPLATE
-    if _CACHED_SUBMITTED_FEATURE_TEMPLATE is None:
-        template_root = Path(tempfile.mkdtemp(prefix="jjr_tpl_sub_"))
-        atexit.register(lambda: shutil.rmtree(template_root, ignore_errors=True))
-        _build_submitted_feature_template(template_root)
-        _CACHED_SUBMITTED_FEATURE_TEMPLATE = template_root
-    return _CACHED_SUBMITTED_FEATURE_TEMPLATE
-
-
 def init_fake_github_repo_with_submitted_feature(
     tmp_path: Path,
 ) -> tuple[Path, FakeGithubRepository]:
-    """Drop-in replacement for `init_fake_github_repo + commit_file("feature 1", ...) + submit`.
+    return init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
 
-    Returns a repo with `feature 1` already committed and submitted as PR #1
-    in the returned `fake_repo`. Callers still need to invoke
-    `configure_submit_environment` to wire the monkeypatches for their own
-    fake_repo instance.
+
+def init_fake_github_repo_with_submitted_stack(
+    tmp_path: Path,
+    *,
+    size: int,
+) -> tuple[Path, FakeGithubRepository]:
+    """Drop-in replacement for `init_fake_github_repo + N x commit_file + submit`.
+
+    Returns a repo with `feature 1` .. `feature <size>` already committed
+    (as `feature-<n>.txt`) and submitted as PRs #1..#<size> in the returned
+    `fake_repo`. Callers still need to invoke `configure_submit_environment`
+    to wire the monkeypatches for their own fake_repo instance.
     """
-    template = _get_cached_submitted_feature_template()
-    template_repo = template / "repo"
+    template = _template_dir(
+        f"submitted-{size}",
+        lambda root: _build_submitted_stack_template(root, size),
+    )
 
     repo, fake_repo = _copy_fake_github_repo_from_template(tmp_path, template)
 
@@ -242,7 +290,7 @@ def init_fake_github_repo_with_submitted_feature(
     if template_state_home.exists():
         shutil.copytree(template_state_home, test_state_home, dirs_exist_ok=True)
         template_repos_root = test_state_home / "jj-stack" / "repos"
-        template_hash = _repo_state_hash(template_repo)
+        template_hash = (template / "repo-state-hash").read_text(encoding="utf-8").strip()
         test_hash = _repo_state_hash(repo)
         if template_hash != test_hash:
             src = template_repos_root / template_hash
@@ -252,6 +300,50 @@ def init_fake_github_repo_with_submitted_feature(
                     entry.rename(template_repos_root / test_hash / entry.name)
                 src.rmdir()
 
+    pickled = pickle.loads((template / "fake_repo.pkl").read_bytes())
+    pickled.git_dir = fake_repo.git_dir
+    return repo, pickled
+
+
+def _build_manual_pr_template(template_root: Path) -> None:
+    """Build a template with `feature 1` committed, `review/manual-feature-1`
+    pushed, and a manually-created PR #1 targeting it.
+
+    Unlike the submitted-stack template this never runs jj-stack `main()`, so it
+    has no state-home to rehome: only the jj repo, the remote, and the pickled
+    `fake_repo` carry state. The manual bookmark is left in place; tests that
+    need it forgotten do so as a cheap per-test step.
+    """
+    repo, fake_repo = _copy_fake_github_repo_from_template(
+        template_root, _get_cached_template()
+    )
+    manual_bookmark = "review/manual-feature-1"
+    commit_file(repo, "feature 1", "feature-1.txt")
+    run_command(["jj", "bookmark", "create", manual_bookmark, "-r", "@-"], repo)
+    run_command(
+        ["jj", "git", "push", "--remote", "origin", "--bookmark", manual_bookmark], repo
+    )
+    fake_repo.create_pull_request(
+        base_ref="main",
+        body="manual body",
+        head_ref=manual_bookmark,
+        title="manual title",
+    )
+    (template_root / "fake_repo.pkl").write_bytes(pickle.dumps(fake_repo))
+
+
+def init_fake_github_repo_with_manual_pr(
+    tmp_path: Path,
+) -> tuple[Path, FakeGithubRepository]:
+    """Return a repo with `feature 1` committed, `review/manual-feature-1`
+    pushed, and a manual PR #1 already targeting it (bookmark still present).
+
+    Mirrors the manual-PR setup shared by several relink tests. Callers still
+    invoke `configure_submit_environment` to wire the monkeypatches for the
+    returned `fake_repo`.
+    """
+    template = _template_dir("manual-pr", _build_manual_pr_template)
+    repo, fake_repo = _copy_fake_github_repo_from_template(tmp_path, template)
     pickled = pickle.loads((template / "fake_repo.pkl").read_bytes())
     pickled.git_dir = fake_repo.git_dir
     return repo, pickled
