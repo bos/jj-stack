@@ -56,8 +56,9 @@ command they use before any direct GitHub mutation.
    multi-stack repo, pass a change ID, revset, or `--pull-request` selector.
    Prefer change IDs in user-facing summaries; use commit IDs only when a
    concrete immutable snapshot matters.
-6. **Stay non-interactive.** Do not pass an interactive `--describe-with`
-   helper; instead pass a description using `--describe`.
+6. **Stay non-interactive.** Do not use `submit --edit`, `checkout --pick`, or
+   an interactive `--describe-with` helper; those open an editor or prompt on
+   stdin for humans. Pass `--describe` files and explicit selectors instead.
 
 ## Using `gh` on a managed stack
 
@@ -79,7 +80,11 @@ you explain that risk.
 
 - **Land ready bottom changes:** `land --dry-run`, then `land`. Lands the
   consecutive ready changes at the bottom and stops before the first unready
-  one; `--pull-request <pr>` stops earlier.
+  one; `--pull-request <pr>` stops earlier. When branch protection forbids
+  direct trunk pushes, use `land --via merge`: it merges each ready PR on
+  GitHub bottom-up (this is the one sanctioned way a managed PR gets merged)
+  and stops at the first PR GitHub reports as not mergeable. It does not move
+  local history — run `sync` afterwards.
 - **Close an abandoned stack's PRs:** `unstack --dry-run`, then `unstack`.
 - **Also remove review branches and tracking:** `unstack --cleanup`, only
   after confirming the stack should be retired. For an orphaned PR from
@@ -87,9 +92,10 @@ you explain that risk.
 - **Stop tracking locally but leave PRs open:** `unstack --local`.
 - **Change PR base/head because the stack shape changed:** reshape with `jj`,
   then `submit --dry-run` and `submit`.
-- **Recover from a squash/rebase merge made on GitHub:**
-  `cleanup --rebase --dry-run`, `cleanup --rebase`, then `submit` to refresh
-  surviving PRs.
+- **Recover from a squash/rebase merge made on GitHub:** `sync` chains the
+  whole repair — fetch, drop merged ancestors, resubmit survivors. To preview
+  or step through it instead: `cleanup --rebase --dry-run`, `cleanup
+  --rebase`, then `submit`.
 - **Adopt existing PRs into local tracking:**
   `checkout --pull-request <pr> --fetch` for a whole stack (sets up tracking
   only; rewrites nothing and does not touch GitHub), or
@@ -115,9 +121,12 @@ by hand. Inspect with `list --fetch --json`, `view --pull-request <pr> --json
 4. Apply review feedback in the change it belongs to: edit the lower `jj`
    change, let descendants rebase, then `view` and `submit`. Do not patch a
    higher change to avoid touching a lower one.
-5. When bottom changes are ready, `land --dry-run`, then `land`.
-6. If `trunk()` merely advanced, use plain `jj rebase`. `cleanup --rebase` is
-   only for ancestors already merged on GitHub under different commit IDs.
+5. When bottom changes are ready, `land --dry-run`, then `land`
+   (`land --via merge` on repos whose trunk cannot be pushed directly, then
+   `sync`).
+6. If `trunk()` merely advanced, use plain `jj rebase`. `sync` (or its
+   stepwise form, `cleanup --rebase` then `submit`) is only for ancestors
+   already merged on GitHub under different commit IDs.
 
 ## Exit codes
 
