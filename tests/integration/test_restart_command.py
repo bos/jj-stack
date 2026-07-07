@@ -7,7 +7,11 @@ from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import CachedChange
 from jj_stack.state.store import ReviewStateStore
 
-from ..support.integration_helpers import commit_file, init_fake_github_repo
+from ..support.integration_helpers import (
+    commit_file,
+    init_fake_github_repo,
+    init_fake_github_repo_with_submitted_feature,
+)
 from .submit_command_helpers import configure_submit_environment, run_main
 
 
@@ -71,12 +75,8 @@ def test_restart_dry_run_leaves_tracking_data_unchanged(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     change_id = JjClient(repo).discover_review_stack().head.change_id
     state_store = ReviewStateStore.for_repo(repo)
@@ -90,48 +90,13 @@ def test_restart_dry_run_leaves_tracking_data_unchanged(
     assert state_store.load() == initial_state
 
 
-def test_submit_restart_creates_new_pull_requests_without_persisting_reset_first(
+def test_submit_restart_creates_fresh_pr_on_regenerated_branch_after_head_branch_rename(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    change_id = JjClient(repo).discover_review_stack().head.change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_change = state_store.load().changes[change_id]
-    assert initial_change.pr_number == 1
-
-    exit_code = run_main(repo, config_path, "submit", "--restart", change_id)
-    captured = capsys.readouterr()
-    restarted_change = state_store.load().changes[change_id]
-
-    assert exit_code == 0
-    assert "PR #2" in captured.out
-    assert restarted_change.pr_number == 2
-    assert restarted_change.bookmark is not None
-    assert restarted_change.bookmark != initial_change.bookmark
-    assert restarted_change.bookmark.endswith(f"-{short_change_id(change_id)}")
-    assert fake_repo.pull_requests[1].head_ref == initial_change.bookmark
-    assert fake_repo.pull_requests[2].head_ref == restarted_change.bookmark
-
-
-def test_submit_restart_does_not_reuse_remembered_pr_after_head_branch_rename(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     change_id = JjClient(repo).discover_review_stack().head.change_id
     state_store = ReviewStateStore.for_repo(repo)
@@ -159,7 +124,9 @@ def test_submit_restart_does_not_reuse_remembered_pr_after_head_branch_rename(
 
     assert exit_code == 0
     assert restarted_change.pr_number == 2
+    assert restarted_change.bookmark is not None
     assert restarted_change.bookmark not in {stale_bookmark, generated_bookmark}
+    assert restarted_change.bookmark.endswith(f"-{short_change_id(change_id)}")
     assert fake_repo.pull_requests[1].head_ref == generated_bookmark
     assert fake_repo.pull_requests[2].head_ref == restarted_change.bookmark
 
@@ -169,12 +136,8 @@ def test_submit_restart_preserves_old_tracking_when_fresh_branch_has_pr(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     change_id = JjClient(repo).discover_review_stack().head.change_id
     short_id = short_change_id(change_id)

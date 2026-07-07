@@ -49,6 +49,25 @@ def test_main_preserves_partial_handler_output_on_keyboard_interrupt(
     assert "Traceback" not in captured.err
 
 
+def test_delete_alias_dispatches_to_the_unstack_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`delete` must stay registered as an argparse alias of `unstack`."""
+
+    calls: list[str] = []
+
+    def fake_unstack(**kwargs) -> int:
+        calls.append("unstack")
+        return 0
+
+    monkeypatch.setattr(cli_module.unstack_command, "unstack", fake_unstack)
+
+    exit_code = main(["delete"])
+
+    assert exit_code == 0
+    assert calls == ["unstack"]
+
+
 def test_config_overrides_preserve_argv_order_across_the_subcommand(
     tmp_path: Path,
 ) -> None:

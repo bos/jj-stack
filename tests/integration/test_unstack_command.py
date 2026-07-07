@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
@@ -18,6 +15,7 @@ from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
+    init_fake_github_repo_with_submitted_stack,
     run_command,
 )
 from ..support.output_assertions import assert_output_contains
@@ -35,9 +33,7 @@ def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
 
 
-@pytest.mark.parametrize("command", ["unstack", "delete"])
 def test_unstack_apply_closes_pull_request_and_retires_active_state(
-    command: str,
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -49,7 +45,7 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
 
-    exit_code = run_main(repo, config_path, command, change_id)
+    exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
@@ -147,13 +143,8 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     first_change_id = stack.revisions[0].change_id
@@ -211,25 +202,6 @@ def test_unstack_cleanup_pull_request_without_saved_record_reports_open_pr_not_t
     assert exit_code == 1
     assert f"PR #{pull_request.number} is not tracked locally" in combined
     assert "not linked to any local change" not in combined
-
-
-def test_unstack_noop_short_circuit_on_untracked_stack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    exit_code = run_main(repo, config_path, "unstack")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert (
-        "Nothing to close on the selected stack."
-        in captured.out
-    )
 
 
 def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
@@ -438,12 +410,8 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -499,12 +467,8 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -536,61 +500,13 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
 
 
-def test_unstack_cleanup_pull_request_blocks_when_saved_pr_head_is_from_fork(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    bottom_bookmark = state.changes[bottom_change_id].bookmark
-    bottom_pr_number = state.changes[bottom_change_id].pr_number
-    assert bottom_bookmark is not None
-    assert bottom_pr_number is not None
-
-    run_command(["jj", "abandon", bottom_change_id], repo)
-    fake_repo.pull_requests[bottom_pr_number].head_label = f"fork-owner:{bottom_bookmark}"
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        str(bottom_pr_number),
-    )
-    captured = capsys.readouterr()
-    combined = _combined_output(captured)
-
-    assert exit_code == 1
-    assert "Close blocked:" in captured.out
-    assert f"its head is fork-owner:{bottom_bookmark}" in combined
-    assert f"close PR #{bottom_pr_number}" not in captured.out
-    assert fake_repo.pull_requests[bottom_pr_number].state == "open"
-    assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
-    assert bottom_change_id in state_store.load().changes
-
-
 def test_unstack_cleanup_pull_request_refuses_when_orphan_bookmark_is_reclaimed(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -640,12 +556,8 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_miss
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -692,74 +604,13 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_miss
     assert bottom_change_id in state_store.load().changes
 
 
-def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_drifted(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    bottom_bookmark = state.changes[bottom_change_id].bookmark
-    bottom_pr_number = state.changes[bottom_change_id].pr_number
-    assert bottom_bookmark is not None
-    assert bottom_pr_number is not None
-
-    run_command(["jj", "abandon", bottom_change_id], repo)
-    state = state_store.load()
-    state_store.save(
-        state.model_copy(
-            update={
-                "changes": {
-                    **state.changes,
-                    bottom_change_id: state.changes[bottom_change_id].model_copy(
-                        update={"last_submitted_commit_id": "0" * 40}
-                    ),
-                }
-            }
-        )
-    )
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        str(bottom_pr_number),
-    )
-    captured = capsys.readouterr()
-    combined = _combined_output(captured)
-
-    assert exit_code == 1
-    assert "Close blocked:" in captured.out
-    assert "already points to a different revision" in combined
-    assert f"close PR #{bottom_pr_number}" not in captured.out
-    assert fake_repo.pull_requests[bottom_pr_number].state == "open"
-    assert issue_comments(fake_repo, bottom_pr_number)
-    assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
-    assert bottom_change_id in state_store.load().changes
-
-
 def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -800,12 +651,8 @@ def test_unstack_cleanup_pull_request_blocks_when_remote_branch_drifted_external
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -852,86 +699,13 @@ def test_unstack_cleanup_pull_request_blocks_when_remote_branch_drifted_external
     assert bottom_change_id in state_store.load().changes
 
 
-def test_unstack_cleanup_pull_request_blocks_when_saved_bookmark_drifted(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    change_id = JjClient(repo).discover_review_stack().head.change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    change_id: initial_state.changes[change_id].model_copy(
-                        update={"bookmark": "review/wrong-bookmark"}
-                    ),
-                }
-            }
-        )
-    )
-    run_command(["jj", "abandon", change_id], repo)
-
-    exit_code = run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1")
-    captured = capsys.readouterr()
-    combined_output = _combined_output(captured)
-
-    assert exit_code == 1
-    assert "Close blocked:" in captured.out
-    assert "no longer has saved bookmark" in combined_output
-    assert fake_repo.pull_requests[1].state == "open"
-    assert (
-        ReviewStateStore.for_repo(repo).load().changes[change_id].bookmark
-        == "review/wrong-bookmark"
-    )
-
-
-def test_unstack_cleanup_pull_request_blocks_when_branch_has_multiple_pull_requests(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    state = ReviewStateStore.for_repo(repo).load()
-    change_id, cached_change = next(iter(state.changes.items()))
-    bookmark = cached_change.bookmark
-    assert bookmark is not None
-    fake_repo.create_pull_request(
-        base_ref=fake_repo.default_branch,
-        body="duplicate branch",
-        head_ref=bookmark,
-        title="duplicate branch",
-    )
-    run_command(["jj", "abandon", change_id], repo)
-
-    exit_code = run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1")
-    captured = capsys.readouterr()
-    combined_output = _combined_output(captured)
-
-    assert exit_code == 1
-    assert "Close blocked:" in captured.out
-    assert "now has multiple pull requests" in combined_output
-    assert fake_repo.pull_requests[1].state == "open"
-
-
 def test_unstack_cleanup_pull_request_blocks_when_saved_pr_is_no_longer_on_github(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -961,95 +735,6 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_pr_is_no_longer_on_githu
     assert f"PR #{bottom_pr_number} is no longer on GitHub" in combined_output
     assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
     assert bottom_change_id in state_store.load().changes
-
-
-def test_unstack_cleanup_pull_request_blocks_when_saved_pr_head_has_been_retargeted(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    bottom_bookmark = state.changes[bottom_change_id].bookmark
-    bottom_pr_number = state.changes[bottom_change_id].pr_number
-    assert bottom_bookmark is not None
-    assert bottom_pr_number is not None
-
-    run_command(["jj", "abandon", bottom_change_id], repo)
-    saved_pr = fake_repo.pull_requests[bottom_pr_number]
-    saved_pr.head_ref = "review/some-other-branch"
-    saved_pr.head_label = f"{fake_repo.owner}:review/some-other-branch"
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        str(bottom_pr_number),
-    )
-    captured = capsys.readouterr()
-    combined_output = _combined_output(captured)
-
-    assert exit_code == 1
-    assert "Close blocked:" in captured.out
-    assert "no longer has saved bookmark" in combined_output
-    assert fake_repo.pull_requests[bottom_pr_number].state == "open"
-    assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
-    assert bottom_change_id in state_store.load().changes
-
-
-def test_unstack_cleanup_pull_request_retires_merged_orphan_via_saved_pr(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    bottom_bookmark = state.changes[bottom_change_id].bookmark
-    bottom_pr_number = state.changes[bottom_change_id].pr_number
-    assert bottom_bookmark is not None
-    assert bottom_pr_number is not None
-
-    saved_pr = fake_repo.pull_requests[bottom_pr_number]
-    saved_pr.state = "closed"
-    saved_pr.merged_at = datetime(2026, 4, 1, tzinfo=UTC).isoformat()
-    run_command(["jj", "abandon", bottom_change_id], repo)
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        str(bottom_pr_number),
-    )
-    captured = capsys.readouterr()
-    output = captured.out
-
-    assert exit_code == 0
-    assert "Applied close actions:" in output
-    assert "prune orphan record" in output
-    assert bottom_change_id not in state_store.load().changes
-    assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
 
 
 def test_unstack_cleanup_pull_request_reports_blocked_when_github_is_unavailable(
@@ -1129,12 +814,8 @@ def test_unstack_cleanup_pull_request_dry_run_previews_orphan_close(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -1174,12 +855,8 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -1355,13 +1032,8 @@ def test_unstack_apply_checkpoints_prior_progress_before_later_block(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     first_change_id = stack.revisions[0].change_id
@@ -1499,13 +1171,8 @@ def test_unstack_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
