@@ -196,10 +196,14 @@ model and lists every drift kind with its expected outcome and recovery path.
 Fail-closed kinds (for example an externally closed, merged, or replaced PR, a corrupted
 saved PR number, an explicitly unlinked change, a drifted or deleted remote review branch,
 or a foreign branch fetch that makes a stack change immutable or divergent) must produce a
-contractual exit code while leaving every boundary untouched: no remote ref changes, no PR
-mutations or PR state events, and unchanged saved review identity for every submitted
-change. Success kinds (external trunk advance, an externally retargeted PR base, an
-external draft toggle) must converge on the full successful-submit contract.
+contractual exit code and one of the kind's expected diagnoses while leaving every
+boundary untouched: no remote ref changes, no PR mutations or PR state events, and
+unchanged saved review identity for every submitted change. The diagnosis is the typed
+identity of the CLI's fail-closed error — a `DriftError` condition, an
+`unsupported_stack:<reason>`, or `conflicted_stack` — captured from the error the CLI
+hands its top-level printer, so a stop that fired for the wrong reason cannot pass on
+exit code alone. Success kinds (external trunk advance, an externally retargeted PR base,
+an external draft toggle) must converge on the full successful-submit contract.
 
 Drift transitions stay faithful to the platform: deleting a remote review branch also
 closes its PR because GitHub does, and a replacement PR created outside the tool shares

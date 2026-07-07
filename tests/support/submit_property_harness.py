@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from jj_stack.jj.client import JjClient
+from jj_stack.errors import ConflictedStackError, DriftError
+from jj_stack.jj.client import JjClient, UnsupportedStackError
 from jj_stack.models.review_state import CachedChange
 from jj_stack.state.store import ReviewStateStore
 
@@ -32,6 +33,7 @@ from .submit_property_scenarios import (
 
 SubmitRunner = Callable[[str | None], int]
 CliRunner = Callable[[tuple[str, ...]], int]
+CliErrorReader = Callable[[], BaseException | None]
 OutputDiscarder = Callable[[], Any]
 
 # `view` must always produce a report or a targeted diagnostic for a drifted
@@ -102,16 +104,20 @@ def replay_external_drift_scenario(
     *,
     discard_output: OutputDiscarder,
     fake_repo: FakeGithubRepository,
+    last_cli_error: CliErrorReader,
     repo: Path,
     run_cli: CliRunner,
     scenario: ExternalDriftScenario,
 ) -> None:
     """Replay one external-drift scenario and assert the model-predicted outcome.
 
-    Fail-closed scenarios must leave every boundary untouched: remote refs,
-    the PR database, and the saved review identity of every submitted change.
-    Success scenarios must converge on the normal post-submit contract. Both
-    end with a `view` report on the drifted selection, which must never crash.
+    Fail-closed scenarios must stop with one of the drift kind's expected
+    diagnoses — not merely the right exit code — and leave every boundary
+    untouched: remote refs, the PR database, and the saved review identity of
+    every submitted change. `last_cli_error` reads the error the CLI reported
+    for the most recent `run_cli` call. Success scenarios must converge on the
+    normal post-submit contract. Both end with a `view` report on the drifted
+    selection, which must never crash.
     """
 
     labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
@@ -152,9 +158,11 @@ def replay_external_drift_scenario(
         fake_repo.pull_request_events.clear()
 
         exit_code = run_cli(("submit", submit_revset))
+        diagnosis = _fail_closed_diagnosis(last_cli_error())
         discard_output()
 
         assert exit_code in scenario.expected_exit_codes, (exit_code, scenario.trace)
+        assert diagnosis in scenario.expected_diagnoses, (diagnosis, scenario.trace)
         assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
         assert _pull_request_snapshots(fake_repo) == before_pull_requests, scenario.trace
         assert fake_repo.pull_request_events == [], scenario.trace
@@ -183,6 +191,21 @@ def replay_external_drift_scenario(
     view_exit_code = run_cli(("view", submit_revset))
     discard_output()
     assert view_exit_code in VIEW_REPORT_EXIT_CODES, (view_exit_code, scenario.trace)
+
+
+def _fail_closed_diagnosis(error: BaseException | None) -> str | None:
+    """Collapse the CLI's reported error to the scenario model's diagnosis vocabulary."""
+
+    if isinstance(error, DriftError):
+        return error.condition
+    if isinstance(error, ConflictedStackError):
+        return "conflicted_stack"
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, UnsupportedStackError):
+            return f"unsupported_stack:{cause.reason}"
+        cause = cause.__cause__
+    return None
 
 
 def replay_failed_submit_retry_scenario(

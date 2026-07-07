@@ -141,14 +141,18 @@ class DriftKindSpec:
     database), `remote_refs` (the remote Git branch namespace), `tracking_store`
     (jj-stack's saved beliefs), or `local_jj` (the local DAG and bookmark view).
     `expected_outcome` is the model's verdict for a submit issued after the
-    drift. Fail-closed kinds carry the contractual exit codes the CLI may use.
-    Non-composable kinds change the stack shape or selection and only appear in
-    hand-written fixed scenarios.
+    drift. Fail-closed kinds carry the contractual exit codes the CLI may use
+    and the diagnoses the CLI may report: a `DriftError` condition, an
+    `unsupported_stack:<reason>`, or `conflicted_stack`. Asserting the diagnosis
+    keeps a stop that fired for the wrong reason — right exit code, misleading
+    repair path — from satisfying the model. Non-composable kinds change the
+    stack shape or selection and only appear in hand-written fixed scenarios.
     """
 
     boundary: Literal["github_prs", "local_jj", "remote_refs", "tracking_store"]
     expected_outcome: DriftOutcome
     exit_codes: tuple[int, ...]
+    diagnoses: tuple[str, ...]
     composable: bool
     needs_label: bool
 
@@ -158,6 +162,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="local_jj",
         expected_outcome="fail_closed",
         exit_codes=(2,),
+        diagnoses=("unsupported_stack:immutable_commit",),
         composable=False,
         needs_label=True,
     ),
@@ -165,6 +170,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="github_prs",
         expected_outcome="fail_closed",
         exit_codes=(1,),
+        diagnoses=("pull_request_not_open",),
         composable=True,
         needs_label=True,
     ),
@@ -172,13 +178,21 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="local_jj",
         expected_outcome="fail_closed",
         exit_codes=(3,),
+        diagnoses=("conflicted_stack",),
         composable=False,
         needs_label=True,
     ),
+    # The fetched foreign ref pins the submitted commit: immutable when the
+    # change is unrewritten, divergent when a local rewrite already replaced it
+    # and the fetch resurrects the hidden predecessor.
     "foreign_branch_fetched": DriftKindSpec(
         boundary="local_jj",
         expected_outcome="fail_closed",
         exit_codes=(2,),
+        diagnoses=(
+            "unsupported_stack:divergent_change",
+            "unsupported_stack:immutable_commit",
+        ),
         composable=True,
         needs_label=True,
     ),
@@ -186,6 +200,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="local_jj",
         expected_outcome="fail_closed",
         exit_codes=(2,),
+        diagnoses=("unsupported_stack:merge_commit",),
         composable=False,
         needs_label=True,
     ),
@@ -193,6 +208,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="github_prs",
         expected_outcome="fail_closed",
         exit_codes=(1,),
+        diagnoses=("pull_request_not_open",),
         composable=True,
         needs_label=True,
     ),
@@ -200,6 +216,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="github_prs",
         expected_outcome="success",
         exit_codes=(),
+        diagnoses=(),
         composable=True,
         needs_label=True,
     ),
@@ -207,6 +224,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="github_prs",
         expected_outcome="success",
         exit_codes=(),
+        diagnoses=(),
         composable=True,
         needs_label=True,
     ),
@@ -214,6 +232,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="github_prs",
         expected_outcome="fail_closed",
         exit_codes=(1,),
+        diagnoses=("pull_request_ambiguous",),
         composable=True,
         needs_label=True,
     ),
@@ -221,6 +240,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="remote_refs",
         expected_outcome="fail_closed",
         exit_codes=(1,),
+        diagnoses=("remote_branch_missing",),
         composable=True,
         needs_label=True,
     ),
@@ -228,6 +248,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="remote_refs",
         expected_outcome="fail_closed",
         exit_codes=(1,),
+        diagnoses=("remote_branch_moved",),
         composable=True,
         needs_label=True,
     ),
@@ -235,6 +256,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="remote_refs",
         expected_outcome="success",
         exit_codes=(),
+        diagnoses=(),
         composable=True,
         needs_label=False,
     ),
@@ -242,6 +264,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="tracking_store",
         expected_outcome="fail_closed",
         exit_codes=(1,),
+        diagnoses=("change_unlinked",),
         composable=True,
         needs_label=True,
     ),
@@ -249,6 +272,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         boundary="tracking_store",
         expected_outcome="fail_closed",
         exit_codes=(1,),
+        diagnoses=("saved_pull_request_mismatch",),
         composable=True,
         needs_label=True,
     ),
@@ -308,6 +332,15 @@ class ExternalDriftScenario:
         for drift in self.drifts:
             codes.update(drift.spec.exit_codes)
         return tuple(sorted(codes))
+
+    @property
+    def expected_diagnoses(self) -> tuple[str, ...]:
+        """Diagnoses the CLI may report, unioned because check order picks the winner."""
+
+        diagnoses: set[str] = set()
+        for drift in self.drifts:
+            diagnoses.update(drift.spec.diagnoses)
+        return tuple(sorted(diagnoses))
 
     @property
     def trace(self) -> str:

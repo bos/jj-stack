@@ -98,7 +98,11 @@ ref on the same commit, and a tracking store still pointing at the closed PR.
   creates/updates — with a contractual exit code and a targeted diagnostic naming the
   repair path. Verification is ordered: stack shape and conflicts (local), then remote
   ref safety, then PR discovery and saved-link consistency, all before the mutation
-  phase begins.
+  phase begins. The diagnostic carries a typed identity (`DriftError.condition` for
+  remote-ref, PR, and tracking-store checks; `UnsupportedStackError.reason` and
+  `ConflictedStackError` for local shape), so the harness asserts *which* check fired,
+  not just the exit code — a stop for the wrong reason names the wrong repair path and
+  must fail the model.
 - **Report always (inspection class).** `view` must produce a report or a targeted
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.

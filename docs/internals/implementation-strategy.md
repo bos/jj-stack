@@ -609,6 +609,13 @@ in `errors.py` maps a raised error to the process exit code, letting a generic
 `CliError` inherit the code of a categorized adapter cause. `view` and `list` return the
 incomplete-report code directly when a printed report is degraded.
 
+Fail-closed verification stops share exit code 1, so `DriftError` in `errors.py` also
+carries a `condition` naming which cross-system check failed (a missing or moved remote
+review branch, a non-open or ambiguous discovered PR, a saved-link mismatch, an unlinked
+change). The condition is not printed; it exists so the drift property harness
+([distributed-state.md](./distributed-state.md)) can assert that a fail-closed stop
+fired for the drift it was aimed at rather than merely with the right exit code.
+
 ## Observability
 
 Easy to debug without making normal output noisy:

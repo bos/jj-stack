@@ -34,6 +34,7 @@ from tests.support.submit_property_scenarios import (
     submit_retry_scenarios_from_environment,
 )
 
+import jj_stack.cli as cli_module
 import jj_stack.commands.submit.command as submit_command
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -173,12 +174,25 @@ def test_submit_property_external_drift_matches_model(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
+    # `main` swallows CliError into an exit code, so record the error it hands
+    # to the top-level printer; the replay asserts the fail-closed diagnosis.
+    last_error: list[CliError | None] = [None]
+    print_cli_error = cli_module._print_cli_error
+
+    def print_and_record_cli_error(error: CliError) -> None:
+        last_error[0] = error
+        print_cli_error(error)
+
+    monkeypatch.setattr(cli_module, "_print_cli_error", print_and_record_cli_error)
+
     def run_cli(args: tuple[str, ...]) -> int:
+        last_error[0] = None
         return run_main(repo, config_path, *args)
 
     replay_external_drift_scenario(
         discard_output=capsys.readouterr,
         fake_repo=fake_repo,
+        last_cli_error=lambda: last_error[0],
         repo=repo,
         run_cli=run_cli,
         scenario=scenario,

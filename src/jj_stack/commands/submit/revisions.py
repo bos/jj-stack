@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jj_stack.ui as ui
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, DriftError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
@@ -351,15 +351,17 @@ def _ensure_actual_remote_target_is_safe(
     if actual_target in {saved_target, entry.revision.commit_id}:
         return
     if actual_target is None:
-        raise CliError(
+        raise DriftError(
             t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} no longer exists.",
+            condition="remote_branch_missing",
             hint=(
                 t"Fetch and inspect the PR link before submitting again. If this branch "
                 t"should stay attached to this change, repair the link with relink."
             ),
         )
-    raise CliError(
+    raise DriftError(
         t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} points to an unexpected commit.",
+        condition="remote_branch_moved",
         hint=(
             t"Fetch and inspect the PR link before submitting again. If this branch "
             t"should stay attached to this change, repair the link with relink."
@@ -543,7 +545,8 @@ def ensure_change_is_not_unlinked(
 ) -> None:
     if review_status.link != "unlinked":
         return
-    raise CliError(
+    raise DriftError(
         t"Change {ui.change_id(change_id)} is unlinked from review tracking.",
+        condition="change_unlinked",
         hint=t"Run {ui.cmd('relink')} to reattach it before submitting again.",
     )

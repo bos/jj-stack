@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from jj_stack.ui import Message, plain_text
 
 type ErrorMessage = Message
@@ -115,3 +117,31 @@ class ConflictedStackError(CliError):
     """Unresolved conflicts in the selected changes block the requested operation."""
 
     exit_code = EXIT_CONFLICTS
+
+
+# Which pre-mutation verification check failed when cross-system drift made review
+# identity unprovable. The vocabulary matches docs/internals/distributed-state.md so
+# fail-closed stops that share an exit code stay distinguishable.
+type DriftCondition = Literal[
+    "change_unlinked",
+    "pull_request_ambiguous",
+    "pull_request_not_open",
+    "remote_branch_missing",
+    "remote_branch_moved",
+    "saved_pull_request_mismatch",
+    "saved_pull_request_missing",
+]
+
+
+class DriftError(CliError):
+    """Cross-system drift left review identity unprovable, so the command fails closed."""
+
+    def __init__(
+        self,
+        message: ErrorMessage,
+        *,
+        condition: DriftCondition,
+        hint: ErrorHint | None = None,
+    ) -> None:
+        super().__init__(message, hint=hint)
+        self.condition = condition

@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 
 import jj_stack.ui as ui
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, DriftError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
 from jj_stack.models.review_state import CachedChange, ReviewState
@@ -309,9 +309,10 @@ def _select_discovered_pull_request(
     pull_requests: tuple[GithubPullRequest, ...],
 ) -> GithubPullRequest | None:
     if len(pull_requests) > 1:
-        raise CliError(
+        raise DriftError(
             t"GitHub reports multiple pull requests for head branch "
             t"{ui.bookmark(head_label)}.",
+            condition="pull_request_ambiguous",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
@@ -321,9 +322,10 @@ def _select_discovered_pull_request(
         return None
     pull_request = pull_requests[0]
     if pull_request.state != "open":
-        raise CliError(
+        raise DriftError(
             t"GitHub reports pull request #{pull_request.number} for head branch "
             t"{ui.bookmark(head_label)} in state {pull_request.state}.",
+            condition="pull_request_not_open",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
@@ -349,28 +351,31 @@ def _ensure_pull_request_link_is_consistent(
     if cached_change is None:
         raise AssertionError("Saved pull request identity requires cached state.")
     if discovered_pull_request is None:
-        raise CliError(
+        raise DriftError(
             t"Saved pull request link exists for bookmark {ui.bookmark(bookmark)}, "
             t"but GitHub no longer reports a PR for that head branch.",
+            condition="saved_pull_request_missing",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
     if cached_change.pr_number not in (None, discovered_pull_request.number):
-        raise CliError(
+        raise DriftError(
             t"Saved pull request #{cached_change.pr_number} does not match the PR "
             t"GitHub reports for bookmark {ui.bookmark(bookmark)} "
             t"(#{discovered_pull_request.number}).",
+            condition="saved_pull_request_mismatch",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
     if cached_change.pr_url not in (None, discovered_pull_request.html_url):
-        raise CliError(
+        raise DriftError(
             t"Saved pull request URL for bookmark {ui.bookmark(bookmark)} does not "
             t"match GitHub.",
+            condition="saved_pull_request_mismatch",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
