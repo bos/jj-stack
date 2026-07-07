@@ -222,6 +222,44 @@ Remaining work:
 Docs should teach the workflow first and enumerate commands second. The primary
 risk is writing reference prose before the task-oriented guides are complete.
 
+## Per-Invocation jj Subprocess Overhead
+
+_Benefit: medium — trims startup latency for every command and is the largest
+remaining lever for integration-test runtime._
+
+Instrumenting the test suite showed each CLI invocation spends a fixed budget
+of `jj` subprocess calls before doing command-specific work: `config list
+jj-stack`, `config get ui.color` (twice), `config list --include-defaults
+colors`, `git remote list`, and `bookmark list --all-remotes`. Rendering also
+issues one `jj --no-pager --color never log -r <rev> --limit 1` per displayed
+revision (~480 calls per full test-suite run), which could be batched into a
+single `jj log` over the revisions being rendered. The `jj --version` gate is
+now cached per process; the config and display reads are the remaining
+candidates for batching or consolidation into fewer invocations.
+
+## Dead `ReviewChangeStatus.baseline` Axis
+
+_Benefit: small — dead code that misleads readers of the classifier._
+
+`classify_review_status_revision` / `classify_review_change` accept a
+`baseline_disagreement` parameter and populate a `ReviewChangeStatus.baseline`
+frozenset, but no production caller passes the parameter and nothing reads the
+field (disagreement warnings consume `SubmittedStateDisagreement` objects
+directly). Remove the axis or wire it to a real consumer.
+
+## Property Harness Cost Trims
+
+_Benefit: small — the property suite is opt-in, so this only affects the CI
+smoke job and manual runs._
+
+Audit findings not yet applied: `insert-middle` and `insert-before-middle`
+in the fixed stack-edit corpus produce model-identical outcomes and differ
+only in setup mechanics, so one can be dropped once the CI smoke count is
+adjusted; `_read_remote_ref` is called per label in loops where a single
+`_remote_refs` snapshot would do; the harness rebuilds and submits each
+initial stack per scenario and could reuse per-size cached submitted-stack
+templates the way integration tests now do.
+
 ## Native GitHub Stack Metadata via `gh stack link`
 
 _Benefit: medium — replaces tool-managed PR comments with GitHub's first-class
