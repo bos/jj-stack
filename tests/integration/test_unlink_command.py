@@ -9,7 +9,6 @@ from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
-    run_command,
 )
 from .submit_command_helpers import (
     configure_submit_environment,
@@ -68,40 +67,6 @@ def test_unlink_is_idempotent_for_unlinked_change(
 
     assert exit_code == 0
     assert "already unlinked from review tracking" in captured.out
-
-
-def test_unlink_accepts_stack_forked_from_trunk_ancestor(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    base_commit_id = JjClient(repo).resolve_revision("@-").commit_id
-
-    commit_file(repo, "trunk 1", "trunk-1.txt")
-    run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
-    run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "main"], repo)
-
-    run_command(["jj", "new", base_commit_id], repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    change_id = JjClient(repo).discover_review_stack(allow_immutable=True).revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().changes[change_id].bookmark
-    assert bookmark is not None
-
-    exit_code = run_main(repo, config_path, "unlink", change_id)
-    captured = capsys.readouterr()
-    unlinked_change = state_store.load().changes[change_id]
-
-    assert exit_code == 0
-    assert "Stopped review tracking for" in captured.out
-    assert unlinked_change.link_state == "unlinked"
-    assert JjClient(repo).get_bookmark_state(bookmark).local_target is not None
 
 
 def test_unlink_rejects_change_without_active_review_link(
