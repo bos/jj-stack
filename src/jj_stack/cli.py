@@ -32,6 +32,7 @@ import jj_stack.commands.list_ as list_command
 import jj_stack.commands.relink as relink_command
 import jj_stack.commands.restart as restart_command
 import jj_stack.commands.submit.command as submit_command
+import jj_stack.commands.sync as sync_command
 import jj_stack.commands.unlink as unlink_command
 import jj_stack.commands.unstack as unstack_command
 import jj_stack.commands.view as view_command
@@ -97,6 +98,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
         "Support commands",
         (
             HelpCommand("cleanup", cleanup_command.HELP),
+            HelpCommand("sync", sync_command.HELP),
             HelpCommand("checkout", checkout_command.HELP),
             HelpCommand("doctor", doctor_command.HELP),
         ),
@@ -492,6 +494,23 @@ def build_parser() -> ArgumentParser:
             t"Rebase the selected stack above changes already merged on GitHub; "
             t"defaults to {ui.revset('@-')} when passed without an explicit revset"
         ),
+    )
+
+    sync_parser = _add_revision_command(
+        subcommands,
+        command="sync",
+        help_text=normalized_help_text(sync_command.HELP),
+        description_text=sync_command.__doc__ or "",
+        handler=_forward_handler(sync_command.sync),
+        revset_help=(
+            t"Revision to sync; defaults to {ui.revset('@-')} (the current stack head)"
+        ),
+    )
+    add_help_argument(
+        sync_parser,
+        "--dry-run",
+        action="store_true",
+        help="Print the rebase plan and submit preview without making any changes",
     )
 
     _add_command_parser(

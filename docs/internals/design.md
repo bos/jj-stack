@@ -646,8 +646,34 @@ Failure guidance stays specific:
   identities rather than partially overwriting
 
 `view --fetch` stays the read-only refresh path; `checkout` is the explicit
-materialization path. A repo-scoped `sync` command remains a separate future question
-rather than being folded into either.
+materialization path. The stack-scoped `sync` command below composes refresh,
+merged-ancestor repair, and resubmission for one selected stack; a repo-scoped variant
+that refreshes several stacks at once remains a separate future question.
+
+### `sync`
+
+`jj stack sync [--dry-run] [<revset>]` chains the routine catch-up flow for one
+selected stack into a single command:
+
+1. refresh remote state and drop merged ancestors, exactly as
+   `cleanup --rebase [<revset>]` would, including its conservative stops
+2. if the rebase step is blocked, stop with the rebase diagnostics and exit `1`
+3. if every change on the selected stack has already merged, report that there is
+   nothing to submit and exit `0`
+4. otherwise run the plain `submit` flow on the re-resolved selected stack
+
+`sync` adds no new mutation surface of its own: it is exactly the composition of the
+two commands above under one operation lock, and each phase journals as itself. It
+accepts no submit flags; runs that need draft handling, descriptions, reviewers, or
+restart semantics use `submit` directly.
+
+`sync` only rewrites history to remove merged ancestors. It does not rebase the stack
+onto newer trunk commits when nothing in the stack has merged — that stays an explicit
+`jj rebase`.
+
+With `--dry-run`, the rebase plan is previewed; the submit preview follows only when no
+rebase work is planned, because a submit preview computed before an unapplied rebase
+would describe the wrong stack.
 
 ### `unstack`
 
@@ -901,6 +927,7 @@ The full command surface:
 - `jj stack unstack [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack delete [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack cleanup [--dry-run] [--rebase [<revset>]]`
+- `jj stack sync [--dry-run] [<revset>]`
 - `jj stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]`
 - `jj stack land [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack completion <bash|zsh|fish>`
@@ -914,7 +941,7 @@ current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `view`, `land`, `unstack`) plus support commands
-(`cleanup`, `checkout`). Repair commands (`restart`, `relink`, `unlink`) and
+(`cleanup`, `checkout`, `sync`). Repair commands (`restart`, `relink`, `unlink`) and
 shell-integration glue (`completion`) stay hidden by default and only appear in
 `jj stack help --all`. The `help` command itself is hidden parser glue: `jj stack help`
 is the same as
@@ -928,8 +955,8 @@ readable.
 
 Target selection is conservative:
 
-- `submit`, `unstack`, `land`, and `cleanup --rebase` default to the stack headed by
-  `@-` when `<revset>` is omitted
+- `submit`, `unstack`, `land`, `sync`, and `cleanup --rebase` default to the stack
+  headed by `@-` when `<revset>` is omitted
 - `submit --draft[=new|all]` and `submit --open` are mutually exclusive
 - `submit --edit` and `submit --describe-with` are mutually exclusive; `--edit` composes
   with `--describe` by pre-filling the editor document from the resolved files

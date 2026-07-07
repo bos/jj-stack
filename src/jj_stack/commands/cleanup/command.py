@@ -52,7 +52,7 @@ from jj_stack.state.operation_lock import (
 )
 from jj_stack.ui import plain_text
 
-from .rebase import _run_cleanup_rebase_command
+from .rebase import run_cleanup_rebase_command
 from .shared import (
     CleanupAction,
     CleanupResult,
@@ -97,11 +97,12 @@ def cleanup(
         command="cleanup --rebase" if rebase_revset is not None else "cleanup",
     ):
         if rebase_revset is not None:
-            return _run_cleanup_rebase_command(
+            rebase_result = run_cleanup_rebase_command(
                 context=context,
                 dry_run=dry_run,
                 rebase_revset=rebase_revset,
             )
+            return 1 if rebase_result.blocked else 0
 
         return _run_cleanup_command(
             context=context,

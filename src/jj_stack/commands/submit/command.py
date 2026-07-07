@@ -146,20 +146,35 @@ def submit(
         context.state_store.require_writable(),
         command="submit",
     ):
-        result = asyncio.run(
-            _run_submit_async(
-                context=context,
-                # The selected line is only rendered when submit picked the
-                # default head for the user.
-                on_prepared=_print_selected_line if revset is None else None,
-                options=options,
-            ),
+        result = run_submit(
+            context=context,
+            # The selected line is only rendered when submit picked the
+            # default head for the user.
+            on_prepared=print_selected_line if revset is None else None,
+            options=options,
         )
     print_submit_result(result)
     return 0
 
 
-def _print_selected_line(selected_change_id: str, selected_subject: str) -> None:
+def run_submit(
+    *,
+    context: CommandContext,
+    on_prepared: Callable[[str, str], None] | None,
+    options: SubmitOptions,
+) -> SubmitResult:
+    """Run the full submit flow. The caller owns the operation lock."""
+
+    return asyncio.run(
+        _run_submit_async(
+            context=context,
+            on_prepared=on_prepared,
+            options=options,
+        ),
+    )
+
+
+def print_selected_line(selected_change_id: str, selected_subject: str) -> None:
     console.output(
         render_selected_line(
             selected_change_id=selected_change_id,

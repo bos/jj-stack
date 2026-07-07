@@ -133,6 +133,9 @@ class RebaseResult:
 
     actions: tuple[CleanupAction, ...]
     blocked: bool
+    # Whether every review change on the selected path has a merged PR, so a
+    # follow-up submit would have nothing left to send.
+    fully_merged: bool = False
 
 
 @dataclass(frozen=True, slots=True)

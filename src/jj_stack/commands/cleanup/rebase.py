@@ -43,12 +43,12 @@ from .shared import (
 )
 
 
-def _run_cleanup_rebase_command(
+def run_cleanup_rebase_command(
     *,
     context: CommandContext,
     dry_run: bool,
     rebase_revset: str,
-) -> int:
+) -> RebaseResult:
     """Render and run the `cleanup --rebase` command path."""
 
     try:
@@ -72,7 +72,7 @@ def _run_cleanup_rebase_command(
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
     _emit_output_lines(_render_rebase_postamble(result=result))
-    return 1 if result.blocked else 0
+    return result
 
 
 def _prepare_cleanup_rebase(
@@ -213,6 +213,8 @@ def _stream_rebase(
         return RebaseResult(
             actions=recorder.as_tuple(),
             blocked=blocked,
+            fully_merged=bool(path_revisions)
+            and len(merged_revisions) == len(path_revisions),
         )
     finally:
         if _rebase_succeeded:

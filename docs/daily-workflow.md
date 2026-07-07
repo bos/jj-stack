@@ -209,6 +209,17 @@ GitHub's view of your stack with:
 jj-stack submit
 ```
 
+`jj-stack sync` chains that catch-up flow into one command: it refreshes remote state, runs
+the same merged-ancestor rebase as `cleanup --rebase`, and then resubmits the stack:
+
+```bash
+jj-stack sync
+```
+
+Like `cleanup --rebase`, `sync` only rewrites history to remove merged changes — it never
+rebases your stack onto newer trunk commits when nothing in it has merged. Use
+`sync --dry-run` to preview the rebase plan first.
+
 ## 8. Unstack abandoned stacks
 
 If a stack should no longer be reviewed:
@@ -258,9 +269,10 @@ jj-stack submit
 # edit in jj
 jj-stack submit
 jj-stack land
-jj-stack cleanup --rebase
-jj-stack submit
+jj-stack sync
 ```
+
+(`sync` is shorthand for the `cleanup --rebase` + `submit` catch-up pair.)
 
 ## When something goes wrong
 

@@ -289,7 +289,9 @@ while another mutation is running. The operation lock replaces same-kind PID wai
 
 `land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `unstack`, and orphaned
 `unstack --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
-events to `operation-log.jsonl` for after-the-fact inspection. Retry behavior derives from
+events to `operation-log.jsonl` for after-the-fact inspection. `sync` composes
+`cleanup --rebase` and `submit` under one operation lock; each composed phase journals
+as itself. Retry behavior derives from
 the current jj DAG, saved tracking data, GitHub state, and explicit user selectors. The
 log is primarily audit evidence and is not a generic recovery model; the one carve-out is
 `land`, which consults the log to detect that an unfinished run already pushed trunk so a
