@@ -606,6 +606,15 @@ this machine, `checkout` is what you run. Plain `view` does not do this implicit
 Selector handling stays unambiguous: a bare positional argument does not double as both
 revset and PR number, and omitting selector flags defaults to the stack headed by `@-`.
 
+`checkout --pick` is a third, interactive selector: it lists the locally tracked stacks
+(current stack first) numbered on standard output, reads one number from standard
+input, and then proceeds exactly as if that stack's head had been passed via
+`--revset`. The picker offers only stacks that already have local tracking — attaching
+a remote-only stack still requires an explicit `--pull-request`. Empty, non-numeric, or
+out-of-range input fails closed with a usage error, and no tracked stacks at all is a
+targeted error pointing at `--pull-request`. The prompt happens before the operation
+lock is taken so an idle picker never blocks other commands.
+
 `checkout` sets up tracking, not workspace motion:
 
 - without `--fetch`, use only commits and PR-backed state already available locally
@@ -928,7 +937,7 @@ The full command surface:
 - `jj stack delete [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack cleanup [--dry-run] [--rebase [<revset>]]`
 - `jj stack sync [--dry-run] [<revset>]`
-- `jj stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]`
+- `jj stack checkout [--fetch] [--pick | --pull-request <pr> | --revset <revset>]`
 - `jj stack land [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack completion <bash|zsh|fish>`
 
@@ -965,8 +974,8 @@ Target selection is conservative:
 - `submit --re-request` re-requests users whose latest review is `APPROVED` or
   `CHANGES_REQUESTED`; pending review requests stay in place
 - `restart`, `relink`, and `unlink` require one explicit `<revset>`
-- `checkout` accepts at most one explicit selector flag and otherwise defaults to the
-  current stack headed by `@-`
+- `checkout` accepts at most one explicit selector flag (`--pick`, `--pull-request`, or
+  `--revset`) and otherwise defaults to the current stack headed by `@-`
 - `view` may omit `<revset>` and inspects the current stack
 
 ### Exit codes

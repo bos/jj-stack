@@ -4,9 +4,10 @@ By default, `checkout` tries to match the current stack headed by `@-` to the
 existing pull requests for that stack.
 
 Use `--pull-request` to select a specific stack by PR number or URL, or
-`--revset` to point at a different local stack. Use `--fetch` when the review
-branches are not available locally yet; this fetches them first and then sets
-up tracking.
+`--revset` to point at a different local stack. Use `--pick` to choose from a
+numbered list of the stacks jj-stack already tracks. Use `--fetch` when the
+review branches are not available locally yet; this fetches them first and
+then sets up tracking.
 
 `checkout` does not rewrite commits, rebase changes, or modify GitHub.
 """
@@ -14,6 +15,7 @@ up tracking.
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +24,7 @@ from typing import Literal, Protocol
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.errors import AmbiguousSelectionError, CliError, ErrorMessage
+from jj_stack.errors import AmbiguousSelectionError, CliError, ErrorMessage, UsageError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
@@ -35,12 +37,14 @@ from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import CachedChange
+from jj_stack.models.stack import LocalStack
 from jj_stack.review.bookmarks import (
     bookmark_matches_generated_change_id,
     bookmark_ownership_for_source,
     discover_bookmarks_for_revisions,
 )
 from jj_stack.review.change_status import classify_review_change_without_pull_request
+from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.status import (
     PreparedRevision,
     PreparedStatus,
@@ -127,6 +131,7 @@ def checkout(
     cli_args: JjCliArgs,
     debug: bool,
     fetch: bool,
+    pick: bool,
     pull_request: str | None,
     repository: Path | None,
     revset: str | None,
@@ -138,6 +143,10 @@ def checkout(
         cli_args=cli_args,
         debug=debug,
     )
+    if pick:
+        # The prompt happens before the operation lock so an idle picker never
+        # blocks other commands.
+        revset = _pick_tracked_stack_head(context)
     with acquire_operation_lock(context.state_store.require_writable(), command="checkout"):
         result = asyncio.run(
             _run_checkout_async(
@@ -175,6 +184,57 @@ def _print_checkout_result(result: CheckoutResult) -> None:
             console.output("Local tracking is already up to date for this stack.")
         else:
             console.output("The selected stack has no changes to review.")
+
+
+def _pick_tracked_stack_head(context: CommandContext) -> str:
+    """List the tracked stacks, read a pick from stdin, and return its head."""
+
+    discovered = discover_tracked_stacks(
+        jj_client=context.jj_client,
+        state=context.state_store.load(),
+    )
+    stacks = sorted(
+        discovered.stacks,
+        key=lambda stack: (
+            not _stack_contains_commit_id(stack, discovered.current_commit_id),
+            stack.head.change_id,
+        ),
+    )
+    if not stacks:
+        raise CliError(
+            "No locally tracked stacks to pick from.",
+            hint=t"Use {ui.cmd('checkout --pull-request PR')} to attach a stack "
+            t"that has no local tracking yet.",
+        )
+    console.output("Locally tracked stacks:")
+    for index, stack in enumerate(stacks, start=1):
+        count = len(stack.revisions)
+        noun = "change" if count == 1 else "changes"
+        console.output(
+            t"  [{index}] {ui.change_id(stack.head.change_id)} "
+            t"{stack.head.subject} ({count} {noun})"
+        )
+    console.output(t"Pick a stack [1-{len(stacks)}]: ")
+    line = sys.stdin.readline()
+    if not line:
+        raise UsageError(t"{ui.cmd('--pick')} needs a stack number on standard input.")
+    selection = line.strip()
+    if not selection.isdigit() or not 1 <= int(selection) <= len(stacks):
+        raise UsageError(
+            t"{ui.cmd(selection or '(empty)')} is not a valid stack number; "
+            t"expected 1-{len(stacks)}."
+        )
+    picked = stacks[int(selection) - 1]
+    console.output(
+        t"Picked stack {ui.change_id(picked.head.change_id)} ({picked.head.subject})"
+    )
+    return picked.head.change_id
+
+
+def _stack_contains_commit_id(stack: LocalStack, commit_id: str | None) -> bool:
+    if commit_id is None:
+        return False
+    return any(revision.commit_id == commit_id for revision in stack.revisions)
 
 
 async def _run_checkout_async(

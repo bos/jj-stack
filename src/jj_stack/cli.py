@@ -960,6 +960,12 @@ def _add_checkout_parser(
         help="Explicit revset whose exact stack should be checked out",
     )
     add_help_argument(
+        selector,
+        "--pick",
+        action="store_true",
+        help="Choose from a numbered list of the stacks jj-stack already tracks",
+    )
+    add_help_argument(
         parser,
         "--fetch",
         action="store_true",

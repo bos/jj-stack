@@ -112,7 +112,9 @@ Use `view` when you need to answer:
 - which PRs are draft, approved, blocked, or need cleanup
 
 If review state already exists on another machine or only on GitHub, run `jj-stack checkout`
-first to start working on that stack locally.
+first to start working on that stack locally. When several stacks are already tracked and
+you don't remember a head change ID, `jj-stack checkout --pick` presents a numbered list to
+choose from.
 
 If you want to inspect the stack for one linked PR directly:
 

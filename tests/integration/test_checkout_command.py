@@ -393,3 +393,70 @@ def _main(repo: Path, config_path: Path, command: str, *command_args: str) -> in
     argv = ["--config-file", str(config_path), "--repository", str(repo), command]
     argv.extend(command_args)
     return main(argv)
+
+
+def test_checkout_pick_lists_tracked_stacks_and_checks_out_the_selection(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "feature 2", "feature-2.txt")
+    assert _main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("2\n"))
+    exit_code = _main(repo, config_path, "checkout", "--pick")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Locally tracked stacks:" in captured.out
+    assert "feature 1" in captured.out
+    assert "feature 2" in captured.out
+    # The working copy sits on the feature 2 stack, so it lists first and
+    # option 2 picks the feature 1 stack.
+    assert "Picked stack" in captured.out
+    assert "(feature 1)" in captured.out
+
+
+def test_checkout_pick_rejects_invalid_selection_before_any_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    capsys.readouterr()
+
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("9\n"))
+    exit_code = _main(repo, config_path, "checkout", "--pick")
+    captured = capsys.readouterr()
+
+    assert exit_code == 5
+    assert "is not a valid stack number" in captured.err
+
+
+def test_checkout_pick_without_tracked_stacks_points_at_pull_request_selector(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("1\n"))
+    exit_code = _main(repo, config_path, "checkout", "--pick")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "No locally tracked stacks to pick from." in captured.err
+    assert "checkout --pull-request PR" in captured.err
