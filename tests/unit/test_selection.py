@@ -9,10 +9,31 @@ from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.selection import (
+    parse_comma_separated_flag_values,
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
     resolve_selected_revset,
 )
+
+
+def test_parse_comma_separated_flag_values_returns_none_when_flag_absent() -> None:
+    assert parse_comma_separated_flag_values(None) is None
+
+
+def test_parse_comma_separated_flag_values_flattens_repeated_flags_and_commas() -> None:
+    assert parse_comma_separated_flag_values(["alice,bob", "carol"]) == [
+        "alice",
+        "bob",
+        "carol",
+    ]
+
+
+def test_parse_comma_separated_flag_values_dedupes_keeping_first_occurrence_order() -> None:
+    assert parse_comma_separated_flag_values(["alice,bob", "carol,bob", "alice"]) == [
+        "alice",
+        "bob",
+        "carol",
+    ]
 
 
 def test_resolve_selected_revset_requires_explicit_selection() -> None:

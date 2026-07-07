@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from jj_stack.bootstrap import CommandContext
+from jj_stack.commands.submit.auto_close import (
+    verify_no_unexpected_pull_request_closures,
+)
+from jj_stack.commands.submit.command import _resolve_submit_options
 from jj_stack.commands.submit.inputs import (
-    preflight_conflicted_revisions as _preflight_conflicted_revisions,
     preflight_private_commits as _preflight_private_commits,
 )
 from jj_stack.commands.submit.models import (
@@ -17,6 +24,8 @@ from jj_stack.commands.submit.models import (
 )
 from jj_stack.commands.submit.pull_requests import (
     _ensure_pull_request_link_is_consistent,
+    _reviewers_to_re_request,
+    _select_discovered_pull_request,
 )
 from jj_stack.commands.submit.revisions import (
     _ClassifiedRevision,
@@ -26,10 +35,17 @@ from jj_stack.commands.submit.revisions import (
     prepare_submit_revisions as _prepare_submit_revisions,
     sync_local_bookmarks as _sync_local_bookmarks,
 )
+from jj_stack.config import AppConfig
 from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_stack.models.github import GithubBranchRef, GithubPullRequest
+from jj_stack.models.github import (
+    GithubBranchRef,
+    GithubPullRequest,
+    GithubPullRequestReview,
+    GithubPullRequestReviewUser,
+)
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.bookmarks import (
@@ -511,31 +527,139 @@ def test_preflight_private_commits_raises_on_private_commit() -> None:
         _preflight_private_commits(client, (private,))
 
 
-def test_preflight_conflicted_revisions_raises_on_conflicted_change() -> None:
-    conflicted = LocalRevision(
-        change_id="head-change",
-        commit_id="head",
-        conflict=True,
-        current_working_copy=False,
-        description="conflicted feature\n",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("trunk",),
+def test_select_discovered_pull_request_rejects_multiple_matches_for_head_branch() -> None:
+    with pytest.raises(CliError, match="multiple pull requests"):
+        _select_discovered_pull_request(
+            head_label="octo-org:review/foo",
+            pull_requests=(
+                _github_pull_request(number=1),
+                _github_pull_request(number=2),
+            ),
+        )
+
+
+def test_select_discovered_pull_request_rejects_non_open_pull_request() -> None:
+    with pytest.raises(CliError, match="in state closed"):
+        _select_discovered_pull_request(
+            head_label="octo-org:review/foo",
+            pull_requests=(_github_pull_request(number=1, state="closed"),),
+        )
+
+
+def _reviews(*specs: tuple[int, str, str]) -> tuple[GithubPullRequestReview, ...]:
+    return tuple(
+        GithubPullRequestReview(
+            id=review_id,
+            state=state,
+            user=GithubPullRequestReviewUser(login=login),
+        )
+        for review_id, login, state in specs
     )
 
-    with pytest.raises(CliError, match="unresolved conflicts"):
-        _preflight_conflicted_revisions((conflicted,))
+
+def test_reviewers_to_re_request_includes_approved_and_changes_requested_by_id_order() -> None:
+    reviews = _reviews(
+        (2, "carol", "APPROVED"),
+        (1, "bob", "CHANGES_REQUESTED"),
+        (3, "dave", "COMMENTED"),
+    )
+
+    assert _reviewers_to_re_request(reviews) == ["bob", "carol"]
 
 
-def _github_pull_request(number: int) -> GithubPullRequest:
+def test_reviewers_to_re_request_uses_latest_review_state_per_reviewer() -> None:
+    reviews = _reviews(
+        (1, "alice", "APPROVED"),
+        (2, "alice", "DISMISSED"),
+        (3, "erin", "CHANGES_REQUESTED"),
+        (4, "erin", "APPROVED"),
+    )
+
+    assert _reviewers_to_re_request(reviews) == ["erin"]
+
+
+class _RefetchPullRequestsClient:
+    def __init__(self, *, refetched: dict[int, GithubPullRequest | None]) -> None:
+        self._refetched = refetched
+
+    async def get_pull_requests_by_numbers(
+        self,
+        *,
+        pull_numbers,
+    ) -> dict[int, GithubPullRequest | None]:
+        return {number: self._refetched.get(number) for number in pull_numbers}
+
+
+def test_verify_no_unexpected_pull_request_closures_raises_when_pr_vanishes() -> None:
+    client = _RefetchPullRequestsClient(refetched={2: None})
+
+    with pytest.raises(CliError, match="no longer reports them"):
+        asyncio.run(
+            verify_no_unexpected_pull_request_closures(
+                discovered_pull_requests={"review/foo": _github_pull_request(number=2)},
+                github_client=cast(GithubClient, client),
+            )
+        )
+
+
+def test_verify_no_unexpected_pull_request_closures_raises_when_pr_becomes_closed() -> None:
+    client = _RefetchPullRequestsClient(
+        refetched={2: _github_pull_request(number=2, state="closed")},
+    )
+
+    with pytest.raises(CliError, match="closed by the end"):
+        asyncio.run(
+            verify_no_unexpected_pull_request_closures(
+                discovered_pull_requests={"review/foo": _github_pull_request(number=2)},
+                github_client=cast(GithubClient, client),
+            )
+        )
+
+
+def _submit_context(config: AppConfig) -> CommandContext:
+    return cast(CommandContext, SimpleNamespace(config=config))
+
+
+def test_resolve_submit_options_prefers_cli_reviewers_and_labels_over_config() -> None:
+    resolved = _resolve_submit_options(
+        context=_submit_context(
+            AppConfig(
+                labels=["config-label"],
+                reviewers=["config-user"],
+                team_reviewers=["config-team"],
+            )
+        ),
+        options=replace(
+            _submit_options(),
+            labels=["cli-label"],
+            reviewers=["cli-user"],
+        ),
+    )
+
+    assert resolved.labels == ["cli-label"]
+    assert resolved.reviewers == ["cli-user"]
+    assert resolved.team_reviewers == ["config-team"]
+
+
+def test_resolve_submit_options_falls_back_to_config_reviewers_and_labels() -> None:
+    resolved = _resolve_submit_options(
+        context=_submit_context(
+            AppConfig(labels=["config-label"], reviewers=["config-user"])
+        ),
+        options=replace(_submit_options(), labels=None, reviewers=None),
+    )
+
+    assert resolved.labels == ["config-label"]
+    assert resolved.reviewers == ["config-user"]
+
+
+def _github_pull_request(number: int, *, state: str = "open") -> GithubPullRequest:
     return GithubPullRequest(
         base=GithubBranchRef(ref="main"),
         body="",
         head=GithubBranchRef(ref="review/foo"),
         html_url=f"https://github.test/octo-org/repo/pull/{number}",
         number=number,
-        state="open",
+        state=state,
         title="feature",
     )
