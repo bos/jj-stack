@@ -23,6 +23,11 @@ or automated, such as invoking an LLM to generate these descriptions.
 --stack <revset>` for the selected stack. The helper must output JSON with string `title` and
 `body` fields.
 
+Use `--edit` to review and edit the planned pull request titles and bodies in your editor
+before anything is pushed. Saving the document continues the submit; a malformed document or
+a non-zero editor exit aborts it before any change is made. The editor is the one jj's
+`ui.editor` setting resolves to. `--edit` cannot be combined with `--describe-with`.
+
 The `--label`, `--reviewers`, `--team-reviewers`, and `--use-bookmarks` flags
 accept comma-separated values and may be repeated. When passed, they override
 the corresponding configured defaults for this run.
@@ -103,6 +108,7 @@ def submit(
     draft: bool,
     draft_all: bool,
     dry_run: bool,
+    edit: bool,
     labels: Sequence[str] | None,
     open_: bool,
     re_request: bool,
@@ -126,6 +132,7 @@ def submit(
         draft=draft,
         draft_all=draft_all,
         dry_run=dry_run,
+        edit=edit,
         labels=labels,
         open_=open_,
         re_request=re_request,
@@ -168,6 +175,7 @@ def _submit_options_from_cli(
     draft: bool,
     draft_all: bool,
     dry_run: bool,
+    edit: bool,
     labels: Sequence[str] | None,
     open_: bool,
     re_request: bool,
@@ -192,6 +200,7 @@ def _submit_options_from_cli(
             open_=open_,
         ),
         dry_run=dry_run,
+        edit=edit,
         labels=parse_comma_separated_flag_values(labels),
         re_request=re_request,
         restart=restart,

@@ -63,6 +63,15 @@ Each PR's title is the change's subject line, and its body is the rest of the ch
 description. When a description has no body, `submit` uses your repository's pull request
 template (for example `.github/PULL_REQUEST_TEMPLATE.md`) if one exists.
 
+To review and polish those titles and bodies in your editor before anything is pushed:
+
+```bash
+jj-stack submit --edit
+```
+
+Saving the document continues the submit; quitting the editor with a non-zero exit aborts it
+with nothing pushed.
+
 If you already have a PR body in a Markdown file, attach it while submitting:
 
 ```bash

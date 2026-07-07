@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,7 @@ def resolve_generated_descriptions(
     *,
     descriptions: Sequence[str],
     describe_with: str | None,
+    edit: bool = False,
     jj_client: JjClient,
     revisions: tuple[LocalRevision, ...],
     selected_revset: str,
@@ -34,26 +36,32 @@ def resolve_generated_descriptions(
 
     if descriptions and describe_with is not None:
         raise UsageError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
+    if edit and describe_with is not None:
+        raise UsageError(t"Use either {ui.cmd('--edit')} or {ui.cmd('--describe-with')}.")
 
     if describe_with is None:
         default_descriptions = _default_pull_request_descriptions(
             revisions,
             template=_read_pull_request_template(jj_client.repo_root),
         )
-        if not descriptions:
-            return default_descriptions, None
-        file_descriptions, stack_description = _resolve_description_files(
-            descriptions=descriptions,
-            jj_client=jj_client,
-            revisions=revisions,
-        )
-        return (
-            {
+        stack_description: GeneratedDescription | None = None
+        if descriptions:
+            file_descriptions, stack_description = _resolve_description_files(
+                descriptions=descriptions,
+                jj_client=jj_client,
+                revisions=revisions,
+            )
+            default_descriptions = {
                 **default_descriptions,
                 **file_descriptions,
-            },
-            stack_description,
-        )
+            }
+        if edit:
+            default_descriptions = _edit_descriptions_in_editor(
+                descriptions=default_descriptions,
+                jj_client=jj_client,
+                revisions=revisions,
+            )
+        return default_descriptions, stack_description
 
     generated_descriptions = {
         revision.change_id: _run_description_command(
@@ -117,6 +125,143 @@ def _read_pull_request_template(repo_root: Path) -> str:
                     t"Could not read pull request template {ui.cmd(str(path))}: {error}"
                 ) from error
     return ""
+
+
+_EDIT_SEPARATOR_PREFIX = "====== change "
+_EDIT_COMMENT_PREFIX = "JJ:"
+
+
+def render_description_edit_document(
+    *,
+    descriptions: dict[str, GeneratedDescription],
+    revisions: tuple[LocalRevision, ...],
+) -> str:
+    """Render the `--edit` document, head change first like `view`."""
+
+    lines = [
+        "JJ: Edit pull request titles and bodies, then save and close the editor.",
+        "JJ: In each change section the first line is the title; the rest is the body.",
+        'JJ: Lines starting with "JJ:" are ignored. Do not edit the separator lines.',
+    ]
+    for revision in reversed(revisions):
+        description = descriptions[revision.change_id]
+        lines.append("")
+        lines.append(f"{_EDIT_SEPARATOR_PREFIX}{revision.change_id}")
+        lines.append(description.title)
+        if description.body:
+            lines.append("")
+            lines.extend(description.body.splitlines())
+    return "\n".join(lines) + "\n"
+
+
+def parse_description_edit_document(
+    document: str,
+    *,
+    revisions: tuple[LocalRevision, ...],
+) -> dict[str, GeneratedDescription]:
+    """Parse an edited `--edit` document, failing closed on anything malformed."""
+
+    known_change_ids = {revision.change_id for revision in revisions}
+    sections: dict[str, list[str]] = {}
+    current_section: list[str] | None = None
+    for line in document.splitlines():
+        if line.startswith(_EDIT_COMMENT_PREFIX):
+            continue
+        if line.startswith(_EDIT_SEPARATOR_PREFIX):
+            change_id = line[len(_EDIT_SEPARATOR_PREFIX) :].strip()
+            if change_id not in known_change_ids:
+                raise CliError(
+                    t"Edited pull request descriptions name unknown change "
+                    t"{ui.change_id(change_id)}."
+                )
+            if change_id in sections:
+                raise CliError(
+                    t"Edited pull request descriptions repeat change "
+                    t"{ui.change_id(change_id)}."
+                )
+            current_section = sections[change_id] = []
+            continue
+        if current_section is None:
+            if line.strip():
+                raise CliError(
+                    "Edited pull request descriptions have content before the first "
+                    "change separator."
+                )
+            continue
+        current_section.append(line)
+
+    parsed: dict[str, GeneratedDescription] = {}
+    for revision in revisions:
+        section = sections.get(revision.change_id)
+        if section is None:
+            raise CliError(
+                t"Edited pull request descriptions are missing change "
+                t"{ui.change_id(revision.change_id)}."
+            )
+        title_index = 0
+        while title_index < len(section) and not section[title_index].strip():
+            title_index += 1
+        if title_index == len(section):
+            raise CliError(
+                t"Edited pull request description for "
+                t"{ui.change_id(revision.change_id)} has no title line."
+            )
+        parsed[revision.change_id] = GeneratedDescription(
+            body="\n".join(section[title_index + 1 :]).strip(),
+            title=section[title_index].strip(),
+        )
+    return parsed
+
+
+def _resolve_editor_command(jj_client: JjClient) -> list[str]:
+    for candidate in (
+        jj_client.get_config_string("ui.editor"),
+        os.environ.get("VISUAL"),
+        os.environ.get("EDITOR"),
+    ):
+        if candidate and candidate.strip():
+            return shlex.split(candidate)
+    raise UsageError(
+        t"{ui.cmd('--edit')} needs an editor: set jj's {ui.code('ui.editor')} config "
+        t"or the {ui.code('VISUAL')} or {ui.code('EDITOR')} environment variable."
+    )
+
+
+def _edit_descriptions_in_editor(
+    *,
+    descriptions: dict[str, GeneratedDescription],
+    jj_client: JjClient,
+    revisions: tuple[LocalRevision, ...],
+) -> dict[str, GeneratedDescription]:
+    editor_command = _resolve_editor_command(jj_client)
+    document = render_description_edit_document(
+        descriptions=descriptions,
+        revisions=revisions,
+    )
+    with tempfile.TemporaryDirectory(prefix="jj-stack-edit-") as tempdir:
+        document_path = Path(tempdir) / "pull-request-descriptions.md"
+        document_path.write_text(document, encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                [*editor_command, str(document_path)],
+                check=False,
+                cwd=jj_client.repo_root,
+            )
+        except FileNotFoundError as error:
+            raise CliError(
+                t"Editor {ui.cmd(editor_command[0])} was not found."
+            ) from error
+        except OSError as error:
+            raise CliError(
+                t"Could not run editor {ui.cmd(editor_command[0])}: {error}"
+            ) from error
+        if completed.returncode != 0:
+            raise CliError(
+                t"Editor {ui.cmd(editor_command[0])} exited with status "
+                t"{completed.returncode}; submit aborted."
+            )
+        edited_document = document_path.read_text(encoding="utf-8")
+    return parse_description_edit_document(edited_document, revisions=revisions)
 
 
 def _resolve_description_files(

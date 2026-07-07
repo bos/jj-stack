@@ -86,6 +86,7 @@ def prepare_submit_inputs(
     ) = resolve_generated_descriptions(
         descriptions=options.descriptions,
         describe_with=options.describe_with,
+        edit=options.edit,
         jj_client=client,
         selected_revset=stack.selected_revset,
         revisions=stack.revisions,

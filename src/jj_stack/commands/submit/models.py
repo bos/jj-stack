@@ -29,6 +29,7 @@ class SubmitOptions:
     describe_with: str | None
     draft_mode: SubmitDraftMode
     dry_run: bool
+    edit: bool
     labels: list[str] | None
     re_request: bool
     restart: bool

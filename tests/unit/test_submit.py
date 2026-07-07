@@ -68,6 +68,7 @@ def _submit_options(*, dry_run: bool = False) -> SubmitOptions:
         describe_with=None,
         draft_mode="default",
         dry_run=dry_run,
+        edit=False,
         labels=None,
         re_request=False,
         restart=False,

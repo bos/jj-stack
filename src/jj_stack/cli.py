@@ -223,6 +223,12 @@ def build_parser() -> ArgumentParser:
         metavar="HELPER",
         help="Delegate pull request and stack-comment text generation to HELPER",
     )
+    add_help_argument(
+        submit_parser,
+        "--edit",
+        action="store_true",
+        help="Edit the planned pull request titles and bodies in your editor first",
+    )
     submit_draft_mode = submit_parser.add_mutually_exclusive_group()
     add_help_argument(
         submit_draft_mode,

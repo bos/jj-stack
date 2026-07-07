@@ -348,6 +348,15 @@ Given a chosen head revision:
      than replaying the full patch history.
    - helper output must be structured. Invalid output aborts `submit` before any local,
      remote, or GitHub mutation.
+   - `submit --edit` opens the user's editor once with the planned title and body of
+     every PR in the selected stack, pre-filled from the defaults above (including any
+     `--describe` files), rendered top-to-bottom like `view`. The edited document
+     replaces those titles and bodies. Invalid edits — content before the first change
+     separator, an unknown, repeated, or missing change section, or a section with no
+     title line — abort `submit` before any local, remote, or GitHub mutation, as does
+     a non-zero editor exit. The editor is the one jj's `ui.editor` resolves to
+     (including its `$VISUAL`/`$EDITOR` fallbacks); `--edit` cannot be combined with
+     `--describe-with`, whose helper already owns description authoring.
 7. Treat merged ancestors as no longer reviewable. Bottom-up for each remaining change:
    - point the local bookmark at the current visible commit for the change
    - treat topology changes as meaningful even when the diff is unchanged: if the parent
@@ -882,7 +891,7 @@ The full command surface:
 - `jj stack submit [--draft[=new|all] | --open]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
   [--describe <change>=<file> | --describe stack=<file> | --describe-with <helper>]
-  [--re-request] [--restart] [<revset>]`
+  [--edit] [--re-request] [--restart] [<revset>]`
 - `jj stack view [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
 - `jj stack list [--fetch] [--json]`
 - `jj stack ls [--fetch] [--json]`
@@ -922,6 +931,8 @@ Target selection is conservative:
 - `submit`, `unstack`, `land`, and `cleanup --rebase` default to the stack headed by
   `@-` when `<revset>` is omitted
 - `submit --draft[=new|all]` and `submit --open` are mutually exclusive
+- `submit --edit` and `submit --describe-with` are mutually exclusive; `--edit` composes
+  with `--describe` by pre-filling the editor document from the resolved files
 - `submit --reviewers` and `submit --team-reviewers` override configured reviewer
   defaults for the current invocation only
 - `submit --re-request` re-requests users whose latest review is `APPROVED` or
