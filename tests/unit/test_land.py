@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import cast
 
@@ -8,15 +9,18 @@ import pytest
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.land.command import _stack_not_on_trunk_error
 from jj_stack.commands.land.execute import (
+    _finalize_landed_pull_request,
     _updated_landed_change,
     ensure_trunk_branch_matches_selected_trunk,
 )
+from jj_stack.commands.land.models import LandRevision
 from jj_stack.commands.land.plan import (
     _collect_landable_prefix,
     _plan_review_bookmark_cleanup,
 )
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
@@ -325,6 +329,92 @@ def test_landed_revision_updates_cached_change_after_merge() -> None:
     assert updated.pr_state == "merged"
     assert updated.navigation_comment_id is None
     assert updated.overview_comment_id is None
+
+
+def test_finalize_landed_pull_request_treats_close_422_as_already_merged() -> None:
+    class CloseRaceGithubClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+            self.get_calls = 0
+
+        async def get_pull_request(self, *, pull_number: int) -> GithubPullRequest:
+            self.get_calls += 1
+            if self.get_calls == 1:
+                return _pull_request(number=pull_number)
+            return _pull_request(number=pull_number, state="merged")
+
+        async def close_pull_request(self, *, pull_number: int) -> None:
+            self.close_calls += 1
+            raise GithubClientError(
+                'GitHub request failed: 422 {"message":"Validation Failed"}',
+                status_code=422,
+            )
+
+    github_client = CloseRaceGithubClient()
+
+    pull_request = asyncio.run(
+        _finalize_landed_pull_request(
+            cached_change=None,
+            github_client=cast(GithubClient, github_client),
+            landed_revision=LandRevision(
+                bookmark="review/feature-1-aaaaaaaa",
+                bookmark_managed=True,
+                change_id="change-1",
+                commit_id="commit-1",
+                needs_resubmit=False,
+                pull_request_number=1,
+                subject="feature 1",
+            ),
+            trunk_branch="main",
+        )
+    )
+
+    assert pull_request.state == "merged"
+    assert github_client.close_calls == 1
+    assert github_client.get_calls == 2
+
+
+def test_finalize_landed_pull_request_does_not_recover_close_422_as_closed() -> None:
+    class CloseRaceGithubClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+            self.get_calls = 0
+
+        async def get_pull_request(self, *, pull_number: int) -> GithubPullRequest:
+            self.get_calls += 1
+            if self.get_calls == 1:
+                return _pull_request(number=pull_number)
+            return _pull_request(number=pull_number, state="closed")
+
+        async def close_pull_request(self, *, pull_number: int) -> None:
+            self.close_calls += 1
+            raise GithubClientError(
+                'GitHub request failed: 422 {"message":"Validation Failed"}',
+                status_code=422,
+            )
+
+    github_client = CloseRaceGithubClient()
+
+    with pytest.raises(CliError, match="Could not close PR #1 after landing"):
+        asyncio.run(
+            _finalize_landed_pull_request(
+                cached_change=None,
+                github_client=cast(GithubClient, github_client),
+                landed_revision=LandRevision(
+                    bookmark="review/feature-1-aaaaaaaa",
+                    bookmark_managed=True,
+                    change_id="change-1",
+                    commit_id="commit-1",
+                    needs_resubmit=False,
+                    pull_request_number=1,
+                    subject="feature 1",
+                ),
+                trunk_branch="main",
+            )
+        )
+
+    assert github_client.close_calls == 1
+    assert github_client.get_calls == 2
 
 
 def test_plan_review_bookmark_cleanup_forgets_owned_bookmark() -> None:

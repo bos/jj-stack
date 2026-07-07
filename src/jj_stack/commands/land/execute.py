@@ -581,7 +581,23 @@ async def _finalize_landed_pull_request(
                 pull_number=pull_request.number,
             )
         except GithubClientError as error:
-            raise CliError(t"Could not close PR #{pull_request.number} after landing") from error
+            recovered_pull_request: GithubPullRequest | None = None
+            if error.status_code == 422:
+                try:
+                    refreshed_pull_request = await github_client.get_pull_request(
+                        pull_number=pull_request.number,
+                    )
+                except GithubClientError:
+                    pass
+                else:
+                    refreshed_pull_request = refreshed_pull_request.normalize_state()
+                    if refreshed_pull_request.state == "merged":
+                        recovered_pull_request = refreshed_pull_request
+            if recovered_pull_request is None:
+                raise CliError(
+                    t"Could not close PR #{pull_request.number} after landing"
+                ) from error
+            pull_request = recovered_pull_request
         pull_request = pull_request.normalize_state()
     if cached_change is not None:
         comment_targets: tuple[tuple[int | None, StackCommentKind], ...] = (
