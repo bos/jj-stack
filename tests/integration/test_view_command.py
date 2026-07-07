@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jj_stack.errors import EXIT_INCOMPLETE, EXIT_NO_STACK
+from jj_stack.errors import EXIT_FAILURE, EXIT_INCOMPLETE, EXIT_NO_STACK
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -197,7 +197,9 @@ def test_view_pull_request_selector_requires_a_linked_local_change(
     captured = capsys.readouterr()
     combined_output = " ".join((captured.out + " " + captured.err).split())
 
-    assert exit_code == EXIT_INCOMPLETE
+    # A single selector that yields no report fails with the error's category
+    # code instead of claiming an incomplete report.
+    assert exit_code == EXIT_FAILURE
     assert "PR #1 is not linked to any local change." in combined_output
 
 

@@ -174,9 +174,14 @@ def _run_status(
                 revset=resolved_selector.revset,
             )
         except CliError as error:
+            if not multi_selector:
+                # A single selector that yields no report matches the bare-view
+                # behavior: fail with the error's category code instead of
+                # degrading to an incomplete report.
+                raise
             if not as_json and printed_blocks:
                 console.output("")
-            if not as_json and multi_selector:
+            if not as_json:
                 console.output(_status_heading(selector))
             console.warning(t"Error: {error_message(error)}")
             hint = error.hint

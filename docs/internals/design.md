@@ -464,7 +464,10 @@ remote state before checking already-known GitHub PR state.
 When more than one selector is given, `view` inspects them in command-line order,
 suppresses exact duplicate stack reports, continues past selector-local resolution
 failures, and exits with the incomplete-report code if any individual stack would have
-done so.
+done so. A single selector behaves like bare `view`: a failure that prevents any report
+propagates with its category code (for example, unsupported stack shape exits `2`)
+instead of degrading to the incomplete-report code, so the exit code for a drifted state
+does not depend on whether the selection was explicit.
 
 Fetched GitHub state often produces extra visible revisions for merged changes, so
 `view` does not insist that every visible revision still forms one supported review

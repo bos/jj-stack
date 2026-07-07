@@ -19,10 +19,11 @@ matches; codes 7-9 are reserved because their `gh stack` meanings have no jj-sta
 Notes:
 
 - `view` and `list` are report commands. When they cannot inspect everything — GitHub is
-  unreachable, a saved PR link has gone stale, or one selector fails to resolve — they still
-  print the best report they can and exit 10. Exit 0 from `view` or `list` means the report
-  is complete and healthy. When they cannot produce a report at all, they fail with one of
-  the error codes instead.
+  unreachable, a saved PR link has gone stale, or one selector among several fails to
+  resolve — they still print the best report they can and exit 10. Exit 0 from `view` or
+  `list` means the report is complete and healthy. When they cannot produce a report at
+  all, including when the only selector given fails to resolve, they fail with one of the
+  error codes instead.
 - With `--json`, exit 10 still comes with a valid payload on stdout; read the exit code
   together with the payload. See [json-output.md](json-output.md).
 - Commands that mutate review state (`submit`, `land`, `unstack`, `cleanup`) exit 1 when they
