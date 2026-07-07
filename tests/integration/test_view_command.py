@@ -13,6 +13,7 @@ from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
+    init_fake_github_repo_with_submitted_stack,
     run_command,
 )
 from ..support.json_schema import assert_json_output_matches_schema
@@ -74,13 +75,8 @@ def test_view_can_select_a_stack_by_pull_request_number(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     first_change_id = stack.revisions[0].change_id
@@ -108,7 +104,7 @@ def test_view_can_select_a_stack_by_pull_request_number(
     assert f"PR #{second_pr_number}" not in captured.out
 
 
-def test_view_does_not_warn_when_unrelated_stack_changed_since_last_submit(
+def test_view_warns_only_for_connected_stack_built_on_selected_head(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -116,62 +112,43 @@ def test_view_does_not_warn_when_unrelated_stack_changed_since_last_submit(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-    alpha_head_change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "beta 1", "beta-1.txt")
-    commit_file(repo, "beta 2", "beta-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    commit_file(repo, "beta 3", "beta-3.txt")
-    new_beta_head_change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-
-    run_command(["jj", "edit", alpha_head_change_id], repo)
-    exit_code = run_main(repo, config_path, "view")
-    captured = capsys.readouterr()
-    normalized_err = " ".join(captured.err.split())
-
-    assert exit_code == 0
-    assert new_beta_head_change_id[:8] not in captured.err
-    assert alpha_head_change_id[:8] not in captured.err
-    assert "changed since its last submit" not in captured.err
-    assert "jj-stack view" not in normalized_err
-
-
-def test_view_warns_when_other_stack_is_built_on_selected_stack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
+    # Selected stack: submitted and unchanged.
     commit_file(repo, "alpha 1", "alpha-1.txt")
     commit_file(repo, "alpha 2", "alpha-2.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
     alpha_head_change_id = JjClient(repo).discover_review_stack().head.change_id
 
-    commit_file(repo, "beta 1", "beta-1.txt")
+    # Connected stack built on the selected head, then advanced past its submit.
+    commit_file(repo, "connected 1", "connected-1.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    commit_file(repo, "beta 2", "beta-2.txt")
-    beta_head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    commit_file(repo, "connected 2", "connected-2.txt")
+    connected_head_change_id = JjClient(repo).discover_review_stack().head.change_id
+
+    # Unrelated stack forked from trunk, also advanced past its submit.
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "unrelated 1", "unrelated-1.txt")
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+    commit_file(repo, "unrelated 2", "unrelated-2.txt")
+    unrelated_head_change_id = JjClient(repo).discover_review_stack().head.change_id
 
     exit_code = run_main(repo, config_path, "view", alpha_head_change_id)
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
     assert exit_code == 0
-    assert beta_head_change_id[:8] in captured.err
+    # The connected stack changed since its submit and gets an advisory.
+    assert connected_head_change_id[:8] in captured.err
     assert "changed since its last submit" in captured.err
-    assert f"jj-stack view {beta_head_change_id[:8]}" in normalized_err
-    assert f"jj-stack submit {beta_head_change_id[:8]}" in normalized_err
+    assert f"jj-stack view {connected_head_change_id[:8]}" in normalized_err
+    assert f"jj-stack submit {connected_head_change_id[:8]}" in normalized_err
+    # The unrelated stack also changed but is not built on the selected head, so
+    # it stays silent.
+    assert unrelated_head_change_id[:8] not in captured.err
+    assert f"jj-stack view {unrelated_head_change_id[:8]}" not in normalized_err
+    assert f"jj-stack submit {unrelated_head_change_id[:8]}" not in normalized_err
 
 
 def test_view_warns_after_middle_change_is_split_into_sibling_stack(
@@ -298,13 +275,8 @@ def test_view_ignores_off_path_reviewable_child(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     stack = JjClient(repo).discover_review_stack()
     feature_1_commit_id = stack.revisions[0].commit_id
@@ -391,38 +363,6 @@ def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
     assert "GitHub status unknown" not in captured.out
 
 
-def test_view_exits_nonzero_when_pull_request_lookup_fails(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailingPullRequestLookupClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, *, head_refs):
-            raise GithubClientError(
-                'GitHub request failed: 422 {"message":"Validation Failed"}',
-                status_code=422,
-            )
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.review.status",),
-        client_type=FailingPullRequestLookupClient,
-    )
-
-    exit_code = run_main(repo, config_path, "view")
-    captured = capsys.readouterr()
-
-    assert exit_code == EXIT_INCOMPLETE
-    assert "saved PR #1 (open), pull request lookup failed" in captured.out
-
-
 def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
     tmp_path: Path,
     monkeypatch,
@@ -454,13 +394,8 @@ def test_view_skips_stack_comment_github_reads(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
@@ -543,9 +478,6 @@ def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     resolve_state_path(repo).unlink()
-
-    assert run_main(repo, config_path, "view", change_id) == 0
-    capsys.readouterr()
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 

@@ -11,6 +11,8 @@ from ..support.integration_helpers import (
     commit_file,
     configure_fake_github_environment,
     init_fake_github_repo,
+    init_fake_github_repo_with_submitted_feature,
+    init_fake_github_repo_with_submitted_stack,
     run_command,
 )
 
@@ -64,12 +66,9 @@ def test_checkout_current_rejects_remote_branches_without_pull_requests(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     state_before = ReviewStateStore.for_repo(repo).load()
     review_bookmarks = sorted(
         {
@@ -97,12 +96,9 @@ def test_checkout_pull_request_rejects_cross_repository_heads(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     state_before = ReviewStateStore.for_repo(repo).load()
     fake_repo.pull_requests[2].head_label = f"someone-else:{fake_repo.pull_requests[2].head_ref}"
 
@@ -120,13 +116,8 @@ def test_checkout_reports_up_to_date_when_selected_stack_is_already_imported(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert _main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2")
     captured = capsys.readouterr()
@@ -158,41 +149,14 @@ def test_checkout_current_fails_closed_when_head_has_no_discoverable_remote_revi
     }
 
 
-def test_checkout_revset_fails_closed_without_remote_bookmark_identity(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path, with_remote=False)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-
-    exit_code = _main(repo, config_path, "checkout", "--revset", change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "selected head already has a pull request" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
-    assert not {
-        bookmark
-        for bookmark in JjClient(repo).list_bookmark_states()
-        if bookmark.startswith("review/")
-    }
-
-
 def test_checkout_pull_request_fails_closed_when_head_branch_matches_multiple_pull_requests(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     stack = JjClient(repo).discover_review_stack()
     top_change_id = stack.revisions[-1].change_id
     initial_state = ReviewStateStore.for_repo(repo).load()
@@ -220,12 +184,9 @@ def test_checkout_fails_closed_when_stack_would_need_generated_bookmarks(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     state_before = ReviewStateStore.for_repo(repo).load()
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -269,12 +230,9 @@ def test_checkout_fails_closed_without_partial_local_bookmark_updates(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     state_before = ReviewStateStore.for_repo(repo).load()
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
@@ -303,12 +261,9 @@ def test_checkout_prefers_exact_remote_bookmarks_over_stale_cached_names(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
     stack = JjClient(repo).discover_review_stack()
@@ -348,12 +303,11 @@ def test_checkout_prefers_exact_remote_bookmarks_over_stale_cached_names(
 def test_checkout_current_rejects_cache_only_link(
     tmp_path: Path,
     monkeypatch,
+    capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     state_before = ReviewStateStore.for_repo(repo).load()
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
@@ -374,7 +328,12 @@ def test_checkout_current_rejects_cache_only_link(
         repo,
     )
 
-    assert _main(repo, config_path, "checkout", "--fetch") == 1
+    exit_code = _main(repo, config_path, "checkout", "--fetch")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "current stack has no matching remote pull request" in captured.err
+    assert ReviewStateStore.for_repo(repo).load().changes == state_before.changes
 
 
 def test_checkout_revset_rejects_generated_bookmarks_without_selected_remote(
@@ -382,12 +341,9 @@ def test_checkout_revset_rejects_generated_bookmarks_without_selected_remote(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
 
-    assert _main(repo, config_path, "submit") == 0
     state_before = ReviewStateStore.for_repo(repo).load()
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id

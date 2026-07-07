@@ -25,13 +25,14 @@ from jj_stack.review.status import (
 def _lookup(
     *,
     state: PullRequestLookupState,
+    message: str | None = None,
     pull_request: object | None = None,
     review_decision: str | None = None,
     review_decision_error: str | None = None,
     source: PullRequestLookupSource = "head",
 ) -> PullRequestLookup:
     return PullRequestLookup(
-        message=None,
+        message=message,
         pull_request=cast(GithubPullRequest | None, pull_request),
         review_decision=review_decision,
         review_decision_error=review_decision_error,
@@ -292,6 +293,42 @@ def test_view_summary_uses_cached_review_decision_when_live_decision_lookup_fail
 
     normalized_lines = " ".join(lines)
     assert "PR #7 approved" in normalized_lines
+
+
+def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
+    revision = _status_revision(
+        bookmark="review/feature-1-abcdefgh",
+        cached_change=CachedChange(
+            bookmark="review/feature-1-abcdefgh",
+            pr_number=1,
+            pr_state="open",
+        ),
+        change_id="abcdefgh1234",
+        commit_id="1234567890abcdef",
+        pull_request_lookup=_lookup(
+            message="pull request lookup failed",
+            pull_request=None,
+            state="error",
+        ),
+        subject="feature 1",
+    )
+
+    lines = view_module.render_status_summary_lines(
+        client=SimpleNamespace(
+            resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
+            render_revision_log_lines=lambda current_revision, *, color_when: (
+                f"○  {current_revision.change_id[:8]} {current_revision.commit_id[:8]}",
+                f"│  {current_revision.subject}",
+            ),
+        ),
+        github_available=True,
+        leading_separator=False,
+        result=SimpleNamespace(revisions=(revision,)),
+        verbose=False,
+    )
+
+    normalized_lines = " ".join(lines)
+    assert "saved PR #1 (open), pull request lookup failed" in normalized_lines
 
 
 def test_view_summary_truncates_middle_of_long_unsubmitted_sections() -> None:

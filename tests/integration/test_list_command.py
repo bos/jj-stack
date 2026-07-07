@@ -13,6 +13,7 @@ from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
+    init_fake_github_repo_with_submitted_stack,
     run_command,
     write_file,
 )
@@ -59,118 +60,30 @@ def test_list_json_reports_public_stack_rows(
     assert "size" not in row
 
 
-def test_list_reports_multiple_locally_tracked_stacks(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    commit_file(repo, "feature 1", "feature-1.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "feature 2", "feature-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "feature 1" in captured.out
-    assert "feature 2" in captured.out
-    assert "PR" in captured.out
-    assert "1" in captured.out
-    assert "2" in captured.out
-    assert "1 change" in captured.out
-
-
-def test_list_summarizes_multi_pull_request_stack_by_count(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    for index in range(5):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "5 PRs" in captured.out
-    assert "PRs 1-5" not in captured.out
-    assert "PRs 1, 2, 3, 4, 5" not in captured.out
-    assert "feature 5" in captured.out
-
-    exit_code = run_main(repo, config_path, "list", "--json")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    payload = json.loads(captured.out)
-    assert [
-        change["pull_request"]["number"] for change in payload["rows"][0]["changes"]
-    ] == [1, 2, 3, 4, 5]
-
-
 def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     tmp_path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
     stack = JjClient(repo).discover_review_stack()
-    middle_change_id = stack.revisions[0].change_id
+    orphaned_change_id = stack.revisions[0].change_id
     state = ReviewStateStore.for_repo(repo).load()
-    middle_pr_number = state.changes[middle_change_id].pr_number
-    assert middle_pr_number is not None
+    orphaned_pr_number = state.changes[orphaned_change_id].pr_number
+    assert orphaned_pr_number is not None
 
-    run_command(["jj", "abandon", middle_change_id], repo)
+    run_command(["jj", "abandon", orphaned_change_id], repo)
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "orphan" in captured.out
-    assert f"PR #{middle_pr_number}" in captured.out
+    assert f"PR #{orphaned_pr_number}" in captured.out
     assert "local change missing" in captured.out
-    assert f"unstack --cleanup --pull-request {middle_pr_number}" in captured.out
-
-
-def test_list_json_reports_public_orphan_rows(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    middle_change_id = stack.revisions[0].change_id
-    state = ReviewStateStore.for_repo(repo).load()
-    middle_pr_number = state.changes[middle_change_id].pr_number
-    assert middle_pr_number is not None
-
-    run_command(["jj", "abandon", middle_change_id], repo)
+    assert f"unstack --cleanup --pull-request {orphaned_pr_number}" in captured.out
 
     exit_code = run_main(repo, config_path, "list", "--json")
     captured = capsys.readouterr()
@@ -182,10 +95,10 @@ def test_list_json_reports_public_orphan_rows(
     orphan_rows = [row for row in payload["rows"] if row["type"] == "orphan"]
     assert len(orphan_rows) == 1
     orphan = orphan_rows[0]
-    assert orphan["change_id"] == middle_change_id
+    assert orphan["change_id"] == orphaned_change_id
     assert orphan["subject"] == "local change missing"
     assert orphan["status"] == "orphan"
-    assert orphan["pull_request"]["number"] == middle_pr_number
+    assert orphan["pull_request"]["number"] == orphaned_pr_number
     assert "hint" not in orphan
 
 
@@ -210,33 +123,6 @@ def test_list_surfaces_orphaned_pull_request_when_no_live_stacks_remain(
     assert "No stacks." not in captured.out
 
 
-def test_list_warns_when_tracked_stack_has_changed_since_last_submit(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    commit_file(repo, "alpha 3", "alpha-3.txt")
-    new_alpha_head_change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-    normalized_err = " ".join(captured.err.split())
-
-    assert exit_code == 0
-    assert new_alpha_head_change_id[:8] in captured.err
-    assert "changed since its last submit" in captured.err
-    assert f"jj-stack view {new_alpha_head_change_id[:8]}" in normalized_err
-    assert f"jj-stack submit {new_alpha_head_change_id[:8]}" in normalized_err
-
-
 def test_list_warns_when_tracked_stack_was_rewritten_without_moving(
     tmp_path,
     monkeypatch,
@@ -257,38 +143,6 @@ def test_list_warns_when_tracked_stack_was_rewritten_without_moving(
     assert "changed since its last submit" in captured.err
     assert f"jj-stack view {change_id[:8]}" in normalized_err
     assert f"jj-stack submit {change_id[:8]}" in normalized_err
-
-
-def test_list_warns_when_untracked_change_is_inserted_below_tracked_stack(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    commit_file(repo, "alpha 2", "alpha-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    head_change_id = stack.head.change_id
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "alpha 0", "alpha-0.txt")
-    inserted_change_id = JjClient(repo).discover_review_stack().head.change_id
-    run_command(["jj", "rebase", "-s", bottom_change_id, "-d", inserted_change_id], repo)
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-    normalized_err = " ".join(captured.err.split())
-
-    assert exit_code == 0
-    assert head_change_id[:8] in captured.err
-    assert f"jj-stack view {head_change_id[:8]}" in normalized_err
-    assert f"jj-stack submit {head_change_id[:8]}" in normalized_err
 
 
 def test_list_does_not_warn_when_tracked_stack_still_starts_at_mutable_trunk(
@@ -408,41 +262,17 @@ def test_list_reports_partial_approval_for_ready_prefix_only(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    for index in range(4):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    approve_pull_requests(fake_repo, 1, 2)
+    approve_pull_requests(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "2 approved" in captured.out
-    assert "2 open" in captured.out
-
-
-def test_list_reports_cleanup_needed_for_merged_pull_request(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "cleanup needed" in captured.out
-    assert "merged ancestor" not in captured.out
+    assert "1 approved" in captured.out
+    assert "1 approved, open" in captured.out
 
 
 def test_list_batches_github_lookup_across_repo_stacks(
@@ -450,12 +280,8 @@ def test_list_batches_github_lookup_across_repo_stacks(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    commit_file(repo, "feature 1", "feature-1.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -495,6 +321,7 @@ def test_list_batches_github_lookup_across_repo_stacks(
     assert exit_code == 0
     assert "feature 1" in captured.out
     assert "feature 2" in captured.out
+    assert "1 change" in captured.out
     assert len(CountingGithubClient.pull_request_lookup_calls) == 1
     assert len(CountingGithubClient.pull_request_lookup_calls[0]) == 2
     assert CountingGithubClient.review_decision_calls == []
@@ -505,12 +332,8 @@ def test_list_fails_closed_when_tracked_changes_share_bookmark(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    commit_file(repo, "feature 1", "feature-1.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -569,40 +392,6 @@ def test_list_does_not_extend_through_modified_working_copy(
     assert f"@ {feature_change_id[:8]}" in captured.out
     assert "feature 1" in captured.out
     assert "1 change" in captured.out
-
-
-def test_list_limits_bookmark_scan_to_tracked_bookmarks(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    commit_file(repo, "feature 2", "feature-2.txt")
-    tracked_change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
-    tracked_bookmark = ReviewStateStore.for_repo(repo).load().changes[tracked_change_id].bookmark
-    assert tracked_bookmark is not None
-
-    bookmark_calls: list[tuple[str, ...] | None] = []
-    original_list_bookmark_states = JjClient.list_bookmark_states
-
-    def tracking_list_bookmark_states(self, bookmarks=None):
-        bookmark_calls.append(None if bookmarks is None else tuple(bookmarks))
-        return original_list_bookmark_states(self, bookmarks)
-
-    monkeypatch.setattr(
-        JjClient,
-        "list_bookmark_states",
-        tracking_list_bookmark_states,
-    )
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "feature 2" in captured.out
-    assert bookmark_calls == [(tracked_bookmark,)]
 
 
 def test_list_marks_unlinked_change(

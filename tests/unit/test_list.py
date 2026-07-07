@@ -3,9 +3,93 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
+import jj_stack.ui as ui
+from jj_stack.commands.list_ import (
+    _format_pull_request_summary,
+    _prepare_repo_inspection_context,
+    _status_fragments,
+)
+from jj_stack.config import RepoConfig
+from jj_stack.github.resolution import GithubTarget
+from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review.change_status import ReviewChangeStatus
 from jj_stack.review.discovery import discover_connected_tracked_stacks, discover_tracked_stacks
+
+
+def _change_status(
+    *,
+    pr_lifecycle: str = "none",
+    pr_draft: bool | None = None,
+    pr_review_decision: str = "none",
+) -> ReviewChangeStatus:
+    return ReviewChangeStatus(
+        local="present",
+        link="active",
+        remote_branch="current",
+        remote_branch_matches_commit=True,
+        pr_lifecycle=cast(Any, pr_lifecycle),
+        pr_draft=pr_draft,
+        pr_review_decision=cast(Any, pr_review_decision),
+    )
+
+
+def _fragment_text(statuses: tuple[ReviewChangeStatus, ...]) -> str:
+    return " | ".join(
+        ui.plain_text(fragment)
+        for fragment in _status_fragments(
+            github_error=None,
+            remote_error=None,
+            statuses=statuses,
+        )
+    )
+
+
+def test_format_pull_request_summary_is_empty_without_pull_requests() -> None:
+    assert _format_pull_request_summary(()) == ""
+
+
+def test_format_pull_request_summary_names_single_pull_request() -> None:
+    assert _format_pull_request_summary((7,)) == "PR 7"
+
+
+def test_format_pull_request_summary_counts_multiple_pull_requests() -> None:
+    assert _format_pull_request_summary((1, 2, 3, 4, 5)) == "5 PRs"
+
+
+def test_status_fragments_report_partial_approval_counts() -> None:
+    statuses = (
+        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
+        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
+        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="none"),
+        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="none"),
+    )
+
+    text = _fragment_text(statuses)
+
+    assert "2 approved" in text
+    assert "2 open" in text
+
+
+def test_status_fragments_collapse_to_bare_approved_when_all_open_prs_approved() -> None:
+    statuses = (
+        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
+        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
+    )
+
+    text = _fragment_text(statuses)
+
+    assert "approved" in text
+    assert "2 approved" not in text
+    assert "open" not in text
+
+
+def test_status_fragments_report_cleanup_needed_for_merged_pull_request() -> None:
+    text = _fragment_text((_change_status(pr_lifecycle="merged"),))
+
+    assert "cleanup needed" in text
+    assert "merged ancestor" not in text
 
 
 def _revision(
@@ -160,3 +244,47 @@ def test_connected_stacks_warn_for_tracked_change_built_on_selected_stack() -> N
 
     assert tuple(stack.head.change_id for stack in discovered) == (connected.change_id,)
     assert queried_descendants == [(connected.commit_id,)]
+
+
+def test_repo_inspection_limits_bookmark_listing_to_tracked_bookmarks() -> None:
+    trunk = _revision("m" * 32, "main", parent="root", subject="main")
+    tracked = _revision("a" * 32, "commit-a", parent="main", subject="feature 1")
+    untracked = _revision("b" * 32, "commit-b", parent="commit-a", subject="feature 2")
+    stack = LocalStack(
+        base_parent=trunk,
+        head=untracked,
+        revisions=(tracked, untracked),
+        selected_revset=untracked.change_id,
+        trunk=trunk,
+    )
+    state = ReviewState(
+        changes={
+            tracked.change_id: CachedChange(
+                bookmark="review/feature-1-abcdef01",
+                pr_number=1,
+                pr_state="open",
+            ),
+        }
+    )
+    bookmark_calls: list[tuple[str, ...] | None] = []
+    jj_client = cast(
+        Any,
+        SimpleNamespace(
+            list_git_remotes=lambda: (
+                GitRemote(name="origin", url="https://github.com/octo-org/repo.git"),
+            ),
+            list_bookmark_states=lambda bookmarks=None: (
+                bookmark_calls.append(bookmarks) or {}
+            ),
+        ),
+    )
+    context = cast(Any, SimpleNamespace(config=RepoConfig(), jj_client=jj_client))
+
+    inspection = _prepare_repo_inspection_context(
+        context=context,
+        discovered=(stack,),
+        state=state,
+    )
+
+    assert isinstance(inspection.github_target, GithubTarget)
+    assert bookmark_calls == [("review/feature-1-abcdef01",)]
