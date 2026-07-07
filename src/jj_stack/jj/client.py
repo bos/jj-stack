@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from collections.abc import Sequence
@@ -1083,6 +1084,10 @@ class JjClient:
 
 _EXPECTED_FIELD_COUNT = 10
 
+_DIVERGENT_CHANGE_ID_ERROR_PATTERN = re.compile(
+    r"Change ID `(?P<change_id>[0-9a-z]+)` is divergent"
+)
+
 
 def _is_missing_revision_error(message: str) -> bool:
     return "Revision `" in message and "doesn't exist" in message
@@ -1105,6 +1110,14 @@ def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | N
     if first_line.startswith("Error: Failed to parse revset:"):
         detail = first_line.removeprefix("Error: ").strip()
         return UsageError(t"Invalid revset {ui.revset(revset)}: {detail}.")
+
+    divergent_match = _DIVERGENT_CHANGE_ID_ERROR_PATTERN.search(first_line)
+    if divergent_match is not None:
+        return UnsupportedStackError.stack_shape(
+            divergent_match.group("change_id"),
+            "divergent changes are not supported.",
+            reason="divergent_change",
+        )
 
     return None
 

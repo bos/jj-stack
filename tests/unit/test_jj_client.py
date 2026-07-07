@@ -71,6 +71,20 @@ class _InvalidRevsetClient(JjClient):
         raise JjCommandError("jj log failed: Error: Failed to parse revset: unexpected token")
 
 
+class _DivergentChangeIdRevsetClient(JjClient):
+    def _query_revisions(
+        self,
+        revset: str,
+        *,
+        limit: int | None = None,
+    ) -> list[LocalRevision]:
+        raise JjCommandError(
+            "jj log failed: Error: Change ID `zqrozzrmllru` is divergent\n"
+            "Hint: Use change offset to select single revision: "
+            "zqrozzrmllru/0, zqrozzrmllru/1"
+        )
+
+
 _TRUNK = _revision_line(
     commit_id="trunk", parents=["root"], change_id="trunk-change", description="main\n"
 )
@@ -147,6 +161,20 @@ def test_resolve_revision_reports_invalid_revsets_with_usage_exit_code() -> None
         client.resolve_revision("bad(")
 
     assert resolve_exit_code(excinfo.value) == EXIT_USAGE
+
+
+def test_resolve_revision_reports_divergent_selected_change_as_unsupported_stack() -> None:
+    # Fetching a foreign branch that points at a rewritten change's old commit
+    # resurrects the predecessor, so the change ID itself no longer resolves.
+    # The raw jj error must become the same targeted divergent-change
+    # diagnostic the stack walk produces, not an unadorned subprocess failure.
+    client = _DivergentChangeIdRevsetClient(Path("/repo"))
+
+    with pytest.raises(UnsupportedStackError, match="divergent changes are not supported") as exc:
+        client.resolve_revision("zqrozzrmllru")
+
+    assert exc.value.change_id == "zqrozzrmllru"
+    assert exc.value.reason == "divergent_change"
 
 
 def _client(
