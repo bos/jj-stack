@@ -132,6 +132,7 @@ class JjClient:
     ) -> None:
         self._repo_root = repo_root
         self._cli_args = cli_args
+        self._config_strings: dict[str, str | None] = {}
 
     @property
     def repo_root(self) -> Path:
@@ -575,14 +576,23 @@ class JjClient:
         return any(boundary_commit_id in revision.parents[1:] for revision in merge_revisions)
 
     def get_config_string(self, key: str) -> str | None:
-        """Return the string value of a jj config key, or None if unset."""
+        """Return the string value of a jj config key, or None if unset.
 
+        Reads are cached for the client's lifetime: nothing rewrites jj
+        config during a command run, and callers such as per-revision
+        rendering re-read the same key many times.
+        """
+
+        if key in self._config_strings:
+            return self._config_strings[key]
         try:
             value = self._run_jj(("config", "get", key), ignore_working_copy=True)
         except JjCommandError:
-            return None
+            value = ""
         stripped = value.strip()
-        return stripped if stripped else None
+        result = stripped if stripped else None
+        self._config_strings[key] = result
+        return result
 
     def read_jj_stack_config_list_output(self) -> str:
         """Return raw stdout from ``jj config list 'jj-stack'``.

@@ -74,7 +74,7 @@ def test_semantic_style_uses_machine_readable_jj_config(
     with console_module.configured_console(
         stdout=StringIO(),
         stderr=StringIO(),
-        color_mode="never",
+        color_mode="always",
         repository=repository,
     ):
         assert console_module.semantic_style("missing") is None
@@ -103,7 +103,7 @@ def test_rich_text_renders_template_semantics(
     with console_module.configured_console(
         stdout=StringIO(),
         stderr=StringIO(),
-        color_mode="never",
+        color_mode="always",
         repository=repository,
     ):
         text = console_module.rich_text(
@@ -142,7 +142,7 @@ def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
     with console_module.configured_console(
         stdout=StringIO(),
         stderr=StringIO(),
-        color_mode="never",
+        color_mode="always",
         repository=repository,
     ):
         text = console_module.rich_text(message)
@@ -172,7 +172,7 @@ def test_revset_uses_semantic_style(
     with console_module.configured_console(
         stdout=StringIO(),
         stderr=StringIO(),
-        color_mode="never",
+        color_mode="always",
         repository=repository,
     ):
         text = console_module.rich_text(ui_module.revset("trunk()"))

@@ -289,20 +289,25 @@ class _RichSpinnerHandle:
         self.status.update(description)
 
 
+def _raw_console(stream: IO[str], *, color_mode: ColorMode) -> Console:
+    if color_mode == "always":
+        return Console(file=stream, force_terminal=True)
+    if color_mode == "never":
+        return Console(file=stream, no_color=True)
+    return Console(file=stream)
+
+
+def _console_emits_color(console: Console) -> bool:
+    return console.is_terminal and not console.no_color
+
+
 def _build_console(
-    stream: IO[str],
+    console: Console,
     *,
-    color_mode: ColorMode,
     semantic_styles: SemanticStyles | None,
     time_output: bool,
     start: float | None,
 ) -> _ConfiguredConsole:
-    if color_mode == "always":
-        console = Console(file=stream, force_terminal=True)
-    elif color_mode == "never":
-        console = Console(file=stream, no_color=True)
-    else:
-        console = Console(file=stream)
     return _ConfiguredConsole(
         console,
         prefix_style=(
@@ -319,26 +324,32 @@ def _build_consoles(
     *,
     cli_args: JjCliArgs,
     color_mode: ColorMode = "auto",
+    load_styles: bool = True,
     repository: Path | None = None,
     stderr: IO[str] | None = None,
     stdout: IO[str] | None = None,
     time_output: bool = False,
 ) -> tuple[_ConfiguredConsole, _ConfiguredConsole, SemanticStyles | None]:
     start = time.perf_counter() if time_output else None
-    stdout_stream = sys.stdout if stdout is None else stdout
-    stderr_stream = sys.stderr if stderr is None else stderr
-    semantic_styles = load_semantic_styles(repository=repository, cli_args=cli_args)
+    stdout_console = _raw_console(sys.stdout if stdout is None else stdout, color_mode=color_mode)
+    stderr_console = _raw_console(sys.stderr if stderr is None else stderr, color_mode=color_mode)
+    # Semantic styles exist only to color output, and reading them costs one
+    # jj invocation, so skip the read when neither console can emit color
+    # (piped or captured output).
+    semantic_styles = None
+    if load_styles and (
+        _console_emits_color(stdout_console) or _console_emits_color(stderr_console)
+    ):
+        semantic_styles = load_semantic_styles(repository=repository, cli_args=cli_args)
     return (
         _build_console(
-            stdout_stream,
-            color_mode=color_mode,
+            stdout_console,
             semantic_styles=semantic_styles,
             time_output=time_output,
             start=start,
         ),
         _build_console(
-            stderr_stream,
-            color_mode=color_mode,
+            stderr_console,
             semantic_styles=semantic_styles,
             time_output=time_output,
             start=start,
@@ -691,4 +702,11 @@ def _rstrip_line_segments(line: list[Segment]) -> list[Segment]:
     return trimmed
 
 
-_STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(cli_args=_NO_CLI_ARGS)
+# The import-time consoles only serve output emitted before a command
+# installs repo-scoped consoles via `configured_console`, so they never load
+# jj semantic styles: that would cost a jj invocation in the wrong directory
+# on every import.
+_STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(
+    cli_args=_NO_CLI_ARGS,
+    load_styles=False,
+)

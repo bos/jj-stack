@@ -224,18 +224,24 @@ risk is writing reference prose before the task-oriented guides are complete.
 
 ## Per-Invocation jj Subprocess Overhead
 
-_Benefit: medium — trims startup latency for every command and is the largest
-remaining lever for integration-test runtime._
+_Benefit: small — the cheap consolidations have been applied; what remains
+requires restructuring that has not yet paid for itself._
 
-Instrumenting the test suite showed each CLI invocation spends a fixed budget
-of `jj` subprocess calls before doing command-specific work: `config list
-jj-stack`, `config get ui.color` (twice), `config list --include-defaults
-colors`, `git remote list`, and `bookmark list --all-remotes`. Rendering also
-issues one `jj --no-pager --color never log -r <rev> --limit 1` per displayed
-revision (~480 calls per full test-suite run), which could be batched into a
-single `jj log` over the revisions being rendered. The `jj --version` gate is
-now cached per process; the config and display reads are the remaining
-candidates for batching or consolidation into fewer invocations.
+Applied so far: the `jj --version` gate and `get_config_string` reads are
+cached per process/client, and semantic color styles are only loaded when a
+console can actually emit color. The remaining fixed per-invocation reads
+(`config list jj-stack` as the working-copy snapshot anchor, `git remote
+list`, `bookmark list --all-remotes`, plus one `ui.color` read each from
+pre-bootstrap console setup and the repo-scoped client) each answer a live
+question once and were left alone.
+
+Evaluated and deferred: batching per-revision `jj log -r <rev> --limit 1`
+display renders into one call. A combined revset renders a connected graph
+(different output than independent per-revision blocks), and splitting one
+render faithfully requires wrapping the user's configured log template in
+markers. The render path already overlaps its subprocess spawns with a
+thread pool, so the win is modest relative to the fragility. Revisit only if
+per-revision rendering shows up as real CLI latency.
 
 ## Dead `ReviewChangeStatus.baseline` Axis
 
