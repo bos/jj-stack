@@ -50,6 +50,11 @@ to work with a `jj`-native stack:
 gh skill install bos/jj-stack jj-stack
 ```
 
+The skill is not installed by `uv tool install jj-stack`. It is shipped in this
+repository under `skills/jj-stack/SKILL.md`, following the Agent Skills
+`skills/*/SKILL.md` convention. `gh skill install` finds that file in the
+repository and copies it into the selected agent's skill directory.
+
 For a specific agent or install scope, pass the relevant `gh skill install`
 flags. For example, to install it for Codex at user scope:
 
@@ -57,9 +62,21 @@ flags. For example, to install it for Codex at user scope:
 gh skill install bos/jj-stack jj-stack --agent codex --scope user
 ```
 
+When developing the skill locally, install from this checkout:
+
+```bash
+gh skill install . jj-stack --from-local --agent codex --scope user --force
+```
+
 The skill tells agents to use `jj` for local stack edits, `jj-stack view --json`
 and `jj-stack list --json` for machine-readable status, and `jj-stack submit`
-to refresh GitHub.
+to refresh GitHub. If `jj-stack` is available through a `jj` alias such as
+`jj stack` or `jj stk`, the skill teaches agents to discover and reuse that
+invocation instead of assuming `jj-stack` is on `PATH`. It also teaches agents
+to check, before direct `gh` PR mutations, whether `jj-stack` is already
+managing review state in the repo, to remember that answer for the session, and
+to distinguish safe PR collaboration metadata from structural or lifecycle
+changes that need a jj-stack risk explanation and your permission.
 
 ### Before your first submit
 

@@ -2,190 +2,137 @@
 name: jj-stack
 license: Apache-2.0
 description: >
-  Manage jj-native stacked GitHub review with jj-stack. Use when an agent needs
-  to inspect, create, submit, refresh, revise, land, clean up, or recover stacked
-  pull requests for local jj changes, especially in repos that use jj change IDs,
-  bookmarks, trunk(), and mutable history.
+  Manage jj-native stacked GitHub review with jj-stack. Use when inspecting,
+  creating, submitting, refreshing, revising, landing, cleaning up, or
+  recovering stacked pull requests for local jj changes, and before mutating
+  any GitHub pull request or branch with gh or the GitHub API in a jj repo.
 ---
 
 # jj-stack
 
 `jj-stack` sends a linear chain of local `jj` changes to GitHub as dependent
-pull requests. Use `jj` to edit the local stack. Use `jj-stack` to inspect,
-submit, refresh, land, and clean up the matching GitHub PRs.
+pull requests. Division of labor: `jj` edits the local stack; `jj-stack` owns
+its GitHub review state (review branches, PRs, landing, cleanup).
 
-## Agent Rules
+## Resolving the command
 
-1. **Edit stacks with `jj`, not Git branches.** Use `jj` to create, split,
-   squash, reorder, rebase, and rewrite local changes.
-2. **Use `jj-stack` for GitHub review state.** Use it to inspect PR status,
-   create or refresh PRs, land ready bottom changes, and clean up review
-   branches.
-3. **Select stacks with change IDs or explicit revsets.** Prefer stable
-   `change_id` values in user-facing summaries. Use commit IDs only when a
+`jj-stack` below is a placeholder for the real invocation. Resolve one per
+repo, confirm it with `--help`, and reuse it for the whole conversation:
+
+1. An invocation named by the user or project instructions.
+2. `uv run jj-stack` inside the jj-stack source repo itself.
+3. `jj-stack`, then `jj stack`.
+4. An alias from `jj --ignore-working-copy config list aliases` whose value
+   delegates to `jj-stack` (commonly via `["util", "exec", "--", ...]`);
+   confirm with `jj <alias> --help`.
+
+If nothing resolves, do not conclude jj-stack is absent; ask the user which
+command they use before any direct GitHub mutation.
+
+## Rules
+
+1. **Edit the stack with `jj`; talk to GitHub with `jj-stack`.** Never use
+   `git branch`/`checkout`/`rebase`, manual branch pushes, or `gh stack` on a
+   jj-stack stack, and never create, delete, or force-push its review
+   branches by hand.
+2. **Check ownership before the first `gh` or API write in a repo.** Run
+   `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json
+   --fetch` for one PR. If the PR, branch, bookmark, or change appears in the
+   output, the stack is managed; cache that answer for the session. Do this
+   lazily — the trigger is a pending GitHub write, not entering a repo. These
+   commands exit 10 when they print a report that is incomplete or needs
+   attention; read the JSON before concluding anything.
+3. **Use jj-stack as the stack authority.** Once jj-stack is detected anywhere
+   in a repo, use it for stack-level PR work in that repo: status, submit,
+   refresh, base/head changes caused by stack rewrites, landing, cleanup,
+   closing, importing, relinking, and recovery. `gh` remains fine for reads and
+   collaboration metadata, but not as the source of truth or mutation path for
+   the stack.
+4. **Inspect before mutating.** Run `view` or `list` before `submit`, `land`,
+   `cleanup`, or `unstack`, and preview with `--dry-run` whenever the next
+   step is uncertain.
+5. **Select explicitly after anything ambiguous.** `submit` defaults to the
+   current stack head (`@-`). After an interrupted command, or in a
+   multi-stack repo, pass a change ID, revset, or `--pull-request` selector.
+   Prefer change IDs in user-facing summaries; use commit IDs only when a
    concrete immutable snapshot matters.
-4. **Inspect before mutating.** Run `jj-stack view` or `jj-stack list` before
-   `submit`, `land`, `cleanup`, or `unstack` unless the user gave a precise
-   command.
-5. **Preview risky operations.** Use `--dry-run` before `submit`, `land`,
-   `cleanup --rebase`, and `unstack --cleanup` when the next step is uncertain.
-6. **Do not manage review branches by hand.** `jj-stack` creates and updates the
-   review bookmarks it uses as GitHub PR branches.
-7. **Do not use `gh stack` for a `jj-stack` stack.** `gh stack` is branch-based
-   and keeps different local state.
-8. **Avoid interactive helpers.** Do not use an interactive `--describe-with`
-   helper unless the user asks for it.
-9. **Honor the repo's local invocation.** In the `jj-stack` repo itself, run
-   `uv run jj-stack ...`; in normal installed use, run `jj-stack ...` or the
-   configured `jj stack ...` alias.
+6. **Stay non-interactive.** Do not pass an interactive `--describe-with`
+   helper; instead pass a description using `--describe`.
 
-Never run these for a `jj-stack` stack unless the user explicitly asks:
+## Using `gh` on a managed stack
 
-- `git branch`, `git checkout`, `git rebase`, or manual Git branch pushes
-- `gh stack ...`
-- `jj-stack unstack --cleanup` without first confirming that the PRs should be
-  closed and the review branches removed
+**Reads are always fine**: `gh pr view`, `gh pr list`, `gh pr checks`,
+`gh pr diff`, and other read-only queries.
 
-## Inspect First
+**Collaboration writes are fine when the user asks**: comments, reviews,
+labels, assignees, milestones, reviewer requests, draft/ready state, and
+title or body edits (a later `submit` may overwrite generated title/body
+text). Never edit or delete comments containing `<!-- jj-stack-navigation -->`
+or `<!-- jj-stack-overview -->`; jj-stack manages those.
 
-Use `view` before mutating a stack:
+**Structural and lifecycle writes are not**: closing, merging, or reopening a
+PR; retargeting base or head; deleting or force-pushing a review branch;
+creating a replacement PR; or equivalent `gh api` mutations. These desync
+local changes, review bookmarks, and tracking data. Map the intent to a
+jj-stack command instead; use `gh` only if the user explicitly confirms after
+you explain that risk.
 
-```bash
-jj-stack view
-jj-stack view --json
-jj-stack view --fetch --json
-jj-stack view <head-change-id>
-jj-stack view --pull-request <pr>
-```
+- **Land ready bottom changes:** `land --dry-run`, then `land`. Lands the
+  consecutive ready changes at the bottom and stops before the first unready
+  one; `--pull-request <pr>` stops earlier.
+- **Close an abandoned stack's PRs:** `unstack --dry-run`, then `unstack`.
+- **Also remove review branches and tracking:** `unstack --cleanup`, only
+  after confirming the stack should be retired. For an orphaned PR from
+  `list`, add `--pull-request <pr>`.
+- **Stop tracking locally but leave PRs open:** `unstack --local`.
+- **Change PR base/head because the stack shape changed:** reshape with `jj`,
+  then `submit --dry-run` and `submit`.
+- **Recover from a squash/rebase merge made on GitHub:**
+  `cleanup --rebase --dry-run`, `cleanup --rebase`, then `submit` to refresh
+  surviving PRs.
+- **Adopt existing PRs into local tracking:**
+  `checkout --pull-request <pr> --fetch` for a whole stack (sets up tracking
+  only; rewrites nothing and does not touch GitHub), or
+  `relink <pr> <revset>` for one PR/change link.
+- **Fresh PRs for the same local changes:** `restart --dry-run <revset>`,
+  then `restart <revset>` and `submit <revset>`.
 
-Use `list` for a repo-wide inventory:
+If a direct GitHub mutation already happened, do not rebuild changes or PRs
+by hand. Inspect with `list --fetch --json`, `view --pull-request <pr> --json
+--fetch`, and `doctor`, then choose `checkout`, `relink`, `unlink`,
+`restart`, or `unstack` from what you see.
 
-```bash
-jj-stack list
-jj-stack list --json
-jj-stack list --fetch --json
-```
+## Everyday flow
 
-Use JSON output when another tool or script will consume status. Use `--fetch`
-when current remote branch positions matter.
+1. Build or revise the stack with `jj`. Each change is one reviewable PR:
+   put a dependency in the same change or a lower one, and unrelated work in
+   a separate stack.
+2. Confirm the shape with `view` (`--json` for machine-readable output,
+   `--fetch` when current remote branch positions matter); `list` shows the
+   repo-wide inventory.
+3. `submit --dry-run`, then `submit` to create or refresh PRs. Add
+   `--re-request` only when the user wants previous reviewers asked again.
+4. Apply review feedback in the change it belongs to: edit the lower `jj`
+   change, let descendants rebase, then `view` and `submit`. Do not patch a
+   higher change to avoid touching a lower one.
+5. When bottom changes are ready, `land --dry-run`, then `land`.
+6. If `trunk()` merely advanced, use plain `jj rebase`. `cleanup --rebase` is
+   only for ancestors already merged on GitHub under different commit IDs.
 
-## Quick Reference
+## Exit codes
 
-- Inspect the current stack: `jj-stack view`
-- Inspect with machine-readable output: `jj-stack view --json`
-- List known stacks: `jj-stack list`
-- Preview submit: `jj-stack submit --dry-run`
-- Create or refresh PRs: `jj-stack submit`
-- Ask previous reviewers to look again: `jj-stack submit --re-request`
-- Preview landing ready bottom changes: `jj-stack land --dry-run`
-- Land ready bottom changes: `jj-stack land`
-- Connect existing PRs to local changes: `jj-stack checkout --pull-request <pr> --fetch`
-- Clean up after squash/rebase merges on GitHub: `jj-stack cleanup --rebase`
-- Close PRs for an abandoned stack: `jj-stack unstack`
-- Close an orphaned PR and remove review state:
-  `jj-stack unstack --cleanup --pull-request <pr>`
+0 success; 1 any other failure, including a blocked action; 2 selection is
+not a supported stack; 3 unresolved conflicts; 4 GitHub auth/API failure;
+5 invalid arguments; 6 ambiguous selector (fails closed — repair with
+`unlink`/`relink` or select explicitly); 10 `view`/`list` printed a report
+that is incomplete or needs attention (the output is still valid — read it);
+130 interrupted.
 
-## Stack Structure
+## When something goes wrong
 
-Each local `jj` change should be a small reviewable unit. Put foundational
-changes lower in the stack and dependent changes higher in the stack:
-
-```text
-trunk()
-  refactor shared model      -> PR #1
-    add API endpoint         -> PR #2
-      add UI                 -> PR #3
-        add integration test -> PR #4
-```
-
-Plan the stack before writing a large change. If one change depends on another,
-the dependency belongs in the same change or in a lower change. If the work is
-unrelated, use a separate `jj` stack.
-
-## Submit Workflow
-
-1. Build or revise the local stack with `jj`.
-2. Check the selected stack with `jj-stack view`.
-3. Preview GitHub changes with `jj-stack submit --dry-run`.
-4. Submit or refresh PRs with `jj-stack submit`.
-5. Use `jj-stack submit --re-request` only when the user wants prior reviewers
-   asked to look again.
-
-The default submit target is the current completed stack head, usually `@-`.
-After an interrupted command, ambiguous status, or multi-stack work, pass an
-explicit revset, change ID, or `--pull-request` selector instead of relying on
-the default.
-
-## Revising a Stack
-
-When review feedback requires a lower change:
-
-1. Move to or edit the appropriate `jj` change.
-2. Make the fix in that change, then rebase or let descendants follow according
-   to normal `jj` workflow.
-3. Run `jj-stack view` to confirm the stack shape.
-4. Run `jj-stack submit --dry-run`, then `jj-stack submit`.
-
-Do not patch a higher change just to avoid changing a lower dependency. Review
-works best when each local `jj` change remains the unit that reviewers should
-read.
-
-## Landing and Cleanup
-
-Preview landing first unless the user has already asked to land:
-
-```bash
-jj-stack land --dry-run
-jj-stack land
-jj-stack land --pull-request <pr>
-```
-
-`land` lands the consecutive ready changes at the bottom of the stack. It stops
-before the first unready change.
-
-Use `cleanup --rebase` only when lower changes were merged on GitHub through
-different commit IDs, such as a squash merge, and the local stack still contains
-those old merged ancestors:
-
-```bash
-jj-stack cleanup --rebase --dry-run
-jj-stack cleanup --rebase
-```
-
-If `trunk()` merely advanced, use plain `jj rebase` instead of
-`cleanup --rebase`.
-
-Use `unstack` only when the user wants to stop reviewing a stack:
-
-```bash
-jj-stack unstack --dry-run
-jj-stack unstack
-jj-stack unstack --cleanup --pull-request <pr>
-```
-
-The `--cleanup` form also removes managed review branches, local bookmarks, and
-tracking data, so use it only when the stack should be retired.
-
-## Existing PR Stacks
-
-When the PRs already exist and local `jj-stack` tracking is missing, connect to
-them before submitting:
-
-```bash
-jj-stack checkout --pull-request <pr> --fetch
-jj-stack checkout --revset <revset> --fetch
-```
-
-`checkout` sets up local tracking. It does not rewrite commits, rebase changes,
-or modify GitHub.
-
-## Failure Handling
-
-- If a command is interrupted, inspect with `jj-stack view` and rerun the
-  intended command with an explicit change ID, revset, or PR selector.
-- If `jj-stack` reports ambiguity, stop and ask for a concrete selector rather
-  than guessing which PR or branch to update.
-- If `jj` reports a stale workspace, run `jj workspace update-stale`.
-- Use `jj op log` and `jj undo` for local jj recovery. Do not use destructive
-  Git commands in a jj repo.
-- If authentication or remote resolution is unclear, run `jj-stack doctor`.
+- Interrupted command: `view`, then rerun with an explicit change ID, revset,
+  or `--pull-request` selector.
+- jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.
+- Stale workspace: `jj workspace update-stale`.
+- Local recovery: `jj op log` and `jj undo`; never destructive git commands.
+- Auth or remote resolution unclear: `doctor`.

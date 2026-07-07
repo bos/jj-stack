@@ -80,6 +80,19 @@ The curated top-level help is part of that executable surface. `jj-stack help --
 shows the full command list and includes any short command aliases so they stay
 discoverable without reading the README first.
 
+The bundled agent skill in `skills/jj-stack/` is also a supported delivery surface, but
+it is not installed by the `jj-stack` executable. It follows the Agent Skills
+`skills/*/SKILL.md` repository convention, so users install it separately with
+`gh skill install bos/jj-stack jj-stack` or, during local development,
+`gh skill install . jj-stack --from-local ...`. The skill teaches agents to resolve and
+cache the repo's working invocation, whether that is `jj-stack`, `uv run jj-stack`, or a
+`jj` alias such as `jj stack` or `jj stk`; to check, before direct `gh` PR or branch
+mutations, whether `jj-stack` already manages review state in that repo; to cache that
+answer for the session; to use machine-readable `list --json` and `view --json` output
+for stack ownership checks; and to distinguish ordinary PR collaboration metadata from
+structural or lifecycle `gh` mutations that can disrupt jj-stack-managed PRs or review
+branches unless the user has seen the risk and approved the direct mutation.
+
 Current aliases include `ls` for `list`, `sub` for `submit`, and `delete` for `unstack`.
 Commands that select one linked pull request also accept `-p` as a short form for
 `--pull-request`.
