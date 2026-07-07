@@ -81,10 +81,12 @@ you explain that risk.
 - **Land ready bottom changes:** `land --dry-run`, then `land`. Lands the
   consecutive ready changes at the bottom and stops before the first unready
   one; `--pull-request <pr>` stops earlier. When branch protection forbids
-  direct trunk pushes, use `land --via merge`: it merges each ready PR on
-  GitHub bottom-up (this is the one sanctioned way a managed PR gets merged)
-  and stops at the first PR GitHub reports as not mergeable. It does not move
-  local history — run `sync` afterwards.
+  direct trunk pushes outright (GitHub says changes must be made through a
+  pull request — not merely that required checks are pending), use
+  `land --via merge`: it merges each ready PR on GitHub bottom-up (this is
+  the one sanctioned way a managed PR gets merged) and stops at the first PR
+  GitHub reports as not mergeable. It does not move local history — run
+  `sync` afterwards.
 - **Close an abandoned stack's PRs:** `unstack --dry-run`, then `unstack`.
 - **Also remove review branches and tracking:** `unstack --cleanup`, only
   after confirming the stack should be retired. For an orphaned PR from
@@ -139,6 +141,16 @@ that is incomplete or needs attention (the output is still valid — read it);
 
 ## When something goes wrong
 
+- Direct-push `land` rejected with `GH006: Protected branch update failed`:
+  the reason line decides the fix — read it before reacting. "required
+  status checks are expected" (or pending/failing) means direct pushes are
+  allowed but the checks must first pass on the exact commits being landed;
+  they are usually re-running after a rebase/refresh, so wait for the
+  review-branch checks and rerun `land` — switching to `--via merge` does
+  not help because the merge API enforces the same checks. Only "changes
+  must be made through a pull request" means direct pushes are forbidden and
+  `--via merge` is the answer; "not authorized" is an access problem, not a
+  transport problem.
 - Interrupted command: `view`, then rerun with an explicit change ID, revset,
   or `--pull-request` selector.
 - jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.

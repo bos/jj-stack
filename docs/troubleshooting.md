@@ -157,6 +157,34 @@ jj-stack submit --re-request
 A pure rebase with the same diff does not need this. In that case, `land` will refresh the review
 branch automatically before pushing `trunk()`.
 
+## `land` fails pushing trunk with a protected-branch error
+
+GitHub rejected the direct trunk push with output like:
+
+```text
+GH006: Protected branch update failed for refs/heads/main
+7 of 7 required status checks are expected
+```
+
+The reason after the `GH006` line decides the fix — read it before changing anything:
+
+- **"required status checks are expected"** (or pending, or failing): direct pushes are
+  allowed here, but the required checks must pass on the exact commits being landed
+  first. This is common right after a rebase: `land` refreshed the review branches, so
+  the checks are re-running against the new commits. Wait for the review-branch checks
+  to finish, then rerun `jj-stack land`. Do not switch to `land --via merge` for this —
+  the merge API enforces the same required checks and refuses just the same.
+- **"Changes must be made through a pull request"**: the repo forbids direct pushes to
+  trunk entirely. Land through GitHub instead, then rebase the rest of your stack:
+
+  ```bash
+  jj-stack land --via merge
+  jj-stack sync
+  ```
+
+- **"You're not authorized to push to this branch"**: an access problem, not a landing
+  problem. Fix repo permissions before retrying either transport.
+
 ## PRs for this stack exist on GitHub but `jj-stack` doesn't know about them
 
 Possible causes:

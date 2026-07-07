@@ -121,6 +121,22 @@ Concrete follow-up questions:
 This should be designed explicitly rather than bolted onto the current `land`
 flow piecemeal.
 
+## Land Trunk-Push Rejection Diagnostics
+
+_Benefit: medium — misreading GitHub's protected-branch rejection sends operators and
+agents to the wrong recovery; one agent switched to `land --via merge` when the real
+blocker was that required checks had not yet passed on the rebased commits._
+
+A rejected direct trunk push currently surfaces git's raw `GH006: Protected branch
+update failed` output, whose reason line decides the correct next step: pending or
+failing required checks mean wait for the review-branch checks and rerun `land`;
+"changes must be made through a pull request" means the repo needs `--via merge`;
+authorization failures mean neither transport will help. `land` could parse the
+rejection reason out of the push error and emit the matching next step directly,
+keeping the raw output for anything it cannot classify. The agent skill and
+`docs/troubleshooting.md` carry this triage as prose today; a typed diagnostic would
+make it self-serve.
+
 ## Guided Recovery and Next-Step UX
 
 _Benefit: large — daily operator quality of life; makes the safe next action
