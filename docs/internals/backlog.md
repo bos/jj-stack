@@ -262,6 +262,15 @@ The transition vocabulary and required behaviors live in
 - a tracking-store-loss drift (fresh machine, deleted state file with live PRs)
   once the product decides which proofs let `submit` adopt existing PRs versus
   requiring `checkout`
+- typed `DriftError` conditions for the remaining untyped fail-closed guards in `submit`,
+  added together with the transition that reaches each one: the conflicted-bookmark guards
+  become reachable once the replay fetches between drift and submit (the `view --fetch`
+  extension above), and the branch-takeover guard is the fail-closed face of
+  tracking-store loss or of a remote branch-name collision with a never-submitted change
+  (a candidate new drift kind). Until then, a replayed drift that trips an untyped guard
+  fails the diagnosis assertion loudly, so nothing is silently absorbed. The atomic-push
+  preflight stays out of the model: it fires with review identity fully proven and is a
+  local tracking-configuration limit, not drift.
 - an exhaustive enumeration mode for drift pairs at small stack sizes; the
   space is small enough to enumerate outright instead of sampling
 - a TLA+ sketch of the transition lattice for oracle-completeness checking was
