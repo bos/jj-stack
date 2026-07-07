@@ -120,6 +120,44 @@ def test_rich_text_renders_template_semantics(
     assert text.spans[1].style == _style_cls()(color="color(81)", bold=True)
 
 
+def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path.cwd()
+    stdout = 'colors.local_bookmarks\0"green"\n'
+    first = "review/fix-one-aaaaaaaa"
+    second = "review/fix-two-bbbbbbbb"
+    expected = f"matches: {first}, {second}."
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
+
+    bookmarks = ui_module.join(ui_module.bookmark, (first, second))
+    message = t"matches: {bookmarks}."
+
+    assert ui_module.plain_text(message) == expected
+
+    with console_module.configured_console(
+        stdout=StringIO(),
+        stderr=StringIO(),
+        color_mode="never",
+        repository=repository,
+    ):
+        text = console_module.rich_text(message)
+
+    style = _style_cls()(color="green")
+    span_cls = import_module("rich.text").Span
+    first_start = expected.index(first)
+    second_start = expected.index(second)
+    assert text.plain == expected
+    assert text.spans == [
+        span_cls(first_start, first_start + len(first), style),
+        span_cls(second_start, second_start + len(second), style),
+    ]
+
+
 def test_revset_uses_semantic_style(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -141,4 +179,3 @@ def test_revset_uses_semantic_style(
 
     assert text.plain == "trunk()"
     assert text.spans == [import_module("rich.text").Span(0, 7, _style_cls()(color="blue"))]
-

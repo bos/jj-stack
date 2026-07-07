@@ -203,6 +203,14 @@ def resolve_interpolation(interpolation: Interpolation) -> Message:
                 return format(converted, interpolation.format_spec)
             return converted
         return value
+    if isinstance(value, tuple):
+        if interpolation.conversion is not None or interpolation.format_spec:
+            plain = plain_text(value)
+            converted = convert(plain, interpolation.conversion)
+            if interpolation.format_spec:
+                return format(converted, interpolation.format_spec)
+            return converted
+        return value
 
     converted = convert(value, interpolation.conversion)
     if interpolation.format_spec:
