@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -208,11 +209,18 @@ class FakeGithubRepository:
                 return pull_request
         return None
 
-    def refresh_pull_request_state(self, pull_request: FakeGithubPullRequest) -> None:
+    def refresh_pull_request_state(
+        self,
+        pull_request: FakeGithubPullRequest,
+        *,
+        branch_heads: dict[str, str] | None = None,
+    ) -> None:
         if pull_request.state != "open":
             return
-        base_commit = self.ref_target(pull_request.base_ref)
-        head_commit = self.ref_target(pull_request.head_ref)
+        if branch_heads is None:
+            branch_heads = self.branch_heads()
+        base_commit = branch_heads.get(pull_request.base_ref)
+        head_commit = branch_heads.get(pull_request.head_ref)
         if base_commit is None or head_commit is None:
             return
         if not self.is_ancestor(head_commit, base_commit):
@@ -224,6 +232,19 @@ class FakeGithubRepository:
             state="closed",
             reason="head_reachable_from_base",
         )
+
+    def refresh_pull_requests(
+        self,
+        pull_requests: Iterable[FakeGithubPullRequest],
+    ) -> None:
+        """Refresh many pull requests off one shared branch-head snapshot."""
+
+        to_refresh = [candidate for candidate in pull_requests if candidate.state == "open"]
+        if not to_refresh:
+            return
+        branch_heads = self.branch_heads()
+        for pull_request in to_refresh:
+            self.refresh_pull_request_state(pull_request, branch_heads=branch_heads)
 
     def update_pull_request_base(
         self,
@@ -268,15 +289,25 @@ class FakeGithubRepository:
         )
 
     def ref_target(self, branch: str) -> str | None:
+        return self.branch_heads().get(branch)
+
+    def branch_heads(self) -> dict[str, str]:
+        """Read every branch target in one git invocation."""
+
         completed = subprocess.run(
-            ["git", "--git-dir", str(self.git_dir), "rev-parse", f"refs/heads/{branch}"],
+            ["git", "--git-dir", str(self.git_dir), "show-ref", "--heads"],
             capture_output=True,
             check=False,
             text=True,
         )
         if completed.returncode != 0:
-            return None
-        return completed.stdout.strip() or None
+            return {}
+        heads: dict[str, str] = {}
+        for line in completed.stdout.splitlines():
+            commit_id, _, ref_name = line.partition(" ")
+            if ref_name.startswith("refs/heads/"):
+                heads[ref_name.removeprefix("refs/heads/")] = commit_id
+        return heads
 
     def is_ancestor(self, ancestor_commit: str, descendant_commit: str) -> bool:
         completed = subprocess.run(
@@ -486,8 +517,7 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         repository = _get_repository(fake_state, owner, repo)
         requested_state = state or "open"
         pull_requests = list(repository.pull_requests.values())
-        for pull_request in pull_requests:
-            repository.refresh_pull_request_state(pull_request)
+        repository.refresh_pull_requests(pull_requests)
         if head is not None:
             pull_requests = [
                 candidate for candidate in pull_requests if candidate.head_label == head
@@ -844,19 +874,26 @@ def _graphql_repository_payload(
         for match in head_ref_matches:
             alias = match.group("alias")
             head_ref = json.loads(match.group("head_ref"))
-            matching_pull_requests = [
-                _graphql_pull_request_payload(
-                    pull_request=pull_request,
-                    repository=repository,
-                    web_origin=web_origin,
-                )
-                for pull_request in sorted(
-                    repository.pull_requests.values(),
-                    key=lambda candidate: candidate.number,
-                )
-                if pull_request.head_ref == head_ref
-            ]
-            payload[alias] = {"nodes": matching_pull_requests[:2]}
+            matching_pull_requests = sorted(
+                (
+                    pull_request
+                    for pull_request in repository.pull_requests.values()
+                    if pull_request.head_ref == head_ref
+                ),
+                key=lambda candidate: candidate.number,
+            )
+            repository.refresh_pull_requests(matching_pull_requests)
+            payload[alias] = {
+                "nodes": [
+                    _graphql_pull_request_payload(
+                        pull_request=pull_request,
+                        repository=repository,
+                        web_origin=web_origin,
+                        refreshed=True,
+                    )
+                    for pull_request in matching_pull_requests
+                ][:2]
+            }
         return payload
 
     pull_request_number_matches = list(_PULL_REQUEST_NUMBER_QUERY_PATTERN.finditer(query))
@@ -865,6 +902,13 @@ def _graphql_repository_payload(
 
     payload: dict[str, object] = {}
     include_latest_opinionated_reviews = "latestOpinionatedReviews" in query
+    requested_pull_requests = [
+        pull_request
+        for match in pull_request_number_matches
+        if (pull_request := repository.pull_requests.get(int(match.group("number"))))
+        is not None
+    ]
+    repository.refresh_pull_requests(requested_pull_requests)
     for match in pull_request_number_matches:
         alias = match.group("alias")
         pull_number = int(match.group("number"))
@@ -876,6 +920,7 @@ def _graphql_repository_payload(
             pull_request=pull_request,
             repository=repository,
             web_origin=web_origin,
+            refreshed=True,
         )
         if include_latest_opinionated_reviews:
             graphql_payload["latestOpinionatedReviews"] = {
@@ -904,8 +949,10 @@ def _graphql_pull_request_payload(
     pull_request: FakeGithubPullRequest,
     repository: FakeGithubRepository,
     web_origin: str,
+    refreshed: bool = False,
 ) -> dict[str, object]:
-    repository.refresh_pull_request_state(pull_request)
+    if not refreshed:
+        repository.refresh_pull_request_state(pull_request)
     payload = pull_request.to_graphql_payload(
         repository=repository,
         web_origin=web_origin,
