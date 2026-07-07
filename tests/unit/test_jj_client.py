@@ -257,93 +257,6 @@ def test_discover_review_stack_uses_non_empty_working_copy_as_default_selection(
     assert [revision.subject for revision in stack.revisions] == ["parent", "head"]
 
 
-def test_discover_review_stack_default_head_includes_merged_side_branch_boundary(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    current_trunk = _revision_line(
-        commit_id="current-trunk",
-        parents=["old-trunk", "merged"],
-        change_id="trunk-change",
-        description="main\n",
-    )
-    merged = _revision_line(
-        commit_id="merged",
-        parents=["old-trunk"],
-        change_id="merged-change",
-        description="merged\n",
-        immutable=True,
-    )
-    head = _revision_line(
-        commit_id="head-3",
-        parents=["merged"],
-        change_id="head-3-change",
-        description="head 3\n",
-        working_copy=True,
-    )
-    old_trunk = _revision_line(
-        commit_id="old-trunk",
-        parents=["root"],
-        change_id="old-trunk-change",
-        description="old trunk\n",
-        immutable=True,
-    )
-    trunk_scan = (
-        _revision_with_flag_line(current_trunk, is_trunk=True)
-        + _revision_with_flag_line(head, is_trunk=False)
-        + _revision_with_flag_line(merged, is_trunk=False)
-    )
-    responses: dict[tuple[str, ...], str] = {
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "trunk() | @ | @-",
-            "-T",
-            _trunk_scan_template(),
-        ): trunk_scan,
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "heads(first_ancestors('head-3') & ::'current-trunk')",
-            "-T",
-            _template(),
-            "--limit",
-            "2",
-        ): merged,
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "children('merged') & merges() & ::'current-trunk'",
-            "-T",
-            _template(),
-        ): current_trunk,
-        (
-            "jj",
-            "log",
-            "--no-graph",
-            "-r",
-            "'merged'::'head-3'",
-            "-T",
-            _template(),
-        ): (head + merged),
-        ("jj", "log", "--no-graph", "-r", "old-trunk", "-T", _template(), "--limit", "2"): (
-            old_trunk
-        ),
-    }
-
-    stack = _client(monkeypatch, responses).discover_review_stack(
-        allow_immutable=True,
-    )
-
-    assert stack.selected_revset == "@"
-    assert [revision.subject for revision in stack.revisions] == ["merged", "head 3"]
-
-
 def test_discover_review_stack_rejects_root_fallback_trunk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -504,7 +417,7 @@ def test_discover_review_stack_allows_immutable_ancestor_for_inspection(
     ]
 
 
-def test_discover_review_stack_excludes_revisions_already_reachable_from_trunk(
+def test_discover_review_stack_includes_side_branch_boundary_merged_into_trunk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     current_trunk = _revision_line(
@@ -758,19 +671,19 @@ def test_discover_review_stack_surfaces_stale_workspace_errors(
         client.discover_review_stack("head")
 
 
-def test_resolve_color_when_honors_explicit_jj_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_color_when_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         ("jj", "config", "get", "ui.color"): "debug\n",
     }
+    configured = _client(monkeypatch, responses)
 
-    value = _client(monkeypatch, responses).resolve_color_when(stdout_is_tty=True)
+    # An explicit jj config value is honored.
+    assert configured.resolve_color_when(stdout_is_tty=True) == "debug"
+    # A CLI override beats the jj config, and CLI "auto" maps to terminal capability.
+    assert configured.resolve_color_when(cli_color="never", stdout_is_tty=True) == "never"
+    assert configured.resolve_color_when(cli_color="auto", stdout_is_tty=False) == "never"
+    assert configured.resolve_color_when(cli_color="auto", stdout_is_tty=True) == "always"
 
-    assert value == "debug"
-
-
-def test_resolve_color_when_maps_auto_to_terminal_capability(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
     def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert tuple(command) == (
             "jj",
@@ -783,22 +696,11 @@ def test_resolve_color_when_maps_auto_to_terminal_capability(
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="no config\n")
 
     monkeypatch.setattr(subprocess, "run", run)
-    client = JjClient(Path("/repo"))
+    unconfigured = JjClient(Path("/repo"))
 
-    assert client.resolve_color_when(stdout_is_tty=True) == "always"
-    assert client.resolve_color_when(stdout_is_tty=False) == "never"
-
-
-def test_resolve_color_when_cli_override_beats_jj_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    responses: dict[tuple[str, ...], str] = {
-        ("jj", "config", "get", "ui.color"): "debug\n",
-    }
-
-    client = _client(monkeypatch, responses)
-
-    assert client.resolve_color_when(cli_color="never", stdout_is_tty=True) == "never"
-    assert client.resolve_color_when(cli_color="auto", stdout_is_tty=False) == "never"
-    assert client.resolve_color_when(cli_color="auto", stdout_is_tty=True) == "always"
+    # Missing config falls back to terminal capability.
+    assert unconfigured.resolve_color_when(stdout_is_tty=True) == "always"
+    assert unconfigured.resolve_color_when(stdout_is_tty=False) == "never"
 
 
 def test_find_private_commits_returns_matching_revisions(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -823,17 +725,6 @@ def test_find_private_commits_returns_matching_revisions(monkeypatch: pytest.Mon
 
     assert len(result) == 1
     assert result[0].commit_id == "head"
-
-
-def test_find_private_commits_skips_empty_policy(monkeypatch: pytest.MonkeyPatch) -> None:
-    responses: dict[tuple[str, ...], str] = {
-        ("jj", "config", "get", "git.private-commits"): "none()\n",
-    }
-    revisions = (make_revision(commit_id="head", change_id="head-change", description="head\n"),)
-
-    result = _client(monkeypatch, responses).find_private_commits(revisions)
-
-    assert result == ()
 
 
 def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation(

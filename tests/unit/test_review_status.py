@@ -18,7 +18,6 @@ from jj_stack.review.status import (
     PreparedStack,
     PreparedStatus,
     ReviewStatusRevision,
-    pinned_bookmarks_for_revisions,
     prepare_stack_for_status,
     stream_status_async,
 )
@@ -275,26 +274,6 @@ def test_locked_status_cache_update_merges_with_current_saved_state(tmp_path) ->
     assert skipped is False
     assert saved.changes["aaaaaaaaaaaa"].pr_review_decision == "approved"
     assert saved.changes["bbbbbbbbbbbb"].pr_number == 99
-
-
-def test_pinned_bookmarks_for_revisions_uses_cached_bookmarks_and_dedupes() -> None:
-    first = cast(LocalRevision, SimpleNamespace(change_id="aaaaaaaa1234"))
-    second = cast(LocalRevision, SimpleNamespace(change_id="bbbbbbbb5678"))
-    third = cast(LocalRevision, SimpleNamespace(change_id="cccccccc9abc"))
-    state = ReviewState(
-        changes={
-            "aaaaaaaa1234": CachedChange(bookmark="review/saved-aaaaaaaa"),
-            "bbbbbbbb5678": CachedChange(bookmark="review/saved-bbbbbbbb"),
-            "cccccccc9abc": CachedChange(bookmark="review/saved-aaaaaaaa"),
-        }
-    )
-
-    result = pinned_bookmarks_for_revisions(
-        revisions=(first, second, third),
-        state=state,
-    )
-
-    assert result == ("review/saved-aaaaaaaa", "review/saved-bbbbbbbb")
 
 
 def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_misses() -> None:

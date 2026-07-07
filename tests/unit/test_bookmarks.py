@@ -23,9 +23,11 @@ def test_generate_bookmark_name_normalizes_subject() -> None:
         description="Fix cache invalidation!!!\n\nBody text.\n",
     )
 
-    bookmark = generate_bookmark_name(revision)
-
-    assert bookmark == "review/fix-cache-invalidation-zvlywqkx"
+    assert generate_bookmark_name(revision) == "review/fix-cache-invalidation-zvlywqkx"
+    assert (
+        generate_bookmark_name(revision, prefix="bosullivan")
+        == "bosullivan/fix-cache-invalidation-zvlywqkx"
+    )
 
 
 def test_generate_bookmark_name_falls_back_for_blank_subject() -> None:
@@ -34,17 +36,6 @@ def test_generate_bookmark_name_falls_back_for_blank_subject() -> None:
     bookmark = generate_bookmark_name(revision)
 
     assert bookmark == "review/change-abcdefgh"
-
-
-def test_generate_bookmark_name_uses_configured_prefix() -> None:
-    revision = _revision(
-        change_id="zvlywqkxtmnpqrstu",
-        description="Fix cache invalidation\n",
-    )
-
-    bookmark = generate_bookmark_name(revision, prefix="bosullivan")
-
-    assert bookmark == "bosullivan/fix-cache-invalidation-zvlywqkx"
 
 
 def test_bookmark_resolver_generates_and_pins_bookmark_when_no_mapping_exists() -> None:
@@ -118,37 +109,40 @@ def test_bookmark_resolver_reuses_discovered_bookmark_when_cache_is_missing() ->
     )
 
 
-def test_discover_bookmarks_reuses_unique_remote_bookmark_with_matching_change_id_suffix() -> (
-    None
-):
-    bookmarks = discover_bookmarks_for_revisions(
-        bookmark_states={
-            "review/original-title-zvlywqkx": BookmarkState(
-                name="review/original-title-zvlywqkx",
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("abc123",)),),
-            ),
-        },
-        remote_name="origin",
-        revisions=(_revision(change_id="zvlywqkxtmnpqrstu", description=""),),
-    )
+@pytest.mark.parametrize(
+    ("prefix", "bookmark"),
+    [
+        pytest.param(None, "review/original-title-zvlywqkx", id="default-prefix"),
+        pytest.param("bosullivan", "bosullivan/original-title-zvlywqkx", id="configured-prefix"),
+    ],
+)
+def test_discover_bookmarks_reuses_unique_remote_bookmark_with_matching_change_id_suffix(
+    prefix: str | None,
+    bookmark: str,
+) -> None:
+    bookmark_states = {
+        bookmark: BookmarkState(
+            name=bookmark,
+            remote_targets=(RemoteBookmarkState(remote="origin", targets=("abc123",)),),
+        ),
+    }
+    revisions = (_revision(change_id="zvlywqkxtmnpqrstu", description=""),)
 
-    assert bookmarks == {"zvlywqkxtmnpqrstu": "review/original-title-zvlywqkx"}
+    if prefix is None:
+        bookmarks = discover_bookmarks_for_revisions(
+            bookmark_states=bookmark_states,
+            remote_name="origin",
+            revisions=revisions,
+        )
+    else:
+        bookmarks = discover_bookmarks_for_revisions(
+            bookmark_states=bookmark_states,
+            prefix=prefix,
+            remote_name="origin",
+            revisions=revisions,
+        )
 
-
-def test_discover_bookmarks_reuses_unique_remote_bookmark_with_configured_prefix() -> None:
-    bookmarks = discover_bookmarks_for_revisions(
-        bookmark_states={
-            "bosullivan/original-title-zvlywqkx": BookmarkState(
-                name="bosullivan/original-title-zvlywqkx",
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("abc123",)),),
-            ),
-        },
-        prefix="bosullivan",
-        remote_name="origin",
-        revisions=(_revision(change_id="zvlywqkxtmnpqrstu", description=""),),
-    )
-
-    assert bookmarks == {"zvlywqkxtmnpqrstu": "bosullivan/original-title-zvlywqkx"}
+    assert bookmarks == {"zvlywqkxtmnpqrstu": bookmark}
 
 
 def test_discover_bookmarks_for_revisions_rejects_ambiguous_matches() -> None:

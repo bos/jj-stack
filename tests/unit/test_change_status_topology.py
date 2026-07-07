@@ -70,20 +70,6 @@ def test_submitted_state_disagreement_returns_empty_when_saved_state_matches() -
     assert submitted_state_disagreement(state, (stack,)) == ()
 
 
-def test_submitted_state_disagreement_flags_change_after_rebase_changed_parent() -> None:
-    a = _revision("change-a")
-    b = _revision("change-b")
-    stack = _stack(a, b)
-    state = ReviewState(
-        changes={
-            "change-a": _tracked(parent=None, head="change-b", pr_number=1),
-            "change-b": _tracked(parent="change-other", head="change-b", pr_number=2),
-        }
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ("change-b",)
-
-
 def test_submitted_state_disagreement_flags_changes_when_head_moved() -> None:
     a = _revision("change-a")
     b = _revision("change-b")

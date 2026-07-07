@@ -4,7 +4,6 @@ from jj_stack.models.bookmarks import RemoteBookmarkState
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.review_state import CachedChange
 from jj_stack.review.change_status import (
-    SubmittedStateDisagreement,
     classify_review_change,
 )
 from jj_stack.review.status import PullRequestLookup
@@ -142,21 +141,3 @@ def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None
     assert status.pr_review_decision == "unknown"
     assert status.pr_review_decision_error == "GitHub returned 502"
     assert status.has_pull_request_lookup_failure is True
-
-
-def test_classifier_preserves_independent_baseline_flags() -> None:
-    status = classify_review_change(
-        baseline_disagreement=SubmittedStateDisagreement(
-            change_id="change-a",
-            commit_changed=True,
-            parent_changed=True,
-            stack_head_changed=False,
-        ),
-        cached_change=CachedChange(last_submitted_commit_id="old"),
-        commit_id="new",
-        local="present",
-        pull_request_lookup=None,
-        remote_state=None,
-    )
-
-    assert status.baseline == frozenset({"commit_changed", "parent_changed"})

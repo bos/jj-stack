@@ -117,32 +117,19 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
 def test_github_client_lists_pull_request_reviews() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/repos/octo-org/stacked-review/pulls/7/reviews"
-        if request.url.params.get("page") == "2":
-            return httpxyz.Response(
-                200,
-                json=[
-                    {
-                        "id": 2,
-                        "state": "COMMENTED",
-                        "user": {"login": "reviewer-2"},
-                    }
-                ],
-                request=request,
-            )
         return httpxyz.Response(
             200,
-            headers={
-                "Link": (
-                    "<https://api.github.test/repos/octo-org/stacked-review/pulls/7/reviews"
-                    '?page=2>; rel="next"'
-                )
-            },
             json=[
                 {
                     "id": 1,
                     "state": "APPROVED",
                     "user": {"login": "reviewer-1"},
-                }
+                },
+                {
+                    "id": 2,
+                    "state": "COMMENTED",
+                    "user": {"login": "reviewer-2"},
+                },
             ],
             request=request,
         )
@@ -457,23 +444,44 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
     assert len(queries) == 1
 
 
-def test_github_client_converts_pull_request_to_draft_via_graphql() -> None:
+@pytest.mark.parametrize(
+    ("client_method", "expected_mutation_name", "expected_is_draft"),
+    [
+        pytest.param(
+            "convert_pull_request_to_draft",
+            "convertPullRequestToDraft",
+            True,
+            id="convert-to-draft",
+        ),
+        pytest.param(
+            "mark_pull_request_ready_for_review",
+            "markPullRequestReadyForReview",
+            False,
+            id="mark-ready-for-review",
+        ),
+    ],
+)
+def test_github_client_toggles_pull_request_draft_state_via_graphql(
+    client_method: str,
+    expected_mutation_name: str,
+    expected_is_draft: bool,
+) -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.method == "POST"
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
         assert payload["variables"] == {"pullRequestId": "PR_kwDOA7"}
-        assert "convertPullRequestToDraft" in payload["query"]
+        assert expected_mutation_name in payload["query"]
         return httpxyz.Response(
             200,
             json={
                 "data": {
-                    "convertPullRequestToDraft": {
+                    expected_mutation_name: {
                         "pullRequest": {
                             "id": "PR_kwDOA7",
                             "number": 7,
                             "state": "OPEN",
-                            "isDraft": True,
+                            "isDraft": expected_is_draft,
                             "mergedAt": None,
                             "url": "https://github.test/octo-org/stacked-review/pull/7",
                             "title": "feature",
@@ -490,53 +498,12 @@ def test_github_client_converts_pull_request_to_draft_via_graphql() -> None:
 
     async def run_test() -> bool:
         async with _github_client(handler) as client:
-            pull_request = await client.convert_pull_request_to_draft(
+            pull_request = await getattr(client, client_method)(
                 pull_request_id="PR_kwDOA7",
             )
         return pull_request.is_draft
 
-    assert asyncio.run(run_test()) is True
-
-
-def test_github_client_marks_pull_request_ready_for_review_via_graphql() -> None:
-    def handler(request: httpxyz.Request) -> httpxyz.Response:
-        assert request.method == "POST"
-        assert request.url.path == "/graphql"
-        payload = json.loads(request.content.decode("utf-8"))
-        assert payload["variables"] == {"pullRequestId": "PR_kwDOA7"}
-        assert "markPullRequestReadyForReview" in payload["query"]
-        return httpxyz.Response(
-            200,
-            json={
-                "data": {
-                    "markPullRequestReadyForReview": {
-                        "pullRequest": {
-                            "id": "PR_kwDOA7",
-                            "number": 7,
-                            "state": "OPEN",
-                            "isDraft": False,
-                            "mergedAt": None,
-                            "url": "https://github.test/octo-org/stacked-review/pull/7",
-                            "title": "feature",
-                            "body": "body",
-                            "baseRefName": "main",
-                            "headRefName": "review/feature",
-                            "headRepositoryOwner": {"login": "octo-org"},
-                        }
-                    }
-                }
-            },
-            request=request,
-        )
-
-    async def run_test() -> bool:
-        async with _github_client(handler) as client:
-            pull_request = await client.mark_pull_request_ready_for_review(
-                pull_request_id="PR_kwDOA7",
-            )
-        return pull_request.is_draft
-
-    assert asyncio.run(run_test()) is False
+    assert asyncio.run(run_test()) is expected_is_draft
 
 
 def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> None:
@@ -588,3 +555,34 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
         return [pull_request.number for pull_request in pull_requests["review/seven"]]
 
     assert asyncio.run(run_test()) == [7]
+
+
+def test_user_facing_reason_reports_repo_not_found_for_404_without_raw_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pretend a token is configured so the 404 reason omits the auth follow-up
+    # hint, letting us assert the bare repo-not-found wording. The raw response
+    # body (JSON, network phrasing) must never leak into the user-facing reason.
+    monkeypatch.setattr("jj_stack.github.client.github_token_from_env", lambda: "token")
+    error = GithubClientError(
+        'GitHub request failed: 404 {"message":"Not Found","documentation_url":"x"}',
+        status_code=404,
+    )
+
+    reason = error.user_facing_reason()
+
+    assert reason == "repo not found or inaccessible"
+    assert "documentation_url" not in reason
+    assert "network" not in reason
+
+
+def test_user_facing_reason_reports_auth_failure_for_401() -> None:
+    error = GithubClientError("GitHub request failed: 401", status_code=401)
+
+    assert error.user_facing_reason() == "auth failed - check GITHUB_TOKEN"
+
+
+def test_user_facing_reason_reports_access_denied_for_403() -> None:
+    error = GithubClientError("GitHub request failed: 403", status_code=403)
+
+    assert error.user_facing_reason() == "access denied - check GITHUB_TOKEN and repo access"

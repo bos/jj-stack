@@ -8,7 +8,7 @@ import jj_stack.github.auth as github_auth_module
 from jj_stack.github.auth import github_token_for_host, github_token_from_env
 
 
-def test_github_token_from_env_prefers_github_token(
+def test_github_token_from_env_precedence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
@@ -16,12 +16,7 @@ def test_github_token_from_env_prefers_github_token(
 
     assert github_token_from_env() == "github-token"
 
-
-def test_github_token_from_env_falls_back_to_gh_token(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    monkeypatch.setenv("GH_TOKEN", "gh-token")
+    monkeypatch.delenv("GITHUB_TOKEN")
 
     assert github_token_from_env() == "gh-token"
 
