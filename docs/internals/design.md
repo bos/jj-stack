@@ -1367,7 +1367,15 @@ Recovery guidance stays case-specific:
   whether the user should pick a different head, clean up merged ancestors, or repair
   closed PR state first
 - if repo policy or branch protection blocks the trunk transition, surface that as a
-  hard error rather than trying an alternate mutation path
+  hard error rather than trying an alternate mutation path. GitHub marks these
+  rejections with stable codes (`GH006` for classic branch protection, `GH013` for
+  rulesets) but prose reason lines, so `land` classifies the reason only to choose
+  the hint: pending required checks point at waiting for the review-branch checks
+  and rerunning `land`, a pull-request requirement points at `--via merge`, a
+  merge-queue requirement says the queue must merge the PRs, and an authorization
+  failure names repo access. The raw rejection lines stay in the error, an
+  unrecognized reason falls back to them alone, and classification never changes
+  what the command does
 
 `land` only owns the bookkeeping that follows directly from the trunk transition:
 

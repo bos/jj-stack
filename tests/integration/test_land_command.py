@@ -795,3 +795,39 @@ def test_land_via_merge_refuses_rebase_method_for_multi_pr_prefix(
     assert "rebase merge cannot land more than one PR" in captured.err
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "open"
+
+
+def test_land_classifies_protected_branch_push_rejection(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A GH006 rejection surfaces the reason and the matching next step."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1)
+    original_trunk_target = JjClient(repo).get_bookmark_state("main").local_target
+    hooks_dir = fake_repo.git_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook = hooks_dir / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\n"
+        'echo "GH006: Protected branch update failed for refs/heads/main." >&2\n'
+        'echo "7 of 7 required status checks are expected." >&2\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+
+    exit_code = run_main(repo, config_path, "land")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "GH006: Protected branch update failed" in captured.err
+    assert "required status checks are expected" in captured.err
+    assert "Wait for the review-branch checks to finish" in captured.err
+    assert "land --via merge would not help" in captured.err
+    # The failed push restored the local trunk bookmark and the PR is intact.
+    assert JjClient(repo).get_bookmark_state("main").local_target == original_trunk_target
+    assert fake_repo.pull_requests[1].state == "open"

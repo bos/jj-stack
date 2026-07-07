@@ -6,8 +6,13 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.push_rejections import (
+    classify_protected_branch_rejection,
+    protected_branch_rejection_hint,
+    rejection_reason_lines,
+)
 from jj_stack.github.stack_comments import StackCommentKind, delete_stack_comment
-from jj_stack.jj.client import JjClient
+from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import CachedChange
 from jj_stack.review.change_status import classify_review_change
@@ -366,6 +371,21 @@ def _push_trunk_bookmark(
             remote=remote_name,
             bookmarks=(trunk_branch,),
         )
+    except JjCommandError as error:
+        _restore_local_trunk_bookmark(
+            client=client,
+            original_target=original_trunk_target,
+            trunk_branch=trunk_branch,
+        )
+        rejection_reason = classify_protected_branch_rejection(str(error))
+        if rejection_reason is None:
+            raise
+        raise CliError(
+            t"GitHub rejected the {ui.bookmark(trunk_branch)} push as a "
+            t"protected-branch violation:\n"
+            t"{rejection_reason_lines(str(error))}",
+            hint=protected_branch_rejection_hint(rejection_reason),
+        ) from error
     except BaseException:
         _restore_local_trunk_bookmark(
             client=client,
