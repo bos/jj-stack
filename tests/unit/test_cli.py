@@ -5,7 +5,7 @@ import pytest
 import jj_stack.ui as ui
 from jj_stack.cli import main
 from jj_stack.commands.view import ViewSelector
-from jj_stack.errors import CliError
+from jj_stack.errors import EXIT_USAGE, CliError
 from tests.support.output_assertions import assert_output_contains
 
 
@@ -176,7 +176,7 @@ def test_main_reports_unknown_command_with_short_recovery_hint(
     exit_code = main(argv)
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_USAGE
     assert_output_contains(captured.err, "Unknown command pants.")
     err_lines = captured.err.splitlines()
     assert err_lines[0] == "Error: Unknown command pants."

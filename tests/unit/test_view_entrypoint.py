@@ -1,3 +1,4 @@
+import json
 from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 
 import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
+from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjCliArgs
 from jj_stack.models.review_state import CachedChange, ReviewState
@@ -316,7 +318,7 @@ def test_view_continues_after_selector_error(
             verbose=False,
         )
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     stdout_lines = stdout.getvalue().splitlines()
     assert "Status for good:" in stdout_lines
     assert "rendered good" in stdout_lines
@@ -326,4 +328,68 @@ def test_view_continues_after_selector_error(
     assert stdout_lines.index("Status for good:") < stdout_lines.index("rendered good")
     assert stdout_lines.index("Status for bad:") < stdout_lines.index("Status for later:")
     assert stdout_lines.index("Status for later:") < stdout_lines.index("rendered later")
+    assert "Error: bad selector" in stderr.getvalue()
+
+
+def test_view_json_continues_after_selector_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_bootstrap(monkeypatch, view_module, tmp_path)
+
+    def fake_prepare_status_for_revset(**kwargs):
+        revset = kwargs["revset"]
+        if revset == "bad":
+            raise view_module.CliError("bad selector")
+        return SimpleNamespace(
+            selected_revset=revset,
+            prepared=SimpleNamespace(
+                stack=SimpleNamespace(
+                    base_parent=SimpleNamespace(commit_id=f"base-{revset}"),
+                    head=SimpleNamespace(change_id=f"{revset}-head"),
+                ),
+                state=ReviewState(),
+                status_revisions=(
+                    SimpleNamespace(revision=SimpleNamespace(change_id=f"{revset}-change")),
+                ),
+            ),
+        )
+
+    def fake_json_prepared_status(**kwargs):
+        selector = kwargs["selector"]
+        return {"selector": selector.value, "changes": []}, False
+
+    monkeypatch.setattr(
+        view_module,
+        "_prepare_status_for_revset",
+        fake_prepare_status_for_revset,
+    )
+    monkeypatch.setattr(view_module, "_json_prepared_status", fake_json_prepared_status)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    with console_module.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
+        exit_code = view_module.view(
+            as_json=True,
+            cli_args=JjCliArgs(),
+            debug=False,
+            fetch=False,
+            pull_request=None,
+            repository=tmp_path,
+            revset=None,
+            selectors=(
+                view_module.ViewSelector(kind="revset", value="good"),
+                view_module.ViewSelector(kind="revset", value="bad"),
+                view_module.ViewSelector(kind="revset", value="later"),
+            ),
+            verbose=False,
+        )
+
+    assert exit_code == EXIT_INCOMPLETE
+    assert json.loads(stdout.getvalue()) == {
+        "stacks": [
+            {"selector": "good", "changes": []},
+            {"selector": "later", "changes": []},
+        ]
+    }
     assert "Error: bad selector" in stderr.getvalue()

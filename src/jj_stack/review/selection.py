@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jj_stack.ui as ui
-from jj_stack.errors import CliError
+from jj_stack.errors import AmbiguousSelectionError, CliError, UsageError
 from jj_stack.github.pull_request_refs import (
     parse_pull_request_number,
     parse_repository_pull_request_reference,
@@ -30,7 +30,7 @@ def resolve_selected_revset(
     if revset is not None:
         return revset
     if require_explicit:
-        raise CliError(
+        raise UsageError(
             t"{ui.cmd(command_label)} requires an explicit revision selection."
         )
     return default_revset
@@ -96,7 +96,7 @@ def resolve_orphaned_pull_request(
         return None
     if len(matching_change_ids) > 1:
         rendered = ", ".join(change_id[:8] for change_id in sorted(matching_change_ids))
-        raise CliError(
+        raise AmbiguousSelectionError(
             t"PR #{pull_request_number} is claimed by multiple tracked records ({rendered}).",
             hint=(
                 t"Repair the tracking data with {ui.cmd('unlink')} "
@@ -138,7 +138,7 @@ def resolve_linked_change_for_pull_request(
 
     action_label = action_name.capitalize()
     if revset is not None:
-        raise CliError(
+        raise UsageError(
             t"Use either {ui.cmd('<revset>')} or {ui.cmd('--pull-request')}, "
             t"not both."
         )
@@ -161,7 +161,7 @@ def resolve_linked_change_for_pull_request(
             ),
         )
     if len(matching_change_ids) > 1:
-        raise CliError(
+        raise AmbiguousSelectionError(
             t"PR #{pull_request_number} is linked to multiple local changes.",
             hint=t"{action_label} by explicit revision after repairing the links.",
         )
@@ -178,7 +178,7 @@ def resolve_linked_change_for_pull_request(
             hint=t"{action_label} by revision once it is visible again.",
         )
     if len(visible_revisions) > 1:
-        raise CliError(
+        raise AmbiguousSelectionError(
             t"PR #{pull_request_number} is linked to local change {ui.change_id(change_id)}, "
             t"but that change is divergent.",
             hint=t"{action_label} by explicit revision after resolving it.",

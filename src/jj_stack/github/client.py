@@ -13,7 +13,7 @@ from textwrap import dedent, indent
 import httpxyz
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from jj_stack.errors import SummarizedError
+from jj_stack.errors import EXIT_GITHUB, SummarizedError
 from jj_stack.github.auth import github_token_for_host, github_token_from_env
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import (
@@ -35,6 +35,8 @@ _DEFAULT_MAX_RATE_LIMIT_BACKOFF_SECONDS = 8.0
 
 class GithubClientError(SummarizedError):
     """Raised when GitHub returns a non-success response."""
+
+    exit_code = EXIT_GITHUB
 
     def __init__(
         self,

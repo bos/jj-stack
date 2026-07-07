@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.resolution import select_submit_remote
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.bookmarks import (
@@ -129,7 +129,7 @@ def preflight_conflicted_revisions(revisions: tuple[LocalRevision, ...]) -> None
         lambda revision: t"{ui.change_id(revision.change_id)} ({revision.subject})",
         conflicted,
     )
-    raise CliError(
+    raise ConflictedStackError(
         t"Stack contains changes with unresolved conflicts: {subjects}. "
         t"Resolve these changes before submitting."
     )

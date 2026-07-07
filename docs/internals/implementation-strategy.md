@@ -597,6 +597,15 @@ When possible, diagnostics point to the exact recovery action:
 Unreadable or partially written tracking state is treated as missing data with one
 warning, then commands fall back to rediscovery where the design allows.
 
+Process exit codes are formalized and implemented; the contract lives in
+[design.md](./design.md) ("Exit codes") with the user-facing table in
+[docs/exit-codes.md](../exit-codes.md). Error classes carry their category code:
+`CliError` subclasses (usage, ambiguous selection, conflicted stack, unsupported stack)
+and adapter errors such as the GitHub client's declare theirs, and `resolve_exit_code`
+in `errors.py` maps a raised error to the process exit code, letting a generic
+`CliError` inherit the code of a categorized adapter cause. `view` and `list` return the
+incomplete-report code directly when a printed report is degraded.
+
 ## Observability
 
 Easy to debug without making normal output noisy:

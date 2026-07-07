@@ -26,7 +26,7 @@ from jj_stack.commands._json_status import (
 )
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.console import requested_color_mode
-from jj_stack.errors import CliError, ErrorMessage, error_message
+from jj_stack.errors import EXIT_INCOMPLETE, CliError, ErrorMessage, error_message
 from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
@@ -216,7 +216,7 @@ def _run_list(
                 indent=2,
             )
         )
-        return 1 if any(row.incomplete for row in rows) else 0
+        return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
     color_when = context.jj_client.resolve_color_when(
         cli_color=requested_color_mode(),
         stdout_is_tty=sys.stdout.isatty(),
@@ -238,7 +238,7 @@ def _run_list(
     )
     _emit_orphan_hints(orphan_rows)
     _emit_stale_stacks_advisory(discovered=ordered, state=state)
-    return 1 if any(row.incomplete for row in rows) else 0
+    return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
 
 
 def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:

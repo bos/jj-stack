@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from jj_stack.errors import CliError
+from jj_stack.errors import UsageError
 from jj_stack.github.resolution import GithubRepoAddress
 
 _PULL_REQUEST_URL_RE = re.compile(
@@ -57,7 +57,7 @@ def parse_repository_pull_request_reference(
 
     pull_request_url = parse_pull_request_url(reference)
     if pull_request_url is None:
-        raise CliError(
+        raise UsageError(
             invalid_reference_message
             or (
                 f"Pull request reference {reference} is not a pull request number "
@@ -65,7 +65,7 @@ def parse_repository_pull_request_reference(
             )
         )
     if pull_request_url.host != github_repository.host:
-        raise CliError(
+        raise UsageError(
             wrong_host_message
             or (
                 f"Pull request URL {reference} does not match configured host "
@@ -76,7 +76,7 @@ def parse_repository_pull_request_reference(
         pull_request_url.owner != github_repository.owner
         or pull_request_url.repo != github_repository.repo
     ):
-        raise CliError(
+        raise UsageError(
             wrong_repository_message
             or (
                 f"Pull request URL {reference} does not match configured repository "

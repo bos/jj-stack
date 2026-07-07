@@ -13,6 +13,8 @@ GitHub head branch for one review change.
   The normal author loop for submit, review, land, and cleanup.
 - [JSON Output](json-output.md)
   The structured output schema for `view --json` and `list --json`.
+- [Exit Codes](exit-codes.md)
+  What each process exit code means for scripts and agents.
 - [Troubleshooting](troubleshooting.md)
   Common symptoms, likely causes, and the next command to run.
 

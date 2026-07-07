@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from jj_stack.errors import EXIT_AMBIGUOUS, EXIT_USAGE, CliError, resolve_exit_code
 from jj_stack.jj.client import (
     JjClient,
     JjCommandError,
     StaleWorkspaceError,
     UnsupportedStackError,
 )
+from jj_stack.models.stack import LocalRevision
 from tests.support.revision_helpers import make_revision
 
 
@@ -44,6 +46,29 @@ def _revision_line(
         "true" if conflict else "false",
     ]
     return "\t".join(fields) + "\n"
+
+
+class _AmbiguousRevsetClient(JjClient):
+    def _query_revisions(
+        self,
+        revset: str,
+        *,
+        limit: int | None = None,
+    ) -> list[LocalRevision]:
+        return [
+            make_revision(commit_id="one", change_id="one-change", description="one\n"),
+            make_revision(commit_id="two", change_id="two-change", description="two\n"),
+        ]
+
+
+class _InvalidRevsetClient(JjClient):
+    def _query_revisions(
+        self,
+        revset: str,
+        *,
+        limit: int | None = None,
+    ) -> list[LocalRevision]:
+        raise JjCommandError("jj log failed: Error: Failed to parse revset: unexpected token")
 
 
 _TRUNK = _revision_line(
@@ -104,6 +129,26 @@ _HIDDEN = _revision_line(
     description="hidden predecessor\n",
     hidden=True,
 )
+
+
+def test_resolve_revision_reports_ambiguous_revsets_with_ambiguous_exit_code() -> None:
+    client = _AmbiguousRevsetClient(Path("/repo"))
+
+    with pytest.raises(CliError) as excinfo:
+        client.resolve_revision("heads(all())")
+
+    assert resolve_exit_code(excinfo.value) == EXIT_AMBIGUOUS
+
+
+def test_resolve_revision_reports_invalid_revsets_with_usage_exit_code() -> None:
+    client = _InvalidRevsetClient(Path("/repo"))
+
+    with pytest.raises(CliError) as excinfo:
+        client.resolve_revision("bad(")
+
+    assert resolve_exit_code(excinfo.value) == EXIT_USAGE
+
+
 def _client(
     monkeypatch: pytest.MonkeyPatch,
     responses: dict[tuple[str, ...], str],

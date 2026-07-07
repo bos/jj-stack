@@ -39,7 +39,7 @@ from jj_stack.commands.close_orphan import (
     run_untracked_cleanup_pull_request,
     state_has_pull_request_record,
 )
-from jj_stack.errors import CliError, ErrorMessage
+from jj_stack.errors import ErrorMessage, UsageError
 from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
@@ -203,7 +203,7 @@ def unstack(
         debug=debug,
     )
     if local and cleanup:
-        raise CliError("unstack --local cannot be combined with --cleanup.")
+        raise UsageError("unstack --local cannot be combined with --cleanup.")
     command = "unstack --local" if local else ("unstack --cleanup" if cleanup else "unstack")
     with acquire_operation_lock(
         context.state_store.require_writable(),

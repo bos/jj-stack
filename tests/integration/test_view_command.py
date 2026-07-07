@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from jj_stack.errors import EXIT_INCOMPLETE, EXIT_NO_STACK
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -219,7 +220,7 @@ def test_view_pull_request_selector_requires_a_linked_local_change(
     captured = capsys.readouterr()
     combined_output = " ".join((captured.out + " " + captured.err).split())
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert "PR #1 is not linked to any local change." in combined_output
 
 
@@ -238,7 +239,7 @@ def test_view_reports_missing_trunk_bookmark_in_empty_repo(
     captured = capsys.readouterr()
     combined = " ".join((captured.out + captured.err).split())
 
-    assert exit_code == 1
+    assert exit_code == EXIT_NO_STACK
     assert "create a trunk bookmark" in combined.lower()
 
 
@@ -256,7 +257,7 @@ def test_view_reports_missing_git_remote_for_local_only_repo(
     captured = capsys.readouterr()
     combined_err = " ".join(captured.err.split())
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert "no git remote" in combined_err.lower()
     assert "Unsubmitted stack:" in captured.out
     assert "GitHub status unknown" in captured.out
@@ -350,7 +351,7 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
     captured = capsys.readouterr()
     normalized_err = " ".join(captured.err.split())
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert "GitHub unavailable for octo-org/stacked-review:" in normalized_err
     assert "repo not found or inaccessible - check GITHUB_TOKEN or gh auth" in normalized_err
     assert "documentation_url" not in captured.out
@@ -418,7 +419,7 @@ def test_view_exits_nonzero_when_pull_request_lookup_fails(
     exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert "saved PR #1 (open), pull request lookup failed" in captured.out
 
 
@@ -444,7 +445,7 @@ def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
 
     exit_code = run_main(repo, config_path, "view", change_id)
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert state_store.load() == state_before
 
 
@@ -592,7 +593,7 @@ def test_view_preserves_cached_pull_request_metadata_when_github_reports_missing
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert "Missing GitHub PR" in captured.out
     assert "remembered PR #1" in captured.out
     assert_output_contains(captured.out, "jj-stack submit --restart")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from jj_stack.errors import EXIT_GITHUB
 from jj_stack.jj.client import JjClient
 from jj_stack.state.journal import read_operation_log
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -135,7 +136,7 @@ def test_relink_reports_missing_pull_request_without_traceback(
     exit_code = run_main(repo, config_path, "relink", "999", change_id)
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_GITHUB
     assert "Could not load pull request #999" in captured.err
     assert "Traceback" not in captured.err
 

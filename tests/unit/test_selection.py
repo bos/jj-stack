@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 
-from jj_stack.errors import CliError
+from jj_stack.errors import EXIT_AMBIGUOUS, CliError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.review_state import CachedChange, ReviewState
@@ -93,6 +93,7 @@ def test_resolve_orphaned_pull_request_fails_closed_on_multiple_matches() -> Non
             state=state,
         )
     assert "Repair the tracking data" in str(excinfo.value)
+    assert excinfo.value.exit_code == EXIT_AMBIGUOUS
 
 
 _REPO_ROOT = Path(__file__).resolve().parent

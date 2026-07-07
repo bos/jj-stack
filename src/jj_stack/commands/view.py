@@ -21,7 +21,7 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._json_status import review_change_json
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.config import RepoConfig
-from jj_stack.errors import CliError, error_message
+from jj_stack.errors import EXIT_INCOMPLETE, CliError, error_message
 from jj_stack.formatting import (
     NativeRevision,
     NativeRevisionRenderClient,
@@ -143,7 +143,7 @@ def _run_status(
                 prepared_status=prepared_status,
             )
             console.output(json.dumps(_view_json_payload(stacks=(rendered,)), indent=2))
-            return 1 if incomplete else 0
+            return EXIT_INCOMPLETE if incomplete else 0
         exit_code = _render_prepared_status(
             context=context,
             prepared_status=prepared_status,
@@ -174,18 +174,17 @@ def _run_status(
                 revset=resolved_selector.revset,
             )
         except CliError as error:
-            if as_json:
-                raise
-            if printed_blocks:
+            if not as_json and printed_blocks:
                 console.output("")
-            if multi_selector:
+            if not as_json and multi_selector:
                 console.output(_status_heading(selector))
             console.warning(t"Error: {error_message(error)}")
             hint = error.hint
             if hint is not None:
                 console.warning(t"Hint: {hint}")
-            exit_code = 1
-            printed_blocks += 1
+            exit_code = EXIT_INCOMPLETE
+            if not as_json:
+                printed_blocks += 1
             continue
 
         change_ids = tuple(
@@ -205,7 +204,7 @@ def _run_status(
                 selector=selector,
             )
             json_stacks.append(rendered)
-            exit_code = max(exit_code, 1 if incomplete else 0)
+            exit_code = max(exit_code, EXIT_INCOMPLETE if incomplete else 0)
             continue
 
         if printed_blocks:
@@ -524,7 +523,7 @@ def _render_prepared_status(
     )
     _emit_lines(render_status_advisory_lines(config=context.config, result=result))
 
-    return 1 if result.incomplete else 0
+    return EXIT_INCOMPLETE if result.incomplete else 0
 
 
 def render_status_summary_lines(

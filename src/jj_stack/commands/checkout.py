@@ -22,7 +22,7 @@ from typing import Literal, Protocol
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.errors import CliError, ErrorMessage
+from jj_stack.errors import AmbiguousSelectionError, CliError, ErrorMessage
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
@@ -639,7 +639,7 @@ def _remote_bookmark_commit_id(
         raise AssertionError("Classified remote bookmark must have an observed state.")
     commit_id = remote_state.target
     if commit_id is None:
-        raise CliError(
+        raise AmbiguousSelectionError(
             t"Remote bookmark {bookmark_token}@{remote_token} is ambiguous. "
             t"{ui.cmd('checkout')} requires one exact branch."
         )

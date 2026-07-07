@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import ClassVar
 
+from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
@@ -648,7 +649,7 @@ def test_list_falls_back_when_github_unavailable(
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert "GitHub unavailable" in captured.out
     assert "feature 1" in captured.out
 
@@ -666,6 +667,6 @@ def test_list_marks_stale_saved_pull_request_link_and_exits_nonzero(
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_INCOMPLETE
     assert "stale link" in captured.out
     assert "PR 1" in captured.out

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from jj_stack.errors import EXIT_GITHUB
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.state.journal import read_operation_log
@@ -709,7 +710,7 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     first_exit_code = run_main(repo, config_path, "land")
     first_run = capsys.readouterr()
 
-    assert first_exit_code == 1
+    assert first_exit_code == EXIT_GITHUB
     assert "Could not load PR #1 during land" in first_run.err
     assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
     assert state_store.load().changes[landed_change_ids[0]].pr_state == "open"

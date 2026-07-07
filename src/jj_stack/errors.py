@@ -1,4 +1,4 @@
-"""User-facing error types shared across CLI commands."""
+"""User-facing error types and exit codes shared across CLI commands."""
 
 from __future__ import annotations
 
@@ -6,6 +6,19 @@ from jj_stack.ui import Message, plain_text
 
 type ErrorMessage = Message
 type ErrorHint = Message
+
+# Process exit codes. Codes 2-6 carry the same meanings as the matching
+# `gh stack` exit codes so scripted callers can treat the two tools alike;
+# 7-9 are reserved because their `gh stack` meanings have no jj-stack analog.
+EXIT_SUCCESS = 0
+EXIT_FAILURE = 1
+EXIT_NO_STACK = 2
+EXIT_CONFLICTS = 3
+EXIT_GITHUB = 4
+EXIT_USAGE = 5
+EXIT_AMBIGUOUS = 6
+EXIT_INCOMPLETE = 10
+EXIT_INTERRUPTED = 130
 
 
 class SummarizedError(RuntimeError):
@@ -15,8 +28,31 @@ class SummarizedError(RuntimeError):
     can render a concise reason without depending on the adapter module.
     """
 
+    exit_code = EXIT_FAILURE
+
     def user_facing_reason(self) -> str:
         raise NotImplementedError
+
+
+def resolve_exit_code(error: BaseException) -> int:
+    """Return the process exit code for a raised CLI error.
+
+    A `CliError` subclass with its own category code wins. A generic
+    `CliError` wrapping a categorized cause inherits the cause's code, so wrap
+    sites do not each need a subclass.
+    """
+
+    if not isinstance(error, CliError):
+        return EXIT_FAILURE
+
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, CliError) and current.exit_code != EXIT_FAILURE:
+            return current.exit_code
+        if isinstance(current, SummarizedError) and current.exit_code != EXIT_FAILURE:
+            return current.exit_code
+        current = current.__cause__
+    return error.exit_code
 
 
 def error_message(error: BaseException) -> ErrorMessage:
@@ -44,7 +80,7 @@ def error_hint(error: BaseException) -> ErrorHint | None:
 class CliError(RuntimeError):
     """Base error for user-facing CLI failures."""
 
-    exit_code = 1
+    exit_code = EXIT_FAILURE
 
     def __init__(self, message: ErrorMessage, *, hint: ErrorHint | None = None) -> None:
         self.message = message
@@ -61,3 +97,21 @@ class CliError(RuntimeError):
         if not hint:
             return message
         return f"{message} {hint}"
+
+
+class UsageError(CliError):
+    """Invalid command-line arguments or flag combinations."""
+
+    exit_code = EXIT_USAGE
+
+
+class AmbiguousSelectionError(CliError):
+    """A selector matches more than one possible target, so the command fails closed."""
+
+    exit_code = EXIT_AMBIGUOUS
+
+
+class ConflictedStackError(CliError):
+    """Unresolved conflicts in the selected changes block the requested operation."""
+
+    exit_code = EXIT_CONFLICTS

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from jj_stack.errors import EXIT_NO_STACK
+
 from ..support.integration_helpers import (
     commit_file,
     init_repo,
@@ -34,7 +36,7 @@ def test_commands_do_not_crash_in_empty_repo(
     exit_code = run_main(repo, config_path, command, *args)
     captured = capsys.readouterr()
 
-    assert exit_code in (0, 1)
+    assert exit_code in (0, 1, EXIT_NO_STACK)
     _assert_no_traceback(captured)
 
 
@@ -50,7 +52,7 @@ def test_stack_commands_fail_closed_for_disconnected_roots(
     captured = capsys.readouterr()
     combined = captured.out + captured.err
 
-    assert exit_code == 1
+    assert exit_code == EXIT_NO_STACK
     assert "root commit" in combined
     assert "trunk()" in combined
     _assert_no_traceback(captured)
@@ -88,7 +90,7 @@ def test_stack_commands_reject_merge_commits_without_traceback(
     captured = capsys.readouterr()
     combined = captured.out + captured.err
 
-    assert exit_code == 1
+    assert exit_code == EXIT_NO_STACK
     assert "merge commits are not supported" in combined
     _assert_no_traceback(captured)
 

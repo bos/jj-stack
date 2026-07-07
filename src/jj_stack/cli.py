@@ -48,7 +48,14 @@ from jj_stack.cli_help import (
 )
 from jj_stack.completion import emit_shell_completion
 from jj_stack.console import RequestedColorMode, configured_console, rich_color_mode
-from jj_stack.errors import CliError, error_hint, error_message
+from jj_stack.errors import (
+    EXIT_INTERRUPTED,
+    CliError,
+    UsageError,
+    error_hint,
+    error_message,
+    resolve_exit_code,
+)
 from jj_stack.jj.client import JjCliArgs
 
 logger = logging.getLogger(__name__)
@@ -596,11 +603,11 @@ def _cli_parse_error(message: str) -> CliError:
         message = f"{message}."
     if message:
         message = f"{message[0].upper()}{message[1:]}"
-    return CliError(message)
+    return UsageError(message)
 
 
 def _unknown_command_error(command_name: str) -> CliError:
-    return CliError(
+    return UsageError(
         t"Unknown command {ui.cmd(command_name)}.",
         hint=t"Run {ui.cmd('jj-stack help')} to list commands.",
     )
@@ -672,7 +679,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cli_args=cli_args,
             normalized_argv=normalized_argv,
         )
-        return error.exit_code
+        return resolve_exit_code(error)
     args.cli_args = cli_args
     args.normalized_argv = tuple(normalized_argv)
     if args.command == "view":
@@ -696,10 +703,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return handler(args)
             except CliError as error:
                 _print_cli_error(error)
-                return error.exit_code
+                return resolve_exit_code(error)
             except KeyboardInterrupt:
                 console.stderr_output("Interrupted.")
-                return 130
+                return EXIT_INTERRUPTED
 
 
 def _default_view_handler(args: Namespace) -> int:
@@ -1189,7 +1196,7 @@ def _normalize_cli_args(argv: Sequence[str]) -> list[str]:
         if draft_mode == "all":
             normalized[index] = "--draft-all"
             continue
-        raise CliError(
+        raise UsageError(
             t"Invalid value for {ui.cmd('--draft')}: {draft_mode}. Expected new or all."
         )
     return _rewrite_help_args(normalized)

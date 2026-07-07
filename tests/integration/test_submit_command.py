@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from jj_stack.errors import EXIT_CONFLICTS, EXIT_GITHUB, EXIT_USAGE
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import (
@@ -688,7 +689,7 @@ def test_submit_blocks_unresolved_conflicted_rebase_without_mutation(
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_CONFLICTS
     assert "unresolved conflicts" in captured.err
     assert ReviewStateStore.for_repo(repo).load().changes == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
@@ -837,7 +838,7 @@ def test_submit_describe_rejects_target_outside_selected_stack_before_mutation(
     )
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_USAGE
     assert "--describe target trunk() is not in the selected stack" in captured.err
     assert ReviewStateStore.for_repo(repo).load().changes == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
@@ -1374,7 +1375,7 @@ def test_submit_reports_stack_comment_update_failures_without_traceback(
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
 
-    assert exit_code == 1
+    assert exit_code == EXIT_GITHUB
     assert "Could not update stack navigation comment" in captured.err
     assert "Traceback" not in captured.err
 
@@ -2047,7 +2048,7 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
         client_type=FlakyMetadataClient,
     )
 
-    assert run_main(repo, config_path, "submit") == 1
+    assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     capsys.readouterr()
 
     state_after_failure = ReviewStateStore.for_repo(repo).load()
@@ -2352,7 +2353,7 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
         concurrency_limits={"jj_stack.commands.submit.command": 2},
     )
 
-    assert run_main(repo, config_path, "submit") == 1
+    assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     capsys.readouterr()
 
     refreshed_state = state_store.load()

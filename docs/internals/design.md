@@ -460,7 +460,8 @@ remote state before checking already-known GitHub PR state.
 
 When more than one selector is given, `view` inspects them in command-line order,
 suppresses exact duplicate stack reports, continues past selector-local resolution
-failures, and exits non-zero if any individual stack would have done so.
+failures, and exits with the incomplete-report code if any individual stack would have
+done so.
 
 Fetched GitHub state often produces extra visible revisions for merged changes, so
 `view` does not insist that every visible revision still forms one supported review
@@ -503,13 +504,14 @@ When GitHub data is available, `view`:
 - renders open draft PRs differently from open published PRs
 - if GitHub is unreachable or misconfigured, reports that once at the repo level and
   falls back to conservative per-change summaries from tracking data rather than claiming a
-  PR is absent. Because the output is incomplete, `view` exits non-zero
-- if it finds an ambiguous PR match, surfaces that inline and exits non-zero rather
-  than silently calling the stack healthy
+  PR is absent. Because the output is incomplete, `view` exits with the incomplete-report
+  code
+- if it finds an ambiguous PR match, surfaces that inline and exits with the
+  incomplete-report code rather than silently calling the stack healthy
 - if a saved PR link existed but GitHub reports no PR for that branch, looks up the
   saved PR number before rendering the result; if GitHub still cannot find a PR, it
-  surfaces the stale link inline and exits non-zero without clearing the saved PR
-  identity
+  surfaces the stale link inline and exits with the incomplete-report code without
+  clearing the saved PR identity
 - when the link is stale, closed, or ambiguous, prints a short repair advisory that
   distinguishes reopening the same PR, relinking an open replacement, and running
   `submit --restart` to create fresh PRs
@@ -545,8 +547,8 @@ compact PR summary, and highlights unusual local states such as divergence, conf
 or merged PRs needing cleanup. The text table shows the exact PR number for a single-PR
 stack and summarizes multi-PR stacks by count so long stacks do not crowd out the
 description column. If GitHub is unavailable or a saved PR link has gone stale, the row
-surfaces that and `list` exits non-zero rather than reporting a healthy tracked stack
-from incomplete data.
+surfaces that and `list` exits with the incomplete-report code rather than reporting a
+healthy tracked stack from incomplete data.
 
 Like `view`, `list` may surface tracked stacks whose submitted state no longer
 matches the live DAG, naming the heads and pointing the user at `view` for the
@@ -911,6 +913,30 @@ Target selection is conservative:
 - `checkout` accepts at most one explicit selector flag and otherwise defaults to the
   current stack headed by `@-`
 - `view` may omit `<revset>` and inspects the current stack
+
+### Exit codes
+
+Process exit codes are part of the CLI contract. Where a meaning overlaps with the
+`gh stack` CLI extension, the code matches, so scripted callers can treat the two tools
+alike; codes 7-9 stay reserved because their `gh stack` meanings (rebase in progress,
+lock contention, stacked-PR feature unavailable) have no jj-stack analog.
+
+- `0` — success
+- `1` — any other failure, including lifecycle commands that stopped on a blocked action
+- `2` — the selection does not form a supported review stack
+- `3` — unresolved conflicts in the selected changes block the operation
+- `4` — GitHub authentication, network, or API failure
+- `5` — invalid command-line arguments
+- `6` — a selector matched more than one target and the command failed closed
+- `10` — `view` or `list` printed a report that is incomplete or needs attention
+- `130` — interrupted
+
+Failure categories ride on the error types: `CliError` subclasses declare their category
+code, and a generic `CliError` that wraps a categorized adapter error (for example a
+GitHub client failure) inherits the adapter's code. `view` and `list` reserve the error
+codes for runs that cannot produce a report at all; a run that prints a degraded report
+exits with the incomplete-report code instead. The user-facing table lives in
+[docs/exit-codes.md](../exit-codes.md).
 
 Notable absences:
 

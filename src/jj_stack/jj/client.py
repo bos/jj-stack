@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 import jj_stack.ui as ui
-from jj_stack.errors import CliError, ErrorHint, ErrorMessage
+from jj_stack.errors import (
+    EXIT_NO_STACK,
+    AmbiguousSelectionError,
+    CliError,
+    ErrorHint,
+    ErrorMessage,
+    UsageError,
+)
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.stack import LocalRevision, LocalStack
 
@@ -44,6 +51,8 @@ UnsupportedStackReason = Literal[
 
 class UnsupportedStackError(CliError):
     """Raised when local history cannot be treated as a linear review stack."""
+
+    exit_code = EXIT_NO_STACK
 
     def __init__(
         self,
@@ -272,7 +281,9 @@ class JjClient:
         if not revisions:
             raise CliError(t"Revset {ui.revset(revset)} did not resolve to a visible revision.")
         if len(revisions) > 1:
-            raise CliError(t"Revset {ui.revset(revset)} resolved to more than one revision.")
+            raise AmbiguousSelectionError(
+                t"Revset {ui.revset(revset)} resolved to more than one revision."
+            )
         return revisions[0]
 
     def query_revisions(
@@ -523,7 +534,9 @@ class JjClient:
         if not selected:
             raise CliError(t"Revset {ui.revset(revset)} did not resolve to a visible revision.")
         if len(selected) > 1:
-            raise CliError(t"Revset {ui.revset(revset)} resolved to more than one revision.")
+            raise AmbiguousSelectionError(
+                t"Revset {ui.revset(revset)} resolved to more than one revision."
+            )
 
         return self._validate_trunk(trunk), selected[0]
 
@@ -1081,7 +1094,7 @@ def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | N
     first_line = raw_message.splitlines()[0].strip()
     if first_line.startswith("Error: Failed to parse revset:"):
         detail = first_line.removeprefix("Error: ").strip()
-        return CliError(t"Invalid revset {ui.revset(revset)}: {detail}.")
+        return UsageError(t"Invalid revset {ui.revset(revset)}: {detail}.")
 
     return None
 

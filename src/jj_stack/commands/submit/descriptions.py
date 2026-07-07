@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 import jj_stack.ui as ui
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, UsageError
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.models.stack import LocalRevision
 
@@ -33,7 +33,7 @@ def resolve_generated_descriptions(
     """Resolve pull request descriptions and an optional stack description."""
 
     if descriptions and describe_with is not None:
-        raise CliError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
+        raise UsageError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
 
     default_descriptions = _default_pull_request_descriptions(revisions)
     if descriptions:
@@ -108,13 +108,13 @@ def _resolve_description_files(
         target, path_text = _parse_description_file_spec(description)
         if target == "stack":
             if len(revisions) <= 1:
-                raise CliError(
+                raise UsageError(
                     t"{ui.cmd('--describe stack=FILE')} is only used when the selected "
                     t"stack has more than one change.",
                     hint=t"Use {ui.cmd('--describe CHANGE=FILE')} to set one PR body.",
                 )
             if generated_stack_description is not None:
-                raise CliError(t"{ui.cmd('--describe')} specified the stack more than once.")
+                raise UsageError(t"{ui.cmd('--describe')} specified the stack more than once.")
             generated_stack_description = GeneratedDescription(
                 body=_read_description_file(path_text),
                 title="",
@@ -127,7 +127,7 @@ def _resolve_description_files(
             target=target,
         )
         if revision.change_id in generated_descriptions:
-            raise CliError(
+            raise UsageError(
                 t"{ui.cmd('--describe')} specified {ui.change_id(revision.change_id)} "
                 t"more than once."
             )
@@ -143,7 +143,7 @@ def _parse_description_file_spec(description: str) -> tuple[str, str]:
     target = target.strip()
     path_text = path_text.strip()
     if not separator or not target or not path_text:
-        raise CliError(
+        raise UsageError(
             t"Expected {ui.cmd('--describe')} value in the form "
             t"{ui.cmd('CHANGE=FILE')} or {ui.cmd('stack=FILE')}."
         )
@@ -172,7 +172,7 @@ def _resolve_description_target(
         None,
     )
     if matching_revision is None:
-        raise CliError(
+        raise UsageError(
             t"{ui.cmd('--describe')} target {ui.revset(target)} is not in the selected stack."
         )
     return matching_revision
