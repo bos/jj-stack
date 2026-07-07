@@ -248,13 +248,12 @@ per-revision rendering shows up as real CLI latency.
 _Benefit: small — the property suite is opt-in, so this only affects the CI
 smoke job and manual runs._
 
-Audit findings not yet applied: `insert-middle` and `insert-before-middle`
-in the fixed stack-edit corpus produce model-identical outcomes and differ
-only in setup mechanics, so one can be dropped once the CI smoke count is
-adjusted; `_read_remote_ref` is called per label in loops where a single
-`_remote_refs` snapshot would do; the harness rebuilds and submits each
-initial stack per scenario and could reuse per-size cached submitted-stack
-templates the way integration tests now do.
+Remaining from the test audit: the harness rebuilds and submits each
+scenario's initial stack from scratch and could reuse per-size cached
+submitted-stack templates the way integration tests now do, at the cost of
+aligning the harness's label conventions with the template contents. The
+other audit findings (duplicate `insert-before-middle` fixed scenario,
+per-label remote-ref reads) have been applied.
 
 ## Native GitHub Stack Metadata via `gh stack link`
 

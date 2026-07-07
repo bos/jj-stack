@@ -1107,15 +1107,6 @@ def _fixed_stack_edit_scenarios() -> tuple[StackEditScenario, ...]:
         )
         .to_scenario(hazard_class="insert-middle", name="insert-middle"),
         _model(3)
-        .append(
-            StackEditOperation(
-                kind="insert_before",
-                label="c2",
-                new_label="i1",
-            )
-        )
-        .to_scenario(hazard_class="insert-before-middle", name="insert-before-middle"),
-        _model(3)
         .append(StackEditOperation(kind="abandon", label="c2"))
         .to_scenario(hazard_class="abandon-middle", name="abandon-middle"),
         _model(4)

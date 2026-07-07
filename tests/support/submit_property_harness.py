@@ -443,6 +443,7 @@ def _capture_submitted_baseline(
     labels_to_change_ids: dict[str, str],
 ) -> dict[str, SubmittedBaseline]:
     state = ReviewStateStore.for_repo(repo).load()
+    remote_heads = _remote_refs(fake_repo.git_dir)
     baseline: dict[str, SubmittedBaseline] = {}
     for label, change_id in labels_to_change_ids.items():
         cached_change = state.changes[change_id]
@@ -457,7 +458,7 @@ def _capture_submitted_baseline(
             change_id=change_id,
             pr_base_ref=pull_request.base_ref,
             pr_number=pr_number,
-            remote_target=_read_remote_ref(fake_repo.git_dir, bookmark),
+            remote_target=_remote_head(remote_heads, bookmark),
         )
     return baseline
 
@@ -675,6 +676,7 @@ def _assert_new_submit_invariants(
     stack,
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
+    remote_heads = _remote_refs(fake_repo.git_dir)
     bookmarks_by_label: dict[str, str] = {}
     stack_head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
 
@@ -698,7 +700,7 @@ def _assert_new_submit_invariants(
             if index > 0
             else "main"
         )
-        assert _read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
+        assert _remote_head(remote_heads, bookmark) == revision.commit_id
         assert pull_request.base_ref == expected_base_ref
         assert pull_request.head_ref == bookmark
         assert pull_request.merged_at is None
@@ -722,6 +724,7 @@ def _assert_successful_submit_invariants(
     strict_base_events: bool,
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
+    remote_heads = _remote_refs(fake_repo.git_dir)
     revisions_by_label = dict(zip(invariants.final_live_labels, stack.revisions, strict=True))
     expected_base_by_pr_number: dict[int, str] = {}
     live_pr_numbers: set[int] = set()
@@ -752,7 +755,7 @@ def _assert_successful_submit_invariants(
             bookmarks_by_label[invariants.final_live_labels[index - 1]] if index > 0 else "main"
         )
         expected_base_by_pr_number[pr_number] = expected_base_ref
-        assert _read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
+        assert _remote_head(remote_heads, bookmark) == revision.commit_id
         assert pull_request.base_ref == expected_base_ref
         assert pull_request.head_ref == bookmark
         assert pull_request.merged_at is None
@@ -769,7 +772,7 @@ def _assert_successful_submit_invariants(
         assert submitted.pr_number not in live_pr_numbers
         assert cached_change.bookmark == submitted.bookmark
         assert cached_change.pr_number == submitted.pr_number
-        assert _read_remote_ref(fake_repo.git_dir, submitted.bookmark) == submitted.remote_target
+        assert _remote_head(remote_heads, submitted.bookmark) == submitted.remote_target
         assert pull_request.base_ref == submitted.pr_base_ref
         assert pull_request.head_ref == submitted.bookmark
         assert pull_request.merged_at is None
@@ -848,6 +851,7 @@ def _assert_deferred_labels_untouched(
     repo: Path,
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
+    remote_heads = _remote_refs(fake_repo.git_dir)
     deferred_pr_numbers = {
         baseline[label].pr_number for label in deferred_labels
     }
@@ -856,7 +860,7 @@ def _assert_deferred_labels_untouched(
         cached_change = state.changes[submitted.change_id]
         pull_request = fake_repo.pull_requests[submitted.pr_number]
         assert cached_change == submitted.cached_change
-        assert _read_remote_ref(fake_repo.git_dir, submitted.bookmark) == submitted.remote_target
+        assert _remote_head(remote_heads, submitted.bookmark) == submitted.remote_target
         assert pull_request.base_ref == submitted.pr_base_ref
         assert pull_request.head_ref == submitted.bookmark
         assert pull_request.merged_at is None
@@ -962,12 +966,8 @@ def _pull_request_snapshots(fake_repo: FakeGithubRepository) -> dict[int, tuple[
     }
 
 
-def _read_remote_ref(remote: Path, bookmark: str) -> str:
-    completed = run_command(
-        ["git", "--git-dir", str(remote), "rev-parse", f"refs/heads/{bookmark}"],
-        remote.parent,
-    )
-    return completed.stdout.strip()
+def _remote_head(remote_heads: dict[str, str], bookmark: str) -> str:
+    return remote_heads[f"refs/heads/{bookmark}"]
 
 
 def _remote_refs(remote: Path) -> dict[str, str]:
