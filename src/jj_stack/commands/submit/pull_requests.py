@@ -9,7 +9,7 @@ from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.review.bookmarks import BookmarkSource, bookmark_ownership_for_source
 from jj_stack.review.change_status import ReviewChangeStatus, classify_saved_review_change
 
@@ -46,6 +46,32 @@ async def discover_pull_requests_by_bookmark(
         )
         for bookmark in bookmarks
     }
+
+
+def ensure_pull_request_links_are_consistent(
+    *,
+    pending_syncs: Sequence[PendingPullRequestSync],
+    state: ReviewState,
+) -> None:
+    """Verify every saved PR link against GitHub discovery before any mutation.
+
+    A damaged or divergent link anywhere in the plan must stop `submit` before
+    local bookmarks move, review branches push, or sibling PRs sync. Validating
+    per change inside the concurrent sync phase would let a mid-stack link
+    failure surface only after those mutations have already happened.
+    """
+
+    for pending_sync in pending_syncs:
+        prepared_revision = pending_sync.prepared
+        change_id = prepared_revision.revision.change_id
+        cached_change = state.changes.get(change_id)
+        _ensure_pull_request_link_is_consistent(
+            bookmark=prepared_revision.bookmark,
+            cached_change=cached_change,
+            change_id=change_id,
+            discovered_pull_request=pending_sync.discovered_pull_request,
+            saved_status=classify_saved_review_change(cached_change, local="present"),
+        )
 
 
 async def sync_pull_requests(
@@ -106,13 +132,6 @@ async def _sync_pull_request(
     discovered_pull_request = pending_sync.discovered_pull_request
     cached_change = run.state.changes.get(change_id)
     saved_status = classify_saved_review_change(cached_change, local="present")
-    _ensure_pull_request_link_is_consistent(
-        bookmark=bookmark,
-        cached_change=cached_change,
-        change_id=change_id,
-        discovered_pull_request=discovered_pull_request,
-        saved_status=saved_status,
-    )
 
     title = pending_sync.generated_description.title
     body = pending_sync.generated_description.body

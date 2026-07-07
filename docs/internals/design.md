@@ -305,7 +305,10 @@ Given a chosen head revision:
    branch, or GitHub mutation.
 6. Look up GitHub PR state for those bookmarks.
    - if the saved PR link disagrees with what GitHub reports, stop and require an
-     explicit recovery flow rather than silently creating a replacement PR
+     explicit recovery flow rather than silently creating a replacement PR. This
+     check covers every change in the selected stack and completes before any local
+     bookmark move, remote branch push, or GitHub mutation, so a mid-stack link
+     failure cannot leave sibling changes half-submitted.
    - by default, the PR title comes from the commit subject and the PR body from the
      remaining commit description; if there is no body, fall back to the subject so the
      opening comment is not blank

@@ -1498,6 +1498,54 @@ def test_submit_fails_closed_when_cached_pull_request_is_missing_on_github(
     assert fake_repo.pull_requests == {}
 
 
+def test_submit_stops_before_push_when_saved_link_mismatch_has_pending_rewrite(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A damaged PR link must stop `submit` before the rewritten branch is pushed.
+
+    Promoted from the property scenario `rewrite:c2,wrong_saved_pr_number:c2`:
+    the link-consistency check used to run inside the pull-request sync phase,
+    after local bookmarks moved and review branches were force-pushed.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    stack = JjClient(repo).discover_review_stack()
+    change_id = stack.revisions[-1].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+    bookmark = initial_state.changes[change_id].bookmark
+    assert bookmark is not None
+    initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
+
+    run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 rewritten"], repo)
+    state_store.save(
+        initial_state.model_copy(
+            update={
+                "changes": {
+                    **initial_state.changes,
+                    change_id: initial_state.changes[change_id].model_copy(
+                        update={"pr_number": 999_999}
+                    ),
+                }
+            }
+        )
+    )
+    corrupted_state = state_store.load()
+
+    exit_code = run_main(repo, config_path, "submit", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Saved pull request #999999 does not match" in captured.err
+    assert state_store.load() == corrupted_state
+    assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
+    assert fake_repo.pull_requests[1].title == "feature 1"
+
+
 def test_submit_fails_closed_when_github_reports_multiple_pull_requests(
     tmp_path: Path,
     monkeypatch,

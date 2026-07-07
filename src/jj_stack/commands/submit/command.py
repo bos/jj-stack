@@ -69,7 +69,11 @@ from .models import (
     SubmitResult,
     SubmittedRevision,
 )
-from .pull_requests import discover_pull_requests_by_bookmark, sync_pull_requests
+from .pull_requests import (
+    discover_pull_requests_by_bookmark,
+    ensure_pull_request_links_are_consistent,
+    sync_pull_requests,
+)
 from .render import print_submit_result, render_selected_line
 from .revisions import (
     prepare_submit_revisions,
@@ -521,6 +525,10 @@ async def _run_submit_async(
                 discovered_pull_requests=discovered_pull_requests,
                 prepared_revisions=prepared_revisions,
                 restarted_change_ids=prepared_inputs.restarted_change_ids,
+            )
+            ensure_pull_request_links_are_consistent(
+                pending_syncs=pending_syncs,
+                state=mutation_run.state,
             )
             sync_local_bookmarks(
                 bookmark_result=bookmark_result,
