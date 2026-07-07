@@ -94,6 +94,10 @@ def _prepare_cleanup_rebase(
             context=context,
             fetch_remote_state=True,
             fetch_only_when_tracked=True,
+            # The rebase destination must be the trunk the fetch just
+            # imported, not the pre-fetch resolution, or survivors land on a
+            # stale trunk commit after real GitHub merges moved the branch.
+            re_resolve_after_remote_refresh=True,
             revset=selected_revset,
         ),
     )
