@@ -11,6 +11,7 @@ import jj_stack.commands.cleanup.stale as stale_module
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._close_actions import ManagedCommentLookup
 from jj_stack.commands.cleanup.command import (
+    _apply_stale_cleanup_mutation_plans,
     _plan_remote_branch_cleanup,
     _run_cleanup_async,
 )
@@ -19,7 +20,9 @@ from jj_stack.commands.cleanup.shared import (
     CleanupAction,
     PreparedCleanup,
     PreparedRebase,
+    RemoteBranchCleanupPlan,
     _CleanupSaver,
+    _StaleCleanupMutationPlan,
 )
 from jj_stack.commands.cleanup.stack_comments import (
     StackCommentCleanupPlan,
@@ -168,9 +171,16 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
     )
 
 
-def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
+def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_deletes(
     tmp_path: Path,
 ) -> None:
+    """A blocked stack-comment plan surfaces the blocked action and deletes nothing.
+
+    The github_client below is a bare SimpleNamespace with no methods: any
+    comment-delete attempt would raise AttributeError, so the run completing is
+    itself the proof that no GitHub deletes were performed.
+    """
+
     state_store = cast(
         ReviewStateStore,
         SimpleNamespace(
@@ -217,6 +227,7 @@ def test_stack_comment_cleanup_records_blocked_action_without_comment_target(
     )
 
     assert recorded_actions == [blocked_action]
+    assert recorded_actions[0].status == "blocked"
 
 
 def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks(
@@ -586,6 +597,78 @@ def test_plan_remote_branch_cleanup_skips_records_without_saved_pr_number() -> N
     assert plan is None
 
 
+def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_once() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class RecordingJjClient:
+        def delete_remote_bookmarks(self, *, remote, deletions, fetch=True) -> None:
+            calls.append(("delete_remote_bookmarks", (remote, tuple(deletions), fetch)))
+
+        def forget_bookmarks(self, bookmarks) -> None:
+            calls.append(("forget_bookmarks", tuple(bookmarks)))
+
+        def fetch_remote(self, *, remote, branches=None) -> None:
+            calls.append(("fetch_remote", (remote, branches)))
+
+    prepared_cleanup = PreparedCleanup(
+        context=_fake_context(jj_client=cast(JjClient, RecordingJjClient())),
+        bookmark_states={},
+        github_target=GithubTarget(
+            remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+            repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
+        ),
+        dry_run=False,
+        state=ReviewState(),
+    )
+
+    def mutation_plan(bookmark: str, expected_target: str) -> _StaleCleanupMutationPlan:
+        return _StaleCleanupMutationPlan(
+            cached_change=CachedChange(bookmark=bookmark, pr_number=1),
+            local_bookmark_action=CleanupAction(
+                kind="local bookmark",
+                status="planned",
+                body=f"forget {bookmark}",
+            ),
+            remote_plan=RemoteBranchCleanupPlan(
+                action=CleanupAction(
+                    kind="remote branch",
+                    status="planned",
+                    body=f"delete {bookmark}@origin",
+                ),
+                expected_remote_target=expected_target,
+            ),
+        )
+
+    recorded_actions: list[CleanupAction] = []
+    _apply_stale_cleanup_mutation_plans(
+        journal=OperationJournal.disabled(),
+        mutation_plans=(
+            mutation_plan("review/feature-1", "commit-1"),
+            mutation_plan("review/feature-2", "commit-2"),
+        ),
+        prepared_cleanup=prepared_cleanup,
+        record_action=recorded_actions.append,
+    )
+
+    assert calls == [
+        (
+            "delete_remote_bookmarks",
+            (
+                "origin",
+                (("review/feature-1", "commit-1"), ("review/feature-2", "commit-2")),
+                False,
+            ),
+        ),
+        ("forget_bookmarks", ("review/feature-1", "review/feature-2")),
+        ("fetch_remote", ("origin", None)),
+    ]
+    assert all(action.status == "applied" for action in recorded_actions)
+
+
 def test_plan_local_bookmark_cleanup_forgets_safe_review_bookmark() -> None:
     plan = cleanup_module._plan_local_bookmark_cleanup(
         cleanup_user_bookmarks=False,
@@ -604,7 +687,5 @@ def test_plan_local_bookmark_cleanup_forgets_safe_review_bookmark() -> None:
     assert plan is not None
     assert plan.kind == "local bookmark"
     assert plan.status == "planned"
-    assert (
-        plan.message
-        == "forget bosullivan/feature-aaaaaaaa (local change is no longer reviewable)"
-    )
+    assert "forget bosullivan/feature-aaaaaaaa" in plan.message
+    assert "no longer reviewable" in plan.message

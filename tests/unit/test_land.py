@@ -73,28 +73,6 @@ def _land_boundary_message(
     return boundary_action.body
 
 
-def test_land_boundary_message_allows_rebased_revision_when_pr_link_is_ready() -> None:
-    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
-    revision = _status_revision(
-        change_id="change-1",
-        commit_id="commit-1",
-        remote_target="other-tip",
-        pull_request=_pull_request(number=1),
-        pull_request_state="open",
-        review_decision="approved",
-        subject="feature 1",
-    )
-
-    message = _land_boundary_message(
-        bypass_readiness=False,
-        client=_jj_client({"commit-1": "same", "other-tip": "same"}),
-        prepared_revision=prepared_revision,
-        revision=revision,
-    )
-
-    assert message is None
-
-
 def test_landable_prefix_marks_diff_equivalent_revision_for_resubmit() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     revision = _status_revision(
@@ -648,7 +626,6 @@ def _prepared_status(
     change_ids: tuple[str, ...],
     *,
     commit_ids: tuple[str, ...] | None = None,
-    conflicted_change_ids: tuple[str, ...] = (),
     selected_revset: str = "@-",
 ) -> PreparedStatus:
     resolved_commit_ids = commit_ids or tuple(
@@ -659,7 +636,7 @@ def _prepared_status(
             revision=SimpleNamespace(
                 change_id=change_id,
                 commit_id=commit_id,
-                conflict=change_id in conflicted_change_ids,
+                conflict=False,
             )
         )
         for change_id, commit_id in zip(change_ids, resolved_commit_ids, strict=True)

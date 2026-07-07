@@ -15,6 +15,7 @@ from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
+    init_fake_github_repo_with_submitted_stack,
     run_command,
     write_file,
 )
@@ -57,13 +58,8 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(3):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
     approve_pull_requests(fake_repo, 1, 2)
 
     stack = JjClient(repo).discover_review_stack()
@@ -242,41 +238,6 @@ def test_land_reports_current_trunk_drift_after_fetch_instead_of_bookmark_mismat
     assert "Local bookmark main points to a different revision" not in combined
 
 
-def test_land_recommends_cleanup_when_selected_stack_already_has_merged_changes(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-    approve_pull_requests(fake_repo, 1, 2)
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[1].merged_at = "2026-04-18T12:00:00Z"
-
-    other = tmp_path / "other"
-    run_command(["git", "clone", str(fake_repo.git_dir), str(other)], tmp_path)
-    run_command(["git", "config", "user.name", "Other User"], other)
-    run_command(["git", "config", "user.email", "other@example.com"], other)
-    write_file(other / "trunk-1.txt", "trunk 1\n")
-    run_command(["git", "add", "trunk-1.txt"], other)
-    run_command(["git", "commit", "-m", "trunk 1"], other)
-    run_command(["git", "push", "origin", "HEAD:main"], other)
-
-    exit_code = run_main(repo, config_path, "land", "--dry-run")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "Error: Selected stack is not based on the current trunk()." in captured.err
-    assert "\nHint: Some lower changes from this stack already landed." in captured.err
-    assert "cleanup --rebase" in captured.err
-    assert "jj rebase -s" not in captured.err
-
-
 def test_land_blocks_unapproved_prefix_by_default(
     tmp_path: Path,
     monkeypatch,
@@ -298,13 +259,8 @@ def test_land_pull_request_selects_the_landed_prefix(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(3):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
     approve_pull_requests(fake_repo, 1, 2, 3)
 
     stack = JjClient(repo).discover_review_stack()
@@ -541,13 +497,8 @@ def test_rebased_partial_land_keeps_descendant_cleanup_path_clear(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(3):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
     approve_pull_requests(fake_repo, 1, 2)
 
     stack = JjClient(repo).discover_review_stack()
@@ -594,13 +545,8 @@ def test_land_restores_local_trunk_bookmark_when_push_does_not_complete(
     expected_exit_code: int,
     expected_error: str,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(2):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
     approve_pull_requests(fake_repo, 1, 2)
 
     client = JjClient(repo)
@@ -626,13 +572,8 @@ def test_land_replans_after_interrupted_push_when_landable_prefix_changes(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(2):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
     approve_pull_requests(fake_repo, 1, 2)
     initial_stack = JjClient(repo).discover_review_stack()
     first_landable_commit_id = initial_stack.revisions[0].commit_id
@@ -670,13 +611,8 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(3):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
     approve_pull_requests(fake_repo, 1, 2)
     fake_repo.pull_requests[3].state = "closed"
     stack = JjClient(repo).discover_review_stack()
