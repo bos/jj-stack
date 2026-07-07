@@ -5,6 +5,12 @@ refreshes one pull request per change from bottom to top. Selected local
 changes must be free of unresolved conflicts before submit will mutate
 bookmarks, remotes, or GitHub state.
 
+Pull request titles come from each change's subject line and bodies from the rest of the
+description. When a description has no body, the repository's pull request template
+(`.github/PULL_REQUEST_TEMPLATE.md`, `PULL_REQUEST_TEMPLATE.md`, or
+`docs/PULL_REQUEST_TEMPLATE.md`) is used instead, and the subject line if there is no
+template.
+
 Use `--describe CHANGE=FILE` to read a prepared pull request body from a Markdown file,
 or `--describe stack=FILE` to read prepared overview text for a multi-change stack.
 Relative file paths are read from the current directory where `jj-stack` was invoked.

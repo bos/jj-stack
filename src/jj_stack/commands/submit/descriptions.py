@@ -35,8 +35,13 @@ def resolve_generated_descriptions(
     if descriptions and describe_with is not None:
         raise UsageError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
 
-    default_descriptions = _default_pull_request_descriptions(revisions)
-    if descriptions:
+    if describe_with is None:
+        default_descriptions = _default_pull_request_descriptions(
+            revisions,
+            template=_read_pull_request_template(jj_client.repo_root),
+        )
+        if not descriptions:
+            return default_descriptions, None
         file_descriptions, stack_description = _resolve_description_files(
             descriptions=descriptions,
             jj_client=jj_client,
@@ -49,9 +54,6 @@ def resolve_generated_descriptions(
             },
             stack_description,
         )
-
-    if describe_with is None:
-        return default_descriptions, None
 
     generated_descriptions = {
         revision.change_id: _run_description_command(
@@ -86,14 +88,35 @@ def resolve_generated_descriptions(
 
 def _default_pull_request_descriptions(
     revisions: tuple[LocalRevision, ...],
+    *,
+    template: str,
 ) -> dict[str, GeneratedDescription]:
     return {
         revision.change_id: GeneratedDescription(
-            body=_pull_request_body(revision.description),
+            body=_pull_request_body(revision.description, template=template),
             title=revision.subject,
         )
         for revision in revisions
     }
+
+
+_PULL_REQUEST_TEMPLATE_DIRECTORIES = (".github", "", "docs")
+_PULL_REQUEST_TEMPLATE_NAMES = ("PULL_REQUEST_TEMPLATE.md", "pull_request_template.md")
+
+
+def _read_pull_request_template(repo_root: Path) -> str:
+    for directory in _PULL_REQUEST_TEMPLATE_DIRECTORIES:
+        for name in _PULL_REQUEST_TEMPLATE_NAMES:
+            path = repo_root / directory / name
+            if not path.is_file():
+                continue
+            try:
+                return path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError) as error:
+                raise CliError(
+                    t"Could not read pull request template {ui.cmd(str(path))}: {error}"
+                ) from error
+    return ""
 
 
 def _resolve_description_files(
@@ -334,11 +357,13 @@ def _run_description_command(
     return GeneratedDescription(body=body, title=title)
 
 
-def _pull_request_body(description: str) -> str:
+def _pull_request_body(description: str, *, template: str) -> str:
     lines = description.splitlines()
     if not lines:
-        return ""
+        return template
     body = "\n".join(lines[1:]).strip()
     if body:
         return body
+    if template:
+        return template
     return lines[0].strip()

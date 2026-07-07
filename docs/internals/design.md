@@ -310,8 +310,16 @@ Given a chosen head revision:
      bookmark move, remote branch push, or GitHub mutation, so a mid-stack link
      failure cannot leave sibling changes half-submitted.
    - by default, the PR title comes from the commit subject and the PR body from the
-     remaining commit description; if there is no body, fall back to the subject so the
-     opening comment is not blank
+     remaining commit description; if there is no body, fall back to the repository's
+     pull request template, and finally to the subject so the opening comment is not
+     blank
+   - the pull request template is the first existing file among
+     `.github/PULL_REQUEST_TEMPLATE.md`, `PULL_REQUEST_TEMPLATE.md`, and
+     `docs/PULL_REQUEST_TEMPLATE.md` (upper- or lower-case filename) under the workspace
+     root. An empty template counts as absent. Because the PR body is re-derived on
+     every submit, the template applies to updates the same way it applies to creation;
+     it never overrides a change description body or an explicit `--describe` /
+     `--describe-with` result.
    - `submit --describe <change>=<file>` replaces one PR body with Markdown read from
      `<file>`, while keeping the PR title from the change subject. The `<change>` selector
      must resolve to exactly one change in the selected stack.

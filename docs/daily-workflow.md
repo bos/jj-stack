@@ -59,6 +59,10 @@ If you want to first inspect what `submit` *would* do, without making any change
 jj-stack submit --dry-run
 ```
 
+Each PR's title is the change's subject line, and its body is the rest of the change
+description. When a description has no body, `submit` uses your repository's pull request
+template (for example `.github/PULL_REQUEST_TEMPLATE.md`) if one exists.
+
 If you already have a PR body in a Markdown file, attach it while submitting:
 
 ```bash
