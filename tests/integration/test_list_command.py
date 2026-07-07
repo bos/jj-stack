@@ -87,6 +87,38 @@ def test_list_reports_multiple_locally_tracked_stacks(
     assert "1 change" in captured.out
 
 
+def test_list_summarizes_multi_pull_request_stack_by_count(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    for index in range(5):
+        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    exit_code = run_main(repo, config_path, "list")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "5 PRs" in captured.out
+    assert "PRs 1-5" not in captured.out
+    assert "PRs 1, 2, 3, 4, 5" not in captured.out
+    assert "feature 5" in captured.out
+
+    exit_code = run_main(repo, config_path, "list", "--json")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert [
+        change["pull_request"]["number"] for change in payload["rows"][0]["changes"]
+    ] == [1, 2, 3, 4, 5]
+
+
 def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     tmp_path,
     monkeypatch,

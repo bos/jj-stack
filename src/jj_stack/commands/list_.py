@@ -399,7 +399,7 @@ def _build_row(
     )
     statuses = tuple(classify_review_status_revision(revision) for revision in revisions)
     pull_request_numbers = _pull_request_numbers_from_revisions(revisions)
-    review = _format_pull_request_range(pull_request_numbers)
+    review = _format_pull_request_summary(pull_request_numbers)
     local_fragments: list[ui.Message] = []
     if any(revision.divergent for revision in stack.revisions):
         local_fragments.append(ui.semantic_text("divergent", "error", "heading"))
@@ -625,14 +625,12 @@ def _tracked_prepared_revisions_by_bookmark(
     return prepared_revisions_by_bookmark
 
 
-def _format_pull_request_range(numbers: tuple[int, ...]) -> str:
+def _format_pull_request_summary(numbers: tuple[int, ...]) -> str:
     if not numbers:
         return ""
     if len(numbers) == 1:
         return f"PR {numbers[0]}"
-    if numbers == tuple(range(numbers[0], numbers[-1] + 1)):
-        return f"PRs {numbers[0]}-{numbers[-1]}"
-    return "PRs " + ", ".join(f"{number}" for number in numbers)
+    return f"{len(numbers)} PRs"
 
 
 def _tracked_pinned_bookmarks_for_repo_inspection(

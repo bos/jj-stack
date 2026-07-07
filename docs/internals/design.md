@@ -540,11 +540,13 @@ is local-first too: discover stacks from saved tracking plus any visible local
 descendants above those tracked changes; do not create tracking for remote-only state;
 do not speculate about GitHub-only stacks that have never been attached locally.
 
-The summary row identifies the stack by head `change_id`, shows stack size, the known
-PR range, and highlights unusual local states such as divergence, conflicts, or merged
-PRs needing cleanup. If GitHub is unavailable or a saved PR link has gone stale, the
-row surfaces that and `list` exits non-zero rather than reporting a healthy tracked
-stack from incomplete data.
+The summary row identifies the stack by head `change_id`, shows stack size, gives a
+compact PR summary, and highlights unusual local states such as divergence, conflicts,
+or merged PRs needing cleanup. The text table shows the exact PR number for a single-PR
+stack and summarizes multi-PR stacks by count so long stacks do not crowd out the
+description column. If GitHub is unavailable or a saved PR link has gone stale, the row
+surfaces that and `list` exits non-zero rather than reporting a healthy tracked stack
+from incomplete data.
 
 Like `view`, `list` may surface tracked stacks whose submitted state no longer
 matches the live DAG, naming the heads and pointing the user at `view` for the

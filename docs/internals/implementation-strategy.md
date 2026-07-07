@@ -294,6 +294,9 @@ or GitHub-client internals.
 Repo-scoped inspection treats orphan-only tracking as first-class output. `list` can
 render those saved orphan rows directly without loading bookmark state when no live
 stacks remain.
+The text `list` renderer keeps stack rows compact by rendering the exact PR number for
+single-PR stacks and a count for multi-PR stacks; the JSON output remains per-change so
+clients can still recover the full PR list.
 Unknown saved PR state is treated as open only when the record has a saved PR number.
 Records without a PR number are not actionable orphan PRs and can be pruned by cleanup.
 Remote branch cleanup still requires a saved PR number, because without one the tool
