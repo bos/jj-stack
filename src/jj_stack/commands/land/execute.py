@@ -83,6 +83,7 @@ async def execute_land_plan(
     *,
     bookmark_cleanup_plans: tuple[ReviewBookmarkCleanupPlan, ...],
     github_client: GithubClient,
+    merge_method: str | None,
     plan: LandPlan,
     prepared_land: PreparedLand,
     remote_name: str,
@@ -110,6 +111,7 @@ async def execute_land_plan(
             selected_revset=selected_revset,
             trunk_branch=trunk_branch,
             trunk_subject=trunk_subject,
+            via=plan.via,
         )
 
     execution_plan = plan
@@ -127,7 +129,9 @@ async def execute_land_plan(
         options={
             "bypass_readiness": prepared_land.bypass_readiness,
             "cleanup_bookmarks": prepared_land.cleanup_bookmarks,
+            "merge_method": merge_method,
             "selected_pr_number": prepared_land.selected_pr_number,
+            "via": plan.via,
         },
         resolved_scope={
             "github_repository": github_client.repository.full_name,
@@ -192,25 +196,29 @@ async def execute_land_plan(
             applied=True,
             blocked=True,
         )
-    await _finalize_planned_revisions(
+    finalized_change_ids = await _finalize_planned_revisions(
         actions=actions,
         bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
         client=prepared.client,
         execution_plan=execution_plan,
         github_client=github_client,
         journal=journal,
+        merge_method=merge_method,
         mutation_run=mutation_run,
         trunk_branch=trunk_branch,
     )
+    finalize_blocked = len(finalized_change_ids) != len(execution_plan.planned_revisions)
     journal.append(
         "completed",
-        {
-            "completed_change_ids": tuple(
-                revision.change_id for revision in execution_plan.planned_revisions
-            )
-        },
+        {"completed_change_ids": finalized_change_ids},
         durable=execution_plan.push_trunk,
     )
+    if finalize_blocked:
+        return land_result(
+            actions=tuple(actions),
+            applied=True,
+            blocked=True,
+        )
     return land_result(
         actions=execution_plan.completed_actions(actions=tuple(actions)),
         applied=True,
@@ -229,7 +237,7 @@ async def _apply_trunk_transition(
     remote_name: str,
     trunk_branch: str,
 ) -> bool:
-    if not execution_plan.push_trunk:
+    if not execution_plan.planned_revisions:
         return False
 
     if execution_plan.resubmit_revisions:
@@ -262,6 +270,10 @@ async def _apply_trunk_transition(
     if dismissed_action is not None:
         actions.append(dismissed_action)
         return True
+    if not execution_plan.push_trunk:
+        # The merge transport lands each PR through GitHub instead of moving
+        # trunk itself.
+        return False
 
     trunk_revision = execution_plan.planned_revisions[-1]
     journal.append(
@@ -390,14 +402,22 @@ async def _finalize_planned_revisions(
     execution_plan: LandPlan,
     github_client: GithubClient,
     journal: OperationJournal,
+    merge_method: str | None,
     mutation_run: LandMutationRun,
     trunk_branch: str,
-) -> None:
+) -> tuple[str, ...]:
+    """Finalize each landed PR bottom-up and return the finalized change IDs.
+
+    A returned tuple shorter than the plan means the merge transport stopped
+    fail-closed at a PR GitHub would not merge.
+    """
+
     landed_head_change_id = (
         execution_plan.planned_revisions[-1].change_id
         if execution_plan.planned_revisions
         else None
     )
+    finalized_change_ids: list[str] = []
     for landed_index, landed_revision in enumerate(execution_plan.planned_revisions):
         console.output(
             t"Finalizing PR #{landed_revision.pull_request_number} for "
@@ -412,12 +432,38 @@ async def _finalize_planned_revisions(
                 "pull_request_number": landed_revision.pull_request_number,
             },
         )
-        final_pull_request = await _finalize_landed_pull_request(
-            cached_change=mutation_run.state_changes.get(landed_revision.change_id),
-            github_client=github_client,
-            landed_revision=landed_revision,
-            trunk_branch=trunk_branch,
-        )
+        if execution_plan.via == "merge":
+            if merge_method is None:
+                raise AssertionError("The merge transport requires a resolved merge method.")
+            final_pull_request, blocked_action = await _merge_landed_pull_request(
+                cached_change=mutation_run.state_changes.get(landed_revision.change_id),
+                github_client=github_client,
+                landed_revision=landed_revision,
+                merge_method=merge_method,
+                trunk_branch=trunk_branch,
+            )
+            if blocked_action is not None or final_pull_request is None:
+                if blocked_action is not None:
+                    actions.append(blocked_action)
+                return tuple(finalized_change_ids)
+            applied_body = (
+                t"merge PR #{landed_revision.pull_request_number} into "
+                t"{ui.bookmark(trunk_branch)} on GitHub for "
+                t"{landed_revision.subject} "
+                t"{ui.change_id(landed_revision.change_id)}"
+            )
+        else:
+            final_pull_request = await _finalize_landed_pull_request(
+                cached_change=mutation_run.state_changes.get(landed_revision.change_id),
+                github_client=github_client,
+                landed_revision=landed_revision,
+                trunk_branch=trunk_branch,
+            )
+            applied_body = (
+                t"finalize PR #{landed_revision.pull_request_number} for "
+                t"{landed_revision.subject} "
+                t"{ui.change_id(landed_revision.change_id)}"
+            )
         journal.append(
             "mutation_applied",
             {
@@ -430,12 +476,11 @@ async def _finalize_planned_revisions(
         actions.append(
             LandAction(
                 kind="pull request",
-                body=t"finalize PR #{landed_revision.pull_request_number} for "
-                t"{landed_revision.subject} "
-                t"{ui.change_id(landed_revision.change_id)}",
+                body=applied_body,
                 status="applied",
             )
         )
+        finalized_change_ids.append(landed_revision.change_id)
         landed_parent_change_id = (
             execution_plan.planned_revisions[landed_index - 1].change_id
             if landed_index > 0
@@ -486,7 +531,7 @@ async def _finalize_planned_revisions(
                         "mutation": "cleanup_local_bookmark",
                     },
                 )
-    return None
+    return tuple(finalized_change_ids)
 
 
 def _apply_review_bookmark_cleanup(
@@ -599,20 +644,113 @@ async def _finalize_landed_pull_request(
                 ) from error
             pull_request = recovered_pull_request
         pull_request = pull_request.normalize_state()
-    if cached_change is not None:
-        comment_targets: tuple[tuple[int | None, StackCommentKind], ...] = (
-            (cached_change.navigation_comment_id, "navigation"),
-            (cached_change.overview_comment_id, "overview"),
-        )
-        for comment_id, kind in comment_targets:
-            if comment_id is None:
-                continue
-            await delete_stack_comment(
-                comment_id=comment_id,
-                github_client=github_client,
-                kind=kind,
-            )
+    await _delete_landed_stack_comments(
+        cached_change=cached_change,
+        github_client=github_client,
+    )
     return pull_request
+
+
+async def _merge_landed_pull_request(
+    *,
+    cached_change: CachedChange | None,
+    github_client: GithubClient,
+    landed_revision: LandRevision,
+    merge_method: str,
+    trunk_branch: str,
+) -> tuple[GithubPullRequest | None, LandAction | None]:
+    """Retarget one landable PR to trunk and merge it through the GitHub API.
+
+    Returns the merged pull request, or a blocking action when GitHub refuses
+    the merge (pending checks, conflicts, or repo policy).
+    """
+
+    try:
+        pull_request = await github_client.get_pull_request(
+            pull_number=landed_revision.pull_request_number,
+        )
+    except GithubClientError as error:
+        raise CliError(
+            t"Could not load PR #{landed_revision.pull_request_number} during land"
+        ) from error
+    pull_request = pull_request.normalize_state()
+    if pull_request.state == "open" and pull_request.base.ref != trunk_branch:
+        try:
+            pull_request = await github_client.update_pull_request(
+                pull_number=pull_request.number,
+                base=trunk_branch,
+                body=pull_request.body or "",
+                title=pull_request.title,
+            )
+        except GithubClientError as error:
+            raise CliError(
+                t"Could not retarget PR #{pull_request.number} to "
+                t"{ui.bookmark(trunk_branch)}"
+            ) from error
+        pull_request = pull_request.normalize_state()
+    if pull_request.state == "open":
+        try:
+            await github_client.merge_pull_request(
+                pull_number=pull_request.number,
+                merge_method=merge_method,
+            )
+        except GithubClientError as error:
+            if error.status_code in (405, 409):
+                return None, LandAction(
+                    kind="boundary",
+                    body=t"at PR #{pull_request.number} for {landed_revision.subject} "
+                    t"{ui.change_id(landed_revision.change_id)}: GitHub reports it is "
+                    t"not mergeable (pending checks, conflicts, or repo policy); make "
+                    t"it mergeable and rerun {ui.cmd('land --via merge')}",
+                    status="blocked",
+                )
+            raise CliError(
+                t"Could not merge PR #{pull_request.number} on GitHub"
+            ) from error
+        try:
+            pull_request = await github_client.get_pull_request(
+                pull_number=pull_request.number,
+            )
+        except GithubClientError as error:
+            raise CliError(
+                t"Could not reload PR #{pull_request.number} after merging"
+            ) from error
+        pull_request = pull_request.normalize_state()
+    if pull_request.state != "merged":
+        return None, LandAction(
+            kind="boundary",
+            body=t"at PR #{pull_request.number} for {landed_revision.subject} "
+            t"{ui.change_id(landed_revision.change_id)}: the PR is "
+            t"{pull_request.state} instead of merged; inspect it on GitHub and "
+            t"rerun {ui.cmd('land --via merge')}",
+            status="blocked",
+        )
+    await _delete_landed_stack_comments(
+        cached_change=cached_change,
+        github_client=github_client,
+    )
+    return pull_request, None
+
+
+async def _delete_landed_stack_comments(
+    *,
+    cached_change: CachedChange | None,
+    github_client: GithubClient,
+) -> None:
+    if cached_change is None:
+        return
+    comment_targets: tuple[tuple[int | None, StackCommentKind], ...] = (
+        (cached_change.navigation_comment_id, "navigation"),
+        (cached_change.overview_comment_id, "overview"),
+    )
+    for comment_id, kind in comment_targets:
+        if comment_id is None:
+            continue
+        await delete_stack_comment(
+            comment_id=comment_id,
+            github_client=github_client,
+            kind=kind,
+        )
 
 
 def _updated_landed_change(

@@ -8,7 +8,9 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_stack,
 )
 from .submit_command_helpers import (
+    approve_pull_requests,
     configure_submit_environment,
+    read_remote_ref,
     run_main,
 )
 
@@ -99,3 +101,37 @@ def test_sync_without_merged_changes_resubmits_the_stack(
     assert "No merged changes on the selected stack need rebasing." in captured.out
     assert "Submitted changes:" in captured.out
     assert fake_repo.pull_requests[1].state == "open"
+
+
+def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """land --via merge then sync is the full protected-trunk workflow."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1)
+    stack = JjClient(repo).discover_review_stack()
+    top_change_id = stack.revisions[1].change_id
+
+    land_exit_code = run_main(repo, config_path, "land", "--via", "merge")
+    capsys.readouterr()
+    assert land_exit_code == 0
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "open"
+
+    sync_exit_code = run_main(repo, config_path, "sync", top_change_id)
+    captured = capsys.readouterr()
+
+    assert sync_exit_code == 0
+    assert "Applied rebase actions:" in captured.out
+    assert "Submitted changes:" in captured.out
+    # The surviving change now sits on the squash-merged trunk tip and its PR
+    # targets trunk.
+    merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
+    rewritten_top = JjClient(repo).resolve_revision(top_change_id)
+    assert rewritten_top.only_parent_commit_id() == merged_trunk_commit
+    assert fake_repo.pull_requests[2].base_ref == "main"
+    assert fake_repo.pull_requests[2].state == "open"

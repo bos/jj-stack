@@ -677,3 +677,121 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     finished_state = state_store.load()
     assert finished_state.changes[landed_change_ids[0]].pr_state == "merged"
     assert finished_state.changes[landed_change_ids[1]].pr_state == "merged"
+
+
+def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    stack = JjClient(repo).discover_review_stack()
+    original_stack_commits = tuple(revision.commit_id for revision in stack.revisions)
+    original_main = read_remote_ref(fake_repo.git_dir, "main")
+
+    exit_code = run_main(repo, config_path, "land", "--via", "merge")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "merge PR #1" in captured.out
+    assert "merge PR #2" in captured.out
+    assert "run sync" in captured.out
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "closed"
+    assert fake_repo.pull_requests[2].merged_at is not None
+    # The second PR was retargeted to trunk before merging.
+    assert fake_repo.pull_requests[2].base_ref == "main"
+    # GitHub's trunk moved through squash merges; jj-stack never pushed it.
+    assert read_remote_ref(fake_repo.git_dir, "main") != original_main
+    # Local history is untouched; sync/cleanup --rebase is the follow-up.
+    refreshed_commits = tuple(
+        JjClient(repo).resolve_revision(revision.change_id).commit_id
+        for revision in stack.revisions
+    )
+    assert refreshed_commits == original_stack_commits
+    state = ReviewStateStore.for_repo(repo).load()
+    for revision in stack.revisions:
+        assert state.changes[revision.change_id].pr_state == "merged"
+
+
+def test_land_via_merge_stops_fail_closed_at_unmergeable_pull_request(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    fake_repo.unmergeable_pull_numbers.add(2)
+    stack = JjClient(repo).discover_review_stack()
+
+    exit_code = run_main(repo, config_path, "land", "--via", "merge")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "not mergeable" in captured.out
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "open"
+    assert fake_repo.pull_requests[2].merged_at is None
+    state = ReviewStateStore.for_repo(repo).load()
+    assert state.changes[stack.revisions[0].change_id].pr_state == "merged"
+    assert state.changes[stack.revisions[1].change_id].pr_state == "open"
+
+
+def test_land_via_merge_dry_run_previews_merges_without_mutating(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1)
+    original_main = read_remote_ref(fake_repo.git_dir, "main")
+
+    exit_code = run_main(repo, config_path, "land", "--dry-run", "--via", "merge")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "merge PR #1" in captured.out
+    assert "Planned land actions:" in captured.out
+    assert fake_repo.pull_requests[1].state == "open"
+    assert read_remote_ref(fake_repo.git_dir, "main") == original_main
+
+
+def test_land_merge_method_flag_requires_via_merge(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    exit_code = run_main(repo, config_path, "land", "--merge-method", "squash")
+    captured = capsys.readouterr()
+
+    assert exit_code == 5
+    assert "--merge-method is only used with --via merge" in captured.err
+
+
+def test_land_via_merge_refuses_rebase_method_for_multi_pr_prefix(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+
+    exit_code = run_main(
+        repo, config_path, "land", "--via", "merge", "--merge-method", "rebase"
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "rebase merge cannot land more than one PR" in captured.err
+    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.pull_requests[2].state == "open"

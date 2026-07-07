@@ -425,6 +425,25 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Keep landed local review bookmarks instead of forgetting them",
     )
+    add_help_argument(
+        land_parser,
+        "--via",
+        choices=("push", "merge"),
+        default="push",
+        help=(
+            t"How to land: {ui.cmd('push')} moves the trunk branch directly (default); "
+            t"{ui.cmd('merge')} merges each ready pull request on GitHub instead"
+        ),
+    )
+    add_help_argument(
+        land_parser,
+        "--merge-method",
+        choices=("merge", "rebase", "squash"),
+        help=(
+            t"GitHub merge method for {ui.cmd('--via merge')}; defaults to the "
+            t"repository's only allowed method"
+        ),
+    )
     unstack_parser = _add_revision_command(
         subcommands,
         command="unstack",

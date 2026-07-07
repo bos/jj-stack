@@ -938,7 +938,8 @@ The full command surface:
 - `jj stack cleanup [--dry-run] [--rebase [<revset>]]`
 - `jj stack sync [--dry-run] [<revset>]`
 - `jj stack checkout [--fetch] [--pick | --pull-request <pr> | --revset <revset>]`
-- `jj stack land [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj stack land [--dry-run] [--via <push|merge>] [--merge-method <merge|squash|rebase>]
+  [--pull-request <pr> | <revset>]`
 - `jj stack completion <bash|zsh|fish>`
 
 `completion` is auxiliary CLI glue. It prints shell completion scripts. It is not a
@@ -1127,6 +1128,14 @@ one before merging.
 - **`close_pull_request`**. Destructive by design. Defense: only invoked by
   `unstack` (including the `unstack --cleanup --pull-request <n>` orphan sub-mode)
   or `land`, each on explicit user instruction or after a successful merge.
+
+- **`merge_pull_request`**. Destructive by design: it permanently merges the PR's
+  head into its base branch. Defense: only invoked by `land --via merge` on explicit
+  user selection, only for PRs that passed the same readiness checks as the
+  direct-push transport, and only after the PR's base has been confirmed or
+  retargeted to the resolved trunk branch, so a merge can never land review content
+  into another review branch. GitHub's own mergeability check remains the final
+  gate: a not-mergeable response stops the landing at that PR.
 
 - **`convert_pull_request_to_draft`**. Repo policy may dismiss approvals on draft
   conversion. Defense: only invoked for an existing open PR when `--draft=all` is
@@ -1318,6 +1327,32 @@ squashed trunk commit, then updates the trunk branch by pushing the new trunk ti
 an optimistic lease that respects branch protection. Trunk protection and required
 checks gate landing; `review/*` protection only exists to block accidental direct
 merges of review branches.
+
+That direct trunk push is the default landing transport. `land --via merge` is the
+alternative for repos where trunk cannot be pushed directly at all (branch protection
+that requires PRs, required checks, merge queues): instead of replaying commits
+locally and moving trunk itself, `land` finalizes each landable PR bottom-up on
+GitHub — retargeting its base to the resolved trunk branch when needed, then merging
+it through the pull request merge API. This never merges a PR whose base is a
+`review/*` branch: the retarget to trunk always happens first, which is exactly the
+shape the recommended policy allows. The readiness scan, conflict checks, drift
+classification, and pre-land review-branch refresh are identical across transports.
+
+The merge method comes from `--merge-method <merge|squash|rebase>`; without the flag,
+`land` uses the repository's allowed merge methods when exactly one is enabled and
+otherwise stops and asks for an explicit choice. A rebase merge is refused when more
+than one PR is being landed: GitHub rewrites commit IDs during a rebase merge, so
+every later PR in the prefix would replay its ancestors' commits.
+
+If GitHub reports a PR as not mergeable — pending required checks, new conflicts, or
+repo policy — `land --via merge` stops fail-closed at that PR: changes already merged
+below it stay merged and recorded in tracking, nothing above it is touched, and the
+diagnostic says to make the PR mergeable and rerun. Merging on GitHub does not move
+local history, so after a merge-transport landing the local stack still contains the
+merged changes; `sync` (or `cleanup --rebase` plus `submit`) is the follow-up that
+rebases the survivors and refreshes their PRs. The operation-log trunk-push resume
+carve-out does not apply to this transport: a rerun sees the already-merged changes as
+merged ancestors and points at the same `sync` follow-up.
 
 Recovery guidance stays case-specific:
 

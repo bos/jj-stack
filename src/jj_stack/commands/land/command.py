@@ -13,6 +13,13 @@ Use `--dry-run` to inspect the landing plan without changing jj or GitHub state.
 
 Use `--pull-request` to select the top of the stack to land by PR number or URL.
 
+By default `land` pushes the trunk branch directly. When branch protection requires changes to
+arrive through pull requests, use `--via merge` instead: each ready PR is retargeted to trunk
+and merged through GitHub, bottom to top, stopping at the first PR GitHub reports as not
+mergeable. The merge method comes from `--merge-method`, or from the repository's settings when
+exactly one method is allowed. Merging on GitHub does not move your local history: afterwards,
+run `sync` to rebase the remaining local stack off the merged changes.
+
 After a successful land, `jj-stack` forgets the bookmarks it was managing for the changes that
 landed, unless they've been moved or become conflicted. If you used your own bookmarks with
 `submit --use-bookmarks`, they will not be cleaned up by default (override with `--config
@@ -35,13 +42,14 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, UsageError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import (
     resolve_trunk_branch,
 )
 from jj_stack.jj.client import JjCliArgs
+from jj_stack.models.github import GithubRepository
 from jj_stack.models.review_state import ReviewState
 from jj_stack.review.change_status import classify_review_status_revision
 from jj_stack.review.selection import (
@@ -65,6 +73,7 @@ from .models import (
     LandPlan,
     LandResult,
     LandRevision,
+    LandVia,
     PreparedLand,
 )
 from .plan import (
@@ -82,13 +91,19 @@ def land(
     cli_args: JjCliArgs,
     debug: bool,
     dry_run: bool,
+    merge_method: str | None,
     pull_request: str | None,
     repository: Path | None,
     revset: str | None,
     skip_cleanup: bool,
+    via: LandVia,
 ) -> int:
     """CLI entrypoint for `land`."""
 
+    if merge_method is not None and via != "merge":
+        raise UsageError(
+            t"{ui.cmd('--merge-method')} is only used with {ui.cmd('--via merge')}."
+        )
     context = bootstrap_context(
         repository=repository,
         cli_args=cli_args,
@@ -103,8 +118,10 @@ def land(
             cleanup_bookmarks=not skip_cleanup,
             context=context,
             dry_run=dry_run,
+            merge_method=merge_method,
             pull_request=pull_request,
             revset=revset,
+            via=via,
         )
 
 
@@ -114,8 +131,10 @@ def _run_land(
     cleanup_bookmarks: bool,
     context: CommandContext,
     dry_run: bool,
+    merge_method: str | None,
     pull_request: str | None,
     revset: str | None,
+    via: LandVia,
 ) -> int:
     selected_pr_number, selected_revset = _resolve_land_target(
         context=context,
@@ -128,8 +147,10 @@ def _run_land(
             cleanup_bookmarks=cleanup_bookmarks,
             context=context,
             dry_run=dry_run,
+            merge_method=merge_method,
             revset=selected_revset,
             selected_pr_number=selected_pr_number,
+            via=via,
         )
     result = _stream_land(prepared_land=prepared_land)
     print_land_result(result)
@@ -170,8 +191,10 @@ def _prepare_land(
     cleanup_bookmarks: bool,
     context: CommandContext,
     dry_run: bool,
+    merge_method: str | None,
     revset: str | None,
     selected_pr_number: int | None,
+    via: LandVia,
 ) -> PreparedLand:
     """Resolve local landing inputs before GitHub planning and execution."""
 
@@ -196,8 +219,10 @@ def _prepare_land(
         dry_run=dry_run,
         bypass_readiness=bypass_readiness,
         context=context,
+        merge_method=merge_method,
         prepared_status=prepared_status,
         selected_pr_number=selected_pr_number,
+        via=via,
     )
 
 
@@ -270,7 +295,25 @@ async def _stream_land_async(
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
 
+        resolved_merge_method: str | None = None
+        if prepared_land.via == "merge":
+            resolved_merge_method = _resolve_land_merge_method(
+                merge_method=prepared_land.merge_method,
+                repository_state=github_repository_state,
+            )
+
         async def finish_plan(plan: LandPlan) -> LandResult:
+            if (
+                plan.via == "merge"
+                and resolved_merge_method == "rebase"
+                and len(plan.planned_revisions) > 1
+            ):
+                raise CliError(
+                    t"A rebase merge cannot land more than one PR at a time: GitHub "
+                    t"rewrites commit IDs during a rebase merge, so every later PR "
+                    t"would replay its ancestors' commits.",
+                    hint=t"Use {ui.cmd('--merge-method squash')} or land one PR per run.",
+                )
             bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
                 bookmark_states=bookmark_states,
                 prefix=prepared_land.context.config.bookmark_prefix,
@@ -290,10 +333,12 @@ async def _stream_land_async(
                     selected_revset=status_result.selected_revset,
                     trunk_branch=trunk_branch,
                     trunk_subject=prepared.stack.trunk.subject,
+                    via=plan.via,
                 )
             return await execute_land_plan(
                 bookmark_cleanup_plans=bookmark_cleanup_plans,
                 github_client=github_client,
+                merge_method=resolved_merge_method,
                 plan=plan,
                 prepared_land=prepared_land,
                 remote_name=remote.name,
@@ -315,8 +360,43 @@ async def _stream_land_async(
             prepared_status=prepared_status,
             status_result=status_result,
             trunk_branch=trunk_branch,
+            via=prepared_land.via,
         )
         return await finish_plan(plan)
+
+
+def _resolve_land_merge_method(
+    *,
+    merge_method: str | None,
+    repository_state: GithubRepository,
+) -> str:
+    """Resolve the GitHub merge method for `land --via merge`."""
+
+    if merge_method is not None:
+        return merge_method
+    settings = {
+        "merge": repository_state.allow_merge_commit,
+        "rebase": repository_state.allow_rebase_merge,
+        "squash": repository_state.allow_squash_merge,
+    }
+    if any(allowed is None for allowed in settings.values()):
+        raise CliError(
+            "GitHub did not report which merge methods this repository allows.",
+            hint=t"Pass {ui.cmd('--merge-method')} explicitly.",
+        )
+    allowed_methods = sorted(method for method, allowed in settings.items() if allowed)
+    if len(allowed_methods) == 1:
+        return allowed_methods[0]
+    if not allowed_methods:
+        raise CliError(
+            "This repository does not allow any pull request merge method.",
+            hint="Fix the repository merge settings on GitHub before landing.",
+        )
+    options = ui.join(ui.cmd, allowed_methods)
+    raise CliError(
+        t"This repository allows more than one merge method ({options}).",
+        hint=t"Pass {ui.cmd('--merge-method')} to choose one.",
+    )
 
 
 def _land_completion_plan_from_log(
@@ -356,6 +436,7 @@ def _land_completion_plan_from_log(
         planned_revisions=planned_revisions,
         push_trunk=False,
         trunk_branch=trunk_branch,
+        via="push",
     )
 
 

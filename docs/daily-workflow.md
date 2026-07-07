@@ -185,6 +185,20 @@ changes remain above the landed changes, they will not need rebasing just becaus
 landed. If someone lands your changes through the GitHub UI, say using a squash merge, you might
 need to rebase; read on.
 
+If your repo's branch protection requires changes to arrive through pull requests, the direct
+trunk push is not available. Land through GitHub instead:
+
+```bash
+jj-stack land --via merge
+```
+
+This retargets each ready PR to trunk and merges it on GitHub, bottom to top, stopping at the
+first PR GitHub reports as not mergeable (for example, when required checks are still running).
+The merge method comes from your repo's settings when only one is allowed; otherwise pass
+`--merge-method squash` (or `rebase`/`merge`). Because GitHub does the merging, your local
+commits are not what lands on trunk — afterwards, run `jj-stack sync` to rebase the rest of
+your local stack off the merged changes and refresh the remaining PRs.
+
 ## 7. Rebase remaining work
 
 `jj-stack cleanup --rebase` is specifically about removing merged ancestors from your local

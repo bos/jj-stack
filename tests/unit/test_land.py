@@ -7,7 +7,10 @@ from typing import cast
 import pytest
 
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands.land.command import _stack_not_on_trunk_error
+from jj_stack.commands.land.command import (
+    _resolve_land_merge_method,
+    _stack_not_on_trunk_error,
+)
 from jj_stack.commands.land.execute import (
     _finalize_landed_pull_request,
     _updated_landed_change,
@@ -23,7 +26,7 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
-from jj_stack.models.github import GithubBranchRef, GithubPullRequest
+from jj_stack.models.github import GithubBranchRef, GithubPullRequest, GithubRepository
 from jj_stack.models.review_state import CachedChange, LinkState
 from jj_stack.review.status import (
     PreparedStatus,
@@ -661,3 +664,82 @@ class _BookmarkClientStub:
     def get_bookmark_state(self, bookmark: str) -> BookmarkState:
         assert bookmark == self._bookmark_state.name
         return self._bookmark_state
+
+
+def _repository_with_merge_settings(
+    *,
+    allow_merge_commit: bool | None,
+    allow_rebase_merge: bool | None,
+    allow_squash_merge: bool | None,
+) -> GithubRepository:
+    return GithubRepository(
+        allow_merge_commit=allow_merge_commit,
+        allow_rebase_merge=allow_rebase_merge,
+        allow_squash_merge=allow_squash_merge,
+        clone_url="https://github.test/acme/widgets.git",
+        default_branch="main",
+        full_name="acme/widgets",
+        html_url="https://github.test/acme/widgets",
+        name="widgets",
+        private=True,
+        url="https://api.github.test/repos/acme/widgets",
+    )
+
+
+def test_resolve_land_merge_method_prefers_explicit_flag() -> None:
+    repository = _repository_with_merge_settings(
+        allow_merge_commit=True,
+        allow_rebase_merge=True,
+        allow_squash_merge=True,
+    )
+
+    assert (
+        _resolve_land_merge_method(merge_method="squash", repository_state=repository)
+        == "squash"
+    )
+
+
+def test_resolve_land_merge_method_uses_the_only_allowed_method() -> None:
+    repository = _repository_with_merge_settings(
+        allow_merge_commit=False,
+        allow_rebase_merge=False,
+        allow_squash_merge=True,
+    )
+
+    assert (
+        _resolve_land_merge_method(merge_method=None, repository_state=repository)
+        == "squash"
+    )
+
+
+def test_resolve_land_merge_method_requires_choice_when_several_are_allowed() -> None:
+    repository = _repository_with_merge_settings(
+        allow_merge_commit=False,
+        allow_rebase_merge=True,
+        allow_squash_merge=True,
+    )
+
+    with pytest.raises(CliError, match="more than one merge method"):
+        _resolve_land_merge_method(merge_method=None, repository_state=repository)
+
+
+def test_resolve_land_merge_method_requires_flag_when_settings_are_unknown() -> None:
+    repository = _repository_with_merge_settings(
+        allow_merge_commit=None,
+        allow_rebase_merge=None,
+        allow_squash_merge=None,
+    )
+
+    with pytest.raises(CliError, match="did not report which merge methods"):
+        _resolve_land_merge_method(merge_method=None, repository_state=repository)
+
+
+def test_resolve_land_merge_method_rejects_repo_that_allows_no_method() -> None:
+    repository = _repository_with_merge_settings(
+        allow_merge_commit=False,
+        allow_rebase_merge=False,
+        allow_squash_merge=False,
+    )
+
+    with pytest.raises(CliError, match="does not allow any pull request merge method"):
+        _resolve_land_merge_method(merge_method=None, repository_state=repository)

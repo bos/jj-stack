@@ -31,6 +31,7 @@ from .models import (
     LandAction,
     LandPlan,
     LandRevision,
+    LandVia,
     ReviewBookmarkCleanupPlan,
 )
 
@@ -84,6 +85,7 @@ def build_land_plan(
     prepared_status: PreparedStatus,
     status_result: StatusResult,
     trunk_branch: str,
+    via: LandVia,
 ) -> LandPlan:
     path_revisions = _resolve_land_path_revisions(
         prepared_status=prepared_status,
@@ -105,8 +107,9 @@ def build_land_plan(
         blocked=not planned_revisions,
         boundary_action=boundary_action,
         planned_revisions=tuple(planned_revisions),
-        push_trunk=bool(planned_revisions),
+        push_trunk=bool(planned_revisions) and via == "push",
         trunk_branch=trunk_branch,
+        via=via,
     )
 
 

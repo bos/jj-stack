@@ -13,6 +13,8 @@ from jj_stack.review.status import PreparedStatus
 from jj_stack.state.store import ReviewStateStore
 from jj_stack.ui import Message, plain_text
 
+LandVia = Literal["push", "merge"]
+
 
 @dataclass(frozen=True, slots=True)
 class LandAction:
@@ -41,6 +43,7 @@ class LandResult:
     selected_revset: str
     trunk_branch: str
     trunk_subject: str
+    via: LandVia
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +54,10 @@ class PreparedLand:
     dry_run: bool
     bypass_readiness: bool
     context: CommandContext
+    merge_method: str | None
     prepared_status: PreparedStatus
     selected_pr_number: int | None
+    via: LandVia
 
 
 @dataclass(slots=True)
@@ -92,6 +97,7 @@ class LandPlan:
     planned_revisions: tuple[LandRevision, ...]
     push_trunk: bool
     trunk_branch: str
+    via: LandVia
 
     @property
     def resubmit_revisions(self) -> tuple[LandRevision, ...]:
@@ -132,12 +138,23 @@ class LandPlan:
                     )
                 )
             for landed_revision in self.planned_revisions:
+                if self.via == "merge":
+                    pull_request_body = (
+                        t"merge PR #{landed_revision.pull_request_number} into "
+                        t"{ui.bookmark(self.trunk_branch)} on GitHub for "
+                        t"{landed_revision.subject} "
+                        t"{ui.change_id(landed_revision.change_id)}"
+                    )
+                else:
+                    pull_request_body = (
+                        t"finalize PR #{landed_revision.pull_request_number} for "
+                        t"{landed_revision.subject} "
+                        t"{ui.change_id(landed_revision.change_id)}"
+                    )
                 actions.append(
                     LandAction(
                         kind="pull request",
-                        body=t"finalize PR #{landed_revision.pull_request_number} for "
-                        t"{landed_revision.subject} "
-                        t"{ui.change_id(landed_revision.change_id)}",
+                        body=pull_request_body,
                         status="planned",
                     )
                 )

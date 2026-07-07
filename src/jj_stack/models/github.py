@@ -11,6 +11,9 @@ class GithubRepository(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    allow_merge_commit: bool | None = None
+    allow_rebase_merge: bool | None = None
+    allow_squash_merge: bool | None = None
     clone_url: str
     default_branch: str | None
     full_name: str

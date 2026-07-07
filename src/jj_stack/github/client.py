@@ -488,6 +488,19 @@ class GithubClient:
             response_name="convert pull request to draft",
         )
 
+    async def merge_pull_request(
+        self,
+        *,
+        pull_number: int,
+        merge_method: str,
+    ) -> None:
+        response = await self._request(
+            "PUT",
+            f"{self._repo_path}/pulls/{pull_number}/merge",
+            json={"merge_method": merge_method},
+        )
+        self._expect_success(response)
+
     async def close_pull_request(
         self,
         *,

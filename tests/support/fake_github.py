@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Iterable
@@ -153,6 +154,11 @@ class FakeGithubRepository:
     git_dir: Path
     name: str
     owner: str
+    # Merge-method settings mirror a linear-history repo: squash only. Tests
+    # that need other methods flip these directly.
+    allow_merge_commit: bool = False
+    allow_rebase_merge: bool = False
+    allow_squash_merge: bool = True
     next_issue_comment_id: int = 1
     next_pull_request_number: int = 1
     next_pull_request_review_id: int = 1
@@ -162,6 +168,9 @@ class FakeGithubRepository:
     pull_request_reviews: dict[int, list[FakeGithubPullRequestReview]] = field(
         default_factory=dict
     )
+    # Test hook: PR numbers GitHub should report as not mergeable (pending
+    # required checks, conflicts, or branch protection).
+    unmergeable_pull_numbers: set[int] = field(default_factory=set)
 
     @property
     def full_name(self) -> str:
@@ -169,6 +178,9 @@ class FakeGithubRepository:
 
     def to_payload(self, *, api_origin: str, web_origin: str) -> dict[str, object]:
         return {
+            "allow_merge_commit": self.allow_merge_commit,
+            "allow_rebase_merge": self.allow_rebase_merge,
+            "allow_squash_merge": self.allow_squash_merge,
             "clone_url": f"{web_origin}/{self.full_name}.git",
             "default_branch": self.default_branch,
             "full_name": self.full_name,
@@ -290,6 +302,62 @@ class FakeGithubRepository:
 
     def ref_target(self, branch: str) -> str | None:
         return self.branch_heads().get(branch)
+
+    def apply_squash_merge(self, pull_request: FakeGithubPullRequest) -> str:
+        """Squash-merge the PR's head into its base on the backing Git repo.
+
+        Real GitHub computes a three-way merge before squashing. Using the head
+        commit's tree matches that result whenever the base has not diverged
+        beyond the PR's merge base, which holds for the sequential stacked
+        merges these tests exercise.
+        """
+
+        heads = self.branch_heads()
+        head_commit = heads[pull_request.head_ref]
+        base_commit = heads[pull_request.base_ref]
+        git_env = {
+            "GIT_AUTHOR_EMAIL": "fake-github@example.com",
+            "GIT_AUTHOR_NAME": "Fake GitHub",
+            "GIT_COMMITTER_EMAIL": "fake-github@example.com",
+            "GIT_COMMITTER_NAME": "Fake GitHub",
+        }
+        tree = self._run_backing_git("rev-parse", f"{head_commit}^{{tree}}")
+        squash_commit = self._run_backing_git(
+            "commit-tree",
+            tree,
+            "-p",
+            base_commit,
+            "-m",
+            f"{pull_request.title} (#{pull_request.number})",
+            env=git_env,
+        )
+        self._run_backing_git(
+            "update-ref",
+            f"refs/heads/{pull_request.base_ref}",
+            squash_commit,
+        )
+        pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        self.update_pull_request_state(
+            pull_request,
+            state="closed",
+            reason="merged",
+        )
+        return squash_commit
+
+    def _run_backing_git(self, *args: str, env: dict[str, str] | None = None) -> str:
+        completed = subprocess.run(
+            ["git", "--git-dir", str(self.git_dir), *args],
+            capture_output=True,
+            check=False,
+            env=None if env is None else {**os.environ, **env},
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(
+                f"fake github git {args} failed:\n"
+                f"stdout={completed.stdout}\nstderr={completed.stderr}"
+            )
+        return completed.stdout.strip()
 
     def branch_heads(self) -> dict[str, str]:
         """Read every branch target in one git invocation."""
@@ -592,6 +660,44 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
             _require_branch(repository, pull_request.base_ref)
         repository.refresh_pull_request_state(pull_request)
         return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
+
+    @app.put("/repos/{owner}/{repo}/pulls/{pull_number}/merge")
+    async def merge_pull_request(
+        owner: str,
+        repo: str,
+        pull_number: int,
+        payload: Annotated[dict[str, object], Body(...)],
+    ) -> dict[str, object]:
+        repository = _get_repository(fake_state, owner, repo)
+        pull_request = repository.pull_requests.get(pull_number)
+        if pull_request is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+        merge_method = payload.get("merge_method", "merge")
+        allowed_methods = {
+            "merge": repository.allow_merge_commit,
+            "rebase": repository.allow_rebase_merge,
+            "squash": repository.allow_squash_merge,
+        }
+        if not allowed_methods.get(str(merge_method), False):
+            raise HTTPException(
+                status_code=405,
+                detail=f"{merge_method} merges are not allowed on this repository.",
+            )
+        repository.refresh_pull_request_state(pull_request)
+        if (
+            pull_request.state != "open"
+            or pull_request.is_draft
+            or pull_number in repository.unmergeable_pull_numbers
+        ):
+            raise HTTPException(status_code=405, detail="Pull Request is not mergeable")
+        # Only squash merges move the backing repo; the fixture default allows
+        # nothing else, matching the recommended linear-history policy.
+        squash_commit = repository.apply_squash_merge(pull_request)
+        return {
+            "merged": True,
+            "message": "Pull Request successfully merged",
+            "sha": squash_commit,
+        }
 
     @app.patch("/repos/{owner}/{repo}/issues/{issue_number}")
     async def update_issue(
