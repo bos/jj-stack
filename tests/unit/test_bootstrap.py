@@ -4,12 +4,21 @@ from unittest.mock import patch
 
 import pytest
 
+import jj_stack.bootstrap
 from jj_stack.bootstrap import (
     _parse_jj_version,
     check_jj_version,
     resolve_repo_root,
 )
 from jj_stack.errors import CliError
+
+
+@pytest.fixture(autouse=True)
+def _forget_verified_jj_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Successful checks elsewhere in the process must not mask failures here."""
+
+    monkeypatch.setattr(jj_stack.bootstrap, "_jj_version_verified", False)
+
 
 # --- _parse_jj_version ---
 

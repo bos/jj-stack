@@ -16,6 +16,7 @@ from jj_stack.state.store import ReviewStateStore
 
 _MINIMUM_JJ_VERSION = (0, 39, 0)
 _MINIMUM_JJ_VERSION_STRING = "0.39.0"
+_jj_version_verified = False
 
 APP_START = time.perf_counter()
 
@@ -142,9 +143,13 @@ def check_jj_version() -> None:
     """Verify that the installed `jj` meets the minimum required version.
 
     Raises `CliError` if `jj` is absent, if its version string cannot be parsed,
-    or if the installed version is older than the minimum.
+    or if the installed version is older than the minimum. A successful check
+    holds for the lifetime of the process and is not repeated.
     """
 
+    global _jj_version_verified
+    if _jj_version_verified:
+        return
     try:
         completed = subprocess.run(
             ["jj", "--version"],
@@ -172,6 +177,7 @@ def check_jj_version() -> None:
             f"jj-stack requires jj {_MINIMUM_JJ_VERSION_STRING} or later. "
             "Please upgrade jj."
         )
+    _jj_version_verified = True
 
 
 def _parse_jj_version(version_output: str) -> tuple[int, ...] | None:
