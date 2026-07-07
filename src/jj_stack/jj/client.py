@@ -902,7 +902,9 @@ class JjClient:
 
         if not patterns:
             return {}
-        stdout = self._run_git(("ls-remote", "--refs", remote, *patterns))
+        stdout = self._run_git(
+            ("ls-remote", "--refs", self._git_remote_target(remote), *patterns)
+        )
         branches: dict[str, str] = {}
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -935,7 +937,7 @@ class JjClient:
             (
                 "push",
                 f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}",
-                remote,
+                self._git_remote_target(remote),
                 f"{desired_target}:refs/heads/{bookmark}",
             )
         )
@@ -957,7 +959,7 @@ class JjClient:
         command = ["push"]
         for bookmark, expected_remote_target in ordered_deletions:
             command.append(f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}")
-        command.append(remote)
+        command.append(self._git_remote_target(remote))
         for bookmark, _expected_remote_target in ordered_deletions:
             command.append(f":refs/heads/{bookmark}")
         self._run_git(command)
@@ -1011,6 +1013,14 @@ class JjClient:
             missing_tool_message=t"{ui.cmd('git')} is not installed or is not on PATH.",
             detect_stale_workspace=False,
         )
+
+    def _git_remote_target(self, remote: str) -> str:
+        """Return a Git CLI target for a jj remote name or explicit remote target."""
+
+        for configured_remote in self.list_git_remotes():
+            if configured_remote.name == remote:
+                return configured_remote.url
+        return remote
 
     def _run_command(
         self,

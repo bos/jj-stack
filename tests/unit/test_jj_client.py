@@ -788,6 +788,107 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation(
     assert "('cand-c' & ::'base-3')" in revset
 
 
+def test_list_remote_branches_resolves_jj_remote_name_to_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_commands: list[tuple[str, ...]] = []
+
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        invocation = tuple(command)
+        seen_commands.append(invocation)
+        if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="origin https://github.test/octo-org/repo.git\n",
+                stderr="",
+            )
+        if invocation == (
+            "git",
+            "ls-remote",
+            "--refs",
+            "https://github.test/octo-org/repo.git",
+            "refs/heads/review/feat",
+        ):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="abc123\trefs/heads/review/feat\n",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {invocation!r}")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+    result = JjClient(Path("/repo")).list_remote_branches(
+        remote="origin", patterns=("refs/heads/review/feat",)
+    )
+
+    assert result == {"review/feat": "abc123"}
+    assert seen_commands == [
+        ("jj", "--ignore-working-copy", "git", "remote", "list"),
+        (
+            "git",
+            "ls-remote",
+            "--refs",
+            "https://github.test/octo-org/repo.git",
+            "refs/heads/review/feat",
+        ),
+    ]
+
+
+def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_commands: list[tuple[str, ...]] = []
+
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        invocation = tuple(command)
+        seen_commands.append(invocation)
+        if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="origin https://github.test/octo-org/repo.git\n",
+                stderr="",
+            )
+        if invocation in {
+            (
+                "git",
+                "push",
+                "--force-with-lease=refs/heads/review/feat:old",
+                "https://github.test/octo-org/repo.git",
+                "new:refs/heads/review/feat",
+            ),
+            ("jj", "git", "fetch", "--remote", "origin"),
+            ("jj", "bookmark", "track", "review/feat", "--remote", "origin"),
+        }:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {invocation!r}")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+    JjClient(Path("/repo")).update_untracked_remote_bookmark(
+        remote="origin",
+        bookmark="review/feat",
+        desired_target="new",
+        expected_remote_target="old",
+    )
+
+    assert seen_commands == [
+        ("jj", "--ignore-working-copy", "git", "remote", "list"),
+        (
+            "git",
+            "push",
+            "--force-with-lease=refs/heads/review/feat:old",
+            "https://github.test/octo-org/repo.git",
+            "new:refs/heads/review/feat",
+        ),
+        ("jj", "git", "fetch", "--remote", "origin"),
+        ("jj", "bookmark", "track", "review/feat", "--remote", "origin"),
+    ]
+
+
 def test_push_bookmarks_issues_one_atomic_jj_invocation_for_a_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -882,9 +983,7 @@ def _runner(responses: dict[tuple[str, ...], str]):
     def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         key = tuple(command)
         response_key = (
-            (key[0], *key[2:])
-            if len(key) > 1 and key[1] == "--ignore-working-copy"
-            else key
+            (key[0], *key[2:]) if len(key) > 1 and key[1] == "--ignore-working-copy" else key
         )
         assert kwargs["capture_output"] is True
         assert kwargs["check"] is False
