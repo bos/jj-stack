@@ -118,6 +118,37 @@ def test_main_renders_cli_error_hint_on_separate_line(
     assert "Hint: Run view --fetch and retry." in err_lines
 
 
+def test_main_wraps_cli_error_hint_with_hanging_indent(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("COLUMNS", "72")
+
+    def fake_view(**kwargs) -> int:
+        raise CliError(
+            "Problem at trunk.",
+            hint=(
+                "Direct pushes are allowed once the required checks pass on the "
+                "exact commits being landed. Wait for the review-branch checks "
+                "to finish, then rerun land; land --via merge would not help "
+                "because the merge API enforces the same checks."
+            ),
+        )
+
+    monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
+
+    exit_code = main(["view"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    err_lines = captured.err.splitlines()
+    assert err_lines[1].startswith("Hint: Direct pushes")
+    hint_continuations = err_lines[2:]
+    assert hint_continuations
+    assert all(line.startswith("      ") for line in hint_continuations)
+    assert not any(line.startswith("exact commits") for line in hint_continuations)
+
+
 def test_main_preserves_view_selector_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

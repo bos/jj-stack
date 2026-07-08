@@ -85,12 +85,19 @@ def test_view_continues_after_selector_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("COLUMNS", "72")
     patch_bootstrap(monkeypatch, view_module, tmp_path)
 
     def fake_prepare_status_for_revset(**kwargs):
         revset = kwargs["revset"]
         if revset == "bad":
-            raise view_module.CliError("bad selector")
+            raise view_module.CliError(
+                "bad selector",
+                hint=(
+                    "Refresh the local view and select an exact pull request before "
+                    "retrying this stack inspection."
+                ),
+            )
         return SimpleNamespace(
             selected_revset=revset,
             prepared=SimpleNamespace(
@@ -145,7 +152,14 @@ def test_view_continues_after_selector_error(
     assert stdout_lines.index("Status for good:") < stdout_lines.index("rendered good")
     assert stdout_lines.index("Status for bad:") < stdout_lines.index("Status for later:")
     assert stdout_lines.index("Status for later:") < stdout_lines.index("rendered later")
-    assert "Error: bad selector" in stderr.getvalue()
+    stderr_lines = stderr.getvalue().splitlines()
+    assert "Error: bad selector" in stderr_lines
+    hint_line_index = next(
+        index
+        for index, line in enumerate(stderr_lines)
+        if line.startswith("Hint: Refresh the local view")
+    )
+    assert stderr_lines[hint_line_index + 1].startswith("      retrying")
 
 
 def test_view_json_continues_after_selector_error(

@@ -183,10 +183,10 @@ def _run_status(
                 console.output("")
             if not as_json:
                 console.output(_status_heading(selector))
-            console.warning(t"Error: {error_message(error)}")
+            console.warning(ui.prefixed_line("Error: ", error_message(error)))
             hint = error.hint
             if hint is not None:
-                console.warning(t"Hint: {hint}")
+                console.warning(ui.prefixed_line("Hint: ", hint))
             exit_code = EXIT_INCOMPLETE
             if not as_json:
                 printed_blocks += 1
