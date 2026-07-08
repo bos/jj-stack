@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from jj_stack.commands.submit.descriptions import (
+    _split_editor_command,
     parse_description_edit_document,
     render_description_edit_document,
     resolve_generated_descriptions,
@@ -166,6 +167,23 @@ def test_edit_is_mutually_exclusive_with_describe_with(tmp_path: Path) -> None:
         )
 
 
+def test_windows_editor_command_preserves_backslashes(monkeypatch) -> None:
+    monkeypatch.setattr("jj_stack.commands.submit.descriptions.os.name", "nt")
+
+    assert _split_editor_command(
+        r"D:\a\jj-stack\jj-stack\.venv\Scripts\python.exe D:\tmp\editor.py"
+    ) == [
+        r"D:\a\jj-stack\jj-stack\.venv\Scripts\python.exe",
+        r"D:\tmp\editor.py",
+    ]
+    assert _split_editor_command(
+        r'"C:\Program Files\Python\python.exe" "D:\tmp\editor script.py"'
+    ) == [
+        r"C:\Program Files\Python\python.exe",
+        r"D:\tmp\editor script.py",
+    ]
+
+
 def _isolate_editor_environment(monkeypatch, tmp_path: Path) -> None:
     jj_config = tmp_path / "jj-config.toml"
     jj_config.write_text("", encoding="utf-8")
@@ -226,4 +244,3 @@ def test_edit_aborts_when_editor_exits_nonzero(monkeypatch, tmp_path: Path) -> N
             revisions=_two_change_stack(),
             selected_revset="@-",
         )
-

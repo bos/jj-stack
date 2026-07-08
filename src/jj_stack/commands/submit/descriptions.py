@@ -220,11 +220,24 @@ def _resolve_editor_command(jj_client: JjClient) -> list[str]:
         os.environ.get("EDITOR"),
     ):
         if candidate and candidate.strip():
-            return shlex.split(candidate)
+            return _split_editor_command(candidate)
     raise UsageError(
         t"{ui.cmd('--edit')} needs an editor: set jj's {ui.code('ui.editor')} config "
         t"or the {ui.code('VISUAL')} or {ui.code('EDITOR')} environment variable."
     )
+
+
+def _split_editor_command(command: str) -> list[str]:
+    parts = shlex.split(command, posix=os.name != "nt")
+    if os.name != "nt":
+        return parts
+    return [_strip_surrounding_quotes(part) for part in parts]
+
+
+def _strip_surrounding_quotes(text: str) -> str:
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        return text[1:-1]
+    return text
 
 
 def _edit_descriptions_in_editor(
