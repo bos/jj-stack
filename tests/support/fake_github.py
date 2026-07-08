@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -958,28 +957,33 @@ def _require_graphql_variable(payload: dict[str, object], key: str) -> str:
     raise HTTPException(status_code=422, detail=f"Expected GraphQL variable {key!r}.")
 
 
-_HEAD_REF_QUERY_PATTERN = re.compile(
-    r"(?m)^\s*(?P<alias>\w+):\s*pullRequests\([^)]*headRefName:\s*"
-    r'(?P<head_ref>"(?:\\.|[^"\\])*")[^)]*\)\s*\{'
-)
-_PULL_REQUEST_NUMBER_QUERY_PATTERN = re.compile(
-    r"(?m)^\s*(?P<alias>\w+):\s*pullRequest\(number:\s*(?P<number>\d+)\)\s*\{"
-)
-
-
 def _graphql_repository_payload(
     *,
     query: str,
     repository: FakeGithubRepository,
     web_origin: str,
 ) -> dict[str, object]:
-    # codeql[py/polynomial-redos]
-    head_ref_matches = list(_HEAD_REF_QUERY_PATTERN.finditer(query))
-    if head_ref_matches:
+    lines = query.splitlines()
+    head_ref_queries: list[tuple[str, str]] = []
+    for index, line in enumerate(lines):
+        alias, separator, selection = line.strip().partition(":")
+        if not separator or not alias.isidentifier():
+            continue
+        if not selection.lstrip().startswith("pullRequests("):
+            continue
+        for argument_line in lines[index + 1 :]:
+            stripped_argument = argument_line.strip()
+            if stripped_argument.startswith(")"):
+                break
+            if not stripped_argument.startswith("headRefName:"):
+                continue
+            head_ref = json.loads(stripped_argument.removeprefix("headRefName:").strip())
+            head_ref_queries.append((alias, head_ref))
+            break
+
+    if head_ref_queries:
         payload: dict[str, object] = {}
-        for match in head_ref_matches:
-            alias = match.group("alias")
-            head_ref = json.loads(match.group("head_ref"))
+        for alias, head_ref in head_ref_queries:
             matching_pull_requests = sorted(
                 (
                     pull_request
@@ -1002,22 +1006,29 @@ def _graphql_repository_payload(
             }
         return payload
 
-    pull_request_number_matches = list(_PULL_REQUEST_NUMBER_QUERY_PATTERN.finditer(query))
-    if not pull_request_number_matches:
+    pull_request_number_queries: list[tuple[str, int]] = []
+    for line in lines:
+        alias, separator, selection = line.strip().partition(":")
+        if not separator or not alias.isidentifier():
+            continue
+        selection = selection.lstrip()
+        if not selection.startswith("pullRequest(number:"):
+            continue
+        number_text = selection.removeprefix("pullRequest(number:").partition(")")[0]
+        pull_request_number_queries.append((alias, int(number_text.strip())))
+
+    if not pull_request_number_queries:
         raise HTTPException(status_code=422, detail="Unsupported GraphQL query.")
 
     payload: dict[str, object] = {}
     include_latest_opinionated_reviews = "latestOpinionatedReviews" in query
     requested_pull_requests = [
         pull_request
-        for match in pull_request_number_matches
-        if (pull_request := repository.pull_requests.get(int(match.group("number"))))
-        is not None
+        for _alias, pull_number in pull_request_number_queries
+        if (pull_request := repository.pull_requests.get(pull_number)) is not None
     ]
     repository.refresh_pull_requests(requested_pull_requests)
-    for match in pull_request_number_matches:
-        alias = match.group("alias")
-        pull_number = int(match.group("number"))
+    for alias, pull_number in pull_request_number_queries:
         pull_request = repository.pull_requests.get(pull_number)
         if pull_request is None:
             payload[alias] = None
