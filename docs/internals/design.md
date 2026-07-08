@@ -1383,7 +1383,13 @@ Recovery guidance stays case-specific:
 - if rerun after the trunk push already succeeded, use the operation log plus
   current `trunk()` and saved PR identity to prove the landed prefix, then finish
   only the remaining exact PR/state/bookmark finalization
-- update tracking for the landed changes
+- while finalizing, keep temporary landed tracking so an interrupted direct-push
+  land can resume exactly; after the landed prefix fully finalizes, retire the
+  direct-push landed changes from review tracking so they do not reappear as
+  cleanup-needed stacks
+- a rerun that finds a landed change missing from saved tracking accepts it only
+  when the interrupted operation's own log recorded the retirement; a record
+  missing for any other reason is ambiguous linkage and fails closed
 - close or mark landed only the PRs that correspond exactly to the landed changes,
   once the trunk transition succeeds
 - apply that PR finalization bottom-to-top through the landed changes so GitHub-side
@@ -1394,6 +1400,11 @@ Recovery guidance stays case-specific:
 - if there are surviving descendants above the landed changes, tell the user to repair
   local ancestry with `cleanup --rebase` and rerun `submit`. `land` does not silently
   retarget or rebase surviving descendants
+
+`land --via merge` keeps the merged tracking records until the follow-up `sync` or
+`cleanup --rebase` has used them to remove GitHub-merged ancestors from the local stack.
+The direct-push transport does not need that follow-up state because the landed commits
+are already the trunk commits.
 
 Broader cleanup remains the job of `cleanup`:
 

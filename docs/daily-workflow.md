@@ -172,8 +172,9 @@ If you want to land only up through one specific pull request:
 jj-stack land --pull-request 7
 ```
 
-By default, a successful `land` forgets the local review bookmarks for the changes that actually
-landed. Use `--skip-cleanup` if you want to keep those local review bookmarks.
+By default, a successful direct `land` forgets the local review bookmarks for the changes that
+actually landed and retires their review tracking. Use `--skip-cleanup` if you want to keep
+those local review bookmarks.
 
 `land` lands the consecutive run of ready PRs at the bottom of your stack. It stops as soon as
 there's a change it cannot land, and will not land changes above a non-landable change. To land

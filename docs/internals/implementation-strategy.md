@@ -300,6 +300,10 @@ keep that single recovery path reliable across crashes without slowing every aud
 trunk-moving `land` runs fsync the begin event, the pushed-trunk event, and the completed
 marker. When a durable append creates `operation-log.jsonl`, it also fsyncs the state
 directory on platforms that support directory fsync.
+Direct-push `land` keeps temporary landed tracking while finalizing PRs, then removes the
+landed records from active tracking after finalization has succeeded. A rerun that finds
+a landed record missing trusts it only when the interrupted operation's journal recorded
+the retirement; otherwise it fails closed.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.

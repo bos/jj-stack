@@ -186,9 +186,9 @@ Your typical author loop is:
 6. If lower changes were merged on GitHub instead of with `jj-stack land`, run
    `jj-stack cleanup --rebase` when status says cleanup is needed.
 
-`land` pushes the ready changes at the bottom of your stack to GitHub trunk and forgets
-the local review bookmarks for the landed changes. It stops before the first change that
-is not ready to land.
+`land` pushes the ready changes at the bottom of your stack to GitHub trunk, forgets
+the local review bookmarks for the landed changes, and retires their review tracking.
+It stops before the first change that is not ready to land.
 
 `cleanup --rebase` is helpful when some lower changes were merged on GitHub, for example with a
 squash merge, and your local stack still contains those old merged ancestors. It removes those

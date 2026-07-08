@@ -408,8 +408,9 @@ def _land_completion_plan_from_log(
 
     prepared = prepared_land.prepared_status.prepared
     state = prepared.state_store.load()
+    events = read_operation_log(prepared.state_store.state_dir)
     begin_event = _latest_interrupted_land_with_trunk_push(
-        events=read_operation_log(prepared.state_store.state_dir),
+        events=events,
         selected_head_change_id=prepared.stack.head.change_id,
     )
     if begin_event is None:
@@ -427,8 +428,16 @@ def _land_completion_plan_from_log(
             hint="Inspect the operation log and current trunk before retrying.",
         )
 
+    retired_change_ids = _logged_retired_change_ids(
+        events=events,
+        operation_id=begin_event.operation_id,
+    )
     for revision in planned_revisions:
-        _ensure_logged_land_matches_saved_state(revision=revision, state=state)
+        _ensure_logged_land_matches_saved_state(
+            retired_change_ids=retired_change_ids,
+            revision=revision,
+            state=state,
+        )
 
     return LandPlan(
         blocked=False,
@@ -490,15 +499,43 @@ def _logged_land_revisions(event: JournalEvent) -> tuple[LandRevision, ...]:
     )
 
 
+def _logged_retired_change_ids(
+    *,
+    events: tuple[JournalEvent, ...],
+    operation_id: str,
+) -> frozenset[str]:
+    """Change IDs whose tracking the interrupted land itself already retired."""
+
+    return frozenset(
+        str(event.data["change_id"])
+        for event in events
+        if event.operation_id == operation_id
+        and event.event == "saved_state_update"
+        and event.data.get("after") is None
+    )
+
+
 def _ensure_logged_land_matches_saved_state(
     *,
+    retired_change_ids: frozenset[str],
     revision: LandRevision,
     state: ReviewState,
 ) -> None:
     cached_change = state.changes.get(revision.change_id)
+    if cached_change is None:
+        # A missing record is trusted only when this interrupted land's own log
+        # proves it finalized the change and retired the tracking before the
+        # completed marker was written. Absence for any other reason is
+        # ambiguous linkage, which must fail closed.
+        if revision.change_id in retired_change_ids:
+            return
+        raise CliError(
+            t"Cannot finish the interrupted land because saved review identity for "
+            t"{ui.change_id(revision.change_id)} no longer matches the logged land.",
+            hint=t"Run {ui.cmd('view --fetch')} and inspect the stack before retrying.",
+        )
     if (
-        cached_change is None
-        or cached_change.link_state != "active"
+        cached_change.link_state != "active"
         or cached_change.bookmark != revision.bookmark
         or cached_change.pr_number != revision.pull_request_number
     ):

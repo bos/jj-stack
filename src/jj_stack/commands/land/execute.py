@@ -27,6 +27,7 @@ from .models import (
     LandRevision,
     PreparedLand,
     ReviewBookmarkCleanupPlan,
+    landed_tracking_retire_body,
 )
 
 
@@ -213,6 +214,14 @@ async def execute_land_plan(
         trunk_branch=trunk_branch,
     )
     finalize_blocked = len(finalized_change_ids) != len(execution_plan.planned_revisions)
+    if not finalize_blocked and execution_plan.via == "push":
+        actions.extend(
+            _retire_finalized_tracking(
+                finalized_revisions=execution_plan.planned_revisions,
+                journal=journal,
+                mutation_run=mutation_run,
+            )
+        )
     journal.append(
         "completed",
         {"completed_change_ids": finalized_change_ids},
@@ -569,6 +578,37 @@ def _apply_review_bookmark_cleanup(
             t"for {ui.change_id(landed_revision.change_id)}",
             status="applied",
         ),
+    )
+
+
+def _retire_finalized_tracking(
+    *,
+    finalized_revisions: tuple[LandRevision, ...],
+    journal: OperationJournal,
+    mutation_run: LandMutationRun,
+) -> tuple[LandAction, ...]:
+    """Remove direct-push landed changes from active review tracking."""
+
+    previous_changes = dict(mutation_run.state_changes)
+    retired_revisions: list[LandRevision] = []
+    for finalized_revision in finalized_revisions:
+        if mutation_run.state_changes.pop(finalized_revision.change_id, None) is not None:
+            retired_revisions.append(finalized_revision)
+    if not retired_revisions:
+        return ()
+
+    mutation_run.save_interim_state()
+    journal.record_saved_state_updates(
+        before=previous_changes,
+        after=mutation_run.state_changes,
+    )
+    return tuple(
+        LandAction(
+            kind="tracking",
+            body=landed_tracking_retire_body(retired_revision),
+            status="applied",
+        )
+        for retired_revision in retired_revisions
     )
 
 

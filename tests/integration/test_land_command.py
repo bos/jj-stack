@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from jj_stack.errors import EXIT_GITHUB
+from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient, JjCommandError
-from jj_stack.state.journal import read_operation_log
+from jj_stack.state.journal import OPERATION_LOG_FILENAME, read_operation_log
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -96,6 +97,8 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
     assert "Finalizing PR #2 for feature 2" in rendered_applied
     assert f"forget {bookmark_1}" in rendered_applied
     assert f"forget {bookmark_2}" in rendered_applied
+    assert "remove tracking for landed feature 1" in rendered_applied
+    assert "remove tracking for landed feature 2" in rendered_applied
     assert read_remote_ref(fake_repo.git_dir, "main") == stack.revisions[1].commit_id
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is not None
@@ -110,22 +113,8 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
     assert read_remote_ref(fake_repo.git_dir, bookmark_2) == stack.revisions[1].commit_id
 
     landed_state = state_store.load()
-    assert landed_state.changes[change_id_1].pr_state == "merged"
-    assert landed_state.changes[change_id_1].navigation_comment_id is None
-    assert landed_state.changes[change_id_1].overview_comment_id is None
-    assert landed_state.changes[change_id_1].last_submitted_parent_change_id is None
-    assert (
-        landed_state.changes[change_id_1].last_submitted_stack_head_change_id == change_id_2
-    )
-    assert landed_state.changes[change_id_2].pr_state == "merged"
-    assert landed_state.changes[change_id_2].navigation_comment_id is None
-    assert landed_state.changes[change_id_2].overview_comment_id is None
-    assert (
-        landed_state.changes[change_id_2].last_submitted_parent_change_id == change_id_1
-    )
-    assert (
-        landed_state.changes[change_id_2].last_submitted_stack_head_change_id == change_id_2
-    )
+    assert change_id_1 not in landed_state.changes
+    assert change_id_2 not in landed_state.changes
     assert landed_state.changes[change_id_3].pr_state == "closed"
     state_dir = resolve_state_path(repo).parent
     journal_events = tuple(
@@ -136,8 +125,38 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
         event.event == "mutation_applied" and event.data["mutation"] == "push_trunk"
         for event in journal_events
     )
-    assert any(event.event == "saved_state_update" for event in journal_events)
+    assert any(
+        event.event == "saved_state_update"
+        and event.data["change_id"] == change_id_1
+        and event.data["after"] is None
+        for event in journal_events
+    )
+    assert any(
+        event.event == "saved_state_update"
+        and event.data["change_id"] == change_id_2
+        and event.data["after"] is None
+        for event in journal_events
+    )
     assert journal_events[-1].event == "completed"
+
+    list_exit_code = run_main(repo, config_path, "list", "--json")
+    listed = capsys.readouterr()
+    assert list_exit_code in (0, EXIT_INCOMPLETE)
+    listed_change_ids = _list_json_change_ids(listed.out)
+    assert change_id_1 not in listed_change_ids
+    assert change_id_2 not in listed_change_ids
+    assert change_id_3 in listed_change_ids
+
+
+def _list_json_change_ids(list_output: str) -> set[str]:
+    """Every change id `list --json` reports, across stack and orphan rows."""
+
+    rows = json.loads(list_output).get("rows", ())
+    change_ids = {
+        change["change_id"] for row in rows for change in row.get("changes", ())
+    }
+    change_ids.update(row["change_id"] for row in rows if row.get("type") == "orphan")
+    return change_ids
 
 
 def test_land_skip_cleanup_keeps_landed_local_review_bookmark(
@@ -164,6 +183,7 @@ def test_land_skip_cleanup_keeps_landed_local_review_bookmark(
     assert f"forget local bookmark {bookmark}" not in captured.out
     bookmark_state = JjClient(repo).get_bookmark_state(bookmark)
     assert bookmark_state.local_target == stack.revisions[0].commit_id
+    assert change_id not in state_store.load().changes
 
 
 def test_land_rejects_stack_forked_from_trunk_ancestor(
@@ -369,7 +389,7 @@ def test_land_auto_resubmits_rebased_branch_before_landing(
     assert read_remote_ref(fake_repo.git_dir, bookmark) == rebased_commit_id
     assert fake_repo.pull_requests[1].state == "closed"
     state = ReviewStateStore.for_repo(repo).load()
-    assert state.changes[change_id].pr_state == "merged"
+    assert change_id not in state.changes
 
 
 def test_land_blocks_content_divergent_rebased_change(
@@ -675,8 +695,113 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     for bookmark in saved_bookmarks:
         assert bookmark_states[bookmark].local_target is None
     finished_state = state_store.load()
-    assert finished_state.changes[landed_change_ids[0]].pr_state == "merged"
-    assert finished_state.changes[landed_change_ids[1]].pr_state == "merged"
+    assert landed_change_ids[0] not in finished_state.changes
+    assert landed_change_ids[1] not in finished_state.changes
+
+
+def test_land_resumes_when_tracking_retired_but_completed_marker_missing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    stack = JjClient(repo).discover_review_stack()
+    landed_commit_id = stack.revisions[1].commit_id
+    landed_change_ids = tuple(revision.change_id for revision in stack.revisions[:2])
+    state_store = ReviewStateStore.for_repo(repo)
+
+    assert run_main(repo, config_path, "land") == 0
+    capsys.readouterr()
+
+    # Reproduce a crash between retiring the landed tracking and writing the
+    # completed marker: drop the trailing completed event from the journal.
+    log_path = resolve_state_path(repo).parent / OPERATION_LOG_FILENAME
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    dropped_event = json.loads(lines[-1])
+    assert (dropped_event["operation"], dropped_event["event"]) == ("land", "completed")
+    log_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    fake_repo.pull_request_events.clear()
+
+    exit_code = run_main(repo, config_path, "land")
+    capsys.readouterr()
+
+    assert exit_code == 0
+    assert fake_repo.pull_request_events == []
+    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "closed"
+    assert fake_repo.pull_requests[2].merged_at is not None
+    assert fake_repo.pull_requests[3].state == "open"
+    finished_state = state_store.load()
+    for change_id in landed_change_ids:
+        assert change_id not in finished_state.changes
+    journal_events = read_operation_log(resolve_state_path(repo).parent)
+    assert journal_events[-1].operation == "land"
+    assert journal_events[-1].event == "completed"
+
+
+def test_land_resume_fails_closed_when_saved_tracking_pruned_externally(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    stack = JjClient(repo).discover_review_stack()
+    landed_commit_id = stack.revisions[1].commit_id
+    landed_change_ids = tuple(revision.change_id for revision in stack.revisions[:2])
+    state_store = ReviewStateStore.for_repo(repo)
+
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnFinalizeLoadClient(GithubClient):
+        async def get_pull_request(self, *, pull_number):
+            if pull_number == 1:
+                raise GithubClientError("Simulated finalization failure", status_code=500)
+            return await super().get_pull_request(pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+        client_type=FailOnFinalizeLoadClient,
+    )
+
+    assert run_main(repo, config_path, "land") == EXIT_GITHUB
+    capsys.readouterr()
+    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
+
+    # Another command (for example a cleanup prune) removes the saved records
+    # before the rerun. Without retire evidence in the interrupted operation's
+    # own journal, the resume must fail closed instead of finalizing PRs whose
+    # linkage it can no longer prove.
+    state = state_store.load()
+    pruned_changes = dict(state.changes)
+    for change_id in landed_change_ids:
+        del pruned_changes[change_id]
+    state_store.save(state.model_copy(update={"changes": pruned_changes}))
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+    )
+    fake_repo.pull_request_events.clear()
+
+    exit_code = run_main(repo, config_path, "land")
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_FAILURE
+    assert "saved review identity" in captured.err
+    assert fake_repo.pull_request_events == []
+    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.pull_requests[2].state == "open"
 
 
 def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(

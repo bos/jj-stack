@@ -161,6 +161,14 @@ class LandPlan:
                 cleanup_action = bookmark_cleanup_by_change_id.get(landed_revision.change_id)
                 if cleanup_action is not None:
                     actions.append(cleanup_action)
+                if self.via == "push":
+                    actions.append(
+                        LandAction(
+                            kind="tracking",
+                            body=landed_tracking_retire_body(landed_revision),
+                            status="planned",
+                        )
+                    )
         if self.boundary_action is not None:
             actions.append(self.boundary_action)
         return tuple(actions)
@@ -179,6 +187,15 @@ class ReviewBookmarkCleanupPlan:
     bookmark: str
     can_forget: bool
     change_id: str
+
+
+def landed_tracking_retire_body(landed_revision: LandRevision) -> Message:
+    """Render the direct-push tracking cleanup action for a landed revision."""
+
+    return (
+        t"remove tracking for landed {landed_revision.subject} "
+        t"{ui.change_id(landed_revision.change_id)}"
+    )
 
 
 class BookmarkStateReader(Protocol):
