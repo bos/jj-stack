@@ -10,6 +10,7 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.land.command import (
     _resolve_land_merge_method,
     _stack_not_on_trunk_error,
+    land,
 )
 from jj_stack.commands.land.execute import (
     _finalize_landed_pull_request,
@@ -22,9 +23,9 @@ from jj_stack.commands.land.plan import (
     _plan_review_bookmark_cleanup,
 )
 from jj_stack.config import RepoConfig
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.jj.client import JjClient
+from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest, GithubRepository
 from jj_stack.models.review_state import CachedChange, LinkState
@@ -684,6 +685,22 @@ def _repository_with_merge_settings(
         private=True,
         url="https://api.github.test/repos/acme/widgets",
     )
+
+
+def test_land_merge_method_requires_via_merge_before_bootstrap() -> None:
+    with pytest.raises(UsageError, match="--merge-method.*--via merge"):
+        land(
+            bypass_readiness=False,
+            cli_args=JjCliArgs(),
+            debug=False,
+            dry_run=False,
+            merge_method="squash",
+            pull_request=None,
+            repository=None,
+            revset=None,
+            skip_cleanup=False,
+            via="push",
+        )
 
 
 def test_resolve_land_merge_method_prefers_explicit_flag() -> None:

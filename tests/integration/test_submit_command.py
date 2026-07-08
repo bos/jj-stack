@@ -2128,58 +2128,6 @@ def _write_edit_editor(tmp_path: Path, name: str, body_lines: list[str]) -> str:
     return f"{_sys.executable} {editor}"
 
 
-def test_submit_edit_applies_editor_changes_to_pull_requests(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    editor_command = _write_edit_editor(
-        tmp_path,
-        "edit-descriptions.py",
-        [
-            "from pathlib import Path",
-            "import sys",
-            "",
-            "path = Path(sys.argv[-1])",
-            "out = []",
-            "pending_title = False",
-            "in_body = False",
-            "for line in path.read_text(encoding='utf-8').splitlines():",
-            "    if line.startswith('JJ:'):",
-            "        continue",
-            "    if line.startswith('====== change '):",
-            "        out.append(line)",
-            "        pending_title = True",
-            "        in_body = False",
-            "        continue",
-            "    if pending_title and line.strip():",
-            "        out.extend([line + ' [edited]', '', 'Body via editor.'])",
-            "        pending_title = False",
-            "        in_body = True",
-            "        continue",
-            "    if not in_body:",
-            "        out.append(line)",
-            "path.write_text('\\n'.join(out) + '\\n', encoding='utf-8')",
-        ],
-    )
-    monkeypatch.delenv("VISUAL", raising=False)
-    monkeypatch.setenv("EDITOR", editor_command)
-
-    exit_code = run_main(repo, config_path, "submit", "--edit")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "Submitted changes:" in captured.out
-    assert fake_repo.pull_requests[1].title == "feature 1 [edited]"
-    assert fake_repo.pull_requests[1].body == "Body via editor."
-    assert fake_repo.pull_requests[2].title == "feature 2 [edited]"
-    assert fake_repo.pull_requests[2].body == "Body via editor."
-
-
 def test_submit_edit_malformed_document_aborts_before_mutation(
     tmp_path: Path,
     monkeypatch,

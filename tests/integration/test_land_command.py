@@ -762,21 +762,6 @@ def test_land_via_merge_dry_run_previews_merges_without_mutating(
     assert read_remote_ref(fake_repo.git_dir, "main") == original_main
 
 
-def test_land_merge_method_flag_requires_via_merge(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    exit_code = run_main(repo, config_path, "land", "--merge-method", "squash")
-    captured = capsys.readouterr()
-
-    assert exit_code == 5
-    assert "--merge-method is only used with --via merge" in captured.err
-
-
 def test_land_via_merge_refuses_rebase_method_for_multi_pr_prefix(
     tmp_path: Path,
     monkeypatch,
