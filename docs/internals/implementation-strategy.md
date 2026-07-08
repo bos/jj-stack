@@ -256,7 +256,11 @@ typed transition vocabulary in [distributed-state.md](distributed-state.md): aft
 initial submit and an optional stack edit, it perturbs GitHub PR state, remote refs,
 saved tracking, or the local `jj` view through user-reachable transitions, then asserts
 the model-predicted outcome — fail closed with every boundary untouched, or full
-success — and that `view` still reports on the drifted state.
+success — and that `view` still reports on the drifted state. A land oracle starts from
+submitted, partially approved stacks that may have been edited since their last submit;
+it predicts the prefix land's readiness walk consumes and models the transport split —
+direct-push land retires the landed tracking, merge-transport land keeps merged tracking
+so follow-up sync or cleanup can rebase the local stack.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page

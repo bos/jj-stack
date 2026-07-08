@@ -279,6 +279,19 @@ The transition vocabulary and required behaviors live in
   boundary, which a spec cannot replay. Revisit if concurrent commands or
   multi-remote support make interleavings first-class.
 
+## Land Property Harness Follow-ups
+
+_Benefit: small–medium — the composed land family covers post-edit readiness walks;
+these extensions add the failure-timing and drift dimensions land shares with submit._
+
+- a generated interrupted-land retry family (one-shot faults after trunk push, after
+  PR finalization, and after tracking retirement) mirroring the submit retry harness;
+  the retire-then-crash and externally-pruned-tracking rerun windows are covered by
+  deterministic integration tests today
+- land after external trunk advance and the other land-facing drift kinds, once the
+  drift replay targets `land` (see External-Drift Model Follow-ups)
+- `--pull-request` prefix selection as a scenario dimension in the composed walk
+
 ## Property Harness Cost Trims
 
 _Benefit: small — the property suite is opt-in, so this only affects the CI

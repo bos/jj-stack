@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the opt-in submit property scenario suite."""
+"""Run the opt-in stack property scenario suites."""
 
 from __future__ import annotations
 
@@ -11,13 +11,16 @@ from collections.abc import Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PROPERTY_TEST_FILE = REPO_ROOT / "tests" / "property" / "submit_property_scenarios.py"
+PROPERTY_TEST_FILES = (
+    REPO_ROOT / "tests" / "property" / "submit_property_scenarios.py",
+    REPO_ROOT / "tests" / "property" / "land_property_scenarios.py",
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = ArgumentParser(
         prog="tests/run_submit_property_scenarios.py",
-        description="Run opt-in submit property scenarios with pytest-xdist.",
+        description="Run opt-in stack property scenarios with pytest-xdist.",
     )
     parser.add_argument(
         "scenarios",
@@ -72,6 +75,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--land-scenarios",
+        type=_non_negative_int,
+        help=(
+            "Number of generated land scenarios to run "
+            "(default: max(11, scenarios // 20); 11 covers the fixed corpus)."
+        ),
+    )
+    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -120,17 +131,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     env["JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"] = str(drift_scenarios)
     if args.seed is not None:
         env["JJ_STACK_SUBMIT_PROPERTY_SEED"] = str(args.seed)
+        env["JJ_STACK_LAND_PROPERTY_SEED"] = str(args.seed)
+    land_scenarios = args.land_scenarios
+    if land_scenarios is None:
+        land_scenarios = max(11, args.scenarios // 20)
+    env["JJ_STACK_LAND_PROPERTY_SCENARIOS"] = str(land_scenarios)
 
     venv_python = REPO_ROOT / ".venv" / (
         Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
     )
+    test_files = [str(path.relative_to(REPO_ROOT)) for path in PROPERTY_TEST_FILES]
     command = [
         str(venv_python),
         "-m",
         "pytest",
         "-n",
         args.jobs,
-        str(PROPERTY_TEST_FILE.relative_to(REPO_ROOT)),
+        *test_files,
         *pytest_args,
     ]
     print(f"==> property scenarios: {shlex.join(command)}", flush=True)

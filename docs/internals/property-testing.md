@@ -222,6 +222,42 @@ tool, and fetches. The fetched untracked remote bookmark makes the recreated cha
 immutable, so `submit` must refuse with the unsupported-stack diagnostic and `view` must
 still report.
 
+## Land Harness
+
+Land scenarios compose the states `land` actually meets: a submitted, partially approved
+stack that may have been edited since its last submit. Each scenario starts from a
+submitted linear stack, optionally applies one local stack edit — a rewrite, an insert,
+or an abandon, with or without a follow-up resubmit — approves a prefix of the final
+live stack, then lands through one transport. The model predicts the prefix land's
+readiness walk consumes: an unapproved PR stops the walk, an unsubmitted inserted change
+stops it, a rewrite without resubmit stops it because the local change no longer matches
+what reviewers approved, and survivors rebased by an abandon stay landable because land
+refreshes their review branches before landing.
+
+For the default direct-push transport, the oracle asserts:
+
+- remote trunk points at the last landed local commit, and stays put when nothing is
+  ready to land
+- landed PRs are finalized as merged, and their remote review branches are left intact
+  at the landed commits
+- landed local review bookmarks are forgotten unless `--skip-cleanup` is present
+- local review tracking for the landed prefix is retired; tracking above the landing
+  boundary and for orphaned changes is untouched
+- `list --json` stops reporting landed changes and still reports the remaining tracked
+  suffix
+
+For `land --via merge`, the oracle asserts the opposite tracking rule for landed PRs:
+GitHub moves trunk by merging the PRs, local `jj` commits are left untouched, and the
+merged tracking records remain so a follow-up `sync` or `cleanup --rebase` can rebase the
+local stack. A blocked merge-transport scenario marks the first PR after the merged prefix
+as unmergeable; the command must stop there, preserve the blocker as open tracking, and
+keep merged tracking for the prefix that GitHub already accepted.
+
+Both transports assert transient events, not only final state: a landed PR transitions to
+closed exactly once, and no other original PR sees any state or base event. The one
+exception is the first blocked merge-transport PR, which may be retargeted to trunk
+before GitHub refuses the merge but must never change state.
+
 ## Interrupted-Submit Retry Harness
 
 Boundary-drift scenarios assert that unsafe external state blocks mutation. Retry
@@ -303,7 +339,8 @@ $ tests/run_submit_property_scenarios.py 500
 The runner accepts the scenario count as a positional argument. It also supports
 `--seed <int>`, `--cross-stack-scenarios <N>`, `--stack-merge-scenarios <N>`,
 `--stack-move-scenarios <N>`, `--retry-scenarios <N>`, `--drift-scenarios <N>`,
-`--jobs <N|auto>`, `--no-sync`, and additional pytest arguments after `--`.
+`--land-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest arguments
+after `--`.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:
@@ -335,6 +372,8 @@ The opt-in runner sets these environment variables for the pytest adapter:
 - `JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS`: target number of unique external-drift
   scenarios
 - `JJ_STACK_SUBMIT_PROPERTY_SEED`: deterministic random seed
+- `JJ_STACK_LAND_PROPERTY_SCENARIOS`: target number of unique land scenarios
+- `JJ_STACK_LAND_PROPERTY_SEED`: deterministic random seed for land scenarios
 
 Those variables configure the adapter; they are not part of the core harness contract.
 
