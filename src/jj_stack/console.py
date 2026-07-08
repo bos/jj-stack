@@ -291,7 +291,7 @@ class _RichSpinnerHandle:
 
 def _raw_console(stream: IO[str], *, color_mode: ColorMode) -> Console:
     if color_mode == "always":
-        return Console(file=stream, force_terminal=True)
+        return Console(file=stream, force_terminal=True, no_color=False)
     if color_mode == "never":
         return Console(file=stream, no_color=True)
     return Console(file=stream)
@@ -578,7 +578,7 @@ def _stream_supports_live_progress(stream: IO[str]) -> bool:
 
 def _progress_console(*, stream: IO[str], color_mode: ColorMode) -> Console:
     if color_mode == "always":
-        return Console(file=stream, force_terminal=True)
+        return Console(file=stream, force_terminal=True, no_color=False)
     if color_mode == "never":
         return Console(file=stream, no_color=True)
     return Console(file=stream)

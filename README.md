@@ -231,8 +231,9 @@ A few repair and housekeeping commands are hidden by default:
 jj-stack help --all
 ```
 
-Like `jj`, `jj-stack` accepts `--color=always|never|debug|auto`. Without that flag, it
-follows your `jj` `ui.color` setting.
+Like `jj`, `jj-stack` accepts `--color=always|never|debug|auto`. `always` forces color
+even if `NO_COLOR` is set. Without that flag, `jj-stack` follows your `jj` `ui.color`
+setting.
 
 ## Configuration
 
