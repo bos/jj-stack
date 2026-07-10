@@ -129,9 +129,49 @@ async def execute_land_plan(
             blocked=True,
         )
     state_dir = prepared.state_store.require_writable()
+    journal_must_be_durable = (
+        execution_plan.push_trunk or execution_plan.resumed_operation_id is not None
+    )
+    resolved_scope: dict[str, object] = {
+        "github_repository": github_client.repository.full_name,
+        "landed_change_ids": tuple(
+            revision.change_id for revision in execution_plan.planned_revisions
+        ),
+        "landed_commit_id": (
+            execution_plan.planned_revisions[-1].commit_id
+            if execution_plan.planned_revisions
+            else prepared.stack.trunk.commit_id
+        ),
+        "ordered_change_ids": tuple(
+            prepared_revision.revision.change_id
+            for prepared_revision in prepared_status.prepared.status_revisions
+        ),
+        "ordered_commit_ids": tuple(
+            prepared_revision.revision.commit_id
+            for prepared_revision in prepared_status.prepared.status_revisions
+        ),
+        "planned_revisions": tuple(
+            {
+                "bookmark": revision.bookmark,
+                "bookmark_managed": revision.bookmark_managed,
+                "change_id": revision.change_id,
+                "commit_id": revision.commit_id,
+                "pull_request_number": revision.pull_request_number,
+                "subject": revision.subject,
+            }
+            for revision in execution_plan.planned_revisions
+        ),
+        "push_trunk": execution_plan.push_trunk,
+        "remote_name": remote_name,
+        "selected_revset": selected_revset,
+        "trunk_branch": trunk_branch,
+    }
+    if execution_plan.resumed_operation_id is not None:
+        resolved_scope["resumed_operation_id"] = execution_plan.resumed_operation_id
+
     journal = OperationJournal.begin(
         state_dir,
-        durable=execution_plan.push_trunk,
+        durable=journal_must_be_durable,
         operation="land",
         options={
             "bypass_readiness": prepared_land.bypass_readiness,
@@ -140,40 +180,7 @@ async def execute_land_plan(
             "selected_pr_number": prepared_land.selected_pr_number,
             "via": plan.via,
         },
-        resolved_scope={
-            "github_repository": github_client.repository.full_name,
-            "landed_change_ids": tuple(
-                revision.change_id for revision in execution_plan.planned_revisions
-            ),
-            "landed_commit_id": (
-                execution_plan.planned_revisions[-1].commit_id
-                if execution_plan.planned_revisions
-                else prepared.stack.trunk.commit_id
-            ),
-            "ordered_change_ids": tuple(
-                prepared_revision.revision.change_id
-                for prepared_revision in prepared_status.prepared.status_revisions
-            ),
-            "ordered_commit_ids": tuple(
-                prepared_revision.revision.commit_id
-                for prepared_revision in prepared_status.prepared.status_revisions
-            ),
-            "planned_revisions": tuple(
-                {
-                    "bookmark": revision.bookmark,
-                    "bookmark_managed": revision.bookmark_managed,
-                    "change_id": revision.change_id,
-                    "commit_id": revision.commit_id,
-                    "pull_request_number": revision.pull_request_number,
-                    "subject": revision.subject,
-                }
-                for revision in execution_plan.planned_revisions
-            ),
-            "push_trunk": execution_plan.push_trunk,
-            "remote_name": remote_name,
-            "selected_revset": selected_revset,
-            "trunk_branch": trunk_branch,
-        },
+        resolved_scope=resolved_scope,
     )
 
     state = prepared.state_store.load()
@@ -223,11 +230,10 @@ async def execute_land_plan(
                 mutation_run=mutation_run,
             )
         )
-    journal.append(
-        "completed",
-        {"completed_change_ids": finalized_change_ids},
-        durable=execution_plan.push_trunk,
-    )
+    completion_data: dict[str, object] = {"completed_change_ids": finalized_change_ids}
+    if not finalize_blocked and execution_plan.resumed_operation_id is not None:
+        completion_data["superseded_operation_id"] = execution_plan.resumed_operation_id
+    journal.append("completed", completion_data, durable=journal_must_be_durable)
     if finalize_blocked:
         return land_result(
             actions=tuple(actions),

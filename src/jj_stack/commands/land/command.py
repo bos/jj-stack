@@ -460,6 +460,7 @@ def _land_completion_plan_from_log(
         planned_revisions=planned_revisions,
         push_trunk=False,
         repair_local_trunk_commit_id=remote_trunk_commit_id,
+        resumed_operation_id=begin_event.operation_id,
         trunk_branch=trunk_branch,
         via="push",
     )
@@ -470,15 +471,22 @@ def _latest_incomplete_direct_push_land(
     events: tuple[JournalEvent, ...],
     selected_head_change_id: str,
 ) -> JournalEvent | None:
-    completed_operation_ids = {
+    finished_operation_ids = {
         event.operation_id
         for event in events
         if event.operation == "land" and event.event == "completed"
     }
+    finished_operation_ids.update(
+        str(event.data["superseded_operation_id"])
+        for event in events
+        if event.operation == "land"
+        and event.event == "completed"
+        and event.data.get("superseded_operation_id") is not None
+    )
     for event in reversed(events):
         if event.operation != "land" or event.event != "begin":
             continue
-        if event.operation_id in completed_operation_ids:
+        if event.operation_id in finished_operation_ids:
             continue
         scope = event.data.get("resolved_scope", {})
         if not scope.get("push_trunk"):
@@ -527,12 +535,20 @@ def _logged_retired_change_ids(
     events: tuple[JournalEvent, ...],
     operation_id: str,
 ) -> frozenset[str]:
-    """Change IDs whose tracking the interrupted land itself already retired."""
+    """Change IDs whose tracking the interrupted land or a linked recovery retired."""
 
+    related_operation_ids = {operation_id}
+    related_operation_ids.update(
+        event.operation_id
+        for event in events
+        if event.operation == "land"
+        and event.event == "begin"
+        and event.data.get("resolved_scope", {}).get("resumed_operation_id") == operation_id
+    )
     return frozenset(
         str(event.data["change_id"])
         for event in events
-        if event.operation_id == operation_id
+        if event.operation_id in related_operation_ids
         and event.event == "saved_state_update"
         and event.data.get("after") is None
     )

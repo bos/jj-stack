@@ -1394,14 +1394,16 @@ Recovery guidance stays case-specific:
 - if the remote accepted the exact logged trunk push but the client lost its
   acknowledgement before recording success, prove the logged commits are now on
   `trunk()`, repair the local trunk bookmark to that imported trunk, and use the same
-  completion path; if the commits did not reach trunk, replan normally
+  completion path; durably link the recovery run to the interrupted run, and supersede
+  the interrupted run only after recovery finalization completes; if the commits did not
+  reach trunk, replan normally
 - while finalizing, keep temporary landed tracking so an interrupted direct-push
   land can resume exactly; after the landed prefix fully finalizes, retire the
   direct-push landed changes from review tracking so they do not reappear as
   cleanup-needed stacks
 - a rerun that finds a landed change missing from saved tracking accepts it only
-  when the interrupted operation's own log recorded the retirement; a record
-  missing for any other reason is ambiguous linkage and fails closed
+  when the interrupted operation or one of its linked recovery runs recorded the
+  retirement; a record missing for any other reason is ambiguous linkage and fails closed
 - close or mark landed only the PRs that correspond exactly to the landed changes,
   once the trunk transition succeeds
 - apply that PR finalization bottom-to-top through the landed changes so GitHub-side

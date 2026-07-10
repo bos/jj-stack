@@ -302,12 +302,15 @@ log is primarily audit evidence and is not a generic recovery model; the one car
 rerun finishes the remaining work instead of attempting trunk movement a second time. To
 keep that single recovery path reliable across crashes without slowing every audit append,
 trunk-moving `land` runs fsync the begin event, the pushed-trunk event, and the completed
-marker. When a durable append creates `operation-log.jsonl`, it also fsyncs the state
-directory on platforms that support directory fsync.
+marker. A recovery run durably links its begin event to the original run and records explicit
+supersession only after finalization completes. This keeps an interrupted recovery resumable
+without leaving the original run permanently active after success. When a durable append creates
+`operation-log.jsonl`, it also fsyncs the state directory on platforms that support directory
+fsync.
 Direct-push `land` keeps temporary landed tracking while finalizing PRs, then removes the
 landed records from active tracking after finalization has succeeded. A rerun that finds
-a landed record missing trusts it only when the interrupted operation's journal recorded
-the retirement; otherwise it fails closed.
+a landed record missing trusts it only when the original operation or one of its linked recovery
+runs recorded the retirement; otherwise it fails closed.
 The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
 to the last submitted commit, single visible revision, mutable, bookmark policy allowing —
 by abandoning the local copy, removing its tracking, and deleting its managed review

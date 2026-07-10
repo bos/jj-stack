@@ -99,6 +99,7 @@ class LandPlan:
     trunk_branch: str
     via: LandVia
     repair_local_trunk_commit_id: str | None = None
+    resumed_operation_id: str | None = None
 
     @property
     def resubmit_revisions(self) -> tuple[LandRevision, ...]:
