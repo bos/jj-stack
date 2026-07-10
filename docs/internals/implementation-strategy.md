@@ -260,7 +260,10 @@ success — and that `view` still reports on the drifted state. A land oracle st
 submitted, partially approved stacks that may have been edited since their last submit;
 it predicts the prefix land's readiness walk consumes and models the transport split —
 direct-push land retires the landed tracking, merge-transport land keeps merged tracking
-so follow-up sync or cleanup can rebase the local stack.
+so follow-up sync or cleanup can rebase the local stack. Its external-drift family snapshots
+the stopping change's durable tracking, complete PR payload, actual local and remembered-remote
+bookmark state, and backing remote ref. The deleted-branch case instead asserts the expected
+post-fetch bookmark absence.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page

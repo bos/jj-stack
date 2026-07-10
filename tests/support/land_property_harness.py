@@ -12,6 +12,7 @@ from typing import Any
 
 from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE, DriftError
 from jj_stack.jj.client import JjClient
+from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.review_state import ReviewState
 from jj_stack.state.journal import OPERATION_LOG_FILENAME, read_operation_log
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -648,12 +649,44 @@ class _BoundarySnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class _DriftStoppingBookmarkSnapshot:
+    """Local, remembered-remote, and backing-ref state at a prefix boundary."""
+
+    backing_remote_ref: str | None
+    bookmark: str
+    bookmark_state: BookmarkState
+    remote_deleted: bool
+    remote_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PullRequestSnapshot:
+    """Complete PR and review state, excluding separately managed issue comments."""
+
+    base_ref: str
+    body: str
+    head_label: str
+    head_ref: str
+    is_draft: bool
+    labels: tuple[str, ...]
+    merged_at: str | None
+    node_id: str
+    number: int
+    requested_reviewers: tuple[str, ...]
+    requested_team_reviewers: tuple[str, ...]
+    reviews: tuple[tuple[str, str], ...]
+    state: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
 class _DriftStoppingChangeSnapshot:
     """Durable identity and GitHub state for the change that stops land."""
 
+    bookmark: _DriftStoppingBookmarkSnapshot | None
     change_id: str
     pull_number: int
-    pull_request: tuple[object, ...]
+    pull_request: _PullRequestSnapshot
     tracking_identity: tuple[object, ...]
 
 
@@ -696,6 +729,7 @@ def replay_land_drift_scenario(
         else _capture_drift_stopping_change(
             fake_repo=fake_repo,
             repo=repo,
+            scenario=scenario,
             tracked=tracked[scenario.initial_labels[scenario.target_position - 1]],
         )
     )
@@ -794,6 +828,9 @@ def _apply_land_drift(
     label = scenario.initial_labels[scenario.target_position - 1]
     change = tracked[label]
     pull_request = fake_repo.pull_requests[change.pull_number]
+    pull_request.labels.append("preserve-land-boundary")
+    pull_request.requested_reviewers.append("preserve-land-reviewer")
+    pull_request.requested_team_reviewers.append("preserve-land-team")
 
     if scenario.kind == "pr_merged_externally":
         fake_repo.apply_squash_merge(pull_request)
@@ -874,13 +911,31 @@ def _capture_drift_stopping_change(
     *,
     fake_repo: FakeGithubRepository,
     repo: Path,
+    scenario: LandDriftScenario,
     tracked: _TrackedChange,
 ) -> _DriftStoppingChangeSnapshot:
     state = ReviewStateStore.for_repo(repo).load()
+    bookmark_snapshot: _DriftStoppingBookmarkSnapshot | None = None
+    if scenario.outcome == "prefix_stop":
+        client = JjClient(repo)
+        remotes = client.list_git_remotes()
+        assert len(remotes) == 1, (remotes, scenario.trace)
+        remote_name = remotes[0].name
+        bookmark_snapshot = _DriftStoppingBookmarkSnapshot(
+            backing_remote_ref=_optional_remote_ref(
+                fake_repo.git_dir,
+                tracked.bookmark,
+            ),
+            bookmark=tracked.bookmark,
+            bookmark_state=client.get_bookmark_state(tracked.bookmark),
+            remote_deleted=scenario.kind == "review_branch_deleted",
+            remote_name=remote_name,
+        )
     return _DriftStoppingChangeSnapshot(
+        bookmark=bookmark_snapshot,
         change_id=tracked.change_id,
         pull_number=tracked.pull_number,
-        pull_request=_pull_request_identity(fake_repo, tracked.pull_number),
+        pull_request=_pull_request_snapshot(fake_repo, tracked.pull_number),
         tracking_identity=_durable_tracking_identity(state, tracked.change_id),
     )
 
@@ -901,10 +956,39 @@ def _assert_drift_stopping_change_preserved(
         actual_tracking,
         trace,
     )
-    assert _pull_request_identity(fake_repo, snapshot.pull_number) == snapshot.pull_request, (
+    assert _pull_request_snapshot(fake_repo, snapshot.pull_number) == snapshot.pull_request, (
         snapshot.pull_number,
         trace,
     )
+    bookmark = snapshot.bookmark
+    if bookmark is None:
+        return
+    actual_backing_ref = _optional_remote_ref(fake_repo.git_dir, bookmark.bookmark)
+    assert actual_backing_ref == bookmark.backing_remote_ref, (
+        bookmark.bookmark,
+        bookmark.backing_remote_ref,
+        actual_backing_ref,
+        trace,
+    )
+    actual_bookmark_state = JjClient(repo).get_bookmark_state(bookmark.bookmark)
+    if bookmark.remote_deleted:
+        assert actual_bookmark_state.local_targets == (), (
+            bookmark.bookmark,
+            actual_bookmark_state,
+            trace,
+        )
+        assert actual_bookmark_state.remote_target(bookmark.remote_name) is None, (
+            bookmark.bookmark,
+            actual_bookmark_state,
+            trace,
+        )
+    else:
+        assert actual_bookmark_state == bookmark.bookmark_state, (
+            bookmark.bookmark,
+            bookmark.bookmark_state,
+            actual_bookmark_state,
+            trace,
+        )
 
 
 def _durable_tracking_identity(state: ReviewState, change_id: str) -> tuple[object, ...]:
@@ -921,19 +1005,27 @@ def _durable_tracking_identity(state: ReviewState, change_id: str) -> tuple[obje
     )
 
 
-def _pull_request_identity(
+def _pull_request_snapshot(
     fake_repo: FakeGithubRepository,
     pull_number: int,
-) -> tuple[object, ...]:
+) -> _PullRequestSnapshot:
     pull_request = fake_repo.pull_requests[pull_number]
     reviews = fake_repo.list_pull_request_reviews(pull_number)
-    return (
-        pull_request.base_ref,
-        pull_request.head_ref,
-        pull_request.state,
-        pull_request.merged_at,
-        pull_request.is_draft,
-        tuple((review.reviewer_login, review.state) for review in reviews),
+    return _PullRequestSnapshot(
+        base_ref=pull_request.base_ref,
+        body=pull_request.body,
+        head_label=pull_request.head_label,
+        head_ref=pull_request.head_ref,
+        is_draft=pull_request.is_draft,
+        labels=tuple(pull_request.labels),
+        merged_at=pull_request.merged_at,
+        node_id=pull_request.node_id,
+        number=pull_request.number,
+        requested_reviewers=tuple(pull_request.requested_reviewers),
+        requested_team_reviewers=tuple(pull_request.requested_team_reviewers),
+        reviews=tuple((review.reviewer_login, review.state) for review in reviews),
+        state=pull_request.state,
+        title=pull_request.title,
     )
 
 
@@ -1363,4 +1455,17 @@ def _remote_ref(remote: Path, bookmark: str) -> str:
             f"could not read remote ref {bookmark!r}:\n"
             f"stdout={completed.stdout}\nstderr={completed.stderr}"
         )
+    return completed.stdout.strip()
+
+
+def _optional_remote_ref(remote: Path, bookmark: str) -> str | None:
+    completed = subprocess.run(
+        ["git", "--git-dir", str(remote), "rev-parse", f"refs/heads/{bookmark}"],
+        capture_output=True,
+        check=False,
+        cwd=remote.parent,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return None
     return completed.stdout.strip()
