@@ -971,7 +971,7 @@ def _apply_drift_operation(
     """Apply one external-actor transition; return a submit revset override if any."""
 
     if drift.kind == "trunk_advanced":
-        _advance_remote_trunk(fake_repo)
+        advance_remote_trunk(fake_repo)
         return None
 
     label = drift.label
@@ -1043,7 +1043,7 @@ def _apply_drift_operation(
             for candidate_label, candidate in reversed(baseline.items())
             if candidate_label != label
         )
-        _update_remote_ref(fake_repo, branch=submitted.bookmark, target=drift_target)
+        update_remote_ref(fake_repo, branch=submitted.bookmark, target=drift_target)
         return None
     if drift.kind == "remote_branch_deleted":
         # GitHub closes a pull request when its head branch is deleted, so the
@@ -1071,7 +1071,7 @@ def _apply_drift_operation(
         # The untracked remote bookmark makes the commit immutable; if the
         # change was rewritten since submit, the resurrected predecessor makes
         # it divergent instead. Either way the stack stops being reviewable.
-        _update_remote_ref(
+        update_remote_ref(
             fake_repo,
             branch=f"agent/copy-{label}",
             target=submitted.remote_target,
@@ -1175,7 +1175,7 @@ def _jj_backing_git_dir(repo: Path) -> Path:
     return store / "git"
 
 
-def _advance_remote_trunk(fake_repo: FakeGithubRepository) -> None:
+def advance_remote_trunk(fake_repo: FakeGithubRepository) -> None:
     """Land unrelated external work on the remote default branch."""
 
     git_dir = str(fake_repo.git_dir)
@@ -1204,10 +1204,10 @@ def _advance_remote_trunk(fake_repo: FakeGithubRepository) -> None:
         ],
         cwd,
     ).stdout.strip()
-    _update_remote_ref(fake_repo, branch="main", target=new_commit)
+    update_remote_ref(fake_repo, branch="main", target=new_commit)
 
 
-def _update_remote_ref(fake_repo: FakeGithubRepository, *, branch: str, target: str) -> None:
+def update_remote_ref(fake_repo: FakeGithubRepository, *, branch: str, target: str) -> None:
     run_command(
         [
             "git",

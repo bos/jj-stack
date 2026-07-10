@@ -510,6 +510,222 @@ def _random_land_scenario(*, rng: random.Random, name: str) -> LandScenario:
     )
 
 
+LandDriftKind = Literal[
+    "changes_requested",
+    "pr_closed",
+    "pr_draft_toggled",
+    "pr_merged_externally",
+    "review_branch_deleted",
+    "trunk_advanced",
+]
+LandDriftOutcome = Literal["fail_closed", "fetch_abandons", "prefix_stop"]
+
+_FAIL_CLOSED_LAND_DRIFT_KINDS = frozenset({"pr_merged_externally", "trunk_advanced"})
+
+
+@dataclass(frozen=True, slots=True)
+class LandDriftScenario:
+    """One external transition applied to a submitted, fully approved stack.
+
+    Fail-closed kinds must stop land before any mutation. Prefix-stop kinds
+    stop the readiness walk at the drifted change and land what sits below.
+
+    A deleted review branch splits by position. Deleting the head's branch
+    lets land's fetch abandon the local change (nothing else references it),
+    so the re-resolved selection lands the untouched survivors below. A
+    mid-stack change survives the fetch because descendants' bookmarks keep
+    it reachable, and its externally closed PR stops the walk like any other
+    prefix stop.
+    """
+
+    name: str
+    initial_size: int
+    kind: LandDriftKind
+    target_position: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.initial_size < 1:
+            raise ValueError("land drift scenarios require a submitted change")
+        if self.kind == "trunk_advanced":
+            if self.target_position is not None:
+                raise ValueError("trunk_advanced does not target one change")
+            return
+        if self.target_position is None:
+            raise ValueError(f"{self.kind} requires a target position")
+        if not 1 <= self.target_position <= self.initial_size:
+            raise ValueError("drift target must be inside the submitted stack")
+        if self.kind == "pr_merged_externally" and self.target_position != 1:
+            # A stacked PR's base is the review branch below it, so only the
+            # bottom PR squash-merges into trunk; merging higher PRs outside
+            # the tool is a different (handoff-family) shape.
+            raise ValueError("external squash merges target the bottom PR")
+        if self.kind == "review_branch_deleted" and self.initial_size < 2:
+            raise ValueError("branch deletion needs a surviving change to land")
+
+    @property
+    def initial_labels(self) -> tuple[str, ...]:
+        return tuple(initial_land_label(index) for index in range(1, self.initial_size + 1))
+
+    @property
+    def outcome(self) -> LandDriftOutcome:
+        if self.kind in _FAIL_CLOSED_LAND_DRIFT_KINDS:
+            return "fail_closed"
+        if self.kind == "review_branch_deleted" and self.target_position == self.initial_size:
+            return "fetch_abandons"
+        return "prefix_stop"
+
+    @property
+    def expected_landed_labels(self) -> tuple[str, ...]:
+        if self.outcome == "fail_closed":
+            return ()
+        assert self.target_position is not None
+        target_label = self.initial_labels[self.target_position - 1]
+        if self.outcome == "fetch_abandons":
+            return tuple(
+                label for label in self.initial_labels if label != target_label
+            )
+        return self.initial_labels[: self.target_position - 1]
+
+    @property
+    def expected_exit_code(self) -> int:
+        if self.outcome == "fail_closed" or not self.expected_landed_labels:
+            return 1
+        return 0
+
+    @property
+    def trace(self) -> str:
+        parts = [f"kind:{self.kind}", f"size:{self.initial_size}"]
+        if self.target_position is not None:
+            parts.append(f"position:{self.target_position}")
+        return ",".join(parts)
+
+    @property
+    def canonical_key(self) -> tuple[object, ...]:
+        return (self.kind, self.initial_size, self.target_position)
+
+    def __str__(self) -> str:
+        return f"{self.name}: {self.trace}"
+
+
+def land_drift_scenarios_from_environment() -> tuple[LandDriftScenario, ...]:
+    """Return deterministic land drift scenarios for the pytest adapter."""
+
+    count = int(
+        os.environ.get(
+            "JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS",
+            str(DEFAULT_LAND_DRIFT_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_STACK_LAND_PROPERTY_SEED",
+            str(DEFAULT_LAND_SCENARIO_SEED),
+        )
+    )
+    return generate_land_drift_scenarios(count=count, seed=seed)
+
+
+def generate_land_drift_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[LandDriftScenario, ...]:
+    if count < 1:
+        return ()
+
+    scenarios: list[LandDriftScenario] = []
+    seen: set[tuple[object, ...]] = set()
+    for scenario in _fixed_land_drift_scenarios():
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+
+    rng = random.Random(seed)
+    attempts = 0
+    max_attempts = max(count * MAX_LAND_ATTEMPTS_MULTIPLIER, 1)
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        scenario = _random_land_drift_scenario(
+            rng=rng, name=f"land-drift-random-{attempts:03d}"
+        )
+        if scenario.canonical_key in seen:
+            continue
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+
+    return tuple(scenarios)
+
+
+def _fixed_land_drift_scenarios() -> tuple[LandDriftScenario, ...]:
+    return (
+        LandDriftScenario(
+            name="drift-trunk-advanced-fails-closed",
+            initial_size=2,
+            kind="trunk_advanced",
+        ),
+        LandDriftScenario(
+            name="drift-external-squash-merge-fails-closed-with-cleanup-path",
+            initial_size=2,
+            kind="pr_merged_externally",
+            target_position=1,
+        ),
+        LandDriftScenario(
+            name="drift-externally-closed-pr-stops-prefix",
+            initial_size=3,
+            kind="pr_closed",
+            target_position=2,
+        ),
+        LandDriftScenario(
+            name="drift-deleted-review-branch-abandons-change-and-lands-survivors",
+            initial_size=2,
+            kind="review_branch_deleted",
+            target_position=2,
+        ),
+        LandDriftScenario(
+            name="drift-draft-toggle-stops-prefix",
+            initial_size=2,
+            kind="pr_draft_toggled",
+            target_position=1,
+        ),
+        LandDriftScenario(
+            name="drift-changes-requested-stops-prefix",
+            initial_size=3,
+            kind="changes_requested",
+            target_position=2,
+        ),
+    )
+
+
+DEFAULT_LAND_DRIFT_SCENARIO_COUNT = len(_fixed_land_drift_scenarios())
+
+
+def _random_land_drift_scenario(
+    *,
+    rng: random.Random,
+    name: str,
+) -> LandDriftScenario:
+    kinds: tuple[LandDriftKind, ...] = (
+        "changes_requested",
+        "pr_closed",
+        "pr_draft_toggled",
+        "pr_merged_externally",
+        "review_branch_deleted",
+        "trunk_advanced",
+    )
+    kind = rng.choice(kinds)
+    initial_size = rng.randint(2, 3)
+    if kind == "trunk_advanced":
+        return LandDriftScenario(name=name, initial_size=initial_size, kind=kind)
+    target_position = 1 if kind == "pr_merged_externally" else rng.randint(1, initial_size)
+    return LandDriftScenario(
+        name=name,
+        initial_size=initial_size,
+        kind=kind,
+        target_position=target_position,
+    )
+
+
 def _random_land_edits(
     *,
     rng: random.Random,

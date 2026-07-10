@@ -264,6 +264,27 @@ closed exactly once, and no other original PR sees any state or base event. The 
 exception is the first blocked merge-transport PR, which may be retargeted to trunk
 before GitHub refuses the merge but must never change state.
 
+## Land Drift Harness
+
+Land drift scenarios apply one external transition to a submitted, fully approved stack,
+then run `land` on its default selection so the drifted state must survive the
+in-command fetch. The model predicts one of three outcomes:
+
+- fail closed: an externally advanced trunk, or a bottom PR squash-merged outside the
+  tool, must stop `land` with a classified error before any mutation — no PR events, no
+  remote ref changes, and unchanged saved review identity
+- prefix stop: an externally closed PR, a draft toggle, a changes-requested review, or a
+  deleted mid-stack review branch stops the readiness walk at the drifted change, and
+  the prefix below lands normally with the standard direct-push contract
+- fetch abandons: deleting the head change's review branch lets the fetch abandon the
+  local change (nothing else references it), so the re-resolved selection lands the
+  untouched survivors below it
+
+The mid-stack versus head split for deleted branches mirrors jj's own semantics: a
+mid-stack change stays visible because descendants' bookmarks keep it reachable, while
+an unreferenced head is abandoned by the fetch. Every drift scenario ends by running
+`view` on the default selection and requiring a report exit rather than a crash.
+
 ## Interrupted-Submit Retry Harness
 
 Boundary-drift scenarios assert that unsafe external state blocks mutation. Retry

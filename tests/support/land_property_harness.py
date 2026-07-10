@@ -6,6 +6,7 @@ import json
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,13 +20,16 @@ from .integration_helpers import commit_file, run_command, write_file
 from .land_property_scenarios import (
     BYSTANDER_LABELS,
     INSERTED_LABEL,
+    LandDriftScenario,
     LandEditOperation,
     LandScenario,
     filename_for_land_label,
     subject_for_land_label,
 )
+from .submit_property_harness import VIEW_REPORT_EXIT_CODES, advance_remote_trunk
 
 CliRunner = Callable[[tuple[str, ...]], int]
+CliErrorReader = Callable[[], BaseException | None]
 OutputReader = Callable[[], Any]
 
 
@@ -56,7 +60,11 @@ def replay_land_scenario(
 ) -> None:
     """Replay one land scenario: edit, approve a prefix, land, assert the contract."""
 
-    labels_to_change_ids = _capture_initial_labels(repo=repo, scenario=scenario)
+    labels_to_change_ids = _capture_initial_labels(
+        initial_labels=scenario.initial_labels,
+        repo=repo,
+        trace=scenario.trace,
+    )
     bystander_snapshot: _BystanderSnapshot | None = None
     if scenario.with_second_stack:
         _create_bystander_stack(read_output=read_output, repo=repo, run_cli=run_cli)
@@ -183,15 +191,16 @@ def replay_land_scenario(
 
 def _capture_initial_labels(
     *,
+    initial_labels: tuple[str, ...],
     repo: Path,
-    scenario: LandScenario,
+    trace: str,
 ) -> dict[str, str]:
     stack = JjClient(repo).discover_review_stack()
-    if len(stack.revisions) != scenario.initial_size:
-        raise AssertionError((scenario.trace, len(stack.revisions)))
+    if len(stack.revisions) != len(initial_labels):
+        raise AssertionError((trace, len(stack.revisions)))
     labels_to_change_ids: dict[str, str] = {}
-    for label, revision in zip(scenario.initial_labels, stack.revisions, strict=True):
-        assert revision.subject == subject_for_land_label(label), (label, scenario.trace)
+    for label, revision in zip(initial_labels, stack.revisions, strict=True):
+        assert revision.subject == subject_for_land_label(label), (label, trace)
         labels_to_change_ids[label] = revision.change_id
     return labels_to_change_ids
 
@@ -613,6 +622,252 @@ def _assert_list_reflects_landed_prefix(
     )
     assert set(landed_change_ids).isdisjoint(listed_change_ids), scenario.trace
     assert set(remaining_tracked_change_ids) <= listed_change_ids, scenario.trace
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundarySnapshot:
+    """Every boundary a fail-closed land must leave untouched.
+
+    Saved records are compared by review identity (bookmark, PR number, link
+    state, last submitted commit) rather than full dumps: a blocked land may
+    still refresh observed PR state into the cache, and that refresh is not a
+    boundary mutation.
+    """
+
+    review_identities: dict[str, tuple[object, ...]]
+    pull_request_states: dict[int, tuple[str, str, bool]]
+    remote_refs: dict[str, str]
+
+
+def replay_land_drift_scenario(
+    *,
+    fake_repo: FakeGithubRepository,
+    last_cli_error: CliErrorReader,
+    read_output: OutputReader,
+    repo: Path,
+    run_cli: CliRunner,
+    scenario: LandDriftScenario,
+) -> None:
+    """Replay one external transition against land and assert the modeled outcome."""
+
+    labels_to_change_ids = _capture_initial_labels(
+        initial_labels=scenario.initial_labels,
+        repo=repo,
+        trace=scenario.trace,
+    )
+    state = ReviewStateStore.for_repo(repo).load()
+    tracked: dict[str, _TrackedChange] = {}
+    for label in scenario.initial_labels:
+        cached = state.changes[labels_to_change_ids[label]]
+        assert cached.bookmark is not None and cached.pr_number is not None
+        tracked[label] = _TrackedChange(
+            bookmark=cached.bookmark,
+            change_id=labels_to_change_ids[label],
+            pull_number=cached.pr_number,
+        )
+        fake_repo.create_pull_request_review(
+            pull_number=cached.pr_number,
+            reviewer_login=f"land-reviewer-{label}",
+            state="APPROVED",
+        )
+
+    _apply_land_drift(fake_repo=fake_repo, scenario=scenario, tracked=tracked)
+    boundary_snapshot = (
+        _capture_boundary_snapshot(fake_repo=fake_repo, repo=repo, tracked=tracked)
+        if scenario.outcome == "fail_closed"
+        else None
+    )
+    original_main = _remote_ref(fake_repo.git_dir, "main")
+    fake_repo.pull_request_events.clear()
+
+    # Land runs on its default selection: the drifted states must survive the
+    # in-command fetch, which can rewrite the local view before selection.
+    exit_code = run_cli(("land",))
+    captured = read_output()
+    assert exit_code == scenario.expected_exit_code, (
+        scenario.trace,
+        captured.out,
+        captured.err,
+    )
+
+    if scenario.outcome == "fail_closed":
+        assert last_cli_error() is not None, scenario.trace
+        assert fake_repo.pull_request_events == [], scenario.trace
+        assert boundary_snapshot is not None
+        _assert_boundaries_untouched(
+            fake_repo=fake_repo,
+            repo=repo,
+            snapshot=boundary_snapshot,
+            trace=scenario.trace,
+        )
+    else:
+        assert scenario.target_position is not None
+        landed = tuple(
+            tracked[label] for label in scenario.expected_landed_labels
+        )
+        remaining_labels: tuple[str, ...] = ()
+        if scenario.outcome == "prefix_stop":
+            remaining_labels = scenario.initial_labels[scenario.target_position :]
+        remaining_tracked = tuple(tracked[label] for label in remaining_labels)
+        # The in-command fetch may rewrite surviving commits (for example after
+        # jj abandons a change whose review branch was deleted), so resolve
+        # the landed commits from the post-land view.
+        client = JjClient(repo)
+        current_commit_ids = {
+            change.change_id: client.resolve_revision(change.change_id).commit_id
+            for change in landed
+        }
+        assert_push_landing(
+            current_commit_ids=current_commit_ids,
+            fake_repo=fake_repo,
+            landed=landed,
+            original_main=original_main,
+            remaining_tracked=remaining_tracked,
+            repo=repo,
+            skip_cleanup=False,
+            state=ReviewStateStore.for_repo(repo).load(),
+            trace=scenario.trace,
+        )
+        landed_pull_numbers = {change.pull_number for change in landed}
+        assert_event_contract(
+            fake_repo=fake_repo,
+            landed_pull_numbers=landed_pull_numbers,
+            trace=scenario.trace,
+            untouched_pull_numbers={
+                change.pull_number for change in tracked.values()
+            }
+            - landed_pull_numbers,
+        )
+
+    view_exit_code = run_cli(("view",))
+    read_output()
+    assert view_exit_code in VIEW_REPORT_EXIT_CODES, (scenario.trace, view_exit_code)
+
+
+def _apply_land_drift(
+    *,
+    fake_repo: FakeGithubRepository,
+    scenario: LandDriftScenario,
+    tracked: dict[str, _TrackedChange],
+) -> None:
+    if scenario.kind == "trunk_advanced":
+        advance_remote_trunk(fake_repo)
+        return
+
+    assert scenario.target_position is not None
+    label = scenario.initial_labels[scenario.target_position - 1]
+    change = tracked[label]
+    pull_request = fake_repo.pull_requests[change.pull_number]
+
+    if scenario.kind == "pr_merged_externally":
+        fake_repo.apply_squash_merge(pull_request)
+        pull_request.merged_at = (
+            datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        )
+        fake_repo.update_pull_request_state(
+            pull_request, state="closed", reason="external_merge"
+        )
+        return
+    if scenario.kind == "pr_closed":
+        fake_repo.update_pull_request_state(
+            pull_request, state="closed", reason="external_close"
+        )
+        return
+    if scenario.kind == "review_branch_deleted":
+        # GitHub closes a pull request when its head branch is deleted, so the
+        # faithful transition is branch deletion plus PR closure.
+        run_command(
+            [
+                "git",
+                "--git-dir",
+                str(fake_repo.git_dir),
+                "update-ref",
+                "-d",
+                f"refs/heads/{change.bookmark}",
+            ],
+            fake_repo.git_dir.parent,
+        )
+        fake_repo.update_pull_request_state(
+            pull_request, state="closed", reason="head_branch_deleted"
+        )
+        return
+    if scenario.kind == "pr_draft_toggled":
+        pull_request.is_draft = True
+        return
+    if scenario.kind == "changes_requested":
+        # The same reviewer flips from approval to changes requested, so the
+        # latest opinionated review controls the decision.
+        fake_repo.create_pull_request_review(
+            pull_number=change.pull_number,
+            reviewer_login=f"land-reviewer-{label}",
+            state="CHANGES_REQUESTED",
+        )
+        return
+    raise AssertionError(f"unsupported land drift kind: {scenario.kind}")
+
+
+def _capture_boundary_snapshot(
+    *,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    tracked: dict[str, _TrackedChange],
+) -> _BoundarySnapshot:
+    state = ReviewStateStore.for_repo(repo).load()
+    review_identities = {
+        change.change_id: _review_identity(state, change.change_id)
+        for change in tracked.values()
+    }
+    pull_request_states = {}
+    remote_refs = {"main": _remote_ref(fake_repo.git_dir, "main")}
+    for change in tracked.values():
+        pull_request = fake_repo.pull_requests[change.pull_number]
+        pull_request_states[change.pull_number] = (
+            pull_request.state,
+            pull_request.base_ref,
+            bool(pull_request.is_draft),
+        )
+        remote_refs[change.bookmark] = _remote_ref(fake_repo.git_dir, change.bookmark)
+    return _BoundarySnapshot(
+        review_identities=review_identities,
+        pull_request_states=pull_request_states,
+        remote_refs=remote_refs,
+    )
+
+
+def _review_identity(state: ReviewState, change_id: str) -> tuple[object, ...]:
+    cached = state.changes[change_id]
+    return (
+        cached.bookmark,
+        cached.pr_number,
+        cached.link_state,
+        cached.last_submitted_commit_id,
+    )
+
+
+def _assert_boundaries_untouched(
+    *,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    snapshot: _BoundarySnapshot,
+    trace: str,
+) -> None:
+    state = ReviewStateStore.for_repo(repo).load()
+    for change_id, expected_identity in snapshot.review_identities.items():
+        assert change_id in state.changes, (change_id, trace)
+        assert _review_identity(state, change_id) == expected_identity, (change_id, trace)
+    for pull_number, expected in snapshot.pull_request_states.items():
+        pull_request = fake_repo.pull_requests[pull_number]
+        actual = (
+            pull_request.state,
+            pull_request.base_ref,
+            bool(pull_request.is_draft),
+        )
+        assert actual == expected, (pull_number, trace)
+    for bookmark, expected_target in snapshot.remote_refs.items():
+        assert _remote_ref(fake_repo.git_dir, bookmark) == expected_target, (
+            bookmark,
+            trace,
+        )
 
 
 def _remote_ref(remote: Path, bookmark: str) -> str:
