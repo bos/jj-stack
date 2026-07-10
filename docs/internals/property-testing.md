@@ -226,13 +226,19 @@ still report.
 
 Land scenarios compose the states `land` actually meets: a submitted, partially approved
 stack that may have been edited since its last submit. Each scenario starts from a
-submitted linear stack, optionally applies one local stack edit — a rewrite, an insert,
-or an abandon, with or without a follow-up resubmit — approves a prefix of the final
-live stack, then lands through one transport. The model predicts the prefix land's
-readiness walk consumes: an unapproved PR stops the walk, an unsubmitted inserted change
-stops it, a rewrite without resubmit stops it because the local change no longer matches
-what reviewers approved, and survivors rebased by an abandon stay landable because land
-refreshes their review branches before landing.
+submitted linear stack, optionally applies a short trace of stack edits from the shared
+edit vocabulary — rewrite, insert, abandon, reorder, and squash, with or without a
+follow-up resubmit — approves a prefix of the final live stack, then lands through one
+transport. Scenario dimensions also cover `--pull-request` selection, which caps the
+walk at the selected change, and a second independently submitted bystander stack that
+the land must leave byte-for-byte untouched even though the trunk moves under it.
+
+The walk model stays small because only two properties of an edited change can stop the
+readiness walk: a change whose content no longer matches its remote review branch (a
+rewrite target or a squash destination) is content-divergent, and an inserted change
+without a resubmit has no pull request. Every other rebased change — moved, reordered,
+or rebased past an abandon — is diff-equivalent, which land refreshes and lands. An
+unapproved PR is the natural stopping boundary.
 
 For the default direct-push transport, the oracle asserts:
 
