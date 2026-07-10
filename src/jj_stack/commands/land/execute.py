@@ -264,6 +264,33 @@ async def _apply_trunk_transition(
                 "mutation": "refresh_review_branches",
             },
         )
+    if execution_plan.repair_local_trunk_commit_id is not None:
+        trunk_commit_id = execution_plan.repair_local_trunk_commit_id
+        journal.append(
+            "planned_mutation",
+            {
+                "commit_id": trunk_commit_id,
+                "mutation": "repair_local_trunk",
+                "trunk_branch": trunk_branch,
+            },
+        )
+        client.set_bookmark(trunk_branch, trunk_commit_id, allow_backwards=True)
+        action = LandAction(
+            kind="local trunk",
+            body=t"move {ui.bookmark(trunk_branch)} to the current "
+            t"{ui.revset('trunk()')} after the interrupted push",
+            status="applied",
+        )
+        actions.append(action)
+        journal.append(
+            "mutation_applied",
+            {
+                "action": action.message,
+                "commit_id": trunk_commit_id,
+                "mutation": "repair_local_trunk",
+                "trunk_branch": trunk_branch,
+            },
+        )
     refresh_actions, dismissed_action = await _refresh_rebased_review_branches(
         bypass_readiness=prepared_land.bypass_readiness,
         client=client,

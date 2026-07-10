@@ -288,10 +288,12 @@ an unreferenced head is abandoned by the fetch. Every drift scenario ends by run
 ## Land Retry Harness
 
 Land retry scenarios interrupt one direct-push land at a checkpoint, then rerun it and
-require convergence rather than rollback. The fault family covers a failed load of the
-first landed PR after the trunk push, a failure on the second landed PR after the first
-finalized, and a dropped completed marker after tracking retirement — the crash window
-between retiring the landed records and sealing the operation log.
+require convergence rather than rollback. The fault family covers a remote trunk push
+whose success acknowledgement is lost before the applied event reaches the operation
+log, a failed load of the first landed PR after the push is durably recorded, a failure
+on the second landed PR after the first finalized, and a dropped completed marker after
+tracking retirement — the crash window between retiring the landed records and sealing
+the operation log.
 
 The oracle spans both runs with one event window: each landed PR transitions to closed
 exactly once in total, so the rerun provably finalizes only what the interrupted run

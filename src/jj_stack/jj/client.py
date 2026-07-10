@@ -364,16 +364,44 @@ class JjClient:
     ) -> set[str]:
         """Return supplied commit IDs that are ancestors of `trunk()`."""
 
+        return self._query_commit_ids_in_ancestor_revset(
+            commit_ids,
+            ancestor_revset="::trunk()",
+        )
+
+    def query_commit_ids_ancestors_of(
+        self,
+        commit_ids: Sequence[str],
+        *,
+        descendant_commit_id: str,
+    ) -> set[str]:
+        """Return supplied commit IDs that are ancestors of one exact commit."""
+
+        return self._query_commit_ids_in_ancestor_revset(
+            commit_ids,
+            ancestor_revset=f"::{descendant_commit_id}",
+        )
+
+    def _query_commit_ids_in_ancestor_revset(
+        self,
+        commit_ids: Sequence[str],
+        *,
+        ancestor_revset: str,
+    ) -> set[str]:
+        """Return supplied commit IDs selected by an ancestor revset."""
+
         ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
         if not ordered_commit_ids:
             return set()
 
-        trunk_ancestor_commit_ids: set[str] = set()
+        matching_commit_ids: set[str] = set()
         for chunk in _chunked(ordered_commit_ids):
-            revisions = self._query_revisions(f"({_union_revset_symbols(chunk)}) & ::trunk()")
+            revisions = self._query_revisions(
+                f"({_union_revset_symbols(chunk)}) & {ancestor_revset}"
+            )
             for revision in revisions:
-                trunk_ancestor_commit_ids.add(revision.commit_id)
-        return trunk_ancestor_commit_ids
+                matching_commit_ids.add(revision.commit_id)
+        return matching_commit_ids
 
     def query_ancestor_revisions(
         self,

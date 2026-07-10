@@ -699,6 +699,62 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     assert landed_change_ids[1] not in finished_state.changes
 
 
+def test_land_recovers_when_trunk_push_succeeds_but_acknowledgement_is_lost(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    stack = JjClient(repo).discover_review_stack()
+    landed_commit_id = stack.revisions[-1].commit_id
+    original_local_main = JjClient(repo).get_bookmark_state("main").local_target
+    original_push_bookmarks = JjClient.push_bookmarks
+    lost_acknowledgement = False
+
+    def push_then_lose_acknowledgement(self, *, remote: str, bookmarks) -> None:
+        nonlocal lost_acknowledgement
+        original_push_bookmarks(self, remote=remote, bookmarks=bookmarks)
+        if bookmarks == ("main",) and not lost_acknowledgement:
+            lost_acknowledgement = True
+            raise JjCommandError("simulated lost trunk push acknowledgement")
+
+    monkeypatch.setattr(JjClient, "push_bookmarks", push_then_lose_acknowledgement)
+
+    first_exit_code = run_main(repo, config_path, "land")
+    first_run = capsys.readouterr()
+
+    assert first_exit_code == 1
+    assert "simulated lost trunk push acknowledgement" in first_run.err
+    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
+    assert JjClient(repo).get_bookmark_state("main").local_target == original_local_main
+
+    monkeypatch.setattr(JjClient, "push_bookmarks", original_push_bookmarks)
+
+    second_exit_code = run_main(repo, config_path, "land")
+    second_run = capsys.readouterr()
+    rendered = _squash_whitespace(second_run.out)
+
+    assert second_exit_code == 0, (second_run.out, second_run.err)
+    assert "move main to the current trunk() after the interrupted push" in rendered
+    assert "push main to feature 2" not in rendered
+    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
+    assert JjClient(repo).get_bookmark_state("main").local_target == landed_commit_id
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.pull_requests[2].state == "closed"
+    state = ReviewStateStore.for_repo(repo).load()
+    for revision in stack.revisions:
+        assert revision.change_id not in state.changes
+    journal_events = read_operation_log(resolve_state_path(repo).parent)
+    assert any(
+        event.event == "mutation_applied"
+        and event.data.get("mutation") == "repair_local_trunk"
+        for event in journal_events
+    )
+    assert journal_events[-1].event == "completed"
+
+
 def test_land_resumes_when_tracking_retired_but_completed_marker_missing(
     tmp_path: Path,
     monkeypatch,

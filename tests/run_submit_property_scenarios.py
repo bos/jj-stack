@@ -95,7 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=_non_negative_int,
         help=(
             "Number of generated interrupted-land retry scenarios to run "
-            "(default: max(3, scenarios // 40); 3 covers the fixed corpus)."
+            "(default: max(4, scenarios // 40); 4 covers the fixed corpus)."
         ),
     )
     parser.add_argument(
@@ -166,7 +166,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     env["JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS"] = str(land_drift_scenarios)
     land_retry_scenarios = args.land_retry_scenarios
     if land_retry_scenarios is None:
-        land_retry_scenarios = max(3, args.scenarios // 40)
+        land_retry_scenarios = max(4, args.scenarios // 40)
     env["JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS"] = str(land_retry_scenarios)
     land_handoff_scenarios = args.land_handoff_scenarios
     if land_handoff_scenarios is None:

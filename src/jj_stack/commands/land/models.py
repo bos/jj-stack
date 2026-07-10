@@ -98,6 +98,7 @@ class LandPlan:
     push_trunk: bool
     trunk_branch: str
     via: LandVia
+    repair_local_trunk_commit_id: str | None = None
 
     @property
     def resubmit_revisions(self) -> tuple[LandRevision, ...]:
@@ -117,6 +118,15 @@ class LandPlan:
             for cleanup_plan in bookmark_cleanup_plans
         }
         if self.planned_revisions:
+            if self.repair_local_trunk_commit_id is not None:
+                actions.append(
+                    LandAction(
+                        kind="local trunk",
+                        body=t"move {ui.bookmark(self.trunk_branch)} to the current "
+                        t"{ui.revset('trunk()')} after the interrupted push",
+                        status="planned",
+                    )
+                )
             for resubmit_revision in self.resubmit_revisions:
                 actions.append(
                     LandAction(

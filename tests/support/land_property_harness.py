@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from jj_stack.errors import EXIT_GITHUB, EXIT_INCOMPLETE
+from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE
 from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewState
 from jj_stack.state.journal import OPERATION_LOG_FILENAME, read_operation_log
@@ -923,7 +923,14 @@ def replay_land_retry_scenario(
         install_fault()
         exit_code = run_cli(("land",))
         captured = read_output()
-        assert exit_code == EXIT_GITHUB, (scenario.trace, captured.out, captured.err)
+        expected_exit_code = (
+            EXIT_FAILURE if scenario.fault == "after_push_ack_lost" else EXIT_GITHUB
+        )
+        assert exit_code == expected_exit_code, (
+            scenario.trace,
+            captured.out,
+            captured.err,
+        )
         # The trunk push precedes finalization, so the interrupted run already
         # moved trunk to the last landed commit.
         expected_main = current_commit_ids[landed[-1].change_id]

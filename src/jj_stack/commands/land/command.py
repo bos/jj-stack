@@ -289,13 +289,6 @@ async def _stream_land_async(
                 remote_name=remote.name,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )
-        ensure_trunk_branch_matches_selected_trunk(
-            client=prepared.client,
-            remote_name=remote.name,
-            trunk_branch=trunk_branch,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
-        )
-
         resolved_merge_method: str | None = None
         if prepared_land.via == "merge":
             resolved_merge_method = _resolve_land_merge_method(
@@ -347,6 +340,13 @@ async def _stream_land_async(
         )
         if completion_plan is not None:
             return await finish_plan(completion_plan)
+
+        ensure_trunk_branch_matches_selected_trunk(
+            client=prepared.client,
+            remote_name=remote.name,
+            trunk_branch=trunk_branch,
+            trunk_commit_id=prepared.stack.trunk.commit_id,
+        )
 
         plan = build_land_plan(
             bypass_readiness=prepared_land.bypass_readiness,
@@ -403,7 +403,7 @@ def _land_completion_plan_from_log(
     prepared = prepared_land.prepared_status.prepared
     state = prepared.state_store.load()
     events = read_operation_log(prepared.state_store.state_dir)
-    begin_event = _latest_interrupted_land_with_trunk_push(
+    begin_event = _latest_incomplete_direct_push_land(
         events=events,
         selected_head_change_id=prepared.stack.head.change_id,
     )
@@ -414,8 +414,29 @@ def _land_completion_plan_from_log(
         return None
 
     commit_ids = tuple(revision.commit_id for revision in planned_revisions)
-    trunk_ancestor_commit_ids = prepared.client.query_trunk_ancestor_commit_ids(commit_ids)
-    if set(commit_ids) - trunk_ancestor_commit_ids:
+    remote = prepared.remote
+    if remote is None:
+        return None
+    trunk_bookmark = prepared.client.get_bookmark_state(trunk_branch)
+    remote_trunk = trunk_bookmark.remote_target(remote.name)
+    remote_trunk_commit_id = None if remote_trunk is None else remote_trunk.target
+    remote_trunk_ancestor_commit_ids = (
+        set()
+        if remote_trunk_commit_id is None
+        else prepared.client.query_commit_ids_ancestors_of(
+            commit_ids,
+            descendant_commit_id=remote_trunk_commit_id,
+        )
+    )
+    if set(commit_ids) - remote_trunk_ancestor_commit_ids:
+        if not _land_log_records_applied_trunk_push(
+            events=events,
+            operation_id=begin_event.operation_id,
+        ):
+            # The durable begin record precedes the push. If the logged commits
+            # did not reach trunk, the failed attempt did not move the remote
+            # and an ordinary replan is safe.
+            return None
         raise CliError(
             "Cannot finish the interrupted land because the logged landed commits "
             f"are not all on {ui.revset('trunk()')}.",
@@ -438,12 +459,13 @@ def _land_completion_plan_from_log(
         boundary_action=None,
         planned_revisions=planned_revisions,
         push_trunk=False,
+        repair_local_trunk_commit_id=remote_trunk_commit_id,
         trunk_branch=trunk_branch,
         via="push",
     )
 
 
-def _latest_interrupted_land_with_trunk_push(
+def _latest_incomplete_direct_push_land(
     *,
     events: tuple[JournalEvent, ...],
     selected_head_change_id: str,
@@ -453,25 +475,32 @@ def _latest_interrupted_land_with_trunk_push(
         for event in events
         if event.operation == "land" and event.event == "completed"
     }
-    pushed_trunk_operation_ids = {
-        event.operation_id
-        for event in events
-        if event.operation == "land"
-        and event.event == "mutation_applied"
-        and event.data.get("mutation") == "push_trunk"
-    }
     for event in reversed(events):
         if event.operation != "land" or event.event != "begin":
             continue
         if event.operation_id in completed_operation_ids:
             continue
-        if event.operation_id not in pushed_trunk_operation_ids:
-            continue
         scope = event.data.get("resolved_scope", {})
+        if not scope.get("push_trunk"):
+            continue
         ordered_change_ids = tuple(scope.get("ordered_change_ids", ()))
         if selected_head_change_id in ordered_change_ids:
             return event
     return None
+
+
+def _land_log_records_applied_trunk_push(
+    *,
+    events: tuple[JournalEvent, ...],
+    operation_id: str,
+) -> bool:
+    return any(
+        event.operation_id == operation_id
+        and event.operation == "land"
+        and event.event == "mutation_applied"
+        and event.data.get("mutation") == "push_trunk"
+        for event in events
+    )
 
 
 def _logged_land_revisions(event: JournalEvent) -> tuple[LandRevision, ...]:

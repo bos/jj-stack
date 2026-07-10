@@ -726,14 +726,21 @@ def _random_land_drift_scenario(
     )
 
 
-LandRetryFault = Literal["after_push_trunk", "after_retire", "mid_finalize"]
+LandRetryFault = Literal[
+    "after_push_ack_lost",
+    "after_push_trunk",
+    "after_retire",
+    "mid_finalize",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class LandRetryScenario:
     """One interrupted direct-push land followed by a converging rerun.
 
-    `after_push_trunk` fails loading the first landed PR after the trunk push;
+    `after_push_ack_lost` moves remote trunk but fails before the successful push
+    is journaled; `after_push_trunk` fails loading the first landed PR after the
+    successful push is journaled;
     `mid_finalize` fails on the second landed PR after the first finalized;
     `after_retire` drops the completed marker after a fully successful run,
     reproducing a crash between tracking retirement and the marker write.
@@ -833,6 +840,12 @@ def generate_land_retry_scenarios(
 def _fixed_land_retry_scenarios() -> tuple[LandRetryScenario, ...]:
     return (
         LandRetryScenario(
+            name="retry-after-trunk-push-acknowledgement-loss-converges",
+            initial_size=2,
+            approved_prefix=2,
+            fault="after_push_ack_lost",
+        ),
+        LandRetryScenario(
             name="retry-after-trunk-push-converges",
             initial_size=3,
             approved_prefix=2,
@@ -862,6 +875,7 @@ def _random_land_retry_scenario(
     name: str,
 ) -> LandRetryScenario:
     faults: tuple[LandRetryFault, ...] = (
+        "after_push_ack_lost",
         "after_push_trunk",
         "after_retire",
         "mid_finalize",

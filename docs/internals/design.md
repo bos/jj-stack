@@ -1391,6 +1391,10 @@ Recovery guidance stays case-specific:
 - if rerun after the trunk push already succeeded, use the operation log plus
   current `trunk()` and saved PR identity to prove the landed prefix, then finish
   only the remaining exact PR/state/bookmark finalization
+- if the remote accepted the exact logged trunk push but the client lost its
+  acknowledgement before recording success, prove the logged commits are now on
+  `trunk()`, repair the local trunk bookmark to that imported trunk, and use the same
+  completion path; if the commits did not reach trunk, replan normally
 - while finalizing, keep temporary landed tracking so an interrupted direct-push
   land can resume exactly; after the landed prefix fully finalizes, retire the
   direct-push landed changes from review tracking so they do not reappear as
