@@ -2,12 +2,67 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LinkState = Literal["active", "unlinked"]
 BookmarkOwnership = Literal["managed", "external"]
+PendingDirectLandPhase = Literal["prepared", "trunk_moved"]
+
+
+class PendingDirectLandRevision(BaseModel):
+    """Exact review identity for one revision in a pending direct land."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    bookmark: str
+    bookmark_ownership: BookmarkOwnership
+    change_id: str
+    commit_id: str
+    pull_request_number: int
+    subject: str
+
+
+class PendingDirectLand(BaseModel):
+    """One unresolved direct-push land transaction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    bookmark_prefix: str
+    cleanup_bookmarks: bool
+    cleanup_user_bookmarks: bool
+    finalized_change_ids: tuple[str, ...] = ()
+    github_host: str
+    github_repository: str
+    operation_id: str
+    original_trunk_commit_id: str
+    phase: PendingDirectLandPhase = "prepared"
+    planned_revisions: tuple[PendingDirectLandRevision, ...]
+    remote_name: str
+    remote_url: str
+    trunk_branch: str
+
+    @model_validator(mode="after")
+    def validate_revision_scope(self) -> Self:
+        if not self.planned_revisions:
+            raise ValueError("a pending direct land requires at least one revision")
+        planned_change_ids = tuple(
+            revision.change_id for revision in self.planned_revisions
+        )
+        if len(set(planned_change_ids)) != len(planned_change_ids):
+            raise ValueError("pending direct land revisions must have unique change IDs")
+        if len(set(self.finalized_change_ids)) != len(self.finalized_change_ids):
+            raise ValueError("finalized pending direct land change IDs must be unique")
+        if set(self.finalized_change_ids) - set(planned_change_ids):
+            raise ValueError("finalized changes must belong to the pending direct land")
+        return self
+
+    @property
+    def target_trunk_commit_id(self) -> str:
+        """Return the exact commit the transaction moves trunk to."""
+
+        return self.planned_revisions[-1].commit_id
 
 
 class CachedChange(BaseModel):
@@ -95,3 +150,4 @@ class ReviewState(BaseModel):
 
     version: Literal[1] = 1
     changes: dict[str, CachedChange] = Field(default_factory=dict)
+    pending_direct_land: PendingDirectLand | None = None

@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import CachedChange, PendingDirectLand, ReviewState
 from jj_stack.review.status import PreparedStatus
 from jj_stack.state.store import ReviewStateStore
 from jj_stack.ui import Message, plain_text
@@ -64,13 +64,22 @@ class PreparedLand:
 class LandMutationRun:
     """Mutable land state shared by live execution phases."""
 
+    pending_direct_land: PendingDirectLand | None
     state: ReviewState
     state_changes: dict[str, CachedChange]
     state_store: ReviewStateStore
 
-    def save_interim_state(self) -> None:
+    def save_interim_state(self, *, durable: bool | None = None) -> None:
+        if durable is None:
+            durable = self.pending_direct_land is not None
         self.state_store.save(
-            self.state.model_copy(update={"changes": dict(self.state_changes)})
+            self.state.model_copy(
+                update={
+                    "changes": dict(self.state_changes),
+                    "pending_direct_land": self.pending_direct_land,
+                }
+            ),
+            durable=durable,
         )
 
 
@@ -98,9 +107,11 @@ class LandPlan:
     push_trunk: bool
     trunk_branch: str
     via: LandVia
-    predecessor_operation_ids: tuple[str, ...] = ()
+    bookmark_prefix: str | None = None
+    cleanup_bookmarks: bool | None = None
+    cleanup_user_bookmarks: bool | None = None
     repair_local_trunk_commit_id: str | None = None
-    resumed_operation_id: str | None = None
+    resume_pending_direct_land: bool = False
 
     @property
     def resubmit_revisions(self) -> tuple[LandRevision, ...]:

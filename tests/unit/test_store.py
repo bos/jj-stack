@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import (
+    CachedChange,
+    PendingDirectLand,
+    PendingDirectLandRevision,
+    ReviewState,
+)
 from jj_stack.state.store import ReviewStateError, ReviewStateStore
 
 
@@ -39,6 +44,36 @@ def test_review_state_store_returns_defaults_when_file_is_missing(tmp_path: Path
 
     assert state.version == 1
     assert state.changes == {}
+
+
+def test_review_state_store_round_trips_pending_direct_land(tmp_path: Path) -> None:
+    store = ReviewStateStore(tmp_path / "state.json")
+    pending = PendingDirectLand(
+        bookmark_prefix="review",
+        cleanup_bookmarks=True,
+        cleanup_user_bookmarks=False,
+        github_host="github.test",
+        github_repository="octo-org/stacked-review",
+        operation_id="operation-1",
+        original_trunk_commit_id="trunk-1",
+        planned_revisions=(
+            PendingDirectLandRevision(
+                bookmark="review/feature-aaaaaaaa",
+                bookmark_ownership="managed",
+                change_id="change-1",
+                commit_id="commit-1",
+                pull_request_number=1,
+                subject="feature",
+            ),
+        ),
+        remote_name="origin",
+        remote_url="https://github.test/octo-org/stacked-review.git",
+        trunk_branch="main",
+    )
+
+    store.save(ReviewState(pending_direct_land=pending), durable=True)
+
+    assert store.load().pending_direct_land == pending
 
 
 def test_review_state_store_rejects_unknown_fields(tmp_path: Path) -> None:

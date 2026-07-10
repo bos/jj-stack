@@ -55,7 +55,7 @@ class ReviewStateStore:
         except ValidationError as error:
             raise ReviewStateError(f"Invalid jj-stack data in {self._path}: {error}") from error
 
-    def save(self, state: ReviewState) -> None:
+    def save(self, state: ReviewState, *, durable: bool = False) -> None:
         """Persist the supplied jj-stack data."""
 
         rendered = state.model_dump_json(exclude_none=True, indent=2) + "\n"
@@ -69,7 +69,12 @@ class ReviewStateStore:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as tmp:
                     tmp.write(rendered)
+                    if durable:
+                        tmp.flush()
+                        os.fsync(tmp.fileno())
                 Path(tmp_name).replace(self._path)
+                if durable:
+                    _fsync_directory(self._path.parent)
             except OSError:
                 Path(tmp_name).unlink(missing_ok=True)
                 raise
@@ -107,3 +112,17 @@ def default_state_root() -> Path:
         return Path(configured).expanduser().resolve()
     return Path("~", ".local", "state").expanduser().resolve()
 
+
+def _fsync_directory(path: Path) -> None:
+    """Durably record a directory entry update where the platform supports it."""
+
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)

@@ -303,17 +303,18 @@ merged-ancestor check or vice versa.
 
 Land retry scenarios interrupt one direct-push land at a checkpoint, then rerun it and
 require convergence rather than rollback. The fault family covers a remote trunk push
-whose success acknowledgement is lost before the applied event reaches the operation
-log, a failed load of the first landed PR after the push is durably recorded, a failure
-on the second landed PR after the first finalized, and a dropped completed marker after
-tracking retirement — the crash window between retiring the landed records and sealing
-the operation log.
+whose success acknowledgement is lost before the checkpoint advances, a failed load of
+the first landed PR after the push is recorded, a failure on the second landed PR after
+the first finalized, and a failure after remote finalization but before the atomic state
+commit clears the pending transaction and landed tracking.
 
 The oracle spans both runs with one event window: each landed PR transitions to closed
 exactly once in total, so the rerun provably finalizes only what the interrupted run
-left unfinished. The rerun must end with the standard direct-push contract, a completed
-land operation as the journal's last land event, and `list --json` free of the landed
-prefix. Merge-transport interruption is deliberately absent here: GitHub has already
+left unfinished. The rerun must end with the standard direct-push contract, no pending
+direct-land transaction, and `list --json` free of the landed prefix. Focused
+retry-and-drift tests also change a review branch, PR head, or repository identity between
+the two runs and require recovery to fail closed without finalizing the changed review.
+Merge-transport interruption is deliberately absent here: GitHub has already
 moved trunk for the accepted prefix, so its recovery path is the sync/cleanup handoff
 chain, not a naive rerun.
 

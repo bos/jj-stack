@@ -8,6 +8,7 @@ import pytest
 
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.land.command import (
+    _ensure_pending_direct_land_scope_matches,
     _resolve_land_merge_method,
     _stack_not_on_trunk_error,
     land,
@@ -26,10 +27,16 @@ from jj_stack.commands.land.plan import (
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjCliArgs, JjClient
-from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
+from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest, GithubRepository
-from jj_stack.models.review_state import CachedChange, LinkState
+from jj_stack.models.review_state import (
+    CachedChange,
+    LinkState,
+    PendingDirectLand,
+    PendingDirectLandRevision,
+)
 from jj_stack.review.status import (
     PreparedStatus,
     PullRequestLookup,
@@ -52,6 +59,49 @@ class _FakeJjClient:
 
 def _jj_client(diffs: dict[str, str] | None = None) -> JjClient:
     return cast(JjClient, _FakeJjClient(diffs))
+
+
+def test_pending_direct_land_rejects_changed_remote_identity() -> None:
+    pending = PendingDirectLand(
+        bookmark_prefix="review",
+        cleanup_bookmarks=True,
+        cleanup_user_bookmarks=False,
+        github_host="github.test",
+        github_repository="octo-org/stacked-review",
+        operation_id="operation-1",
+        original_trunk_commit_id="trunk-1",
+        planned_revisions=(
+            PendingDirectLandRevision(
+                bookmark="review/feature-aaaaaaaa",
+                bookmark_ownership="managed",
+                change_id="change-1",
+                commit_id="commit-1",
+                pull_request_number=1,
+                subject="feature",
+            ),
+        ),
+        remote_name="origin",
+        remote_url="https://github.test/octo-org/stacked-review.git",
+        trunk_branch="main",
+    )
+    github_client = SimpleNamespace(
+        repository=GithubRepoAddress(
+            host="github.test",
+            owner="octo-org",
+            repo="stacked-review",
+        )
+    )
+
+    with pytest.raises(CliError, match="repository, remote, or trunk branch changed"):
+        _ensure_pending_direct_land_scope_matches(
+            github_client=cast(GithubClient, github_client),
+            pending=pending,
+            remote=GitRemote(
+                name="origin",
+                url="https://github.test/octo-org/replacement.git",
+            ),
+            trunk_branch="main",
+        )
 
 
 def _fake_context() -> CommandContext:
@@ -316,6 +366,8 @@ def test_landed_revision_updates_cached_change_after_merge() -> None:
 
 def test_finalize_landed_pull_request_treats_close_422_as_already_merged() -> None:
     class CloseRaceGithubClient:
+        repository = SimpleNamespace(owner="octo-org")
+
         def __init__(self) -> None:
             self.close_calls = 0
             self.get_calls = 0
@@ -323,8 +375,17 @@ def test_finalize_landed_pull_request_treats_close_422_as_already_merged() -> No
         async def get_pull_request(self, *, pull_number: int) -> GithubPullRequest:
             self.get_calls += 1
             if self.get_calls == 1:
-                return _pull_request(number=pull_number)
-            return _pull_request(number=pull_number, state="merged")
+                state = "open"
+            else:
+                state = "merged"
+            return _pull_request(number=pull_number, state=state).model_copy(
+                update={
+                    "head": GithubBranchRef(
+                        label="octo-org:review/feature-1-aaaaaaaa",
+                        ref="review/feature-1-aaaaaaaa",
+                    )
+                }
+            )
 
         async def close_pull_request(self, *, pull_number: int) -> None:
             self.close_calls += 1
@@ -359,6 +420,8 @@ def test_finalize_landed_pull_request_treats_close_422_as_already_merged() -> No
 
 def test_finalize_landed_pull_request_does_not_recover_close_422_as_closed() -> None:
     class CloseRaceGithubClient:
+        repository = SimpleNamespace(owner="octo-org")
+
         def __init__(self) -> None:
             self.close_calls = 0
             self.get_calls = 0
@@ -366,8 +429,17 @@ def test_finalize_landed_pull_request_does_not_recover_close_422_as_closed() -> 
         async def get_pull_request(self, *, pull_number: int) -> GithubPullRequest:
             self.get_calls += 1
             if self.get_calls == 1:
-                return _pull_request(number=pull_number)
-            return _pull_request(number=pull_number, state="closed")
+                state = "open"
+            else:
+                state = "closed"
+            return _pull_request(number=pull_number, state=state).model_copy(
+                update={
+                    "head": GithubBranchRef(
+                        label="octo-org:review/feature-1-aaaaaaaa",
+                        ref="review/feature-1-aaaaaaaa",
+                    )
+                }
+            )
 
         async def close_pull_request(self, *, pull_number: int) -> None:
             self.close_calls += 1

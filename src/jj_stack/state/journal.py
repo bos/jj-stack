@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from jj_stack.state.operation_lock import read_operation_lock_holder
 
@@ -85,6 +85,22 @@ class OperationJournal:
 
         return cls(operation="", operation_id="", path=None)
 
+    @classmethod
+    def resume(
+        cls,
+        state_dir: Path,
+        *,
+        operation: str,
+        operation_id: str,
+    ) -> OperationJournal:
+        """Return a handle that appends to an existing operation's audit stream."""
+
+        return cls(
+            operation=operation,
+            operation_id=operation_id,
+            path=state_dir / OPERATION_LOG_FILENAME,
+        )
+
     def append(
         self,
         event: JournalEventKind,
@@ -106,6 +122,7 @@ class OperationJournal:
             timestamp=datetime.now(UTC).isoformat(),
             data=data,
         )
+        _terminate_partial_line(self.path)
         with self.path.open("a", encoding="utf-8") as output:
             output.write(entry.model_dump_json(exclude_none=True) + "\n")
             if durable:
@@ -148,13 +165,31 @@ class OperationJournal:
 
 
 def read_operation_log(state_dir: Path) -> tuple[JournalEvent, ...]:
-    """Read the repo-level operation audit log."""
+    """Read valid audit events, ignoring malformed best-effort records."""
 
     path = state_dir / OPERATION_LOG_FILENAME
     if not path.exists():
         return ()
-    return tuple(
-        JournalEvent.model_validate_json(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line
+    lines = tuple(
+        line for line in path.read_text(encoding="utf-8").splitlines() if line
     )
+    events: list[JournalEvent] = []
+    for line in lines:
+        try:
+            events.append(JournalEvent.model_validate_json(line))
+        except ValidationError:
+            continue
+    return tuple(events)
+
+
+def _terminate_partial_line(path: Path) -> None:
+    """Keep a torn append from absorbing the next valid audit record."""
+
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    with path.open("rb+") as output:
+        output.seek(-1, os.SEEK_END)
+        if output.read(1) == b"\n":
+            return
+        output.seek(0, os.SEEK_END)
+        output.write(b"\n")

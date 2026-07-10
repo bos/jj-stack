@@ -14,7 +14,7 @@ from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE, DriftErr
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.review_state import ReviewState
-from jj_stack.state.journal import OPERATION_LOG_FILENAME, read_operation_log
+from jj_stack.state.journal import read_operation_log
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from .fake_github import FakeGithubRepository
@@ -1106,28 +1106,24 @@ def replay_land_retry_scenario(
     original_main = _remote_ref(fake_repo.git_dir, "main")
     fake_repo.pull_request_events.clear()
 
-    if scenario.fault == "after_retire":
-        exit_code = run_cli(("land",))
-        captured = read_output()
-        assert exit_code == 0, (scenario.trace, captured.out, captured.err)
-        _drop_land_completed_marker(repo=repo, trace=scenario.trace)
-    else:
-        install_fault()
-        exit_code = run_cli(("land",))
-        captured = read_output()
-        expected_exit_code = (
-            EXIT_FAILURE if scenario.fault == "after_push_ack_lost" else EXIT_GITHUB
-        )
-        assert exit_code == expected_exit_code, (
-            scenario.trace,
-            captured.out,
-            captured.err,
-        )
-        # The trunk push precedes finalization, so the interrupted run already
-        # moved trunk to the last landed commit.
-        expected_main = current_commit_ids[landed[-1].change_id]
-        assert _remote_ref(fake_repo.git_dir, "main") == expected_main, scenario.trace
-        restore_github()
+    install_fault()
+    exit_code = run_cli(("land",))
+    captured = read_output()
+    expected_exit_code = (
+        EXIT_FAILURE
+        if scenario.fault in {"after_push_ack_lost", "before_state_commit"}
+        else EXIT_GITHUB
+    )
+    assert exit_code == expected_exit_code, (
+        scenario.trace,
+        captured.out,
+        captured.err,
+    )
+    # The trunk push precedes finalization, so the interrupted run already
+    # moved trunk to the last landed commit.
+    expected_main = current_commit_ids[landed[-1].change_id]
+    assert _remote_ref(fake_repo.git_dir, "main") == expected_main, scenario.trace
+    restore_github()
 
     rerun_exit_code = run_cli(("land",))
     captured = read_output()
@@ -1164,6 +1160,7 @@ def replay_land_retry_scenario(
         if event.operation == "land"
     )
     assert land_events[-1].event == "completed", scenario.trace
+    assert ReviewStateStore.for_repo(repo).load().pending_direct_land is None
     _assert_list_reflects_landed_prefix(
         landed_change_ids=tuple(change.change_id for change in landed),
         read_output=read_output,
@@ -1427,19 +1424,6 @@ def _assert_recovery_converged(
             and review.reviewer_login == f"land-reviewer-{label}"
             for review in reviews
         ), (label, scenario.trace)
-
-
-def _drop_land_completed_marker(*, repo: Path, trace: str) -> None:
-    """Reproduce a crash between tracking retirement and the completed marker."""
-
-    log_path = resolve_state_path(repo).parent / OPERATION_LOG_FILENAME
-    lines = log_path.read_text(encoding="utf-8").splitlines()
-    dropped_event = json.loads(lines[-1])
-    assert (dropped_event["operation"], dropped_event["event"]) == ("land", "completed"), (
-        trace,
-        dropped_event,
-    )
-    log_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
 
 
 def _remote_ref(remote: Path, bookmark: str) -> str:

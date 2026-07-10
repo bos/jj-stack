@@ -113,3 +113,20 @@ def test_disabled_operation_journal_drops_events(tmp_path: Path) -> None:
 
     assert read_operation_log(tmp_path) == ()
 
+
+def test_operation_journal_ignores_torn_trailing_append(tmp_path: Path) -> None:
+    journal = OperationJournal.begin(
+        tmp_path,
+        operation="land",
+        options={},
+        resolved_scope={},
+    )
+    if journal.path is None:
+        raise AssertionError("Expected an enabled operation journal.")
+    with journal.path.open("a", encoding="utf-8") as output:
+        output.write('{"event":"completed"')
+    journal.append("completed", {"completed_change_ids": ("change-1",)})
+
+    events = read_operation_log(tmp_path)
+
+    assert [event.event for event in events] == ["begin", "completed"]

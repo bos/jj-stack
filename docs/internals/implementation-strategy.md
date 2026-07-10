@@ -298,27 +298,22 @@ while another mutation is running. The operation lock replaces same-kind PID wai
 `unstack --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
 events to `operation-log.jsonl` for after-the-fact inspection. `sync` composes
 `cleanup --rebase` and `submit` under one operation lock; each composed phase journals
-as itself. Retry behavior derives from
-the current jj DAG, saved tracking data, GitHub state, and explicit user selectors. The
-log is primarily audit evidence and is not a generic recovery model; the one carve-out is
-`land`, which consults the log to detect that an unfinished run already pushed trunk so a
-rerun finishes the remaining work instead of attempting trunk movement a second time. To
-keep that single recovery path reliable across crashes without slowing every audit append,
-trunk-moving `land` runs fsync the begin event, the pushed-trunk event, and the completed
-marker. A recovery run durably links its begin event to the original run and records explicit
-supersession only after finalization completes. This keeps an interrupted recovery resumable
-without leaving the original run permanently active after success. An ordinary direct-push
-replan also links exact-scope pre-push attempts as predecessors and supersedes the linked
-operation family only after it completes. Changed stack or land prefixes do not inherit that
-linkage. If later independent land operations collectively finalize every exact revision logged
-by the older pre-push attempt, their durable completion records retire it without retroactively
-treating any partial plan as its replacement. When a durable append creates
-`operation-log.jsonl`, it also fsyncs the state directory on platforms that support directory
-fsync.
-Direct-push `land` keeps temporary landed tracking while finalizing PRs, then removes the
-landed records from active tracking after finalization has succeeded. A rerun that finds
-a landed record missing trusts it only when the original operation or one of its linked recovery
-runs recorded the retirement; otherwise it fails closed.
+as itself. Retry behavior derives from the current jj DAG, saved tracking data, GitHub state,
+explicit user selectors, and — for direct-push `land` only — one typed pending transaction in
+the repo state file. The audit log is never projected back into live command state.
+
+The pending direct-land transaction is written durably before local or remote mutation. It
+stores the exact repository, remote, trunk before and after the push, planned review identities,
+whether trunk movement was observed, and finalized change IDs. Every later checkpoint is saved
+atomically with the per-change tracking it describes. The final checkpoint clears the
+transaction and removes landed tracking in the same durable replacement. This gives recovery
+one explicit state machine and one commit point rather than inferring unfinished work from
+relationships among historical audit events.
+
+When a durable write creates or replaces correctness-critical state, it fsyncs the file and
+state directory on platforms that support those operations. Audit appends may still be durable
+for diagnostic quality, but an absent completed marker or malformed trailing record cannot
+reactivate or block a completed land.
 The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
 to the last submitted commit, single visible revision, mutable, bookmark policy allowing —
 by abandoning the local copy, removing its tracking, and deleting its managed review

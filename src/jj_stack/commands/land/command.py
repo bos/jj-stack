@@ -37,7 +37,6 @@ pull requests on GitHub.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 
 import jj_stack.console as console
@@ -45,13 +44,14 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.errors import CliError, DriftError, UsageError
 from jj_stack.formatting import short_change_id
-from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.resolution import (
     resolve_trunk_branch,
 )
 from jj_stack.jj.client import JjCliArgs
-from jj_stack.models.github import GithubRepository
-from jj_stack.models.review_state import ReviewState
+from jj_stack.models.bookmarks import BookmarkState, GitRemote
+from jj_stack.models.github import GithubPullRequest, GithubRepository
+from jj_stack.models.review_state import PendingDirectLand, ReviewState
 from jj_stack.review.change_status import classify_review_status_revision
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -63,7 +63,7 @@ from jj_stack.review.status import (
     prepare_status,
     stream_status,
 )
-from jj_stack.state.journal import JournalEvent, read_operation_log
+from jj_stack.state.journal import OperationJournal
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from .execute import (
@@ -85,6 +85,10 @@ from .plan import (
 from .render import print_land_result
 
 HELP = "Land the ready changes at the bottom of a stack"
+
+
+class _ReprepareLand(Exception):
+    """The pending transaction changed local state used by preparation."""
 
 
 def land(
@@ -154,7 +158,21 @@ def _run_land(
             selected_pr_number=selected_pr_number,
             via=via,
         )
-    result = _stream_land(prepared_land=prepared_land)
+    try:
+        result = _stream_land(prepared_land=prepared_land)
+    except _ReprepareLand:
+        with console.spinner(description="Re-inspecting jj stack"):
+            prepared_land = _prepare_land(
+                bypass_readiness=prepared_land.bypass_readiness,
+                cleanup_bookmarks=prepared_land.cleanup_bookmarks,
+                context=prepared_land.context,
+                dry_run=prepared_land.dry_run,
+                merge_method=prepared_land.merge_method,
+                revset=prepared_land.prepared_status.selected_revset,
+                selected_pr_number=prepared_land.selected_pr_number,
+                via=prepared_land.via,
+            )
+        result = _stream_land(prepared_land=prepared_land)
     print_land_result(result)
     return 1 if result.blocked else 0
 
@@ -259,16 +277,6 @@ async def _stream_land_async(
             t"Could not inspect GitHub pull request state for {ui.cmd('land')}: "
             t"{status_result.github_error}"
         )
-    selected_stack_is_off_trunk = (
-        bool(prepared.stack.revisions)
-        and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
-    )
-    if selected_stack_is_off_trunk:
-        raise _stack_not_on_trunk_error(
-            prepared_status=prepared_status,
-            status_result=status_result,
-        )
-
     github_repository = prepared_status.github_repository
     remote = prepared.remote
     if github_repository is None or remote is None:
@@ -304,9 +312,18 @@ async def _stream_land_async(
             )
             bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
                 bookmark_states=bookmark_states,
-                prefix=prepared_land.context.config.bookmark_prefix,
-                cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-                cleanup_user_bookmarks=prepared_land.context.config.cleanup_user_bookmarks,
+                prefix=plan.bookmark_prefix
+                or prepared_land.context.config.bookmark_prefix,
+                cleanup_bookmarks=(
+                    prepared_land.cleanup_bookmarks
+                    if plan.cleanup_bookmarks is None
+                    else plan.cleanup_bookmarks
+                ),
+                cleanup_user_bookmarks=(
+                    prepared_land.context.config.cleanup_user_bookmarks
+                    if plan.cleanup_user_bookmarks is None
+                    else plan.cleanup_user_bookmarks
+                ),
                 planned_revisions=plan.planned_revisions,
             )
             if prepared_land.dry_run:
@@ -335,12 +352,25 @@ async def _stream_land_async(
                 trunk_subject=prepared.stack.trunk.subject,
             )
 
-        completion_plan = _land_completion_plan_from_log(
+        completion_plan = await _pending_direct_land_plan(
+            bookmark_states=bookmark_states,
+            github_client=github_client,
             prepared_land=prepared_land,
+            remote=remote,
             trunk_branch=trunk_branch,
         )
         if completion_plan is not None:
             return await finish_plan(completion_plan)
+
+        selected_stack_is_off_trunk = (
+            bool(prepared.stack.revisions)
+            and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
+        )
+        if selected_stack_is_off_trunk:
+            raise _stack_not_on_trunk_error(
+                prepared_status=prepared_status,
+                status_result=status_result,
+            )
 
         ensure_trunk_branch_matches_selected_trunk(
             client=prepared.client,
@@ -357,26 +387,6 @@ async def _stream_land_async(
             trunk_branch=trunk_branch,
             via=prepared_land.via,
         )
-        if plan.push_trunk:
-            events = read_operation_log(prepared.state_store.state_dir)
-            plan = replace(
-                plan,
-                predecessor_operation_ids=_matching_incomplete_land_replans(
-                    events=events,
-                    github_repository=github_client.repository.full_name,
-                    ordered_change_ids=tuple(
-                        revision.revision.change_id
-                        for revision in prepared_status.prepared.status_revisions
-                    ),
-                    ordered_commit_ids=tuple(
-                        revision.revision.commit_id
-                        for revision in prepared_status.prepared.status_revisions
-                    ),
-                    planned_revisions=plan.planned_revisions,
-                    remote_name=remote.name,
-                    trunk_branch=trunk_branch,
-                ),
-            )
         return await finish_plan(plan)
 
 
@@ -414,365 +424,241 @@ def _resolve_land_merge_method(
     )
 
 
-def _land_completion_plan_from_log(
+async def _pending_direct_land_plan(
     *,
+    bookmark_states: dict[str, BookmarkState],
+    github_client: GithubClient,
     prepared_land: PreparedLand,
+    remote: GitRemote,
     trunk_branch: str,
 ) -> LandPlan | None:
-    """Build a post-trunk land completion plan from log evidence and current state."""
+    """Reconcile the one pending direct-land transaction before replanning."""
 
     prepared = prepared_land.prepared_status.prepared
     state = prepared.state_store.load()
-    events = read_operation_log(prepared.state_store.state_dir)
-    begin_event = _latest_incomplete_direct_push_land(
-        events=events,
-        selected_head_change_id=prepared.stack.head.change_id,
-    )
-    if begin_event is None:
-        return None
-    planned_revisions = _logged_land_revisions(begin_event)
-    if not planned_revisions:
+    pending = state.pending_direct_land
+    if pending is None:
         return None
 
-    commit_ids = tuple(revision.commit_id for revision in planned_revisions)
-    remote = prepared.remote
-    if remote is None:
-        return None
-    trunk_bookmark = prepared.client.get_bookmark_state(trunk_branch)
+    _ensure_pending_direct_land_scope_matches(
+        github_client=github_client,
+        pending=pending,
+        remote=remote,
+        trunk_branch=trunk_branch,
+    )
+    trunk_bookmark = bookmark_states.get(trunk_branch)
+    if trunk_bookmark is None:
+        trunk_bookmark = prepared.client.get_bookmark_state(trunk_branch)
     remote_trunk = trunk_bookmark.remote_target(remote.name)
     remote_trunk_commit_id = None if remote_trunk is None else remote_trunk.target
-    remote_trunk_ancestor_commit_ids = (
-        set()
-        if remote_trunk_commit_id is None
-        else prepared.client.query_commit_ids_ancestors_of(
-            commit_ids,
-            descendant_commit_id=remote_trunk_commit_id,
-        )
-    )
-    if set(commit_ids) - remote_trunk_ancestor_commit_ids:
-        if not _land_log_records_applied_trunk_push(
-            events=events,
-            operation_id=begin_event.operation_id,
-        ):
-            # The durable begin record precedes the push. If the logged commits
-            # did not reach trunk, the failed attempt did not move the remote
-            # and an ordinary replan is safe.
-            return None
+    if remote_trunk_commit_id is None:
         raise CliError(
-            "Cannot finish the interrupted land because the logged landed commits "
-            f"are not all on {ui.revset('trunk()')}.",
-            hint="Inspect the operation log and current trunk before retrying.",
+            t"Cannot reconcile the interrupted land because remote trunk "
+            t"{ui.bookmark(f'{trunk_branch}@{remote.name}')} is unavailable.",
+            hint="Fetch, inspect the remote trunk, and retry.",
         )
 
-    retired_change_ids = _logged_retired_change_ids(
-        events=events,
-        operation_id=begin_event.operation_id,
+    commit_ids = tuple(
+        revision.commit_id for revision in pending.planned_revisions
     )
-    for revision in planned_revisions:
-        _ensure_logged_land_matches_saved_state(
-            retired_change_ids=retired_change_ids,
-            revision=revision,
-            state=state,
+    landed_commit_ids = prepared.client.query_commit_ids_ancestors_of(
+        commit_ids,
+        descendant_commit_id=remote_trunk_commit_id,
+    )
+    if set(commit_ids) - landed_commit_ids:
+        if pending.phase == "trunk_moved":
+            raise CliError(
+                t"Cannot finish the interrupted land because its exact commits are no "
+                t"longer all on {ui.revset('trunk()')}.",
+                hint="Inspect the current trunk and the pending land before retrying.",
+            )
+        if prepared_land.dry_run:
+            raise CliError(
+                "An earlier direct land did not move remote trunk and needs to be "
+                "cleared before a new preview can be computed.",
+                hint=t"Run {ui.cmd('land')} without {ui.cmd('--dry-run')} once to "
+                t"reconcile it.",
+            )
+        _clear_unapplied_pending_direct_land(
+            pending=pending,
+            prepared_land=prepared_land,
         )
+        raise _ReprepareLand
 
+    await _ensure_pending_direct_land_review_identities(
+        bookmark_states=bookmark_states,
+        github_client=github_client,
+        pending=pending,
+        remote=remote,
+        state=state,
+    )
     return LandPlan(
         blocked=False,
+        bookmark_prefix=pending.bookmark_prefix,
         boundary_action=None,
-        planned_revisions=planned_revisions,
-        predecessor_operation_ids=_land_operation_predecessor_ids(
-            events=events,
-            operation_id=begin_event.operation_id,
+        cleanup_bookmarks=pending.cleanup_bookmarks,
+        cleanup_user_bookmarks=pending.cleanup_user_bookmarks,
+        planned_revisions=tuple(
+            LandRevision(
+                bookmark=revision.bookmark,
+                bookmark_managed=revision.bookmark_ownership == "managed",
+                change_id=revision.change_id,
+                commit_id=revision.commit_id,
+                needs_resubmit=False,
+                pull_request_number=revision.pull_request_number,
+                subject=revision.subject,
+            )
+            for revision in pending.planned_revisions
         ),
         push_trunk=False,
         repair_local_trunk_commit_id=remote_trunk_commit_id,
-        resumed_operation_id=begin_event.operation_id,
+        resume_pending_direct_land=True,
         trunk_branch=trunk_branch,
         via="push",
     )
 
 
-def _latest_incomplete_direct_push_land(
+def _ensure_pending_direct_land_scope_matches(
     *,
-    events: tuple[JournalEvent, ...],
-    selected_head_change_id: str,
-) -> JournalEvent | None:
-    finished_operation_ids = _finished_land_operation_ids(events)
-    for event in reversed(events):
-        if event.operation != "land" or event.event != "begin":
-            continue
-        if event.operation_id in finished_operation_ids:
-            continue
-        scope = event.data.get("resolved_scope", {})
-        if not scope.get("push_trunk"):
-            continue
-        ordered_change_ids = tuple(scope.get("ordered_change_ids", ()))
-        if selected_head_change_id in ordered_change_ids:
-            return event
-    return None
-
-
-def _finished_land_operation_ids(
-    events: tuple[JournalEvent, ...],
-) -> frozenset[str]:
-    finished_operation_ids = {
-        event.operation_id
-        for event in events
-        if event.operation == "land" and event.event == "completed"
-    }
-    finished_operation_ids.update(
-        str(event.data["superseded_operation_id"])
-        for event in events
-        if event.operation == "land"
-        and event.event == "completed"
-        and event.data.get("superseded_operation_id") is not None
-    )
-    for event in events:
-        if event.operation != "land" or event.event != "completed":
-            continue
-        raw_operation_ids = event.data.get("superseded_operation_ids", ())
-        if isinstance(raw_operation_ids, list):
-            finished_operation_ids.update(str(operation_id) for operation_id in raw_operation_ids)
-    finished_operation_ids.update(
-        _collectively_finalized_pre_push_operation_ids(events=events)
-    )
-    return frozenset(finished_operation_ids)
-
-
-def _collectively_finalized_pre_push_operation_ids(
-    *,
-    events: tuple[JournalEvent, ...],
-) -> frozenset[str]:
-    """Find pre-push attempts whose exact revisions all finished in later lands."""
-
-    begin_events = {
-        event.operation_id: (position, event)
-        for position, event in enumerate(events)
-        if event.operation == "land" and event.event == "begin"
-    }
-    latest_finalization_by_revision: dict[tuple[object, ...], int] = {}
-    for position, event in enumerate(events):
-        if event.operation != "land" or event.event != "completed":
-            continue
-        begin_entry = begin_events.get(event.operation_id)
-        if begin_entry is None:
-            continue
-        raw_completed_change_ids = event.data.get("completed_change_ids", ())
-        if not isinstance(raw_completed_change_ids, list):
-            continue
-        completed_change_ids = {str(change_id) for change_id in raw_completed_change_ids}
-        for revision in _logged_land_revisions(begin_entry[1]):
-            if revision.change_id not in completed_change_ids:
-                continue
-            latest_finalization_by_revision[
-                _land_revision_scope_identity(revision)
-            ] = position
-
-    applied_push_operation_ids = {
-        event.operation_id
-        for event in events
-        if event.operation == "land"
-        and event.event == "mutation_applied"
-        and event.data.get("mutation") == "push_trunk"
-    }
-    collectively_finalized: set[str] = set()
-    for operation_id, (begin_position, begin_event) in begin_events.items():
-        scope = begin_event.data.get("resolved_scope", {})
-        if not scope.get("push_trunk") or operation_id in applied_push_operation_ids:
-            continue
-        planned_revision_identities = tuple(
-            _land_revision_scope_identity(revision)
-            for revision in _logged_land_revisions(begin_event)
-        )
-        if planned_revision_identities and all(
-            latest_finalization_by_revision.get(identity, -1) > begin_position
-            for identity in planned_revision_identities
-        ):
-            collectively_finalized.add(operation_id)
-    return frozenset(collectively_finalized)
-
-
-def _land_operation_predecessor_ids(
-    *,
-    events: tuple[JournalEvent, ...],
-    operation_id: str,
-) -> tuple[str, ...]:
-    """Return every earlier operation linked to one interrupted land."""
-
-    begin_events = {
-        event.operation_id: event
-        for event in events
-        if event.operation == "land" and event.event == "begin"
-    }
-    discovered: set[str] = set()
-    pending = [operation_id]
-    while pending:
-        current_operation_id = pending.pop()
-        begin_event = begin_events.get(current_operation_id)
-        if begin_event is None:
-            continue
-        scope = begin_event.data.get("resolved_scope", {})
-        linked_operation_ids: list[str] = []
-        resumed_operation_id = scope.get("resumed_operation_id")
-        if isinstance(resumed_operation_id, str):
-            linked_operation_ids.append(resumed_operation_id)
-        raw_predecessors = scope.get("predecessor_operation_ids", ())
-        if isinstance(raw_predecessors, list):
-            linked_operation_ids.extend(str(predecessor) for predecessor in raw_predecessors)
-        for linked_operation_id in linked_operation_ids:
-            if linked_operation_id == operation_id or linked_operation_id in discovered:
-                continue
-            discovered.add(linked_operation_id)
-            pending.append(linked_operation_id)
-    return tuple(
-        event.operation_id
-        for event in events
-        if event.operation_id in discovered and event.event == "begin"
-    )
-
-
-def _matching_incomplete_land_replans(
-    *,
-    events: tuple[JournalEvent, ...],
-    github_repository: str,
-    ordered_change_ids: tuple[str, ...],
-    ordered_commit_ids: tuple[str, ...],
-    planned_revisions: tuple[LandRevision, ...],
-    remote_name: str,
+    github_client: GithubClient,
+    pending: PendingDirectLand,
+    remote: GitRemote,
     trunk_branch: str,
-) -> tuple[str, ...]:
-    """Find pre-push failures that an identical direct-push replan can finish."""
-
-    finished_operation_ids = _finished_land_operation_ids(events)
-    planned_revision_identities = tuple(
-        _land_revision_scope_identity(revision) for revision in planned_revisions
+) -> None:
+    expected_scope = (
+        pending.github_host,
+        pending.github_repository,
+        pending.remote_name,
+        pending.remote_url,
+        pending.trunk_branch,
     )
-    matching_operation_ids: list[str] = []
-    for event in events:
-        if event.operation != "land" or event.event != "begin":
-            continue
-        if event.operation_id in finished_operation_ids:
-            continue
-        if _land_log_records_applied_trunk_push(
-            events=events,
-            operation_id=event.operation_id,
-        ):
-            continue
-        scope = event.data.get("resolved_scope", {})
-        if (
-            scope.get("push_trunk") is not True
-            or scope.get("github_repository") != github_repository
-            or scope.get("remote_name") != remote_name
-            or scope.get("trunk_branch") != trunk_branch
-            or tuple(scope.get("ordered_change_ids", ())) != ordered_change_ids
-            or tuple(scope.get("ordered_commit_ids", ())) != ordered_commit_ids
-        ):
-            continue
-        logged_revision_identities = tuple(
-            _land_revision_scope_identity(revision)
-            for revision in _logged_land_revisions(event)
-        )
-        if logged_revision_identities == planned_revision_identities:
-            matching_operation_ids.append(event.operation_id)
-    return tuple(matching_operation_ids)
-
-
-def _land_revision_scope_identity(revision: LandRevision) -> tuple[object, ...]:
-    return (
-        revision.bookmark,
-        revision.bookmark_managed,
-        revision.change_id,
-        revision.commit_id,
-        revision.pull_request_number,
-        revision.subject,
+    current_scope = (
+        github_client.repository.host,
+        github_client.repository.full_name,
+        remote.name,
+        remote.url,
+        trunk_branch,
+    )
+    if current_scope == expected_scope:
+        return
+    raise CliError(
+        "Cannot finish the interrupted land because the GitHub repository, remote, "
+        "or trunk branch changed since it began.",
+        hint="Restore the original target or inspect and clear the pending land manually.",
     )
 
 
-def _land_log_records_applied_trunk_push(
+async def _ensure_pending_direct_land_review_identities(
     *,
-    events: tuple[JournalEvent, ...],
-    operation_id: str,
-) -> bool:
-    return any(
-        event.operation_id == operation_id
-        and event.operation == "land"
-        and event.event == "mutation_applied"
-        and event.data.get("mutation") == "push_trunk"
-        for event in events
-    )
-
-
-def _logged_land_revisions(event: JournalEvent) -> tuple[LandRevision, ...]:
-    scope = event.data.get("resolved_scope", {})
-    planned_revisions = scope.get("planned_revisions")
-    if not isinstance(planned_revisions, list):
-        return ()
-    return tuple(
-        LandRevision(
-            bookmark=raw_revision["bookmark"],
-            bookmark_managed=raw_revision.get("bookmark_managed", True),
-            change_id=raw_revision["change_id"],
-            commit_id=raw_revision["commit_id"],
-            needs_resubmit=False,
-            pull_request_number=raw_revision["pull_request_number"],
-            subject=raw_revision["subject"],
-        )
-        for raw_revision in planned_revisions
-    )
-
-
-def _logged_retired_change_ids(
-    *,
-    events: tuple[JournalEvent, ...],
-    operation_id: str,
-) -> frozenset[str]:
-    """Change IDs whose tracking the interrupted land or a linked recovery retired."""
-
-    related_operation_ids = {operation_id}
-    related_operation_ids.update(
-        event.operation_id
-        for event in events
-        if event.operation == "land"
-        and event.event == "begin"
-        and event.data.get("resolved_scope", {}).get("resumed_operation_id") == operation_id
-    )
-    return frozenset(
-        str(event.data["change_id"])
-        for event in events
-        if event.operation_id in related_operation_ids
-        and event.event == "saved_state_update"
-        and event.data.get("after") is None
-    )
-
-
-def _ensure_logged_land_matches_saved_state(
-    *,
-    retired_change_ids: frozenset[str],
-    revision: LandRevision,
+    bookmark_states: dict[str, BookmarkState],
+    github_client: GithubClient,
+    pending: PendingDirectLand,
+    remote: GitRemote,
     state: ReviewState,
 ) -> None:
-    cached_change = state.changes.get(revision.change_id)
-    if cached_change is None:
-        # A missing record is trusted only when this interrupted land's own log
-        # proves it finalized the change and retired the tracking before the
-        # completed marker was written. Absence for any other reason is
-        # ambiguous linkage, which must fail closed.
-        if revision.change_id in retired_change_ids:
-            return
-        raise CliError(
-            t"Cannot finish the interrupted land because saved review identity for "
-            t"{ui.change_id(revision.change_id)} no longer matches the logged land.",
-            hint=t"Run {ui.cmd('view --fetch')} and inspect the stack before retrying.",
+    finalized_change_ids = set(pending.finalized_change_ids)
+    pull_requests = await asyncio.gather(
+        *(
+            _load_pending_pull_request(
+                github_client=github_client,
+                pull_request_number=revision.pull_request_number,
+            )
+            for revision in pending.planned_revisions
         )
-    if (
-        cached_change.link_state != "active"
-        or cached_change.bookmark != revision.bookmark
-        or cached_change.pr_number != revision.pull_request_number
+    )
+    for revision, pull_request in zip(
+        pending.planned_revisions,
+        pull_requests,
+        strict=True,
     ):
-        raise CliError(
-            t"Cannot finish the interrupted land because saved review identity for "
-            t"{ui.change_id(revision.change_id)} no longer matches the logged land.",
-            hint=t"Run {ui.cmd('view --fetch')} and inspect the stack before retrying.",
+        cached_change = state.changes.get(revision.change_id)
+        if (
+            cached_change is None
+            or cached_change.link_state != "active"
+            or cached_change.bookmark != revision.bookmark
+            or cached_change.pr_number != revision.pull_request_number
+            or cached_change.bookmark_ownership != revision.bookmark_ownership
+        ):
+            raise _pending_direct_land_identity_error(revision.change_id)
+
+        expected_head_label = f"{github_client.repository.owner}:{revision.bookmark}"
+        if (
+            pull_request.head.ref != revision.bookmark
+            or pull_request.head.label != expected_head_label
+        ):
+            raise _pending_direct_land_identity_error(revision.change_id)
+        remote_bookmark = bookmark_states.get(
+            revision.bookmark,
+            BookmarkState(name=revision.bookmark),
+        ).remote_target(remote.name)
+        remote_target = None if remote_bookmark is None else remote_bookmark.target
+        if remote_target is not None and remote_target != revision.commit_id:
+            raise _pending_direct_land_identity_error(revision.change_id)
+        if pull_request.state == "open" and remote_target != revision.commit_id:
+            raise _pending_direct_land_identity_error(revision.change_id)
+        if (
+            revision.change_id in finalized_change_ids
+            and pull_request.state == "open"
+        ):
+            raise _pending_direct_land_identity_error(revision.change_id)
+
+
+async def _load_pending_pull_request(
+    *,
+    github_client: GithubClient,
+    pull_request_number: int,
+) -> GithubPullRequest:
+    try:
+        pull_request = await github_client.get_pull_request(
+            pull_number=pull_request_number,
         )
+    except GithubClientError as error:
+        raise CliError(
+            t"Could not verify PR #{pull_request_number} for the interrupted land"
+        ) from error
+    return pull_request.normalize_state()
+
+
+def _pending_direct_land_identity_error(change_id: str) -> CliError:
+    return CliError(
+        t"Cannot finish the interrupted land because review identity for "
+        t"{ui.change_id(change_id)} changed after trunk moved.",
+        hint=t"Run {ui.cmd('view --fetch')} and inspect the stack before retrying.",
+    )
+
+
+def _clear_unapplied_pending_direct_land(
+    *,
+    pending: PendingDirectLand,
+    prepared_land: PreparedLand,
+) -> None:
+    """Clear a transaction whose exact commits never reached remote trunk."""
+
+    prepared = prepared_land.prepared_status.prepared
+    local_trunk = prepared.client.get_bookmark_state(pending.trunk_branch)
+    if local_trunk.local_target == pending.target_trunk_commit_id:
+        prepared.client.set_bookmark(
+            pending.trunk_branch,
+            pending.original_trunk_commit_id,
+            allow_backwards=True,
+        )
+
+    state = prepared.state_store.load()
+    if state.pending_direct_land != pending:
+        raise CliError("Pending direct-land state changed while it was being reconciled.")
+    prepared.state_store.save(
+        state.model_copy(update={"pending_direct_land": None}),
+        durable=True,
+    )
+    OperationJournal.resume(
+        prepared.state_store.state_dir,
+        operation="land",
+        operation_id=pending.operation_id,
+    ).append(
+        "completed",
+        {"outcome": "trunk_not_moved"},
+        durable=True,
+    )
 
 
 def _stack_not_on_trunk_error(

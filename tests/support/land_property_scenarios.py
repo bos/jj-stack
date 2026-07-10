@@ -725,7 +725,7 @@ def _random_land_drift_scenario(
 LandRetryFault = Literal[
     "after_push_ack_lost",
     "after_push_trunk",
-    "after_retire",
+    "before_state_commit",
     "mid_finalize",
 ]
 
@@ -738,8 +738,8 @@ class LandRetryScenario:
     is journaled; `after_push_trunk` fails loading the first landed PR after the
     successful push is journaled;
     `mid_finalize` fails on the second landed PR after the first finalized;
-    `after_retire` drops the completed marker after a fully successful run,
-    reproducing a crash between tracking retirement and the marker write.
+    `before_state_commit` fails after every PR finalized but before the pending
+    transaction and landed tracking are cleared atomically.
     """
 
     name: str
@@ -854,10 +854,10 @@ def _fixed_land_retry_scenarios() -> tuple[LandRetryScenario, ...]:
             fault="mid_finalize",
         ),
         LandRetryScenario(
-            name="retry-after-tracking-retire-converges",
+            name="retry-before-direct-land-state-commit-converges",
             initial_size=2,
             approved_prefix=1,
-            fault="after_retire",
+            fault="before_state_commit",
         ),
     )
 
@@ -873,7 +873,7 @@ def _random_land_retry_scenario(
     faults: tuple[LandRetryFault, ...] = (
         "after_push_ack_lost",
         "after_push_trunk",
-        "after_retire",
+        "before_state_commit",
         "mid_finalize",
     )
     fault = rng.choice(faults)

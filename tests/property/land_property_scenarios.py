@@ -28,6 +28,7 @@ from tests.support.land_property_scenarios import (
 )
 
 import jj_stack.cli as cli_module
+import jj_stack.commands.land.execute as land_execute
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
@@ -125,6 +126,7 @@ def test_land_property_interrupted_land_retry_converges(
     app = create_app(FakeGithubState.single_repository(fake_repo))
     fault_pull_number = scenario.fault_pull_number
     original_push_bookmarks = JjClient.push_bookmarks
+    original_retire = land_execute._retire_finalized_tracking
 
     class FaultOnFinalizeLoadClient(GithubClient):
         async def get_pull_request(self, *, pull_number):
@@ -147,6 +149,16 @@ def test_land_property_interrupted_land_retry_converges(
 
             monkeypatch.setattr(JjClient, "push_bookmarks", push_then_lose_ack)
             return
+        if scenario.fault == "before_state_commit":
+            def fail_before_state_commit(**_kwargs) -> None:
+                raise CliError("Simulated failure before the direct-land state commit")
+
+            monkeypatch.setattr(
+                land_execute,
+                "_retire_finalized_tracking",
+                fail_before_state_commit,
+            )
+            return
         patch_github_client_builders(
             monkeypatch,
             app=app,
@@ -157,6 +169,11 @@ def test_land_property_interrupted_land_retry_converges(
 
     def restore_github() -> None:
         monkeypatch.setattr(JjClient, "push_bookmarks", original_push_bookmarks)
+        monkeypatch.setattr(
+            land_execute,
+            "_retire_finalized_tracking",
+            original_retire,
+        )
         patch_github_client_builders(
             monkeypatch,
             app=app,

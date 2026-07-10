@@ -277,10 +277,11 @@ companion file records the owning command, PID, and start time for diagnostics. 
 cache write and skips that write with a diagnostic if another operation is running.
 
 Mutating commands append operation events to the repo-level `operation-log.jsonl` audit log.
-The log is not a topology source of truth and is mostly evidence for explaining what
-happened after the fact. The one retry carve-out is `land`: after a trunk push succeeds,
-the log can prove that a rerun should finish the exact remaining PR/state/bookmark
-finalization instead of attempting trunk movement again.
+The log is not a topology source of truth or a recovery database; it is evidence for
+explaining what happened after the fact. Direct-push `land` instead stores one typed pending
+transaction beside the per-change tracking state. That checkpoint exists only while a trunk
+transition may need recovery and is cleared atomically with the landed tracking after
+finalization.
 
 ## Submission algorithm
 
@@ -1387,28 +1388,23 @@ Recovery guidance stays case-specific:
 
 `land` only owns the bookkeeping that follows directly from the trunk transition:
 
-- record enough state to resume idempotently if interrupted
-- if rerun after the trunk push already succeeded, use the operation log plus
-  current `trunk()` and saved PR identity to prove the landed prefix, then finish
-  only the remaining exact PR/state/bookmark finalization
-- if the remote accepted the exact logged trunk push but the client lost its
-  acknowledgement before recording success, prove the logged commits are now on
-  `trunk()`, repair the local trunk bookmark to that imported trunk, and use the same
-  completion path; durably link the recovery run to the interrupted run, and supersede
-  the interrupted run only after recovery finalization completes; if the commits did not
-  reach trunk, replan normally
-- when an ordinary direct-push replan exactly matches an earlier pre-push attempt's
-  repository, remote, trunk, ordered stack, commit IDs, and planned revisions, durably
-  link that attempt as a predecessor and supersede it only after the replan completes;
-  a changed plan stays independent, but later durable land completions retire the older
-  pre-push attempt once they collectively prove that every exact logged revision was finalized
-- while finalizing, keep temporary landed tracking so an interrupted direct-push
-  land can resume exactly; after the landed prefix fully finalizes, retire the
-  direct-push landed changes from review tracking so they do not reappear as
-  cleanup-needed stacks
-- a rerun that finds a landed change missing from saved tracking accepts it only
-  when the interrupted operation or one of its linked recovery runs recorded the
-  retirement; a record missing for any other reason is ambiguous linkage and fails closed
+- before a direct trunk push, durably save one typed pending transaction containing the
+  exact GitHub repository, remote, trunk before and after the push, planned commit and
+  change IDs, review bookmarks, and PR numbers
+- never start a second direct-push transaction while one is unresolved; first reconcile
+  the saved transaction against the current remote trunk
+- if the saved commits did not reach trunk, restore a local trunk bookmark moved by the
+  interrupted attempt, clear the unapplied transaction, and replan from current state
+- if the saved commits reached trunk, require the current GitHub repository, remote, trunk,
+  PR heads, and review-branch targets to match the checkpoint before resuming; external
+  drift fails closed instead of closing or retiring a different review
+- checkpoint finalization progress together with the per-change tracking state so a rerun
+  can repeat remote mutations idempotently after any interruption
+- after every landed PR finalizes, atomically clear the pending transaction and retire the
+  direct-push landed tracking in one durable state replacement; an audit-log append is not
+  part of this commit point
+- keep the operation log observational. Missing, stale, or malformed trailing audit data
+  must not change whether a direct-push transaction is recoverable
 - close or mark landed only the PRs that correspond exactly to the landed changes,
   once the trunk transition succeeds
 - apply that PR finalization bottom-to-top through the landed changes so GitHub-side
