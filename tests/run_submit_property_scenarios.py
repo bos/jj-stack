@@ -71,7 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=_non_negative_int,
         help=(
             "Number of generated external-drift scenarios to run "
-            "(default: max(19, scenarios // 5); 19 covers the fixed corpus)."
+            "(default: max(20, scenarios // 5); 20 covers the fixed corpus)."
         ),
     )
     parser.add_argument(
@@ -151,7 +151,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     env["JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS"] = str(retry_scenarios)
     drift_scenarios = args.drift_scenarios
     if drift_scenarios is None:
-        drift_scenarios = max(19, args.scenarios // 5)
+        drift_scenarios = max(20, args.scenarios // 5)
     env["JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"] = str(drift_scenarios)
     if args.seed is not None:
         env["JJ_STACK_SUBMIT_PROPERTY_SEED"] = str(args.seed)

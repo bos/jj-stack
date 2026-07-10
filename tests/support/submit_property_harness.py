@@ -153,8 +153,9 @@ def replay_external_drift_scenario(
 
     if scenario.expected_outcome == "fail_closed":
         before_refs = _remote_refs(fake_repo.git_dir)
-        before_pull_requests = _pull_request_snapshots(fake_repo)
-        before_identity = _saved_review_identity(repo, baseline)
+        before_github = _github_snapshot(fake_repo)
+        before_bookmarks = _bookmark_snapshot(repo)
+        before_state = ReviewStateStore.for_repo(repo).load()
         fake_repo.pull_request_events.clear()
 
         exit_code = run_cli(("submit", submit_revset))
@@ -164,9 +165,10 @@ def replay_external_drift_scenario(
         assert exit_code in scenario.expected_exit_codes, (exit_code, scenario.trace)
         assert diagnosis in scenario.expected_diagnoses, (diagnosis, scenario.trace)
         assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
-        assert _pull_request_snapshots(fake_repo) == before_pull_requests, scenario.trace
+        assert _github_snapshot(fake_repo) == before_github, scenario.trace
         assert fake_repo.pull_request_events == [], scenario.trace
-        assert _saved_review_identity(repo, baseline) == before_identity, scenario.trace
+        assert _bookmark_snapshot(repo) == before_bookmarks, scenario.trace
+        assert ReviewStateStore.for_repo(repo).load() == before_state, scenario.trace
     else:
         stack = _discover_stack_for_labels(
             repo=repo,
@@ -1221,31 +1223,12 @@ def update_remote_ref(fake_repo: FakeGithubRepository, *, branch: str, target: s
     )
 
 
-def _saved_review_identity(
-    repo: Path,
-    baseline: dict[str, SubmittedBaseline],
-) -> dict[str, tuple[str | None, int | None, str | None]]:
-    """The stored review identity of every originally submitted change."""
-
-    state = ReviewStateStore.for_repo(repo).load()
-    identity: dict[str, tuple[str | None, int | None, str | None]] = {}
-    for label, submitted in baseline.items():
-        cached_change = state.changes.get(submitted.change_id)
-        if cached_change is None:
-            identity[label] = (None, None, None)
-            continue
-        identity[label] = (
-            cached_change.bookmark,
-            cached_change.pr_number,
-            cached_change.pr_url,
-        )
-    return identity
-
-
-def _pull_request_snapshots(
+def _github_snapshot(
     fake_repo: FakeGithubRepository,
-) -> dict[int, tuple[object, ...]]:
-    return {
+) -> tuple[object, ...]:
+    """All observable fake-GitHub state a fail-closed submit must preserve."""
+
+    pull_requests = {
         number: (
             pull_request.base_ref,
             pull_request.head_ref,
@@ -1260,6 +1243,32 @@ def _pull_request_snapshots(
         )
         for number, pull_request in fake_repo.pull_requests.items()
     }
+    comments = {
+        issue_number: tuple(
+            (comment.id, comment.issue_number, comment.body) for comment in issue_comments
+        )
+        for issue_number, issue_comments in fake_repo.issue_comments.items()
+    }
+    reviews = {
+        pull_number: tuple(
+            (review.id, review.reviewer_login, review.state) for review in pull_reviews
+        )
+        for pull_number, pull_reviews in fake_repo.pull_request_reviews.items()
+    }
+    return (
+        pull_requests,
+        comments,
+        reviews,
+        fake_repo.next_issue_comment_id,
+        fake_repo.next_pull_request_number,
+        fake_repo.next_pull_request_review_id,
+    )
+
+
+def _bookmark_snapshot(repo: Path) -> dict[str, object]:
+    """The complete local and remembered-remote bookmark view."""
+
+    return dict(JjClient(repo).list_bookmark_states())
 
 
 def _remote_head(remote_heads: dict[str, str], bookmark: str) -> str:
