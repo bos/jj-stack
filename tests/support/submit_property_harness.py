@@ -162,8 +162,8 @@ def replay_external_drift_scenario(
         diagnosis = _fail_closed_diagnosis(last_cli_error())
         discard_output()
 
-        assert exit_code in scenario.expected_exit_codes, (exit_code, scenario.trace)
-        assert diagnosis in scenario.expected_diagnoses, (diagnosis, scenario.trace)
+        failure = (exit_code, diagnosis)
+        assert failure in scenario.expected_failures, (failure, scenario.trace)
         assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
         assert _github_snapshot(fake_repo) == before_github, scenario.trace
         assert fake_repo.pull_request_events == [], scenario.trace

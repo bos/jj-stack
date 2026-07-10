@@ -204,8 +204,10 @@ older submitted change makes preflight fail. The diagnosis is the typed
 identity of the CLI's fail-closed error — a `DriftError` condition, an
 `unsupported_stack:<reason>`, or `conflicted_stack` — captured from the error the CLI
 hands its top-level printer, so a stop that fired for the wrong reason cannot pass on
-exit code alone. Success kinds (external trunk advance, an externally retargeted PR base,
-an external draft toggle) must converge on the full successful-submit contract.
+exit code alone. Each drift kind owns explicit allowed `(exit code, diagnosis)` pairs;
+composed scenarios union those pairs without accepting a code from one drift beside the
+diagnosis from another. Success kinds (external trunk advance, an externally retargeted
+PR base, an external draft toggle) must converge on the full successful-submit contract.
 
 Drift transitions stay faithful to the platform: deleting a remote review branch also
 closes its PR because GitHub does, and a replacement PR created outside the tool shares
