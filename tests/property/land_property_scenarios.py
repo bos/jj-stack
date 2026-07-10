@@ -3,24 +3,34 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from tests.integration.submit_command_helpers import configure_submit_environment, run_main
+from tests.integration.submit_command_helpers import (
+    configure_submit_environment,
+    patch_github_client_builders,
+    run_main,
+)
+from tests.support.fake_github import FakeGithubState, create_app
 from tests.support.integration_helpers import init_fake_github_repo_with_submitted_stack
 from tests.support.land_property_harness import (
     replay_land_drift_scenario,
+    replay_land_retry_scenario,
     replay_land_scenario,
 )
 from tests.support.land_property_scenarios import (
     LandDriftScenario,
+    LandRetryScenario,
     LandScenario,
     land_drift_scenarios_from_environment,
+    land_retry_scenarios_from_environment,
     land_scenarios_from_environment,
 )
 
 import jj_stack.cli as cli_module
 from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient, GithubClientError
 
 LAND_SCENARIOS = land_scenarios_from_environment()
 LAND_DRIFT_SCENARIOS = land_drift_scenarios_from_environment()
+LAND_RETRY_SCENARIOS = land_retry_scenarios_from_environment()
 
 
 @pytest.mark.parametrize(
@@ -87,6 +97,63 @@ def test_land_property_external_drift_matches_model(
         last_cli_error=lambda: last_error[0],
         read_output=capsys.readouterr,
         repo=repo,
+        run_cli=run_cli,
+        scenario=scenario,
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    LAND_RETRY_SCENARIOS,
+    ids=lambda scenario: scenario.name,
+)
+def test_land_property_interrupted_land_retry_converges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scenario: LandRetryScenario,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(
+        tmp_path, size=scenario.initial_size
+    )
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+    fault_pull_number = scenario.fault_pull_number
+
+    class FaultOnFinalizeLoadClient(GithubClient):
+        async def get_pull_request(self, *, pull_number):
+            if pull_number == fault_pull_number:
+                raise GithubClientError(
+                    "Simulated finalization failure", status_code=500
+                )
+            return await super().get_pull_request(pull_number=pull_number)
+
+    def install_fault() -> None:
+        patch_github_client_builders(
+            monkeypatch,
+            app=app,
+            fake_repo=fake_repo,
+            modules=("jj_stack.commands.land.command",),
+            client_type=FaultOnFinalizeLoadClient,
+        )
+
+    def restore_github() -> None:
+        patch_github_client_builders(
+            monkeypatch,
+            app=app,
+            fake_repo=fake_repo,
+            modules=("jj_stack.commands.land.command",),
+        )
+
+    def run_cli(args: tuple[str, ...]) -> int:
+        return run_main(repo, config_path, *args)
+
+    replay_land_retry_scenario(
+        fake_repo=fake_repo,
+        install_fault=install_fault,
+        read_output=capsys.readouterr,
+        repo=repo,
+        restore_github=restore_github,
         run_cli=run_cli,
         scenario=scenario,
     )

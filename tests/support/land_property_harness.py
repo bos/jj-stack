@@ -10,10 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from jj_stack.errors import EXIT_INCOMPLETE
+from jj_stack.errors import EXIT_GITHUB, EXIT_INCOMPLETE
 from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewState
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.state.journal import OPERATION_LOG_FILENAME, read_operation_log
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
@@ -22,6 +23,7 @@ from .land_property_scenarios import (
     INSERTED_LABEL,
     LandDriftScenario,
     LandEditOperation,
+    LandRetryScenario,
     LandScenario,
     filename_for_land_label,
     subject_for_land_label,
@@ -154,7 +156,7 @@ def replay_land_scenario(
                 change.change_id for change in remaining_tracked
             ),
             run_cli=run_cli,
-            scenario=scenario,
+            trace=scenario.trace,
         )
     else:
         _assert_merge_transport_result(
@@ -604,11 +606,11 @@ def _assert_list_reflects_landed_prefix(
     read_output: OutputReader,
     remaining_tracked_change_ids: tuple[str, ...],
     run_cli: CliRunner,
-    scenario: LandScenario,
+    trace: str,
 ) -> None:
     exit_code = run_cli(("list", "--json"))
     captured = read_output()
-    assert exit_code in (0, EXIT_INCOMPLETE), (scenario.trace, captured.out, captured.err)
+    assert exit_code in (0, EXIT_INCOMPLETE), (trace, captured.out, captured.err)
 
     payload = json.loads(captured.out)
     rows = payload.get("rows", ())
@@ -620,8 +622,8 @@ def _assert_list_reflects_landed_prefix(
     listed_change_ids.update(
         row["change_id"] for row in rows if row.get("type") == "orphan"
     )
-    assert set(landed_change_ids).isdisjoint(listed_change_ids), scenario.trace
-    assert set(remaining_tracked_change_ids) <= listed_change_ids, scenario.trace
+    assert set(landed_change_ids).isdisjoint(listed_change_ids), trace
+    assert set(remaining_tracked_change_ids) <= listed_change_ids, trace
 
 
 @dataclass(frozen=True, slots=True)
@@ -868,6 +870,122 @@ def _assert_boundaries_untouched(
             bookmark,
             trace,
         )
+
+
+def replay_land_retry_scenario(
+    *,
+    fake_repo: FakeGithubRepository,
+    install_fault: Callable[[], None],
+    read_output: OutputReader,
+    repo: Path,
+    restore_github: Callable[[], None],
+    run_cli: CliRunner,
+    scenario: LandRetryScenario,
+) -> None:
+    """Interrupt one direct-push land at a checkpoint, rerun, and assert convergence."""
+
+    labels_to_change_ids = _capture_initial_labels(
+        initial_labels=scenario.initial_labels,
+        repo=repo,
+        trace=scenario.trace,
+    )
+    stack = JjClient(repo).discover_review_stack()
+    current_commit_ids = {
+        revision.change_id: revision.commit_id for revision in stack.revisions
+    }
+    state = ReviewStateStore.for_repo(repo).load()
+    tracked: dict[str, _TrackedChange] = {}
+    for label in scenario.initial_labels:
+        cached = state.changes[labels_to_change_ids[label]]
+        assert cached.bookmark is not None and cached.pr_number is not None
+        tracked[label] = _TrackedChange(
+            bookmark=cached.bookmark,
+            change_id=labels_to_change_ids[label],
+            pull_number=cached.pr_number,
+        )
+    for label in scenario.landed_labels:
+        fake_repo.create_pull_request_review(
+            pull_number=tracked[label].pull_number,
+            reviewer_login=f"land-reviewer-{label}",
+            state="APPROVED",
+        )
+    landed = tuple(tracked[label] for label in scenario.landed_labels)
+    original_main = _remote_ref(fake_repo.git_dir, "main")
+    fake_repo.pull_request_events.clear()
+
+    if scenario.fault == "after_retire":
+        exit_code = run_cli(("land",))
+        captured = read_output()
+        assert exit_code == 0, (scenario.trace, captured.out, captured.err)
+        _drop_land_completed_marker(repo=repo, trace=scenario.trace)
+    else:
+        install_fault()
+        exit_code = run_cli(("land",))
+        captured = read_output()
+        assert exit_code == EXIT_GITHUB, (scenario.trace, captured.out, captured.err)
+        # The trunk push precedes finalization, so the interrupted run already
+        # moved trunk to the last landed commit.
+        expected_main = current_commit_ids[landed[-1].change_id]
+        assert _remote_ref(fake_repo.git_dir, "main") == expected_main, scenario.trace
+        restore_github()
+
+    rerun_exit_code = run_cli(("land",))
+    captured = read_output()
+    assert rerun_exit_code == 0, (scenario.trace, captured.out, captured.err)
+
+    remaining_tracked = tuple(
+        tracked[label]
+        for label in scenario.initial_labels[scenario.approved_prefix :]
+    )
+    assert_push_landing(
+        current_commit_ids=current_commit_ids,
+        fake_repo=fake_repo,
+        landed=landed,
+        original_main=original_main,
+        remaining_tracked=remaining_tracked,
+        repo=repo,
+        skip_cleanup=False,
+        state=ReviewStateStore.for_repo(repo).load(),
+        trace=scenario.trace,
+    )
+    # The event window spans both runs, so exactly-once closure proves the
+    # rerun finalized only what the interrupted run left unfinished.
+    landed_pull_numbers = {change.pull_number for change in landed}
+    assert_event_contract(
+        fake_repo=fake_repo,
+        landed_pull_numbers=landed_pull_numbers,
+        trace=scenario.trace,
+        untouched_pull_numbers={change.pull_number for change in tracked.values()}
+        - landed_pull_numbers,
+    )
+    land_events = tuple(
+        event
+        for event in read_operation_log(resolve_state_path(repo).parent)
+        if event.operation == "land"
+    )
+    assert land_events[-1].event == "completed", scenario.trace
+    _assert_list_reflects_landed_prefix(
+        landed_change_ids=tuple(change.change_id for change in landed),
+        read_output=read_output,
+        remaining_tracked_change_ids=tuple(
+            change.change_id for change in remaining_tracked
+        ),
+        run_cli=run_cli,
+        trace=scenario.trace,
+    )
+
+
+def _drop_land_completed_marker(*, repo: Path, trace: str) -> None:
+    """Reproduce a crash between tracking retirement and the completed marker."""
+
+    log_path = resolve_state_path(repo).parent / OPERATION_LOG_FILENAME
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    dropped_event = json.loads(lines[-1])
+    assert (dropped_event["operation"], dropped_event["event"]) == ("land", "completed"), (
+        trace,
+        dropped_event,
+    )
+    log_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
 
 
 def _remote_ref(remote: Path, bookmark: str) -> str:

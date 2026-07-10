@@ -91,6 +91,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--land-retry-scenarios",
+        type=_non_negative_int,
+        help=(
+            "Number of generated interrupted-land retry scenarios to run "
+            "(default: max(3, scenarios // 40); 3 covers the fixed corpus)."
+        ),
+    )
+    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -148,6 +156,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if land_drift_scenarios is None:
         land_drift_scenarios = max(6, args.scenarios // 40)
     env["JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS"] = str(land_drift_scenarios)
+    land_retry_scenarios = args.land_retry_scenarios
+    if land_retry_scenarios is None:
+        land_retry_scenarios = max(3, args.scenarios // 40)
+    env["JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS"] = str(land_retry_scenarios)
 
     venv_python = REPO_ROOT / ".venv" / (
         Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")

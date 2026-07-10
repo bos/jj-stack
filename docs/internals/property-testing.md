@@ -285,6 +285,22 @@ mid-stack change stays visible because descendants' bookmarks keep it reachable,
 an unreferenced head is abandoned by the fetch. Every drift scenario ends by running
 `view` on the default selection and requiring a report exit rather than a crash.
 
+## Land Retry Harness
+
+Land retry scenarios interrupt one direct-push land at a checkpoint, then rerun it and
+require convergence rather than rollback. The fault family covers a failed load of the
+first landed PR after the trunk push, a failure on the second landed PR after the first
+finalized, and a dropped completed marker after tracking retirement — the crash window
+between retiring the landed records and sealing the operation log.
+
+The oracle spans both runs with one event window: each landed PR transitions to closed
+exactly once in total, so the rerun provably finalizes only what the interrupted run
+left unfinished. The rerun must end with the standard direct-push contract, a completed
+land operation as the journal's last land event, and `list --json` free of the landed
+prefix. Merge-transport interruption is deliberately absent here: GitHub has already
+moved trunk for the accepted prefix, so its recovery path is the sync/cleanup handoff
+chain, not a naive rerun.
+
 ## Interrupted-Submit Retry Harness
 
 Boundary-drift scenarios assert that unsafe external state blocks mutation. Retry

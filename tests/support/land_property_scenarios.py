@@ -726,6 +726,157 @@ def _random_land_drift_scenario(
     )
 
 
+LandRetryFault = Literal["after_push_trunk", "after_retire", "mid_finalize"]
+
+
+@dataclass(frozen=True, slots=True)
+class LandRetryScenario:
+    """One interrupted direct-push land followed by a converging rerun.
+
+    `after_push_trunk` fails loading the first landed PR after the trunk push;
+    `mid_finalize` fails on the second landed PR after the first finalized;
+    `after_retire` drops the completed marker after a fully successful run,
+    reproducing a crash between tracking retirement and the marker write.
+    """
+
+    name: str
+    initial_size: int
+    approved_prefix: int
+    fault: LandRetryFault
+
+    def __post_init__(self) -> None:
+        if self.initial_size < 1:
+            raise ValueError("land retry scenarios require a submitted change")
+        if not 1 <= self.approved_prefix <= self.initial_size:
+            raise ValueError("the retried land must have a landable prefix")
+        if self.fault == "mid_finalize" and self.approved_prefix < 2:
+            raise ValueError("mid_finalize interrupts the second landed PR")
+
+    @property
+    def initial_labels(self) -> tuple[str, ...]:
+        return tuple(initial_land_label(index) for index in range(1, self.initial_size + 1))
+
+    @property
+    def landed_labels(self) -> tuple[str, ...]:
+        return self.initial_labels[: self.approved_prefix]
+
+    @property
+    def fault_pull_number(self) -> int | None:
+        if self.fault == "after_push_trunk":
+            return 1
+        if self.fault == "mid_finalize":
+            return 2
+        return None
+
+    @property
+    def trace(self) -> str:
+        return f"fault:{self.fault},size:{self.initial_size},prefix:{self.approved_prefix}"
+
+    @property
+    def canonical_key(self) -> tuple[object, ...]:
+        return (self.fault, self.initial_size, self.approved_prefix)
+
+    def __str__(self) -> str:
+        return f"{self.name}: {self.trace}"
+
+
+def land_retry_scenarios_from_environment() -> tuple[LandRetryScenario, ...]:
+    """Return deterministic land retry scenarios for the pytest adapter."""
+
+    count = int(
+        os.environ.get(
+            "JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS",
+            str(DEFAULT_LAND_RETRY_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_STACK_LAND_PROPERTY_SEED",
+            str(DEFAULT_LAND_SCENARIO_SEED),
+        )
+    )
+    return generate_land_retry_scenarios(count=count, seed=seed)
+
+
+def generate_land_retry_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[LandRetryScenario, ...]:
+    if count < 1:
+        return ()
+
+    scenarios: list[LandRetryScenario] = []
+    seen: set[tuple[object, ...]] = set()
+    for scenario in _fixed_land_retry_scenarios():
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+
+    rng = random.Random(seed)
+    attempts = 0
+    max_attempts = max(count * MAX_LAND_ATTEMPTS_MULTIPLIER, 1)
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        scenario = _random_land_retry_scenario(
+            rng=rng, name=f"land-retry-random-{attempts:03d}"
+        )
+        if scenario.canonical_key in seen:
+            continue
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+
+    return tuple(scenarios)
+
+
+def _fixed_land_retry_scenarios() -> tuple[LandRetryScenario, ...]:
+    return (
+        LandRetryScenario(
+            name="retry-after-trunk-push-converges",
+            initial_size=3,
+            approved_prefix=2,
+            fault="after_push_trunk",
+        ),
+        LandRetryScenario(
+            name="retry-mid-finalize-converges-without-double-close",
+            initial_size=3,
+            approved_prefix=2,
+            fault="mid_finalize",
+        ),
+        LandRetryScenario(
+            name="retry-after-tracking-retire-converges",
+            initial_size=2,
+            approved_prefix=1,
+            fault="after_retire",
+        ),
+    )
+
+
+DEFAULT_LAND_RETRY_SCENARIO_COUNT = len(_fixed_land_retry_scenarios())
+
+
+def _random_land_retry_scenario(
+    *,
+    rng: random.Random,
+    name: str,
+) -> LandRetryScenario:
+    faults: tuple[LandRetryFault, ...] = (
+        "after_push_trunk",
+        "after_retire",
+        "mid_finalize",
+    )
+    fault = rng.choice(faults)
+    initial_size = rng.randint(2, 3)
+    minimum_prefix = 2 if fault == "mid_finalize" else 1
+    return LandRetryScenario(
+        name=name,
+        initial_size=initial_size,
+        approved_prefix=rng.randint(minimum_prefix, initial_size),
+        fault=fault,
+    )
+
+
 def _random_land_edits(
     *,
     rng: random.Random,
