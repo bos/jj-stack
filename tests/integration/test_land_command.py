@@ -632,6 +632,21 @@ def test_land_replans_after_interrupted_push_when_landable_prefix_changes(
     assert len(land_begins) == 2
     assert "predecessor_operation_ids" not in land_begins[-1].data["resolved_scope"]
 
+    fake_repo.pull_requests[2].state = "open"
+
+    third_exit_code = run_main(repo, config_path, "land")
+    third_run = capsys.readouterr()
+
+    assert third_exit_code == 0, (third_run.out, third_run.err)
+    assert "push main to feature 2" in _squash_whitespace(third_run.out)
+
+    fourth_exit_code = run_main(repo, config_path, "land")
+    fourth_run = capsys.readouterr()
+
+    assert fourth_exit_code == 1
+    assert "No changes on the selected stack are ready to land." in fourth_run.out
+    assert "saved review identity" not in fourth_run.err
+
 
 def test_land_completed_replan_supersedes_matching_pre_push_failure(
     tmp_path: Path,

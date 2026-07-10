@@ -1400,7 +1400,8 @@ Recovery guidance stays case-specific:
 - when an ordinary direct-push replan exactly matches an earlier pre-push attempt's
   repository, remote, trunk, ordered stack, commit IDs, and planned revisions, durably
   link that attempt as a predecessor and supersede it only after the replan completes;
-  a changed plan stays independent
+  a changed plan stays independent, but later durable land completions retire the older
+  pre-push attempt once they collectively prove that every exact logged revision was finalized
 - while finalizing, keep temporary landed tracking so an interrupted direct-push
   land can resume exactly; after the landed prefix fully finalizes, retire the
   direct-push landed changes from review tracking so they do not reappear as

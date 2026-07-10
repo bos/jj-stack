@@ -532,7 +532,63 @@ def _finished_land_operation_ids(
         raw_operation_ids = event.data.get("superseded_operation_ids", ())
         if isinstance(raw_operation_ids, list):
             finished_operation_ids.update(str(operation_id) for operation_id in raw_operation_ids)
+    finished_operation_ids.update(
+        _collectively_finalized_pre_push_operation_ids(events=events)
+    )
     return frozenset(finished_operation_ids)
+
+
+def _collectively_finalized_pre_push_operation_ids(
+    *,
+    events: tuple[JournalEvent, ...],
+) -> frozenset[str]:
+    """Find pre-push attempts whose exact revisions all finished in later lands."""
+
+    begin_events = {
+        event.operation_id: (position, event)
+        for position, event in enumerate(events)
+        if event.operation == "land" and event.event == "begin"
+    }
+    latest_finalization_by_revision: dict[tuple[object, ...], int] = {}
+    for position, event in enumerate(events):
+        if event.operation != "land" or event.event != "completed":
+            continue
+        begin_entry = begin_events.get(event.operation_id)
+        if begin_entry is None:
+            continue
+        raw_completed_change_ids = event.data.get("completed_change_ids", ())
+        if not isinstance(raw_completed_change_ids, list):
+            continue
+        completed_change_ids = {str(change_id) for change_id in raw_completed_change_ids}
+        for revision in _logged_land_revisions(begin_entry[1]):
+            if revision.change_id not in completed_change_ids:
+                continue
+            latest_finalization_by_revision[
+                _land_revision_scope_identity(revision)
+            ] = position
+
+    applied_push_operation_ids = {
+        event.operation_id
+        for event in events
+        if event.operation == "land"
+        and event.event == "mutation_applied"
+        and event.data.get("mutation") == "push_trunk"
+    }
+    collectively_finalized: set[str] = set()
+    for operation_id, (begin_position, begin_event) in begin_events.items():
+        scope = begin_event.data.get("resolved_scope", {})
+        if not scope.get("push_trunk") or operation_id in applied_push_operation_ids:
+            continue
+        planned_revision_identities = tuple(
+            _land_revision_scope_identity(revision)
+            for revision in _logged_land_revisions(begin_event)
+        )
+        if planned_revision_identities and all(
+            latest_finalization_by_revision.get(identity, -1) > begin_position
+            for identity in planned_revision_identities
+        ):
+            collectively_finalized.add(operation_id)
+    return frozenset(collectively_finalized)
 
 
 def _land_operation_predecessor_ids(
