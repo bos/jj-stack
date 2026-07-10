@@ -540,11 +540,11 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
     assert "onto surviving change first-su" in result.actions[0].message
 
 
-def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
-    class MutationRejectingJjClient:
-        def __getattr__(self, name: str):
-            raise AssertionError(f"cleanup must not call {name}")
-
+def _run_merged_ancestor_retirement(
+    *,
+    client: JjClient,
+    remote_state: RemoteBookmarkState | None,
+) -> tuple[CleanupAction, ...]:
     cached_change = CachedChange(
         bookmark="review/merged-aaaaaaaa",
         last_submitted_commit_id="merged-commit",
@@ -555,10 +555,7 @@ def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
         bookmark="review/merged-aaaaaaaa",
         cached_change=cached_change,
         change_id="merged-change",
-        remote_state=RemoteBookmarkState(
-            remote="origin",
-            targets=("remote-left", "remote-right"),
-        ),
+        remote_state=remote_state,
         subject="merged feature",
     )
     prepared_status = cast(
@@ -586,7 +583,7 @@ def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
 
     _retire_merged_ancestors(
         blocked=False,
-        client=cast(JjClient, MutationRejectingJjClient()),
+        client=client,
         journal=OperationJournal.disabled(),
         merged_revisions=(cast(ReviewStatusRevision, merged_revision),),
         prepared_rebase=PreparedRebase(
@@ -597,11 +594,51 @@ def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
         prepared_status=prepared_status,
         record_action=actions.append,
     )
+    return tuple(actions)
+
+
+def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
+    class MutationRejectingJjClient:
+        def __getattr__(self, name: str):
+            raise AssertionError(f"cleanup must not call {name}")
+
+    actions = _run_merged_ancestor_retirement(
+        client=cast(JjClient, MutationRejectingJjClient()),
+        remote_state=RemoteBookmarkState(
+            remote="origin",
+            targets=("remote-left", "remote-right"),
+        ),
+    )
 
     assert len(actions) == 1
     assert actions[0].kind == "abandon"
     assert actions[0].status == "skipped"
     assert "remote bookmark review/merged-aaaaaaaa is conflicted" in actions[0].message
+
+
+def test_retire_merged_ancestor_preserves_conflicted_local_bookmark() -> None:
+    class ConflictedBookmarkJjClient:
+        def get_bookmark_state(self, bookmark: str) -> BookmarkState:
+            return BookmarkState(
+                name=bookmark,
+                local_targets=("local-left", "local-right"),
+            )
+
+        def __getattr__(self, name: str):
+            raise AssertionError(f"cleanup must not call {name}")
+
+    actions = _run_merged_ancestor_retirement(
+        client=cast(JjClient, ConflictedBookmarkJjClient()),
+        remote_state=RemoteBookmarkState(
+            remote="origin",
+            targets=("merged-commit",),
+        ),
+    )
+
+    assert len(actions) == 1
+    assert actions[0].kind == "abandon"
+    assert actions[0].status == "skipped"
+    assert "local bookmark review/merged-aaaaaaaa is conflicted" in actions[0].message
 
 
 def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned() -> None:

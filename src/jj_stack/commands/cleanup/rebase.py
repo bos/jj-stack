@@ -431,6 +431,19 @@ def _retire_merged_ancestors(
                 )
             )
             continue
+        local_bookmark_state = client.get_bookmark_state(revision.bookmark)
+        if len(local_bookmark_state.local_targets) > 1:
+            record_action(
+                CleanupAction(
+                    kind="abandon",
+                    status="skipped",
+                    body=(
+                        t"preserve merged {_revision_label_template(revision)}: local "
+                        t"bookmark {ui.bookmark(revision.bookmark)} is conflicted"
+                    ),
+                )
+            )
+            continue
         if classify_review_status_revision(revision).local == "divergent":
             record_action(
                 CleanupAction(
@@ -464,7 +477,7 @@ def _retire_merged_ancestors(
         )
         if (
             not cleanup_allowed
-            and client.get_bookmark_state(revision.bookmark).local_target is not None
+            and local_bookmark_state.local_target is not None
         ):
             record_action(
                 CleanupAction(

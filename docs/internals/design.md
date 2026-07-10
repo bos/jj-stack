@@ -1236,18 +1236,18 @@ The algorithm:
    stop and require manual `jj rebase`.
 7. Once the rebases succeed, retire each merged change whose local copy is provably
    inert: the local commit is exactly the last submitted (reviewed) commit, only one
-   visible revision carries the change ID, the commit is mutable, any observed remote
-   review bookmark is unambiguous, and bookmark policy allows touching any bookmark still
-   pointing at it. Retirement abandons the local copy, removes its saved tracking, and
-   deletes its managed remote review branch.
+   visible revision carries the change ID, the commit is mutable, its local bookmark and any
+   observed remote review bookmark are unambiguous, and bookmark policy allows touching any
+   bookmark still pointing at it. Retirement abandons the local copy, removes its saved
+   tracking, and deletes its managed remote review branch.
    Copies that fail the proof — rewritten since submit, divergent, pinned immutable by
    a fetched review branch, or guarded by an unmanaged bookmark — stay in place with
    an action explaining why. Retirement deletes any verified managed remote branch
    first, abandons the inert local copy, and removes saved tracking last, so a failed
    remote deletion keeps the exact identity needed to retry. Plain `cleanup` retires
-   immutable leftovers once their tracking goes stale. A conflicted remote review bookmark
-   preserves the local copy and tracking until its identity is resolved. Change-id headers
-   that newer
+   immutable leftovers once their tracking goes stale. A conflicted local or remote review
+   bookmark preserves the local copy and tracking until its identity is resolved. Change-id
+   headers that newer
    `jj` transfers through Git are
    deliberately not part of the proof: forge squash and rebase merges drop them, so
    the saved last-submitted commit is the reliable evidence.
