@@ -319,7 +319,8 @@ that already happened.
 Recovery requires every persisted review branch to remain present at its exact commit, including
 branches for PRs that GitHub already finalized. GitHub PR payloads carry the head commit OID as
 well as the branch label; the executor rechecks both on every PR load immediately before it
-retargets, closes, or merges that PR.
+retargets, closes, or merges that PR. After a close request, the reloaded PR must also be non-open
+before finalization progress or landed tracking is committed.
 
 Every state save that contains a pending direct-land transaction is automatically durable,
 including saves made by commands that merely preserve the transaction while updating other

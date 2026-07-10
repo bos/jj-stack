@@ -810,6 +810,48 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     assert landed_change_ids[1] not in finished_state.changes
 
 
+def test_land_preserves_pending_transaction_when_closed_pr_reloads_open(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    stack = JjClient(repo).discover_review_stack()
+    state_store = ReviewStateStore.for_repo(repo)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class ReloadOpenAfterCloseClient(GithubClient):
+        async def get_pull_request(self, *, pull_number):
+            pull_request = await super().get_pull_request(pull_number=pull_number)
+            if pull_number != 1:
+                return pull_request
+            return pull_request.model_copy(
+                update={"merged_at": None, "state": "open"}
+            )
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+        client_type=ReloadOpenAfterCloseClient,
+    )
+
+    exit_code = run_main(repo, config_path, "land")
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_FAILURE
+    assert "still reports it open after the close request" in captured.err
+    pending = state_store.load().pending_direct_land
+    assert pending is not None
+    assert pending.phase == "trunk_moved"
+    assert pending.finalized_change_ids == ()
+    for revision in stack.revisions:
+        assert revision.change_id in state_store.load().changes
+
+
 def test_land_recovers_before_inspecting_an_unrelated_selected_merge(
     tmp_path: Path,
     monkeypatch,

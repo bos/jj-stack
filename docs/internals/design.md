@@ -1415,7 +1415,8 @@ Recovery guidance stays case-specific:
   is checked again on each finalization load; external drift fails closed instead of closing or
   retiring a different review
 - checkpoint finalization progress together with the per-change tracking state so a rerun
-  can repeat remote mutations idempotently after any interruption
+  can repeat remote mutations idempotently after any interruption. A requested PR close only
+  counts as finalized after a reload confirms that the PR is no longer open
 - after every landed PR finalizes, atomically clear the pending transaction and retire the
   direct-push landed tracking in one durable state replacement; an audit-log append is not
   part of this commit point

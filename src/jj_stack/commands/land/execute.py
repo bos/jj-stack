@@ -821,6 +821,12 @@ async def _finalize_landed_pull_request(
             landed_revision=landed_revision,
             pull_request=pull_request,
         )
+        if pull_request.state == "open":
+            raise CliError(
+                t"Cannot finalize PR #{pull_request.number} because GitHub still "
+                t"reports it open after the close request.",
+                hint=t"Inspect the PR on GitHub and rerun {ui.cmd('land')}.",
+            )
     await _delete_landed_stack_comments(
         cached_change=cached_change,
         github_client=github_client,
