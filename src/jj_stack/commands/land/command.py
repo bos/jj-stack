@@ -312,8 +312,11 @@ async def _stream_land_async(
             )
             bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
                 bookmark_states=bookmark_states,
-                prefix=plan.bookmark_prefix
-                or prepared_land.context.config.bookmark_prefix,
+                prefix=(
+                    prepared_land.context.config.bookmark_prefix
+                    if plan.bookmark_prefix is None
+                    else plan.bookmark_prefix
+                ),
                 cleanup_bookmarks=(
                     prepared_land.cleanup_bookmarks
                     if plan.cleanup_bookmarks is None
@@ -591,6 +594,8 @@ async def _ensure_pending_direct_land_review_identities(
             revision.bookmark,
             BookmarkState(name=revision.bookmark),
         ).remote_target(remote.name)
+        if remote_bookmark is not None and len(remote_bookmark.targets) > 1:
+            raise _pending_direct_land_identity_error(revision.change_id)
         remote_target = None if remote_bookmark is None else remote_bookmark.target
         if remote_target is not None and remote_target != revision.commit_id:
             raise _pending_direct_land_identity_error(revision.change_id)
