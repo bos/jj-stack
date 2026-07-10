@@ -42,7 +42,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.errors import CliError, UsageError
+from jj_stack.errors import CliError, DriftError, UsageError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import (
@@ -573,14 +573,15 @@ def _stack_not_on_trunk_error(
     *,
     prepared_status: PreparedStatus,
     status_result: StatusResult,
-) -> CliError:
+) -> DriftError:
     message = t"Selected stack is not based on the current {ui.revset('trunk()')}."
     if any(
         classify_review_status_revision(revision).pr_lifecycle == "merged"
         for revision in status_result.revisions
     ):
-        return CliError(
+        return DriftError(
             message,
+            condition="merged_ancestor_on_trunk",
             hint=(
                 t"Some lower changes from this stack already landed. Run "
                 t"{ui.cmd('cleanup --rebase')} {ui.revset(status_result.selected_revset)} "
@@ -590,8 +591,9 @@ def _stack_not_on_trunk_error(
 
     bottom_change_id = prepared_status.prepared.status_revisions[0].revision.change_id
     rebase_command = f"jj rebase -s {short_change_id(bottom_change_id)} -d 'trunk()'"
-    return CliError(
+    return DriftError(
         message,
+        condition="stack_not_on_trunk",
         hint=(
             t"No change in the selected stack has landed yet. Move the whole stack onto "
             t"{ui.revset('trunk()')} with {ui.cmd(rebase_command)} before retrying."

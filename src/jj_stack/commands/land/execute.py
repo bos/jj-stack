@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, DriftError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.push_rejections import (
     classify_protected_branch_rejection,
@@ -78,9 +78,10 @@ def ensure_trunk_branch_matches_selected_trunk(
             hint="Resolve it before landing.",
         )
     if review_status.remote_branch_matches_commit is not True:
-        raise CliError(
+        raise DriftError(
             t"Remote trunk bookmark {ui.bookmark(f'{trunk_branch}@{remote_name}')} moved since "
             t"the selected path was resolved.",
+            condition="remote_trunk_moved",
             hint="Fetch, rebase if needed, and retry.",
         )
 

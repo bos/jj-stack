@@ -290,6 +290,9 @@ In both prefix-stop and fetch-abandon outcomes, the stopping change keeps its du
 bookmark, PR, and submitted-topology identity plus its exact GitHub PR state; `land`
 owns only the prefix it actually landed and leaves that recovery evidence for explicit
 follow-up. Managed stack-comment IDs may clear as the landed prefix is finalized.
+Fail-closed outcomes also assert the typed condition carried by the CLI error, so a
+plain stack fork caused by advanced trunk cannot pass by stopping on the
+merged-ancestor check or vice versa.
 
 ## Land Retry Harness
 

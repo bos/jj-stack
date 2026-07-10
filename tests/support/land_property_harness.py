@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE
+from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE, DriftError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewState
 from jj_stack.state.journal import OPERATION_LOG_FILENAME, read_operation_log
@@ -713,7 +713,9 @@ def replay_land_drift_scenario(
     )
 
     if scenario.outcome == "fail_closed":
-        assert last_cli_error() is not None, scenario.trace
+        error = last_cli_error()
+        assert isinstance(error, DriftError), (error, scenario.trace)
+        assert error.condition == scenario.expected_diagnosis, (error.condition, scenario.trace)
         assert fake_repo.pull_request_events == [], scenario.trace
         assert boundary_snapshot is not None
         _assert_boundaries_untouched(

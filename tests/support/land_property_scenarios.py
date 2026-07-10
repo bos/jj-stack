@@ -519,6 +519,7 @@ LandDriftKind = Literal[
     "trunk_advanced",
 ]
 LandDriftOutcome = Literal["fail_closed", "fetch_abandons", "prefix_stop"]
+LandDriftDiagnosis = Literal["merged_ancestor_on_trunk", "stack_not_on_trunk"]
 
 _FAIL_CLOSED_LAND_DRIFT_KINDS = frozenset({"pr_merged_externally", "trunk_advanced"})
 
@@ -591,6 +592,14 @@ class LandDriftScenario:
         if self.outcome == "fail_closed" or not self.expected_landed_labels:
             return 1
         return 0
+
+    @property
+    def expected_diagnosis(self) -> LandDriftDiagnosis | None:
+        if self.kind == "trunk_advanced":
+            return "stack_not_on_trunk"
+        if self.kind == "pr_merged_externally":
+            return "merged_ancestor_on_trunk"
+        return None
 
     @property
     def trace(self) -> str:
