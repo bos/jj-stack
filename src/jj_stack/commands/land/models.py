@@ -98,6 +98,7 @@ class LandPlan:
     push_trunk: bool
     trunk_branch: str
     via: LandVia
+    predecessor_operation_ids: tuple[str, ...] = ()
     repair_local_trunk_commit_id: str | None = None
     resumed_operation_id: str | None = None
 

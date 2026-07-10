@@ -1397,6 +1397,10 @@ Recovery guidance stays case-specific:
   completion path; durably link the recovery run to the interrupted run, and supersede
   the interrupted run only after recovery finalization completes; if the commits did not
   reach trunk, replan normally
+- when an ordinary direct-push replan exactly matches an earlier pre-push attempt's
+  repository, remote, trunk, ordered stack, commit IDs, and planned revisions, durably
+  link that attempt as a predecessor and supersede it only after the replan completes;
+  a changed plan stays independent
 - while finalizing, keep temporary landed tracking so an interrupted direct-push
   land can resume exactly; after the landed prefix fully finalizes, retire the
   direct-push landed changes from review tracking so they do not reappear as

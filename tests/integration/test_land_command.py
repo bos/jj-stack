@@ -624,6 +624,63 @@ def test_land_replans_after_interrupted_push_when_landable_prefix_changes(
     assert "simulated trunk push failure" in first_run.err
     assert "Resuming interrupted" not in second_run.out
     assert read_remote_ref(fake_repo.git_dir, "main") == first_landable_commit_id
+    land_begins = tuple(
+        event
+        for event in read_operation_log(resolve_state_path(repo).parent)
+        if event.operation == "land" and event.event == "begin"
+    )
+    assert len(land_begins) == 2
+    assert "predecessor_operation_ids" not in land_begins[-1].data["resolved_scope"]
+
+
+def test_land_completed_replan_supersedes_matching_pre_push_failure(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    original_push_bookmarks = JjClient.push_bookmarks
+    push_calls = 0
+
+    def fail_first_push_bookmarks(self, *, remote: str, bookmarks) -> None:
+        nonlocal push_calls
+        push_calls += 1
+        if push_calls == 1:
+            raise JjCommandError("simulated trunk push failure")
+        original_push_bookmarks(self, remote=remote, bookmarks=bookmarks)
+
+    monkeypatch.setattr(JjClient, "push_bookmarks", fail_first_push_bookmarks)
+
+    assert run_main(repo, config_path, "land") == 1
+    first_run = capsys.readouterr()
+    assert "simulated trunk push failure" in first_run.err
+
+    assert run_main(repo, config_path, "land") == 0
+    second_run = capsys.readouterr()
+    assert "push main to feature 2" in _squash_whitespace(second_run.out)
+
+    journal_events = read_operation_log(resolve_state_path(repo).parent)
+    land_begins = tuple(
+        event
+        for event in journal_events
+        if event.operation == "land" and event.event == "begin"
+    )
+    assert len(land_begins) == 2
+    assert land_begins[-1].data["resolved_scope"]["predecessor_operation_ids"] == [
+        land_begins[0].operation_id
+    ]
+    assert journal_events[-1].data["superseded_operation_ids"] == [
+        land_begins[0].operation_id
+    ]
+
+    third_exit_code = run_main(repo, config_path, "land")
+    third_run = capsys.readouterr()
+
+    assert third_exit_code == 1
+    assert "No changes on the selected stack are ready to land." in third_run.out
+    assert "saved review identity" not in third_run.err
 
 
 def test_land_finishes_after_trunk_push_interrupted_before_finalization(
@@ -772,7 +829,9 @@ def test_land_recovers_when_trunk_push_succeeds_but_acknowledgement_is_lost(
     )
     assert journal_events[-1].event == "completed"
     assert (
-        journal_events[-1].data["superseded_operation_id"] == direct_push_begin.operation_id
+        journal_events[-1].data["superseded_operation_ids"] == [
+            direct_push_begin.operation_id
+        ]
     )
 
     third_exit_code = run_main(repo, config_path, "land")
@@ -816,7 +875,7 @@ def test_land_recovery_resumes_when_its_completed_marker_is_missing(
     lines = log_path.read_text(encoding="utf-8").splitlines()
     dropped_event = json.loads(lines[-1])
     assert dropped_event["event"] == "completed"
-    assert dropped_event["data"].get("superseded_operation_id") is not None
+    assert dropped_event["data"].get("superseded_operation_ids")
     log_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
     fake_repo.pull_request_events.clear()
 
@@ -828,7 +887,7 @@ def test_land_recovery_resumes_when_its_completed_marker_is_missing(
     assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
     journal_events = read_operation_log(resolve_state_path(repo).parent)
     assert journal_events[-1].event == "completed"
-    assert journal_events[-1].data.get("superseded_operation_id") is not None
+    assert journal_events[-1].data.get("superseded_operation_ids")
 
 
 def test_land_resumes_when_tracking_retired_but_completed_marker_missing(

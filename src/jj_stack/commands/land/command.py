@@ -37,6 +37,7 @@ pull requests on GitHub.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import jj_stack.console as console
@@ -356,6 +357,26 @@ async def _stream_land_async(
             trunk_branch=trunk_branch,
             via=prepared_land.via,
         )
+        if plan.push_trunk:
+            events = read_operation_log(prepared.state_store.state_dir)
+            plan = replace(
+                plan,
+                predecessor_operation_ids=_matching_incomplete_land_replans(
+                    events=events,
+                    github_repository=github_client.repository.full_name,
+                    ordered_change_ids=tuple(
+                        revision.revision.change_id
+                        for revision in prepared_status.prepared.status_revisions
+                    ),
+                    ordered_commit_ids=tuple(
+                        revision.revision.commit_id
+                        for revision in prepared_status.prepared.status_revisions
+                    ),
+                    planned_revisions=plan.planned_revisions,
+                    remote_name=remote.name,
+                    trunk_branch=trunk_branch,
+                ),
+            )
         return await finish_plan(plan)
 
 
@@ -458,6 +479,10 @@ def _land_completion_plan_from_log(
         blocked=False,
         boundary_action=None,
         planned_revisions=planned_revisions,
+        predecessor_operation_ids=_land_operation_predecessor_ids(
+            events=events,
+            operation_id=begin_event.operation_id,
+        ),
         push_trunk=False,
         repair_local_trunk_commit_id=remote_trunk_commit_id,
         resumed_operation_id=begin_event.operation_id,
@@ -471,18 +496,7 @@ def _latest_incomplete_direct_push_land(
     events: tuple[JournalEvent, ...],
     selected_head_change_id: str,
 ) -> JournalEvent | None:
-    finished_operation_ids = {
-        event.operation_id
-        for event in events
-        if event.operation == "land" and event.event == "completed"
-    }
-    finished_operation_ids.update(
-        str(event.data["superseded_operation_id"])
-        for event in events
-        if event.operation == "land"
-        and event.event == "completed"
-        and event.data.get("superseded_operation_id") is not None
-    )
+    finished_operation_ids = _finished_land_operation_ids(events)
     for event in reversed(events):
         if event.operation != "land" or event.event != "begin":
             continue
@@ -495,6 +509,126 @@ def _latest_incomplete_direct_push_land(
         if selected_head_change_id in ordered_change_ids:
             return event
     return None
+
+
+def _finished_land_operation_ids(
+    events: tuple[JournalEvent, ...],
+) -> frozenset[str]:
+    finished_operation_ids = {
+        event.operation_id
+        for event in events
+        if event.operation == "land" and event.event == "completed"
+    }
+    finished_operation_ids.update(
+        str(event.data["superseded_operation_id"])
+        for event in events
+        if event.operation == "land"
+        and event.event == "completed"
+        and event.data.get("superseded_operation_id") is not None
+    )
+    for event in events:
+        if event.operation != "land" or event.event != "completed":
+            continue
+        raw_operation_ids = event.data.get("superseded_operation_ids", ())
+        if isinstance(raw_operation_ids, list):
+            finished_operation_ids.update(str(operation_id) for operation_id in raw_operation_ids)
+    return frozenset(finished_operation_ids)
+
+
+def _land_operation_predecessor_ids(
+    *,
+    events: tuple[JournalEvent, ...],
+    operation_id: str,
+) -> tuple[str, ...]:
+    """Return every earlier operation linked to one interrupted land."""
+
+    begin_events = {
+        event.operation_id: event
+        for event in events
+        if event.operation == "land" and event.event == "begin"
+    }
+    discovered: set[str] = set()
+    pending = [operation_id]
+    while pending:
+        current_operation_id = pending.pop()
+        begin_event = begin_events.get(current_operation_id)
+        if begin_event is None:
+            continue
+        scope = begin_event.data.get("resolved_scope", {})
+        linked_operation_ids: list[str] = []
+        resumed_operation_id = scope.get("resumed_operation_id")
+        if isinstance(resumed_operation_id, str):
+            linked_operation_ids.append(resumed_operation_id)
+        raw_predecessors = scope.get("predecessor_operation_ids", ())
+        if isinstance(raw_predecessors, list):
+            linked_operation_ids.extend(str(predecessor) for predecessor in raw_predecessors)
+        for linked_operation_id in linked_operation_ids:
+            if linked_operation_id == operation_id or linked_operation_id in discovered:
+                continue
+            discovered.add(linked_operation_id)
+            pending.append(linked_operation_id)
+    return tuple(
+        event.operation_id
+        for event in events
+        if event.operation_id in discovered and event.event == "begin"
+    )
+
+
+def _matching_incomplete_land_replans(
+    *,
+    events: tuple[JournalEvent, ...],
+    github_repository: str,
+    ordered_change_ids: tuple[str, ...],
+    ordered_commit_ids: tuple[str, ...],
+    planned_revisions: tuple[LandRevision, ...],
+    remote_name: str,
+    trunk_branch: str,
+) -> tuple[str, ...]:
+    """Find pre-push failures that an identical direct-push replan can finish."""
+
+    finished_operation_ids = _finished_land_operation_ids(events)
+    planned_revision_identities = tuple(
+        _land_revision_scope_identity(revision) for revision in planned_revisions
+    )
+    matching_operation_ids: list[str] = []
+    for event in events:
+        if event.operation != "land" or event.event != "begin":
+            continue
+        if event.operation_id in finished_operation_ids:
+            continue
+        if _land_log_records_applied_trunk_push(
+            events=events,
+            operation_id=event.operation_id,
+        ):
+            continue
+        scope = event.data.get("resolved_scope", {})
+        if (
+            scope.get("push_trunk") is not True
+            or scope.get("github_repository") != github_repository
+            or scope.get("remote_name") != remote_name
+            or scope.get("trunk_branch") != trunk_branch
+            or tuple(scope.get("ordered_change_ids", ())) != ordered_change_ids
+            or tuple(scope.get("ordered_commit_ids", ())) != ordered_commit_ids
+        ):
+            continue
+        logged_revision_identities = tuple(
+            _land_revision_scope_identity(revision)
+            for revision in _logged_land_revisions(event)
+        )
+        if logged_revision_identities == planned_revision_identities:
+            matching_operation_ids.append(event.operation_id)
+    return tuple(matching_operation_ids)
+
+
+def _land_revision_scope_identity(revision: LandRevision) -> tuple[object, ...]:
+    return (
+        revision.bookmark,
+        revision.bookmark_managed,
+        revision.change_id,
+        revision.commit_id,
+        revision.pull_request_number,
+        revision.subject,
+    )
 
 
 def _land_log_records_applied_trunk_push(

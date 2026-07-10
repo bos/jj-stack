@@ -168,6 +168,10 @@ async def execute_land_plan(
     }
     if execution_plan.resumed_operation_id is not None:
         resolved_scope["resumed_operation_id"] = execution_plan.resumed_operation_id
+    if execution_plan.predecessor_operation_ids:
+        resolved_scope["predecessor_operation_ids"] = (
+            execution_plan.predecessor_operation_ids
+        )
 
     journal = OperationJournal.begin(
         state_dir,
@@ -231,8 +235,20 @@ async def execute_land_plan(
             )
         )
     completion_data: dict[str, object] = {"completed_change_ids": finalized_change_ids}
-    if not finalize_blocked and execution_plan.resumed_operation_id is not None:
-        completion_data["superseded_operation_id"] = execution_plan.resumed_operation_id
+    superseded_operation_ids = tuple(
+        dict.fromkeys(
+            (
+                *execution_plan.predecessor_operation_ids,
+                *(
+                    (execution_plan.resumed_operation_id,)
+                    if execution_plan.resumed_operation_id is not None
+                    else ()
+                ),
+            )
+        )
+    )
+    if not finalize_blocked and superseded_operation_ids:
+        completion_data["superseded_operation_ids"] = superseded_operation_ids
     journal.append("completed", completion_data, durable=journal_must_be_durable)
     if finalize_blocked:
         return land_result(
