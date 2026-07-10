@@ -1236,10 +1236,12 @@ The algorithm:
    stop and require manual `jj rebase`.
 7. Once the rebases succeed, retire each merged change whose local copy is provably
    inert: the local commit is exactly the last submitted (reviewed) commit, only one
-   visible revision carries the change ID, the commit is mutable, its local bookmark and any
-   observed remote review bookmark are unambiguous, and bookmark policy allows touching any
-   bookmark still pointing at it. Retirement abandons the local copy, removes its saved
-   tracking, and deletes its managed remote review branch.
+   visible revision carries the change ID, the commit is mutable, its local bookmarks and any
+   observed remote review bookmark are unambiguous, and bookmark policy allows touching every
+   local bookmark still pointing at it. Retirement abandons the local copy, removes its saved
+   tracking, and deletes its managed remote review branch. Local bookmark inspection uses one
+   current repo-wide snapshot after rebasing, because abandoning a commit affects every local
+   bookmark that targets it, not only its tracked review bookmark.
    Copies that fail the proof — rewritten since submit, divergent, pinned immutable by
    a fetched review branch, or guarded by an unmanaged bookmark — stay in place with
    an action explaining why. Retirement deletes any verified managed remote branch

@@ -599,6 +599,9 @@ def _run_merged_ancestor_retirement(
 
 def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
     class MutationRejectingJjClient:
+        def list_bookmark_states(self) -> dict[str, BookmarkState]:
+            return {}
+
         def __getattr__(self, name: str):
             raise AssertionError(f"cleanup must not call {name}")
 
@@ -618,11 +621,13 @@ def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
 
 def test_retire_merged_ancestor_preserves_conflicted_local_bookmark() -> None:
     class ConflictedBookmarkJjClient:
-        def get_bookmark_state(self, bookmark: str) -> BookmarkState:
-            return BookmarkState(
-                name=bookmark,
-                local_targets=("local-left", "local-right"),
-            )
+        def list_bookmark_states(self) -> dict[str, BookmarkState]:
+            return {
+                "review/merged-aaaaaaaa": BookmarkState(
+                    name="review/merged-aaaaaaaa",
+                    local_targets=("merged-commit", "local-right"),
+                )
+            }
 
         def __getattr__(self, name: str):
             raise AssertionError(f"cleanup must not call {name}")

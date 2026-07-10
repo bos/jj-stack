@@ -331,10 +331,11 @@ appends may still be durable for diagnostic quality, but an absent completed mar
 trailing record cannot reactivate or block a completed land.
 The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
 to the last submitted commit, single visible revision, mutable, unambiguous local and remote
-bookmarks, and bookmark policy allowing — by deleting its verified managed review branch before
-abandoning the local copy and removing tracking. Bookmark conflicts and remote deletion failures
-therefore retain both local and saved identity for retry; failed removability proofs are preserved
-with an explanatory action.
+bookmarks, and bookmark policy allowing every local bookmark that points at the commit. It loads
+one current bookmark snapshot after rebasing, then deletes the verified managed review branch
+before abandoning the local copy and removing tracking. Bookmark conflicts, guarded user
+bookmarks, and remote deletion failures therefore retain both local and saved identity for retry;
+failed removability proofs are preserved with an explanatory action.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.

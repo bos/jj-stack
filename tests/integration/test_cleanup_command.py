@@ -205,7 +205,7 @@ def test_cleanup_restack_rebases_survivor_and_retires_landed_merged_ancestor(
     landed_state = state_store.load()
     assert bottom_change_id not in landed_state.changes
     assert top_change_id in landed_state.changes
-    assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
+    assert f"refs/heads/{bottom_bookmark}" not in remote_refs(fake_repo.git_dir)
     journal_events = read_operation_log(resolve_state_path(repo).parent)
     assert any(
         event.operation == "cleanup-rebase"
@@ -214,6 +214,47 @@ def test_cleanup_restack_rebases_survivor_and_retires_landed_merged_ancestor(
         and event.data["after"] is None
         for event in journal_events
     )
+
+
+def test_cleanup_restack_preserves_merged_ancestor_with_user_bookmark(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    bottom_change_id = stack.revisions[0].change_id
+    top_change_id = stack.revisions[1].change_id
+    trunk_commit_id = stack.trunk.commit_id
+    state_store = ReviewStateStore.for_repo(repo)
+    bottom_bookmark = state_store.load().changes[bottom_change_id].bookmark
+    assert bottom_bookmark is not None
+    run_command(
+        ["jj", "bookmark", "create", "user/preserve", "-r", bottom_change_id],
+        repo,
+    )
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
+
+    exit_code = run_main(repo, config_path, "cleanup", "--rebase", top_change_id)
+    captured = capsys.readouterr()
+    rendered = " ".join(captured.out.split())
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "preserve merged feature 1" in rendered
+    assert "bookmark user/preserve is not managed by jj-stack" in rendered
+    assert JjClient(repo).resolve_revision(top_change_id).only_parent_commit_id() == (
+        trunk_commit_id
+    )
+    assert JjClient(repo).resolve_revision(bottom_change_id).change_id == bottom_change_id
+    bookmark_states = JjClient(repo).list_bookmark_states(
+        ("user/preserve", bottom_bookmark)
+    )
+    assert bookmark_states["user/preserve"].local_target is not None
+    assert bookmark_states[bottom_bookmark].local_target is not None
+    assert bottom_change_id in state_store.load().changes
+    assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
 
 
 def test_cleanup_restack_keeps_identity_when_remote_branch_delete_fails(

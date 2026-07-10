@@ -404,6 +404,7 @@ def _retire_merged_ancestors(
         for prepared_revision in prepared.status_revisions
     }
     config = prepared_rebase.context.config
+    bookmark_states = client.list_bookmark_states()
     retired: list[tuple[ReviewStatusRevision, bool]] = []
 
     for revision in merged_revisions:
@@ -431,15 +432,30 @@ def _retire_merged_ancestors(
                 )
             )
             continue
-        local_bookmark_state = client.get_bookmark_state(revision.bookmark)
-        if len(local_bookmark_state.local_targets) > 1:
+        pointing_bookmarks = tuple(
+            bookmark_state
+            for bookmark_state in sorted(
+                bookmark_states.values(),
+                key=lambda candidate: candidate.name,
+            )
+            if local_revision.commit_id in bookmark_state.local_targets
+        )
+        conflicted_bookmark = next(
+            (
+                bookmark_state
+                for bookmark_state in pointing_bookmarks
+                if len(bookmark_state.local_targets) > 1
+            ),
+            None,
+        )
+        if conflicted_bookmark is not None:
             record_action(
                 CleanupAction(
                     kind="abandon",
                     status="skipped",
                     body=(
                         t"preserve merged {_revision_label_template(revision)}: local "
-                        t"bookmark {ui.bookmark(revision.bookmark)} is conflicted"
+                        t"bookmark {ui.bookmark(conflicted_bookmark.name)} is conflicted"
                     ),
                 )
             )
@@ -475,17 +491,31 @@ def _retire_merged_ancestors(
             cleanup_user_bookmarks=config.cleanup_user_bookmarks,
             prefix=config.bookmark_prefix,
         )
-        if (
-            not cleanup_allowed
-            and local_bookmark_state.local_target is not None
-        ):
+        guarded_bookmark = next(
+            (
+                bookmark_state
+                for bookmark_state in pointing_bookmarks
+                if not bookmark_cleanup_allowed(
+                    bookmark=bookmark_state.name,
+                    bookmark_managed=(
+                        cached_change.manages_bookmark
+                        if bookmark_state.name == revision.bookmark
+                        else False
+                    ),
+                    cleanup_user_bookmarks=config.cleanup_user_bookmarks,
+                    prefix=config.bookmark_prefix,
+                )
+            ),
+            None,
+        )
+        if guarded_bookmark is not None:
             record_action(
                 CleanupAction(
                     kind="abandon",
                     status="skipped",
                     body=(
                         t"preserve merged {_revision_label_template(revision)}: bookmark "
-                        t"{ui.bookmark(revision.bookmark)} is not managed by jj-stack "
+                        t"{ui.bookmark(guarded_bookmark.name)} is not managed by jj-stack "
                         t"(set {ui.cmd('jj-stack.cleanup_user_bookmarks=true')} to "
                         t"include it)"
                     ),
