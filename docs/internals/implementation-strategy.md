@@ -316,10 +316,12 @@ selection and stack/status preparation start only after an unapplied checkpoint 
 An unrelated unsupported local stack therefore cannot prevent completion of a trunk transition
 that already happened.
 
-When a durable write creates or replaces correctness-critical state, it fsyncs the file and
-state directory on platforms that support those operations. Audit appends may still be durable
-for diagnostic quality, but an absent completed marker or malformed trailing record cannot
-reactivate or block a completed land.
+Every state save that contains a pending direct-land transaction is automatically durable,
+including saves made by commands that merely preserve the transaction while updating other
+tracking. A durable replacement fsyncs the file and state directory, suppressing only platform
+errors that specifically mean directory fsync is unsupported; other failures surface to the
+caller. Audit appends may still be durable for diagnostic quality, but an absent completed
+marker or malformed trailing record cannot reactivate or block a completed land.
 The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
 to the last submitted commit, single visible revision, mutable, bookmark policy allowing —
 by deleting its verified managed review branch before abandoning the local copy and removing

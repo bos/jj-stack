@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import tempfile
@@ -14,6 +15,11 @@ from jj_stack.models.review_state import ReviewState
 
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
+_UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = {
+    errno.EINVAL,
+    errno.ENOTSUP,
+    errno.EOPNOTSUPP,
+}
 
 
 class ReviewStateError(CliError):
@@ -58,6 +64,7 @@ class ReviewStateStore:
     def save(self, state: ReviewState, *, durable: bool = False) -> None:
         """Persist the supplied jj-stack data."""
 
+        durable = durable or state.pending_direct_land is not None
         rendered = state.model_dump_json(exclude_none=True, indent=2) + "\n"
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,11 +125,14 @@ def _fsync_directory(path: Path) -> None:
 
     try:
         fd = os.open(path, os.O_RDONLY)
-    except OSError:
-        return
+    except OSError as error:
+        if error.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            return
+        raise
     try:
         os.fsync(fd)
-    except OSError:
-        pass
+    except OSError as error:
+        if error.errno not in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            raise
     finally:
         os.close(fd)
