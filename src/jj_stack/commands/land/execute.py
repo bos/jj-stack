@@ -784,6 +784,11 @@ async def _finalize_landed_pull_request(
                 t"{ui.bookmark(trunk_branch)}"
             ) from error
         pull_request = pull_request.normalize_state()
+        _ensure_landed_pull_request_head(
+            github_client=github_client,
+            landed_revision=landed_revision,
+            pull_request=pull_request,
+        )
     if pull_request.state == "open":
         try:
             await github_client.close_pull_request(
@@ -811,6 +816,11 @@ async def _finalize_landed_pull_request(
                 ) from error
             pull_request = recovered_pull_request
         pull_request = pull_request.normalize_state()
+        _ensure_landed_pull_request_head(
+            github_client=github_client,
+            landed_revision=landed_revision,
+            pull_request=pull_request,
+        )
     await _delete_landed_stack_comments(
         cached_change=cached_change,
         github_client=github_client,
@@ -860,6 +870,11 @@ async def _merge_landed_pull_request(
                 t"{ui.bookmark(trunk_branch)}"
             ) from error
         pull_request = pull_request.normalize_state()
+        _ensure_landed_pull_request_head(
+            github_client=github_client,
+            landed_revision=landed_revision,
+            pull_request=pull_request,
+        )
     if pull_request.state == "open":
         try:
             await github_client.merge_pull_request(
@@ -888,6 +903,11 @@ async def _merge_landed_pull_request(
                 t"Could not reload PR #{pull_request.number} after merging"
             ) from error
         pull_request = pull_request.normalize_state()
+        _ensure_landed_pull_request_head(
+            github_client=github_client,
+            landed_revision=landed_revision,
+            pull_request=pull_request,
+        )
     if pull_request.state != "merged":
         return None, LandAction(
             kind="boundary",
@@ -916,12 +936,14 @@ def _ensure_landed_pull_request_head(
     if (
         pull_request.head.ref == landed_revision.bookmark
         and pull_request.head.label == expected_head_label
+        and pull_request.head.sha == landed_revision.commit_id
     ):
         return
     raise CliError(
-        t"Cannot finalize PR #{pull_request.number} because its head is "
-        t"{ui.bookmark(pull_request.head.label or pull_request.head.ref)}, not "
-        t"{ui.bookmark(expected_head_label)}.",
+        t"Cannot finalize PR #{pull_request.number} because its head no longer matches "
+        t"{ui.bookmark(expected_head_label)} for "
+        t"{ui.change_id(landed_revision.change_id)} at commit "
+        t"{ui.commit_id(landed_revision.commit_id)}.",
         hint=t"Run {ui.cmd('view --fetch')} and inspect the review before retrying.",
     )
 

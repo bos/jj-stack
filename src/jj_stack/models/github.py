@@ -30,6 +30,7 @@ class GithubBranchRef(BaseModel):
 
     label: str | None = None
     ref: str
+    sha: str | None = None
 
 
 class GithubPullRequest(BaseModel):
@@ -67,6 +68,7 @@ class GithubPullRequest(BaseModel):
             "head": {
                 "label": _graphql_head_label(value),
                 "ref": head_ref,
+                "sha": value.get("headRefOid"),
             },
             "html_url": value.get("url"),
             "merged_at": value.get("mergedAt"),
@@ -150,4 +152,3 @@ def _normalize_graphql_review_decision(value: object) -> str | None:
     if normalized == "CHANGES_REQUESTED":
         return "changes_requested"
     return None
-

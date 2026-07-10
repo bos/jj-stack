@@ -316,6 +316,11 @@ selection and stack/status preparation start only after an unapplied checkpoint 
 An unrelated unsupported local stack therefore cannot prevent completion of a trunk transition
 that already happened.
 
+Recovery requires every persisted review branch to remain present at its exact commit, including
+branches for PRs that GitHub already finalized. GitHub PR payloads carry the head commit OID as
+well as the branch label; the executor rechecks both on every PR load immediately before it
+retargets, closes, or merges that PR.
+
 Every state save that contains a pending direct-land transaction is automatically durable,
 including saves made by commands that merely preserve the transaction while updating other
 tracking. A durable replacement fsyncs the file and state directory, suppressing only platform

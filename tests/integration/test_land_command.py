@@ -978,6 +978,126 @@ def test_land_recovery_fails_closed_when_review_branch_moves_after_trunk(
     assert state_store.load().pending_direct_land is not None
 
 
+def test_land_recovery_requires_finalized_review_branch_to_still_exist(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    stack = JjClient(repo).discover_review_stack()
+    state_store = ReviewStateStore.for_repo(repo)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnSecondFinalizeClient(GithubClient):
+        async def get_pull_request(self, *, pull_number):
+            if pull_number == 2:
+                raise GithubClientError("Simulated finalization failure", status_code=500)
+            return await super().get_pull_request(pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+        client_type=FailOnSecondFinalizeClient,
+    )
+    assert run_main(repo, config_path, "land") == EXIT_GITHUB
+    capsys.readouterr()
+
+    pending = state_store.load().pending_direct_land
+    assert pending is not None
+    first_revision = pending.planned_revisions[0]
+    assert first_revision.change_id in pending.finalized_change_ids
+    assert fake_repo.pull_requests[1].state == "closed"
+    JjClient(repo).delete_remote_bookmarks(
+        remote="origin",
+        deletions=((first_revision.bookmark, first_revision.commit_id),),
+        fetch=False,
+    )
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+    )
+    exit_code = run_main(repo, config_path, "land")
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_FAILURE
+    assert "review identity" in captured.err
+    assert state_store.load().pending_direct_land is not None
+    assert stack.revisions[0].change_id in state_store.load().changes
+
+
+def test_land_revalidates_pr_head_commit_immediately_before_finalizing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    state_store = ReviewStateStore.for_repo(repo)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnFinalizeLoadClient(GithubClient):
+        async def get_pull_request(self, *, pull_number):
+            if pull_number == 1:
+                raise GithubClientError("Simulated finalization failure", status_code=500)
+            return await super().get_pull_request(pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+        client_type=FailOnFinalizeLoadClient,
+    )
+    assert run_main(repo, config_path, "land") == EXIT_GITHUB
+    capsys.readouterr()
+
+    pending = state_store.load().pending_direct_land
+    assert pending is not None
+    review_bookmark = pending.planned_revisions[0].bookmark
+    run_command(["jj", "new", pending.original_trunk_commit_id], repo)
+    commit_file(repo, "racing review head", "racing-review-head.txt")
+    drift_commit_id = JjClient(repo).resolve_revision("@-").commit_id
+    JjClient(repo).set_bookmark("drift-target", drift_commit_id)
+    JjClient(repo).push_bookmarks(remote="origin", bookmarks=("drift-target",))
+
+    class MoveHeadBeforeFinalizeClient(GithubClient):
+        first_pull_request_loads = 0
+
+        async def get_pull_request(self, *, pull_number):
+            if pull_number == 1:
+                self.first_pull_request_loads += 1
+                if self.first_pull_request_loads == 2:
+                    update_remote_ref(
+                        fake_repo,
+                        branch=review_bookmark,
+                        target=drift_commit_id,
+                    )
+            return await super().get_pull_request(pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+        client_type=MoveHeadBeforeFinalizeClient,
+    )
+    exit_code = run_main(repo, config_path, "land")
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_FAILURE
+    assert "head no longer matches" in captured.err
+    assert state_store.load().pending_direct_land is not None
+    assert fake_repo.ref_target(review_bookmark) == drift_commit_id
+
+
 def test_land_recovers_when_trunk_push_succeeds_but_acknowledgement_is_lost(
     tmp_path: Path,
     monkeypatch,

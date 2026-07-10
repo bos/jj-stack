@@ -1407,8 +1407,10 @@ Recovery guidance stays case-specific:
 - if the saved commits did not reach trunk, restore a local trunk bookmark moved by the
   interrupted attempt, clear the unapplied transaction, and replan from current state
 - if the saved commits reached trunk, require the current GitHub repository, remote, trunk,
-  PR heads, and review-branch targets to match the checkpoint before resuming; external
-  drift fails closed instead of closing or retiring a different review
+  PR head branch and commit, and every review-branch target to match the checkpoint before
+  resuming. A review branch must still exist even after its PR finalized, and the PR head commit
+  is checked again on each finalization load; external drift fails closed instead of closing or
+  retiring a different review
 - checkpoint finalization progress together with the per-change tracking state so a rerun
   can repeat remote mutations idempotently after any interruption
 - after every landed PR finalizes, atomically clear the pending transaction and retire the

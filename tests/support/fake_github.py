@@ -22,6 +22,7 @@ class FakeGithubPullRequest:
     body: str
     head_label: str
     head_ref: str
+    head_sha: str
     is_draft: bool
     merged_at: str | None
     node_id: str
@@ -38,11 +39,16 @@ class FakeGithubPullRequest:
         repository: FakeGithubRepository,
         web_origin: str,
     ) -> dict[str, object]:
+        self._refresh_head_sha(repository)
         return {
             "base": {"label": f"{repository.full_name}:{self.base_ref}", "ref": self.base_ref},
             "body": self.body,
             "draft": self.is_draft,
-            "head": {"label": self.head_label, "ref": self.head_ref},
+            "head": {
+                "label": self.head_label,
+                "ref": self.head_ref,
+                "sha": self.head_sha,
+            },
             "html_url": f"{web_origin}/{repository.full_name}/pull/{self.number}",
             "merged_at": self.merged_at,
             "node_id": self.node_id,
@@ -57,10 +63,12 @@ class FakeGithubPullRequest:
         repository: FakeGithubRepository,
         web_origin: str,
     ) -> dict[str, object]:
+        self._refresh_head_sha(repository)
         return {
             "baseRefName": self.base_ref,
             "body": self.body,
             "headRefName": self.head_ref,
+            "headRefOid": self.head_sha,
             "headRepositoryOwner": {"login": repository.owner},
             "id": self.node_id,
             "isDraft": self.is_draft,
@@ -70,6 +78,10 @@ class FakeGithubPullRequest:
             "title": self.title,
             "url": f"{web_origin}/{repository.full_name}/pull/{self.number}",
         }
+
+    def _refresh_head_sha(self, repository: FakeGithubRepository) -> None:
+        if current_head := repository.ref_target(self.head_ref):
+            self.head_sha = current_head
 
 
 @dataclass(slots=True)
@@ -200,11 +212,19 @@ class FakeGithubRepository:
     ) -> FakeGithubPullRequest:
         number = self.next_pull_request_number
         self.next_pull_request_number += 1
+        # Tests may construct a historical PR after deleting or without creating
+        # its source branch. Real GitHub still retains the PR's last head OID.
+        head_sha = self.ref_target(head_ref) or self.ref_target(base_ref)
+        if head_sha is None:
+            raise AssertionError(
+                f"Fake GitHub branches {head_ref!r} and {base_ref!r} do not exist."
+            )
         pull_request = FakeGithubPullRequest(
             base_ref=base_ref,
             body=body,
             head_label=f"{self.owner}:{head_ref}",
             head_ref=head_ref,
+            head_sha=head_sha,
             is_draft=draft,
             merged_at=None,
             node_id=f"PR_kwDO_fake_{number}",

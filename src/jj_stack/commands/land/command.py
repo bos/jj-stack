@@ -689,6 +689,7 @@ async def _ensure_pending_direct_land_review_identities(
         if (
             pull_request.head.ref != revision.bookmark
             or pull_request.head.label != expected_head_label
+            or pull_request.head.sha != revision.commit_id
         ):
             raise _pending_direct_land_identity_error(revision.change_id)
         remote_bookmark = bookmark_states.get(
@@ -698,9 +699,7 @@ async def _ensure_pending_direct_land_review_identities(
         if remote_bookmark is not None and len(remote_bookmark.targets) > 1:
             raise _pending_direct_land_identity_error(revision.change_id)
         remote_target = None if remote_bookmark is None else remote_bookmark.target
-        if remote_target is not None and remote_target != revision.commit_id:
-            raise _pending_direct_land_identity_error(revision.change_id)
-        if pull_request.state == "open" and remote_target != revision.commit_id:
+        if remote_target != revision.commit_id:
             raise _pending_direct_land_identity_error(revision.change_id)
         if (
             revision.change_id in finalized_change_ids

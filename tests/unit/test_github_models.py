@@ -7,6 +7,7 @@ def _graphql_pull_request_payload(review_decision: object) -> dict[str, object]:
     return {
         "baseRefName": "main",
         "headRefName": "review/feature-1",
+        "headRefOid": "head-commit-id",
         "headRepositoryOwner": {"login": "octo-org"},
         "number": 1,
         "reviewDecision": review_decision,
@@ -24,5 +25,6 @@ def test_graphql_review_decision_normalizes_known_states_and_drops_unknown() -> 
     unknown = GithubPullRequest.model_validate(_graphql_pull_request_payload("REVIEW_REQUIRED"))
 
     assert approved.review_decision == "approved"
+    assert approved.head.sha == "head-commit-id"
     assert changes.review_decision == "changes_requested"
     assert unknown.review_decision is None

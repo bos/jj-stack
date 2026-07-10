@@ -384,6 +384,7 @@ def test_finalize_landed_pull_request_treats_close_422_as_already_merged() -> No
                     "head": GithubBranchRef(
                         label="octo-org:review/feature-1-aaaaaaaa",
                         ref="review/feature-1-aaaaaaaa",
+                        sha="commit-1",
                     )
                 }
             )
@@ -438,6 +439,7 @@ def test_finalize_landed_pull_request_does_not_recover_close_422_as_closed() -> 
                     "head": GithubBranchRef(
                         label="octo-org:review/feature-1-aaaaaaaa",
                         ref="review/feature-1-aaaaaaaa",
+                        sha="commit-1",
                     )
                 }
             )

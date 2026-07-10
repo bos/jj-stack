@@ -872,6 +872,7 @@ def _pull_request_fields_fragment() -> str:
           body
           baseRefName
           headRefName
+          headRefOid
           headRepositoryOwner {
             login
           }
