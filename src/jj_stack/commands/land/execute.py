@@ -211,6 +211,9 @@ async def execute_land_plan(
                 github_host=github_client.repository.host,
                 github_repository=github_client.repository.full_name,
                 operation_id=journal.operation_id,
+                original_local_trunk_commit_id=(
+                    prepared.client.get_bookmark_state(trunk_branch).local_target
+                ),
                 original_trunk_commit_id=prepared.stack.trunk.commit_id,
                 planned_revisions=tuple(
                     PendingDirectLandRevision(

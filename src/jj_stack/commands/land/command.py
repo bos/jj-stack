@@ -642,11 +642,14 @@ def _clear_unapplied_pending_direct_land(
     prepared = prepared_land.prepared_status.prepared
     local_trunk = prepared.client.get_bookmark_state(pending.trunk_branch)
     if local_trunk.local_target == pending.target_trunk_commit_id:
-        prepared.client.set_bookmark(
-            pending.trunk_branch,
-            pending.original_trunk_commit_id,
-            allow_backwards=True,
-        )
+        if pending.original_local_trunk_commit_id is None:
+            prepared.client.forget_bookmarks((pending.trunk_branch,))
+        else:
+            prepared.client.set_bookmark(
+                pending.trunk_branch,
+                pending.original_local_trunk_commit_id,
+                allow_backwards=True,
+            )
 
     state = prepared.state_store.load()
     if state.pending_direct_land != pending:

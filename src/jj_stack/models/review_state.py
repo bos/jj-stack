@@ -36,6 +36,7 @@ class PendingDirectLand(BaseModel):
     github_host: str
     github_repository: str
     operation_id: str
+    original_local_trunk_commit_id: str | None
     original_trunk_commit_id: str
     phase: PendingDirectLandPhase = "prepared"
     planned_revisions: tuple[PendingDirectLandRevision, ...]

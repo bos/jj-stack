@@ -69,6 +69,7 @@ def test_pending_direct_land_rejects_changed_remote_identity() -> None:
         github_host="github.test",
         github_repository="octo-org/stacked-review",
         operation_id="operation-1",
+        original_local_trunk_commit_id="trunk-1",
         original_trunk_commit_id="trunk-1",
         planned_revisions=(
             PendingDirectLandRevision(

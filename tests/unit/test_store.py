@@ -55,6 +55,7 @@ def test_review_state_store_round_trips_pending_direct_land(tmp_path: Path) -> N
         github_host="github.test",
         github_repository="octo-org/stacked-review",
         operation_id="operation-1",
+        original_local_trunk_commit_id="trunk-1",
         original_trunk_commit_id="trunk-1",
         planned_revisions=(
             PendingDirectLandRevision(
