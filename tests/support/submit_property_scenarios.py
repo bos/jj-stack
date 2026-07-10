@@ -10,6 +10,8 @@ from typing import Literal
 from .stack_edit_scenarios import (
     StackEditOperation,
     apply_stack_edit,
+    move_after_candidates,
+    move_before_candidates,
 )
 
 DriftKind = Literal[
@@ -1552,9 +1554,9 @@ def _available_operations(
         move_label = rng.choice(movable_to_top)
         operations.append(StackEditOperation(kind="move_to_top", label=move_label))
 
-        move_after_candidates = _move_after_candidates(model.live_labels)
-        if move_after_candidates:
-            label, target_label = rng.choice(move_after_candidates)
+        after_candidates = move_after_candidates(model.live_labels)
+        if after_candidates:
+            label, target_label = rng.choice(after_candidates)
             operations.append(
                 StackEditOperation(
                     kind="move_after",
@@ -1563,9 +1565,9 @@ def _available_operations(
                 )
             )
 
-        move_before_candidates = _move_before_candidates(model.live_labels)
-        if move_before_candidates:
-            label, target_label = rng.choice(move_before_candidates)
+        before_candidates = move_before_candidates(model.live_labels)
+        if before_candidates:
+            label, target_label = rng.choice(before_candidates)
             operations.append(
                 StackEditOperation(
                     kind="move_before",
@@ -1625,26 +1627,6 @@ def _mark_rewritten_initials(
     for label in labels:
         if label.startswith("c") and int(label[1:]) <= initial_size:
             target.add(label)
-
-
-def _move_after_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
-    candidates: list[tuple[str, str]] = []
-    for index, label in enumerate(live_labels):
-        for target_index, target_label in enumerate(live_labels):
-            if target_label == label or index == target_index + 1:
-                continue
-            candidates.append((label, target_label))
-    return tuple(candidates)
-
-
-def _move_before_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
-    candidates: list[tuple[str, str]] = []
-    for index, label in enumerate(live_labels):
-        for target_index, target_label in enumerate(live_labels):
-            if target_label == label or index + 1 == target_index:
-                continue
-            candidates.append((label, target_label))
-    return tuple(candidates)
 
 
 def _label_sort_key(label: str) -> tuple[str, int]:

@@ -49,6 +49,28 @@ class StackEditEffect:
     rewritten_labels: frozenset[str]
 
 
+def move_after_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    """Return moves that change the order instead of naming the current parent."""
+
+    return tuple(
+        (label, target_label)
+        for index, label in enumerate(live_labels)
+        for target_index, target_label in enumerate(live_labels)
+        if target_label != label and index != target_index + 1
+    )
+
+
+def move_before_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    """Return moves that change the order instead of naming the current child."""
+
+    return tuple(
+        (label, target_label)
+        for index, label in enumerate(live_labels)
+        for target_index, target_label in enumerate(live_labels)
+        if target_label != label and index + 1 != target_index
+    )
+
+
 def apply_stack_edit(
     live_labels: tuple[str, ...],
     operation: StackEditOperation,

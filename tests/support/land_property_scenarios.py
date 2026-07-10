@@ -25,6 +25,8 @@ from .stack_edit_scenarios import (
     StackEditOperation as LandEditOperation,
     StackEditOperationKind as LandEditKind,
     apply_stack_edit,
+    move_after_candidates,
+    move_before_candidates,
 )
 
 LandVia = Literal["push", "merge"]
@@ -1112,9 +1114,11 @@ def _random_land_edits(
             operation = LandEditOperation(kind=kind, label=rng.choice(live))
         elif kind == "move_to_top":
             operation = LandEditOperation(kind=kind, label=rng.choice(live[:-1]))
-        elif kind in {"move_after", "move_before"}:
-            label = rng.choice(live)
-            target = rng.choice([candidate for candidate in live if candidate != label])
+        elif kind == "move_after":
+            label, target = rng.choice(move_after_candidates(tuple(live)))
+            operation = LandEditOperation(kind=kind, label=label, target_label=target)
+        elif kind == "move_before":
+            label, target = rng.choice(move_before_candidates(tuple(live)))
             operation = LandEditOperation(kind=kind, label=label, target_label=target)
         else:
             operation = LandEditOperation(kind=kind, label=rng.choice(live[1:]))
