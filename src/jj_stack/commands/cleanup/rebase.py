@@ -418,6 +418,19 @@ def _retire_merged_ancestors(
             # leave it in place. A merged change rewritten since its submit
             # already blocked the whole pass in the pre-actions.
             continue
+        remote_state = revision.remote_state
+        if remote_state is not None and len(remote_state.targets) > 1:
+            record_action(
+                CleanupAction(
+                    kind="abandon",
+                    status="skipped",
+                    body=(
+                        t"preserve merged {_revision_label_template(revision)}: remote "
+                        t"bookmark {ui.bookmark(revision.bookmark)} is conflicted"
+                    ),
+                )
+            )
+            continue
         if classify_review_status_revision(revision).local == "divergent":
             record_action(
                 CleanupAction(

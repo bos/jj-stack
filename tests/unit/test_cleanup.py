@@ -15,7 +15,7 @@ from jj_stack.commands.cleanup.command import (
     _plan_remote_branch_cleanup,
     _run_cleanup_async,
 )
-from jj_stack.commands.cleanup.rebase import _stream_rebase
+from jj_stack.commands.cleanup.rebase import _retire_merged_ancestors, _stream_rebase
 from jj_stack.commands.cleanup.shared import (
     CleanupAction,
     PreparedCleanup,
@@ -37,7 +37,7 @@ from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkSt
 from jj_stack.models.github import GithubIssueComment
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.review.change_status import classify_review_change_without_pull_request
-from jj_stack.review.status import PreparedStatus
+from jj_stack.review.status import PreparedStatus, ReviewStatusRevision
 from jj_stack.state.journal import OperationJournal
 from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
@@ -538,6 +538,70 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
     assert result.actions[0].status == "blocked"
     assert "cannot automatically rebase second survivor" in result.actions[0].message
     assert "onto surviving change first-su" in result.actions[0].message
+
+
+def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
+    class MutationRejectingJjClient:
+        def __getattr__(self, name: str):
+            raise AssertionError(f"cleanup must not call {name}")
+
+    cached_change = CachedChange(
+        bookmark="review/merged-aaaaaaaa",
+        last_submitted_commit_id="merged-commit",
+        pr_number=1,
+        pr_state="merged",
+    )
+    merged_revision = SimpleNamespace(
+        bookmark="review/merged-aaaaaaaa",
+        cached_change=cached_change,
+        change_id="merged-change",
+        remote_state=RemoteBookmarkState(
+            remote="origin",
+            targets=("remote-left", "remote-right"),
+        ),
+        subject="merged feature",
+    )
+    prepared_status = cast(
+        PreparedStatus,
+        SimpleNamespace(
+            prepared=SimpleNamespace(
+                remote=GitRemote(
+                    name="origin",
+                    url="git@github.com:octo-org/stacked-review.git",
+                ),
+                state_store=SimpleNamespace(),
+                status_revisions=(
+                    SimpleNamespace(
+                        revision=SimpleNamespace(
+                            change_id="merged-change",
+                            commit_id="merged-commit",
+                            immutable=False,
+                        )
+                    ),
+                ),
+            )
+        ),
+    )
+    actions: list[CleanupAction] = []
+
+    _retire_merged_ancestors(
+        blocked=False,
+        client=cast(JjClient, MutationRejectingJjClient()),
+        journal=OperationJournal.disabled(),
+        merged_revisions=(cast(ReviewStatusRevision, merged_revision),),
+        prepared_rebase=PreparedRebase(
+            context=_fake_context(),
+            dry_run=False,
+            prepared_status=prepared_status,
+        ),
+        prepared_status=prepared_status,
+        record_action=actions.append,
+    )
+
+    assert len(actions) == 1
+    assert actions[0].kind == "abandon"
+    assert actions[0].status == "skipped"
+    assert "remote bookmark review/merged-aaaaaaaa is conflicted" in actions[0].message
 
 
 def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned() -> None:
