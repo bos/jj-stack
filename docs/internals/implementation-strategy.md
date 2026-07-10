@@ -324,9 +324,10 @@ retargets, closes, or merges that PR.
 Every state save that contains a pending direct-land transaction is automatically durable,
 including saves made by commands that merely preserve the transaction while updating other
 tracking. A durable replacement fsyncs the file and state directory, suppressing only platform
-errors that specifically mean directory fsync is unsupported; other failures surface to the
-caller. Audit appends may still be durable for diagnostic quality, but an absent completed
-marker or malformed trailing record cannot reactivate or block a completed land.
+errors that specifically mean directory fsync is unsupported; Windows skips the unsupported
+directory operation while still syncing the file. Other failures surface to the caller. Audit
+appends may still be durable for diagnostic quality, but an absent completed marker or malformed
+trailing record cannot reactivate or block a completed land.
 The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
 to the last submitted commit, single visible revision, mutable, unambiguous remote bookmark,
 and bookmark policy allowing — by deleting its verified managed review branch before abandoning

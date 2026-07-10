@@ -101,7 +101,8 @@ def test_pending_direct_land_automatically_fsyncs_file_and_directory(
 
     store.save(ReviewState(pending_direct_land=_pending_direct_land()))
 
-    assert fsynced_kinds == ["file", "directory"]
+    expected_kinds = ["file"] if os.name == "nt" else ["file", "directory"]
+    assert fsynced_kinds == expected_kinds
 
 
 def test_durable_save_reports_file_fsync_failure(tmp_path: Path, monkeypatch) -> None:
@@ -141,6 +142,7 @@ def test_durable_save_reports_atomic_replace_failure(tmp_path: Path, monkeypatch
     assert not tuple(tmp_path.glob("state.json.*.tmp"))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not support directory fsync")
 def test_durable_save_reports_directory_fsync_failure(tmp_path: Path, monkeypatch) -> None:
     store = ReviewStateStore(tmp_path / "state.json")
     real_fsync = os.fsync
@@ -156,6 +158,7 @@ def test_durable_save_reports_directory_fsync_failure(tmp_path: Path, monkeypatc
         store.save(ReviewState(pending_direct_land=_pending_direct_land()))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not support directory fsync")
 def test_durable_save_tolerates_unsupported_directory_fsync(
     tmp_path: Path,
     monkeypatch,

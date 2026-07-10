@@ -16,9 +16,9 @@ from jj_stack.models.review_state import ReviewState
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
 _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = {
-    errno.EINVAL,
-    errno.ENOTSUP,
-    errno.EOPNOTSUPP,
+    error_number
+    for name in ("EINVAL", "ENOTSUP", "EOPNOTSUPP")
+    if (error_number := getattr(errno, name, None)) is not None
 }
 
 
@@ -123,6 +123,8 @@ def default_state_root() -> Path:
 def _fsync_directory(path: Path) -> None:
     """Durably record a directory entry update where the platform supports it."""
 
+    if os.name == "nt":
+        return
     try:
         fd = os.open(path, os.O_RDONLY)
     except OSError as error:
