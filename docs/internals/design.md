@@ -226,6 +226,12 @@ Even the PR link can usually be rediscovered by asking GitHub for the PR whose h
 branch matches the saved bookmark, but that rediscovery is an explicit recovery flow —
 plain `view` does not do it for never-tracked changes.
 
+During a direct-push `land`, the same file temporarily holds one repo-level pending
+transaction. It records exact operation scope and finalization progress, not stack topology,
+and disappears atomically with the landed per-change records when finalization completes.
+Other commands preserve it when updating their own tracking fields; a later `land` either
+finishes it exactly or fails closed if those commands changed its review identities.
+
 User-authored settings (e.g. reviewer or label preferences, `use_bookmarks` patterns)
 live in `jj` config, not in the tracking-state file.
 
@@ -1445,6 +1451,7 @@ Shape:
 ```json
 {
   "version": 1,
+  "pending_direct_land": null,
   "changes": {
     "<full-change-id>": {
       "bookmark": "review/fix-bookmark-resolution-ypvmkkuo",
