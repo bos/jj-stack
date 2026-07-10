@@ -414,11 +414,18 @@ $ tests/run_submit_property_scenarios.py 500
 ```
 
 The runner accepts the scenario count as a positional argument. It also supports
-`--seed <int>`, `--cross-stack-scenarios <N>`, `--stack-merge-scenarios <N>`,
+`--seed <int>`, `--random-seed`, `--cross-stack-scenarios <N>`,
+`--stack-merge-scenarios <N>`,
 `--stack-move-scenarios <N>`, `--retry-scenarios <N>`, `--drift-scenarios <N>`,
 `--land-scenarios <N>`, `--land-drift-scenarios <N>`, `--land-retry-scenarios <N>`,
 `--land-handoff-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest
 arguments after `--`.
+
+`--random-seed` generates one seed, prints it with the matching `--seed <int>`
+reproduction argument, and uses it for both scenario generation and pytest-randomly
+ordering. GitHub CI uses this mode and runs one generated scenario beyond every fixed
+family corpus, so a failing CI log always contains the seed needed to replay the same
+scenario pool and test order locally.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:

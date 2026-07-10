@@ -61,4 +61,14 @@ jobs:
         run: echo "$(tools/install-jj-release.sh "$JJ_VERSION")" >> "$GITHUB_PATH"
 
       - name: Run submit property smoke scenarios
-        run: tests/run_submit_property_scenarios.py 7 -n auto
+        run: >-
+          tests/run_submit_property_scenarios.py 10 --random-seed -n auto
+          --cross-stack-scenarios 5
+          --stack-merge-scenarios 5
+          --stack-move-scenarios 5
+          --retry-scenarios 5
+          --drift-scenarios 21
+          --land-scenarios 21
+          --land-drift-scenarios 7
+          --land-retry-scenarios 5
+          --land-handoff-scenarios 6

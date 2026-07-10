@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import shlex
 import subprocess
 from argparse import ArgumentParser, ArgumentTypeError
@@ -15,6 +16,7 @@ PROPERTY_TEST_FILES = (
     REPO_ROOT / "tests" / "property" / "submit_property_scenarios.py",
     REPO_ROOT / "tests" / "property" / "land_property_scenarios.py",
 )
+DEFAULT_PROPERTY_SEED = 8675309
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -29,10 +31,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=100,
         help="Number of generated stack-edit scenarios to run (default: 100).",
     )
-    parser.add_argument(
+    seed_group = parser.add_mutually_exclusive_group()
+    seed_group.add_argument(
         "--seed",
         type=int,
         help="Deterministic scenario seed. Defaults to the harness seed.",
+    )
+    seed_group.add_argument(
+        "--random-seed",
+        action="store_true",
+        help="Generate and print one random seed for scenarios and pytest ordering.",
     )
     parser.add_argument(
         "--cross-stack-scenarios",
@@ -153,9 +161,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if drift_scenarios is None:
         drift_scenarios = max(20, args.scenarios // 5)
     env["JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"] = str(drift_scenarios)
-    if args.seed is not None:
-        env["JJ_STACK_SUBMIT_PROPERTY_SEED"] = str(args.seed)
-        env["JJ_STACK_LAND_PROPERTY_SEED"] = str(args.seed)
+    seed = secrets.randbits(32) if args.random_seed else args.seed
+    if seed is None:
+        seed = DEFAULT_PROPERTY_SEED
+    env["JJ_STACK_SUBMIT_PROPERTY_SEED"] = str(seed)
+    env["JJ_STACK_LAND_PROPERTY_SEED"] = str(seed)
     land_scenarios = args.land_scenarios
     if land_scenarios is None:
         land_scenarios = max(20, args.scenarios // 20)
@@ -183,9 +193,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "pytest",
         "-n",
         args.jobs,
+        f"--randomly-seed={seed}",
         *test_files,
         *pytest_args,
     ]
+    print(f"==> property seed: {seed} (reproduce with --seed {seed})", flush=True)
     print(f"==> property scenarios: {shlex.join(command)}", flush=True)
     completed = subprocess.run(command, cwd=REPO_ROOT, env=env)
     return completed.returncode
