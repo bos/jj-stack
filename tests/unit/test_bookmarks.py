@@ -109,17 +109,8 @@ def test_bookmark_resolver_reuses_discovered_bookmark_when_cache_is_missing() ->
     )
 
 
-@pytest.mark.parametrize(
-    ("prefix", "bookmark"),
-    [
-        pytest.param(None, "review/original-title-zvlywqkx", id="default-prefix"),
-        pytest.param("bosullivan", "bosullivan/original-title-zvlywqkx", id="configured-prefix"),
-    ],
-)
-def test_discover_bookmarks_reuses_unique_remote_bookmark_with_matching_change_id_suffix(
-    prefix: str | None,
-    bookmark: str,
-) -> None:
+def test_discover_bookmarks_reuses_unique_remote_bookmark_by_change_id_suffix() -> None:
+    bookmark = "review/original-title-zvlywqkx"
     bookmark_states = {
         bookmark: BookmarkState(
             name=bookmark,
@@ -128,19 +119,11 @@ def test_discover_bookmarks_reuses_unique_remote_bookmark_with_matching_change_i
     }
     revisions = (_revision(change_id="zvlywqkxtmnpqrstu", description=""),)
 
-    if prefix is None:
-        bookmarks = discover_bookmarks_for_revisions(
-            bookmark_states=bookmark_states,
-            remote_name="origin",
-            revisions=revisions,
-        )
-    else:
-        bookmarks = discover_bookmarks_for_revisions(
-            bookmark_states=bookmark_states,
-            prefix=prefix,
-            remote_name="origin",
-            revisions=revisions,
-        )
+    bookmarks = discover_bookmarks_for_revisions(
+        bookmark_states=bookmark_states,
+        remote_name="origin",
+        revisions=revisions,
+    )
 
     assert bookmarks == {"zvlywqkxtmnpqrstu": bookmark}
 

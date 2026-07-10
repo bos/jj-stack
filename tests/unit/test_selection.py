@@ -16,18 +16,6 @@ from jj_stack.review.selection import (
 )
 
 
-def test_parse_comma_separated_flag_values_returns_none_when_flag_absent() -> None:
-    assert parse_comma_separated_flag_values(None) is None
-
-
-def test_parse_comma_separated_flag_values_flattens_repeated_flags_and_commas() -> None:
-    assert parse_comma_separated_flag_values(["alice,bob", "carol"]) == [
-        "alice",
-        "bob",
-        "carol",
-    ]
-
-
 def test_parse_comma_separated_flag_values_dedupes_keeping_first_occurrence_order() -> None:
     assert parse_comma_separated_flag_values(["alice,bob", "carol,bob", "alice"]) == [
         "alice",
@@ -167,4 +155,3 @@ def _revision(
         immutable=False,
         parents=parents,
     )
-

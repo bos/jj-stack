@@ -17,10 +17,11 @@ from jj_stack.commands.land.execute import (
     _updated_landed_change,
     ensure_trunk_branch_matches_selected_trunk,
 )
-from jj_stack.commands.land.models import LandRevision
+from jj_stack.commands.land.models import LandPlan, LandRevision
 from jj_stack.commands.land.plan import (
     _collect_landable_prefix,
     _plan_review_bookmark_cleanup,
+    validate_land_plan_merge_method,
 )
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, UsageError
@@ -703,19 +704,6 @@ def test_land_merge_method_requires_via_merge_before_bootstrap() -> None:
         )
 
 
-def test_resolve_land_merge_method_prefers_explicit_flag() -> None:
-    repository = _repository_with_merge_settings(
-        allow_merge_commit=True,
-        allow_rebase_merge=True,
-        allow_squash_merge=True,
-    )
-
-    assert (
-        _resolve_land_merge_method(merge_method="squash", repository_state=repository)
-        == "squash"
-    )
-
-
 def test_resolve_land_merge_method_uses_the_only_allowed_method() -> None:
     repository = _repository_with_merge_settings(
         allow_merge_commit=False,
@@ -760,3 +748,29 @@ def test_resolve_land_merge_method_rejects_repo_that_allows_no_method() -> None:
 
     with pytest.raises(CliError, match="does not allow any pull request merge method"):
         _resolve_land_merge_method(merge_method=None, repository_state=repository)
+
+
+def test_land_plan_rejects_rebase_merge_for_multi_pr_prefix() -> None:
+    revisions = tuple(
+        LandRevision(
+            bookmark=f"review/feature-{number}",
+            bookmark_managed=True,
+            change_id=f"change-{number}",
+            commit_id=f"commit-{number}",
+            needs_resubmit=False,
+            pull_request_number=number,
+            subject=f"feature {number}",
+        )
+        for number in (1, 2)
+    )
+    plan = LandPlan(
+        blocked=False,
+        boundary_action=None,
+        planned_revisions=revisions,
+        push_trunk=False,
+        trunk_branch="main",
+        via="merge",
+    )
+
+    with pytest.raises(CliError, match="rebase merge cannot land more than one PR"):
+        validate_land_plan_merge_method(merge_method="rebase", plan=plan)

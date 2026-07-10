@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jj_stack.ui as ui
+from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
@@ -110,6 +111,25 @@ def build_land_plan(
         push_trunk=bool(planned_revisions) and via == "push",
         trunk_branch=trunk_branch,
         via=via,
+    )
+
+
+def validate_land_plan_merge_method(
+    *,
+    merge_method: str | None,
+    plan: LandPlan,
+) -> None:
+    """Reject merge methods that cannot preserve the planned stack."""
+
+    if plan.via != "merge" or merge_method != "rebase":
+        return
+    if len(plan.planned_revisions) <= 1:
+        return
+    raise CliError(
+        t"A rebase merge cannot land more than one PR at a time: GitHub rewrites "
+        t"commit IDs during a rebase merge, so every later PR would replay its "
+        t"ancestors' commits.",
+        hint=t"Use {ui.cmd('--merge-method squash')} or land one PR per run.",
     )
 
 

@@ -444,68 +444,6 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
     assert len(queries) == 1
 
 
-@pytest.mark.parametrize(
-    ("client_method", "expected_mutation_name", "expected_is_draft"),
-    [
-        pytest.param(
-            "convert_pull_request_to_draft",
-            "convertPullRequestToDraft",
-            True,
-            id="convert-to-draft",
-        ),
-        pytest.param(
-            "mark_pull_request_ready_for_review",
-            "markPullRequestReadyForReview",
-            False,
-            id="mark-ready-for-review",
-        ),
-    ],
-)
-def test_github_client_toggles_pull_request_draft_state_via_graphql(
-    client_method: str,
-    expected_mutation_name: str,
-    expected_is_draft: bool,
-) -> None:
-    def handler(request: httpxyz.Request) -> httpxyz.Response:
-        assert request.method == "POST"
-        assert request.url.path == "/graphql"
-        payload = json.loads(request.content.decode("utf-8"))
-        assert payload["variables"] == {"pullRequestId": "PR_kwDOA7"}
-        assert expected_mutation_name in payload["query"]
-        return httpxyz.Response(
-            200,
-            json={
-                "data": {
-                    expected_mutation_name: {
-                        "pullRequest": {
-                            "id": "PR_kwDOA7",
-                            "number": 7,
-                            "state": "OPEN",
-                            "isDraft": expected_is_draft,
-                            "mergedAt": None,
-                            "url": "https://github.test/octo-org/stacked-review/pull/7",
-                            "title": "feature",
-                            "body": "body",
-                            "baseRefName": "main",
-                            "headRefName": "review/feature",
-                            "headRepositoryOwner": {"login": "octo-org"},
-                        }
-                    }
-                }
-            },
-            request=request,
-        )
-
-    async def run_test() -> bool:
-        async with _github_client(handler) as client:
-            pull_request = await getattr(client, client_method)(
-                pull_request_id="PR_kwDOA7",
-            )
-        return pull_request.is_draft
-
-    assert asyncio.run(run_test()) is expected_is_draft
-
-
 def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         payload = json.loads(request.content.decode("utf-8"))

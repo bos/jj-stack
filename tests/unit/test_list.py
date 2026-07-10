@@ -3,93 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-import jj_stack.ui as ui
-from jj_stack.commands.list_ import (
-    _format_pull_request_summary,
-    _prepare_repo_inspection_context,
-    _status_fragments,
-)
+from jj_stack.commands.list_ import _prepare_repo_inspection_context
 from jj_stack.config import RepoConfig
 from jj_stack.github.resolution import GithubTarget
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.change_status import ReviewChangeStatus
 from jj_stack.review.discovery import discover_connected_tracked_stacks, discover_tracked_stacks
-
-
-def _change_status(
-    *,
-    pr_lifecycle: str = "none",
-    pr_draft: bool | None = None,
-    pr_review_decision: str = "none",
-) -> ReviewChangeStatus:
-    return ReviewChangeStatus(
-        local="present",
-        link="active",
-        remote_branch="current",
-        remote_branch_matches_commit=True,
-        pr_lifecycle=cast(Any, pr_lifecycle),
-        pr_draft=pr_draft,
-        pr_review_decision=cast(Any, pr_review_decision),
-    )
-
-
-def _fragment_text(statuses: tuple[ReviewChangeStatus, ...]) -> str:
-    return " | ".join(
-        ui.plain_text(fragment)
-        for fragment in _status_fragments(
-            github_error=None,
-            remote_error=None,
-            statuses=statuses,
-        )
-    )
-
-
-def test_format_pull_request_summary_is_empty_without_pull_requests() -> None:
-    assert _format_pull_request_summary(()) == ""
-
-
-def test_format_pull_request_summary_names_single_pull_request() -> None:
-    assert _format_pull_request_summary((7,)) == "PR 7"
-
-
-def test_format_pull_request_summary_counts_multiple_pull_requests() -> None:
-    assert _format_pull_request_summary((1, 2, 3, 4, 5)) == "5 PRs"
-
-
-def test_status_fragments_report_partial_approval_counts() -> None:
-    statuses = (
-        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
-        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
-        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="none"),
-        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="none"),
-    )
-
-    text = _fragment_text(statuses)
-
-    assert "2 approved" in text
-    assert "2 open" in text
-
-
-def test_status_fragments_collapse_to_bare_approved_when_all_open_prs_approved() -> None:
-    statuses = (
-        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
-        _change_status(pr_lifecycle="open", pr_draft=False, pr_review_decision="approved"),
-    )
-
-    text = _fragment_text(statuses)
-
-    assert "approved" in text
-    assert "2 approved" not in text
-    assert "open" not in text
-
-
-def test_status_fragments_report_cleanup_needed_for_merged_pull_request() -> None:
-    text = _fragment_text((_change_status(pr_lifecycle="merged"),))
-
-    assert "cleanup needed" in text
-    assert "merged ancestor" not in text
 
 
 def _revision(

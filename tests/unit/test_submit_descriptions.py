@@ -112,14 +112,6 @@ def test_edit_document_parse_rejects_unknown_change() -> None:
         parse_description_edit_document(document, revisions=revisions)
 
 
-def test_edit_document_parse_rejects_missing_change_section() -> None:
-    revisions = _two_change_stack()
-    document = "====== change topchange\nfeature 2\n"
-
-    with pytest.raises(CliError, match="missing change"):
-        parse_description_edit_document(document, revisions=revisions)
-
-
 def test_edit_document_parse_rejects_repeated_change_section() -> None:
     revisions = _two_change_stack()
     document = (

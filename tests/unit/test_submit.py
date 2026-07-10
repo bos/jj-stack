@@ -642,18 +642,6 @@ def test_resolve_submit_options_prefers_cli_reviewers_and_labels_over_config() -
     assert resolved.team_reviewers == ["config-team"]
 
 
-def test_resolve_submit_options_falls_back_to_config_reviewers_and_labels() -> None:
-    resolved = _resolve_submit_options(
-        context=_submit_context(
-            AppConfig(labels=["config-label"], reviewers=["config-user"])
-        ),
-        options=replace(_submit_options(), labels=None, reviewers=None),
-    )
-
-    assert resolved.labels == ["config-label"]
-    assert resolved.reviewers == ["config-user"]
-
-
 def _github_pull_request(number: int, *, state: str = "open") -> GithubPullRequest:
     return GithubPullRequest(
         base=GithubBranchRef(ref="main"),

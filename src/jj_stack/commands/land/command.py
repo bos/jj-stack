@@ -79,6 +79,7 @@ from .models import (
 from .plan import (
     build_land_plan,
     plan_review_bookmark_cleanup_for_revisions,
+    validate_land_plan_merge_method,
 )
 from .render import print_land_result
 
@@ -303,17 +304,10 @@ async def _stream_land_async(
             )
 
         async def finish_plan(plan: LandPlan) -> LandResult:
-            if (
-                plan.via == "merge"
-                and resolved_merge_method == "rebase"
-                and len(plan.planned_revisions) > 1
-            ):
-                raise CliError(
-                    t"A rebase merge cannot land more than one PR at a time: GitHub "
-                    t"rewrites commit IDs during a rebase merge, so every later PR "
-                    t"would replay its ancestors' commits.",
-                    hint=t"Use {ui.cmd('--merge-method squash')} or land one PR per run.",
-                )
+            validate_land_plan_merge_method(
+                merge_method=resolved_merge_method,
+                plan=plan,
+            )
             bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
                 bookmark_states=bookmark_states,
                 prefix=prepared_land.context.config.bookmark_prefix,
