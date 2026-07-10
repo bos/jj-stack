@@ -191,8 +191,10 @@ the local review bookmarks for the landed changes, and retires their review trac
 It stops before the first change that is not ready to land.
 
 `cleanup --rebase` is helpful when some lower changes were merged on GitHub, for example with a
-squash merge, and your local stack still contains those old merged ancestors. It removes those
-merged ancestors from the local stack and rebases the remaining changes onto `trunk()`.
+squash merge, and your local stack still contains those old merged ancestors. It rebases the
+remaining changes onto `trunk()` and retires the merged ancestors — abandoning each local copy
+it can prove is exactly what reviewers merged, along with its review tracking and review
+branch. Copies it cannot prove inert stay in place with an explanation.
 
 When `list` or `view` says a tracked stack changed since the last submit, inspect that
 stack directly:

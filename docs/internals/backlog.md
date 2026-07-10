@@ -77,11 +77,15 @@ repo-scoped `sync` command that:
 _Benefit: unknown — potentially useful for recovery and checkout UX, but not needed for the
 current core workflow._
 
-Recent `jj` versions can write a `change-id` header into Git commit objects created by
-`jj`. That header is not shown by normal Git or GitHub commit views, and it should not become
-a new source of truth for jj-stack. Still, it may be useful evidence in future recovery
-flows where the user experience should follow a logical `jj` change rather than one exact
-commit object.
+Since `jj` 0.30 the `change-id` header in Git commit objects is written and imported by
+default (`git.write-change-id-header`), so change IDs survive ordinary push/fetch round
+trips. The `jj` changelog notes the limits that matter here: `git rebase` and some forges
+drop the header when they rewrite commits, and GitHub squash merges create fresh commits
+without it — which is why the cleanup rebase pass proves a merged ancestor inert from the
+saved last-submitted commit rather than from header identity. The header is not shown by
+normal Git or GitHub commit views, and it should not become a new source of truth for
+jj-stack. Still, it may be useful evidence in future recovery flows where the user
+experience should follow a logical `jj` change rather than one exact commit object.
 
 High-level cases where this might help:
 
@@ -289,10 +293,6 @@ same models._
   push-only coverage was chosen first; the mergeability stop adds one more boundary)
 - composed drift pairs against land, mirroring the submit drift family's dual-drift
   combinations
-- a residual-copy story for external squash merges: after recovery, the pre-merge
-  local change stays reviewable and tracked until the user abandons it, and `list`
-  keeps reporting it as cleanup-needed with no command that retires it directly; decide
-  whether `cleanup` or `unstack` should offer that retirement
 
 ## Property Harness Cost Trims
 

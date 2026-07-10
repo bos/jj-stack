@@ -313,11 +313,11 @@ with GitHub's usual head-branch auto-delete. Then `sync` (or `cleanup --rebase` 
 The oracle asserts the recovery converged before the final land: every suffix change
 keeps its PR number, bookmark, and pre-handoff approvals, the bottom suffix PR targets
 trunk, review branches point at the rebased commits, and the merged prefix sees no
-further event of any kind after the handoff begins. After the final land, external-merge
-scenarios abandon the residual pre-merge local copies — the squash rewrote history, so
-the tool conservatively keeps them until the user retires them — and a closing `cleanup`
-must prune all remaining tracking, leaving `list --json` empty for every original
-change.
+further event of any kind after the handoff begins. For external merges, the recovery's
+rebase pass must itself retire the pre-merge local copies — they are provably the
+reviewed commits — while merge-transport lands leave copies pinned immutable by their
+untracked review branches, so a closing `cleanup` retires those; either way the chain
+must end with `list --json` empty and no tracking for any original change.
 
 ## Interrupted-Submit Retry Harness
 

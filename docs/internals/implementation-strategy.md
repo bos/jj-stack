@@ -308,6 +308,10 @@ Direct-push `land` keeps temporary landed tracking while finalizing PRs, then re
 landed records from active tracking after finalization has succeeded. A rerun that finds
 a landed record missing trusts it only when the interrupted operation's journal recorded
 the retirement; otherwise it fails closed.
+The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
+to the last submitted commit, single visible revision, mutable, bookmark policy allowing —
+by abandoning the local copy, removing its tracking, and deleting its managed review
+branch; failed proofs are preserved with an explanatory action.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.

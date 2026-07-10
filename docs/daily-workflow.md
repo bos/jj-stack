@@ -205,7 +205,10 @@ your local stack off the merged changes and refresh the remaining PRs.
 `jj-stack cleanup --rebase` is specifically about removing merged ancestors from your local
 stack and rebasing surviving descendants onto `trunk()`. Use it when some lower changes were
 merged on GitHub through different commit IDs and your local stack still contains those
-now-merged ancestors:
+now-merged ancestors. When it can prove a merged ancestor's local copy is exactly what
+reviewers merged, it also abandons that copy and retires its review tracking and review
+branch, so nothing lingers as cleanup-needed; copies it cannot prove inert are preserved with
+an explanation:
 
 ```bash
 jj-stack cleanup --rebase

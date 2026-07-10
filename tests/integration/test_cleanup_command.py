@@ -17,6 +17,7 @@ from ..support.integration_helpers import (
     run_command,
 )
 from .submit_command_helpers import (
+    approve_pull_requests,
     configure_submit_environment,
     issue_comments,
     read_remote_ref,
@@ -144,7 +145,7 @@ def test_cleanup_keeps_orphan_local_review_bookmark_on_live_reviewable_change(
     ).stdout
 
 
-def test_cleanup_restack_previews_and_rebases_survivor_above_merged_ancestor(
+def test_cleanup_restack_rebases_survivor_and_retires_landed_merged_ancestor(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -156,6 +157,9 @@ def test_cleanup_restack_previews_and_rebases_survivor_above_merged_ancestor(
     bottom_change_id = stack.revisions[0].change_id
     top_change_id = stack.revisions[1].change_id
     trunk_commit_id = stack.trunk.commit_id
+    state_store = ReviewStateStore.for_repo(repo)
+    bottom_bookmark = state_store.load().changes[bottom_change_id].bookmark
+    assert bottom_bookmark is not None
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
 
@@ -168,10 +172,16 @@ def test_cleanup_restack_previews_and_rebases_survivor_above_merged_ancestor(
         top_change_id,
     )
     preview = capsys.readouterr()
+    rendered_preview = " ".join(preview.out.split())
 
     assert preview_exit_code == 0
     assert "Planned rebase actions:" in preview.out
     assert f"rebase {top_change_id[:8]} onto trunk()" in preview.out
+    assert "abandon merged feature 1" in rendered_preview
+    assert "remove tracking for landed feature 1" in rendered_preview
+    # The preview mutates nothing.
+    assert JjClient(repo).resolve_revision(bottom_change_id).change_id == bottom_change_id
+    assert bottom_change_id in state_store.load().changes
 
     apply_exit_code = run_main(
         repo,
@@ -181,12 +191,65 @@ def test_cleanup_restack_previews_and_rebases_survivor_above_merged_ancestor(
         top_change_id,
     )
     applied = capsys.readouterr()
+    rendered_applied = " ".join(applied.out.split())
     rewritten_top = JjClient(repo).resolve_revision(top_change_id)
 
     assert apply_exit_code == 0
     assert "Applied rebase actions:" in applied.out
+    assert "abandon merged feature 1" in rendered_applied
+    assert "remove tracking for landed feature 1" in rendered_applied
+    assert f"delete {bottom_bookmark}@origin" in rendered_applied
     assert rewritten_top.only_parent_commit_id() == trunk_commit_id
-    assert JjClient(repo).resolve_revision(bottom_change_id).commit_id != rewritten_top.commit_id
+    matched = JjClient(repo).query_revisions_by_change_ids((bottom_change_id,))
+    assert not matched.get(bottom_change_id, ())
+    landed_state = state_store.load()
+    assert bottom_change_id not in landed_state.changes
+    assert top_change_id in landed_state.changes
+    assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
+    journal_events = read_operation_log(resolve_state_path(repo).parent)
+    assert any(
+        event.operation == "cleanup-rebase"
+        and event.event == "saved_state_update"
+        and event.data["change_id"] == bottom_change_id
+        and event.data["after"] is None
+        for event in journal_events
+    )
+
+
+def test_cleanup_restack_preserves_immutable_merged_ancestor(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A merge-transport land leaves the pre-merge copy pinned by its remote
+    review branch; the retire pass must leave it for plain cleanup."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1)
+
+    stack = JjClient(repo).discover_review_stack()
+    bottom_change_id = stack.revisions[0].change_id
+    top_change_id = stack.revisions[1].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+
+    assert run_main(repo, config_path, "land", "--via", "merge") == 0
+    capsys.readouterr()
+
+    exit_code = run_main(repo, config_path, "cleanup", "--rebase", top_change_id)
+    captured = capsys.readouterr()
+    rendered = " ".join(captured.out.split())
+
+    assert exit_code == 0
+    assert "preserve merged feature 1" in rendered
+    assert "the local commit is immutable" in rendered
+    assert "abandon merged feature 1" not in rendered
+    assert JjClient(repo).resolve_revision(bottom_change_id).change_id == bottom_change_id
+    assert bottom_change_id in state_store.load().changes
+
+    assert run_main(repo, config_path, "cleanup") == 0
+    capsys.readouterr()
+    assert bottom_change_id not in state_store.load().changes
 
 
 def test_cleanup_restack_skips_inspection_on_fully_untracked_stack(

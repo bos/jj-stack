@@ -1227,9 +1227,17 @@ The algorithm:
    `trunk()`.
 6. If later remaining segments would still need to land on another remaining change,
    stop and require manual `jj rebase`.
-7. Once the rebases succeed, leftover merged or fetched side copies may stay in place
-   until a later conservative cleanup pass can prove they are removable.
-   `cleanup --rebase`'s primary job is to repair the active local stack first.
+7. Once the rebases succeed, retire each merged change whose local copy is provably
+   inert: the local commit is exactly the last submitted (reviewed) commit, only one
+   visible revision carries the change ID, the commit is mutable, and bookmark policy
+   allows touching any bookmark still pointing at it. Retirement abandons the local
+   copy, removes its saved tracking, and deletes its managed remote review branch.
+   Copies that fail the proof — rewritten since submit, divergent, pinned immutable by
+   a fetched review branch, or guarded by an unmanaged bookmark — stay in place with
+   an action explaining why; plain `cleanup` retires immutable leftovers once their
+   tracking goes stale. Change-id headers that newer `jj` transfers through Git are
+   deliberately not part of the proof: forge squash and rebase merges drop them, so
+   the saved last-submitted commit is the reliable evidence.
 8. Do not rebase surviving local descendants onto fetched branch-tip commits for
    merged non-trunk PRs. Those fetched commits are review-branch state, not the
    canonical continuation of the local stack.

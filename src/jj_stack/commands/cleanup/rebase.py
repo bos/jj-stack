@@ -9,7 +9,11 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.jj.client import JjClient, UnsupportedStackError
-from jj_stack.review.bookmarks import bookmark_glob, is_review_bookmark
+from jj_stack.review.bookmarks import (
+    bookmark_cleanup_allowed,
+    bookmark_glob,
+    is_review_bookmark,
+)
 from jj_stack.review.change_status import (
     classify_review_status_revision,
     classify_saved_review_change,
@@ -196,6 +200,16 @@ def _stream_rebase(
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
 
+        _retire_merged_ancestors(
+            blocked=blocked,
+            client=client,
+            journal=rebase_journal,
+            merged_revisions=merged_revisions,
+            prepared_rebase=prepared_rebase,
+            prepared_status=prepared_status,
+            record_action=recorder.record,
+        )
+
         _record_rebase_policy_actions(
             prefix=prepared_rebase.context.config.bookmark_prefix,
             merged_revisions=merged_revisions,
@@ -358,6 +372,162 @@ def _run_rebase_pass(
                 kind="rebase",
                 status=status,
                 body=body,
+            )
+        )
+
+
+def _retire_merged_ancestors(
+    *,
+    blocked: bool,
+    client: JjClient,
+    journal: OperationJournal,
+    merged_revisions: tuple[ReviewStatusRevision, ...],
+    prepared_rebase: PreparedRebase,
+    prepared_status: PreparedStatus,
+    record_action: Callable[[CleanupAction], None],
+) -> None:
+    """Retire merged ancestors whose local copies are provably inert.
+
+    The conservative removability proof: the PR merged, the local commit is
+    exactly the last submitted (reviewed) commit, only one visible revision
+    carries the change ID, the commit is mutable, and bookmark policy allows
+    touching any local bookmark still pointing at it. Anything short of that
+    proof stays in place with an action explaining why.
+    """
+
+    if blocked or not merged_revisions:
+        return
+
+    prepared = prepared_status.prepared
+    local_revisions = {
+        prepared_revision.revision.change_id: prepared_revision.revision
+        for prepared_revision in prepared.status_revisions
+    }
+    config = prepared_rebase.context.config
+    retired: list[tuple[ReviewStatusRevision, bool]] = []
+
+    for revision in merged_revisions:
+        cached_change = revision.cached_change
+        local_revision = local_revisions.get(revision.change_id)
+        if (
+            cached_change is None
+            or local_revision is None
+            or cached_change.last_submitted_commit_id != local_revision.commit_id
+        ):
+            # Without proof that the local copy is exactly what reviewers saw,
+            # leave it in place. A merged change rewritten since its submit
+            # already blocked the whole pass in the pre-actions.
+            continue
+        if classify_review_status_revision(revision).local == "divergent":
+            record_action(
+                CleanupAction(
+                    kind="abandon",
+                    status="skipped",
+                    body=(
+                        t"preserve merged {_revision_label_template(revision)}: multiple "
+                        t"visible revisions still share that change ID"
+                    ),
+                )
+            )
+            continue
+        if local_revision.immutable:
+            record_action(
+                CleanupAction(
+                    kind="abandon",
+                    status="skipped",
+                    body=(
+                        t"preserve merged {_revision_label_template(revision)}: the local "
+                        t"commit is immutable; run {ui.cmd('cleanup')} to retire its "
+                        t"tracking"
+                    ),
+                )
+            )
+            continue
+        cleanup_allowed = bookmark_cleanup_allowed(
+            bookmark=revision.bookmark,
+            bookmark_managed=cached_change.manages_bookmark,
+            cleanup_user_bookmarks=config.cleanup_user_bookmarks,
+            prefix=config.bookmark_prefix,
+        )
+        if (
+            not cleanup_allowed
+            and client.get_bookmark_state(revision.bookmark).local_target is not None
+        ):
+            record_action(
+                CleanupAction(
+                    kind="abandon",
+                    status="skipped",
+                    body=(
+                        t"preserve merged {_revision_label_template(revision)}: bookmark "
+                        t"{ui.bookmark(revision.bookmark)} is not managed by jj-stack "
+                        t"(set {ui.cmd('jj-stack.cleanup_user_bookmarks=true')} to "
+                        t"include it)"
+                    ),
+                )
+            )
+            continue
+        retired.append((revision, cleanup_allowed))
+
+    if not retired:
+        return
+
+    dry_run = prepared_rebase.dry_run
+    status = "planned" if dry_run else "applied"
+
+    if not dry_run:
+        client.abandon_revisions(
+            tuple(revision.change_id for revision, _cleanup_allowed in retired)
+        )
+    for revision, _cleanup_allowed in retired:
+        record_action(
+            CleanupAction(
+                kind="abandon",
+                status=status,
+                body=(
+                    t"abandon merged {_revision_label_template(revision)}; its reviewed "
+                    t"commit already landed through PR "
+                    t"#{revision.pull_request_number()}"
+                ),
+            )
+        )
+
+    if not dry_run:
+        state = prepared.state_store.load()
+        previous_changes = dict(state.changes)
+        next_changes = dict(state.changes)
+        for revision, _cleanup_allowed in retired:
+            next_changes.pop(revision.change_id, None)
+        prepared.state_store.save(state.model_copy(update={"changes": next_changes}))
+        journal.record_saved_state_updates(before=previous_changes, after=next_changes)
+    for revision, _cleanup_allowed in retired:
+        record_action(
+            CleanupAction(
+                kind="tracking",
+                status=status,
+                body=t"remove tracking for landed {_revision_label_template(revision)}",
+            )
+        )
+
+    remote = prepared.remote
+    if remote is None:
+        return
+    deletions = tuple(
+        (revision.bookmark, revision.remote_state.target)
+        for revision, cleanup_allowed in retired
+        if cleanup_allowed
+        and revision.remote_state is not None
+        and revision.remote_state.target is not None
+    )
+    if not deletions:
+        return
+    if not dry_run:
+        client.delete_remote_bookmarks(remote=remote.name, deletions=deletions)
+    for bookmark, _expected_remote_target in deletions:
+        record_action(
+            CleanupAction(
+                kind="remote branch",
+                status=status,
+                body=t"delete {ui.bookmark(bookmark)}@{remote.name}",
             )
         )
 

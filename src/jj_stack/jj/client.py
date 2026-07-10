@@ -971,6 +971,14 @@ class JjClient:
 
         self._run_jj(("rebase", "-s", source, "-d", destination))
 
+    def abandon_revisions(self, revsets: Sequence[str]) -> None:
+        """Abandon revisions; jj rebases descendants and drops pointing bookmarks."""
+
+        ordered_revsets = tuple(revsets)
+        if not ordered_revsets:
+            return
+        self._run_jj(("abandon", *ordered_revsets))
+
     def _query_revisions(self, revset: str, *, limit: int | None = None) -> list[LocalRevision]:
         lines = self._query_template_lines(revset, _COMMIT_TEMPLATE, limit=limit)
         return [_parse_revision_line(line) for line in lines]

@@ -1073,15 +1073,9 @@ def replay_land_handoff_scenario(
         },
     )
 
-    if scenario.origin == "external_squash_merge":
-        # The external squash rewrote the merged commits, so the tool cannot
-        # prove the local pre-merge copies landed and conservatively keeps
-        # them reviewable. The user retires them like any stale local draft.
-        for label in scenario.merged_labels:
-            run_command(["jj", "abandon", tracked[label].change_id], repo)
-
-    # The merged prefix's tracking stays until a broader cleanup prunes it and
-    # removes review-branch leftovers; only then has the lifecycle converged.
+    # A merge-transport land leaves the pre-merge copies immutable (pinned by
+    # their untracked remote review branches), so their tracking stays until a
+    # broader cleanup retires it; only then has the lifecycle converged.
     exit_code = run_cli(("cleanup",))
     captured = read_output()
     assert exit_code == 0, (scenario.trace, captured.out, captured.err)
@@ -1211,6 +1205,15 @@ def _assert_recovery_converged(
         pull_request = fake_repo.pull_requests[tracked[label].pull_number]
         assert pull_request.state == "closed", (label, scenario.trace)
         assert pull_request.merged_at is not None, (label, scenario.trace)
+
+    if scenario.origin == "external_squash_merge":
+        # The recovery's rebase pass proves the pre-merge local copies inert
+        # (reviewed commit unchanged since submit) and retires them directly.
+        for label in scenario.merged_labels:
+            assert tracked[label].change_id not in state.changes, (
+                label,
+                scenario.trace,
+            )
 
     # Approvals granted before the handoff stay attached to the same PRs.
     pre_approved = (
