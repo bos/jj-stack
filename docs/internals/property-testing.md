@@ -56,7 +56,10 @@ current execution adapter: it gives the opt-in runner temporary directories,
 monkeypatching, captured output, concise assertion reporting, and `pytest-xdist`
 scheduling.
 
-The integration layer generates small `StackEditScenario` values. Each scenario has:
+The integration layer generates small `StackEditScenario` values. Submit and land use
+one shared `StackEditOperation` vocabulary and pure order-transition model; each command
+layers its own state projection and real-`jj` replay onto those transitions. Each submit
+scenario has:
 
 - an initial stack size
 - an ordered list of stack-edit operations
@@ -231,8 +234,8 @@ still report.
 Land scenarios compose the states `land` actually meets: a submitted, partially approved
 stack that may have been edited since its last submit. Each scenario starts from a
 submitted linear stack, optionally applies a short trace of stack edits from the shared
-edit vocabulary — rewrite, insert, abandon, reorder, and squash, with or without a
-follow-up resubmit — approves a prefix of the final live stack, then lands through one
+edit vocabulary — rewrite, insert before or after, abandon, reorder, and squash, with or
+without a follow-up resubmit — approves a prefix of the final live stack, then lands through one
 transport. Scenario dimensions also cover `--pull-request` selection, which caps the
 walk at the selected change, and a second independently submitted bystander stack that
 the land must leave byte-for-byte untouched even though the trunk moves under it.

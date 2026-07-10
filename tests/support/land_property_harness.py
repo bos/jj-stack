@@ -20,7 +20,6 @@ from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
 from .land_property_scenarios import (
     BYSTANDER_LABELS,
-    INSERTED_LABEL,
     LandDriftScenario,
     LandEditOperation,
     LandHandoffScenario,
@@ -334,16 +333,25 @@ def _apply_one_land_edit(
         )
         return live_labels
 
-    if operation.kind == "insert_after":
-        next_label = live_labels[index + 1] if index + 1 < len(live_labels) else None
-        run_command(["jj", "new", change_id], repo)
+    if operation.kind in {"insert_after", "insert_before"}:
+        inserted_label = operation.new_label
+        assert inserted_label is not None
+        next_label = (
+            live_labels[index + 1]
+            if operation.kind == "insert_after" and index + 1 < len(live_labels)
+            else None
+        )
+        new_args = ["jj", "new", change_id]
+        if operation.kind == "insert_before":
+            new_args = ["jj", "new", "-B", change_id]
+        run_command(new_args, repo)
         commit_file(
             repo,
-            subject_for_land_label(INSERTED_LABEL),
-            filename_for_land_label(INSERTED_LABEL),
+            subject_for_land_label(inserted_label),
+            filename_for_land_label(inserted_label),
         )
         inserted_stack = JjClient(repo).discover_review_stack()
-        labels_to_change_ids[INSERTED_LABEL] = inserted_stack.head.change_id
+        labels_to_change_ids[inserted_label] = inserted_stack.head.change_id
         if next_label is not None:
             run_command(
                 [
@@ -352,15 +360,12 @@ def _apply_one_land_edit(
                     "-s",
                     labels_to_change_ids[next_label],
                     "-d",
-                    labels_to_change_ids[INSERTED_LABEL],
+                    labels_to_change_ids[inserted_label],
                 ],
                 repo,
             )
-        return [
-            *live_labels[: index + 1],
-            INSERTED_LABEL,
-            *live_labels[index + 1 :],
-        ]
+        insert_at = index + 1 if operation.kind == "insert_after" else index
+        return [*live_labels[:insert_at], inserted_label, *live_labels[insert_at:]]
 
     if operation.kind == "move_to_top":
         top_label = live_labels[-1]

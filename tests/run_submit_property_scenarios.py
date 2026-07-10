@@ -79,7 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=_non_negative_int,
         help=(
             "Number of generated land scenarios to run "
-            "(default: max(18, scenarios // 20); 18 covers the fixed corpus)."
+            "(default: max(20, scenarios // 20); 20 covers the fixed corpus)."
         ),
     )
     parser.add_argument(
@@ -158,7 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         env["JJ_STACK_LAND_PROPERTY_SEED"] = str(args.seed)
     land_scenarios = args.land_scenarios
     if land_scenarios is None:
-        land_scenarios = max(18, args.scenarios // 20)
+        land_scenarios = max(20, args.scenarios // 20)
     env["JJ_STACK_LAND_PROPERTY_SCENARIOS"] = str(land_scenarios)
     land_drift_scenarios = args.land_drift_scenarios
     if land_drift_scenarios is None:

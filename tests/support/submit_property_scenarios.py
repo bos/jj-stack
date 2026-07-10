@@ -7,16 +7,11 @@ import random
 from dataclasses import dataclass
 from typing import Literal
 
-StackEditOperationKind = Literal[
-    "abandon",
-    "insert_after",
-    "insert_before",
-    "move_after",
-    "move_before",
-    "move_to_top",
-    "rewrite",
-    "squash_into_previous",
-]
+from .stack_edit_scenarios import (
+    StackEditOperation,
+    apply_stack_edit,
+)
+
 DriftKind = Literal[
     "agent_recreated_change",
     "closed_pr",
@@ -41,7 +36,7 @@ SubmitRetryFailurePoint = Literal[
     "pull_request_metadata",
 ]
 
-DEFAULT_STACK_EDIT_SCENARIO_COUNT = 8
+DEFAULT_STACK_EDIT_SCENARIO_COUNT = 9
 DEFAULT_CROSS_STACK_SCENARIO_COUNT = 8
 DEFAULT_STACK_MERGE_SCENARIO_COUNT = 8
 DEFAULT_STACK_MOVE_SCENARIO_COUNT = 8
@@ -64,28 +59,6 @@ class SubmitInvariants:
     initial_size: int
     orphaned_labels: tuple[str, ...]
     trace: str
-
-
-@dataclass(frozen=True, slots=True)
-class StackEditOperation:
-    """One supported local stack edit in a generated scenario."""
-
-    kind: StackEditOperationKind
-    label: str
-    new_label: str | None = None
-    target_label: str | None = None
-
-    @property
-    def trace(self) -> str:
-        if self.kind in {"insert_after", "insert_before"}:
-            if self.new_label is None:
-                raise AssertionError(f"{self.kind} operation requires a new label.")
-            return f"{self.kind}:{self.label}:{self.new_label}"
-        if self.kind in {"move_after", "move_before"}:
-            if self.target_label is None:
-                raise AssertionError(f"{self.kind} operation requires a target label.")
-            return f"{self.kind}:{self.label}:{self.target_label}"
-        return f"{self.kind}:{self.label}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,94 +518,26 @@ class _ScenarioModel:
     next_insert_index: int = 1
 
     def append(self, operation: StackEditOperation) -> _ScenarioModel:
-        live_labels = list(self.live_labels)
         orphaned_labels = set(self.orphaned_labels)
         rewritten_initial_labels = set(self.rewritten_initial_labels)
         next_insert_index = self.next_insert_index
 
-        if operation.kind == "move_to_top":
-            _move_to_top(
-                live_labels,
-                operation.label,
-                rewritten_initial_labels,
-                initial_size=self.initial_size,
-            )
-        elif operation.kind == "move_after":
-            _move_after(
-                live_labels,
-                operation.label,
-                _require_target_label(operation),
-                rewritten_initial_labels,
-                initial_size=self.initial_size,
-            )
-        elif operation.kind == "move_before":
-            _move_before(
-                live_labels,
-                operation.label,
-                _require_target_label(operation),
-                rewritten_initial_labels,
-                initial_size=self.initial_size,
-            )
-        elif operation.kind == "insert_after":
-            if operation.new_label is None:
-                raise AssertionError("insert_after operation requires a new label.")
-            index = live_labels.index(operation.label)
-            _mark_rewritten_initials(
-                rewritten_initial_labels,
-                live_labels[index + 1 :],
-                initial_size=self.initial_size,
-            )
-            live_labels.insert(index + 1, operation.new_label)
+        if operation.kind == "abandon" and not operation.label.startswith("c"):
+            raise AssertionError("abandon requires an initially submitted label.")
+        effect = apply_stack_edit(self.live_labels, operation)
+        _mark_rewritten_initials(
+            rewritten_initial_labels,
+            effect.rewritten_labels,
+            initial_size=self.initial_size,
+        )
+        if effect.removed_label is not None and effect.removed_label.startswith("c"):
+            orphaned_labels.add(effect.removed_label)
+        if operation.kind in {"insert_after", "insert_before"}:
             next_insert_index += 1
-        elif operation.kind == "insert_before":
-            if operation.new_label is None:
-                raise AssertionError("insert_before operation requires a new label.")
-            index = live_labels.index(operation.label)
-            _mark_rewritten_initials(
-                rewritten_initial_labels,
-                live_labels[index:],
-                initial_size=self.initial_size,
-            )
-            live_labels.insert(index, operation.new_label)
-            next_insert_index += 1
-        elif operation.kind == "abandon":
-            index = live_labels.index(operation.label)
-            if len(live_labels) == 1:
-                raise AssertionError("abandon requires a surviving live change.")
-            if not operation.label.startswith("c"):
-                raise AssertionError("abandon requires an initially submitted label.")
-            _mark_rewritten_initials(
-                rewritten_initial_labels,
-                live_labels[index + 1 :],
-                initial_size=self.initial_size,
-            )
-            live_labels.pop(index)
-            orphaned_labels.add(operation.label)
-        elif operation.kind == "rewrite":
-            index = live_labels.index(operation.label)
-            _mark_rewritten_initials(
-                rewritten_initial_labels,
-                live_labels[index:],
-                initial_size=self.initial_size,
-            )
-        elif operation.kind == "squash_into_previous":
-            index = live_labels.index(operation.label)
-            if index == 0:
-                raise AssertionError("squash_into_previous requires a non-bottom label.")
-            _mark_rewritten_initials(
-                rewritten_initial_labels,
-                live_labels[index - 1 :],
-                initial_size=self.initial_size,
-            )
-            live_labels.pop(index)
-            if operation.label.startswith("c"):
-                orphaned_labels.add(operation.label)
-        else:
-            raise AssertionError(f"unsupported operation kind: {operation.kind}")
 
         return _ScenarioModel(
             initial_size=self.initial_size,
-            live_labels=tuple(live_labels),
+            live_labels=effect.live_labels,
             operations=(*self.operations, operation),
             orphaned_labels=tuple(sorted(orphaned_labels, key=_label_sort_key)),
             rewritten_initial_labels=tuple(sorted(rewritten_initial_labels, key=_label_sort_key)),
@@ -1596,6 +1501,18 @@ def _fixed_stack_edit_scenarios() -> tuple[StackEditScenario, ...]:
         _model(4)
         .append(StackEditOperation(kind="move_before", label="c4", target_label="c2"))
         .to_scenario(hazard_class="move-before-middle", name="move-before-middle"),
+        _model(4)
+        .append(StackEditOperation(kind="move_after", label="c1", target_label="c2"))
+        .to_scenario(hazard_class="move-after-middle", name="move-after-middle"),
+        _model(3)
+        .append(
+            StackEditOperation(
+                kind="insert_before",
+                label="c2",
+                new_label="i1",
+            )
+        )
+        .to_scenario(hazard_class="insert-before-middle", name="insert-before-middle"),
         _model(3)
         .append(StackEditOperation(kind="rewrite", label="c2"))
         .to_scenario(hazard_class="rewrite-middle", name="rewrite-middle"),
@@ -1701,86 +1618,13 @@ def _model(initial_size: int) -> _ScenarioModel:
 
 def _mark_rewritten_initials(
     target: set[str],
-    labels: list[str],
+    labels: frozenset[str],
     *,
     initial_size: int,
 ) -> None:
     for label in labels:
         if label.startswith("c") and int(label[1:]) <= initial_size:
             target.add(label)
-
-
-def _require_target_label(operation: StackEditOperation) -> str:
-    if operation.target_label is None:
-        raise AssertionError(f"{operation.kind} operation requires a target label.")
-    return operation.target_label
-
-
-def _move_to_top(
-    live_labels: list[str],
-    label: str,
-    rewritten_initial_labels: set[str],
-    *,
-    initial_size: int,
-) -> None:
-    index = live_labels.index(label)
-    if index == len(live_labels) - 1:
-        raise AssertionError("move_to_top requires a non-top label.")
-    _mark_rewritten_initials(
-        rewritten_initial_labels,
-        live_labels[index:],
-        initial_size=initial_size,
-    )
-    live_labels.pop(index)
-    live_labels.append(label)
-
-
-def _move_after(
-    live_labels: list[str],
-    label: str,
-    target_label: str,
-    rewritten_initial_labels: set[str],
-    *,
-    initial_size: int,
-) -> None:
-    index = live_labels.index(label)
-    target_index = live_labels.index(target_label)
-    if target_label == label:
-        raise AssertionError("move_after requires a different target label.")
-    if index == target_index + 1:
-        raise AssertionError("move_after requires a non-current parent target.")
-    _mark_rewritten_initials(
-        rewritten_initial_labels,
-        live_labels[min(index, target_index) :],
-        initial_size=initial_size,
-    )
-    moved = live_labels.pop(index)
-    target_index = live_labels.index(target_label)
-    live_labels.insert(target_index + 1, moved)
-
-
-def _move_before(
-    live_labels: list[str],
-    label: str,
-    target_label: str,
-    rewritten_initial_labels: set[str],
-    *,
-    initial_size: int,
-) -> None:
-    index = live_labels.index(label)
-    target_index = live_labels.index(target_label)
-    if target_label == label:
-        raise AssertionError("move_before requires a different target label.")
-    if index + 1 == target_index:
-        raise AssertionError("move_before requires a non-current child target.")
-    _mark_rewritten_initials(
-        rewritten_initial_labels,
-        live_labels[min(index, target_index) :],
-        initial_size=initial_size,
-    )
-    moved = live_labels.pop(index)
-    target_index = live_labels.index(target_label)
-    live_labels.insert(target_index, moved)
 
 
 def _move_after_candidates(live_labels: tuple[str, ...]) -> tuple[tuple[str, str], ...]:

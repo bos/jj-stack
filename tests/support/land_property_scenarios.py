@@ -21,16 +21,13 @@ import random
 from dataclasses import dataclass
 from typing import Literal
 
+from .stack_edit_scenarios import (
+    StackEditOperation as LandEditOperation,
+    StackEditOperationKind as LandEditKind,
+    apply_stack_edit,
+)
+
 LandVia = Literal["push", "merge"]
-LandEditKind = Literal[
-    "abandon",
-    "insert_after",
-    "move_after",
-    "move_before",
-    "move_to_top",
-    "rewrite",
-    "squash_into_previous",
-]
 
 DEFAULT_LAND_SCENARIO_SEED = 8675309
 MAX_LAND_ATTEMPTS_MULTIPLIER = 40
@@ -51,21 +48,6 @@ def filename_for_land_label(label: str) -> str:
     return f"{label}.txt"
 
 
-@dataclass(frozen=True, slots=True)
-class LandEditOperation:
-    """One local stack edit applied after the initial submit."""
-
-    kind: LandEditKind
-    label: str
-    target_label: str | None = None
-
-    @property
-    def trace(self) -> str:
-        if self.kind in {"move_after", "move_before"}:
-            return f"{self.kind}:{self.label}:{self.target_label}"
-        return f"{self.kind}:{self.label}"
-
-
 def simulate_land_edits(
     *,
     edits: tuple[LandEditOperation, ...],
@@ -77,47 +59,16 @@ def simulate_land_edits(
     scenario validation and random generation share one source of truth.
     """
 
-    live = list(initial_labels)
+    live = initial_labels
     orphaned: list[str] = []
     divergent: set[str] = set()
     for operation in edits:
-        if operation.label not in live:
-            raise ValueError(f"edit targets a change that is not live: {operation.trace}")
-        index = live.index(operation.label)
-        if operation.kind == "abandon":
-            if len(live) < 2:
-                raise ValueError("abandon requires a surviving live change")
-            live.pop(index)
-            orphaned.append(operation.label)
-        elif operation.kind == "rewrite":
-            divergent.add(operation.label)
-        elif operation.kind == "insert_after":
-            if INSERTED_LABEL in live:
-                raise ValueError("only one insert per trace is modeled")
-            live.insert(index + 1, INSERTED_LABEL)
-        elif operation.kind == "move_to_top":
-            if live[-1] == operation.label:
-                raise ValueError("move_to_top target is already at the top")
-            live.pop(index)
-            live.append(operation.label)
-        elif operation.kind in {"move_after", "move_before"}:
-            target = operation.target_label
-            if target is None or target == operation.label or target not in live:
-                raise ValueError(f"move requires a distinct live target: {operation.trace}")
-            live.pop(index)
-            target_index = live.index(target)
-            insert_at = target_index + 1 if operation.kind == "move_after" else target_index
-            live.insert(insert_at, operation.label)
-        elif operation.kind == "squash_into_previous":
-            if index == 0:
-                raise ValueError("squash_into_previous requires a non-bottom change")
-            destination = live[index - 1]
-            live.pop(index)
-            orphaned.append(operation.label)
-            divergent.add(destination)
-        else:
-            raise ValueError(f"unsupported land edit kind: {operation.kind}")
-    return tuple(live), tuple(orphaned), frozenset(divergent)
+        effect = apply_stack_edit(live, operation)
+        live = effect.live_labels
+        if effect.removed_label is not None:
+            orphaned.append(effect.removed_label)
+        divergent.update(effect.content_divergent_labels)
+    return live, tuple(orphaned), frozenset(divergent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,8 +315,28 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             name="push-insert-without-resubmit-stops-at-unsubmitted-change",
             initial_size=2,
             via="push",
-            edits=(LandEditOperation(kind="insert_after", label=initial_land_label(1)),),
+            edits=(
+                LandEditOperation(
+                    kind="insert_after",
+                    label=initial_land_label(1),
+                    new_label=INSERTED_LABEL,
+                ),
+            ),
             resubmit_after_edit=False,
+            approved_prefix=3,
+        ),
+        LandScenario(
+            name="push-insert-before-with-resubmit-lands-full-stack",
+            initial_size=2,
+            via="push",
+            edits=(
+                LandEditOperation(
+                    kind="insert_before",
+                    label=initial_land_label(2),
+                    new_label=INSERTED_LABEL,
+                ),
+            ),
+            resubmit_after_edit=True,
             approved_prefix=3,
         ),
         LandScenario(
@@ -381,6 +352,20 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             initial_size=3,
             via="push",
             edits=(LandEditOperation(kind="move_to_top", label=initial_land_label(1)),),
+            resubmit_after_edit=False,
+            approved_prefix=3,
+        ),
+        LandScenario(
+            name="push-move-after-without-resubmit-auto-resubmits-moved-prefix",
+            initial_size=3,
+            via="push",
+            edits=(
+                LandEditOperation(
+                    kind="move_after",
+                    label=initial_land_label(1),
+                    target_label=initial_land_label(2),
+                ),
+            ),
             resubmit_after_edit=False,
             approved_prefix=3,
         ),
@@ -1112,12 +1097,16 @@ def _random_land_edits(
                  "squash_into_previous")
             )
         if not inserted:
-            kinds.append("insert_after")
+            kinds.extend(("insert_after", "insert_before"))
         kind = rng.choice(kinds)
         if kind == "rewrite":
             operation = LandEditOperation(kind=kind, label=rng.choice(live))
-        elif kind == "insert_after":
-            operation = LandEditOperation(kind=kind, label=rng.choice(live))
+        elif kind in {"insert_after", "insert_before"}:
+            operation = LandEditOperation(
+                kind=kind,
+                label=rng.choice(live),
+                new_label=INSERTED_LABEL,
+            )
             inserted = True
         elif kind == "abandon":
             operation = LandEditOperation(kind=kind, label=rng.choice(live))
