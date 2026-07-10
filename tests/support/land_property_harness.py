@@ -642,6 +642,16 @@ class _BoundarySnapshot:
     remote_refs: dict[str, str]
 
 
+@dataclass(frozen=True, slots=True)
+class _DriftStoppingChangeSnapshot:
+    """Durable identity and GitHub state for the change that stops land."""
+
+    change_id: str
+    pull_number: int
+    pull_request: tuple[object, ...]
+    tracking_identity: tuple[object, ...]
+
+
 def replay_land_drift_scenario(
     *,
     fake_repo: FakeGithubRepository,
@@ -675,6 +685,15 @@ def replay_land_drift_scenario(
         )
 
     _apply_land_drift(fake_repo=fake_repo, scenario=scenario, tracked=tracked)
+    stopping_change_snapshot = (
+        None
+        if scenario.target_position is None
+        else _capture_drift_stopping_change(
+            fake_repo=fake_repo,
+            repo=repo,
+            tracked=tracked[scenario.initial_labels[scenario.target_position - 1]],
+        )
+    )
     boundary_snapshot = (
         _capture_boundary_snapshot(fake_repo=fake_repo, repo=repo, tracked=tracked)
         if scenario.outcome == "fail_closed"
@@ -740,6 +759,13 @@ def replay_land_drift_scenario(
                 change.pull_number for change in tracked.values()
             }
             - landed_pull_numbers,
+        )
+        assert stopping_change_snapshot is not None
+        _assert_drift_stopping_change_preserved(
+            fake_repo=fake_repo,
+            repo=repo,
+            snapshot=stopping_change_snapshot,
+            trace=scenario.trace,
         )
 
     view_exit_code = run_cli(("view",))
@@ -834,6 +860,73 @@ def _capture_boundary_snapshot(
         review_identities=review_identities,
         pull_request_states=pull_request_states,
         remote_refs=remote_refs,
+    )
+
+
+def _capture_drift_stopping_change(
+    *,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    tracked: _TrackedChange,
+) -> _DriftStoppingChangeSnapshot:
+    state = ReviewStateStore.for_repo(repo).load()
+    return _DriftStoppingChangeSnapshot(
+        change_id=tracked.change_id,
+        pull_number=tracked.pull_number,
+        pull_request=_pull_request_identity(fake_repo, tracked.pull_number),
+        tracking_identity=_durable_tracking_identity(state, tracked.change_id),
+    )
+
+
+def _assert_drift_stopping_change_preserved(
+    *,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    snapshot: _DriftStoppingChangeSnapshot,
+    trace: str,
+) -> None:
+    state = ReviewStateStore.for_repo(repo).load()
+    assert snapshot.change_id in state.changes, (snapshot.change_id, trace)
+    actual_tracking = _durable_tracking_identity(state, snapshot.change_id)
+    assert actual_tracking == snapshot.tracking_identity, (
+        snapshot.change_id,
+        snapshot.tracking_identity,
+        actual_tracking,
+        trace,
+    )
+    assert _pull_request_identity(fake_repo, snapshot.pull_number) == snapshot.pull_request, (
+        snapshot.pull_number,
+        trace,
+    )
+
+
+def _durable_tracking_identity(state: ReviewState, change_id: str) -> tuple[object, ...]:
+    cached = state.changes[change_id]
+    return (
+        cached.bookmark,
+        cached.bookmark_ownership,
+        cached.last_submitted_commit_id,
+        cached.last_submitted_parent_change_id,
+        cached.last_submitted_stack_head_change_id,
+        cached.link_state,
+        cached.pr_number,
+        cached.pr_url,
+    )
+
+
+def _pull_request_identity(
+    fake_repo: FakeGithubRepository,
+    pull_number: int,
+) -> tuple[object, ...]:
+    pull_request = fake_repo.pull_requests[pull_number]
+    reviews = fake_repo.list_pull_request_reviews(pull_number)
+    return (
+        pull_request.base_ref,
+        pull_request.head_ref,
+        pull_request.state,
+        pull_request.merged_at,
+        pull_request.is_draft,
+        tuple((review.reviewer_login, review.state) for review in reviews),
     )
 
 

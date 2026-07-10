@@ -286,6 +286,10 @@ The mid-stack versus head split for deleted branches mirrors jj's own semantics:
 mid-stack change stays visible because descendants' bookmarks keep it reachable, while
 an unreferenced head is abandoned by the fetch. Every drift scenario ends by running
 `view` on the default selection and requiring a report exit rather than a crash.
+In both prefix-stop and fetch-abandon outcomes, the stopping change keeps its durable
+bookmark, PR, and submitted-topology identity plus its exact GitHub PR state; `land`
+owns only the prefix it actually landed and leaves that recovery evidence for explicit
+follow-up. Managed stack-comment IDs may clear as the landed prefix is finalized.
 
 ## Land Retry Harness
 
