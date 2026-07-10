@@ -421,11 +421,12 @@ The runner accepts the scenario count as a positional argument. It also supports
 `--land-handoff-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest
 arguments after `--`.
 
-`--random-seed` generates one seed, prints it with the matching `--seed <int>`
-reproduction argument, and uses it for both scenario generation and pytest-randomly
-ordering. GitHub CI uses this mode and runs one generated scenario beyond every fixed
-family corpus, so a failing CI log always contains the seed needed to replay the same
-scenario pool and test order locally.
+`--random-seed` generates one seed and uses it for both scenario generation and
+pytest-randomly ordering. The runner prints a complete reproduction invocation with the
+resolved seed, every family count, worker count, sync choice, and extra pytest arguments.
+GitHub CI uses this mode and runs one generated scenario beyond every fixed family corpus,
+so a failing CI log contains the exact command needed to replay the same scenario pool and
+test order locally.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:

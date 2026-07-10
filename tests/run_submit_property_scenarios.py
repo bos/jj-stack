@@ -197,7 +197,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         *test_files,
         *pytest_args,
     ]
-    print(f"==> property seed: {seed} (reproduce with --seed {seed})", flush=True)
+    reproduction_command = [
+        "tests/run_submit_property_scenarios.py",
+        str(args.scenarios),
+        "--seed",
+        str(seed),
+        "--jobs",
+        args.jobs,
+        "--cross-stack-scenarios",
+        str(cross_stack_scenarios),
+        "--stack-merge-scenarios",
+        str(stack_merge_scenarios),
+        "--stack-move-scenarios",
+        str(stack_move_scenarios),
+        "--retry-scenarios",
+        str(retry_scenarios),
+        "--drift-scenarios",
+        str(drift_scenarios),
+        "--land-scenarios",
+        str(land_scenarios),
+        "--land-drift-scenarios",
+        str(land_drift_scenarios),
+        "--land-retry-scenarios",
+        str(land_retry_scenarios),
+        "--land-handoff-scenarios",
+        str(land_handoff_scenarios),
+    ]
+    if args.no_sync:
+        reproduction_command.append("--no-sync")
+    if pytest_args:
+        reproduction_command.extend(("--", *pytest_args))
+
+    print(f"==> property seed: {seed}", flush=True)
+    print(f"==> reproduce: {shlex.join(reproduction_command)}", flush=True)
     print(f"==> property scenarios: {shlex.join(command)}", flush=True)
     completed = subprocess.run(command, cwd=REPO_ROOT, env=env)
     return completed.returncode
