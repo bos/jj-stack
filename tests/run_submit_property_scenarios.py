@@ -99,6 +99,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--land-handoff-scenarios",
+        type=_non_negative_int,
+        help=(
+            "Number of generated merged-prefix handoff scenarios to run "
+            "(default: max(5, scenarios // 40); 5 covers the fixed corpus)."
+        ),
+    )
+    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -160,6 +168,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if land_retry_scenarios is None:
         land_retry_scenarios = max(3, args.scenarios // 40)
     env["JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS"] = str(land_retry_scenarios)
+    land_handoff_scenarios = args.land_handoff_scenarios
+    if land_handoff_scenarios is None:
+        land_handoff_scenarios = max(5, args.scenarios // 40)
+    env["JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS"] = str(land_handoff_scenarios)
 
     venv_python = REPO_ROOT / ".venv" / (
         Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")

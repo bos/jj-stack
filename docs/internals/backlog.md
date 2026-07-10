@@ -281,16 +281,18 @@ The transition vocabulary and required behaviors live in
 
 ## Land Property Harness Follow-ups
 
-_Benefit: small–medium — the composed land family covers post-edit readiness walks;
-these extensions add the failure-timing and drift dimensions land shares with submit._
+_Benefit: small — the land families now cover composed edits, external drift,
+interrupted retries, and the merged-prefix handoff chain; these extensions deepen the
+same models._
 
-- a generated interrupted-land retry family (one-shot faults after trunk push, after
-  PR finalization, and after tracking retirement) mirroring the submit retry harness;
-  the retire-then-crash and externally-pruned-tracking rerun windows are covered by
-  deterministic integration tests today
-- land after external trunk advance and the other land-facing drift kinds, once the
-  drift replay targets `land` (see External-Drift Model Follow-ups)
-- `--pull-request` prefix selection as a scenario dimension in the composed walk
+- merge-transport variants of the land drift family (the readiness walk is shared, so
+  push-only coverage was chosen first; the mergeability stop adds one more boundary)
+- composed drift pairs against land, mirroring the submit drift family's dual-drift
+  combinations
+- a residual-copy story for external squash merges: after recovery, the pre-merge
+  local change stays reviewable and tracked until the user abandons it, and `list`
+  keeps reporting it as cleanup-needed with no command that retires it directly; decide
+  whether `cleanup` or `unstack` should offer that retirement
 
 ## Property Harness Cost Trims
 

@@ -877,6 +877,201 @@ def _random_land_retry_scenario(
     )
 
 
+LandHandoffOrigin = Literal["external_squash_merge", "merge_land"]
+LandHandoffRecovery = Literal["cleanup_rebase", "sync"]
+
+
+@dataclass(frozen=True, slots=True)
+class LandHandoffScenario:
+    """A merged prefix handed off to sync/cleanup, resubmitted, then landed.
+
+    The chain replays the documented recovery contract end to end: a prefix
+    reaches trunk through GitHub merges — `land --via merge`, an interrupted
+    merge land, or squash merges outside the tool — then `sync` or
+    `cleanup --rebase` plus `submit` rebuilds the local suffix, and a final
+    direct-push land consumes it.
+    """
+
+    name: str
+    initial_size: int
+    merged_prefix: int
+    origin: LandHandoffOrigin
+    recovery: LandHandoffRecovery
+    merge_fault: bool = False
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.merged_prefix <= self.initial_size - 1:
+            raise ValueError("the handoff needs a merged prefix and a surviving suffix")
+        if self.merge_fault and self.origin != "merge_land":
+            raise ValueError("only a merge-transport land can be interrupted mid-merge")
+
+    @property
+    def initial_labels(self) -> tuple[str, ...]:
+        return tuple(initial_land_label(index) for index in range(1, self.initial_size + 1))
+
+    @property
+    def merged_labels(self) -> tuple[str, ...]:
+        return self.initial_labels[: self.merged_prefix]
+
+    @property
+    def suffix_labels(self) -> tuple[str, ...]:
+        return self.initial_labels[self.merged_prefix :]
+
+    @property
+    def fault_pull_number(self) -> int | None:
+        if not self.merge_fault:
+            return None
+        return self.merged_prefix + 1
+
+    @property
+    def withheld_position(self) -> int | None:
+        """The 1-based position left unapproved to stop the merge land.
+
+        An interrupted merge land approves everything and relies on the fault
+        instead; the suffix approval then survives into the final land.
+        """
+
+        if self.origin == "merge_land" and not self.merge_fault:
+            return self.merged_prefix + 1
+        return None
+
+    @property
+    def trace(self) -> str:
+        parts = [
+            f"origin:{self.origin}",
+            f"recovery:{self.recovery}",
+            f"size:{self.initial_size}",
+            f"merged:{self.merged_prefix}",
+        ]
+        if self.merge_fault:
+            parts.append("merge_fault")
+        return ",".join(parts)
+
+    @property
+    def canonical_key(self) -> tuple[object, ...]:
+        return (
+            self.origin,
+            self.recovery,
+            self.initial_size,
+            self.merged_prefix,
+            self.merge_fault,
+        )
+
+    def __str__(self) -> str:
+        return f"{self.name}: {self.trace}"
+
+
+def land_handoff_scenarios_from_environment() -> tuple[LandHandoffScenario, ...]:
+    """Return deterministic land handoff scenarios for the pytest adapter."""
+
+    count = int(
+        os.environ.get(
+            "JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS",
+            str(DEFAULT_LAND_HANDOFF_SCENARIO_COUNT),
+        )
+    )
+    seed = int(
+        os.environ.get(
+            "JJ_STACK_LAND_PROPERTY_SEED",
+            str(DEFAULT_LAND_SCENARIO_SEED),
+        )
+    )
+    return generate_land_handoff_scenarios(count=count, seed=seed)
+
+
+def generate_land_handoff_scenarios(
+    *,
+    count: int,
+    seed: int,
+) -> tuple[LandHandoffScenario, ...]:
+    if count < 1:
+        return ()
+
+    scenarios: list[LandHandoffScenario] = []
+    seen: set[tuple[object, ...]] = set()
+    for scenario in _fixed_land_handoff_scenarios():
+        if len(scenarios) >= count:
+            return tuple(scenarios)
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+
+    rng = random.Random(seed)
+    attempts = 0
+    max_attempts = max(count * MAX_LAND_ATTEMPTS_MULTIPLIER, 1)
+    while len(scenarios) < count and attempts < max_attempts:
+        attempts += 1
+        scenario = _random_land_handoff_scenario(
+            rng=rng, name=f"land-handoff-random-{attempts:03d}"
+        )
+        if scenario.canonical_key in seen:
+            continue
+        scenarios.append(scenario)
+        seen.add(scenario.canonical_key)
+
+    return tuple(scenarios)
+
+
+def _fixed_land_handoff_scenarios() -> tuple[LandHandoffScenario, ...]:
+    return (
+        LandHandoffScenario(
+            name="handoff-merge-land-then-sync-lands-suffix",
+            initial_size=3,
+            merged_prefix=1,
+            origin="merge_land",
+            recovery="sync",
+        ),
+        LandHandoffScenario(
+            name="handoff-merge-land-then-cleanup-rebase-lands-suffix",
+            initial_size=3,
+            merged_prefix=2,
+            origin="merge_land",
+            recovery="cleanup_rebase",
+        ),
+        LandHandoffScenario(
+            name="handoff-external-squash-merge-then-sync-recovers",
+            initial_size=3,
+            merged_prefix=1,
+            origin="external_squash_merge",
+            recovery="sync",
+        ),
+        LandHandoffScenario(
+            name="handoff-external-squash-merge-then-cleanup-rebase-recovers",
+            initial_size=2,
+            merged_prefix=1,
+            origin="external_squash_merge",
+            recovery="cleanup_rebase",
+        ),
+        LandHandoffScenario(
+            name="handoff-interrupted-merge-land-recovers-through-sync",
+            initial_size=2,
+            merged_prefix=1,
+            origin="merge_land",
+            recovery="sync",
+            merge_fault=True,
+        ),
+    )
+
+
+DEFAULT_LAND_HANDOFF_SCENARIO_COUNT = len(_fixed_land_handoff_scenarios())
+
+
+def _random_land_handoff_scenario(
+    *,
+    rng: random.Random,
+    name: str,
+) -> LandHandoffScenario:
+    origins: tuple[LandHandoffOrigin, ...] = ("external_squash_merge", "merge_land")
+    recoveries: tuple[LandHandoffRecovery, ...] = ("cleanup_rebase", "sync")
+    initial_size = rng.randint(2, 4)
+    return LandHandoffScenario(
+        name=name,
+        initial_size=initial_size,
+        merged_prefix=rng.randint(1, initial_size - 1),
+        origin=rng.choice(origins),
+        recovery=rng.choice(recoveries),
+    )
+
+
 def _random_land_edits(
     *,
     rng: random.Random,

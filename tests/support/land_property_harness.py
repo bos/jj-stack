@@ -23,6 +23,7 @@ from .land_property_scenarios import (
     INSERTED_LABEL,
     LandDriftScenario,
     LandEditOperation,
+    LandHandoffScenario,
     LandRetryScenario,
     LandScenario,
     filename_for_land_label,
@@ -973,6 +974,257 @@ def replay_land_retry_scenario(
         run_cli=run_cli,
         trace=scenario.trace,
     )
+
+
+def replay_land_handoff_scenario(
+    *,
+    fake_repo: FakeGithubRepository,
+    install_fault: Callable[[], None],
+    read_output: OutputReader,
+    repo: Path,
+    restore_github: Callable[[], None],
+    run_cli: CliRunner,
+    scenario: LandHandoffScenario,
+) -> None:
+    """Replay one merged-prefix handoff chain and assert end-to-end convergence."""
+
+    labels_to_change_ids = _capture_initial_labels(
+        initial_labels=scenario.initial_labels,
+        repo=repo,
+        trace=scenario.trace,
+    )
+    state = ReviewStateStore.for_repo(repo).load()
+    tracked: dict[str, _TrackedChange] = {}
+    for label in scenario.initial_labels:
+        cached = state.changes[labels_to_change_ids[label]]
+        assert cached.bookmark is not None and cached.pr_number is not None
+        tracked[label] = _TrackedChange(
+            bookmark=cached.bookmark,
+            change_id=labels_to_change_ids[label],
+            pull_number=cached.pr_number,
+        )
+    for position, label in enumerate(scenario.initial_labels, start=1):
+        if position == scenario.withheld_position:
+            continue
+        fake_repo.create_pull_request_review(
+            pull_number=tracked[label].pull_number,
+            reviewer_login=f"land-reviewer-{label}",
+            state="APPROVED",
+        )
+
+    _apply_handoff_origin(
+        fake_repo=fake_repo,
+        install_fault=install_fault,
+        read_output=read_output,
+        restore_github=restore_github,
+        run_cli=run_cli,
+        scenario=scenario,
+        tracked=tracked,
+    )
+    # One event window from here to the end of the chain: the merged prefix
+    # must never see another event, and each suffix PR closes exactly once.
+    fake_repo.pull_request_events.clear()
+
+    _run_handoff_recovery(read_output=read_output, run_cli=run_cli, scenario=scenario)
+    _assert_recovery_converged(
+        fake_repo=fake_repo,
+        repo=repo,
+        scenario=scenario,
+        tracked=tracked,
+    )
+
+    if scenario.withheld_position is not None:
+        withheld_label = scenario.initial_labels[scenario.withheld_position - 1]
+        fake_repo.create_pull_request_review(
+            pull_number=tracked[withheld_label].pull_number,
+            reviewer_login=f"land-reviewer-{withheld_label}",
+            state="APPROVED",
+        )
+
+    suffix = tuple(tracked[label] for label in scenario.suffix_labels)
+    client = JjClient(repo)
+    current_commit_ids = {
+        change.change_id: client.resolve_revision(change.change_id).commit_id
+        for change in suffix
+    }
+    original_main = _remote_ref(fake_repo.git_dir, "main")
+
+    exit_code = run_cli(("land",))
+    captured = read_output()
+    assert exit_code == 0, (scenario.trace, captured.out, captured.err)
+
+    assert_push_landing(
+        current_commit_ids=current_commit_ids,
+        fake_repo=fake_repo,
+        landed=suffix,
+        original_main=original_main,
+        remaining_tracked=(),
+        repo=repo,
+        skip_cleanup=False,
+        state=ReviewStateStore.for_repo(repo).load(),
+        trace=scenario.trace,
+    )
+    assert_event_contract(
+        fake_repo=fake_repo,
+        landed_pull_numbers={change.pull_number for change in suffix},
+        trace=scenario.trace,
+        untouched_pull_numbers={
+            tracked[label].pull_number for label in scenario.merged_labels
+        },
+    )
+
+    if scenario.origin == "external_squash_merge":
+        # The external squash rewrote the merged commits, so the tool cannot
+        # prove the local pre-merge copies landed and conservatively keeps
+        # them reviewable. The user retires them like any stale local draft.
+        for label in scenario.merged_labels:
+            run_command(["jj", "abandon", tracked[label].change_id], repo)
+
+    # The merged prefix's tracking stays until a broader cleanup prunes it and
+    # removes review-branch leftovers; only then has the lifecycle converged.
+    exit_code = run_cli(("cleanup",))
+    captured = read_output()
+    assert exit_code == 0, (scenario.trace, captured.out, captured.err)
+    final_state = ReviewStateStore.for_repo(repo).load()
+    for change in tracked.values():
+        assert change.change_id not in final_state.changes, (
+            change.change_id,
+            scenario.trace,
+        )
+    _assert_list_reflects_landed_prefix(
+        landed_change_ids=tuple(change.change_id for change in tracked.values()),
+        read_output=read_output,
+        remaining_tracked_change_ids=(),
+        run_cli=run_cli,
+        trace=scenario.trace,
+    )
+
+
+def _apply_handoff_origin(
+    *,
+    fake_repo: FakeGithubRepository,
+    install_fault: Callable[[], None],
+    read_output: OutputReader,
+    restore_github: Callable[[], None],
+    run_cli: CliRunner,
+    scenario: LandHandoffScenario,
+    tracked: dict[str, _TrackedChange],
+) -> None:
+    """Move the merged prefix to trunk through GitHub, by land or externally."""
+
+    if scenario.origin == "external_squash_merge":
+        # An ordinary external merge of a stacked PR: retarget it to trunk,
+        # squash-merge it, let GitHub close it as merged, and let GitHub's
+        # auto-delete remove the head branch. The branch deletion is what
+        # later lets the fetch drop the local review bookmark, mirroring how
+        # a merge-transport land forgets it directly.
+        for label in scenario.merged_labels:
+            change = tracked[label]
+            pull_request = fake_repo.pull_requests[change.pull_number]
+            fake_repo.update_pull_request_base(
+                pull_request, base_ref="main", reason="external_retarget"
+            )
+            fake_repo.apply_squash_merge(pull_request)
+            pull_request.merged_at = (
+                datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            )
+            fake_repo.update_pull_request_state(
+                pull_request, state="closed", reason="external_merge"
+            )
+            run_command(
+                [
+                    "git",
+                    "--git-dir",
+                    str(fake_repo.git_dir),
+                    "update-ref",
+                    "-d",
+                    f"refs/heads/{change.bookmark}",
+                ],
+                fake_repo.git_dir.parent,
+            )
+    elif scenario.merge_fault:
+        install_fault()
+        exit_code = run_cli(("land", "--via", "merge"))
+        captured = read_output()
+        assert exit_code == EXIT_GITHUB, (scenario.trace, captured.out, captured.err)
+        restore_github()
+    else:
+        exit_code = run_cli(("land", "--via", "merge"))
+        captured = read_output()
+        assert exit_code == 0, (scenario.trace, captured.out, captured.err)
+
+    for label in scenario.merged_labels:
+        pull_request = fake_repo.pull_requests[tracked[label].pull_number]
+        assert pull_request.state == "closed", (label, scenario.trace)
+        assert pull_request.merged_at is not None, (label, scenario.trace)
+
+
+def _run_handoff_recovery(
+    *,
+    read_output: OutputReader,
+    run_cli: CliRunner,
+    scenario: LandHandoffScenario,
+) -> None:
+    if scenario.recovery == "sync":
+        exit_code = run_cli(("sync",))
+        captured = read_output()
+        assert exit_code == 0, (scenario.trace, captured.out, captured.err)
+        return
+    exit_code = run_cli(("cleanup", "--rebase"))
+    captured = read_output()
+    assert exit_code == 0, (scenario.trace, captured.out, captured.err)
+    exit_code = run_cli(("submit",))
+    captured = read_output()
+    assert exit_code == 0, (scenario.trace, captured.out, captured.err)
+
+
+def _assert_recovery_converged(
+    *,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    scenario: LandHandoffScenario,
+    tracked: dict[str, _TrackedChange],
+) -> None:
+    """The recovery rebased and resubmitted the suffix onto the merged trunk."""
+
+    state = ReviewStateStore.for_repo(repo).load()
+    client = JjClient(repo)
+    previous_bookmark: str | None = None
+    for position, label in enumerate(scenario.suffix_labels):
+        change = tracked[label]
+        cached = state.changes.get(change.change_id)
+        assert cached is not None, (label, scenario.trace)
+        assert cached.pr_number == change.pull_number, (label, scenario.trace)
+        assert cached.bookmark == change.bookmark, (label, scenario.trace)
+        pull_request = fake_repo.pull_requests[change.pull_number]
+        assert pull_request.state == "open", (label, scenario.trace)
+        expected_base = "main" if position == 0 else previous_bookmark
+        assert pull_request.base_ref == expected_base, (label, scenario.trace)
+        commit_id = client.resolve_revision(change.change_id).commit_id
+        assert _remote_ref(fake_repo.git_dir, change.bookmark) == commit_id, (
+            label,
+            scenario.trace,
+        )
+        previous_bookmark = change.bookmark
+
+    for label in scenario.merged_labels:
+        pull_request = fake_repo.pull_requests[tracked[label].pull_number]
+        assert pull_request.state == "closed", (label, scenario.trace)
+        assert pull_request.merged_at is not None, (label, scenario.trace)
+
+    # Approvals granted before the handoff stay attached to the same PRs.
+    pre_approved = (
+        scenario.suffix_labels
+        if scenario.withheld_position is None
+        else scenario.suffix_labels[1:]
+    )
+    for label in pre_approved:
+        reviews = fake_repo.list_pull_request_reviews(tracked[label].pull_number)
+        assert any(
+            review.state == "APPROVED"
+            and review.reviewer_login == f"land-reviewer-{label}"
+            for review in reviews
+        ), (label, scenario.trace)
 
 
 def _drop_land_completed_marker(*, repo: Path, trace: str) -> None:

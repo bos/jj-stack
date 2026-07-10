@@ -301,6 +301,24 @@ prefix. Merge-transport interruption is deliberately absent here: GitHub has alr
 moved trunk for the accepted prefix, so its recovery path is the sync/cleanup handoff
 chain, not a naive rerun.
 
+## Land Handoff Harness
+
+Merge-transport land and external merges both leave documented multi-command recovery
+work behind, and the handoff family replays that contract end to end. A prefix reaches
+trunk through GitHub merges — `land --via merge` stopped by an unapproved change, the
+same land interrupted mid-merge by a fault, or squash merges performed outside the tool
+with GitHub's usual head-branch auto-delete. Then `sync` (or `cleanup --rebase` plus
+`submit`) rebuilds the suffix, and a final direct-push land consumes it.
+
+The oracle asserts the recovery converged before the final land: every suffix change
+keeps its PR number, bookmark, and pre-handoff approvals, the bottom suffix PR targets
+trunk, review branches point at the rebased commits, and the merged prefix sees no
+further event of any kind after the handoff begins. After the final land, external-merge
+scenarios abandon the residual pre-merge local copies — the squash rewrote history, so
+the tool conservatively keeps them until the user retires them — and a closing `cleanup`
+must prune all remaining tracking, leaving `list --json` empty for every original
+change.
+
 ## Interrupted-Submit Retry Harness
 
 Boundary-drift scenarios assert that unsafe external state blocks mutation. Retry
@@ -382,8 +400,9 @@ $ tests/run_submit_property_scenarios.py 500
 The runner accepts the scenario count as a positional argument. It also supports
 `--seed <int>`, `--cross-stack-scenarios <N>`, `--stack-merge-scenarios <N>`,
 `--stack-move-scenarios <N>`, `--retry-scenarios <N>`, `--drift-scenarios <N>`,
-`--land-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest arguments
-after `--`.
+`--land-scenarios <N>`, `--land-drift-scenarios <N>`, `--land-retry-scenarios <N>`,
+`--land-handoff-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest
+arguments after `--`.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:
@@ -416,7 +435,14 @@ The opt-in runner sets these environment variables for the pytest adapter:
   scenarios
 - `JJ_STACK_SUBMIT_PROPERTY_SEED`: deterministic random seed
 - `JJ_STACK_LAND_PROPERTY_SCENARIOS`: target number of unique land scenarios
-- `JJ_STACK_LAND_PROPERTY_SEED`: deterministic random seed for land scenarios
+- `JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS`: target number of unique land drift
+  scenarios
+- `JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS`: target number of unique interrupted-land
+  retry scenarios
+- `JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS`: target number of unique merged-prefix
+  handoff scenarios
+- `JJ_STACK_LAND_PROPERTY_SEED`: deterministic random seed for all land scenario
+  families
 
 Those variables configure the adapter; they are not part of the core harness contract.
 
