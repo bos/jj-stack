@@ -316,8 +316,9 @@ for diagnostic quality, but an absent completed marker or malformed trailing rec
 reactivate or block a completed land.
 The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
 to the last submitted commit, single visible revision, mutable, bookmark policy allowing —
-by abandoning the local copy, removing its tracking, and deleting its managed review
-branch; failed proofs are preserved with an explanatory action.
+by deleting its verified managed review branch before abandoning the local copy and removing
+tracking. Remote deletion failures therefore retain both local and saved identity for retry;
+failed removability proofs are preserved with an explanatory action.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.

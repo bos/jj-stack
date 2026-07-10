@@ -474,6 +474,36 @@ def _retire_merged_ancestors(
     dry_run = prepared_rebase.dry_run
     status = "planned" if dry_run else "applied"
 
+    remote = prepared.remote
+    deletions = (
+        ()
+        if remote is None
+        else tuple(
+            (revision.bookmark, revision.remote_state.target)
+            for revision, cleanup_allowed in retired
+            if cleanup_allowed
+            and revision.remote_state is not None
+            and revision.remote_state.target is not None
+        )
+    )
+    if deletions:
+        if remote is None:
+            raise AssertionError("Remote branch deletions require a resolved remote.")
+        if not dry_run:
+            client.delete_remote_bookmarks(
+                remote=remote.name,
+                deletions=deletions,
+                fetch=False,
+            )
+        for bookmark, _expected_remote_target in deletions:
+            record_action(
+                CleanupAction(
+                    kind="remote branch",
+                    status=status,
+                    body=t"delete {ui.bookmark(bookmark)}@{remote.name}",
+                )
+            )
+
     if not dry_run:
         client.abandon_revisions(
             tuple(revision.change_id for revision, _cleanup_allowed in retired)
@@ -491,6 +521,11 @@ def _retire_merged_ancestors(
             )
         )
 
+    if not dry_run and deletions:
+        if remote is None:
+            raise AssertionError("Remote branch deletions require a resolved remote.")
+        client.fetch_remote(remote=remote.name)
+
     if not dry_run:
         state = prepared.state_store.load()
         previous_changes = dict(state.changes)
@@ -505,29 +540,6 @@ def _retire_merged_ancestors(
                 kind="tracking",
                 status=status,
                 body=t"remove tracking for landed {_revision_label_template(revision)}",
-            )
-        )
-
-    remote = prepared.remote
-    if remote is None:
-        return
-    deletions = tuple(
-        (revision.bookmark, revision.remote_state.target)
-        for revision, cleanup_allowed in retired
-        if cleanup_allowed
-        and revision.remote_state is not None
-        and revision.remote_state.target is not None
-    )
-    if not deletions:
-        return
-    if not dry_run:
-        client.delete_remote_bookmarks(remote=remote.name, deletions=deletions)
-    for bookmark, _expected_remote_target in deletions:
-        record_action(
-            CleanupAction(
-                kind="remote branch",
-                status=status,
-                body=t"delete {ui.bookmark(bookmark)}@{remote.name}",
             )
         )
 

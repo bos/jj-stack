@@ -194,7 +194,7 @@ def test_cleanup_restack_rebases_survivor_and_retires_landed_merged_ancestor(
     rendered_applied = " ".join(applied.out.split())
     rewritten_top = JjClient(repo).resolve_revision(top_change_id)
 
-    assert apply_exit_code == 0
+    assert apply_exit_code == 0, (applied.out, applied.err)
     assert "Applied rebase actions:" in applied.out
     assert "abandon merged feature 1" in rendered_applied
     assert "remove tracking for landed feature 1" in rendered_applied
@@ -214,6 +214,40 @@ def test_cleanup_restack_rebases_survivor_and_retires_landed_merged_ancestor(
         and event.data["after"] is None
         for event in journal_events
     )
+
+
+def test_cleanup_restack_keeps_identity_when_remote_branch_delete_fails(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    bottom_change_id = stack.revisions[0].change_id
+    top_change_id = stack.revisions[1].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    bottom_bookmark = state_store.load().changes[bottom_change_id].bookmark
+    assert bottom_bookmark is not None
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
+
+    def fail_remote_branch_delete(*_args, **_kwargs) -> None:
+        raise RuntimeError("Simulated remote branch delete failure")
+
+    monkeypatch.setattr(
+        JjClient,
+        "delete_remote_bookmarks",
+        fail_remote_branch_delete,
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated remote branch delete failure"):
+        run_main(repo, config_path, "cleanup", "--rebase", top_change_id)
+    capsys.readouterr()
+
+    assert JjClient(repo).resolve_revision(bottom_change_id).change_id == bottom_change_id
+    assert bottom_change_id in state_store.load().changes
+    assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
 
 
 def test_cleanup_restack_preserves_immutable_merged_ancestor(

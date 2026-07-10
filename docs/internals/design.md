@@ -1235,8 +1235,11 @@ The algorithm:
    copy, removes its saved tracking, and deletes its managed remote review branch.
    Copies that fail the proof — rewritten since submit, divergent, pinned immutable by
    a fetched review branch, or guarded by an unmanaged bookmark — stay in place with
-   an action explaining why; plain `cleanup` retires immutable leftovers once their
-   tracking goes stale. Change-id headers that newer `jj` transfers through Git are
+   an action explaining why. Retirement deletes any verified managed remote branch
+   first, abandons the inert local copy, and removes saved tracking last, so a failed
+   remote deletion keeps the exact identity needed to retry. Plain `cleanup` retires
+   immutable leftovers once their tracking goes stale. Change-id headers that newer
+   `jj` transfers through Git are
    deliberately not part of the proof: forge squash and rebase merges drop them, so
    the saved last-submitted commit is the reliable evidence.
 8. Do not rebase surviving local descendants onto fetched branch-tip commits for
