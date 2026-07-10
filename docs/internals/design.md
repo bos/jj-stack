@@ -1401,7 +1401,9 @@ Recovery guidance stays case-specific:
   exact GitHub repository, remote, trunk before and after the push, planned commit and
   change IDs, review bookmarks, and PR numbers
 - never start a second direct-push transaction while one is unresolved; first reconcile
-  the saved transaction against the current remote trunk
+  the saved transaction against the current remote trunk. This recovery runs before
+  selector resolution or normal stack discovery, so unrelated local topology cannot block
+  completion of an already-applied trunk transition
 - if the saved commits did not reach trunk, restore a local trunk bookmark moved by the
   interrupted attempt, clear the unapplied transaction, and replan from current state
 - if the saved commits reached trunk, require the current GitHub repository, remote, trunk,

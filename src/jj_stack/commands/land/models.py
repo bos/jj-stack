@@ -60,6 +60,20 @@ class PreparedLand:
     via: LandVia
 
 
+@dataclass(frozen=True, slots=True)
+class LandExecutionInputs:
+    """Mutation dependencies independent of normal stack/status preparation."""
+
+    bypass_readiness: bool
+    cleanup_bookmarks: bool
+    context: CommandContext
+    ordered_change_ids: tuple[str, ...]
+    ordered_commit_ids: tuple[str, ...]
+    original_trunk_commit_id: str
+    remote_url: str
+    selected_pr_number: int | None
+
+
 @dataclass(slots=True)
 class LandMutationRun:
     """Mutable land state shared by live execution phases."""

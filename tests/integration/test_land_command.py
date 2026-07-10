@@ -810,6 +810,60 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     assert landed_change_ids[1] not in finished_state.changes
 
 
+def test_land_recovers_before_inspecting_an_unrelated_selected_merge(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1, 2)
+    state_store = ReviewStateStore.for_repo(repo)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnFinalizeLoadClient(GithubClient):
+        async def get_pull_request(self, *, pull_number):
+            if pull_number == 1:
+                raise GithubClientError("Simulated finalization failure", status_code=500)
+            return await super().get_pull_request(pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+        client_type=FailOnFinalizeLoadClient,
+    )
+    assert run_main(repo, config_path, "land") == EXIT_GITHUB
+    capsys.readouterr()
+
+    pending = state_store.load().pending_direct_land
+    assert pending is not None
+    run_command(["jj", "new", pending.original_trunk_commit_id], repo)
+    commit_file(repo, "unrelated left", "unrelated-left.txt")
+    left_commit_id = JjClient(repo).resolve_revision("@-").commit_id
+    run_command(["jj", "new", pending.original_trunk_commit_id], repo)
+    commit_file(repo, "unrelated right", "unrelated-right.txt")
+    right_commit_id = JjClient(repo).resolve_revision("@-").commit_id
+    run_command(["jj", "new", left_commit_id, right_commit_id], repo)
+    commit_file(repo, "unrelated merge", "unrelated-merge.txt")
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.land.command",),
+    )
+    exit_code = run_main(repo, config_path, "land")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "merge commits are not supported" not in captured.out + captured.err
+    assert state_store.load().pending_direct_land is None
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.pull_requests[2].state == "closed"
+
+
 def test_land_retries_after_finalization_before_atomic_state_commit(
     tmp_path: Path,
     monkeypatch,

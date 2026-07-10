@@ -46,6 +46,9 @@ from jj_stack.errors import CliError, DriftError, UsageError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.resolution import (
+    GithubRepoAddress,
+    GithubTarget,
+    resolve_github_target,
     resolve_trunk_branch,
 )
 from jj_stack.jj.client import JjCliArgs
@@ -71,6 +74,7 @@ from .execute import (
     execute_land_plan,
 )
 from .models import (
+    LandExecutionInputs,
     LandPlan,
     LandResult,
     LandRevision,
@@ -85,10 +89,6 @@ from .plan import (
 from .render import print_land_result
 
 HELP = "Land the ready changes at the bottom of a stack"
-
-
-class _ReprepareLand(Exception):
-    """The pending transaction changed local state used by preparation."""
 
 
 def land(
@@ -119,6 +119,13 @@ def land(
         context.state_store.require_writable(),
         command="land",
     ):
+        pending_result = _resume_pending_direct_land(
+            context=context,
+            dry_run=dry_run,
+        )
+        if pending_result is not None:
+            print_land_result(pending_result)
+            return 1 if pending_result.blocked else 0
         return _run_land(
             bypass_readiness=bypass_readiness,
             cleanup_bookmarks=not skip_cleanup,
@@ -128,6 +135,118 @@ def land(
             pull_request=pull_request,
             revset=revset,
             via=via,
+        )
+
+
+def _resume_pending_direct_land(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+) -> LandResult | None:
+    """Reconcile a durable direct-land checkpoint before normal stack selection."""
+
+    state = context.state_store.load()
+    pending = state.pending_direct_land
+    if pending is None:
+        return None
+
+    target = resolve_github_target(context.jj_client.list_git_remotes())
+    if not isinstance(target, GithubTarget):
+        message = (
+            target.remote_error
+            or target.github_repository_error
+            or t"Could not determine which Git remote to use."
+        )
+        raise CliError(message)
+    return asyncio.run(
+        _resume_pending_direct_land_async(
+            context=context,
+            dry_run=dry_run,
+            pending=pending,
+            remote=target.remote,
+            repository=target.repository,
+            state=state,
+        )
+    )
+
+
+async def _resume_pending_direct_land_async(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    pending: PendingDirectLand,
+    remote: GitRemote,
+    repository: GithubRepoAddress,
+    state: ReviewState,
+) -> LandResult | None:
+    async with build_github_client(repository=repository) as github_client:
+        _ensure_pending_direct_land_scope_matches(
+            github_client=github_client,
+            pending=pending,
+            remote=remote,
+            trunk_branch=pending.trunk_branch,
+        )
+        with console.spinner(description="Refreshing interrupted land state"):
+            context.jj_client.fetch_remote(remote=remote.name)
+            bookmark_states = context.jj_client.list_bookmark_states()
+        plan = await _pending_direct_land_plan(
+            bookmark_states=bookmark_states,
+            context=context,
+            dry_run=dry_run,
+            github_client=github_client,
+            pending=pending,
+            remote=remote,
+            state=state,
+        )
+        if plan is None:
+            return None
+
+        bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
+            bookmark_states=bookmark_states,
+            prefix=pending.bookmark_prefix,
+            cleanup_bookmarks=pending.cleanup_bookmarks,
+            cleanup_user_bookmarks=pending.cleanup_user_bookmarks,
+            planned_revisions=plan.planned_revisions,
+        )
+        selected_revset = pending.planned_revisions[-1].change_id
+        trunk_subject = pending.planned_revisions[-1].subject
+        if dry_run:
+            return LandResult(
+                actions=plan.planned_actions(
+                    bookmark_cleanup_plans=bookmark_cleanup_plans,
+                ),
+                applied=False,
+                bypass_readiness=False,
+                blocked=plan.blocked,
+                remote_name=remote.name,
+                selected_revset=selected_revset,
+                trunk_branch=pending.trunk_branch,
+                trunk_subject=trunk_subject,
+                via=plan.via,
+            )
+        return await execute_land_plan(
+            bookmark_cleanup_plans=bookmark_cleanup_plans,
+            execution=LandExecutionInputs(
+                bypass_readiness=False,
+                cleanup_bookmarks=pending.cleanup_bookmarks,
+                context=context,
+                ordered_change_ids=tuple(
+                    revision.change_id for revision in pending.planned_revisions
+                ),
+                ordered_commit_ids=tuple(
+                    revision.commit_id for revision in pending.planned_revisions
+                ),
+                original_trunk_commit_id=pending.original_trunk_commit_id,
+                remote_url=pending.remote_url,
+                selected_pr_number=None,
+            ),
+            github_client=github_client,
+            merge_method=None,
+            plan=plan,
+            remote_name=remote.name,
+            selected_revset=selected_revset,
+            trunk_branch=pending.trunk_branch,
+            trunk_subject=trunk_subject,
         )
 
 
@@ -158,21 +277,7 @@ def _run_land(
             selected_pr_number=selected_pr_number,
             via=via,
         )
-    try:
-        result = _stream_land(prepared_land=prepared_land)
-    except _ReprepareLand:
-        with console.spinner(description="Re-inspecting jj stack"):
-            prepared_land = _prepare_land(
-                bypass_readiness=prepared_land.bypass_readiness,
-                cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-                context=prepared_land.context,
-                dry_run=prepared_land.dry_run,
-                merge_method=prepared_land.merge_method,
-                revset=prepared_land.prepared_status.selected_revset,
-                selected_pr_number=prepared_land.selected_pr_number,
-                via=prepared_land.via,
-            )
-        result = _stream_land(prepared_land=prepared_land)
+    result = _stream_land(prepared_land=prepared_land)
     print_land_result(result)
     return 1 if result.blocked else 0
 
@@ -345,25 +450,30 @@ async def _stream_land_async(
                 )
             return await execute_land_plan(
                 bookmark_cleanup_plans=bookmark_cleanup_plans,
+                execution=LandExecutionInputs(
+                    bypass_readiness=prepared_land.bypass_readiness,
+                    cleanup_bookmarks=prepared_land.cleanup_bookmarks,
+                    context=prepared_land.context,
+                    ordered_change_ids=tuple(
+                        prepared_revision.revision.change_id
+                        for prepared_revision in prepared.status_revisions
+                    ),
+                    ordered_commit_ids=tuple(
+                        prepared_revision.revision.commit_id
+                        for prepared_revision in prepared.status_revisions
+                    ),
+                    original_trunk_commit_id=prepared.stack.trunk.commit_id,
+                    remote_url=remote.url,
+                    selected_pr_number=prepared_land.selected_pr_number,
+                ),
                 github_client=github_client,
                 merge_method=resolved_merge_method,
                 plan=plan,
-                prepared_land=prepared_land,
                 remote_name=remote.name,
                 selected_revset=status_result.selected_revset,
                 trunk_branch=trunk_branch,
                 trunk_subject=prepared.stack.trunk.subject,
             )
-
-        completion_plan = await _pending_direct_land_plan(
-            bookmark_states=bookmark_states,
-            github_client=github_client,
-            prepared_land=prepared_land,
-            remote=remote,
-            trunk_branch=trunk_branch,
-        )
-        if completion_plan is not None:
-            return await finish_plan(completion_plan)
 
         selected_stack_is_off_trunk = (
             bool(prepared.stack.revisions)
@@ -430,28 +540,19 @@ def _resolve_land_merge_method(
 async def _pending_direct_land_plan(
     *,
     bookmark_states: dict[str, BookmarkState],
+    context: CommandContext,
+    dry_run: bool,
     github_client: GithubClient,
-    prepared_land: PreparedLand,
+    pending: PendingDirectLand,
     remote: GitRemote,
-    trunk_branch: str,
+    state: ReviewState,
 ) -> LandPlan | None:
     """Reconcile the one pending direct-land transaction before replanning."""
 
-    prepared = prepared_land.prepared_status.prepared
-    state = prepared.state_store.load()
-    pending = state.pending_direct_land
-    if pending is None:
-        return None
-
-    _ensure_pending_direct_land_scope_matches(
-        github_client=github_client,
-        pending=pending,
-        remote=remote,
-        trunk_branch=trunk_branch,
-    )
+    trunk_branch = pending.trunk_branch
     trunk_bookmark = bookmark_states.get(trunk_branch)
     if trunk_bookmark is None:
-        trunk_bookmark = prepared.client.get_bookmark_state(trunk_branch)
+        trunk_bookmark = context.jj_client.get_bookmark_state(trunk_branch)
     remote_trunk = trunk_bookmark.remote_target(remote.name)
     remote_trunk_commit_id = None if remote_trunk is None else remote_trunk.target
     if remote_trunk_commit_id is None:
@@ -464,7 +565,7 @@ async def _pending_direct_land_plan(
     commit_ids = tuple(
         revision.commit_id for revision in pending.planned_revisions
     )
-    landed_commit_ids = prepared.client.query_commit_ids_ancestors_of(
+    landed_commit_ids = context.jj_client.query_commit_ids_ancestors_of(
         commit_ids,
         descendant_commit_id=remote_trunk_commit_id,
     )
@@ -475,7 +576,7 @@ async def _pending_direct_land_plan(
                 t"longer all on {ui.revset('trunk()')}.",
                 hint="Inspect the current trunk and the pending land before retrying.",
             )
-        if prepared_land.dry_run:
+        if dry_run:
             raise CliError(
                 "An earlier direct land did not move remote trunk and needs to be "
                 "cleared before a new preview can be computed.",
@@ -483,10 +584,10 @@ async def _pending_direct_land_plan(
                 t"reconcile it.",
             )
         _clear_unapplied_pending_direct_land(
+            context=context,
             pending=pending,
-            prepared_land=prepared_land,
         )
-        raise _ReprepareLand
+        return None
 
     await _ensure_pending_direct_land_review_identities(
         bookmark_states=bookmark_states,
@@ -634,32 +735,31 @@ def _pending_direct_land_identity_error(change_id: str) -> CliError:
 
 def _clear_unapplied_pending_direct_land(
     *,
+    context: CommandContext,
     pending: PendingDirectLand,
-    prepared_land: PreparedLand,
 ) -> None:
     """Clear a transaction whose exact commits never reached remote trunk."""
 
-    prepared = prepared_land.prepared_status.prepared
-    local_trunk = prepared.client.get_bookmark_state(pending.trunk_branch)
+    local_trunk = context.jj_client.get_bookmark_state(pending.trunk_branch)
     if local_trunk.local_target == pending.target_trunk_commit_id:
         if pending.original_local_trunk_commit_id is None:
-            prepared.client.forget_bookmarks((pending.trunk_branch,))
+            context.jj_client.forget_bookmarks((pending.trunk_branch,))
         else:
-            prepared.client.set_bookmark(
+            context.jj_client.set_bookmark(
                 pending.trunk_branch,
                 pending.original_local_trunk_commit_id,
                 allow_backwards=True,
             )
 
-    state = prepared.state_store.load()
+    state = context.state_store.load()
     if state.pending_direct_land != pending:
         raise CliError("Pending direct-land state changed while it was being reconciled.")
-    prepared.state_store.save(
+    context.state_store.save(
         state.model_copy(update={"pending_direct_land": None}),
         durable=True,
     )
     OperationJournal.resume(
-        prepared.state_store.state_dir,
+        context.state_store.state_dir,
         operation="land",
         operation_id=pending.operation_id,
     ).append(

@@ -310,6 +310,12 @@ transaction and removes landed tracking in the same durable replacement. This gi
 one explicit state machine and one commit point rather than inferring unfinished work from
 relationships among historical audit events.
 
+The command checks that transaction immediately after bootstrap and lock acquisition. Recovery
+resolves only the persisted repository, remote, trunk, commits, bookmarks, and PRs; normal revset
+selection and stack/status preparation start only after an unapplied checkpoint has been cleared.
+An unrelated unsupported local stack therefore cannot prevent completion of a trunk transition
+that already happened.
+
 When a durable write creates or replaces correctness-critical state, it fsyncs the file and
 state directory on platforms that support those operations. Audit appends may still be durable
 for diagnostic quality, but an absent completed marker or malformed trailing record cannot

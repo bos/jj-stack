@@ -25,11 +25,11 @@ from jj_stack.state.journal import OperationJournal
 from .models import (
     BookmarkStateReader,
     LandAction,
+    LandExecutionInputs,
     LandMutationRun,
     LandPlan,
     LandResult,
     LandRevision,
-    PreparedLand,
     ReviewBookmarkCleanupPlan,
     landed_tracking_retire_body,
 )
@@ -96,7 +96,7 @@ async def execute_land_plan(
     github_client: GithubClient,
     merge_method: str | None,
     plan: LandPlan,
-    prepared_land: PreparedLand,
+    execution: LandExecutionInputs,
     remote_name: str,
     selected_revset: str,
     trunk_branch: str,
@@ -104,8 +104,8 @@ async def execute_land_plan(
 ) -> LandResult:
     """Execute a non-dry-run land plan and return the actions that were applied."""
 
-    prepared_status = prepared_land.prepared_status
-    prepared = prepared_status.prepared
+    client = execution.context.jj_client
+    state_store = execution.context.state_store
 
     def land_result(
         *,
@@ -116,7 +116,7 @@ async def execute_land_plan(
         return LandResult(
             actions=actions,
             applied=applied,
-            bypass_readiness=prepared_land.bypass_readiness,
+            bypass_readiness=execution.bypass_readiness,
             blocked=blocked,
             remote_name=remote_name,
             selected_revset=selected_revset,
@@ -132,7 +132,7 @@ async def execute_land_plan(
             applied=False,
             blocked=True,
         )
-    state_dir = prepared.state_store.require_writable()
+    state_dir = state_store.require_writable()
     journal_must_be_durable = (
         execution_plan.push_trunk or execution_plan.resume_pending_direct_land
     )
@@ -144,16 +144,10 @@ async def execute_land_plan(
         "landed_commit_id": (
             execution_plan.planned_revisions[-1].commit_id
             if execution_plan.planned_revisions
-            else prepared.stack.trunk.commit_id
+            else execution.original_trunk_commit_id
         ),
-        "ordered_change_ids": tuple(
-            prepared_revision.revision.change_id
-            for prepared_revision in prepared_status.prepared.status_revisions
-        ),
-        "ordered_commit_ids": tuple(
-            prepared_revision.revision.commit_id
-            for prepared_revision in prepared_status.prepared.status_revisions
-        ),
+        "ordered_change_ids": execution.ordered_change_ids,
+        "ordered_commit_ids": execution.ordered_commit_ids,
         "planned_revisions": tuple(
             {
                 "bookmark": revision.bookmark,
@@ -170,7 +164,7 @@ async def execute_land_plan(
         "selected_revset": selected_revset,
         "trunk_branch": trunk_branch,
     }
-    state = prepared.state_store.load()
+    state = state_store.load()
     pending_direct_land = state.pending_direct_land
     if execution_plan.resume_pending_direct_land:
         if pending_direct_land is None:
@@ -186,10 +180,10 @@ async def execute_land_plan(
             durable=journal_must_be_durable,
             operation="land",
             options={
-                "bypass_readiness": prepared_land.bypass_readiness,
-                "cleanup_bookmarks": prepared_land.cleanup_bookmarks,
+                "bypass_readiness": execution.bypass_readiness,
+                "cleanup_bookmarks": execution.cleanup_bookmarks,
                 "merge_method": merge_method,
-                "selected_pr_number": prepared_land.selected_pr_number,
+                "selected_pr_number": execution.selected_pr_number,
                 "via": plan.via,
             },
             resolved_scope=resolved_scope,
@@ -199,22 +193,19 @@ async def execute_land_plan(
                 raise CliError(
                     "Another direct land is still pending and must be resolved first."
                 )
-            remote = prepared.remote
-            if remote is None:
-                raise AssertionError("Direct land requires a resolved remote.")
             pending_direct_land = PendingDirectLand(
-                bookmark_prefix=prepared_land.context.config.bookmark_prefix,
-                cleanup_bookmarks=prepared_land.cleanup_bookmarks,
+                bookmark_prefix=execution.context.config.bookmark_prefix,
+                cleanup_bookmarks=execution.cleanup_bookmarks,
                 cleanup_user_bookmarks=(
-                    prepared_land.context.config.cleanup_user_bookmarks
+                    execution.context.config.cleanup_user_bookmarks
                 ),
                 github_host=github_client.repository.host,
                 github_repository=github_client.repository.full_name,
                 operation_id=journal.operation_id,
                 original_local_trunk_commit_id=(
-                    prepared.client.get_bookmark_state(trunk_branch).local_target
+                    client.get_bookmark_state(trunk_branch).local_target
                 ),
-                original_trunk_commit_id=prepared.stack.trunk.commit_id,
+                original_trunk_commit_id=execution.original_trunk_commit_id,
                 planned_revisions=tuple(
                     PendingDirectLandRevision(
                         bookmark=revision.bookmark,
@@ -229,14 +220,14 @@ async def execute_land_plan(
                     for revision in execution_plan.planned_revisions
                 ),
                 remote_name=remote_name,
-                remote_url=remote.url,
+                remote_url=execution.remote_url,
                 trunk_branch=trunk_branch,
             )
     mutation_run = LandMutationRun(
         pending_direct_land=pending_direct_land,
         state=state,
         state_changes=dict(state.changes),
-        state_store=prepared.state_store,
+        state_store=state_store,
     )
     if execution_plan.push_trunk:
         mutation_run.save_interim_state(durable=True)
@@ -247,12 +238,12 @@ async def execute_land_plan(
     }
     trunk_transition_blocked = await _apply_trunk_transition(
         actions=actions,
-        client=prepared.client,
+        client=client,
         execution_plan=execution_plan,
         github_client=github_client,
         journal=journal,
         mutation_run=mutation_run,
-        prepared_land=prepared_land,
+        bypass_readiness=execution.bypass_readiness,
         remote_name=remote_name,
         trunk_branch=trunk_branch,
     )
@@ -265,7 +256,7 @@ async def execute_land_plan(
     finalized_change_ids = await _finalize_planned_revisions(
         actions=actions,
         bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
-        client=prepared.client,
+        client=client,
         execution_plan=execution_plan,
         github_client=github_client,
         journal=journal,
@@ -300,12 +291,12 @@ async def execute_land_plan(
 async def _apply_trunk_transition(
     *,
     actions: list[LandAction],
+    bypass_readiness: bool,
     client: JjClient,
     execution_plan: LandPlan,
     github_client: GithubClient,
     journal: OperationJournal,
     mutation_run: LandMutationRun,
-    prepared_land: PreparedLand,
     remote_name: str,
     trunk_branch: str,
 ) -> bool:
@@ -351,7 +342,7 @@ async def _apply_trunk_transition(
             },
         )
     refresh_actions, dismissed_action = await _refresh_rebased_review_branches(
-        bypass_readiness=prepared_land.bypass_readiness,
+        bypass_readiness=bypass_readiness,
         client=client,
         github_client=github_client,
         resubmit_revisions=execution_plan.resubmit_revisions,
