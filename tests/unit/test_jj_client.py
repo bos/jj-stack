@@ -29,6 +29,7 @@ def _revision_line(
     divergent: bool = False,
     hidden: bool = False,
     working_copy: bool = False,
+    working_copy_workspaces: list[str] | None = None,
     immutable: bool = False,
 ) -> str:
     import json
@@ -41,6 +42,11 @@ def _revision_line(
         "true" if empty else "false",
         "true" if divergent else "false",
         "true" if working_copy else "false",
+        json.dumps(
+            working_copy_workspaces
+            if working_copy_workspaces is not None
+            else (["default"] if working_copy else [])
+        ),
         "true" if hidden else "false",
         "true" if immutable else "false",
         "true" if conflict else "false",
@@ -635,8 +641,8 @@ def test_discover_review_stack_rejects_hidden_revisions(monkeypatch: pytest.Monk
             id="wrong-field-count",
         ),
         pytest.param(
-            'NOT_JSON\t"commit-id"\t"desc"\t[]\tfalse\tfalse\tfalse\tfalse\tfalse'
-            "\tfalse\tfalse\ttrue\n",
+            'NOT_JSON\t"commit-id"\t"desc"\t[]\tfalse\tfalse\tfalse\t[]\tfalse'
+            "\tfalse\tfalse\tfalse\ttrue\n",
             "invalid JSON",
             id="invalid-json",
         ),
@@ -645,9 +651,18 @@ def test_discover_review_stack_rejects_hidden_revisions(monkeypatch: pytest.Monk
             '"commit-id"\t'
             '"desc"\t'
             '"not-a-list"\t'
-            "false\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\n",
+            "false\tfalse\tfalse\t[]\tfalse\tfalse\tfalse\tfalse\ttrue\n",
             "unexpected field types",
-            id="wrong-field-type",
+            id="wrong-parent-field-type",
+        ),
+        pytest.param(
+            '"change-id"\t'
+            '"commit-id"\t'
+            '"desc"\t'
+            "[]\t"
+            'false\tfalse\tfalse\t"not-a-list"\tfalse\tfalse\tfalse\tfalse\ttrue\n',
+            "unexpected field types",
+            id="wrong-workspace-field-type",
         ),
     ],
 )
@@ -917,7 +932,9 @@ def _template() -> str:
         r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '
         r'json(parents.map(|p| p.commit_id())) ++ "\t" ++ '
         r'json(empty) ++ "\t" ++ json(divergent) ++ "\t" ++ '
-        r'json(current_working_copy) ++ "\t" ++ json(self.hidden()) ++ "\t" ++ '
+        r'json(current_working_copy) ++ "\t" ++ '
+        r'json(working_copies.map(|wc| wc.name())) ++ "\t" ++ '
+        r'json(self.hidden()) ++ "\t" ++ '
         r'json(immutable) ++ "\t" ++ json(self.conflict()) ++ "\n"'
     )
 

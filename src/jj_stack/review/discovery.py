@@ -174,7 +174,7 @@ def _discover_stacks_from_revisions(
     all_revisions_by_commit_id = {
         revision.commit_id: revision
         for revision in revisions
-        if not revision.current_working_copy
+        if not revision.is_working_copy
         and revision.is_reviewable(allow_divergent=True, allow_immutable=True)
     }
     if not all_revisions_by_commit_id:

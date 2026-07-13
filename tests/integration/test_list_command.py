@@ -422,6 +422,40 @@ def test_list_does_not_extend_through_modified_working_copy(
     assert "1 change" in captured.out
 
 
+def test_list_does_not_extend_through_another_workspaces_working_copy(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    feature_change_id = JjClient(repo).discover_review_stack().head.change_id
+    other_workspace = tmp_path / "other-workspace"
+    run_command(
+        [
+            "jj",
+            "workspace",
+            "add",
+            "--name",
+            "other",
+            "--revision",
+            feature_change_id,
+            str(other_workspace),
+        ],
+        repo,
+    )
+
+    exit_code = run_main(repo, config_path, "list", "--json")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert len(payload["rows"]) == 1
+    assert [change["change_id"] for change in payload["rows"][0]["changes"]] == [
+        feature_change_id
+    ]
+
+
 def test_list_marks_unlinked_change(
     tmp_path,
     monkeypatch,

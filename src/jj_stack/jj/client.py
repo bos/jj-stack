@@ -28,7 +28,9 @@ _COMMIT_TEMPLATE = (
     r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '
     r'json(parents.map(|p| p.commit_id())) ++ "\t" ++ '
     r'json(empty) ++ "\t" ++ json(divergent) ++ "\t" ++ '
-    r'json(current_working_copy) ++ "\t" ++ json(self.hidden()) ++ "\t" ++ '
+    r'json(current_working_copy) ++ "\t" ++ '
+    r'json(working_copies.map(|wc| wc.name())) ++ "\t" ++ '
+    r'json(self.hidden()) ++ "\t" ++ '
     r'json(immutable) ++ "\t" ++ json(self.conflict()) ++ "\n"'
 )
 _SCAN_TEMPLATE_PREFIX = _COMMIT_TEMPLATE.removesuffix(r'"\n"') + r'"\t" ++ '
@@ -157,7 +159,7 @@ class JjClient:
         else:
             trunk, head = self._resolve_selected_head_and_trunk(revset)
             selected_revset = revset
-            if head.current_working_copy and head.empty:
+            if head.is_working_copy and head.empty:
                 raise UnsupportedStackError(
                     "Selected revision resolves to the empty working-copy commit. "
                     "Select a concrete change instead.",
@@ -1102,6 +1104,12 @@ class JjClient:
                 t"stack reached the root commit before {ui.revset('trunk()')}.",
                 reason="reached_root_before_trunk",
             )
+        if revision.is_working_copy and revision.empty:
+            raise UnsupportedStackError.stack_shape(
+                revision.change_id,
+                "empty working-copy commits are not reviewable.",
+                reason="empty_working_copy",
+            )
         if revision.hidden:
             raise UnsupportedStackError.stack_shape(
                 revision.change_id,
@@ -1128,7 +1136,7 @@ class JjClient:
             )
 
 
-_EXPECTED_FIELD_COUNT = 10
+_EXPECTED_FIELD_COUNT = 11
 
 _DIVERGENT_CHANGE_ID_ERROR_PATTERN = re.compile(
     r"Change ID `(?P<change_id>[0-9a-z]+)` is divergent"
@@ -1183,6 +1191,7 @@ def _parse_revision_line(line: str) -> LocalRevision:
         empty_json,
         divergent_json,
         working_copy_json,
+        working_copy_workspaces_json,
         hidden_json,
         immutable_json,
         conflict_json,
@@ -1193,6 +1202,14 @@ def _parse_revision_line(line: str) -> LocalRevision:
             raise JjCommandError(
                 t"{ui.cmd('jj log')} output has unexpected field types: "
                 t"parents field is not a JSON array. Raw line: {line!r}"
+            )
+        working_copy_workspaces_raw = json.loads(working_copy_workspaces_json)
+        if not isinstance(working_copy_workspaces_raw, list) or not all(
+            isinstance(workspace, str) for workspace in working_copy_workspaces_raw
+        ):
+            raise JjCommandError(
+                t"{ui.cmd('jj log')} output has unexpected field types: "
+                t"working-copy workspaces field is not a JSON string array. Raw line: {line!r}"
             )
         return LocalRevision(
             change_id=json.loads(change_id_json),
@@ -1205,6 +1222,7 @@ def _parse_revision_line(line: str) -> LocalRevision:
             hidden=json.loads(hidden_json),
             immutable=json.loads(immutable_json),
             parents=tuple(parents_raw),
+            working_copy_workspaces=tuple(working_copy_workspaces_raw),
         )
     except json.JSONDecodeError as error:
         raise JjCommandError(

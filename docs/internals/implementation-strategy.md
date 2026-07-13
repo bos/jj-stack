@@ -185,6 +185,9 @@ bookmarks plus tracked and untracked remote bookmark state, and surface stale-wo
 errors distinctly so commands can suggest `jj workspace update-stale`.
 
 The adapter prefers machine-readable template output over parsing human text.
+Revision templates capture both `current_working_copy` and the names returned by
+`working_copies`: the former marks the invoking workspace, while the latter lets repo-scoped
+discovery recognize working-copy commits owned by any workspace.
 
 ### Git adapter
 

@@ -20,6 +20,7 @@ class LocalRevision(BaseModel):
     hidden: bool
     immutable: bool
     parents: tuple[str, ...]
+    working_copy_workspaces: tuple[str, ...] = ()
 
     @property
     def subject(self) -> str:
@@ -27,6 +28,12 @@ class LocalRevision(BaseModel):
 
         first_line = self.description.splitlines()[0] if self.description else ""
         return first_line or "(no description set)"
+
+    @property
+    def is_working_copy(self) -> bool:
+        """Whether any workspace currently uses this revision as its working copy."""
+
+        return self.current_working_copy or bool(self.working_copy_workspaces)
 
     def is_reviewable(
         self,
@@ -40,7 +47,7 @@ class LocalRevision(BaseModel):
             not self.hidden
             and (allow_immutable or not self.immutable)
             and (allow_divergent or not self.divergent)
-            and not (self.current_working_copy and self.empty)
+            and not (self.is_working_copy and self.empty)
             and len(self.parents) == 1
         )
 

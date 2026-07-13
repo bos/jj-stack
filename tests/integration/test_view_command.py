@@ -70,6 +70,85 @@ def test_view_json_reports_public_stack_status(
     assert "saved_pull_request" not in revision
 
 
+def test_view_rejects_empty_working_copy_from_another_workspace(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    feature_change_id = JjClient(repo).discover_review_stack().head.change_id
+    other_workspace = tmp_path / "other-workspace"
+    run_command(
+        [
+            "jj",
+            "workspace",
+            "add",
+            "--name",
+            "other",
+            "--revision",
+            feature_change_id,
+            str(other_workspace),
+        ],
+        repo,
+    )
+    other_working_copy = JjClient(other_workspace).resolve_revision("@")
+
+    exit_code = run_main(repo, config_path, "view", other_working_copy.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_NO_STACK
+    assert "empty working-copy commit" in captured.err
+
+
+def test_view_rejects_empty_working_copy_inside_stack_from_another_workspace(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    feature_change_id = JjClient(repo).discover_review_stack().head.change_id
+    base_workspace = tmp_path / "base-workspace"
+    run_command(
+        [
+            "jj",
+            "workspace",
+            "add",
+            "--name",
+            "base",
+            "--revision",
+            feature_change_id,
+            str(base_workspace),
+        ],
+        repo,
+    )
+    empty_base = JjClient(base_workspace).resolve_revision("@")
+    child_workspace = tmp_path / "child-workspace"
+    run_command(
+        [
+            "jj",
+            "workspace",
+            "add",
+            "--name",
+            "child",
+            "--revision",
+            empty_base.change_id,
+            str(child_workspace),
+        ],
+        repo,
+    )
+    commit_file(child_workspace, "feature 2", "feature-2.txt")
+    child_change_id = JjClient(child_workspace).resolve_revision("@-").change_id
+
+    exit_code = run_main(repo, config_path, "view", child_change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_NO_STACK
+    assert empty_base.change_id[:8] in captured.err
+    assert "empty working-copy commits are not reviewable" in captured.err
+
+
 def test_view_can_select_a_stack_by_pull_request_number(
     tmp_path: Path,
     monkeypatch,

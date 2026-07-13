@@ -177,6 +177,11 @@ the target remote, `submit` errors out rather than guessing.
 ### Workspaces
 
 Tracking state is shared across workspaces for the same repo (see Storage strategy).
+Repo-scoped discovery treats every workspace's working-copy commit as workspace state,
+not as an extra review change: `list` excludes those commits regardless of which workspace
+invoked it. Explicit selection may use a non-empty working-copy commit, but an empty
+working-copy commit from any workspace is not reviewable. Only the invoking workspace's
+working-copy commit is marked as current in user-facing output.
 Stale working copies are a local workspace concern, not a separate review concept: if
 `jj` reports a stale workspace, the tool stops and points the user at
 `jj workspace update-stale`. Divergence caused by concurrent rewrites from multiple
