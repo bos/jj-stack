@@ -662,6 +662,7 @@ fired for the drift it was aimed at rather than merely with the right exit code.
 Easy to debug without making normal output noisy:
 
 - concise user-facing output by default
+- transient progress must stop before persistent output is written to another stream
 - debug logging behind a flag
 - request/response logging in debug mode with token redaction
 - enough plan logging to explain why a change is being created, updated, skipped, or

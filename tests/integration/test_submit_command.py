@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -90,6 +91,40 @@ def _assert_stack_pull_requests_match_dag(
         assert pull_request.state == "open"
         assert pull_request.merged_at is None
         assert pull_request.base_ref == expected_base
+
+
+def test_submit_prints_default_selection_after_preparation_spinner_stops(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from jj_stack.commands.submit import command as submit_command
+
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    active_spinners: list[str] = []
+
+    @contextmanager
+    def recording_spinner(*, description: str):
+        active_spinners.append(description)
+        try:
+            yield
+        finally:
+            active_spinners.remove(description)
+
+    selected_lines: list[tuple[str, str]] = []
+
+    def record_selected_line(change_id: str, subject: str) -> None:
+        assert "Preparing submit" not in active_spinners
+        selected_lines.append((change_id, subject))
+
+    monkeypatch.setattr(submit_command.console, "spinner", recording_spinner)
+    monkeypatch.setattr(submit_command, "print_selected_line", record_selected_line)
+
+    assert run_main(repo, config_path, "submit") == 0
+
+    stack = JjClient(repo).discover_review_stack()
+    assert selected_lines == [(stack.head.change_id, stack.head.subject)]
 
 
 def test_submit_projects_review_bookmarks_to_selected_remote(

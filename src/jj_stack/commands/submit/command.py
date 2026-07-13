@@ -426,9 +426,13 @@ async def _run_submit_async(
     with console.spinner(description="Preparing submit"):
         prepared_inputs = prepare_submit_inputs(
             context=context,
-            on_prepared=on_prepared,
             options=options,
             resolved_options=resolved_options,
+        )
+    if on_prepared is not None:
+        on_prepared(
+            prepared_inputs.stack.head.change_id,
+            prepared_inputs.stack.head.subject,
         )
     client = prepared_inputs.client
     remote = prepared_inputs.remote

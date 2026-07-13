@@ -294,7 +294,9 @@ finalization.
 Given a chosen head revision:
 
 1. Resolve the head. When the user runs `submit` with no `<revset>`, the head is `@-`.
-   `@` stays explicit user intent and is never selected by an omitted argument.
+   `@` stays explicit user intent and is never selected by an omitted argument. Print the
+   selected head after the transient preparation status has cleared, so persistent output
+   starts on its own line.
 2. Walk the parent chain down to the stack boundary, building a linear chain of visible
    mutable changes. The boundary is usually `trunk()`, but may also be a recent shared
    ancestor of the head and `trunk()`, or an allowed merged-side boundary discovered

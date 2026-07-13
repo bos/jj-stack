@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ConflictedStackError
@@ -29,7 +27,6 @@ from .models import (
 def prepare_submit_inputs(
     *,
     context: CommandContext,
-    on_prepared: Callable[[str, str], None] | None,
     options: SubmitOptions,
     resolved_options: ResolvedSubmitOptions,
 ) -> PreparedSubmitInputs:
@@ -40,11 +37,6 @@ def prepare_submit_inputs(
     state_store = context.state_store
     remote = select_submit_remote(client.list_git_remotes())
     stack = client.discover_review_stack(options.revset)
-    if on_prepared is not None:
-        on_prepared(
-            stack.head.change_id,
-            stack.head.subject,
-        )
     state = state_store.load()
     bookmark_states = client.list_bookmark_states()
     restarted_change_ids: frozenset[str] = frozenset()
