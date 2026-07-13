@@ -4,8 +4,8 @@ Shows one row per stack in this repo, including the head change ID, stack size, 
 state, and description of the head commit.
 
 It also shows orphaned PRs: open PRs that `jj-stack` still knows about, but whose local change
-is no longer part of any current stack. Close those explicitly with
-`jj-stack unstack --cleanup --pull-request <pr>`.
+is no longer part of any current stack. Retire every orphan shown with
+`jj-stack unstack --cleanup --pull-request orphans`.
 
 `--fetch` runs a fetch first so the report uses current remote branch locations.
 """
@@ -78,7 +78,6 @@ class OrphanRow:
 
     bookmark: str | None
     change_id: str
-    hint: str | None
     pull_request: dict[str, object] | None
     review: str
     state: ui.Message
@@ -168,7 +167,7 @@ def _run_list(
                 rows=(),
             )
         )
-        _emit_orphan_hints(orphan_rows)
+        _emit_orphan_hint(orphan_rows)
         return 0
     with console.spinner(description="Loading bookmark state"):
         repo_inspection = _prepare_repo_inspection_context(
@@ -236,7 +235,7 @@ def _run_list(
             rows=rows,
         )
     )
-    _emit_orphan_hints(orphan_rows)
+    _emit_orphan_hint(orphan_rows)
     _emit_stale_stacks_advisory(discovered=ordered, state=state)
     return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
 
@@ -246,7 +245,6 @@ def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:
     return OrphanRow(
         bookmark=orphan.cached_change.bookmark,
         change_id=orphan.change_id,
-        hint=(f"unstack --cleanup --pull-request {pr_number}" if pr_number is not None else None),
         pull_request=cached_pull_request_json(orphan.cached_change),
         review=f"PR #{pr_number}" if pr_number is not None else "(no PR number)",
         state=ui.semantic_text("orphan", "warning", "heading"),
@@ -299,11 +297,11 @@ def _json_orphan_row(row: OrphanRow) -> dict[str, object]:
     return payload
 
 
-def _emit_orphan_hints(orphan_rows: tuple[OrphanRow, ...]) -> None:
-    for orphan in orphan_rows:
-        if orphan.hint is None:
-            continue
-        console.note(t"Orphan {orphan.review}: run {ui.cmd(orphan.hint)} to retire it.")
+def _emit_orphan_hint(orphan_rows: tuple[OrphanRow, ...]) -> None:
+    if not orphan_rows:
+        return
+    command = ui.cmd("unstack --cleanup --pull-request orphans")
+    console.note(t"Orphan cleanup: run {command} to retire every orphan shown.")
 
 
 def _emit_stale_stacks_advisory(

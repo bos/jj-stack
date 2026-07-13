@@ -591,10 +591,11 @@ per-stack next step.
 
 `list` also surfaces orphaned PRs — saved tracking records whose change is no longer
 present in any current stack — as their own rows, separate from the live stacks. Each
-row names the PR and points at `unstack --cleanup --pull-request <pr>` as the explicit
-single-PR closure path; `--pull-request orphans` selects every orphan row. Without this
-surfacing, common workflows (squashing two reviewed changes by emptying one and abandoning
-it) would leave PRs open without the user noticing.
+row names the PR, and one advisory after the table points at
+`unstack --cleanup --pull-request orphans` to retire every orphan shown. The explicit
+single-PR closure path remains `--pull-request <pr>`. Without this surfacing, common
+workflows (squashing two reviewed changes by emptying one and abandoning it) would leave
+PRs open without the user noticing.
 
 With `--json`, `list` prints the same row model as the text table. Stack rows include
 their changes so clients can derive stack length, head change, and PR list directly

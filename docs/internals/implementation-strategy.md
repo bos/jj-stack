@@ -371,7 +371,8 @@ or GitHub-client internals.
 
 Repo-scoped inspection treats orphan-only tracking as first-class output. `list` can
 render those saved orphan rows directly without loading bookmark state when no live
-stacks remain.
+stacks remain. Text output emits one repo-level cleanup advisory for the complete orphan
+set rather than repeating a per-PR command after every row.
 The text `list` renderer keeps stack rows compact by rendering the exact PR number for
 single-PR stacks and a count for multi-PR stacks; the JSON output remains per-change so
 clients can still recover the full PR list.
