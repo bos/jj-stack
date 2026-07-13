@@ -325,6 +325,11 @@ selection and stack/status preparation start only after an unapplied checkpoint 
 An unrelated unsupported local stack therefore cannot prevent completion of a trunk transition
 that already happened.
 
+`commands/land/recovery.py` owns that checkpoint-first workflow: target resolution, remote
+refresh, scope and review-identity verification, the clear-versus-resume decision, and
+construction of the exact resume plan. `commands/land/command.py` owns the ordinary selected-stack
+path and enters it only when recovery reports that no applied checkpoint remains.
+
 Recovery requires every persisted review branch to remain present at its exact commit, including
 branches for PRs that GitHub already finalized. GitHub PR payloads carry the head commit OID as
 well as the branch label; the executor rechecks both on every PR load immediately before it

@@ -8,7 +8,6 @@ import pytest
 
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.land.command import (
-    _ensure_pending_direct_land_scope_matches,
     _resolve_land_merge_method,
     _stack_not_on_trunk_error,
     land,
@@ -24,6 +23,7 @@ from jj_stack.commands.land.plan import (
     _plan_review_bookmark_cleanup,
     validate_land_plan_merge_method,
 )
+from jj_stack.commands.land.recovery import _ensure_pending_direct_land_scope_matches
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError

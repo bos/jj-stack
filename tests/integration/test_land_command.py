@@ -30,6 +30,11 @@ from .submit_command_helpers import (
     run_main,
 )
 
+_LAND_CLIENT_MODULES = (
+    "jj_stack.commands.land.command",
+    "jj_stack.commands.land.recovery",
+)
+
 
 def _squash_whitespace(text: str) -> str:
     return " ".join(text.split())
@@ -770,7 +775,7 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=FailOnFinalizeLoadClient,
     )
 
@@ -786,7 +791,7 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
     )
 
     second_exit_code = run_main(repo, config_path, "land")
@@ -835,7 +840,7 @@ def test_land_preserves_pending_transaction_when_closed_pr_reloads_open(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=ReloadOpenAfterCloseClient,
     )
 
@@ -873,7 +878,7 @@ def test_land_recovers_before_inspecting_an_unrelated_selected_merge(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=FailOnFinalizeLoadClient,
     )
     assert run_main(repo, config_path, "land") == EXIT_GITHUB
@@ -894,7 +899,7 @@ def test_land_recovers_before_inspecting_an_unrelated_selected_merge(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
     )
     exit_code = run_main(repo, config_path, "land")
     captured = capsys.readouterr()
@@ -984,7 +989,7 @@ def test_land_recovery_fails_closed_when_review_branch_moves_after_trunk(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=FailOnFinalizeLoadClient,
     )
     assert run_main(repo, config_path, "land") == EXIT_GITHUB
@@ -1007,7 +1012,7 @@ def test_land_recovery_fails_closed_when_review_branch_moves_after_trunk(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
     )
     fake_repo.pull_request_events.clear()
 
@@ -1042,7 +1047,7 @@ def test_land_recovery_requires_finalized_review_branch_to_still_exist(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=FailOnSecondFinalizeClient,
     )
     assert run_main(repo, config_path, "land") == EXIT_GITHUB
@@ -1063,7 +1068,7 @@ def test_land_recovery_requires_finalized_review_branch_to_still_exist(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
     )
     exit_code = run_main(repo, config_path, "land")
     captured = capsys.readouterr()
@@ -1095,7 +1100,7 @@ def test_land_revalidates_pr_head_commit_immediately_before_finalizing(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=FailOnFinalizeLoadClient,
     )
     assert run_main(repo, config_path, "land") == EXIT_GITHUB
@@ -1128,7 +1133,7 @@ def test_land_revalidates_pr_head_commit_immediately_before_finalizing(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=MoveHeadBeforeFinalizeClient,
     )
     exit_code = run_main(repo, config_path, "land")
@@ -1324,7 +1329,7 @@ def test_land_resume_fails_closed_when_saved_tracking_pruned_externally(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
         client_type=FailOnFinalizeLoadClient,
     )
 
@@ -1345,7 +1350,7 @@ def test_land_resume_fails_closed_when_saved_tracking_pruned_externally(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.land.command",),
+        modules=_LAND_CLIENT_MODULES,
     )
     fake_repo.pull_request_events.clear()
 

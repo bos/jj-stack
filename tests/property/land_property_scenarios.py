@@ -37,6 +37,10 @@ LAND_SCENARIOS = land_scenarios_from_environment()
 LAND_DRIFT_SCENARIOS = land_drift_scenarios_from_environment()
 LAND_RETRY_SCENARIOS = land_retry_scenarios_from_environment()
 LAND_HANDOFF_SCENARIOS = land_handoff_scenarios_from_environment()
+_LAND_CLIENT_MODULES = (
+    "jj_stack.commands.land.command",
+    "jj_stack.commands.land.recovery",
+)
 
 
 @pytest.mark.parametrize(
@@ -163,7 +167,7 @@ def test_land_property_interrupted_land_retry_converges(
             monkeypatch,
             app=app,
             fake_repo=fake_repo,
-            modules=("jj_stack.commands.land.command",),
+            modules=_LAND_CLIENT_MODULES,
             client_type=FaultOnFinalizeLoadClient,
         )
 
@@ -178,7 +182,7 @@ def test_land_property_interrupted_land_retry_converges(
             monkeypatch,
             app=app,
             fake_repo=fake_repo,
-            modules=("jj_stack.commands.land.command",),
+            modules=_LAND_CLIENT_MODULES,
         )
 
     def run_cli(args: tuple[str, ...]) -> int:
@@ -226,7 +230,7 @@ def test_land_property_merged_prefix_handoff_converges(
             monkeypatch,
             app=app,
             fake_repo=fake_repo,
-            modules=("jj_stack.commands.land.command",),
+            modules=_LAND_CLIENT_MODULES,
             client_type=FaultOnMergeClient,
         )
 
@@ -235,7 +239,7 @@ def test_land_property_merged_prefix_handoff_converges(
             monkeypatch,
             app=app,
             fake_repo=fake_repo,
-            modules=("jj_stack.commands.land.command",),
+            modules=_LAND_CLIENT_MODULES,
         )
 
     def run_cli(args: tuple[str, ...]) -> int:
