@@ -332,9 +332,14 @@ path and enters it only when recovery reports that no applied checkpoint remains
 
 Recovery requires every persisted review branch to remain present at its exact commit, including
 branches for PRs that GitHub already finalized. GitHub PR payloads carry the head commit OID as
-well as the branch label; the executor rechecks both on every PR load immediately before it
-retargets, closes, or merges that PR. After a close request, the reloaded PR must also be non-open
-before finalization progress or landed tracking is committed.
+well as the branch label; the per-PR finalizer rechecks both on every PR load immediately before
+it retargets, closes, or merges that PR. After a close request, the reloaded PR must also be
+non-open before finalization progress or landed tracking is committed.
+
+`commands/land/pull_requests.py` owns that one-PR GitHub protocol, including retargeting, exact
+head verification, direct-close and merge outcomes, and stack-comment removal. The executor owns
+the bottom-up stack sequence around it: journal events, durable checkpoints, tracking updates,
+bookmark cleanup, and the decision to stop at a blocked PR.
 
 Every state save that contains a pending direct-land transaction is automatically durable,
 including saves made by commands that merely preserve the transaction while updating other

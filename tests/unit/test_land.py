@@ -13,7 +13,6 @@ from jj_stack.commands.land.command import (
     land,
 )
 from jj_stack.commands.land.execute import (
-    _finalize_landed_pull_request,
     _updated_landed_change,
     ensure_trunk_branch_matches_selected_trunk,
 )
@@ -23,6 +22,7 @@ from jj_stack.commands.land.plan import (
     _plan_review_bookmark_cleanup,
     validate_land_plan_merge_method,
 )
+from jj_stack.commands.land.pull_requests import finalize_landed_pull_request
 from jj_stack.commands.land.recovery import _ensure_pending_direct_land_scope_matches
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, UsageError
@@ -399,7 +399,7 @@ def test_finalize_landed_pull_request_treats_close_422_as_already_merged() -> No
     github_client = CloseRaceGithubClient()
 
     pull_request = asyncio.run(
-        _finalize_landed_pull_request(
+        finalize_landed_pull_request(
             cached_change=None,
             github_client=cast(GithubClient, github_client),
             landed_revision=LandRevision(
@@ -455,7 +455,7 @@ def test_finalize_landed_pull_request_does_not_recover_close_422_as_closed() -> 
 
     with pytest.raises(CliError, match="Could not close PR #1 after landing"):
         asyncio.run(
-            _finalize_landed_pull_request(
+            finalize_landed_pull_request(
                 cached_change=None,
                 github_client=cast(GithubClient, github_client),
                 landed_revision=LandRevision(
