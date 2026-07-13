@@ -90,7 +90,9 @@ you explain that risk.
 - **Close an abandoned stack's PRs:** `unstack --dry-run`, then `unstack`.
 - **Also remove review branches and tracking:** `unstack --cleanup`, only
   after confirming the stack should be retired. For an orphaned PR from
-  `list`, add `--pull-request <pr>`.
+  `list`, add `--pull-request <pr>`; to preview and retire every orphan, use
+  `unstack --cleanup --pull-request orphans --dry-run`, then
+  `unstack --cleanup --pull-request orphans`.
 - **Stop tracking locally but leave PRs open:** `unstack --local`.
 - **Change PR base/head because the stack shape changed:** reshape with `jj`,
   then `submit --dry-run` and `submit`.

@@ -589,9 +589,9 @@ per-stack next step.
 `list` also surfaces orphaned PRs — saved tracking records whose change is no longer
 present in any current stack — as their own rows, separate from the live stacks. Each
 row names the PR and points at `unstack --cleanup --pull-request <pr>` as the explicit
-closure path. Without this surfacing, common workflows (squashing two reviewed
-changes by emptying one and abandoning it) would leave PRs open without the user
-noticing.
+single-PR closure path; `--pull-request orphans` selects every orphan row. Without this
+surfacing, common workflows (squashing two reviewed changes by emptying one and abandoning
+it) would leave PRs open without the user noticing.
 
 With `--json`, `list` prints the same row model as the text table. Stack rows include
 their changes so clients can derive stack length, head change, and PR list directly
@@ -695,8 +695,9 @@ would describe the wrong stack.
 
 ### `unstack`
 
-`jj stack unstack [--cleanup] [--dry-run] [--pull-request <pr> | <revset>]` ends review
-for one stack.
+`jj stack unstack [--cleanup] [--dry-run]
+[--pull-request <pr|orphans> | <revset>]` ends review for one stack or an explicit set of
+orphaned pull requests.
 
 `unstack` is stack-first. It looks at the local stack, finds the open PRs the tool is
 already tracking there, and either runs or previews the actions needed to end review.
@@ -711,6 +712,15 @@ the saved PR still uses the saved branch name on the configured GitHub repositor
 just a same-named branch from another owner. "Ambiguous" includes the case where the
 saved branch is now claimed by another tracked change (e.g. via `use_bookmarks`) —
 branch deletion in that mode would silently take a branch out from under a live review.
+
+`unstack --cleanup --pull-request orphans` selects every open-PR tracking record that
+`list` reports as an orphan when the command begins. The `orphans` selector cannot be
+combined with a revset or `--local`. The command processes targets in pull-request-number
+order and applies the same PR-head, bookmark-ownership, and duplicate-claim checks used for
+one orphan. A blocked target remains open and tracked; other independently verified targets
+continue, and the command exits `1` if any target was blocked. A hard failure stops the
+batch with prior successful cleanup preserved. `--dry-run` performs the same selection and
+verification without closing PRs or deleting review artifacts.
 
 Without `--cleanup`, `unstack`:
 
@@ -942,7 +952,8 @@ The full command surface:
 - `jj stack restart [--dry-run] <revset>`
 - `jj stack relink <pr> <revset>`
 - `jj stack unlink <revset>`
-- `jj stack unstack [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
+- `jj stack unstack [--local | --cleanup] [--dry-run]
+  [--pull-request <pr|orphans> | <revset>]`
 - `jj stack delete [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack cleanup [--dry-run] [--rebase [<revset>]]`
 - `jj stack sync [--dry-run] [<revset>]`

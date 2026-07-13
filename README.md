@@ -212,6 +212,13 @@ no longer part of any current stack. When you are ready to retire that PR:
 jj-stack unstack --cleanup --pull-request <pr>
 ```
 
+Use `--pull-request orphans` to preview or retire every orphan in one operation:
+
+```bash
+jj-stack unstack --cleanup --pull-request orphans --dry-run
+jj-stack unstack --cleanup --pull-request orphans
+```
+
 ## Learn more
 
 User guides live under [docs](docs/README.md):

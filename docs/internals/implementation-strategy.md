@@ -116,6 +116,10 @@ selected stack or revision, GitHub and remote observations, parsed options, and 
 `CommandContext` when later phases need shared dependencies. Mutating phases that need
 dry-run mode, journal state, or interim saves use a small run object such as
 `SubmitMutationRun`, `LandMutationRun`, `_OrphanCloseRun`, or `AbortRun`.
+The `unstack --cleanup --pull-request orphans` selector snapshots orphan records from
+repo-scoped stack discovery, rejects duplicate PR claims before mutation, and then reuses the
+single-orphan close path in PR-number order. Each applied target reloads tracking state so an
+earlier retirement cannot be restored by a later save.
 Submit resolves prepared PR and stack descriptions while loading local inputs, before
 bookmark, remote, or GitHub mutation, so bad revsets, duplicate targets, and unreadable
 files fail closed.

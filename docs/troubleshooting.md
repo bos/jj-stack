@@ -288,4 +288,6 @@ jj-stack unstack --cleanup <change-id>
 If a failed `submit` created PRs or review branches that you no longer want, run
 `unstack --cleanup` on the selected stack. If the change was abandoned and only tracking data
 remains, use `jj-stack list` to find the orphaned PR and then
-`jj-stack unstack --cleanup --pull-request <pr>`.
+`jj-stack unstack --cleanup --pull-request <pr>`. To retire every orphan shown by
+`jj-stack list`, preview `jj-stack unstack --cleanup --pull-request orphans --dry-run`, then
+run it again without `--dry-run`.

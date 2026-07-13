@@ -272,6 +272,13 @@ longer part of any current stack. When you are ready to retire that PR, close it
 jj-stack unstack --cleanup --pull-request 7
 ```
 
+To preview and retire every orphan shown by `list` in one operation, run:
+
+```bash
+jj-stack unstack --cleanup --pull-request orphans --dry-run
+jj-stack unstack --cleanup --pull-request orphans
+```
+
 If `jj-stack list` says another tracked stack changed since its last submit, either run
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
 `jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another

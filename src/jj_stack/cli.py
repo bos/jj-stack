@@ -476,8 +476,8 @@ def build_parser() -> ArgumentParser:
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
         help=(
-            "Select a stack by PR number or URL; with --cleanup, this can also retire "
-            "an orphaned PR shown by list"
+            "Select a stack by PR number or URL, or use 'orphans' with --cleanup "
+            "to retire every orphan"
         ),
     )
     _add_checkout_parser(

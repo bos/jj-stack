@@ -4,7 +4,8 @@ By default, this runs a repo-wide cleanup of tracking data and review branches t
 match an active review. With `--rebase [REVSET]`, it works on one local stack instead.
 
 Open orphaned PRs are preserved. Run `jj-stack list` to see them, then retire one explicitly
-with `jj-stack unstack --cleanup --pull-request <pr>`.
+with `jj-stack unstack --cleanup --pull-request <pr>`, or retire all of them with
+`jj-stack unstack --cleanup --pull-request orphans`.
 
 Use `cleanup --rebase` when some changes from your stack have been merged on GitHub as rewritten
 commits (e.g. via a squash merge in the GitHub UI). In this case, your local stack still
@@ -344,10 +345,10 @@ def _process_stale_cleanup_change(
     if is_open_pr_record(prepared_change.cached_change):
         pull_request_number = prepared_change.cached_change.pr_number
         assert pull_request_number is not None
-        close_hint = ui.cmd(f"jj-stack unstack --cleanup --pull-request {pull_request_number}")
+        close_hint = ui.cmd("jj-stack unstack --cleanup --pull-request orphans")
         body = (
             t"preserve open orphan {ui.change_id(prepared_change.change_id)} "
-            t"(run {close_hint} to retire it)"
+            t"(run {close_hint} to retire all open orphans)"
         )
         record_action(
             CleanupAction(

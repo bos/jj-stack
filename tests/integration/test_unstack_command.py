@@ -462,6 +462,171 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
     assert "not linked" not in _combined_output(rerun_captured)
 
 
+def test_unstack_cleanup_orphans_dry_run_then_retires_every_orphan(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    stack = JjClient(repo).discover_review_stack()
+    change_ids = tuple(revision.change_id for revision in stack.revisions)
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+    bookmarks = tuple(initial_state.changes[change_id].bookmark for change_id in change_ids)
+    assert all(bookmark is not None for bookmark in bookmarks)
+
+    run_command(["jj", "abandon", *change_ids], repo)
+
+    dry_run_exit_code = run_main(
+        repo,
+        config_path,
+        "unstack",
+        "--cleanup",
+        "--pull-request",
+        "orphans",
+        "--dry-run",
+    )
+    dry_run = capsys.readouterr()
+
+    assert dry_run_exit_code == 0
+    assert dry_run.out.count("Planned close actions:") == 2
+    assert "close PR #1" in dry_run.out
+    assert "close PR #2" in dry_run.out
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
+    assert state_store.load() == initial_state
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "unstack",
+        "--cleanup",
+        "--pull-request",
+        "orphans",
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured.out.count("Applied close actions:") == 2
+    assert all(
+        pull_request.state == "closed" for pull_request in fake_repo.pull_requests.values()
+    )
+    assert state_store.load().changes == {}
+    remaining_remote_refs = remote_refs(fake_repo.git_dir)
+    assert all(
+        f"refs/heads/{bookmark}" not in remaining_remote_refs
+        for bookmark in bookmarks
+        if bookmark is not None
+    )
+
+    rerun_exit_code = run_main(
+        repo,
+        config_path,
+        "unstack",
+        "--cleanup",
+        "--pull-request",
+        "orphans",
+    )
+    rerun = capsys.readouterr()
+
+    assert rerun_exit_code == 0
+    assert "No orphaned pull requests are tracked." in rerun.out
+
+
+def test_unstack_pull_request_orphans_requires_cleanup(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    exit_code = run_main(repo, config_path, "unstack", "--pull-request", "orphans")
+    captured = capsys.readouterr()
+
+    assert exit_code == 5
+    assert "unstack --pull-request orphans requires --cleanup" in _combined_output(captured)
+    assert fake_repo.pull_requests[1].state == "open"
+
+
+def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    stack = JjClient(repo).discover_review_stack()
+    change_ids = tuple(revision.change_id for revision in stack.revisions)
+    state_store = ReviewStateStore.for_repo(repo)
+    run_command(["jj", "abandon", *change_ids], repo)
+    fake_repo.pull_requests[1].head_ref = "review/reclaimed"
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "unstack",
+        "--cleanup",
+        "--pull-request",
+        "orphans",
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "cannot close orphaned PR #1" in _combined_output(captured)
+    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.pull_requests[2].state == "closed"
+    refreshed_state = state_store.load()
+    assert change_ids[0] in refreshed_state.changes
+    assert change_ids[1] not in refreshed_state.changes
+
+
+def test_unstack_cleanup_orphans_rejects_pr_claimed_by_live_change_before_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    stack = JjClient(repo).discover_review_stack()
+    orphaned_change_id = stack.revisions[0].change_id
+    live_change_id = stack.revisions[1].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    state = state_store.load()
+    orphaned_pr_number = state.changes[orphaned_change_id].pr_number
+    assert orphaned_pr_number is not None
+    run_command(["jj", "abandon", orphaned_change_id], repo)
+    ambiguous_state = state.model_copy(
+        update={
+            "changes": {
+                **state.changes,
+                live_change_id: state.changes[live_change_id].model_copy(
+                    update={"pr_number": orphaned_pr_number}
+                ),
+            }
+        }
+    )
+    state_store.save(ambiguous_state)
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "unstack",
+        "--cleanup",
+        "--pull-request",
+        "orphans",
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 6
+    assert "multiple tracking records claim the same PR" in _combined_output(captured)
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
+    assert state_store.load() == ambiguous_state
+
+
 def test_unstack_cleanup_pull_request_closes_orphaned_pr(
     tmp_path: Path,
     monkeypatch,

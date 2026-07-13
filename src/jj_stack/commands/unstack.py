@@ -8,6 +8,7 @@ preserved unless `cleanup_user_bookmarks = true`. Use `--pull-request` to close 
 URL.
 
 Use `unstack --cleanup --pull-request <pr>` to retire an orphaned PR shown by `list`.
+Use `unstack --cleanup --pull-request orphans` to retire every orphan shown by `list`.
 Use `unstack --local` to forget local review tracking without closing PRs or deleting
 bookmarks.
 
@@ -39,7 +40,7 @@ from jj_stack.commands.close_orphan import (
     run_untracked_cleanup_pull_request,
     state_has_pull_request_record,
 )
-from jj_stack.errors import ErrorMessage, UsageError
+from jj_stack.errors import AmbiguousSelectionError, ErrorMessage, UsageError
 from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
@@ -57,7 +58,9 @@ from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
     classify_saved_review_change,
+    enumerate_orphaned_records,
 )
+from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
@@ -202,9 +205,23 @@ def unstack(
         cli_args=cli_args,
         debug=debug,
     )
+    close_orphans = pull_request == "orphans"
+    if close_orphans and not cleanup:
+        raise UsageError("unstack --pull-request orphans requires --cleanup.")
+    if close_orphans and local:
+        raise UsageError("unstack --pull-request orphans cannot be combined with --local.")
+    if close_orphans and revset is not None:
+        raise UsageError("unstack --pull-request orphans cannot be combined with a revision.")
     if local and cleanup:
         raise UsageError("unstack --local cannot be combined with --cleanup.")
-    command = "unstack --local" if local else ("unstack --cleanup" if cleanup else "unstack")
+    if close_orphans:
+        command = "unstack --cleanup --pull-request orphans"
+    elif local:
+        command = "unstack --local"
+    elif cleanup:
+        command = "unstack --cleanup"
+    else:
+        command = "unstack"
     with acquire_operation_lock(
         context.state_store.require_writable(),
         command=command,
@@ -218,6 +235,13 @@ def unstack(
             )
             _print_local_unstack_result(result)
             return 0
+        if close_orphans:
+            return asyncio.run(
+                _run_orphan_closes(
+                    context=context,
+                    dry_run=dry_run,
+                )
+            )
         return _run_close(
             context=context,
             cleanup=cleanup,
@@ -225,6 +249,75 @@ def unstack(
             pull_request=pull_request,
             revset=revset,
         )
+
+
+async def _run_orphan_closes(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+) -> int:
+    state = context.state_store.load()
+    discovered = discover_tracked_stacks(
+        jj_client=context.jj_client,
+        state=state,
+    )
+    orphaned_records = enumerate_orphaned_records(state, discovered.stacks)
+    orphan_targets_by_pull_request: dict[int, list[str]] = {}
+    for orphan in orphaned_records:
+        pull_request_number = orphan.cached_change.pr_number
+        assert pull_request_number is not None
+        orphan_targets_by_pull_request.setdefault(pull_request_number, []).append(
+            orphan.change_id
+        )
+
+    active_claims_by_pull_request = {
+        pull_request_number: [
+            change_id
+            for change_id, cached_change in state.changes.items()
+            if cached_change.pr_number == pull_request_number
+            and classify_saved_review_change(cached_change, local="present").link == "active"
+        ]
+        for pull_request_number in orphan_targets_by_pull_request
+    }
+    ambiguous_targets = {
+        pull_request_number: change_ids
+        for pull_request_number, change_ids in active_claims_by_pull_request.items()
+        if len(change_ids) > 1
+    }
+    if ambiguous_targets:
+        details = ", ".join(
+            f"PR #{pull_request_number} ({', '.join(change_id[:8] for change_id in change_ids)})"
+            for pull_request_number, change_ids in sorted(ambiguous_targets.items())
+        )
+        raise AmbiguousSelectionError(
+            t"Cannot retire orphaned pull requests because multiple tracking records claim "
+            t"the same PR: {details}.",
+            hint=t"Repair the tracking data with {ui.cmd('unlink')} or {ui.cmd('relink')} "
+            t"before retrying.",
+        )
+
+    targets = tuple(
+        (pull_request_number, change_ids[0])
+        for pull_request_number, change_ids in sorted(
+            orphan_targets_by_pull_request.items()
+        )
+    )
+    if not targets:
+        console.output("No orphaned pull requests are tracked.")
+        return 0
+
+    blocked = False
+    for pull_request_number, change_id in targets:
+        current_state = context.state_store.load()
+        exit_code = await run_orphan_close(
+            change_id=change_id,
+            context=context,
+            dry_run=dry_run,
+            pull_request_number=pull_request_number,
+            state=current_state,
+        )
+        blocked = blocked or exit_code != 0
+    return 1 if blocked else 0
 
 
 def _run_local_unstack(
