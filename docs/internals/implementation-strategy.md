@@ -119,6 +119,8 @@ dry-run mode, journal state, or interim saves use a small run object such as
 Submit resolves prepared PR and stack descriptions while loading local inputs, before
 bookmark, remote, or GitHub mutation, so bad revsets, duplicate targets, and unreadable
 files fail closed.
+Explicit reviewer flags remain mutation intent after preparation: submit synchronizes those
+review requests even when PR content, base, and draft state need no update.
 Purely local mutations should stay out of GitHub inspection paths when they can resolve
 their target from `jj` and saved state alone; for example, `unstack --local` only removes
 saved tracking records for the selected stack and does not enter the close/cleanup stream.

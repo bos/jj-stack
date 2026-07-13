@@ -188,6 +188,8 @@ async def _sync_pull_request(
         and (
             action != "unchanged"
             or not saved_status.saved_pull_request_identity
+            or options.reviewers is not None
+            or options.team_reviewers is not None
         )
     ):
         await _sync_pull_request_metadata(

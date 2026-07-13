@@ -257,6 +257,9 @@ If you leave `bookmark_prefix` unset, `jj-stack` keeps the default `review/...` 
 `jj-stack submit` can override those defaults with `--reviewers`, `--team-reviewers`,
 `--label`, and `--use-bookmarks`.
 
+Passing `--reviewers` or `--team-reviewers` also applies those review requests when the pull
+requests are otherwise unchanged. Existing reviewers that are omitted are left in place.
+
 `cleanup_user_bookmarks` defaults to `false`. Leave it unset if bookmarks selected
 through `use_bookmarks` should be preserved during later cleanup. Set it to `true` only
 if you want `cleanup`, `unstack --cleanup`, and `land` to delete those reused bookmarks too

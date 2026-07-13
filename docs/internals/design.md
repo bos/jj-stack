@@ -978,7 +978,9 @@ Target selection is conservative:
 - `submit --edit` and `submit --describe-with` are mutually exclusive; `--edit` composes
   with `--describe` by pre-filling the editor document from the resolved files
 - `submit --reviewers` and `submit --team-reviewers` override configured reviewer
-  defaults for the current invocation only
+  defaults for the current invocation only. Passing either flag requests those reviewers
+  even when the selected pull requests are otherwise unchanged; omitted reviewers are not
+  removed
 - `submit --re-request` re-requests users whose latest review is `APPROVED` or
   `CHANGES_REQUESTED`; pending review requests stay in place
 - `restart`, `relink`, and `unlink` require one explicit `<revset>`
