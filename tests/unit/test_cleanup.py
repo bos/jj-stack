@@ -15,7 +15,11 @@ from jj_stack.commands.cleanup.command import (
     _plan_remote_branch_cleanup,
     _run_cleanup_async,
 )
-from jj_stack.commands.cleanup.rebase import _retire_merged_ancestors, _stream_rebase
+from jj_stack.commands.cleanup.rebase import _stream_rebase
+from jj_stack.commands.cleanup.retirement import (
+    MergedAncestorRetirementPlan,
+    plan_merged_ancestor_retirements,
+)
 from jj_stack.commands.cleanup.shared import (
     CleanupAction,
     PreparedCleanup,
@@ -540,110 +544,85 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
     assert "onto surviving change first-su" in result.actions[0].message
 
 
-def _run_merged_ancestor_retirement(
+def _merged_ancestor_retirement_plan(
     *,
-    client: JjClient,
+    bookmark_states: dict[str, BookmarkState],
     remote_state: RemoteBookmarkState | None,
-) -> tuple[CleanupAction, ...]:
+) -> MergedAncestorRetirementPlan:
     cached_change = CachedChange(
         bookmark="review/merged-aaaaaaaa",
         last_submitted_commit_id="merged-commit",
         pr_number=1,
         pr_state="merged",
     )
-    merged_revision = SimpleNamespace(
+    merged_revision = ReviewStatusRevision(
         bookmark="review/merged-aaaaaaaa",
+        bookmark_source="saved",
         cached_change=cached_change,
         change_id="merged-change",
+        commit_id="merged-commit",
+        link_state="active",
+        local_divergent=False,
+        managed_comments_lookup=None,
+        pull_request_lookup=None,
         remote_state=remote_state,
         subject="merged feature",
     )
-    prepared_status = cast(
-        PreparedStatus,
-        SimpleNamespace(
-            prepared=SimpleNamespace(
-                remote=GitRemote(
-                    name="origin",
-                    url="git@github.com:octo-org/stacked-review.git",
-                ),
-                state_store=SimpleNamespace(),
-                status_revisions=(
-                    SimpleNamespace(
-                        revision=SimpleNamespace(
-                            change_id="merged-change",
-                            commit_id="merged-commit",
-                            immutable=False,
-                        )
-                    ),
-                ),
-            )
-        ),
+    local_revision = make_revision(
+        change_id="merged-change",
+        commit_id="merged-commit",
+        description="merged feature",
     )
-    actions: list[CleanupAction] = []
-
-    _retire_merged_ancestors(
-        blocked=False,
-        client=client,
-        journal=OperationJournal.disabled(),
-        merged_revisions=(cast(ReviewStatusRevision, merged_revision),),
-        prepared_rebase=PreparedRebase(
-            context=_fake_context(),
-            dry_run=False,
-            prepared_status=prepared_status,
-        ),
-        prepared_status=prepared_status,
-        record_action=actions.append,
+    return plan_merged_ancestor_retirements(
+        bookmark_states=bookmark_states,
+        cleanup_user_bookmarks=False,
+        local_revisions_by_change_id={"merged-change": local_revision},
+        merged_revisions=(merged_revision,),
+        prefix="review",
     )
-    return tuple(actions)
 
 
 def test_retire_merged_ancestor_preserves_conflicted_remote_bookmark() -> None:
-    class MutationRejectingJjClient:
-        def list_bookmark_states(self) -> dict[str, BookmarkState]:
-            return {}
-
-        def __getattr__(self, name: str):
-            raise AssertionError(f"cleanup must not call {name}")
-
-    actions = _run_merged_ancestor_retirement(
-        client=cast(JjClient, MutationRejectingJjClient()),
+    plan = _merged_ancestor_retirement_plan(
+        bookmark_states={},
         remote_state=RemoteBookmarkState(
             remote="origin",
             targets=("remote-left", "remote-right"),
         ),
     )
 
-    assert len(actions) == 1
-    assert actions[0].kind == "abandon"
-    assert actions[0].status == "skipped"
-    assert "remote bookmark review/merged-aaaaaaaa is conflicted" in actions[0].message
+    assert plan.retirements == ()
+    assert len(plan.preservation_actions) == 1
+    assert plan.preservation_actions[0].kind == "abandon"
+    assert plan.preservation_actions[0].status == "skipped"
+    assert (
+        "remote bookmark review/merged-aaaaaaaa is conflicted"
+        in plan.preservation_actions[0].message
+    )
 
 
 def test_retire_merged_ancestor_preserves_conflicted_local_bookmark() -> None:
-    class ConflictedBookmarkJjClient:
-        def list_bookmark_states(self) -> dict[str, BookmarkState]:
-            return {
-                "review/merged-aaaaaaaa": BookmarkState(
-                    name="review/merged-aaaaaaaa",
-                    local_targets=("merged-commit", "local-right"),
-                )
-            }
-
-        def __getattr__(self, name: str):
-            raise AssertionError(f"cleanup must not call {name}")
-
-    actions = _run_merged_ancestor_retirement(
-        client=cast(JjClient, ConflictedBookmarkJjClient()),
+    plan = _merged_ancestor_retirement_plan(
+        bookmark_states={
+            "review/merged-aaaaaaaa": BookmarkState(
+                name="review/merged-aaaaaaaa",
+                local_targets=("merged-commit", "local-right"),
+            )
+        },
         remote_state=RemoteBookmarkState(
             remote="origin",
             targets=("merged-commit",),
         ),
     )
 
-    assert len(actions) == 1
-    assert actions[0].kind == "abandon"
-    assert actions[0].status == "skipped"
-    assert "local bookmark review/merged-aaaaaaaa is conflicted" in actions[0].message
+    assert plan.retirements == ()
+    assert len(plan.preservation_actions) == 1
+    assert plan.preservation_actions[0].kind == "abandon"
+    assert plan.preservation_actions[0].status == "skipped"
+    assert (
+        "local bookmark review/merged-aaaaaaaa is conflicted"
+        in plan.preservation_actions[0].message
+    )
 
 
 def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned() -> None:

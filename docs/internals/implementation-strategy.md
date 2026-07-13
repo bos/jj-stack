@@ -346,6 +346,11 @@ before abandoning the local copy and removing tracking. Bookmark conflicts, guar
 bookmarks, and remote deletion failures therefore retain both local and saved identity for retry;
 failed removability proofs are preserved with an explanatory action.
 
+That retirement flow lives in `commands/cleanup/retirement.py`. It first computes a pure typed
+plan from the prepared revisions and one current bookmark snapshot, then applies remote deletion,
+local abandonment, and tracking removal in their required order. `cleanup/rebase.py` owns stack
+repair orchestration but does not duplicate the retirement proof or its mutation protocol.
+
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
 
