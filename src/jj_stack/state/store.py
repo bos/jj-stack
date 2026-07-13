@@ -106,9 +106,26 @@ class ReviewStateStore:
 def resolve_state_path(repo_root: Path) -> Path:
     """Return the machine-written jj-stack data path for the repo."""
 
-    repo_storage_root = (repo_root / ".jj" / "repo").resolve()
+    repo_storage_root = _resolve_repo_storage_root(repo_root)
     repo_id = hashlib.sha256(str(repo_storage_root).encode("utf-8")).hexdigest()
     return default_state_root() / STATE_DIRNAME / "repos" / repo_id / STATE_FILENAME
+
+
+def _resolve_repo_storage_root(repo_root: Path) -> Path:
+    """Resolve the storage directory shared by every workspace for a jj repo."""
+
+    repo_path = repo_root / ".jj" / "repo"
+    if repo_path.is_file():
+        try:
+            target = repo_path.read_text(encoding="utf-8").strip()
+        except OSError as error:
+            raise ReviewStateError(
+                f"Could not read jj repository path file {repo_path}: {error}"
+            ) from error
+        if not target:
+            raise ReviewStateError(f"jj repository path file is empty: {repo_path}")
+        repo_path = repo_path.parent / target
+    return repo_path.resolve()
 
 
 def default_state_root() -> Path:

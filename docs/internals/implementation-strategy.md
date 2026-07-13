@@ -286,7 +286,10 @@ It does not decide stack topology or branch naming.
   effective `--config` / `--config-file` overrides on every `jj` invocation
 - tracking state lives in `~/.local/state/jj-stack/repos/<repo-id>/state.json`
 - `<repo-id>` is derived from the canonical `.jj/repo` storage path so every workspace
-  for the same repo shares one state location
+  for the same repo shares one state location. Primary workspaces expose that path as a
+  directory; additional workspaces expose a path file whose contents are resolved relative
+  to the workspace's `.jj` directory. The path file's own location is never hashed as the
+  repository identity.
 - reads treat a missing state file as empty state; writes create parent directories on
   demand and only fail if the filesystem refuses
 

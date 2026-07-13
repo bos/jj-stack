@@ -268,9 +268,12 @@ Repo defaults follow `jj`'s own precedence:
 That keeps `jj-stack` aligned with `jj`'s config model rather than inventing a parallel
 conditional-matching system.
 
-`<repo-id>` is derived from the canonical `.jj/repo` storage path. That keeps state
-repo-scoped across workspaces without a separate bootstrap step and without writing any
-tool-specific file into the workspace.
+`<repo-id>` is derived from the canonical `.jj/repo` storage path. In the primary workspace,
+`.jj/repo` is that storage directory. In an additional workspace, `.jj/repo` is a path file
+pointing at the same directory; resolve its contents relative to the workspace's `.jj`
+directory before canonicalizing and hashing it. The path file itself is never a repository
+identity. That keeps state repo-scoped across workspaces without a separate bootstrap step and
+without writing any tool-specific file into the workspace.
 
 Reads treat a missing state file as empty state. Writes create the parent directory on
 demand and only fail if the filesystem refuses.

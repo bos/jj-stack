@@ -217,3 +217,25 @@ def test_review_state_store_for_repo_does_not_depend_on_config_id(tmp_path: Path
     loaded_state = store.load()
 
     assert loaded_state == ReviewState()
+
+
+def test_review_state_store_shares_tracking_across_workspaces_for_same_repo(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    primary_workspace = tmp_path / "primary"
+    repo_storage = primary_workspace / ".jj" / "repo"
+    repo_storage.mkdir(parents=True)
+    secondary_workspace = tmp_path / "secondary"
+    secondary_jj_dir = secondary_workspace / ".jj"
+    secondary_jj_dir.mkdir(parents=True)
+    repo_pointer = os.path.relpath(repo_storage, secondary_jj_dir)
+    (secondary_jj_dir / "repo").write_text(repo_pointer, encoding="utf-8")
+    primary_store = ReviewStateStore.for_repo(primary_workspace)
+    secondary_store = ReviewStateStore.for_repo(secondary_workspace)
+    state = ReviewState(changes={"change-1": CachedChange(bookmark="review/change-1")})
+
+    primary_store.save(state)
+
+    assert secondary_store.load() == state
