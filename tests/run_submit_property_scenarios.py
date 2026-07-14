@@ -8,7 +8,7 @@ import secrets
 import shlex
 import subprocess
 from argparse import ArgumentParser, ArgumentTypeError
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +17,35 @@ PROPERTY_TEST_FILES = (
     REPO_ROOT / "tests" / "property" / "land_property_scenarios.py",
 )
 DEFAULT_PROPERTY_SEED = 8675309
+_REPRODUCTION_SCENARIO_OPTIONS = (
+    (
+        "--cross-stack-scenarios",
+        "JJ_STACK_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS",
+    ),
+    (
+        "--stack-merge-scenarios",
+        "JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS",
+    ),
+    (
+        "--stack-move-scenarios",
+        "JJ_STACK_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS",
+    ),
+    ("--retry-scenarios", "JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS"),
+    ("--drift-scenarios", "JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"),
+    ("--land-scenarios", "JJ_STACK_LAND_PROPERTY_SCENARIOS"),
+    (
+        "--land-drift-scenarios",
+        "JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS",
+    ),
+    (
+        "--land-retry-scenarios",
+        "JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS",
+    ),
+    (
+        "--land-handoff-scenarios",
+        "JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS",
+    ),
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -197,42 +226,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         *test_files,
         *pytest_args,
     ]
-    reproduction_command = [
-        "tests/run_submit_property_scenarios.py",
-        str(args.scenarios),
-        "--seed",
-        str(seed),
-        "--jobs",
-        args.jobs,
-        "--cross-stack-scenarios",
-        str(cross_stack_scenarios),
-        "--stack-merge-scenarios",
-        str(stack_merge_scenarios),
-        "--stack-move-scenarios",
-        str(stack_move_scenarios),
-        "--retry-scenarios",
-        str(retry_scenarios),
-        "--drift-scenarios",
-        str(drift_scenarios),
-        "--land-scenarios",
-        str(land_scenarios),
-        "--land-drift-scenarios",
-        str(land_drift_scenarios),
-        "--land-retry-scenarios",
-        str(land_retry_scenarios),
-        "--land-handoff-scenarios",
-        str(land_handoff_scenarios),
-    ]
-    if args.no_sync:
-        reproduction_command.append("--no-sync")
-    if pytest_args:
-        reproduction_command.extend(("--", *pytest_args))
+    reproduction_command = _build_reproduction_command(
+        env=env,
+        jobs=args.jobs,
+        no_sync=args.no_sync,
+        pytest_args=pytest_args,
+        scenarios=args.scenarios,
+        seed=seed,
+    )
 
     print(f"==> property seed: {seed}", flush=True)
     print(f"==> reproduce: {shlex.join(reproduction_command)}", flush=True)
     print(f"==> property scenarios: {shlex.join(command)}", flush=True)
     completed = subprocess.run(command, cwd=REPO_ROOT, env=env)
     return completed.returncode
+
+
+def _build_reproduction_command(
+    *,
+    env: Mapping[str, str],
+    jobs: str,
+    no_sync: bool,
+    pytest_args: Sequence[str],
+    scenarios: int,
+    seed: int,
+) -> tuple[str, ...]:
+    command = [
+        "tests/run_submit_property_scenarios.py",
+        str(scenarios),
+        "--seed",
+        str(seed),
+        "--jobs",
+        jobs,
+    ]
+    for option, environment_name in _REPRODUCTION_SCENARIO_OPTIONS:
+        command.extend((option, env[environment_name]))
+    if no_sync:
+        command.append("--no-sync")
+    if pytest_args:
+        command.extend(("--", *pytest_args))
+    return tuple(command)
 
 
 def _positive_int(value: str) -> int:

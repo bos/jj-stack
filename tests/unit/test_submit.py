@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
@@ -11,12 +13,13 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.submit.auto_close import (
     verify_no_unexpected_pull_request_closures,
 )
-from jj_stack.commands.submit.command import _resolve_submit_options
+from jj_stack.commands.submit.command import _resolve_submit_options, _run_submit_async
 from jj_stack.commands.submit.inputs import (
     preflight_private_commits as _preflight_private_commits,
 )
 from jj_stack.commands.submit.models import (
     LocalBookmarkAction,
+    PreparedSubmitInputs,
     PreparedSubmitRevision,
     PushOperation,
     SubmitMutationRun,
@@ -77,6 +80,82 @@ def _submit_options(*, dry_run: bool = False) -> SubmitOptions:
         team_reviewers=None,
         use_bookmarks=None,
     )
+
+
+def test_submit_prepared_callback_runs_after_spinner_stops(monkeypatch) -> None:
+    trunk = make_revision(
+        commit_id="trunk",
+        change_id="trunk-change",
+        description="main\n",
+    )
+    stack = LocalStack(
+        base_parent=trunk,
+        head=trunk,
+        revisions=(),
+        selected_revset="@-",
+        trunk=trunk,
+    )
+    client = cast(JjClient, SimpleNamespace(list_bookmark_states=lambda: {}))
+    prepared_inputs = PreparedSubmitInputs(
+        bookmark_states={},
+        bookmark_result=BookmarkResolutionResult(
+            changed=False,
+            resolutions=(),
+            state=ReviewState(),
+        ),
+        client=client,
+        generated_pull_request_descriptions={},
+        generated_stack_description=None,
+        remote=GitRemote(
+            name="origin",
+            url="https://github.test/octo-org/repo.git",
+        ),
+        restarted_change_ids=frozenset(),
+        stack=stack,
+        state=ReviewState(),
+    )
+    context = cast(
+        CommandContext,
+        SimpleNamespace(
+            config=AppConfig(),
+            state_store=SimpleNamespace(),
+        ),
+    )
+    active_spinners: list[str] = []
+
+    @contextmanager
+    def recording_spinner(*, description: str) -> Iterator[None]:
+        active_spinners.append(description)
+        try:
+            yield
+        finally:
+            active_spinners.remove(description)
+
+    selected_lines: list[tuple[str, str]] = []
+
+    def record_selected_line(change_id: str, subject: str) -> None:
+        assert "Preparing submit" not in active_spinners
+        selected_lines.append((change_id, subject))
+
+    monkeypatch.setattr(
+        "jj_stack.commands.submit.command.prepare_submit_inputs",
+        lambda **_kwargs: prepared_inputs,
+    )
+    monkeypatch.setattr(
+        "jj_stack.commands.submit.command.console.spinner",
+        recording_spinner,
+    )
+
+    result = asyncio.run(
+        _run_submit_async(
+            context=context,
+            on_prepared=record_selected_line,
+            options=_submit_options(),
+        )
+    )
+
+    assert selected_lines == [(trunk.change_id, trunk.subject)]
+    assert result.selected_change_id == trunk.change_id
 
 
 def test_resolve_local_action_rejects_conflicted_bookmark() -> None:

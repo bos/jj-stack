@@ -123,34 +123,6 @@ def test_list_surfaces_orphaned_pull_request_when_no_live_stacks_remain(
     assert "No stacks." not in captured.out
 
 
-def test_list_emits_one_cleanup_hint_for_all_orphaned_pull_requests(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    orphaned_change_ids = tuple(revision.change_id for revision in stack.revisions[:2])
-    state = ReviewStateStore.for_repo(repo).load()
-    orphaned_pr_numbers = tuple(
-        state.changes[change_id].pr_number for change_id in orphaned_change_ids
-    )
-    assert all(pr_number is not None for pr_number in orphaned_pr_numbers)
-
-    run_command(["jj", "abandon", *orphaned_change_ids], repo)
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    for pr_number in orphaned_pr_numbers:
-        assert f"PR #{pr_number}" in captured.out
-        assert f"unstack --cleanup --pull-request {pr_number}" not in captured.out
-    assert captured.out.count("unstack --cleanup --pull-request orphans") == 1
-
-
 def test_list_warns_when_tracked_stack_was_rewritten_without_moving(
     tmp_path,
     monkeypatch,

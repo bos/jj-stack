@@ -1217,51 +1217,6 @@ def test_land_recovers_when_trunk_push_succeeds_but_acknowledgement_is_lost(
     assert "saved review identity" not in third_run.err
 
 
-def test_land_does_not_reactivate_completed_checkpoint_from_audit_log(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    landed_commit_id = JjClient(repo).discover_review_stack().revisions[-1].commit_id
-    original_push_bookmarks = JjClient.push_bookmarks
-    lost_acknowledgement = False
-
-    def push_then_lose_acknowledgement(self, *, remote: str, bookmarks) -> None:
-        nonlocal lost_acknowledgement
-        original_push_bookmarks(self, remote=remote, bookmarks=bookmarks)
-        if bookmarks == ("main",) and not lost_acknowledgement:
-            lost_acknowledgement = True
-            raise JjCommandError("simulated lost trunk push acknowledgement")
-
-    monkeypatch.setattr(JjClient, "push_bookmarks", push_then_lose_acknowledgement)
-    assert run_main(repo, config_path, "land") == 1
-    capsys.readouterr()
-    monkeypatch.setattr(JjClient, "push_bookmarks", original_push_bookmarks)
-
-    assert run_main(repo, config_path, "land") == 0
-    capsys.readouterr()
-
-    # Audit completion is deliberately outside the state commit point.
-    log_path = resolve_state_path(repo).parent / OPERATION_LOG_FILENAME
-    lines = log_path.read_text(encoding="utf-8").splitlines()
-    dropped_event = json.loads(lines[-1])
-    assert dropped_event["event"] == "completed"
-    log_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1, (captured.out, captured.err)
-    assert "No changes on the selected stack are ready to land." in captured.out
-    assert fake_repo.pull_request_events == []
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-    assert ReviewStateStore.for_repo(repo).load().pending_direct_land is None
-
-
 def test_land_ignores_missing_audit_completion_after_state_commit(
     tmp_path: Path,
     monkeypatch,

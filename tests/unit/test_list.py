@@ -3,13 +3,36 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-from jj_stack.commands.list_ import _prepare_repo_inspection_context
+import jj_stack.ui as ui
+from jj_stack.commands.list_ import (
+    OrphanRow,
+    _emit_orphan_hint,
+    _prepare_repo_inspection_context,
+)
 from jj_stack.config import RepoConfig
 from jj_stack.github.resolution import GithubTarget
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.discovery import discover_connected_tracked_stacks, discover_tracked_stacks
+
+
+def test_orphan_hint_is_emitted_once_for_all_rows(monkeypatch) -> None:
+    row = OrphanRow(
+        bookmark="review/orphan-aaaaaaaa",
+        change_id="a" * 32,
+        pull_request={"number": 1},
+        review="orphan",
+        state="orphan",
+        subject="orphan",
+    )
+    notes: list[ui.Message] = []
+    monkeypatch.setattr("jj_stack.commands.list_.console.note", notes.append)
+
+    _emit_orphan_hint((row, row))
+
+    assert len(notes) == 1
+    assert "unstack --cleanup --pull-request orphans" in ui.plain_text(notes[0])
 
 
 def _revision(

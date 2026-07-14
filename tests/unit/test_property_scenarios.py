@@ -1,6 +1,5 @@
 import pytest
 
-from tests.support.land_property_scenarios import generate_land_scenarios
 from tests.support.stack_edit_scenarios import (
     StackEditOperation,
     apply_stack_edit,
@@ -57,12 +56,6 @@ def test_shared_move_candidates_exclude_adjacent_no_ops() -> None:
     assert ("c1", "c2") not in move_before_candidates(labels)
     assert ("c1", "c2") in move_after_candidates(labels)
     assert ("c3", "c2") in move_before_candidates(labels)
-
-
-def test_land_generator_avoids_adjacent_no_op_moves() -> None:
-    scenarios = generate_land_scenarios(count=21, seed=12)
-
-    assert len(scenarios) == 21
 
 
 def test_composed_drift_keeps_exit_codes_paired_with_their_diagnoses() -> None:

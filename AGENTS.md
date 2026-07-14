@@ -54,9 +54,12 @@ compatibility code, migration code, or the like.
 - For focused test runs, do not use plain `uv run pytest ...`; it can miss the repo's package
   path in this project layout. First run `uv sync --locked`, then invoke pytest through the repo
   virtualenv, for example `.venv/bin/python -m pytest tests/unit/test_jj_client.py`.
-- When adding, removing, or evaluating tests, read
-  [docs/internals/testing-philosophy.md](docs/internals/testing-philosophy.md) first and follow
-  it.
+- Before adding, modifying, removing, or reviewing tests, fixtures, helpers, or property
+  scenarios, read and follow
+  [docs/internals/testing-philosophy.md](docs/internals/testing-philosophy.md). Add or retain
+  coverage only for a distinct worthwhile risk at the narrowest meaningful layer; search for and
+  consolidate overlapping coverage first. For property-harness changes, also follow
+  [docs/internals/property-testing.md](docs/internals/property-testing.md).
 
 # Code reviews
 
