@@ -93,9 +93,9 @@ for stack ownership checks; and to distinguish ordinary PR collaboration metadat
 structural or lifecycle `gh` mutations that can disrupt jj-stack-managed PRs or review
 branches unless the user has seen the risk and approved the direct mutation.
 
-Current aliases include `ls` for `list`, `sub` for `submit`, and `delete` for `unstack`.
-Commands that select one linked pull request also accept `-p` as a short form for
-`--pull-request`.
+Current aliases include `status` and `st` for `view`, `ls` for `list`, `sub` for
+`submit`, and `delete` for `unstack`. Commands that select one linked pull request also
+accept `-p` as a short form for `--pull-request`.
 When an option has the same user-facing meaning as `gh stack`, prefer the same spelling;
 for example, `submit --open` marks draft pull requests ready for review.
 

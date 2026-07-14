@@ -123,9 +123,11 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
 _PULL_REQUEST_OPTION_STRINGS = ("-p", "--pull-request")
 _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "submit": ("sub",),
+    "view": ("status", "st"),
     "list": ("ls",),
     "unstack": ("delete",),
 }
+_VIEW_COMMANDS = frozenset(("view", *_COMMAND_ALIASES["view"]))
 _KNOWN_COMMANDS = frozenset(
     name
     for _, entries in _TOP_LEVEL_HELP_GROUPS
@@ -305,6 +307,7 @@ def build_parser() -> ArgumentParser:
     view_parser = _add_revision_command(
         subcommands,
         command="view",
+        aliases=_COMMAND_ALIASES["view"],
         help_text=normalized_help_text(view_command.HELP),
         description_text=view_command.__doc__ or "",
         handler=_forward_handler(
@@ -725,7 +728,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return resolve_exit_code(error)
     args.cli_args = cli_args
     args.normalized_argv = tuple(normalized_argv)
-    if args.command == "view":
+    if args.command in _VIEW_COMMANDS:
         args.view_selectors = () if view_args is None else view_args.selectors
     effective_color = args.color
     if effective_color is None:
@@ -778,7 +781,7 @@ def _parse_view_command_args(argv: Sequence[str]) -> _ParsedViewCommandArgs | No
     """Rewrite `view` argv and preserve explicit selector order."""
 
     command_index = _find_subcommand_index(argv)
-    if command_index is None or argv[command_index] != "view":
+    if command_index is None or argv[command_index] not in _VIEW_COMMANDS:
         return None
 
     prefix = list(argv[: command_index + 1])

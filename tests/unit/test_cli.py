@@ -118,8 +118,10 @@ def test_main_renders_cli_error_hint_on_separate_line(
     assert "Hint: Run view --fetch and retry." in err_lines
 
 
+@pytest.mark.parametrize("command", ["view", "status", "st"])
 def test_main_preserves_view_selector_order(
     monkeypatch: pytest.MonkeyPatch,
+    command: str,
 ) -> None:
     observed: dict[str, object] = {}
 
@@ -129,7 +131,7 @@ def test_main_preserves_view_selector_order(
 
     monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
 
-    exit_code = main(["view", "foo", "--pull-request", "17", "bar"])
+    exit_code = main([command, "foo", "--pull-request", "17", "bar"])
 
     assert exit_code == 0
     assert observed["selectors"] == (
@@ -137,6 +139,14 @@ def test_main_preserves_view_selector_order(
         ViewSelector(kind="pull_request", value="17"),
         ViewSelector(kind="revset", value="bar"),
     )
+
+
+def test_help_all_lists_view_aliases(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = main(["help", "--all"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "view, status, st" in captured.out
 
 
 @pytest.mark.parametrize(
