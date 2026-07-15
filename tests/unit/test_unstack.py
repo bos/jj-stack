@@ -12,13 +12,34 @@ from jj_stack.commands.unstack import (
     PreparedClose,
     _cleanup_revision,
     _CloseMutationRun,
+    unstack,
 )
 from jj_stack.config import RepoConfig
+from jj_stack.errors import UsageError
 from jj_stack.github.client import GithubClient
-from jj_stack.jj.client import JjClient
+from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_stack.models.review_state import CachedChange, ReviewState
 from jj_stack.review.status import ReviewStatusRevision
+
+
+def test_unstack_rejects_orphans_without_cleanup_before_bootstrap(monkeypatch) -> None:
+    def fail_bootstrap(**_kwargs) -> None:
+        raise AssertionError("invalid options must not bootstrap the repository")
+
+    monkeypatch.setattr("jj_stack.commands.unstack.bootstrap_context", fail_bootstrap)
+
+    with pytest.raises(UsageError, match="orphans requires --cleanup"):
+        unstack(
+            cleanup=False,
+            cli_args=JjCliArgs(),
+            debug=False,
+            dry_run=False,
+            local=False,
+            pull_request="orphans",
+            repository=None,
+            revset=None,
+        )
 
 
 def _stub_revision(*, change_id: str) -> ReviewStatusRevision:

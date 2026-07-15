@@ -200,11 +200,6 @@ def unstack(
 ) -> int:
     """CLI entrypoint for `unstack`."""
 
-    context = bootstrap_context(
-        repository=repository,
-        cli_args=cli_args,
-        debug=debug,
-    )
     close_orphans = pull_request == "orphans"
     if close_orphans and not cleanup:
         raise UsageError("unstack --pull-request orphans requires --cleanup.")
@@ -222,6 +217,11 @@ def unstack(
         command = "unstack --cleanup"
     else:
         command = "unstack"
+    context = bootstrap_context(
+        repository=repository,
+        cli_args=cli_args,
+        debug=debug,
+    )
     with acquire_operation_lock(
         context.state_store.require_writable(),
         command=command,

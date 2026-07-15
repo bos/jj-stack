@@ -534,22 +534,6 @@ def test_unstack_cleanup_orphans_dry_run_then_retires_every_orphan(
     assert "No orphaned pull requests are tracked." in rerun.out
 
 
-def test_unstack_pull_request_orphans_requires_cleanup(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    exit_code = run_main(repo, config_path, "unstack", "--pull-request", "orphans")
-    captured = capsys.readouterr()
-
-    assert exit_code == 5
-    assert "unstack --pull-request orphans requires --cleanup" in _combined_output(captured)
-    assert fake_repo.pull_requests[1].state == "open"
-
-
 def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     tmp_path: Path,
     monkeypatch,

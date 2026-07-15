@@ -102,7 +102,9 @@ for example, `submit --open` marks draft pull requests ready for review.
 Command entrypoints bootstrap a `CommandContext` containing config, the `jj` client,
 repo root, runtime options, and the repo state store. CLI boundary code should preserve
 that context until it builds command-specific options or resolved target data, instead
-of reconstructing shared dependencies from the repo root.
+of reconstructing shared dependencies from the repo root. Argument combinations that do
+not depend on repository state are rejected before bootstrap; for example, the `orphans`
+selector for `unstack` requires `--cleanup`.
 
 Command-specific options should hold normalized CLI values after argparse-specific
 parsing is complete. Commands with their own behavior flags or selectors use
