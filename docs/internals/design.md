@@ -958,6 +958,7 @@ The full command surface:
 - `jj stack view [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
 - `jj stack status [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
 - `jj stack st [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
+- `jj stack v [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
 - `jj stack list [--fetch] [--json]`
 - `jj stack ls [--fetch] [--json]`
 - `jj stack restart [--dry-run] <revset>`
@@ -977,8 +978,8 @@ The full command surface:
 review-state command and does not inspect the repo, the tracking-state file, or
 GitHub.
 
-`status` and `st` are long and short aliases for `view`. Run with no subcommand, the
-executable behaves the same as `jj stack view` on the current stack.
+`status` is a long alias for `view`; `st` and `v` are short aliases. Run with no
+subcommand, the executable behaves the same as `jj stack view` on the current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `view`, `land`, `unstack`) plus support commands

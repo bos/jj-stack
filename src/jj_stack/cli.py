@@ -123,7 +123,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
 _PULL_REQUEST_OPTION_STRINGS = ("-p", "--pull-request")
 _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "submit": ("sub",),
-    "view": ("status", "st"),
+    "view": ("status", "st", "v"),
     "list": ("ls",),
     "unstack": ("delete",),
 }
