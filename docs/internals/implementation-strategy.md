@@ -514,8 +514,9 @@ The default local verification command is:
 ./check.py
 ```
 
-That script runs `uv sync --locked`, then `ruff check`, `pyrefly check`, and
-`pytest -n auto` with randomized test order so hidden cross-test coupling fails fast.
+That script runs `uv sync --locked`, then `ruff check`, `pyrefly check`, a second
+`pyrefly check --python-platform win32` pass, and `pytest -n auto` with randomized test
+order so hidden cross-test coupling and Windows-only type errors fail fast.
 
 `./check.py -n 4` overrides the default worker count; `./check.py -n 1` provides a
 serial escape hatch without changing the bootstrap, lint, and type-check steps.

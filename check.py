@@ -77,6 +77,10 @@ def _build_checks(
     return (
         ("ruff", ("-m", "ruff", "check")),
         ("pyrefly", ("-m", "pyrefly", "check")),
+        (
+            "pyrefly-windows",
+            ("-m", "pyrefly", "check", "--python-platform", "win32"),
+        ),
         ("pytest", pytest_command),
     )
 
