@@ -91,6 +91,55 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
     )
 
 
+def test_relink_replaces_stale_submitted_commit_with_remote_pr_head(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+    cached_change = initial_state.changes[change_id]
+    bookmark = cached_change.bookmark
+    assert bookmark is not None
+    remote_pr_head = read_remote_ref(fake_repo.git_dir, bookmark)
+    stale_submitted_commit = read_remote_ref(fake_repo.git_dir, "main")
+    assert stale_submitted_commit != remote_pr_head
+    state_store.save(
+        initial_state.model_copy(
+            update={
+                "changes": {
+                    **initial_state.changes,
+                    change_id: cached_change.model_copy(
+                        update={"last_submitted_commit_id": stale_submitted_commit}
+                    ),
+                }
+            }
+        )
+    )
+    run_command(
+        ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature repaired"],
+        repo,
+    )
+
+    exit_code = run_main(repo, config_path, "relink", "1", change_id)
+    capsys.readouterr()
+    relinked_change = state_store.load().changes[change_id]
+
+    assert exit_code == 0
+    assert relinked_change.last_submitted_commit_id == remote_pr_head
+
+    exit_code = run_main(repo, config_path, "submit", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "PR #1 updated" in captured.out
+    assert set(fake_repo.pull_requests) == {1}
+
+
 def test_relink_reports_missing_pull_request_without_traceback(
     tmp_path: Path,
     monkeypatch,

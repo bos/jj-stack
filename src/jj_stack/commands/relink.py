@@ -118,7 +118,7 @@ async def _run_relink_async(
                     f"Could not load pull request #{pull_request_number}"
                 ) from error
 
-    bookmark = _validated_relink_bookmark(
+    bookmark, remote_commit_id = _validated_relink_bookmark(
         client=client,
         github_repository=github_repository,
         pull_request=pull_request,
@@ -153,6 +153,7 @@ async def _run_relink_async(
             update={
                 "bookmark": bookmark,
                 "bookmark_ownership": "external",
+                "last_submitted_commit_id": remote_commit_id,
                 "link_state": "active",
                 "pr_number": pull_request.number,
                 "pr_review_decision": None,
@@ -243,7 +244,7 @@ def _validated_relink_bookmark(
     pull_request: GithubPullRequest,
     remote: GitRemote,
     revision: LocalRevision,
-) -> str:
+) -> tuple[str, str]:
     if pull_request.state != "open":
         raise CliError(
             f"Pull request #{pull_request.number} is not open; cannot relink "
@@ -290,7 +291,9 @@ def _validated_relink_bookmark(
             t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote.name}')} is conflicted.",
             hint="Resolve it before relinking.",
         )
-    return bookmark
+    if remote_state is None or remote_state.target is None:
+        raise AssertionError("validated relink bookmark has no unambiguous remote target")
+    return bookmark, remote_state.target
 
 
 def _ensure_relinkable_cached_link(

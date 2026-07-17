@@ -466,8 +466,10 @@ The recovery surface is explicit and narrow:
   PR state without mutating GitHub or local bookmarks
 - `jj stack relink <pr> <revset>` is a repair command. It explicitly reattaches an
   existing PR (and its same-repo head branch) to a specific `jj` change. It pins the
-  branch locally and saves the PR identity so a later `submit` updates the relinked
-  review rather than opening a replacement.
+  branch locally, saves the PR identity, and records the fetched remote branch target
+  as the submitted baseline. Replacing any stale saved baseline is what lets a later
+  `submit` update the relinked review rather than rejecting that branch or opening a
+  replacement.
 - `jj stack restart <revset>` is a repair command for abandoning stale or unusable
   PR tracking on a selected stack. It keeps the `jj` changes, clears their previous PR
   identity, assigns fresh managed review bookmark names, and leaves the next `submit`
