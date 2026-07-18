@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import os
 import tempfile
@@ -15,11 +14,6 @@ from jj_stack.models.review_state import ReviewState
 
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
-_UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = {
-    error_number
-    for name in ("EINVAL", "ENOTSUP", "EOPNOTSUPP")
-    if (error_number := getattr(errno, name, None)) is not None
-}
 
 
 class ReviewStateError(CliError):
@@ -27,7 +21,12 @@ class ReviewStateError(CliError):
 
 
 class ReviewStateStore:
-    """Load and save jj-stack data in a user state directory."""
+    """Load and save jj-stack data in a user state directory.
+
+    Tracking data is a reconstructible convenience (`checkout` and `relink`
+    re-adopt reviews from GitHub), so writes are atomic but not fsync-durable:
+    losing a write costs a re-derivation, never correctness.
+    """
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -61,10 +60,9 @@ class ReviewStateStore:
         except ValidationError as error:
             raise ReviewStateError(f"Invalid jj-stack data in {self._path}: {error}") from error
 
-    def save(self, state: ReviewState, *, durable: bool = False) -> None:
-        """Persist the supplied jj-stack data."""
+    def save(self, state: ReviewState) -> None:
+        """Persist the supplied jj-stack data atomically."""
 
-        durable = durable or state.pending_direct_land is not None
         rendered = state.model_dump_json(exclude_none=True, indent=2) + "\n"
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,12 +74,7 @@ class ReviewStateStore:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as tmp:
                     tmp.write(rendered)
-                    if durable:
-                        tmp.flush()
-                        os.fsync(tmp.fileno())
                 Path(tmp_name).replace(self._path)
-                if durable:
-                    _fsync_directory(self._path.parent)
             except OSError:
                 Path(tmp_name).unlink(missing_ok=True)
                 raise
@@ -135,24 +128,3 @@ def default_state_root() -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return Path("~", ".local", "state").expanduser().resolve()
-
-
-def _fsync_directory(path: Path) -> None:
-    """Durably record a directory entry update where the platform supports it."""
-
-    if os.name == "nt":
-        return
-    try:
-        fd = os.open(path, os.O_RDONLY)
-    except OSError as error:
-        if error.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
-            return
-        raise
-    else:
-        try:
-            os.fsync(fd)
-        except OSError as error:
-            if error.errno not in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
-                raise
-        finally:
-            os.close(fd)

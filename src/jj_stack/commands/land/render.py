@@ -42,8 +42,8 @@ def print_land_result(result: LandResult) -> None:
             )
     if result.via == "merge" and result.applied and _any_applied_pull_request(result):
         console.output(
-            t"Merged on GitHub without moving local history: run {ui.cmd('sync')} to "
-            t"rebase the local stack off the merged changes."
+            t"GitHub accepted the merges; converging the local stack off the merged "
+            t"changes..."
         )
 
 

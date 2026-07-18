@@ -14,8 +14,7 @@ from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE, DriftErr
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.review_state import ReviewState
-from jj_stack.state.journal import read_operation_log
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
@@ -160,12 +159,35 @@ def replay_land_scenario(
             trace=scenario.trace,
         )
     else:
+        selection_cap = (
+            scenario.land_target_position
+            if scenario.land_target_position is not None
+            else len(scenario.final_live_labels)
+        )
+        within_selection_labels = scenario.final_live_labels[
+            len(landed_labels) : selection_cap
+        ]
+        remaining_within_selection = tuple(
+            tracked[label] for label in within_selection_labels if label in tracked
+        )
+        remaining_above_selection = tuple(
+            change
+            for change in remaining_tracked
+            if change not in remaining_within_selection
+        )
+        # Survivors inside the selection are legitimately resubmitted by the
+        # in-command convergence, so only reviews outside it must stay silent.
+        if landed:
+            untouched_pull_numbers -= {
+                change.pull_number for change in remaining_within_selection
+            }
         _assert_merge_transport_result(
             current_commit_ids=current_commit_ids,
             fake_repo=fake_repo,
             landed=landed,
             original_main=original_main,
-            remaining_tracked=remaining_tracked,
+            remaining_within_selection=remaining_within_selection,
+            remaining_above_selection=remaining_above_selection,
             repo=repo,
             state=state,
             trace=scenario.trace,
@@ -530,7 +552,8 @@ def _assert_merge_transport_result(
     fake_repo: FakeGithubRepository,
     landed: tuple[_TrackedChange, ...],
     original_main: str,
-    remaining_tracked: tuple[_TrackedChange, ...],
+    remaining_within_selection: tuple[_TrackedChange, ...],
+    remaining_above_selection: tuple[_TrackedChange, ...],
     repo: Path,
     state: ReviewState,
     trace: str,
@@ -540,27 +563,52 @@ def _assert_merge_transport_result(
     else:
         assert _remote_ref(fake_repo.git_dir, "main") == original_main, trace
 
-    # GitHub moved trunk by merging; the local commits stay untouched so a
-    # follow-up sync or cleanup --rebase can remove the merged ancestors.
     client = JjClient(repo)
-    for change_id, commit_id in current_commit_ids.items():
-        assert client.resolve_revision(change_id).commit_id == commit_id, trace
 
+    # GitHub moved trunk by merging, and land converged the selected stack
+    # before returning: merged tracking is retired and the surviving selected
+    # changes were rebased onto the merged trunk and resubmitted.
     for change in landed:
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "closed", (change.pull_number, trace)
         assert pull_request.merged_at is not None, (change.pull_number, trace)
-        cached = state.changes.get(change.change_id)
-        assert cached is not None, (change.pull_number, trace)
-        assert cached.pr_state == "merged", (change.pull_number, trace)
+        assert change.change_id not in state.changes, (change.pull_number, trace)
 
-    for change in remaining_tracked:
+    for change in remaining_within_selection:
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "open", (change.pull_number, trace)
         assert pull_request.merged_at is None, (change.pull_number, trace)
         cached = state.changes.get(change.change_id)
         assert cached is not None, (change.pull_number, trace)
-        assert cached.pr_state == "open", (change.pull_number, trace)
+        live_commit = client.resolve_revision(change.change_id).commit_id
+        if landed:
+            assert live_commit != current_commit_ids[change.change_id], (
+                change.pull_number,
+                trace,
+            )
+        assert cached.last_submitted_commit_id == live_commit, (
+            change.pull_number,
+            trace,
+        )
+        assert _remote_ref(fake_repo.git_dir, change.bookmark) == live_commit, (
+            change.pull_number,
+            trace,
+        )
+
+    # Changes above a --pull-request cap follow the jj rewrite but are not
+    # resubmitted: their reviews wait for their own next command.
+    for change in remaining_above_selection:
+        pull_request = fake_repo.pull_requests[change.pull_number]
+        assert pull_request.state == "open", (change.pull_number, trace)
+        assert pull_request.merged_at is None, (change.pull_number, trace)
+        cached = state.changes.get(change.change_id)
+        assert cached is not None, (change.pull_number, trace)
+        assert cached.last_submitted_commit_id == current_commit_ids[
+            change.change_id
+        ], (change.pull_number, trace)
+        assert _remote_ref(fake_repo.git_dir, change.bookmark) == current_commit_ids[
+            change.change_id
+        ], (change.pull_number, trace)
 
 
 def _assert_orphans_untouched(
@@ -1109,12 +1157,10 @@ def replay_land_retry_scenario(
     install_fault()
     exit_code = run_cli(("land",))
     captured = read_output()
-    expected_exit_code = (
-        EXIT_FAILURE
-        if scenario.fault in {"after_push_ack_lost", "before_state_commit"}
-        else EXIT_GITHUB
-    )
-    assert exit_code == expected_exit_code, (
+    # Every fault surfaces as a failed run: ambiguous push loss and a lost
+    # retirement save raise, and a failed finalization load is reported as a
+    # skipped landed review. None of them leaves replay state behind.
+    assert exit_code == EXIT_FAILURE, (
         scenario.trace,
         captured.out,
         captured.err,
@@ -1125,7 +1171,9 @@ def replay_land_retry_scenario(
     assert _remote_ref(fake_repo.git_dir, "main") == expected_main, scenario.trace
     restore_github()
 
-    rerun_exit_code = run_cli(("land",))
+    # sync is the single documented recovery: it finalizes and retires the
+    # landed prefix from observed state, whatever the interruption point was.
+    rerun_exit_code = run_cli(("sync",))
     captured = read_output()
     assert rerun_exit_code == 0, (scenario.trace, captured.out, captured.err)
 
@@ -1145,22 +1193,16 @@ def replay_land_retry_scenario(
         trace=scenario.trace,
     )
     # The event window spans both runs, so exactly-once closure proves the
-    # rerun finalized only what the interrupted run left unfinished.
+    # recovery finalized only what the interrupted run left unfinished. The
+    # unapproved suffix may legitimately see convergence events (a base
+    # retarget onto trunk) from the recovery's resubmit.
     landed_pull_numbers = {change.pull_number for change in landed}
     assert_event_contract(
         fake_repo=fake_repo,
         landed_pull_numbers=landed_pull_numbers,
         trace=scenario.trace,
-        untouched_pull_numbers={change.pull_number for change in tracked.values()}
-        - landed_pull_numbers,
+        untouched_pull_numbers=set(),
     )
-    land_events = tuple(
-        event
-        for event in read_operation_log(resolve_state_path(repo).parent)
-        if event.operation == "land"
-    )
-    assert land_events[-1].event == "completed", scenario.trace
-    assert ReviewStateStore.for_repo(repo).load().pending_direct_land is None
     _assert_list_reflects_landed_prefix(
         landed_change_ids=tuple(change.change_id for change in landed),
         read_output=read_output,
@@ -1269,9 +1311,8 @@ def replay_land_handoff_scenario(
         },
     )
 
-    # A merge-transport land leaves the pre-merge copies immutable (pinned by
-    # their untracked remote review branches), so their tracking stays until a
-    # broader cleanup retires it; only then has the lifecycle converged.
+    # A closing cleanup must find nothing left to do: convergence already
+    # retired every merged review, and the chain ends with empty tracking.
     exit_code = run_cli(("cleanup",))
     captured = read_output()
     assert exit_code == 0, (scenario.trace, captured.out, captured.err)
@@ -1402,14 +1443,14 @@ def _assert_recovery_converged(
         assert pull_request.state == "closed", (label, scenario.trace)
         assert pull_request.merged_at is not None, (label, scenario.trace)
 
-    if scenario.origin == "external_squash_merge":
-        # The recovery's rebase pass proves the pre-merge local copies inert
-        # (reviewed commit unchanged since submit) and retires them directly.
-        for label in scenario.merged_labels:
-            assert tracked[label].change_id not in state.changes, (
-                label,
-                scenario.trace,
-            )
+    # The convergence pass (in-command for land --via merge, the recovery run
+    # for external merges and faulted lands) proves the pre-merge local copies
+    # inert and retires their tracking directly.
+    for label in scenario.merged_labels:
+        assert tracked[label].change_id not in state.changes, (
+            label,
+            scenario.trace,
+        )
 
     # Approvals granted before the handoff stay attached to the same PRs.
     pre_approved = (

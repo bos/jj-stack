@@ -2,68 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 LinkState = Literal["active", "unlinked"]
 BookmarkOwnership = Literal["managed", "external"]
-PendingDirectLandPhase = Literal["prepared", "trunk_moved"]
 
 
-class PendingDirectLandRevision(BaseModel):
-    """Exact review identity for one revision in a pending direct land."""
+class LandNote(BaseModel):
+    """Message-only record of a land whose GitHub outcome may be unconfirmed.
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    bookmark: str
-    bookmark_ownership: BookmarkOwnership
-    change_id: str
-    commit_id: str
-    pull_request_number: int
-    subject: str
-
-
-class PendingDirectLand(BaseModel):
-    """One unresolved direct-push land transaction."""
+    The note exists so the next command can say why state is about to change
+    ("an earlier land was interrupted...") instead of changing it silently. It
+    only ever influences what the tool says, never what it does: no execution
+    path may read it to gate or select a mutation. Convergence is always
+    computed from what GitHub and the jj DAG currently report, and the note is
+    cleared whenever a command finishes with full knowledge of the outcome.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    bookmark_prefix: str
-    cleanup_bookmarks: bool
-    cleanup_user_bookmarks: bool
-    finalized_change_ids: tuple[str, ...] = ()
-    github_host: str
-    github_repository: str
-    operation_id: str
-    original_local_trunk_commit_id: str | None
-    original_trunk_commit_id: str
-    phase: PendingDirectLandPhase = "prepared"
-    planned_revisions: tuple[PendingDirectLandRevision, ...]
-    remote_name: str
-    remote_url: str
+    pull_request_numbers: tuple[int, ...]
     trunk_branch: str
-
-    @model_validator(mode="after")
-    def validate_revision_scope(self) -> Self:
-        if not self.planned_revisions:
-            raise ValueError("a pending direct land requires at least one revision")
-        planned_change_ids = tuple(
-            revision.change_id for revision in self.planned_revisions
-        )
-        if len(set(planned_change_ids)) != len(planned_change_ids):
-            raise ValueError("pending direct land revisions must have unique change IDs")
-        if len(set(self.finalized_change_ids)) != len(self.finalized_change_ids):
-            raise ValueError("finalized pending direct land change IDs must be unique")
-        if set(self.finalized_change_ids) - set(planned_change_ids):
-            raise ValueError("finalized changes must belong to the pending direct land")
-        return self
-
-    @property
-    def target_trunk_commit_id(self) -> str:
-        """Return the exact commit the transaction moves trunk to."""
-
-        return self.planned_revisions[-1].commit_id
+    via: Literal["push", "merge"]
 
 
 class CachedChange(BaseModel):
@@ -151,4 +113,4 @@ class ReviewState(BaseModel):
 
     version: Literal[1] = 1
     changes: dict[str, CachedChange] = Field(default_factory=dict)
-    pending_direct_land: PendingDirectLand | None = None
+    land_note: LandNote | None = None

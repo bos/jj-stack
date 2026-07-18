@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 import jj_stack.commands.land.execute as land_execute
-from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE, CliError
+from jj_stack.errors import EXIT_FAILURE, EXIT_INCOMPLETE, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient, JjCommandError
-from jj_stack.state.journal import OPERATION_LOG_FILENAME, read_operation_log
+from jj_stack.state.journal import read_operation_log
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -32,7 +32,7 @@ from .submit_command_helpers import (
 
 _LAND_CLIENT_MODULES = (
     "jj_stack.commands.land.command",
-    "jj_stack.commands.land.recovery",
+    "jj_stack.review.landed",
 )
 
 
@@ -132,19 +132,8 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
         event.event == "mutation_applied" and event.data["mutation"] == "push_trunk"
         for event in journal_events
     )
-    assert any(
-        event.event == "saved_state_update"
-        and event.data["change_id"] == change_id_1
-        and event.data["after"] is None
-        for event in journal_events
-    )
-    assert any(
-        event.event == "saved_state_update"
-        and event.data["change_id"] == change_id_2
-        and event.data["after"] is None
-        for event in journal_events
-    )
     assert journal_events[-1].event == "completed"
+    assert set(journal_events[-1].data["retired_change_ids"]) == {change_id_1, change_id_2}
 
     list_exit_code = run_main(repo, config_path, "list", "--json")
     listed = capsys.readouterr()
@@ -594,11 +583,13 @@ def test_land_restores_local_trunk_bookmark_when_push_does_not_complete(
     assert read_remote_ref(fake_repo.git_dir, "main") == remote_before
 
 
-def test_land_retry_repairs_local_trunk_moved_before_interrupted_push(
+def test_land_rerun_after_crash_between_trunk_move_and_push_gives_targeted_hint(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
+    """A crash that leaves the local trunk bookmark moved fails closed with a repair hint."""
+
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     approve_pull_requests(fake_repo, 1, 2)
@@ -611,43 +602,46 @@ def test_land_retry_repairs_local_trunk_moved_before_interrupted_push(
         client.set_bookmark(trunk_branch, trunk_revision.commit_id)
         raise CliError("Simulated process death before the trunk push")
 
-    monkeypatch.setattr(
-        land_execute,
-        "_push_trunk_bookmark",
-        move_trunk_then_crash,
-    )
+    monkeypatch.setattr(land_execute, "_push_trunk_bookmark", move_trunk_then_crash)
 
     assert run_main(repo, config_path, "land") == EXIT_FAILURE
     first_run = capsys.readouterr()
     assert "Simulated process death" in first_run.err
     assert JjClient(repo).get_bookmark_state("main").local_target == target_trunk
-    assert ReviewStateStore.for_repo(repo).load().pending_direct_land is not None
 
-    monkeypatch.setattr(
-        land_execute,
-        "_push_trunk_bookmark",
-        original_push_trunk,
-    )
+    monkeypatch.setattr(land_execute, "_push_trunk_bookmark", original_push_trunk)
 
-    exit_code = run_main(repo, config_path, "land")
+    second_exit_code = run_main(repo, config_path, "land")
     second_run = capsys.readouterr()
 
-    assert exit_code == 0, (second_run.out, second_run.err)
+    assert second_exit_code == EXIT_FAILURE
+    assert "does not match" in second_run.err
+    assert "move main back with" in second_run.err
+
     assert original_trunk is not None
+    JjClient(repo).set_bookmark("main", original_trunk, allow_backwards=True)
+
+    third_exit_code = run_main(repo, config_path, "land")
+    third_run = capsys.readouterr()
+
+    assert third_exit_code == 0, (third_run.out, third_run.err)
     assert read_remote_ref(fake_repo.git_dir, "main") == target_trunk
-    assert ReviewStateStore.for_repo(repo).load().pending_direct_land is None
 
 
-def test_land_replans_after_interrupted_push_when_landable_prefix_changes(
+def test_land_rerun_after_failed_push_replans_from_current_state(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
+    """A failed trunk push leaves no residue; the rerun replans against live state."""
+
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     approve_pull_requests(fake_repo, 1, 2)
     initial_stack = JjClient(repo).discover_review_stack()
     first_landable_commit_id = initial_stack.revisions[0].commit_id
+    trunk_before = JjClient(repo).get_bookmark_state("main").local_target
+    remote_before = read_remote_ref(fake_repo.git_dir, "main")
 
     push_calls = 0
     original_push_bookmarks = JjClient.push_bookmarks
@@ -666,80 +660,17 @@ def test_land_replans_after_interrupted_push_when_landable_prefix_changes(
 
     assert first_exit_code == 1
     assert "simulated trunk push failure" in first_run.err
-    pending = ReviewStateStore.for_repo(repo).load().pending_direct_land
-    assert pending is not None
-    assert pending.phase == "prepared"
+    assert JjClient(repo).get_bookmark_state("main").local_target == trunk_before
+    assert read_remote_ref(fake_repo.git_dir, "main") == remote_before
+
     fake_repo.pull_requests[2].state = "closed"
 
     second_exit_code = run_main(repo, config_path, "land")
     second_run = capsys.readouterr()
 
-    assert second_exit_code == 0
-    assert "simulated trunk push failure" in first_run.err
-    assert "Resuming interrupted" not in second_run.out
+    assert second_exit_code == 0, (second_run.out, second_run.err)
+    assert "push main to feature 1" in _squash_whitespace(second_run.out)
     assert read_remote_ref(fake_repo.git_dir, "main") == first_landable_commit_id
-    assert ReviewStateStore.for_repo(repo).load().pending_direct_land is None
-
-    fake_repo.pull_requests[2].state = "open"
-
-    third_exit_code = run_main(repo, config_path, "land")
-    third_run = capsys.readouterr()
-
-    assert third_exit_code == 0, (third_run.out, third_run.err)
-    assert "push main to feature 2" in _squash_whitespace(third_run.out)
-
-    fourth_exit_code = run_main(repo, config_path, "land")
-    fourth_run = capsys.readouterr()
-
-    assert fourth_exit_code == 1
-    assert "No changes on the selected stack are ready to land." in fourth_run.out
-    assert "saved review identity" not in fourth_run.err
-
-
-def test_land_replan_replaces_unapplied_pending_transaction(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    original_push_bookmarks = JjClient.push_bookmarks
-    push_calls = 0
-
-    def fail_first_push_bookmarks(self, *, remote: str, bookmarks) -> None:
-        nonlocal push_calls
-        push_calls += 1
-        if push_calls == 1:
-            raise JjCommandError("simulated trunk push failure")
-        original_push_bookmarks(self, remote=remote, bookmarks=bookmarks)
-
-    monkeypatch.setattr(JjClient, "push_bookmarks", fail_first_push_bookmarks)
-
-    assert run_main(repo, config_path, "land") == 1
-    first_run = capsys.readouterr()
-    assert "simulated trunk push failure" in first_run.err
-    first_pending = ReviewStateStore.for_repo(repo).load().pending_direct_land
-    assert first_pending is not None
-
-    assert run_main(repo, config_path, "land") == 0
-    second_run = capsys.readouterr()
-    assert "push main to feature 2" in _squash_whitespace(second_run.out)
-
-    assert ReviewStateStore.for_repo(repo).load().pending_direct_land is None
-    completed_first_attempt = tuple(
-        event
-        for event in read_operation_log(resolve_state_path(repo).parent)
-        if event.operation_id == first_pending.operation_id and event.event == "completed"
-    )
-    assert completed_first_attempt[-1].data["outcome"] == "trunk_not_moved"
-
-    third_exit_code = run_main(repo, config_path, "land")
-    third_run = capsys.readouterr()
-
-    assert third_exit_code == 1
-    assert "No changes on the selected stack are ready to land." in third_run.out
-    assert "saved review identity" not in third_run.err
 
 
 def test_land_finishes_after_trunk_push_interrupted_before_finalization(
@@ -747,10 +678,11 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     monkeypatch,
     capsys,
 ) -> None:
+    """Finalization left behind by an interrupted land converges through sync."""
+
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     approve_pull_requests(fake_repo, 1, 2)
-    fake_repo.pull_requests[3].state = "closed"
     stack = JjClient(repo).discover_review_stack()
     landed_commit_id = stack.revisions[1].commit_id
     landed_change_ids = tuple(revision.change_id for revision in stack.revisions[:2])
@@ -781,11 +713,18 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
 
     first_exit_code = run_main(repo, config_path, "land")
     first_run = capsys.readouterr()
+    first_rendered = _squash_whitespace(first_run.out)
 
-    assert first_exit_code == EXIT_GITHUB
-    assert "Could not load PR #1 during land" in first_run.err
+    assert first_exit_code == 1
+    assert "could not load PR #1" in first_rendered
+    assert "rerun sync" in first_rendered
+    assert "Finalizing PR #2 for feature 2" in first_rendered
     assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-    assert state_store.load().changes[landed_change_ids[0]].pr_state == "open"
+    assert fake_repo.pull_requests[2].state == "closed"
+    assert fake_repo.pull_requests[2].merged_at is not None
+    interrupted_state = state_store.load()
+    assert landed_change_ids[0] in interrupted_state.changes
+    assert landed_change_ids[1] not in interrupted_state.changes
 
     patch_github_client_builders(
         monkeypatch,
@@ -794,531 +733,130 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
         modules=_LAND_CLIENT_MODULES,
     )
 
-    second_exit_code = run_main(repo, config_path, "land")
-    second_run = capsys.readouterr()
-    rendered = _squash_whitespace(second_run.out)
+    sync_exit_code = run_main(repo, config_path, "sync")
+    sync_run = capsys.readouterr()
+    sync_rendered = _squash_whitespace(sync_run.out)
 
-    assert second_exit_code == 0
-    assert "Finalizing PR #1 for feature 1" in rendered
-    assert "Finalizing PR #2 for feature 2" in rendered
-    assert "push main to feature 2" not in rendered
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
+    assert sync_exit_code == 0, (sync_run.out, sync_run.err)
+    assert "Finalizing PR #1" in sync_rendered
+    assert "remove tracking for landed" in sync_rendered
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].state == "closed"
-    assert fake_repo.pull_requests[2].merged_at is not None
+    assert fake_repo.pull_requests[3].base_ref == "main"
+    finished_state = state_store.load()
+    assert landed_change_ids[0] not in finished_state.changes
     bookmark_states = JjClient(repo).list_bookmark_states(saved_bookmarks)
     for bookmark in saved_bookmarks:
         assert bookmark_states[bookmark].local_target is None
-    finished_state = state_store.load()
-    assert landed_change_ids[0] not in finished_state.changes
-    assert landed_change_ids[1] not in finished_state.changes
 
 
-def test_land_preserves_pending_transaction_when_closed_pr_reloads_open(
+def test_sync_skips_landed_review_whose_pull_request_head_moved(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
+    """The sweep never finalizes a PR whose head no longer identifies the review."""
+
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
     stack = JjClient(repo).discover_review_stack()
+    commit_1 = stack.revisions[0].commit_id
+    commit_2 = stack.revisions[1].commit_id
+    change_id_1 = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    bookmark_1 = state_store.load().changes[change_id_1].bookmark
+    assert bookmark_1 is not None
+    # The exact commit reached trunk outside the tool, but the review branch
+    # (and so the PR head) was force-moved to unrelated work afterwards.
+    update_remote_ref(fake_repo, branch="main", target=commit_1)
+    update_remote_ref(fake_repo, branch=bookmark_1, target=commit_2)
 
-    class ReloadOpenAfterCloseClient(GithubClient):
-        async def get_pull_request(self, *, pull_number):
-            pull_request = await super().get_pull_request(pull_number=pull_number)
-            if pull_number != 1:
-                return pull_request
-            return pull_request.model_copy(
-                update={"merged_at": None, "state": "open"}
-            )
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=ReloadOpenAfterCloseClient,
-    )
-
-    exit_code = run_main(repo, config_path, "land")
+    exit_code = run_main(repo, config_path, "sync")
     captured = capsys.readouterr()
-
-    assert exit_code == EXIT_FAILURE
-    assert "still reports it open after the close request" in captured.err
-    pending = state_store.load().pending_direct_land
-    assert pending is not None
-    assert pending.phase == "trunk_moved"
-    assert pending.finalized_change_ids == ()
-    for revision in stack.revisions:
-        assert revision.change_id in state_store.load().changes
-
-
-def test_land_recovers_before_inspecting_an_unrelated_selected_merge(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    state_store = ReviewStateStore.for_repo(repo)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailOnFinalizeLoadClient(GithubClient):
-        async def get_pull_request(self, *, pull_number):
-            if pull_number == 1:
-                raise GithubClientError("Simulated finalization failure", status_code=500)
-            return await super().get_pull_request(pull_number=pull_number)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=FailOnFinalizeLoadClient,
-    )
-    assert run_main(repo, config_path, "land") == EXIT_GITHUB
-    capsys.readouterr()
-
-    pending = state_store.load().pending_direct_land
-    assert pending is not None
-    run_command(["jj", "new", pending.original_trunk_commit_id], repo)
-    commit_file(repo, "unrelated left", "unrelated-left.txt")
-    left_commit_id = JjClient(repo).resolve_revision("@-").commit_id
-    run_command(["jj", "new", pending.original_trunk_commit_id], repo)
-    commit_file(repo, "unrelated right", "unrelated-right.txt")
-    right_commit_id = JjClient(repo).resolve_revision("@-").commit_id
-    run_command(["jj", "new", left_commit_id, right_commit_id], repo)
-    commit_file(repo, "unrelated merge", "unrelated-merge.txt")
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-    )
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
+    rendered = _squash_whitespace(captured.out)
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert "merge commits are not supported" not in captured.out + captured.err
-    assert state_store.load().pending_direct_land is None
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[2].state == "closed"
+    assert "skip landed" in rendered
+    assert "head no longer matches" in rendered
+    assert fake_repo.pull_requests[1].state == "open"
+    assert change_id_1 in state_store.load().changes
 
 
-def test_land_retries_after_finalization_before_atomic_state_commit(
+def test_sync_retires_review_merged_outside_the_tool_with_preserved_commit(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
+    """A merge that preserved the exact commit retires lazily on the next sync."""
+
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
     stack = JjClient(repo).discover_review_stack()
-    original_retire = land_execute._retire_finalized_tracking
+    commit_1 = stack.revisions[0].commit_id
+    change_id_1 = stack.revisions[0].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    bookmark_1 = state_store.load().changes[change_id_1].bookmark
+    assert bookmark_1 is not None
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
+    update_remote_ref(fake_repo, branch="main", target=commit_1)
 
-    def fail_before_state_commit(**_kwargs) -> None:
-        raise CliError("Simulated failure before the direct-land state commit")
+    exit_code = run_main(repo, config_path, "sync")
+    captured = capsys.readouterr()
+    rendered = _squash_whitespace(captured.out)
 
-    monkeypatch.setattr(
-        land_execute,
-        "_retire_finalized_tracking",
-        fail_before_state_commit,
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "remove tracking for landed" in rendered
+    assert change_id_1 not in state_store.load().changes
+    assert JjClient(repo).list_bookmark_states((bookmark_1,))[bookmark_1].local_target is None
+
+
+def test_interrupted_merge_land_is_explained_once_by_the_next_command(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """An unconfirmed merge request is explained by the next run, then forgotten."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnMergeClient(GithubClient):
+        async def merge_pull_request(self, *, pull_number, merge_method):
+            raise GithubClientError("Simulated merge outage", status_code=500)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=_LAND_CLIENT_MODULES,
+        client_type=FailOnMergeClient,
     )
 
-    first_exit_code = run_main(repo, config_path, "land")
+    first_exit_code = run_main(repo, config_path, "land", "--via", "merge")
     first_run = capsys.readouterr()
+    assert first_exit_code != 0
+    assert "Could not merge PR #1" in first_run.err
 
-    assert first_exit_code == EXIT_FAILURE
-    assert "Simulated failure before" in first_run.err
-    pending = ReviewStateStore.for_repo(repo).load().pending_direct_land
-    assert pending is not None
-    assert pending.phase == "trunk_moved"
-    assert set(pending.finalized_change_ids) == {
-        revision.change_id for revision in stack.revisions
-    }
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[2].state == "closed"
-
-    monkeypatch.setattr(
-        land_execute,
-        "_retire_finalized_tracking",
-        original_retire,
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=_LAND_CLIENT_MODULES,
     )
-    fake_repo.pull_request_events.clear()
 
-    second_exit_code = run_main(repo, config_path, "land")
+    second_exit_code = run_main(repo, config_path, "sync")
     second_run = capsys.readouterr()
-
     assert second_exit_code == 0, (second_run.out, second_run.err)
-    assert fake_repo.pull_request_events == []
-    final_state = ReviewStateStore.for_repo(repo).load()
-    assert final_state.pending_direct_land is None
-    for revision in stack.revisions:
-        assert revision.change_id not in final_state.changes
+    assert "An earlier" in second_run.out
+    assert "interrupted before confirming" in second_run.out
 
-
-def test_land_recovery_fails_closed_when_review_branch_moves_after_trunk(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    stack = JjClient(repo).discover_review_stack()
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().changes[stack.revisions[0].change_id].bookmark
-    if bookmark is None:
-        raise AssertionError("Expected a saved review bookmark.")
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailOnFinalizeLoadClient(GithubClient):
-        async def get_pull_request(self, *, pull_number):
-            if pull_number == 1:
-                raise GithubClientError("Simulated finalization failure", status_code=500)
-            return await super().get_pull_request(pull_number=pull_number)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=FailOnFinalizeLoadClient,
-    )
-    assert run_main(repo, config_path, "land") == EXIT_GITHUB
-    capsys.readouterr()
-
-    pending = state_store.load().pending_direct_land
-    assert pending is not None
-    run_command(["jj", "new", pending.original_trunk_commit_id], repo)
-    commit_file(repo, "new review work", "new-review-work.txt")
-    drift_client = JjClient(repo)
-    drift_commit_id = drift_client.resolve_revision("@-").commit_id
-    drift_client.set_bookmark("drift-target", drift_commit_id)
-    drift_client.push_bookmarks(remote="origin", bookmarks=("drift-target",))
-    update_remote_ref(
-        fake_repo,
-        branch=bookmark,
-        target=drift_commit_id,
-    )
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-    )
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == EXIT_FAILURE
-    assert "review identity" in captured.err
-    assert fake_repo.pull_request_events == []
-    assert state_store.load().pending_direct_land is not None
-
-
-def test_land_recovery_requires_finalized_review_branch_to_still_exist(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    stack = JjClient(repo).discover_review_stack()
-    state_store = ReviewStateStore.for_repo(repo)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailOnSecondFinalizeClient(GithubClient):
-        async def get_pull_request(self, *, pull_number):
-            if pull_number == 2:
-                raise GithubClientError("Simulated finalization failure", status_code=500)
-            return await super().get_pull_request(pull_number=pull_number)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=FailOnSecondFinalizeClient,
-    )
-    assert run_main(repo, config_path, "land") == EXIT_GITHUB
-    capsys.readouterr()
-
-    pending = state_store.load().pending_direct_land
-    assert pending is not None
-    first_revision = pending.planned_revisions[0]
-    assert first_revision.change_id in pending.finalized_change_ids
-    assert fake_repo.pull_requests[1].state == "closed"
-    JjClient(repo).delete_remote_bookmarks(
-        remote="origin",
-        deletions=((first_revision.bookmark, first_revision.commit_id),),
-        fetch=False,
-    )
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-    )
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == EXIT_FAILURE
-    assert "review identity" in captured.err
-    assert state_store.load().pending_direct_land is not None
-    assert stack.revisions[0].change_id in state_store.load().changes
-
-
-def test_land_revalidates_pr_head_commit_immediately_before_finalizing(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    state_store = ReviewStateStore.for_repo(repo)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailOnFinalizeLoadClient(GithubClient):
-        async def get_pull_request(self, *, pull_number):
-            if pull_number == 1:
-                raise GithubClientError("Simulated finalization failure", status_code=500)
-            return await super().get_pull_request(pull_number=pull_number)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=FailOnFinalizeLoadClient,
-    )
-    assert run_main(repo, config_path, "land") == EXIT_GITHUB
-    capsys.readouterr()
-
-    pending = state_store.load().pending_direct_land
-    assert pending is not None
-    review_bookmark = pending.planned_revisions[0].bookmark
-    run_command(["jj", "new", pending.original_trunk_commit_id], repo)
-    commit_file(repo, "racing review head", "racing-review-head.txt")
-    drift_commit_id = JjClient(repo).resolve_revision("@-").commit_id
-    JjClient(repo).set_bookmark("drift-target", drift_commit_id)
-    JjClient(repo).push_bookmarks(remote="origin", bookmarks=("drift-target",))
-
-    class MoveHeadBeforeFinalizeClient(GithubClient):
-        first_pull_request_loads = 0
-
-        async def get_pull_request(self, *, pull_number):
-            if pull_number == 1:
-                self.first_pull_request_loads += 1
-                if self.first_pull_request_loads == 2:
-                    update_remote_ref(
-                        fake_repo,
-                        branch=review_bookmark,
-                        target=drift_commit_id,
-                    )
-            return await super().get_pull_request(pull_number=pull_number)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=MoveHeadBeforeFinalizeClient,
-    )
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == EXIT_FAILURE
-    assert "head no longer matches" in captured.err
-    assert state_store.load().pending_direct_land is not None
-    assert fake_repo.ref_target(review_bookmark) == drift_commit_id
-
-
-def test_land_recovers_when_trunk_push_succeeds_but_acknowledgement_is_lost(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    stack = JjClient(repo).discover_review_stack()
-    landed_commit_id = stack.revisions[-1].commit_id
-    original_local_main = JjClient(repo).get_bookmark_state("main").local_target
-    original_push_bookmarks = JjClient.push_bookmarks
-    lost_acknowledgement = False
-
-    def push_then_lose_acknowledgement(self, *, remote: str, bookmarks) -> None:
-        nonlocal lost_acknowledgement
-        original_push_bookmarks(self, remote=remote, bookmarks=bookmarks)
-        if bookmarks == ("main",) and not lost_acknowledgement:
-            lost_acknowledgement = True
-            raise JjCommandError("simulated lost trunk push acknowledgement")
-
-    monkeypatch.setattr(JjClient, "push_bookmarks", push_then_lose_acknowledgement)
-
-    first_exit_code = run_main(repo, config_path, "land")
-    first_run = capsys.readouterr()
-
-    assert first_exit_code == 1
-    assert "simulated lost trunk push acknowledgement" in first_run.err
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-    assert JjClient(repo).get_bookmark_state("main").local_target == original_local_main
-
-    monkeypatch.setattr(JjClient, "push_bookmarks", original_push_bookmarks)
-
-    second_exit_code = run_main(repo, config_path, "land")
-    second_run = capsys.readouterr()
-    rendered = _squash_whitespace(second_run.out)
-
-    assert second_exit_code == 0, (second_run.out, second_run.err)
-    assert "move main to the current trunk() after the interrupted push" in rendered
-    assert "push main to feature 2" not in rendered
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-    assert JjClient(repo).get_bookmark_state("main").local_target == landed_commit_id
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[2].state == "closed"
-    state = ReviewStateStore.for_repo(repo).load()
-    assert state.pending_direct_land is None
-    for revision in stack.revisions:
-        assert revision.change_id not in state.changes
-    journal_events = read_operation_log(resolve_state_path(repo).parent)
-    assert any(
-        event.event == "mutation_applied"
-        and event.data.get("mutation") == "repair_local_trunk"
-        for event in journal_events
-    )
-    direct_push_begin = next(
-        event
-        for event in journal_events
-        if event.operation == "land"
-        and event.event == "begin"
-        and event.data["resolved_scope"]["push_trunk"]
-    )
-    assert journal_events[-1].event == "completed"
-    assert journal_events[-1].operation_id == direct_push_begin.operation_id
-
-    third_exit_code = run_main(repo, config_path, "land")
+    third_exit_code = run_main(repo, config_path, "sync")
     third_run = capsys.readouterr()
-
-    assert third_exit_code == 1
-    assert "No changes on the selected stack are ready to land." in third_run.out
-    assert "saved review identity" not in third_run.err
-
-
-def test_land_ignores_missing_audit_completion_after_state_commit(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    stack = JjClient(repo).discover_review_stack()
-    landed_commit_id = stack.revisions[1].commit_id
-    landed_change_ids = tuple(revision.change_id for revision in stack.revisions[:2])
-    state_store = ReviewStateStore.for_repo(repo)
-
-    assert run_main(repo, config_path, "land") == 0
-    capsys.readouterr()
-
-    # Reproduce a crash between retiring the landed tracking and writing the
-    # completed marker: drop the trailing completed event from the journal.
-    log_path = resolve_state_path(repo).parent / OPERATION_LOG_FILENAME
-    lines = log_path.read_text(encoding="utf-8").splitlines()
-    dropped_event = json.loads(lines[-1])
-    assert (dropped_event["operation"], dropped_event["event"]) == ("land", "completed")
-    log_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "land")
-    capsys.readouterr()
-
-    assert exit_code == 1
-    assert fake_repo.pull_request_events == []
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].state == "closed"
-    assert fake_repo.pull_requests[2].merged_at is not None
-    assert fake_repo.pull_requests[3].state == "open"
-    finished_state = state_store.load()
-    for change_id in landed_change_ids:
-        assert change_id not in finished_state.changes
-    assert state_store.load().pending_direct_land is None
-
-
-def test_land_resume_fails_closed_when_saved_tracking_pruned_externally(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-    stack = JjClient(repo).discover_review_stack()
-    landed_commit_id = stack.revisions[1].commit_id
-    landed_change_ids = tuple(revision.change_id for revision in stack.revisions[:2])
-    state_store = ReviewStateStore.for_repo(repo)
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailOnFinalizeLoadClient(GithubClient):
-        async def get_pull_request(self, *, pull_number):
-            if pull_number == 1:
-                raise GithubClientError("Simulated finalization failure", status_code=500)
-            return await super().get_pull_request(pull_number=pull_number)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=FailOnFinalizeLoadClient,
-    )
-
-    assert run_main(repo, config_path, "land") == EXIT_GITHUB
-    capsys.readouterr()
-    assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
-
-    # Another command removes the saved records without atomically clearing the
-    # pending transaction. Recovery must fail closed instead of finalizing PRs
-    # whose linkage it can no longer prove.
-    state = state_store.load()
-    pruned_changes = dict(state.changes)
-    for change_id in landed_change_ids:
-        del pruned_changes[change_id]
-    state_store.save(state.model_copy(update={"changes": pruned_changes}))
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-    )
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == EXIT_FAILURE
-    assert "review identity" in captured.err
-    assert all(
-        event.reason == "head_reachable_from_base"
-        for event in fake_repo.pull_request_events
-    )
-    assert state_store.load().pending_direct_land is not None
+    assert third_exit_code == 0
+    assert "interrupted before confirming" not in third_run.out
 
 
 def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
@@ -1326,40 +864,38 @@ def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
     monkeypatch,
     capsys,
 ) -> None:
+    """Merge-transport landing converges the local stack before returning."""
+
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     approve_pull_requests(fake_repo, 1, 2)
     stack = JjClient(repo).discover_review_stack()
-    original_stack_commits = tuple(revision.commit_id for revision in stack.revisions)
+    change_ids = tuple(revision.change_id for revision in stack.revisions)
     original_main = read_remote_ref(fake_repo.git_dir, "main")
 
     exit_code = run_main(repo, config_path, "land", "--via", "merge")
     captured = capsys.readouterr()
+    rendered = _squash_whitespace(captured.out)
 
-    assert exit_code == 0
-    assert "merge PR #1" in captured.out
-    assert "merge PR #2" in captured.out
-    assert "run sync" in captured.out
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "merge PR #1" in rendered
+    assert "merge PR #2" in rendered
+    assert "Nothing to submit: everything on the selected stack has merged." in rendered
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "closed"
     assert fake_repo.pull_requests[2].merged_at is not None
     # The second PR was retargeted to trunk before merging.
     assert fake_repo.pull_requests[2].base_ref == "main"
-    # GitHub's trunk moved through squash merges; jj-stack never pushed it.
+    # GitHub's trunk moved through the merges; jj-stack never pushed it.
     assert read_remote_ref(fake_repo.git_dir, "main") != original_main
-    # Local history is untouched; sync/cleanup --rebase is the follow-up.
-    refreshed_commits = tuple(
-        JjClient(repo).resolve_revision(revision.change_id).commit_id
-        for revision in stack.revisions
-    )
-    assert refreshed_commits == original_stack_commits
+    # The merged changes were reconciled out of tracking by the convergence run.
     state = ReviewStateStore.for_repo(repo).load()
-    for revision in stack.revisions:
-        assert state.changes[revision.change_id].pr_state == "merged"
+    for change_id in change_ids:
+        assert change_id not in state.changes
 
 
-def test_land_via_merge_stops_fail_closed_at_unmergeable_pull_request(
+def test_land_via_merge_stops_fail_closed_then_converges_accepted_prefix(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1369,6 +905,9 @@ def test_land_via_merge_stops_fail_closed_at_unmergeable_pull_request(
     approve_pull_requests(fake_repo, 1, 2)
     fake_repo.unmergeable_pull_numbers.add(2)
     stack = JjClient(repo).discover_review_stack()
+    change_id_1 = stack.revisions[0].change_id
+    change_id_2 = stack.revisions[1].change_id
+    original_commit_2 = stack.revisions[1].commit_id
 
     exit_code = run_main(repo, config_path, "land", "--via", "merge")
     captured = capsys.readouterr()
@@ -1379,9 +918,14 @@ def test_land_via_merge_stops_fail_closed_at_unmergeable_pull_request(
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "open"
     assert fake_repo.pull_requests[2].merged_at is None
+    # The accepted prefix converged: its tracking retired, and the surviving
+    # change was rebased onto the merged trunk and resubmitted.
     state = ReviewStateStore.for_repo(repo).load()
-    assert state.changes[stack.revisions[0].change_id].pr_state == "merged"
-    assert state.changes[stack.revisions[1].change_id].pr_state == "open"
+    assert change_id_1 not in state.changes
+    surviving_commit = JjClient(repo).resolve_revision(change_id_2).commit_id
+    assert surviving_commit != original_commit_2
+    assert state.changes[change_id_2].last_submitted_commit_id == surviving_commit
+    assert fake_repo.pull_requests[2].base_ref == "main"
 
 
 def test_land_via_merge_dry_run_previews_merges_without_mutating(

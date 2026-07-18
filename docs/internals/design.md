@@ -231,11 +231,11 @@ Even the PR link can usually be rediscovered by asking GitHub for the PR whose h
 branch matches the saved bookmark, but that rediscovery is an explicit recovery flow —
 plain `view` does not do it for never-tracked changes.
 
-During a direct-push `land`, the same file temporarily holds one repo-level pending
-transaction. It records exact operation scope and finalization progress, not stack topology,
-and disappears atomically with the landed per-change records when finalization completes.
-Other commands preserve it when updating their own tracking fields; a later `land` either
-finishes it exactly or fails closed if those commands changed its review identities.
+During a land, the same file may briefly hold one message-only note recording which pull
+requests the command was about to mutate. The note only ever changes what a later command
+*says* (explaining an interrupted land before its effects surface); no execution path reads
+it to decide what to do, and any command that finishes with full knowledge of the outcome
+clears it. Losing the note costs an explanation, never correctness.
 
 User-authored settings (e.g. reviewer or label preferences, `use_bookmarks` patterns)
 live in `jj` config, not in the tracking-state file.
@@ -292,10 +292,9 @@ cache write and skips that write with a diagnostic if another operation is runni
 
 Mutating commands append operation events to the repo-level `operation-log.jsonl` audit log.
 The log is not a topology source of truth or a recovery database; it is evidence for
-explaining what happened after the fact. Direct-push `land` instead stores one typed pending
-transaction beside the per-change tracking state. That checkpoint exists only while a trunk
-transition may need recovery and is cleared atomically with the landed tracking after
-finalization.
+explaining what happened after the fact. There is no recovery database at all: an
+interrupted command converges by observation on the next `land` or `sync` (see
+[design-next.md](design-next.md) for the convergence theory).
 
 ## Submission algorithm
 
@@ -1398,13 +1397,12 @@ every later PR in the prefix would replay its ancestors' commits.
 
 If GitHub reports a PR as not mergeable — pending required checks, new conflicts, or
 repo policy — `land --via merge` stops fail-closed at that PR: changes already merged
-below it stay merged and recorded in tracking, nothing above it is touched, and the
-diagnostic says to make the PR mergeable and rerun. Merging on GitHub does not move
-local history, so after a merge-transport landing the local stack still contains the
-merged changes; `sync` (or `cleanup --rebase` plus `submit`) is the follow-up that
-rebases the survivors and refreshes their PRs. The operation-log trunk-push resume
-carve-out does not apply to this transport: a rerun sees the already-merged changes as
-merged ancestors and points at the same `sync` follow-up.
+below it stay merged, nothing above it is asked to merge, and the diagnostic says to
+make the PR mergeable and rerun. After GitHub accepts any merges, `land` runs the same
+convergence as `sync` before returning: it drops the merged changes from the selected
+local stack, retires their tracking, and resubmits the surviving selected changes onto
+the merged trunk. An interruption anywhere in that sequence needs no special recovery —
+rerunning `land` or `sync` converges from whatever GitHub currently reports.
 
 Recovery guidance stays case-specific:
 
@@ -1429,45 +1427,31 @@ Recovery guidance stays case-specific:
   unrecognized reason falls back to them alone, and classification never changes
   what the command does
 
-`land` only owns the bookkeeping that follows directly from the trunk transition:
+`land` owns only the mutation; convergence is shared with `sync` and is observational:
 
-- before a direct trunk push, durably save one typed pending transaction containing the
-  exact GitHub repository, remote, trunk before and after the push, planned commit and
-  change IDs, review bookmarks, and PR numbers
-- never start a second direct-push transaction while one is unresolved; first reconcile
-  the saved transaction against the current remote trunk. This recovery runs before
-  selector resolution or normal stack discovery, so unrelated local topology cannot block
-  completion of an already-applied trunk transition
-- if the saved commits did not reach trunk, restore a local trunk bookmark moved by the
-  interrupted attempt, clear the unapplied transaction, and replan from current state
-- if the saved commits reached trunk, require the current GitHub repository, remote, trunk,
-  PR head branch and commit, and every review-branch target to match the checkpoint before
-  resuming. A review branch must still exist even after its PR finalized, and the PR head commit
-  is checked again on each finalization load; external drift fails closed instead of closing or
-  retiring a different review
-- checkpoint finalization progress together with the per-change tracking state so a rerun
-  can repeat remote mutations idempotently after any interruption. A requested PR close only
-  counts as finalized after a reload confirms that the PR is no longer open
-- after every landed PR finalizes, atomically clear the pending transaction and retire the
-  direct-push landed tracking in one durable state replacement; an audit-log append is not
-  part of this commit point
-- keep the operation log observational. Missing, stale, or malformed trailing audit data
-  must not change whether a direct-push transaction is recoverable
-- close or mark landed only the PRs that correspond exactly to the landed changes,
-  once the trunk transition succeeds
-- apply that PR finalization bottom-to-top through the landed changes so GitHub-side
-  state changes follow the same stack order as `submit` and `land`
-- forget the local `review/*` bookmarks for the landed changes, but only when those
-  bookmarks still point at the landed commits; `--skip-cleanup` retains them for
-  explicit repair or inspection
-- if there are surviving descendants above the landed changes, tell the user to repair
-  local ancestry with `cleanup --rebase` and rerun `submit`. `land` does not silently
-  retarget or rebase surviving descendants
-
-`land --via merge` keeps the merged tracking records until the follow-up `sync` or
-`cleanup --rebase` has used them to remove GitHub-merged ancestors from the local stack.
-The direct-push transport does not need that follow-up state because the landed commits
-are already the trunk commits.
+- a tracked change is landed iff its pull request is merged and its merge-result commit
+  is an ancestor of the current remote trunk. For transports that preserve commit IDs
+  (direct push, merge-commit merges) the merge-result commit is the change's own commit
+- the direct trunk push is one leased update; an in-process failure restores the local
+  trunk bookmark, and a hard interruption leaves a mismatched local trunk bookmark that
+  the next run reports with the exact repair command rather than guessing
+- finalization (retarget a landed PR's base to trunk, close it, confirm it is no longer
+  open) is idempotent and identity-guarded: it never touches a PR whose head branch,
+  label, or commit no longer identifies the landed review — such reviews are reported
+  and skipped, never mutated. A close rejected because the PR merged concurrently counts
+  as success
+- because finalization is reachable from `sync`'s landed-review sweep as well as from
+  `land`, an interruption between the trunk push and any finalization needs no saved
+  state: the sweep finds every tracked review whose exact submitted commit is an
+  ancestor of trunk, finalizes open ones bottom-up, retires their tracking, and forgets
+  local review bookmarks still pointing at the landed commits (`--skip-cleanup` and the
+  user-bookmark policy are respected). The same sweep retires reviews merged outside
+  the tool whose commits were preserved (merge-commit method)
+- apply PR finalization bottom-to-top through the landed changes so GitHub-side state
+  changes follow the same stack order as `submit` and `land`
+- keep the operation log observational; it never influences recovery
+- direct-push survivors above the landed prefix keep their bases by construction and are
+  not resubmitted; merge-transport survivors are converged in-command as described above
 
 Broader cleanup remains the job of `cleanup`:
 
@@ -1490,7 +1474,7 @@ Shape:
 ```json
 {
   "version": 1,
-  "pending_direct_land": null,
+  "land_note": null,
   "changes": {
     "<full-change-id>": {
       "bookmark": "review/fix-bookmark-resolution-ypvmkkuo",

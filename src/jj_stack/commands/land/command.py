@@ -17,8 +17,12 @@ By default `land` pushes the trunk branch directly. When branch protection requi
 arrive through pull requests, use `--via merge` instead: each ready PR is retargeted to trunk
 and merged through GitHub, bottom to top, stopping at the first PR GitHub reports as not
 mergeable. The merge method comes from `--merge-method`, or from the repository's settings when
-exactly one method is allowed. Merging on GitHub does not move your local history: afterwards,
-run `sync` to rebase the remaining local stack off the merged changes.
+exactly one method is allowed. After GitHub accepts merges, `land` runs the same convergence as
+`sync`: it drops the merged changes from your local stack and refreshes the surviving pull
+requests before returning.
+
+If `land` is interrupted at any point, no special recovery is needed: rerun `land` or run
+`sync`, and the stack converges from whatever GitHub currently reports.
 
 After a successful land, `jj-stack` forgets the bookmarks it was managing for the changes that
 landed, unless they've been moved or become conflicted. If you used your own bookmarks with
@@ -26,12 +30,9 @@ landed, unless they've been moved or become conflicted. If you used your own boo
 jj-stack.cleanup_user_bookmarks=true`). Use `--skip-cleanup` to keep even `jj-stack`'s own
 review bookmarks.
 
-`land` does not touch changes above the first that could not be landed. In the usual direct-push
+`land` does not touch changes above the first that could not be landed. In the direct-push
 path, those remaining local changes keep the same base they already had, so no local rebase is
-needed just because lower changes landed. Run `cleanup --rebase` only when some lower changes
-were merged through different commit IDs and the local stack still contains those merged
-ancestors; after that local rewrite, run `submit` to refresh the surviving review branches and
-pull requests on GitHub.
+needed just because lower changes landed.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands.sync import report_land_note, run_stack_convergence
 from jj_stack.errors import CliError, DriftError, UsageError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClientError, build_github_client
@@ -77,7 +79,6 @@ from .plan import (
     plan_review_bookmark_cleanup_for_revisions,
     validate_land_plan_merge_method,
 )
-from .recovery import reconcile_pending_direct_land
 from .render import print_land_result
 
 HELP = "Land the ready changes at the bottom of a stack"
@@ -111,13 +112,7 @@ def land(
         context.state_store.require_writable(),
         command="land",
     ):
-        pending_result = reconcile_pending_direct_land(
-            context=context,
-            dry_run=dry_run,
-        )
-        if pending_result is not None:
-            print_land_result(pending_result)
-            return 1 if pending_result.blocked else 0
+        report_land_note(context=context, clear=not dry_run)
         return _run_land(
             bypass_readiness=bypass_readiness,
             cleanup_bookmarks=not skip_cleanup,
@@ -159,6 +154,14 @@ def _run_land(
         )
     result = _stream_land(prepared_land=prepared_land)
     print_land_result(result)
+    if result.merged_change_ids and not dry_run:
+        convergence_exit = run_stack_convergence(
+            context=context,
+            dry_run=False,
+            revset=result.selected_revset,
+        )
+        if convergence_exit != 0:
+            return 1
     return 1 if result.blocked else 0
 
 
@@ -269,8 +272,7 @@ async def _stream_land_async(
 
     async with build_github_client(repository=github_repository) as github_client:
         try:
-            github_repository_state = await github_client.get_repository(
-            )
+            github_repository_state = await github_client.get_repository()
         except GithubClientError as error:
             raise CliError(
                 t"Could not load GitHub repository {github_repository.full_name}"
@@ -295,26 +297,16 @@ async def _stream_land_async(
                 merge_method=resolved_merge_method,
                 plan=plan,
             )
-            bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
-                bookmark_states=bookmark_states,
-                prefix=(
-                    prepared_land.context.config.bookmark_prefix
-                    if plan.bookmark_prefix is None
-                    else plan.bookmark_prefix
-                ),
-                cleanup_bookmarks=(
-                    prepared_land.cleanup_bookmarks
-                    if plan.cleanup_bookmarks is None
-                    else plan.cleanup_bookmarks
-                ),
-                cleanup_user_bookmarks=(
-                    prepared_land.context.config.cleanup_user_bookmarks
-                    if plan.cleanup_user_bookmarks is None
-                    else plan.cleanup_user_bookmarks
-                ),
-                planned_revisions=plan.planned_revisions,
-            )
             if prepared_land.dry_run:
+                bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
+                    bookmark_states=bookmark_states,
+                    prefix=prepared_land.context.config.bookmark_prefix,
+                    cleanup_bookmarks=prepared_land.cleanup_bookmarks,
+                    cleanup_user_bookmarks=(
+                        prepared_land.context.config.cleanup_user_bookmarks
+                    ),
+                    planned_revisions=plan.planned_revisions,
+                )
                 return LandResult(
                     actions=plan.planned_actions(
                         bookmark_cleanup_plans=bookmark_cleanup_plans,
@@ -329,21 +321,10 @@ async def _stream_land_async(
                     via=plan.via,
                 )
             return await execute_land_plan(
-                bookmark_cleanup_plans=bookmark_cleanup_plans,
                 execution=LandExecutionInputs(
                     bypass_readiness=prepared_land.bypass_readiness,
                     cleanup_bookmarks=prepared_land.cleanup_bookmarks,
                     context=prepared_land.context,
-                    ordered_change_ids=tuple(
-                        prepared_revision.revision.change_id
-                        for prepared_revision in prepared.status_revisions
-                    ),
-                    ordered_commit_ids=tuple(
-                        prepared_revision.revision.commit_id
-                        for prepared_revision in prepared.status_revisions
-                    ),
-                    original_trunk_commit_id=prepared.stack.trunk.commit_id,
-                    remote_url=remote.url,
                     selected_pr_number=prepared_land.selected_pr_number,
                 ),
                 github_client=github_client,
@@ -432,8 +413,8 @@ def _stack_not_on_trunk_error(
             condition="merged_ancestor_on_trunk",
             hint=(
                 t"Some lower changes from this stack already landed. Run "
-                t"{ui.cmd('cleanup --rebase')} {ui.revset(status_result.selected_revset)} "
-                t"to rebase the remaining local changes before retrying."
+                t"{ui.cmd('sync')} {ui.revset(status_result.selected_revset)} "
+                t"to converge the remaining local changes before retrying."
             ),
         )
 

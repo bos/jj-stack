@@ -8,9 +8,7 @@ from typing import Literal, Protocol
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import CachedChange, PendingDirectLand, ReviewState
 from jj_stack.review.status import PreparedStatus
-from jj_stack.state.store import ReviewStateStore
 from jj_stack.ui import Message, plain_text
 
 LandVia = Literal["push", "merge"]
@@ -44,6 +42,9 @@ class LandResult:
     trunk_branch: str
     trunk_subject: str
     via: LandVia
+    # Change IDs GitHub accepted through the merge transport; the caller
+    # converges the local stack for them afterwards.
+    merged_change_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,34 +68,7 @@ class LandExecutionInputs:
     bypass_readiness: bool
     cleanup_bookmarks: bool
     context: CommandContext
-    ordered_change_ids: tuple[str, ...]
-    ordered_commit_ids: tuple[str, ...]
-    original_trunk_commit_id: str
-    remote_url: str
     selected_pr_number: int | None
-
-
-@dataclass(slots=True)
-class LandMutationRun:
-    """Mutable land state shared by live execution phases."""
-
-    pending_direct_land: PendingDirectLand | None
-    state: ReviewState
-    state_changes: dict[str, CachedChange]
-    state_store: ReviewStateStore
-
-    def save_interim_state(self, *, durable: bool | None = None) -> None:
-        if durable is None:
-            durable = self.pending_direct_land is not None
-        self.state_store.save(
-            self.state.model_copy(
-                update={
-                    "changes": dict(self.state_changes),
-                    "pending_direct_land": self.pending_direct_land,
-                }
-            ),
-            durable=durable,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,11 +95,6 @@ class LandPlan:
     push_trunk: bool
     trunk_branch: str
     via: LandVia
-    bookmark_prefix: str | None = None
-    cleanup_bookmarks: bool | None = None
-    cleanup_user_bookmarks: bool | None = None
-    repair_local_trunk_commit_id: str | None = None
-    resume_pending_direct_land: bool = False
 
     @property
     def resubmit_revisions(self) -> tuple[LandRevision, ...]:
@@ -145,15 +114,6 @@ class LandPlan:
             for cleanup_plan in bookmark_cleanup_plans
         }
         if self.planned_revisions:
-            if self.repair_local_trunk_commit_id is not None:
-                actions.append(
-                    LandAction(
-                        kind="local trunk",
-                        body=t"move {ui.bookmark(self.trunk_branch)} to the current "
-                        t"{ui.revset('trunk()')} after the interrupted push",
-                        status="planned",
-                    )
-                )
             for resubmit_revision in self.resubmit_revisions:
                 actions.append(
                     LandAction(
@@ -227,7 +187,7 @@ class ReviewBookmarkCleanupPlan:
 
 
 def landed_tracking_retire_body(landed_revision: LandRevision) -> Message:
-    """Render the direct-push tracking cleanup action for a landed revision."""
+    """Render the tracking cleanup action for a landed revision."""
 
     return (
         t"remove tracking for landed {landed_revision.subject} "

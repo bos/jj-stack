@@ -259,12 +259,13 @@ For the default direct-push transport, the oracle asserts:
 - `list --json` stops reporting landed changes and still reports the remaining tracked
   suffix
 
-For `land --via merge`, the oracle asserts the opposite tracking rule for landed PRs:
-GitHub moves trunk by merging the PRs, local `jj` commits are left untouched, and the
-merged tracking records remain so a follow-up `sync` or `cleanup --rebase` can rebase the
-local stack. A blocked merge-transport scenario marks the first PR after the merged prefix
-as unmergeable; the command must stop there, preserve the blocker as open tracking, and
-keep merged tracking for the prefix that GitHub already accepted.
+For `land --via merge`, the oracle asserts the in-command convergence contract: GitHub
+moves trunk by merging the PRs, and before returning `land` retires the merged tracking,
+rebases the surviving selected changes onto the merged trunk, and resubmits them. Survivors
+above a `--pull-request` cap follow the jj rewrite but are not resubmitted; their reviews
+wait for their own next command. A blocked merge-transport scenario marks the first PR after
+the merged prefix as unmergeable; the command must stop there, keep the blocker open and
+tracked, and still converge the accepted prefix.
 
 Both transports assert transient events, not only final state: a landed PR transitions to
 closed exactly once, and no other original PR sees any state or base event. The one
@@ -301,22 +302,21 @@ merged-ancestor check or vice versa.
 
 ## Land Retry Harness
 
-Land retry scenarios interrupt one direct-push land at a checkpoint, then rerun it and
-require convergence rather than rollback. The fault family covers a remote trunk push
-whose success acknowledgement is lost before the checkpoint advances, a failed load of
-the first landed PR after the push is recorded, a failure on the second landed PR after
-the first finalized, and a failure after remote finalization but before the atomic state
-commit clears the pending transaction and landed tracking.
+Land retry scenarios interrupt one direct-push land at a fault point, then run `sync` and
+require convergence rather than rollback. There is no saved transaction to resume: recovery
+is observational, so the fault family covers a trunk push whose success acknowledgement is
+lost, a failed load of the first landed PR during finalization, a failure on a later landed
+PR after an earlier one finalized, and a lost tracking-retirement save after every PR
+finalized remotely.
 
 The oracle spans both runs with one event window: each landed PR transitions to closed
-exactly once in total, so the rerun provably finalizes only what the interrupted run
-left unfinished. The rerun must end with the standard direct-push contract, no pending
-direct-land transaction, and `list --json` free of the landed prefix. Focused
-retry-and-drift tests also change a review branch, PR head, or repository identity between
-the two runs and require recovery to fail closed without finalizing the changed review.
-Merge-transport interruption is deliberately absent here: GitHub has already
-moved trunk for the accepted prefix, so its recovery path is the sync/cleanup handoff
-chain, not a naive rerun.
+exactly once in total, so the recovery provably finalizes only what the interrupted run
+left unfinished. The recovery must end with the standard direct-push contract and
+`list --json` free of the landed prefix; the unapproved suffix may see legitimate
+convergence events (a base retarget onto trunk) from the recovery's resubmit. The
+deterministic integration suite covers the fail-closed variants where a review branch or
+PR head changes between the runs: the sweep reports and skips such reviews without
+mutating them.
 
 ## Land Handoff Harness
 
@@ -330,11 +330,11 @@ with GitHub's usual head-branch auto-delete. Then `sync` (or `cleanup --rebase` 
 The oracle asserts the recovery converged before the final land: every suffix change
 keeps its PR number, bookmark, and pre-handoff approvals, the bottom suffix PR targets
 trunk, review branches point at the rebased commits, and the merged prefix sees no
-further event of any kind after the handoff begins. For external merges, the recovery's
-rebase pass must itself retire the pre-merge local copies — they are provably the
-reviewed commits — while merge-transport lands leave copies pinned immutable by their
-untracked review branches, so a closing `cleanup` retires those; either way the chain
-must end with `list --json` empty and no tracking for any original change.
+further event of any kind after the handoff begins. The convergence pass — in-command for
+`land --via merge`, the recovery run for external merges and faulted lands — proves the
+pre-merge local copies inert and retires them directly; copies something still pins
+immutable are preserved with guidance and retired by a closing `cleanup`. Either way the
+chain must end with `list --json` empty and no tracking for any original change.
 
 ## Interrupted-Submit Retry Harness
 

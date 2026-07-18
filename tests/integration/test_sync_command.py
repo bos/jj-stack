@@ -66,7 +66,8 @@ def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
     monkeypatch,
     capsys,
 ) -> None:
-    """land --via merge then sync is the full protected-trunk workflow."""
+    """land --via merge converges the protected-trunk flow before returning;
+    a follow-up sync finds nothing left to repair."""
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -79,17 +80,21 @@ def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
     assert land_exit_code == 0
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "open"
+    # The in-command convergence already rebased the survivor onto the
+    # squash-merged trunk tip and retargeted its PR.
+    merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
+    rewritten_top = JjClient(repo).resolve_revision(top_change_id)
+    assert rewritten_top.only_parent_commit_id() == merged_trunk_commit
+    assert fake_repo.pull_requests[2].base_ref == "main"
 
     sync_exit_code = run_main(repo, config_path, "sync", top_change_id)
     captured = capsys.readouterr()
 
     assert sync_exit_code == 0
-    assert "Applied rebase actions:" in captured.out
-    assert "Submitted changes:" in captured.out
-    # The surviving change now sits on the squash-merged trunk tip and its PR
-    # targets trunk.
-    merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
-    rewritten_top = JjClient(repo).resolve_revision(top_change_id)
-    assert rewritten_top.only_parent_commit_id() == merged_trunk_commit
-    assert fake_repo.pull_requests[2].base_ref == "main"
+    assert "No merged changes on the selected stack need rebasing." in captured.out
+    # Convergence is idempotent: the survivor did not move again.
+    assert (
+        JjClient(repo).resolve_revision(top_change_id).commit_id
+        == rewritten_top.commit_id
+    )
     assert fake_repo.pull_requests[2].state == "open"

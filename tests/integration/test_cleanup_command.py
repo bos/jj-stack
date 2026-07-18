@@ -16,6 +16,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_stack,
     run_command,
 )
+from ..support.submit_property_harness import update_remote_ref
 from .submit_command_helpers import (
     approve_pull_requests,
     configure_submit_environment,
@@ -296,8 +297,8 @@ def test_cleanup_restack_preserves_immutable_merged_ancestor(
     monkeypatch,
     capsys,
 ) -> None:
-    """A merge-transport land leaves the pre-merge copy pinned by its remote
-    review branch; the retire pass must leave it for plain cleanup."""
+    """A pre-merge copy pinned immutable by a foreign remote branch is
+    preserved by the convergence retire pass and left for plain cleanup."""
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -305,13 +306,16 @@ def test_cleanup_restack_preserves_immutable_merged_ancestor(
 
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
-    top_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
+    # A teammate's branch at the reviewed commit is imported by the in-land
+    # fetch as an untracked remote bookmark, pinning the local copy immutable.
+    update_remote_ref(
+        fake_repo,
+        branch="teammate-pin",
+        target=stack.revisions[0].commit_id,
+    )
 
-    assert run_main(repo, config_path, "land", "--via", "merge") == 0
-    capsys.readouterr()
-
-    exit_code = run_main(repo, config_path, "cleanup", "--rebase", top_change_id)
+    exit_code = run_main(repo, config_path, "land", "--via", "merge")
     captured = capsys.readouterr()
     rendered = " ".join(captured.out.split())
 

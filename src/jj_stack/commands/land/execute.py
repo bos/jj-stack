@@ -1,4 +1,13 @@
-"""Live execution for the land command."""
+"""Live execution for the land command.
+
+Execution is mutate-only: gates were checked during planning, and every
+recovery path is observational. The direct-push transport moves trunk with one
+leased push and then finalizes through the shared landed-review sweep; the
+merge transport asks GitHub to merge the planned prefix bottom-up and reports
+exactly what GitHub accepted so the caller can converge the local stack. No
+durable transaction state exists: an interruption at any point is recovered by
+the next `land` or `sync` from what GitHub and the jj DAG report then.
+"""
 
 from __future__ import annotations
 
@@ -12,27 +21,25 @@ from jj_stack.github.push_rejections import (
     rejection_reason_lines,
 )
 from jj_stack.jj.client import JjClient, JjCommandError
-from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import (
-    CachedChange,
-    PendingDirectLand,
-    PendingDirectLandRevision,
-)
+from jj_stack.models.review_state import LandNote
 from jj_stack.review.change_status import classify_review_change
+from jj_stack.review.landed import (
+    BookmarkCleanupPolicy,
+    LandedReviewResult,
+    finalize_landed_reviews,
+)
 from jj_stack.state.journal import OperationJournal
+from jj_stack.state.store import ReviewStateStore
 
 from .models import (
     BookmarkStateReader,
     LandAction,
     LandExecutionInputs,
-    LandMutationRun,
     LandPlan,
     LandResult,
     LandRevision,
-    ReviewBookmarkCleanupPlan,
-    landed_tracking_retire_body,
 )
-from .pull_requests import finalize_landed_pull_request, merge_landed_pull_request
+from .pull_requests import merge_landed_pull_request
 
 
 def ensure_trunk_branch_matches_selected_trunk(
@@ -82,6 +89,19 @@ def ensure_trunk_branch_matches_selected_trunk(
             hint="Resolve it before landing.",
         )
     if review_status.remote_branch_matches_commit is not True:
+        remote_target = None if remote_state is None else remote_state.target
+        if local_target == trunk_commit_id and remote_target is not None:
+            move_command = f"jj bookmark move {trunk_branch} --to {remote_target[:12]}"
+            raise CliError(
+                t"Local trunk bookmark {ui.bookmark(trunk_branch)} does not match "
+                t"{ui.bookmark(f'{trunk_branch}@{remote_name}')}.",
+                hint=(
+                    t"If an earlier {ui.cmd('land')} was interrupted before its push, move "
+                    t"{ui.bookmark(trunk_branch)} back with {ui.cmd(move_command)} and rerun "
+                    t"{ui.cmd('land')}; otherwise push or fetch to reconcile the trunk "
+                    t"bookmarks."
+                ),
+            )
         raise DriftError(
             t"Remote trunk bookmark {ui.bookmark(f'{trunk_branch}@{remote_name}')} moved since "
             t"the selected path was resolved.",
@@ -92,7 +112,6 @@ def ensure_trunk_branch_matches_selected_trunk(
 
 async def execute_land_plan(
     *,
-    bookmark_cleanup_plans: tuple[ReviewBookmarkCleanupPlan, ...],
     github_client: GithubClient,
     merge_method: str | None,
     plan: LandPlan,
@@ -112,6 +131,7 @@ async def execute_land_plan(
         actions: tuple[LandAction, ...],
         applied: bool,
         blocked: bool,
+        merged_change_ids: tuple[str, ...] = (),
     ) -> LandResult:
         return LandResult(
             actions=actions,
@@ -123,231 +143,48 @@ async def execute_land_plan(
             trunk_branch=trunk_branch,
             trunk_subject=trunk_subject,
             via=plan.via,
+            merged_change_ids=merged_change_ids,
         )
 
-    execution_plan = plan
-    if execution_plan.blocked:
+    if plan.blocked:
         return land_result(
-            actions=execution_plan.planned_actions(),
+            actions=plan.planned_actions(),
             applied=False,
             blocked=True,
         )
     state_dir = state_store.require_writable()
-    journal_must_be_durable = (
-        execution_plan.push_trunk or execution_plan.resume_pending_direct_land
+    journal = OperationJournal.begin(
+        state_dir,
+        operation="land",
+        options={
+            "bypass_readiness": execution.bypass_readiness,
+            "cleanup_bookmarks": execution.cleanup_bookmarks,
+            "merge_method": merge_method,
+            "selected_pr_number": execution.selected_pr_number,
+            "via": plan.via,
+        },
+        resolved_scope={
+            "github_repository": github_client.repository.full_name,
+            "planned_change_ids": tuple(
+                revision.change_id for revision in plan.planned_revisions
+            ),
+            "planned_commit_ids": tuple(
+                revision.commit_id for revision in plan.planned_revisions
+            ),
+            "push_trunk": plan.push_trunk,
+            "remote_name": remote_name,
+            "selected_revset": selected_revset,
+            "trunk_branch": trunk_branch,
+        },
     )
-    resolved_scope: dict[str, object] = {
-        "github_repository": github_client.repository.full_name,
-        "landed_change_ids": tuple(
-            revision.change_id for revision in execution_plan.planned_revisions
-        ),
-        "landed_commit_id": (
-            execution_plan.planned_revisions[-1].commit_id
-            if execution_plan.planned_revisions
-            else execution.original_trunk_commit_id
-        ),
-        "ordered_change_ids": execution.ordered_change_ids,
-        "ordered_commit_ids": execution.ordered_commit_ids,
-        "planned_revisions": tuple(
-            {
-                "bookmark": revision.bookmark,
-                "bookmark_managed": revision.bookmark_managed,
-                "change_id": revision.change_id,
-                "commit_id": revision.commit_id,
-                "pull_request_number": revision.pull_request_number,
-                "subject": revision.subject,
-            }
-            for revision in execution_plan.planned_revisions
-        ),
-        "push_trunk": execution_plan.push_trunk,
-        "remote_name": remote_name,
-        "selected_revset": selected_revset,
-        "trunk_branch": trunk_branch,
-    }
-    state = state_store.load()
-    pending_direct_land = state.pending_direct_land
-    if execution_plan.resume_pending_direct_land:
-        if pending_direct_land is None:
-            raise CliError("The pending direct land disappeared before it could resume.")
-        journal = OperationJournal.resume(
-            state_dir,
-            operation="land",
-            operation_id=pending_direct_land.operation_id,
-        )
-    else:
-        journal = OperationJournal.begin(
-            state_dir,
-            durable=journal_must_be_durable,
-            operation="land",
-            options={
-                "bypass_readiness": execution.bypass_readiness,
-                "cleanup_bookmarks": execution.cleanup_bookmarks,
-                "merge_method": merge_method,
-                "selected_pr_number": execution.selected_pr_number,
-                "via": plan.via,
-            },
-            resolved_scope=resolved_scope,
-        )
-        if execution_plan.push_trunk:
-            if pending_direct_land is not None:
-                raise CliError(
-                    "Another direct land is still pending and must be resolved first."
-                )
-            pending_direct_land = PendingDirectLand(
-                bookmark_prefix=execution.context.config.bookmark_prefix,
-                cleanup_bookmarks=execution.cleanup_bookmarks,
-                cleanup_user_bookmarks=(
-                    execution.context.config.cleanup_user_bookmarks
-                ),
-                github_host=github_client.repository.host,
-                github_repository=github_client.repository.full_name,
-                operation_id=journal.operation_id,
-                original_local_trunk_commit_id=(
-                    client.get_bookmark_state(trunk_branch).local_target
-                ),
-                original_trunk_commit_id=execution.original_trunk_commit_id,
-                planned_revisions=tuple(
-                    PendingDirectLandRevision(
-                        bookmark=revision.bookmark,
-                        bookmark_ownership=(
-                            "managed" if revision.bookmark_managed else "external"
-                        ),
-                        change_id=revision.change_id,
-                        commit_id=revision.commit_id,
-                        pull_request_number=revision.pull_request_number,
-                        subject=revision.subject,
-                    )
-                    for revision in execution_plan.planned_revisions
-                ),
-                remote_name=remote_name,
-                remote_url=execution.remote_url,
-                trunk_branch=trunk_branch,
-            )
-    mutation_run = LandMutationRun(
-        pending_direct_land=pending_direct_land,
-        state=state,
-        state_changes=dict(state.changes),
-        state_store=state_store,
-    )
-    if execution_plan.push_trunk:
-        mutation_run.save_interim_state(durable=True)
+    _write_land_note(plan=plan, state_store=state_store, trunk_branch=trunk_branch)
 
     actions: list[LandAction] = []
-    bookmark_cleanup_by_change_id = {
-        cleanup_plan.change_id: cleanup_plan for cleanup_plan in bookmark_cleanup_plans
-    }
-    trunk_transition_blocked = await _apply_trunk_transition(
-        actions=actions,
+    refresh_actions = _refresh_stale_review_branches(
         client=client,
-        execution_plan=execution_plan,
-        github_client=github_client,
-        journal=journal,
-        mutation_run=mutation_run,
-        bypass_readiness=execution.bypass_readiness,
         remote_name=remote_name,
-        trunk_branch=trunk_branch,
-    )
-    if trunk_transition_blocked:
-        return land_result(
-            actions=tuple(actions),
-            applied=True,
-            blocked=True,
-        )
-    finalized_change_ids = await _finalize_planned_revisions(
-        actions=actions,
-        bookmark_cleanup_by_change_id=bookmark_cleanup_by_change_id,
-        client=client,
-        execution_plan=execution_plan,
-        github_client=github_client,
-        journal=journal,
-        merge_method=merge_method,
-        mutation_run=mutation_run,
-        trunk_branch=trunk_branch,
-    )
-    finalize_blocked = len(finalized_change_ids) != len(execution_plan.planned_revisions)
-    if not finalize_blocked and execution_plan.via == "push":
-        actions.extend(
-            _retire_finalized_tracking(
-                finalized_revisions=execution_plan.planned_revisions,
-                journal=journal,
-                mutation_run=mutation_run,
-            )
-        )
-    completion_data: dict[str, object] = {"completed_change_ids": finalized_change_ids}
-    journal.append("completed", completion_data, durable=journal_must_be_durable)
-    if finalize_blocked:
-        return land_result(
-            actions=tuple(actions),
-            applied=True,
-            blocked=True,
-        )
-    return land_result(
-        actions=execution_plan.completed_actions(actions=tuple(actions)),
-        applied=True,
-        blocked=False,
-    )
-
-
-async def _apply_trunk_transition(
-    *,
-    actions: list[LandAction],
-    bypass_readiness: bool,
-    client: JjClient,
-    execution_plan: LandPlan,
-    github_client: GithubClient,
-    journal: OperationJournal,
-    mutation_run: LandMutationRun,
-    remote_name: str,
-    trunk_branch: str,
-) -> bool:
-    if not execution_plan.planned_revisions:
-        return False
-
-    if execution_plan.resubmit_revisions:
-        journal.append(
-            "planned_mutation",
-            {
-                "change_ids": tuple(
-                    revision.change_id for revision in execution_plan.resubmit_revisions
-                ),
-                "mutation": "refresh_review_branches",
-            },
-        )
-    if execution_plan.repair_local_trunk_commit_id is not None:
-        trunk_commit_id = execution_plan.repair_local_trunk_commit_id
-        journal.append(
-            "planned_mutation",
-            {
-                "commit_id": trunk_commit_id,
-                "mutation": "repair_local_trunk",
-                "trunk_branch": trunk_branch,
-            },
-        )
-        _checkpoint_pending_trunk_moved(mutation_run)
-        client.set_bookmark(trunk_branch, trunk_commit_id, allow_backwards=True)
-        action = LandAction(
-            kind="local trunk",
-            body=t"move {ui.bookmark(trunk_branch)} to the current "
-            t"{ui.revset('trunk()')} after the interrupted push",
-            status="applied",
-        )
-        actions.append(action)
-        journal.append(
-            "mutation_applied",
-            {
-                "action": action.message,
-                "commit_id": trunk_commit_id,
-                "mutation": "repair_local_trunk",
-                "trunk_branch": trunk_branch,
-            },
-        )
-    refresh_actions, dismissed_action = await _refresh_rebased_review_branches(
-        bypass_readiness=bypass_readiness,
-        client=client,
-        github_client=github_client,
-        resubmit_revisions=execution_plan.resubmit_revisions,
-        remote_name=remote_name,
-        trunk_branch=trunk_branch,
+        resubmit_revisions=plan.resubmit_revisions,
+        state_store=state_store,
     )
     actions.extend(refresh_actions)
     if refresh_actions:
@@ -358,15 +195,57 @@ async def _apply_trunk_transition(
                 "mutation": "refresh_review_branches",
             },
         )
+    dismissed_action = await _check_post_resubmit_approvals(
+        bypass_readiness=execution.bypass_readiness,
+        github_client=github_client,
+        resubmit_revisions=plan.resubmit_revisions,
+        trunk_branch=trunk_branch,
+    )
     if dismissed_action is not None:
         actions.append(dismissed_action)
-        return True
-    if not execution_plan.push_trunk:
-        # The merge transport lands each PR through GitHub instead of moving
-        # trunk itself.
-        return False
+        _clear_land_note(state_store)
+        journal.append("completed", {"outcome": "approval_dismissed"})
+        return land_result(actions=tuple(actions), applied=True, blocked=True)
 
-    trunk_revision = execution_plan.planned_revisions[-1]
+    if plan.via == "push":
+        return await _execute_direct_push(
+            actions=actions,
+            client=client,
+            execution=execution,
+            github_client=github_client,
+            journal=journal,
+            land_result=land_result,
+            plan=plan,
+            remote_name=remote_name,
+            state_store=state_store,
+            trunk_branch=trunk_branch,
+        )
+    return await _execute_github_merges(
+        actions=actions,
+        github_client=github_client,
+        journal=journal,
+        land_result=land_result,
+        merge_method=merge_method,
+        plan=plan,
+        state_store=state_store,
+        trunk_branch=trunk_branch,
+    )
+
+
+async def _execute_direct_push(
+    *,
+    actions: list[LandAction],
+    client: JjClient,
+    execution: LandExecutionInputs,
+    github_client: GithubClient,
+    journal: OperationJournal,
+    land_result,  # noqa: ANN001 - local result factory
+    plan: LandPlan,
+    remote_name: str,
+    state_store: ReviewStateStore,
+    trunk_branch: str,
+) -> LandResult:
+    trunk_revision = plan.planned_revisions[-1]
     journal.append(
         "planned_mutation",
         {
@@ -376,51 +255,255 @@ async def _apply_trunk_transition(
             "trunk_branch": trunk_branch,
         },
     )
-    trunk_action = _push_trunk_bookmark(
-        client=client,
-        remote_name=remote_name,
-        trunk_branch=trunk_branch,
-        trunk_revision=trunk_revision,
-    )
-    _checkpoint_pending_trunk_moved(mutation_run)
+    try:
+        trunk_action = _push_trunk_bookmark(
+            client=client,
+            remote_name=remote_name,
+            trunk_branch=trunk_branch,
+            trunk_revision=trunk_revision,
+        )
+    except JjCommandError:
+        # An unclassified push failure is ambiguous — GitHub may or may not
+        # have applied it — so the note stays to explain the next run.
+        raise
+    except CliError:
+        # A classified rejection proves trunk did not move; there is nothing
+        # for a later run to explain.
+        _clear_land_note(state_store)
+        raise
+    actions.append(trunk_action)
     journal.append(
         "mutation_applied",
         {
             "action": trunk_action.message,
-            "change_id": trunk_revision.change_id,
             "commit_id": trunk_revision.commit_id,
             "mutation": "push_trunk",
             "trunk_branch": trunk_branch,
         },
-        durable=True,
     )
-    actions.append(trunk_action)
-    return False
 
-
-def _checkpoint_pending_trunk_moved(mutation_run: LandMutationRun) -> None:
-    """Durably record that the pending transaction's commits reached trunk."""
-
-    pending = mutation_run.pending_direct_land
-    if pending is None or pending.phase == "trunk_moved":
-        return
-    mutation_run.pending_direct_land = pending.model_copy(
-        update={"phase": "trunk_moved"}
+    subjects = {revision.change_id: revision.subject for revision in plan.planned_revisions}
+    sweep_results = await finalize_landed_reviews(
+        bookmark_policy=BookmarkCleanupPolicy(
+            cleanup_bookmarks=execution.cleanup_bookmarks,
+            cleanup_user_bookmarks=execution.context.config.cleanup_user_bookmarks,
+            prefix=execution.context.config.bookmark_prefix,
+        ),
+        github_client=github_client,
+        jj_client=client,
+        labels=subjects,
+        order=tuple(revision.change_id for revision in plan.planned_revisions),
+        state_store=state_store,
+        trunk_branch=trunk_branch,
+        trunk_commit_id=trunk_revision.commit_id,
     )
-    mutation_run.save_interim_state(durable=True)
+    sweep_actions, any_skipped = render_landed_sweep_actions(
+        results=sweep_results,
+        subjects=subjects,
+    )
+    actions.extend(sweep_actions)
+    _clear_land_note(state_store)
+    journal.append(
+        "completed",
+        {
+            "retired_change_ids": tuple(
+                result.candidate.change_id for result in sweep_results if result.retired
+            ),
+        },
+    )
+    if any_skipped:
+        return land_result(actions=tuple(actions), applied=True, blocked=True)
+    return land_result(
+        actions=plan.completed_actions(actions=tuple(actions)),
+        applied=True,
+        blocked=False,
+    )
 
 
-async def _refresh_rebased_review_branches(
+async def _execute_github_merges(
     *,
-    bypass_readiness: bool,
-    client: JjClient,
+    actions: list[LandAction],
     github_client: GithubClient,
-    resubmit_revisions: tuple[LandRevision, ...],
-    remote_name: str,
+    journal: OperationJournal,
+    land_result,  # noqa: ANN001 - local result factory
+    merge_method: str | None,
+    plan: LandPlan,
+    state_store: ReviewStateStore,
     trunk_branch: str,
-) -> tuple[tuple[LandAction, ...], LandAction | None]:
+) -> LandResult:
+    if merge_method is None:
+        raise AssertionError("The merge transport requires a resolved merge method.")
+    state = state_store.load()
+    merged_change_ids: list[str] = []
+    blocked_action: LandAction | None = None
+    for landed_revision in plan.planned_revisions:
+        console.output(
+            t"Merging PR #{landed_revision.pull_request_number} for "
+            t"{landed_revision.subject} "
+            t"{ui.change_id(landed_revision.change_id)}..."
+        )
+        journal.append(
+            "planned_mutation",
+            {
+                "change_id": landed_revision.change_id,
+                "mutation": "merge_pull_request",
+                "pull_request_number": landed_revision.pull_request_number,
+            },
+        )
+        final_pull_request, blocked = await merge_landed_pull_request(
+            cached_change=state.changes.get(landed_revision.change_id),
+            github_client=github_client,
+            landed_revision=landed_revision,
+            merge_method=merge_method,
+            trunk_branch=trunk_branch,
+        )
+        if blocked is not None or final_pull_request is None:
+            blocked_action = blocked
+            break
+        journal.append(
+            "mutation_applied",
+            {
+                "change_id": landed_revision.change_id,
+                "mutation": "merge_pull_request",
+                "pull_request_number": landed_revision.pull_request_number,
+            },
+        )
+        actions.append(
+            LandAction(
+                kind="pull request",
+                body=t"merge PR #{landed_revision.pull_request_number} into "
+                t"{ui.bookmark(trunk_branch)} on GitHub for "
+                t"{landed_revision.subject} "
+                t"{ui.change_id(landed_revision.change_id)}",
+                status="applied",
+            )
+        )
+        merged_change_ids.append(landed_revision.change_id)
+    if blocked_action is not None:
+        actions.append(blocked_action)
+    _clear_land_note(state_store)
+    journal.append("completed", {"merged_change_ids": tuple(merged_change_ids)})
+    blocked = len(merged_change_ids) != len(plan.planned_revisions)
+    return land_result(
+        actions=(
+            tuple(actions)
+            if blocked
+            else plan.completed_actions(actions=tuple(actions))
+        ),
+        applied=True,
+        blocked=blocked,
+        merged_change_ids=tuple(merged_change_ids),
+    )
+
+
+def render_landed_sweep_actions(
+    *,
+    results: tuple[LandedReviewResult, ...],
+    subjects: dict[str, str] | None = None,
+) -> tuple[tuple[LandAction, ...], bool]:
+    """Render sweep results as land actions; True when anything was skipped."""
+
+    labels = subjects or {}
+    actions: list[LandAction] = []
+    any_skipped = False
+    for result in results:
+        candidate = result.candidate
+        subject = labels.get(candidate.change_id)
+        label = (
+            t"{subject} {ui.change_id(candidate.change_id)}"
+            if subject is not None
+            else t"{ui.change_id(candidate.change_id)}"
+        )
+        if result.outcome == "skipped":
+            any_skipped = True
+            actions.append(
+                LandAction(
+                    kind="pull request",
+                    body=t"finalizing landed {label} skipped: {result.skip_reason}; "
+                    t"inspect with {ui.cmd('view --fetch')} and rerun {ui.cmd('sync')}",
+                    status="blocked",
+                )
+            )
+            continue
+        if result.outcome == "finalized":
+            actions.append(
+                LandAction(
+                    kind="pull request",
+                    body=t"finalize PR #{candidate.pull_request_number} for {label}",
+                    status="applied",
+                )
+            )
+        if result.forgot_bookmark:
+            actions.append(
+                LandAction(
+                    kind="local bookmark",
+                    body=t"forget {ui.bookmark(candidate.bookmark)} for {label}",
+                    status="applied",
+                )
+            )
+        actions.append(
+            LandAction(
+                kind="tracking",
+                body=t"remove tracking for landed {label}",
+                status="applied",
+            )
+        )
+    return tuple(actions), any_skipped
+
+
+def _write_land_note(
+    *,
+    plan: LandPlan,
+    state_store: ReviewStateStore,
+    trunk_branch: str,
+) -> None:
+    """Record what this land is about to ask GitHub, for messaging only.
+
+    The note never gates behavior: it exists so the next command can explain an
+    interrupted land instead of changing state silently, and it is cleared as
+    soon as any run finishes with full knowledge of the outcome.
+    """
+
+    state = state_store.load()
+    state_store.save(
+        state.model_copy(
+            update={
+                "land_note": LandNote(
+                    pull_request_numbers=tuple(
+                        revision.pull_request_number
+                        for revision in plan.planned_revisions
+                    ),
+                    trunk_branch=trunk_branch,
+                    via=plan.via,
+                )
+            }
+        )
+    )
+
+
+def _clear_land_note(state_store: ReviewStateStore) -> None:
+    state = state_store.load()
+    if state.land_note is None:
+        return
+    state_store.save(state.model_copy(update={"land_note": None}))
+
+
+def _refresh_stale_review_branches(
+    *,
+    client: JjClient,
+    remote_name: str,
+    resubmit_revisions: tuple[LandRevision, ...],
+    state_store: ReviewStateStore,
+) -> tuple[LandAction, ...]:
+    """Re-push diff-equivalent review branches so PRs match the local commits.
+
+    Re-pushing the same commit is idempotent, and the refreshed submitted
+    baseline is recorded from what was just observed to be pushed; there is no
+    checkpoint to reconcile later.
+    """
+
     if not resubmit_revisions:
-        return (), None
+        return ()
 
     console.output(
         t"Refreshing {len(resubmit_revisions)} review "
@@ -437,7 +520,16 @@ async def _refresh_rebased_review_branches(
         remote=remote_name,
         bookmarks=tuple(revision.bookmark for revision in resubmit_revisions),
     )
-    actions = tuple(
+    state = state_store.load()
+    next_changes = dict(state.changes)
+    for revision in resubmit_revisions:
+        cached_change = next_changes.get(revision.change_id)
+        if cached_change is not None:
+            next_changes[revision.change_id] = cached_change.model_copy(
+                update={"last_submitted_commit_id": revision.commit_id}
+            )
+    state_store.save(state.model_copy(update={"changes": next_changes}))
+    return tuple(
         LandAction(
             kind="review branch",
             body=t"refresh {ui.bookmark(revision.bookmark)} to "
@@ -447,13 +539,6 @@ async def _refresh_rebased_review_branches(
         )
         for revision in resubmit_revisions
     )
-    dismissed_action = await _check_post_resubmit_approvals(
-        bypass_readiness=bypass_readiness,
-        github_client=github_client,
-        resubmit_revisions=resubmit_revisions,
-        trunk_branch=trunk_branch,
-    )
-    return actions, dismissed_action
 
 
 def _push_trunk_bookmark(
@@ -513,207 +598,6 @@ def _restore_local_trunk_bookmark(
     client.set_bookmark(trunk_branch, original_target, allow_backwards=True)
 
 
-async def _finalize_planned_revisions(
-    *,
-    actions: list[LandAction],
-    bookmark_cleanup_by_change_id: dict[str, ReviewBookmarkCleanupPlan],
-    client: JjClient,
-    execution_plan: LandPlan,
-    github_client: GithubClient,
-    journal: OperationJournal,
-    merge_method: str | None,
-    mutation_run: LandMutationRun,
-    trunk_branch: str,
-) -> tuple[str, ...]:
-    """Finalize each landed PR bottom-up and return the finalized change IDs.
-
-    A returned tuple shorter than the plan means the merge transport stopped
-    fail-closed at a PR GitHub would not merge.
-    """
-
-    landed_head_change_id = (
-        execution_plan.planned_revisions[-1].change_id
-        if execution_plan.planned_revisions
-        else None
-    )
-    finalized_change_ids: list[str] = []
-    for landed_index, landed_revision in enumerate(execution_plan.planned_revisions):
-        console.output(
-            t"Finalizing PR #{landed_revision.pull_request_number} for "
-            t"{landed_revision.subject} "
-            t"{ui.change_id(landed_revision.change_id)}..."
-        )
-        journal.append(
-            "planned_mutation",
-            {
-                "change_id": landed_revision.change_id,
-                "mutation": "finalize_pull_request",
-                "pull_request_number": landed_revision.pull_request_number,
-            },
-        )
-        if execution_plan.via == "merge":
-            if merge_method is None:
-                raise AssertionError("The merge transport requires a resolved merge method.")
-            final_pull_request, blocked_action = await merge_landed_pull_request(
-                cached_change=mutation_run.state_changes.get(landed_revision.change_id),
-                github_client=github_client,
-                landed_revision=landed_revision,
-                merge_method=merge_method,
-                trunk_branch=trunk_branch,
-            )
-            if blocked_action is not None or final_pull_request is None:
-                if blocked_action is not None:
-                    actions.append(blocked_action)
-                return tuple(finalized_change_ids)
-            applied_body = (
-                t"merge PR #{landed_revision.pull_request_number} into "
-                t"{ui.bookmark(trunk_branch)} on GitHub for "
-                t"{landed_revision.subject} "
-                t"{ui.change_id(landed_revision.change_id)}"
-            )
-        else:
-            final_pull_request = await finalize_landed_pull_request(
-                cached_change=mutation_run.state_changes.get(landed_revision.change_id),
-                github_client=github_client,
-                landed_revision=landed_revision,
-                trunk_branch=trunk_branch,
-            )
-            applied_body = (
-                t"finalize PR #{landed_revision.pull_request_number} for "
-                t"{landed_revision.subject} "
-                t"{ui.change_id(landed_revision.change_id)}"
-            )
-        journal.append(
-            "mutation_applied",
-            {
-                "change_id": landed_revision.change_id,
-                "mutation": "finalize_pull_request",
-                "pull_request": final_pull_request,
-                "pull_request_number": landed_revision.pull_request_number,
-            },
-        )
-        actions.append(
-            LandAction(
-                kind="pull request",
-                body=applied_body,
-                status="applied",
-            )
-        )
-        finalized_change_ids.append(landed_revision.change_id)
-        landed_parent_change_id = (
-            execution_plan.planned_revisions[landed_index - 1].change_id
-            if landed_index > 0
-            else None
-        )
-        previous_change = mutation_run.state_changes.get(landed_revision.change_id)
-        updated_change = _updated_landed_change(
-            bookmark=landed_revision.bookmark,
-            bookmark_managed=landed_revision.bookmark_managed,
-            cached_change=previous_change,
-            commit_id=landed_revision.commit_id,
-            parent_change_id=landed_parent_change_id,
-            pull_request=final_pull_request,
-            stack_head_change_id=landed_head_change_id,
-        )
-        mutation_run.state_changes[landed_revision.change_id] = updated_change
-        pending_direct_land = mutation_run.pending_direct_land
-        if (
-            pending_direct_land is not None
-            and landed_revision.change_id
-            not in pending_direct_land.finalized_change_ids
-        ):
-            mutation_run.pending_direct_land = pending_direct_land.model_copy(
-                update={
-                    "finalized_change_ids": (
-                        *pending_direct_land.finalized_change_ids,
-                        landed_revision.change_id,
-                    )
-                }
-            )
-        mutation_run.save_interim_state()
-        journal.append(
-            "saved_state_update",
-            {
-                "after": updated_change,
-                "before": previous_change,
-                "change_id": landed_revision.change_id,
-            },
-        )
-        cleanup_plan = bookmark_cleanup_by_change_id.get(landed_revision.change_id)
-        if cleanup_plan is not None:
-            if cleanup_plan.can_forget:
-                journal.append(
-                    "planned_mutation",
-                    {
-                        "bookmark": cleanup_plan.bookmark,
-                        "change_id": landed_revision.change_id,
-                        "mutation": "cleanup_local_bookmark",
-                    },
-                )
-            cleanup_actions = _apply_review_bookmark_cleanup(
-                client, cleanup_plan, landed_revision
-            )
-            actions.extend(cleanup_actions)
-            if cleanup_plan.can_forget:
-                journal.append(
-                    "mutation_applied",
-                    {
-                        "actions": tuple(action.message for action in cleanup_actions),
-                        "bookmark": cleanup_plan.bookmark,
-                        "change_id": landed_revision.change_id,
-                        "mutation": "cleanup_local_bookmark",
-                    },
-                )
-    return tuple(finalized_change_ids)
-
-
-def _apply_review_bookmark_cleanup(
-    client: JjClient,
-    cleanup_plan: ReviewBookmarkCleanupPlan,
-    landed_revision: LandRevision,
-) -> tuple[LandAction, ...]:
-    if not cleanup_plan.can_forget:
-        return (cleanup_plan.action,)
-    client.forget_bookmarks((cleanup_plan.bookmark,))
-    return (
-        LandAction(
-            kind="local bookmark",
-            body=t"forget {ui.bookmark(cleanup_plan.bookmark)} "
-            t"for {ui.change_id(landed_revision.change_id)}",
-            status="applied",
-        ),
-    )
-
-
-def _retire_finalized_tracking(
-    *,
-    finalized_revisions: tuple[LandRevision, ...],
-    journal: OperationJournal,
-    mutation_run: LandMutationRun,
-) -> tuple[LandAction, ...]:
-    """Remove direct-push landed changes from active review tracking."""
-
-    previous_changes = dict(mutation_run.state_changes)
-    retired_revisions: list[LandRevision] = []
-    for finalized_revision in finalized_revisions:
-        if mutation_run.state_changes.pop(finalized_revision.change_id, None) is not None:
-            retired_revisions.append(finalized_revision)
-    mutation_run.pending_direct_land = None
-    mutation_run.save_interim_state(durable=True)
-    journal.record_saved_state_updates(
-        before=previous_changes,
-        after=mutation_run.state_changes,
-    )
-    return tuple(
-        LandAction(
-            kind="tracking",
-            body=landed_tracking_retire_body(retired_revision),
-            status="applied",
-        )
-        for retired_revision in retired_revisions
-    )
-
-
 async def _check_post_resubmit_approvals(
     *,
     bypass_readiness: bool,
@@ -740,49 +624,10 @@ async def _check_post_resubmit_approvals(
         if decision != "approved":
             return LandAction(
                 kind="boundary",
-                body=t"before pushing {ui.bookmark(trunk_branch)} because refreshing "
+                body=t"before landing because refreshing "
                 t"{ui.bookmark(revision.bookmark)} dismissed the approval on "
                 t"PR #{revision.pull_request_number}; request re-review and rerun "
                 t"{ui.cmd('land')}",
                 status="blocked",
             )
     return None
-
-
-def _updated_landed_change(
-    *,
-    bookmark: str,
-    bookmark_managed: bool,
-    cached_change: CachedChange | None,
-    commit_id: str,
-    parent_change_id: str | None,
-    pull_request: GithubPullRequest,
-    stack_head_change_id: str | None,
-) -> CachedChange:
-    pr_state = pull_request.state
-    if pull_request.merged_at is not None:
-        pr_state = "merged"
-    if cached_change is None:
-        return CachedChange(
-            bookmark=bookmark,
-            bookmark_ownership="managed" if bookmark_managed else "external",
-            last_submitted_commit_id=commit_id,
-            last_submitted_parent_change_id=parent_change_id,
-            last_submitted_stack_head_change_id=stack_head_change_id,
-            pr_number=pull_request.number,
-            pr_state=pr_state,
-            pr_url=pull_request.html_url,
-        )
-    return cached_change.model_copy(
-        update={
-            "bookmark": bookmark,
-            "bookmark_ownership": "managed" if bookmark_managed else "external",
-            "last_submitted_commit_id": commit_id,
-            "last_submitted_parent_change_id": parent_change_id,
-            "last_submitted_stack_head_change_id": stack_head_change_id,
-            "pr_number": pull_request.number,
-            "pr_review_decision": None,
-            "pr_state": pr_state,
-            "pr_url": pull_request.html_url,
-        }
-    ).with_cleared_comments()

@@ -272,12 +272,13 @@ instead of replaying a retained recovery record.
 | `submit`                    | `jj-stack submit <revset>`             |
 | `unstack` / `unstack --cleanup` | `jj-stack unstack [--cleanup] <revset>`  |
 | `cleanup --rebase`          | `jj-stack cleanup --rebase <revset>`   |
-| `land`                      | `jj-stack land <revset>`               |
+| `land`                      | `jj-stack sync <revset>`               |
 
-For an interrupted `land` specifically: if the trunk push already succeeded before a later
-failure, the landed commits are already on `trunk()`. Rerun `jj-stack land <revset>`;
-`jj-stack` will skip the trunk push it can already prove happened and finish PR/state/bookmark
-finalization for the exact landed commits.
+For an interrupted `land` specifically: run `jj-stack sync <revset>`. If the trunk push
+already succeeded, the landed commits are already on `trunk()`; `sync` finds every tracked
+review whose exact commit reached `trunk()`, finalizes its pull request, and retires its
+tracking. If GitHub merges were requested but never confirmed, the next `land` or `sync`
+explains what actually merged and converges from the current GitHub state.
 
 ### Back out
 

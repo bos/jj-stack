@@ -325,3 +325,18 @@ Possible follow-up work:
   available, keeping the overview comment only if it still adds value
 - decide how `checkout` should treat PRs that are linked into a native GitHub
   stack but have no local tracking data
+
+## Post-rework follow-ups from the observational land rebuild
+
+_Benefit: small each; recorded so residue-tolerance stays a decision, not an accident._
+
+- Direct-push landed review branches are left on the remote by design (the sweep only
+  forgets local bookmarks). A `cleanup` GC pass could delete tool-owned remote branches
+  whose PRs finalized, under the same lease and ownership rules the merge-transport
+  retirement already applies.
+- A trunk push whose acknowledgement is lost restores the local trunk bookmark, so the
+  next fetch can leave it behind or conflicted; `land` reports the exact
+  `jj bookmark move` repair. If this proves common, teach the report to distinguish the
+  remote-contains-local case (safe to fast-forward automatically) from true divergence.
+- The state model still carries lifecycle caches, topology pointers, and comment IDs;
+  reducing it to identity-only (design-next.md "Durable state") is the next slice.
