@@ -17,7 +17,9 @@ Optimize for finding:
 
 Before raising a finding, anchor yourself in:
 
-- `docs/internals/design.md`
+- `docs/internals/design-next.md` (canonical for landing, recovery, cleanup, and the
+  tracking-state model)
+- `docs/internals/design.md` for the areas design-next does not cover
 - repo invariants from `AGENTS.md`
 - explicit product decisions already made in the thread
 
@@ -43,6 +45,40 @@ Many bugs here come from interactions between loosely coupled systems. Pay extra
 - cleanup behavior that might delete or preserve the wrong artifacts
 
 These are much higher-value than generic style concerns.
+
+## Guard against complexity spirals
+
+This repo's worst historical failure mode was not a bug; it was a feedback loop: a
+defensive patch created states only the defense could produce, those states needed their
+own guards, the spec canonized each guard, and tests made every mechanism look
+load-bearing. Reviews are the main brake on that loop. Apply these tests to every finding
+and every fix — including your own proposed fixes:
+
+- **The self-inflicted-state test.** For any new guard, saved field, or recovery path,
+  ask: can the state it handles arise in a world without our machinery? If it exists only
+  because of a mechanism we added, the finding is against the mechanism, not the missing
+  guard. Sharpest form: would deleting the mechanism also delete the failure mode?
+- **Rule-completion over rule-addition.** When a site is broken, first look for an
+  existing rule elsewhere in the codebase that the site failed to apply, and apply that
+  one, shared. A finding that proposes a new variant of an existing predicate or guard is
+  itself a defect in the finding.
+- **New durable state is a spec event, not a bugfix.** Any persisted field, phase enum,
+  or ordering dependency between durable writes requires a spec amendment in the same
+  change, plus answers to: what deletes this state, and what happens if that deletion
+  never runs? If recovering the new state would need another mechanism, reject it.
+- **Defenses require an observed trigger.** A reproduction, a live-API observation, or a
+  user report. "The other system might do X" earns a backlog entry naming the experiment
+  that would confirm it — never code.
+- **Match guard strength to the cost hierarchy.** Name what a proposed guard actually
+  protects, against the ranked kernel: lost commits > mutating the wrong PR or ref >
+  guessed linkage > metadata consistency. Reconstructible state gets report-and-continue
+  or converge-on-retry, not exact-match validation; a guard stronger than its tier is
+  complexity to delete, not rigor. Every fail-closed stop must name a runnable next
+  step — "fix it manually" with no command means the design is incomplete.
+- **Rate of hardening is itself a finding.** If the change under review is the third or
+  later consecutive hardening of the same area, the correct review output is "stop
+  patching; re-derive the theory," escalated as a design question — not approval of one
+  more locally defensible fix.
 
 ## Review the user experience directly
 

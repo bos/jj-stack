@@ -90,6 +90,36 @@ Examples that usually do not deserve dedicated tests:
 The point is not to test every bad thing that could happen. The point is to
 test the bad things that are plausible and costly.
 
+## Keep tests from ratcheting complexity
+
+Tests are the pawl in this repo's historical complexity ratchet: once a defensive
+mechanism has tests, removing the mechanism looks like a regression even when the
+replacement gives users a simpler and safer story. These rules keep coverage honest:
+
+- **Tests pin contracts, not mechanisms.** Before asserting on internal state — saved
+  records, phases, journal contents — restate the assertion as an outcome another system
+  could observe: GitHub state, the jj DAG, an exit code plus its message. If it cannot be
+  restated, the test is pinning a mechanism, and it will defend that mechanism against
+  future deletion.
+- **Prefer convergence properties over interruption matrices.** For interruptible
+  operations, the high-value test is: interrupt, run the documented recovery, and assert
+  the fixed point plus exactly-once external effects. Under a convergent design, one
+  property replaces a matrix of interruption-point cases. Needing a test per interruption
+  point is evidence the design is not convergent — file that as a design bug, not a
+  coverage gap.
+- **Fixtures must be reachable through the front door.** Construct test states through
+  supported commands, external-system mutations, or documented user actions. If a state
+  can only be constructed by forging internal records no command writes, the scenario may
+  not be real; the fixture is a smell pointing at either a phantom state or a missing
+  command.
+- **Deleting a guarantee deletes its tests, by policy.** When the spec removes a
+  guarantee, the tests enshrining it are removed in the same change, and "this test would
+  fail" is never an argument for keeping the guarantee.
+- **Name the fake's idealizations.** Where the fake diverges from the real system,
+  record the divergence explicitly so the affected behavior families are known to be
+  untestable locally rather than silently green. Each named gap should point at a live
+  check or a stricter fake mode that would establish the real contract.
+
 ## Choosing the right layer
 
 After a case passes the worthwhile-test gate, use the narrowest layer that exercises the behavior
