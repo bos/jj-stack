@@ -725,3 +725,18 @@ Optimize for a tight loop:
 If we keep the `jj` DAG as the source of truth, keep the GitHub layer narrow, and keep
 the fake server honest by regularly checking it against real GitHub, the implementation
 should stay understandable and correct as it grows.
+
+## Rework status (2026-07)
+
+The observational-convergence rework from [design-next.md](design-next.md) is implemented:
+
+- `land: rebuild recovery on observational convergence` — the landed-review sweep
+  (`review/landed.py`), `sync` as the single convergence routine, the message-only land
+  note, and the removal of the direct-land transaction and its recovery module.
+- `state: drop saved submitted-topology pointers` — staleness derives from commit
+  identity alone.
+- `state: reduce tracking to review identity` — lifecycle caches, comment IDs, and PR
+  URLs removed; managed comments rediscover by body marker; tool-closed reviews retire
+  by unlinking.
+
+Remaining follow-ups live in [backlog.md](backlog.md).

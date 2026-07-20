@@ -33,10 +33,14 @@ compatibility code, migration code, or the like.
 
 - In user-facing output, identify revisions by `change_id` by default. If a concrete immutable
   snapshot matters, include the `commit_id` second and label it explicitly.
-- Read [docs/internals/design.md](docs/internals/design.md) and
-  [docs/internals/implementation-strategy.md](docs/internals/implementation-strategy.md)
-  before changing behavior or adding tests. `design.md` is the canonical
-  product spec.
+- Read [docs/internals/design-next.md](docs/internals/design-next.md) — the canonical
+  spec for landing, recovery, cleanup, and the tracking-state model — and
+  [docs/internals/design.md](docs/internals/design.md) for the areas it does not cover,
+  before changing behavior or adding tests. Design prose is derived from principles, not
+  the other way around: evaluate a documented behavior on its merits before extending it,
+  and prefer deleting case-specific rules that follow from the principles over adding new
+  ones. Never add durable transaction or replay state; recovery is observational
+  (see design-next.md).
 - Preserve the core invariants: the `jj` DAG is the source of truth, local cache is sparse,
   GitHub pull requests are derived from the local `jj` stack, and ambiguous linkage fails
   closed.

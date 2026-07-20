@@ -1,5 +1,11 @@
 # jj-native stacked GitHub review: design
 
+> Scope note: [design-next.md](design-next.md) is the canonical spec for landing,
+> recovery, cleanup, and the tracking-state model; those sections here have been aligned
+> with it and defer to it on conflict. This document remains authoritative for the areas
+> design-next does not cover, with its claims read as derived guidance, not immutable
+> case law.
+
 ## Summary
 
 `jj-stack` turns a linear chain of `jj` changes into a stack of GitHub pull requests
@@ -13,7 +19,7 @@ The model is small:
 - the local stack is rediscovered from the `jj` DAG on every run, not from a saved parent map
 
 The only thing `jj-stack` saves locally is a small per-change record holding the bookmark
-name, the PR number/URL, and a couple of flags. Everything else is derived. That keeps the
+name, the PR number, and the submitted baseline. Everything else is derived. That keeps the
 tool feeling like an extension of `jj` rather than a parallel stack manager.
 
 ## Recommended GitHub policy
