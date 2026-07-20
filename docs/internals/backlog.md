@@ -338,5 +338,9 @@ _Benefit: small each; recorded so residue-tolerance stays a decision, not an acc
   next fetch can leave it behind or conflicted; `land` reports the exact
   `jj bookmark move` repair. If this proves common, teach the report to distinguish the
   remote-contains-local case (safe to fast-forward automatically) from true divergence.
-- The state model still carries lifecycle caches, topology pointers, and comment IDs;
-  reducing it to identity-only (design-next.md "Durable state") is the next slice.
+- Real GitHub's merged-detection may not fire when a stacked PR's base is retargeted to
+  trunk after a direct push, leaving finalized PRs closed-but-not-merged; the fake
+  auto-marks them merged (see the idealization note in tests/support/fake_github.py), so
+  this family is untestable locally. Experiment against a live repo before teaching the
+  landed predicate anything: if closed-not-merged occurs, decide between treating
+  closed+exact-commit-on-trunk+matching-head as finalized or documenting the state.

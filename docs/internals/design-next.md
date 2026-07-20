@@ -43,9 +43,14 @@ Ranked. When guarantees conflict, the higher rule wins.
 3. Never mutate a pull request without proving its repository and head-branch identity against
    the linkage being acted on.
 4. Never guess ambiguous linkage; fail closed before mutation.
-5. Never mutate outside the selected stack.
+5. Never project, rewrite, or resubmit work outside the selected stack.
 
 Everything else converges on retry or leaves residue with a reported next step.
+
+Retiring a landed review is not projection: the landed predicate is independent of any
+selection, so the landed-review sweep runs over all saved tracking wherever convergence
+runs, and it mutates only pull requests it has proven landed by exact commit and head
+identity.
 
 Tracking-metadata consistency is deliberately not in the kernel. Metadata is reconstructible
 (`checkout` bootstraps from GitHub, `relink` adopts a specific PR), so losing or discarding it
@@ -59,6 +64,8 @@ Per tracked change, the state file stores exactly:
 - `change_id` (key)
 - `bookmark` — the managed review branch name
 - `bookmark_ownership` — managed or external
+- `link_state` — active, or unlinked: the do-not-reattach marker written by `unlink`
+  and by review retirement
 - `pr_number`
 - `last_submitted_commit_id` — the submitted baseline
 
@@ -93,19 +100,28 @@ current ordering protocol.
 
 ### sync
 
-The only convergence and recovery command. Algorithm, for the selected stack:
+The only convergence and recovery command. Two independent parts:
 
-1. Fetch the remote; resolve current trunk.
-2. Evaluate the landed predicate for each tracked change on the selected stack, bottom-up;
-   the result is a landed prefix.
-3. If a landed change's local commit differs from its submitted baseline (unpublished local
-   edits), stop and report before any history rewrite; converging would discard those edits.
+The **landed-review sweep**, over all saved tracking: a review whose exact submitted
+commit is an ancestor of trunk, whose current local commit still equals that baseline,
+and whose PR head still identifies it is finalized (an open PR is retargeted to trunk and
+closed until GitHub no longer reports it open), its tracking retired, and its safe local
+managed bookmarks forgotten. A candidate with local edits since its last submit, a moved
+PR head, or a PR closed without merging is reported with a runnable next step and
+skipped — never mutated, never blocking the rest of the sweep. Preserved-ID landings
+leave their remote review branches for `cleanup`; the rewritten-ID retirement below
+deletes cleanup-eligible remote branches under lease as part of its proof.
+
+Then, **for the selected stack**:
+
+1. Fetch the remote; resolve current trunk (this precedes the sweep in practice).
+2. Identify the merged prefix from live PR state, bottom-up.
+3. If a merged change's local commit differs from its submitted baseline (unpublished
+   local edits), stop and report before any history rewrite; converging would discard
+   those edits.
 4. Rebase the first surviving change onto trunk; `jj` rewrites descendants.
-5. Resubmit the surviving tracked changes (ordinary `submit` semantics).
-6. Retire landed tracking records; forget local managed bookmarks still pointing at landed
-   commits; delete cleanup-eligible remote managed branches under lease.
-7. Anything uncertain — a moved branch, an ambiguous link, an unexpected PR state — is
-   reported with a next step and skipped, never blocking the rest of the convergence.
+5. Resubmit the surviving tracked changes (ordinary `submit` semantics); retire the
+   proven-inert merged records.
 
 `sync` is rerunnable and consults no saved operation state. Running it when there is nothing
 to do reports that and exits cleanly. It is the documented answer to every interruption:
@@ -124,8 +140,9 @@ Transports:
 - **Direct push.** Refresh any stale review branches (idempotent re-push), then move remote
   trunk to the prefix head with one leased push. A protected-branch rejection proves trunk
   did not move and is reported as a hard error with a classified hint. After the push,
-  finalize each planned PR bottom-up (retarget base to trunk, confirm GitHub reports it
-  merged); finalization is idempotent and equally reachable from `sync`.
+  finalize each planned PR bottom-up (retarget base to trunk, close, confirm GitHub no
+  longer reports it open); finalization is idempotent and equally reachable from `sync`.
+  Only planned reviews can block the exit code; sweep stragglers are advisory.
 - **Merge.** For each planned PR bottom-up, request the GitHub merge with the resolved
   method; stop fail-closed at the first PR GitHub refuses. The accepted prefix then converges
   through the `sync` routine. Method resolution: `--merge-method`, else the repository's
@@ -133,7 +150,9 @@ Transports:
   All three methods are supported; squash is the general case.
 
 Interruption at any point — including loss of a merge acknowledgement — is recovered by
-observation: the next `land` or `sync` fetches, applies the landed predicate, and converges.
+observation: the next `land` or `sync` fetches, applies the landed predicate, and
+converges. `land` runs the sweep on every non-dry-run invocation, so even a run whose
+plan is blocked converges the leftovers of an earlier interruption.
 
 **Message-only intent note.** Before its first non-idempotent remote mutation, `land` may
 write a small note (operation, PR numbers) whose sole purpose is messaging: the next command
@@ -143,9 +162,11 @@ the tool says, never what it does. It is never validated against the world, neve
 mutation, and is deleted after the next convergence pass. If a proposed change would make
 execution read this note, the change is wrong or the note must be removed.
 
-**Lazy convergence.** `land` and `sync` converge the selected stack only. Other tracked
-stacks sharing a landed ancestor are untouched; `view`/`list` may cheaply report "ancestor
-merged — run `sync`" for them, and their own next command performs the same convergence.
+**Lazy convergence.** `land` and `sync` rebase and resubmit the selected stack only.
+Other tracked stacks sharing a landed ancestor are untouched; `view`/`list` may cheaply
+report "ancestor merged — run `sync`" for them, and their own next command performs the
+same convergence. The landed-review sweep is the one global pass: landed is landed,
+regardless of selection.
 
 ### cleanup
 

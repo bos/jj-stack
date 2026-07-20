@@ -246,6 +246,12 @@ class FakeGithubRepository:
         *,
         branch_heads: dict[str, str] | None = None,
     ) -> None:
+        # Known idealization: this fake marks an open PR merged whenever its
+        # head commits become reachable from its base, on every refresh. Real
+        # GitHub's merged-detection may not fire on a base retarget after a
+        # direct push, so the closed-but-not-merged finalization family is
+        # untestable against this fake. See the live-experiment entry in
+        # docs/internals/backlog.md before relying on merged-detection here.
         if pull_request.state != "open":
             return
         if branch_heads is None:

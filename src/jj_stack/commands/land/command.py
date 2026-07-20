@@ -333,6 +333,7 @@ async def _stream_land_async(
                 remote_name=remote.name,
                 selected_revset=status_result.selected_revset,
                 trunk_branch=trunk_branch,
+                trunk_commit_id=prepared.stack.trunk.commit_id,
                 trunk_subject=prepared.stack.trunk.subject,
             )
 

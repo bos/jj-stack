@@ -148,7 +148,7 @@ def sweep_landed_reviews(*, context: CommandContext, dry_run: bool) -> None:
         state_store=context.state_store,
         trunk_commit_id=trunk_commit_id,
     )
-    _render_sweep_results(dry_run=dry_run, results=results)
+    render_sweep_results(dry_run=dry_run, results=results)
 
 
 def report_land_note(*, clear: bool, context: CommandContext) -> None:
@@ -172,7 +172,7 @@ def report_land_note(*, clear: bool, context: CommandContext) -> None:
         context.state_store.save(state.model_copy(update={"land_note": None}))
 
 
-def _render_sweep_results(
+def render_sweep_results(
     *,
     dry_run: bool,
     results: tuple[LandedReviewResult, ...],

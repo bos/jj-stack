@@ -732,21 +732,59 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
         modules=_LAND_CLIENT_MODULES,
     )
 
-    sync_exit_code = run_main(repo, config_path, "sync")
-    sync_run = capsys.readouterr()
-    sync_rendered = _squash_whitespace(sync_run.out)
+    # Rerunning land converges the leftover even though its own plan is
+    # blocked at the unapproved PR #3 — the help-text promise.
+    rerun_exit_code = run_main(repo, config_path, "land")
+    rerun = capsys.readouterr()
+    rerun_rendered = _squash_whitespace(rerun.out)
 
-    assert sync_exit_code == 0, (sync_run.out, sync_run.err)
-    assert "Finalizing PR #1" in sync_rendered
-    assert "remove tracking for landed" in sync_rendered
+    assert "Finalizing PR #1" in rerun_rendered
+    assert "remove tracking for landed" in rerun_rendered
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[3].base_ref == "main"
-    finished_state = state_store.load()
-    assert landed_change_ids[0] not in finished_state.changes
+    interrupted_state = state_store.load()
+    assert landed_change_ids[0] not in interrupted_state.changes
     bookmark_states = JjClient(repo).list_bookmark_states(saved_bookmarks)
     for bookmark in saved_bookmarks:
         assert bookmark_states[bookmark].local_target is None
+    # Its own plan stayed blocked (PR #3 unapproved), so the exit code says so.
+    assert rerun_exit_code == 1
+
+    # sync then refreshes the surviving stack normally.
+    sync_exit_code = run_main(repo, config_path, "sync")
+    sync_run = capsys.readouterr()
+    assert sync_exit_code == 0, (sync_run.out, sync_run.err)
+    assert fake_repo.pull_requests[3].base_ref == "main"
+
+
+def test_sync_skips_merged_review_whose_pull_request_head_moved(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Even a merged PR is never torn down without proof its head is this review."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    commit_1 = stack.revisions[0].commit_id
+    commit_2 = stack.revisions[1].commit_id
+    change_id_1 = stack.revisions[0].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    bookmark_1 = state_store.load().changes[change_id_1].bookmark
+    assert bookmark_1 is not None
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-07-20T12:00:00Z"
+    update_remote_ref(fake_repo, branch="main", target=commit_1)
+    update_remote_ref(fake_repo, branch=bookmark_1, target=commit_2)
+
+    exit_code = run_main(repo, config_path, "sync")
+    captured = capsys.readouterr()
+    rendered = _squash_whitespace(captured.out)
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "head no longer matches" in rendered
+    assert change_id_1 in state_store.load().changes
 
 
 def test_sync_skips_landed_review_whose_pull_request_head_moved(
@@ -779,6 +817,148 @@ def test_sync_skips_landed_review_whose_pull_request_head_moved(
     assert "head no longer matches" in rendered
     assert fake_repo.pull_requests[1].state == "open"
     assert change_id_1 in state_store.load().changes
+
+
+def test_sweep_skips_landed_review_with_local_edits_since_submit(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A landed review whose change was edited locally is reported, never retired.
+
+    The dangerous variant: another workspace's direct push put the exact
+    submitted commit on trunk while its PR is still open, and the user edited
+    the change here before fetching. Convergence must not close that PR or
+    retire its tracking out from under the edits.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    change_id_1 = stack.revisions[0].change_id
+    commit_1 = stack.revisions[0].commit_id
+    state_store = ReviewStateStore.for_repo(repo)
+    # The exact submitted commit reaches trunk remotely (as an interrupted
+    # direct push from elsewhere would leave it); PR #1 stays open.
+    update_remote_ref(fake_repo, branch="main", target=commit_1)
+    # The user edits the change locally before fetching.
+    run_command(["jj", "describe", "-r", change_id_1, "-m", "feature 1 edited"], repo)
+
+    exit_code = run_main(repo, config_path, "sync")
+    captured = capsys.readouterr()
+    rendered = _squash_whitespace(captured.out + captured.err)
+
+    # The rebase pass blocks on the local edits, and the sweep independently
+    # skips the same review instead of closing its PR or retiring it.
+    assert exit_code == 1, (captured.out, captured.err)
+    assert "skip landed" in rendered
+    assert "does not resolve to one local revision" in rendered
+    # PR state is not a usable signal here: the fake auto-marks reachable
+    # heads merged (see its idealization note). The contract is that the
+    # sweep neither finalized nor retired the edited review.
+    assert change_id_1 in state_store.load().changes
+
+
+def test_land_with_clean_plan_is_not_blocked_by_an_unrelated_straggler(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A skipped straggler from an earlier interruption is advisory, not blocking."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1)
+    stack = JjClient(repo).discover_review_stack()
+    change_id_1 = stack.revisions[0].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    bookmark_1 = state_store.load().changes[change_id_1].bookmark
+    assert bookmark_1 is not None
+
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnFinalizeLoadClient(GithubClient):
+        async def get_pull_request(self, *, pull_number):
+            if pull_number == 1:
+                raise GithubClientError("Simulated finalization failure", status_code=500)
+            return await super().get_pull_request(pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=_LAND_CLIENT_MODULES,
+        client_type=FailOnFinalizeLoadClient,
+    )
+    assert run_main(repo, config_path, "land") == 1
+    capsys.readouterr()
+    assert change_id_1 in state_store.load().changes
+
+    # The straggler's PR is closed without merging (its commit is on trunk),
+    # a state the sweep reports and skips on every later run.
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=_LAND_CLIENT_MODULES,
+    )
+    fake_repo.pull_requests[1].state = "closed"
+    commit_file(repo, "feature 2", "feature-2.txt")
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+    approve_pull_requests(fake_repo, 2)
+
+    exit_code = run_main(repo, config_path, "land")
+    captured = capsys.readouterr()
+    rendered = _squash_whitespace(captured.out)
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "closed without merge" in rendered
+    assert fake_repo.pull_requests[2].state == "closed"
+    assert fake_repo.pull_requests[2].merged_at is not None
+    # The straggler is untouched and still tracked for inspection.
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.pull_requests[1].merged_at is None
+    assert change_id_1 in state_store.load().changes
+
+
+def test_sweep_tolerates_comment_deletion_failure_and_still_retires(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Comment teardown failures leave residue; they never abort convergence."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    change_id_1 = stack.revisions[0].change_id
+    commit_1 = stack.revisions[0].commit_id
+    state_store = ReviewStateStore.for_repo(repo)
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-07-20T12:00:00Z"
+    update_remote_ref(fake_repo, branch="main", target=commit_1)
+
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class FailOnCommentDeleteClient(GithubClient):
+        async def delete_issue_comment(self, *, comment_id):
+            raise GithubClientError("Simulated comment outage", status_code=500)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=_LAND_CLIENT_MODULES,
+        client_type=FailOnCommentDeleteClient,
+    )
+
+    exit_code = run_main(repo, config_path, "sync")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "remove tracking for landed" in _squash_whitespace(captured.out)
+    assert change_id_1 not in state_store.load().changes
 
 
 def test_sync_retires_review_merged_outside_the_tool_with_preserved_commit(

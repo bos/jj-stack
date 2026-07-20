@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import jj_stack.console as console
 import jj_stack.ui as ui
+from jj_stack.commands.sync import render_sweep_results
 from jj_stack.errors import CliError, DriftError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.push_rejections import (
@@ -119,6 +120,7 @@ async def execute_land_plan(
     remote_name: str,
     selected_revset: str,
     trunk_branch: str,
+    trunk_commit_id: str,
     trunk_subject: str,
 ) -> LandResult:
     """Execute a non-dry-run land plan and return the actions that were applied."""
@@ -147,6 +149,14 @@ async def execute_land_plan(
         )
 
     if plan.blocked:
+        # A blocked plan is still a convergence opportunity: leftovers from an
+        # interrupted land finalize here, so rerunning land keeps its promise.
+        await _converge_landed_leftovers(
+            execution=execution,
+            github_client=github_client,
+            trunk_branch=trunk_branch,
+            trunk_commit_id=trunk_commit_id,
+        )
         return land_result(
             actions=plan.planned_actions(),
             applied=False,
@@ -195,12 +205,18 @@ async def execute_land_plan(
                 "mutation": "refresh_review_branches",
             },
         )
-    dismissed_action = await _check_post_resubmit_approvals(
-        bypass_readiness=execution.bypass_readiness,
-        github_client=github_client,
-        resubmit_revisions=plan.resubmit_revisions,
-        trunk_branch=trunk_branch,
-    )
+    try:
+        dismissed_action = await _check_post_resubmit_approvals(
+            bypass_readiness=execution.bypass_readiness,
+            github_client=github_client,
+            resubmit_revisions=plan.resubmit_revisions,
+            trunk_branch=trunk_branch,
+        )
+    except CliError:
+        # The recheck is a read; failing it leaves only the idempotent branch
+        # refresh behind, so there is nothing for a note to explain.
+        _clear_land_note(state_store)
+        raise
     if dismissed_action is not None:
         actions.append(dismissed_action)
         _clear_land_note(state_store)
@@ -220,6 +236,12 @@ async def execute_land_plan(
             state_store=state_store,
             trunk_branch=trunk_branch,
         )
+    await _converge_landed_leftovers(
+        execution=execution,
+        github_client=github_client,
+        trunk_branch=trunk_branch,
+        trunk_commit_id=trunk_commit_id,
+    )
     return await _execute_github_merges(
         actions=actions,
         github_client=github_client,
@@ -284,11 +306,7 @@ async def _execute_direct_push(
 
     subjects = {revision.change_id: revision.subject for revision in plan.planned_revisions}
     sweep_results = await finalize_landed_reviews(
-        bookmark_policy=BookmarkCleanupPolicy(
-            cleanup_bookmarks=execution.cleanup_bookmarks,
-            cleanup_user_bookmarks=execution.context.config.cleanup_user_bookmarks,
-            prefix=execution.context.config.bookmark_prefix,
-        ),
+        bookmark_policy=_sweep_bookmark_policy(execution),
         github_client=github_client,
         jj_client=client,
         labels=subjects,
@@ -297,11 +315,25 @@ async def _execute_direct_push(
         trunk_branch=trunk_branch,
         trunk_commit_id=trunk_revision.commit_id,
     )
+    # Only the reviews this land was asked to land can block its exit code;
+    # a straggler from an earlier interruption is advisory residue.
+    planned_change_ids = {revision.change_id for revision in plan.planned_revisions}
+    planned_results = tuple(
+        result
+        for result in sweep_results
+        if result.candidate.change_id in planned_change_ids
+    )
+    straggler_results = tuple(
+        result
+        for result in sweep_results
+        if result.candidate.change_id not in planned_change_ids
+    )
     sweep_actions, any_skipped = render_landed_sweep_actions(
-        results=sweep_results,
+        results=planned_results,
         subjects=subjects,
     )
     actions.extend(sweep_actions)
+    render_sweep_results(dry_run=False, results=straggler_results)
     _clear_land_note(state_store)
     journal.append(
         "completed",
@@ -392,6 +424,34 @@ async def _execute_github_merges(
         blocked=blocked,
         merged_change_ids=tuple(merged_change_ids),
     )
+
+
+def _sweep_bookmark_policy(execution: LandExecutionInputs) -> BookmarkCleanupPolicy:
+    return BookmarkCleanupPolicy(
+        cleanup_bookmarks=execution.cleanup_bookmarks,
+        cleanup_user_bookmarks=execution.context.config.cleanup_user_bookmarks,
+        prefix=execution.context.config.bookmark_prefix,
+    )
+
+
+async def _converge_landed_leftovers(
+    *,
+    execution: LandExecutionInputs,
+    github_client: GithubClient,
+    trunk_branch: str,
+    trunk_commit_id: str,
+) -> None:
+    """Finalize and retire reviews an earlier interrupted land left behind."""
+
+    results = await finalize_landed_reviews(
+        bookmark_policy=_sweep_bookmark_policy(execution),
+        github_client=github_client,
+        jj_client=execution.context.jj_client,
+        state_store=execution.context.state_store,
+        trunk_branch=trunk_branch,
+        trunk_commit_id=trunk_commit_id,
+    )
+    render_sweep_results(dry_run=False, results=results)
 
 
 def render_landed_sweep_actions(

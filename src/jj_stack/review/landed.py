@@ -26,11 +26,10 @@ from jj_stack.github.client import GithubClient, GithubClientError, build_github
 from jj_stack.github.resolution import GithubRepoAddress, resolve_trunk_branch
 from jj_stack.github.stack_comments import (
     StackCommentKind,
-    delete_stack_comment,
     is_navigation_comment,
     is_overview_comment,
 )
-from jj_stack.jj.client import JjClient
+from jj_stack.jj.client import JjClient, JjCommandError, UnsupportedStackError
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewState
@@ -196,6 +195,16 @@ async def _finalize_landed_review(
     label: str | None = None,
     trunk_branch: str,
 ) -> LandedReviewResult:
+    # The same rule the rebase path applies: a landed change carrying local
+    # edits since its last submit is stopped and reported, never retired, so
+    # the linkage its own recovery guidance depends on stays intact.
+    local_edits = _local_edits_skip_reason(candidate=candidate, jj_client=jj_client)
+    if local_edits is not None:
+        return LandedReviewResult(
+            candidate=candidate,
+            outcome="skipped",
+            skip_reason=local_edits,
+        )
     if not dry_run:
         rendered_label = (
             t"{label} {ui.change_id(candidate.change_id)}"
@@ -217,19 +226,22 @@ async def _finalize_landed_review(
         )
     pull_request = pull_request.normalize_state()
 
-    if pull_request.state == "open":
-        head_mismatch = landed_pull_request_head_mismatch(
-            bookmark=candidate.bookmark,
-            commit_id=candidate.commit_id,
-            github_client=github_client,
-            pull_request=pull_request,
+    # Every mutation path — finalizing an open PR or tearing down a merged
+    # one — requires the head to still identify this exact review.
+    head_mismatch = landed_pull_request_head_mismatch(
+        bookmark=candidate.bookmark,
+        commit_id=candidate.commit_id,
+        github_client=github_client,
+        pull_request=pull_request,
+    )
+    if head_mismatch is not None:
+        return LandedReviewResult(
+            candidate=candidate,
+            outcome="skipped",
+            skip_reason=head_mismatch,
         )
-        if head_mismatch is not None:
-            return LandedReviewResult(
-                candidate=candidate,
-                outcome="skipped",
-                skip_reason=head_mismatch,
-            )
+
+    if pull_request.state == "open":
         if not dry_run:
             try:
                 pull_request = await finalize_landed_pull_request(
@@ -259,12 +271,13 @@ async def _finalize_landed_review(
     elif pull_request.state == "merged":
         outcome = "already_merged"
     else:
+        retire_command = f"unstack --cleanup --pull-request {candidate.pull_request_number}"
         return LandedReviewResult(
             candidate=candidate,
             outcome="skipped",
-            skip_reason=t"PR #{candidate.pull_request_number} is closed without merge; "
-            t"its commit is on {ui.revset('trunk()')} but the review needs an explicit "
-            t"decision",
+            skip_reason=t"PR #{candidate.pull_request_number} is closed without merge "
+            t"although its commit is on {ui.revset('trunk()')}; reopen it, or retire "
+            t"the review with {ui.cmd(retire_command)}",
         )
 
     forget_bookmark = _may_forget_landed_bookmark(
@@ -307,6 +320,26 @@ def _may_forget_landed_bookmark(
             expected_commit_id=candidate.commit_id,
         )
         == "safe"
+    )
+
+
+def _local_edits_skip_reason(
+    *,
+    candidate: LandedReviewCandidate,
+    jj_client: JjClient,
+) -> Message | None:
+    try:
+        live_commit_id = jj_client.resolve_revision(candidate.change_id).commit_id
+    except (JjCommandError, UnsupportedStackError):
+        return (
+            t"{ui.change_id(candidate.change_id)} does not resolve to one local "
+            t"revision; inspect it with {ui.cmd('view --fetch')}"
+        )
+    if live_commit_id == candidate.commit_id:
+        return None
+    return (
+        t"{ui.change_id(candidate.change_id)} has local edits since its last "
+        t"submit; push a new version first or rebase manually"
     )
 
 
@@ -408,14 +441,19 @@ async def delete_landed_stack_comments(
     except GithubClientError:
         return
     for kind in ("navigation", "overview"):
-        for comment in comments:
-            if not _comment_matches_kind(body=comment.body, kind=kind):
-                continue
-            await delete_stack_comment(
-                comment_id=comment.id,
-                github_client=github_client,
-                kind=kind,
-            )
+        matches = [
+            comment
+            for comment in comments
+            if _comment_matches_kind(body=comment.body, kind=kind)
+        ]
+        # The same multiplicity stance as submit and cleanup: more than one
+        # marker match is ambiguous, so leave the residue for inspection.
+        if len(matches) != 1:
+            continue
+        try:
+            await github_client.delete_issue_comment(comment_id=matches[0].id)
+        except GithubClientError:
+            continue
 
 
 def _comment_matches_kind(*, body: str, kind: StackCommentKind) -> bool:
