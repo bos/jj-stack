@@ -25,7 +25,7 @@ def _pull_request(*, draft: bool = False, state: str = "open") -> GithubPullRequ
 
 def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(pr_number=1, pr_state="open"),
+        cached_change=CachedChange(pr_number=1),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
@@ -45,7 +45,7 @@ def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
 
 def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(pr_number=1, pr_state="open"),
+        cached_change=CachedChange(pr_number=1),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
@@ -124,7 +124,7 @@ def test_classifier_marks_single_remote_target_that_does_not_match_commit() -> N
 
 def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(pr_number=1, pr_state="open"),
+        cached_change=CachedChange(pr_number=1),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(

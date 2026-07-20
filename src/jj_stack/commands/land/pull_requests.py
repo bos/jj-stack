@@ -6,7 +6,6 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import CachedChange
 from jj_stack.review.landed import (
     delete_landed_stack_comments,
     landed_pull_request_head_mismatch,
@@ -17,7 +16,6 @@ from .models import LandAction, LandRevision
 
 async def merge_landed_pull_request(
     *,
-    cached_change: CachedChange | None,
     github_client: GithubClient,
     landed_revision: LandRevision,
     merge_method: str,
@@ -105,8 +103,8 @@ async def merge_landed_pull_request(
             status="blocked",
         )
     await delete_landed_stack_comments(
-        cached_change=cached_change,
         github_client=github_client,
+        pull_request_number=pull_request.number,
     )
     return pull_request, None
 

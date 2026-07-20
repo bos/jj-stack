@@ -79,9 +79,6 @@ class OrphanedRecord:
     cached_change: CachedChange
 
 
-_OPEN_PR_STATES_FOR_ORPHANS = frozenset({"open", "draft"})
-
-
 def classify_review_status_revision(
     revision: ReviewStatusRevision,
 ) -> ReviewChangeStatus:
@@ -137,8 +134,7 @@ def classify_review_change(
         ),
         saved_review_identity=cached_change is not None and cached_change.has_review_identity,
         saved_pull_request_identity=(
-            cached_change is not None
-            and (cached_change.pr_number is not None or cached_change.pr_url is not None)
+            cached_change is not None and cached_change.pr_number is not None
         ),
     )
 
@@ -178,21 +174,14 @@ def classify_saved_review_change(
 
 
 def is_open_pr_record(cached_change: CachedChange) -> bool:
-    """Whether a saved record's PR is still open from tracking state alone.
+    """Whether a saved record may still name an open PR, from tracking alone.
 
-    This is a tracking-state-only predicate: actively linked state, a saved PR
-    number, and `pr_state` either open/draft or unknown. Callers that care
-    whether the change has left live stacks must filter for that separately.
+    Identity-only tracking cannot know live PR lifecycle, so every actively
+    linked record with a PR number counts; live inspection decides what to do
+    with it. Retired reviews are unlinked or removed, so they never count.
     """
 
-    if _link_state(cached_change) != "active":
-        return False
-    if cached_change.pr_number is None:
-        return False
-    pr_state = cached_change.pr_state
-    if pr_state is None:
-        return True
-    return pr_state in _OPEN_PR_STATES_FOR_ORPHANS
+    return _link_state(cached_change) == "active" and cached_change.pr_number is not None
 
 
 def enumerate_orphaned_records(

@@ -122,7 +122,6 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
     landed_state = state_store.load()
     assert change_id_1 not in landed_state.changes
     assert change_id_2 not in landed_state.changes
-    assert landed_state.changes[change_id_3].pr_state == "closed"
     state_dir = resolve_state_path(repo).parent
     journal_events = tuple(
         event for event in read_operation_log(state_dir) if event.operation == "land"

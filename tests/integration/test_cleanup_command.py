@@ -27,13 +27,12 @@ from .submit_command_helpers import (
 )
 
 
-def _mark_pr_state(
+def _mark_unlinked(
     state_store: ReviewStateStore,
     *,
     change_id: str,
-    pr_state: str,
 ) -> None:
-    """Set the saved pr_state for a single tracked change."""
+    """Unlink a single tracked change, as closing its review through the tool does."""
 
     state = state_store.load()
     state_store.save(
@@ -42,7 +41,7 @@ def _mark_pr_state(
                 "changes": {
                     **state.changes,
                     change_id: state.changes[change_id].model_copy(
-                        update={"pr_state": pr_state}
+                        update={"link_state": "unlinked"}
                     ),
                 }
             }
@@ -326,6 +325,14 @@ def test_cleanup_restack_preserves_immutable_merged_ancestor(
     assert JjClient(repo).resolve_revision(bottom_change_id).change_id == bottom_change_id
     assert bottom_change_id in state_store.load().changes
 
+    assert (
+        run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1") == 0
+    )
+    capsys.readouterr()
+    # The retired review is unlinked so its artifacts stay findable; a later
+    # cleanup pass removes the record itself.
+    assert state_store.load().changes[bottom_change_id].is_unlinked
+
     assert run_main(repo, config_path, "cleanup") == 0
     capsys.readouterr()
     assert bottom_change_id not in state_store.load().changes
@@ -376,7 +383,7 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
 
-    _mark_pr_state(state_store, change_id=change_id, pr_state="closed")
+    _mark_unlinked(state_store, change_id=change_id)
     run_command(["jj", "abandon", change_id], repo)
     run_command(["jj", "bookmark", "delete", bookmark], repo)
 
@@ -496,7 +503,7 @@ def test_cleanup_previews_and_applies_local_bookmark_forget_with_remote_delete_w
     state_store = ReviewStateStore.for_repo(repo)
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
-    _mark_pr_state(state_store, change_id=change_id, pr_state="closed")
+    _mark_unlinked(state_store, change_id=change_id)
 
     run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
     monkeypatch.setattr(
@@ -566,7 +573,7 @@ def test_cleanup_can_delete_user_bookmarks_when_configured(
     capsys.readouterr()
     state_store = ReviewStateStore.for_repo(repo)
     [tracked_change_id] = list(state_store.load().changes.keys())
-    _mark_pr_state(state_store, change_id=tracked_change_id, pr_state="merged")
+    _mark_unlinked(state_store, change_id=tracked_change_id)
 
     monkeypatch.setattr(
         "jj_stack.commands.cleanup.command._stale_change_reasons",
@@ -605,7 +612,7 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
     bookmark = initial_state.changes[change_id].bookmark
     assert bookmark is not None
 
-    _mark_pr_state(state_store, change_id=change_id, pr_state="closed")
+    _mark_unlinked(state_store, change_id=change_id)
     run_command(["jj", "abandon", change_id], repo)
     run_command(["jj", "bookmark", "delete", bookmark], repo)
 
@@ -673,7 +680,6 @@ def test_cleanup_apply_preserves_managed_stack_comment_for_closed_pull_request(
     assert exit_code == 0
     assert "stack navigation comment" not in captured.out
     assert refreshed_state.changes[change_id].pr_number == 2
-    assert refreshed_state.changes[change_id].navigation_comment_id == 2
     assert len(issue_comments(fake_repo, 2)) == 1
 
 
@@ -690,7 +696,7 @@ def test_cleanup_logs_begin_after_failed_apply(
     state_store = ReviewStateStore.for_repo(repo)
     bookmark = state_store.load().changes[change_id].bookmark
     assert bookmark is not None
-    _mark_pr_state(state_store, change_id=change_id, pr_state="closed")
+    _mark_unlinked(state_store, change_id=change_id)
 
     run_command(["jj", "abandon", change_id], repo)
     run_command(["jj", "bookmark", "delete", bookmark], repo)

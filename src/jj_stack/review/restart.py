@@ -90,18 +90,9 @@ def restart_state_for_stack(
 
 
 def cached_change_needs_restart(cached_change: CachedChange) -> bool:
-    return any(
-        value is not None
-        for value in (
-            cached_change.last_submitted_commit_id,
-            cached_change.pr_is_draft,
-            cached_change.pr_number,
-            cached_change.pr_review_decision,
-            cached_change.pr_state,
-            cached_change.pr_url,
-            cached_change.navigation_comment_id,
-            cached_change.overview_comment_id,
-        )
+    return (
+        cached_change.last_submitted_commit_id is not None
+        or cached_change.pr_number is not None
     )
 
 
@@ -113,7 +104,7 @@ def restart_cached_change(cached_change: CachedChange, *, new_bookmark: str) -> 
             "last_submitted_commit_id": None,
             "link_state": "active",
         }
-    ).with_cleared_pr_identity().with_cleared_comments()
+    ).with_cleared_pr_identity()
 
 
 def fresh_bookmark_name(

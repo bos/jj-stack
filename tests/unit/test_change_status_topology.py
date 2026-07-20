@@ -45,8 +45,6 @@ def _tracked(
         bookmark="review/example",
         last_submitted_commit_id=commit_id,
         pr_number=pr_number,
-        pr_state="open",
-        pr_url="https://example.test/pull/1",
     )
 
 
@@ -84,8 +82,6 @@ def test_submitted_state_disagreement_skips_records_without_saved_baseline() -> 
             "change-a": CachedChange(
                 bookmark="review/example",
                 pr_number=1,
-                pr_state="open",
-                pr_url="https://example.test/pull/1",
             )
         }
     )
@@ -112,7 +108,6 @@ def test_submitted_state_disagreement_skips_unlinked_records_even_when_stale() -
 def _orphan_record(
     *,
     pr_number: int | None = 42,
-    pr_state: str | None,
     link_state: LinkState = "active",
     bookmark: str | None = "review/example",
 ) -> CachedChange:
@@ -120,8 +115,6 @@ def _orphan_record(
         bookmark=bookmark,
         link_state=link_state,
         pr_number=pr_number,
-        pr_state=pr_state,
-        pr_url="https://example.test/pull/42",
     )
 
 
@@ -131,7 +124,7 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
     state = ReviewState(
         changes={
             "change-live": _tracked(commit_id="commit-change-live", pr_number=1),
-            "change-orphan": _orphan_record(pr_state="open"),
+            "change-orphan": _orphan_record(),
         }
     )
 
@@ -140,9 +133,9 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
     assert tuple(orphan.change_id for orphan in orphans) == ("change-orphan",)
 
 
-def test_enumerate_orphaned_records_treats_unknown_pr_state_as_still_open() -> None:
+def test_enumerate_orphaned_records_reports_every_active_record_with_a_pr() -> None:
     state = ReviewState(
-        changes={"change-orphan": _orphan_record(pr_state=None)}
+        changes={"change-orphan": _orphan_record()}
     )
 
     orphans = enumerate_orphaned_records(state, ())
@@ -153,19 +146,8 @@ def test_enumerate_orphaned_records_treats_unknown_pr_state_as_still_open() -> N
 def test_enumerate_orphaned_records_skips_records_without_pr_number() -> None:
     state = ReviewState(
         changes={
-            "change-open": _orphan_record(pr_number=None, pr_state="open"),
-            "change-unknown": _orphan_record(pr_number=None, pr_state=None),
-        }
-    )
-
-    assert enumerate_orphaned_records(state, ()) == ()
-
-
-def test_enumerate_orphaned_records_skips_records_with_closed_or_merged_pr() -> None:
-    state = ReviewState(
-        changes={
-            "change-closed": _orphan_record(pr_state="closed"),
-            "change-merged": _orphan_record(pr_state="merged"),
+            "change-open": _orphan_record(pr_number=None),
+            "change-unknown": _orphan_record(pr_number=None),
         }
     )
 
@@ -175,7 +157,7 @@ def test_enumerate_orphaned_records_skips_records_with_closed_or_merged_pr() -> 
 def test_enumerate_orphaned_records_skips_unlinked_records() -> None:
     state = ReviewState(
         changes={
-            "change-detached": _orphan_record(pr_state="open", link_state="unlinked"),
+            "change-detached": _orphan_record(link_state="unlinked"),
         }
     )
 

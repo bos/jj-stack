@@ -17,7 +17,6 @@ from jj_stack.github.stack_comments import (
     stack_comment_marker,
 )
 from jj_stack.models.github import GithubIssueComment
-from jj_stack.models.review_state import CachedChange
 
 from .models import (
     GeneratedDescription,
@@ -51,14 +50,6 @@ async def sync_stack_comments(
     for revision in revisions:
         if revision.pull_request_number is None:
             continue
-        cached_change = (
-            run.state_changes.get(revision.change_id)
-            or run.state.changes.get(revision.change_id)
-        )
-        if cached_change is None:
-            if run.dry_run:
-                continue
-            raise AssertionError("Stack summary comments require a saved pull request link.")
         navigation_comment_body = None
         if has_navigation_comments:
             navigation_comment_body = _render_navigation_comment(
@@ -73,7 +64,6 @@ async def sync_stack_comments(
             )
         pending.append(
             PendingStackCommentSync(
-                cached_change=cached_change,
                 change_id=revision.change_id,
                 navigation_comment_body=navigation_comment_body,
                 overview_comment_body=overview_comment_body,
@@ -95,20 +85,6 @@ async def sync_stack_comments(
             raise CliError("Could not list stack comments") from error
 
     with console.progress(description="Syncing stack comments", total=len(pending)) as progress:
-
-        def handle_success(_index: int, result: tuple[str, CachedChange]) -> None:
-            change_id, updated_change = result
-            previous_change = run.state_changes.get(change_id) or run.state.changes.get(change_id)
-            if previous_change != updated_change:
-                run.state_changes[change_id] = updated_change
-                run.record_saved_state_update(
-                    after=updated_change,
-                    before=previous_change,
-                    change_id=change_id,
-                )
-                run.save_interim_state()
-            progress.advance()
-
         await run_bounded_tasks(
             concurrency=concurrency,
             items=tuple(pending),
@@ -118,7 +94,7 @@ async def sync_stack_comments(
                 pending_sync=pending_sync,
                 run=run,
             ),
-            on_success=handle_success,
+            on_success=lambda _index, _result: progress.advance(),
         )
 
 
@@ -128,9 +104,8 @@ async def _sync_stack_comment_task(
     github_client: GithubClient,
     pending_sync: PendingStackCommentSync,
     run: SubmitMutationRun,
-) -> tuple[str, CachedChange]:
-    navigation_comment = await _sync_managed_comment(
-        cached_comment_id=pending_sync.cached_change.navigation_comment_id,
+) -> None:
+    await _sync_managed_comment(
         comment_body=pending_sync.navigation_comment_body,
         comments=comments,
         github_client=github_client,
@@ -138,8 +113,7 @@ async def _sync_stack_comment_task(
         pull_request_number=pending_sync.pull_request_number,
         run=run,
     )
-    overview_comment = await _sync_managed_comment(
-        cached_comment_id=pending_sync.cached_change.overview_comment_id,
+    await _sync_managed_comment(
         comment_body=pending_sync.overview_comment_body,
         comments=comments,
         github_client=github_client,
@@ -147,20 +121,10 @@ async def _sync_stack_comment_task(
         pull_request_number=pending_sync.pull_request_number,
         run=run,
     )
-    updated_change = pending_sync.cached_change.model_copy(
-        update={
-            "navigation_comment_id": (
-                None if navigation_comment is None else navigation_comment.id
-            ),
-            "overview_comment_id": None if overview_comment is None else overview_comment.id,
-        }
-    )
-    return pending_sync.change_id, updated_change
 
 
 async def _sync_managed_comment(
     *,
-    cached_comment_id: int | None,
     comment_body: str | None,
     comments: tuple[GithubIssueComment, ...],
     github_client: GithubClient,
@@ -169,11 +133,9 @@ async def _sync_managed_comment(
     run: SubmitMutationRun,
 ) -> GithubIssueComment | None:
     dry_run = run.dry_run
-    existing_comment = _resolve_saved_managed_comment(
-        cached_comment_id=cached_comment_id,
+    existing_comment = _discover_managed_comment(
         comments=comments,
         kind=kind,
-        pull_request_number=pull_request_number,
     )
     if comment_body is None:
         if existing_comment is None:
@@ -203,35 +165,6 @@ async def _sync_managed_comment(
         github_client=github_client,
         kind=kind,
         pull_request_number=pull_request_number,
-    )
-
-
-def _resolve_saved_managed_comment(
-    *,
-    cached_comment_id: int | None,
-    comments: tuple[GithubIssueComment, ...],
-    kind: StackCommentKind,
-    pull_request_number: int,
-) -> GithubIssueComment | None:
-    if cached_comment_id is not None:
-        cached_comment = next(
-            (comment for comment in comments if comment.id == cached_comment_id),
-            None,
-        )
-        if cached_comment is not None:
-            if not _managed_comment_matches_kind(body=cached_comment.body, kind=kind):
-                raise CliError(
-                    t"Saved {stack_comment_label(kind)} #{cached_comment_id} for pull request "
-                    t"#{pull_request_number} does not belong to jj-stack.",
-                    hint=(
-                        t"Inspect the PR link with {ui.cmd('view --fetch')} or "
-                        t"delete the saved comment ID before submitting again."
-                    ),
-                )
-            return cached_comment
-    return _discover_managed_comment(
-        comments=comments,
-        kind=kind,
     )
 
 

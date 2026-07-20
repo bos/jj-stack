@@ -781,16 +781,8 @@ detaches one change from active PR tracking without touching GitHub.
 `unlink` is an advanced repair command, not the normal way to end a review. Its unit of
 intent mirrors `relink`: one change, identified from the local DAG.
 
-`unlink` clears the active link fields:
-
-- `pr_number`
-- `pr_url`
-- `pr_state`
-- `pr_review_decision`
-- `navigation_comment_id`
-- `overview_comment_id`
-
-It then writes a durable unlinked marker for the change. That marker matters because
+`unlink` clears the saved `pr_number` and writes a durable unlinked marker for the
+change. That marker matters because
 simply deleting the saved record would otherwise be reversed by later rediscovery.
 
 Unlinked state means:
@@ -845,15 +837,7 @@ wants to inspect or stage the tracking reset separately.
 previous PR tracking:
 
 - `last_submitted_commit_id`
-- `last_submitted_parent_change_id`
-- `last_submitted_stack_head_change_id`
-- `pr_is_draft`
 - `pr_number`
-- `pr_url`
-- `pr_state`
-- `pr_review_decision`
-- `navigation_comment_id`
-- `overview_comment_id`
 
 It does not mark the changes as unlinked. Instead it writes fresh managed review
 bookmark names that still end with each change's short change ID, so the next
@@ -1478,21 +1462,21 @@ Shape:
   "changes": {
     "<full-change-id>": {
       "bookmark": "review/fix-bookmark-resolution-ypvmkkuo",
-      "unlinked_at": "2026-03-22T12:34:56+00:00",
+      "bookmark_ownership": "managed",
       "link_state": "active",
       "pr_number": 123,
-      "pr_review_decision": "approved",
-      "pr_state": "open",
-      "pr_url": "https://github.com/org/repo/pull/123",
-      "navigation_comment_id": 456789,
-      "overview_comment_id": 456790,
-      "last_submitted_commit_id": "0123456789abcdef",
-      "last_submitted_parent_change_id": "zzzzzzzzzzzzzzzz",
-      "last_submitted_stack_head_change_id": "yyyyyyyyyyyyyyyy"
+      "last_submitted_commit_id": "0123456789abcdef"
     }
   }
 }
 ```
+
+The record is review identity plus the submitted baseline — nothing else. PR
+lifecycle, review decisions, and URLs are live observations fetched on demand;
+managed stack comments are rediscovered by their body markers; submitted
+topology is derived from the `jj` DAG. See
+[design-next.md](design-next.md) "Durable state" for the field-by-field
+rationale.
 
 Config goes under `[jj-stack]` in the standard `jj` config scopes
 (`jj config edit --user|--repo|--workspace`), for example:

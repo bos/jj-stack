@@ -1080,9 +1080,7 @@ def _format_status_summary(
         )
         review_decision = change_status.pr_review_decision
         if review_decision == "unknown" and lookup.review_decision_error is not None:
-            review_decision = (
-                "none" if cached_change is None else cached_change.pr_review_decision or "none"
-            )
+            review_decision = "none"
         if change_status.pr_draft is True:
             pass
         elif review_decision == "approved":
@@ -1158,24 +1156,8 @@ def _emit_lines(
 def _format_cached_pull_request_label(cached_change) -> str | None:
     if cached_change is None or cached_change.pr_number is None:
         return None
-
-    label = format_pull_request_label(
-        cached_change.pr_number,
-        is_draft=bool(cached_change.pr_is_draft) and cached_change.pr_state == "open",
-        prefix="saved ",
-    )
-    if cached_change.pr_state is None:
-        return label
-
-    details = [cached_change.pr_state]
-    if (
-        cached_change.pr_state == "open"
-        and not cached_change.pr_is_draft
-        and cached_change.pr_review_decision is not None
-    ):
-        _rd = cached_change.pr_review_decision
-        details.append("changes requested" if _rd == "changes_requested" else _rd)
-    return f"{label} ({', '.join(details)})"
+    # Identity-only tracking has no lifecycle to show; --fetch reports it live.
+    return format_pull_request_label(cached_change.pr_number, prefix="saved ")
 
 
 def _classified_revision_has_link_advisory(

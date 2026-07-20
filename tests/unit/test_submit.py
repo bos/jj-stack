@@ -392,7 +392,6 @@ def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
     cached_change = CachedChange(
         bookmark="review/foo",
         pr_number=17,
-        pr_url="https://github.test/octo-org/repo/pull/17",
     )
     with pytest.raises(
         CliError,

@@ -94,50 +94,42 @@ class ManagedCommentLookup:
 
 async def find_managed_comments(
     *,
-    cached_navigation_comment_id: int | None,
-    cached_overview_comment_id: int | None,
     github_client: GithubClient,
     pull_request_number: int,
 ) -> tuple[ManagedCommentLookup, ...]:
-    """Resolve managed stack comments for one PR via a single list call.
+    """Discover managed stack comments for one PR via a single list call.
 
-    Returns entries only for kinds that resolved to a delete target or were
-    blocked. Kinds with no cached id and no body-marker match are omitted.
+    Managed comments are identified by their body markers alone. Returns
+    entries only for kinds that resolved to a delete target or were blocked;
+    kinds with no body-marker match are omitted.
     """
 
-    cached_ids: dict[StackCommentKind, int | None] = {
-        "navigation": cached_navigation_comment_id,
-        "overview": cached_overview_comment_id,
-    }
+    kinds: tuple[StackCommentKind, ...] = ("navigation", "overview")
 
     try:
         comments = await github_client.list_issue_comments(
             issue_number=pull_request_number,
         )
     except GithubClientError as error:
-        if error.status_code != 404:
-            reason = error.user_facing_reason()
-            return tuple(
-                ManagedCommentLookup(
-                    kind=kind,
-                    blocked_reason=(
-                        f"cannot inspect {stack_comment_label(kind)}s for PR "
-                        f"#{pull_request_number}: {reason}"
-                    ),
-                )
-                for kind in cached_ids
+        if error.status_code == 404:
+            return ()
+        reason = error.user_facing_reason()
+        return tuple(
+            ManagedCommentLookup(
+                kind=kind,
+                blocked_reason=(
+                    f"cannot inspect {stack_comment_label(kind)}s for PR "
+                    f"#{pull_request_number}: {reason}"
+                ),
             )
-        return await _resolve_cached_managed_comments_after_404(
-            cached_ids=cached_ids,
-            github_client=github_client,
+            for kind in kinds
         )
 
     return tuple(
         entry
-        for kind, cached_comment_id in cached_ids.items()
+        for kind in kinds
         for entry in (
             _resolve_managed_comment_from_listed(
-                cached_comment_id=cached_comment_id,
                 comments=comments,
                 kind=kind,
                 pull_request_number=pull_request_number,
@@ -149,28 +141,10 @@ async def find_managed_comments(
 
 def _resolve_managed_comment_from_listed(
     *,
-    cached_comment_id: int | None,
     comments: tuple[GithubIssueComment, ...],
     kind: StackCommentKind,
     pull_request_number: int,
 ) -> ManagedCommentLookup | None:
-    if cached_comment_id is not None:
-        cached_comment = next(
-            (comment for comment in comments if comment.id == cached_comment_id),
-            None,
-        )
-        if cached_comment is not None:
-            if not comment_matches_kind(body=cached_comment.body, kind=kind):
-                return ManagedCommentLookup(
-                    kind=kind,
-                    blocked_reason=(
-                        f"cannot delete saved {stack_comment_label(kind)} "
-                        f"#{cached_comment_id} because it does not belong to "
-                        "jj-stack"
-                    ),
-                )
-            return ManagedCommentLookup(kind=kind, comment=cached_comment)
-
     matching_comments = [
         comment for comment in comments if comment_matches_kind(body=comment.body, kind=kind)
     ]
@@ -185,49 +159,6 @@ def _resolve_managed_comment_from_listed(
     if not matching_comments:
         return None
     return ManagedCommentLookup(kind=kind, comment=matching_comments[0])
-
-
-async def _resolve_cached_managed_comments_after_404(
-    *,
-    cached_ids: dict[StackCommentKind, int | None],
-    github_client: GithubClient,
-) -> tuple[ManagedCommentLookup, ...]:
-    entries: list[ManagedCommentLookup] = []
-    for kind, cached_comment_id in cached_ids.items():
-        if cached_comment_id is None:
-            continue
-        try:
-            cached_comment = await github_client.get_issue_comment(
-                comment_id=cached_comment_id,
-            )
-        except GithubClientError as cached_comment_error:
-            if cached_comment_error.status_code == 404:
-                continue
-            entries.append(
-                ManagedCommentLookup(
-                    kind=kind,
-                    blocked_reason=(
-                        f"cannot inspect saved {stack_comment_label(kind)} "
-                        f"#{cached_comment_id}: "
-                        f"{cached_comment_error.user_facing_reason()}"
-                    ),
-                )
-            )
-            continue
-        if not comment_matches_kind(body=cached_comment.body, kind=kind):
-            entries.append(
-                ManagedCommentLookup(
-                    kind=kind,
-                    blocked_reason=(
-                        f"cannot delete saved {stack_comment_label(kind)} "
-                        f"#{cached_comment_id} because it does not belong to "
-                        "jj-stack"
-                    ),
-                )
-            )
-            continue
-        entries.append(ManagedCommentLookup(kind=kind, comment=cached_comment))
-    return tuple(entries)
 
 
 def emit_close_actions(
@@ -296,19 +227,11 @@ def _action_presentation(
     return ("  ?", None, None)
 
 
-def retire_cached_change(
-    cached_change: CachedChange,
-    *,
-    pr_state: str,
-) -> CachedChange:
-    # Closed changes remain "active" unless they were explicitly unlinked. The saved
-    # jj-stack data still needs the last known review identity so later cleanup or
-    # status refresh can reason about the already-closed stack without reattaching it.
-    updates = {
-        "pr_review_decision": None,
-        "pr_state": pr_state,
-    }
-    return cached_change.model_copy(update=updates)
+def retire_cached_change(cached_change: CachedChange) -> CachedChange:
+    # A closed review keeps its identity but is unlinked: list stops reporting
+    # it as an open orphan, submit will not silently reattach it, and cleanup
+    # can still locate its artifacts. relink re-adopts it explicitly.
+    return cached_change.model_copy(update={"link_state": "unlinked"})
 
 
 def plan_bookmark_cleanup(

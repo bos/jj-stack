@@ -1047,7 +1047,6 @@ def _durable_tracking_identity(state: ReviewState, change_id: str) -> tuple[obje
         cached.last_submitted_commit_id,
         cached.link_state,
         cached.pr_number,
-        cached.pr_url,
     )
 
 

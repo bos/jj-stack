@@ -18,7 +18,6 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_stack,
     run_command,
 )
-from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     configure_submit_environment,
     issue_comments,
@@ -52,10 +51,7 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     assert exit_code == 0
     assert "Applied close actions:" in captured.out
     assert fake_repo.pull_requests[1].state == "closed"
-    assert refreshed_state.changes[change_id].pr_state == "closed"
-    assert refreshed_state.changes[change_id].pr_review_decision is None
-    assert refreshed_state.changes[change_id].navigation_comment_id is None
-    assert refreshed_state.changes[change_id].overview_comment_id is None
+    assert refreshed_state.changes[change_id].is_unlinked
     assert issue_comments(fake_repo, 1) == []
 
 
@@ -170,8 +166,8 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     assert f"Using PR #{first_pr_number} -> {first_change_id}" in captured.out
     assert fake_repo.pull_requests[first_pr_number].state == "closed"
     assert fake_repo.pull_requests[second_pr_number].state == "open"
-    assert refreshed_state.changes[first_change_id].pr_state == "closed"
-    assert refreshed_state.changes[second_change_id].pr_state == "open"
+    assert refreshed_state.changes[first_change_id].is_unlinked
+    assert not refreshed_state.changes[second_change_id].is_unlinked
 
 
 def test_unstack_cleanup_pull_request_without_saved_record_reports_open_pr_not_tracked(
@@ -396,9 +392,7 @@ def test_unstack_apply_cleanup_deletes_owned_bookmarks_and_comments(
     assert "Applied close actions:" in captured.out
     assert "stop review tracking for feature 1" in normalized_output
     assert fake_repo.pull_requests[1].state == "closed"
-    assert refreshed_state.changes[change_id].pr_state == "closed"
-    assert refreshed_state.changes[change_id].navigation_comment_id is None
-    assert refreshed_state.changes[change_id].overview_comment_id is None
+    assert refreshed_state.changes[change_id].is_unlinked
     assert issue_comments(fake_repo, 1) == []
     assert bookmark not in remote_refs(fake_repo.git_dir)
     assert JjClient(repo).get_bookmark_state(bookmark).local_target is None
@@ -955,7 +949,7 @@ def test_unstack_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
     assert "Close blocked:" in captured.out
     assert "already points to a different revision" in combined_output
     assert "mark orphaned change" in captured.out
-    assert refreshed_state.changes[change_id].pr_state == "closed"
+    assert refreshed_state.changes[change_id].is_unlinked
 
 
 def test_unstack_cleanup_pull_request_dry_run_previews_orphan_close(
@@ -1116,8 +1110,8 @@ def test_unstack_apply_rerun_is_idempotent(
     assert first_exit_code == 0
     assert second_exit_code == 0
     assert "No close actions were needed for the selected stack." in captured.out
-    assert first_state.changes[change_id].pr_state == "closed"
-    assert second_state.changes[change_id].pr_state == "closed"
+    assert first_state.changes[change_id].is_unlinked
+    assert second_state.changes[change_id].is_unlinked
     assert 1 not in fake_repo.pull_requests
 
 
@@ -1145,9 +1139,7 @@ def test_unstack_apply_cleanup_rerun_completes_after_prior_close_when_pr_is_miss
 
     assert exit_code == 0
     assert "Applied close actions:" in captured.out
-    assert refreshed_state.changes[change_id].pr_state == "closed"
-    assert refreshed_state.changes[change_id].navigation_comment_id is None
-    assert refreshed_state.changes[change_id].overview_comment_id is None
+    assert refreshed_state.changes[change_id].is_unlinked
     assert issue_comments(fake_repo, 1) == []
     assert bookmark not in remote_refs(fake_repo.git_dir)
     assert JjClient(repo).get_bookmark_state(bookmark).local_target is None
@@ -1211,56 +1203,12 @@ def test_unstack_apply_checkpoints_prior_progress_before_later_block(
     assert first_exit_code == 1
     assert second_exit_code == 1
     assert "Close blocked:" in first_run.out
-    assert checkpointed_state.changes[first_change_id].pr_state == "open"
-    assert checkpointed_state.changes[head_change_id].pr_state == "closed"
+    assert not checkpointed_state.changes[first_change_id].is_unlinked
+    assert checkpointed_state.changes[head_change_id].is_unlinked
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
     assert "previous close was interrupted" not in second_run.out
     assert f"close PR #{head_pr_number}" not in second_run.out
-
-
-def test_unstack_apply_cleanup_rechecks_cached_comment_ownership_when_pr_is_missing(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-
-    assert run_main(repo, config_path, "unstack", change_id) == 0
-    capsys.readouterr()
-
-    manual_comment = fake_repo.create_issue_comment(body="manual note", issue_number=1)
-    state = state_store.load()
-    cached_change = state.changes[change_id]
-    state_store.save(
-        state.model_copy(
-            update={
-                "changes": {
-                    **state.changes,
-                    change_id: cached_change.model_copy(
-                        update={"navigation_comment_id": manual_comment.id}
-                    ),
-                }
-            }
-        )
-    )
-    del fake_repo.pull_requests[1]
-
-    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert_output_contains(
-        captured.out,
-        "cannot delete saved stack navigation comment",
-        "does not belong to jj-stack",
-    )
-    assert manual_comment in issue_comments(fake_repo, 1)
 
 
 def test_unstack_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(

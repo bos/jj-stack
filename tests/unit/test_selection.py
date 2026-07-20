@@ -58,8 +58,6 @@ def test_resolve_orphaned_pull_request_uses_supported_stack_membership() -> None
             "change-1": CachedChange(
                 bookmark="review/change-1",
                 pr_number=17,
-                pr_state="open",
-                pr_url="https://example.test/pull/17",
             )
         }
     )

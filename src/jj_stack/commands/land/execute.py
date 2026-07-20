@@ -333,7 +333,6 @@ async def _execute_github_merges(
 ) -> LandResult:
     if merge_method is None:
         raise AssertionError("The merge transport requires a resolved merge method.")
-    state = state_store.load()
     merged_change_ids: list[str] = []
     blocked_action: LandAction | None = None
     for landed_revision in plan.planned_revisions:
@@ -351,7 +350,6 @@ async def _execute_github_merges(
             },
         )
         final_pull_request, blocked = await merge_landed_pull_request(
-            cached_change=state.changes.get(landed_revision.change_id),
             github_client=github_client,
             landed_revision=landed_revision,
             merge_method=merge_method,

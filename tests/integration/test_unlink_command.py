@@ -41,11 +41,6 @@ def test_unlink_detaches_change_and_preserves_local_bookmark(
     assert unlinked_change.bookmark == bookmark
     assert unlinked_change.link_state == "unlinked"
     assert unlinked_change.pr_number is None
-    assert unlinked_change.pr_review_decision is None
-    assert unlinked_change.pr_state is None
-    assert unlinked_change.pr_url is None
-    assert unlinked_change.navigation_comment_id is None
-    assert unlinked_change.overview_comment_id is None
     assert JjClient(repo).get_bookmark_state(bookmark).local_target is not None
     assert fake_repo.pull_requests[1].state == "open"
     assert issue_comments(fake_repo, 1) == []

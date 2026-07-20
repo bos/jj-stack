@@ -242,14 +242,12 @@ def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
     )
 
 
-def test_view_summary_uses_cached_review_decision_when_live_decision_lookup_fails() -> None:
+def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() -> None:
     revision = _status_revision(
         bookmark="review/feature-7-abcdefgh",
         cached_change=CachedChange(
             bookmark="review/feature-7-abcdefgh",
             pr_number=7,
-            pr_review_decision="approved",
-            pr_state="open",
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
@@ -281,7 +279,10 @@ def test_view_summary_uses_cached_review_decision_when_live_decision_lookup_fail
     )
 
     normalized_lines = " ".join(lines)
-    assert "PR #7 approved" in normalized_lines
+    # Identity-only tracking has no saved decision to fall back on; a failed
+    # live lookup must not claim one.
+    assert "PR #7" in normalized_lines
+    assert "approved" not in normalized_lines
 
 
 def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
@@ -290,7 +291,6 @@ def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
         cached_change=CachedChange(
             bookmark="review/feature-1-abcdefgh",
             pr_number=1,
-            pr_state="open",
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
@@ -317,7 +317,7 @@ def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
     )
 
     normalized_lines = " ".join(lines)
-    assert "saved PR #1 (open), pull request lookup failed" in normalized_lines
+    assert "saved PR #1, pull request lookup failed" in normalized_lines
 
 
 def test_view_summary_truncates_middle_of_long_unsubmitted_sections() -> None:

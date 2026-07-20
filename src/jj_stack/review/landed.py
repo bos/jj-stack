@@ -24,11 +24,16 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.resolution import GithubRepoAddress, resolve_trunk_branch
-from jj_stack.github.stack_comments import StackCommentKind, delete_stack_comment
+from jj_stack.github.stack_comments import (
+    StackCommentKind,
+    delete_stack_comment,
+    is_navigation_comment,
+    is_overview_comment,
+)
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewState
 from jj_stack.review.bookmarks import (
     bookmark_cleanup_allowed,
     classify_local_bookmark_forget,
@@ -161,7 +166,6 @@ async def finalize_landed_reviews(
             bookmark_state=bookmark_states.get(
                 candidate.bookmark, BookmarkState(name=candidate.bookmark)
             ),
-            cached_change=state.changes[candidate.change_id],
             candidate=candidate,
             dry_run=dry_run,
             github_client=github_client,
@@ -185,7 +189,6 @@ async def _finalize_landed_review(
     *,
     bookmark_policy: BookmarkCleanupPolicy,
     bookmark_state: BookmarkState,
-    cached_change: CachedChange,
     candidate: LandedReviewCandidate,
     dry_run: bool,
     github_client: GithubClient,
@@ -273,8 +276,8 @@ async def _finalize_landed_review(
         if forget_bookmark:
             jj_client.forget_bookmarks((candidate.bookmark,))
         await delete_landed_stack_comments(
-            cached_change=cached_change,
             github_client=github_client,
+            pull_request_number=candidate.pull_request_number,
         )
     return LandedReviewResult(
         candidate=candidate,
@@ -388,23 +391,37 @@ async def finalize_landed_pull_request(
 
 async def delete_landed_stack_comments(
     *,
-    cached_change: CachedChange | None,
     github_client: GithubClient,
+    pull_request_number: int,
 ) -> None:
-    if cached_change is None:
-        return
-    comment_targets: tuple[tuple[int | None, StackCommentKind], ...] = (
-        (cached_change.navigation_comment_id, "navigation"),
-        (cached_change.overview_comment_id, "overview"),
-    )
-    for comment_id, kind in comment_targets:
-        if comment_id is None:
-            continue
-        await delete_stack_comment(
-            comment_id=comment_id,
-            github_client=github_client,
-            kind=kind,
+    """Delete this PR's managed stack comments, discovered by their markers.
+
+    Comment identity is never cached: managed comments carry body markers and
+    are rediscovered on demand. Failures leave harmless residue for the next
+    convergence or cleanup pass rather than failing the landing.
+    """
+
+    try:
+        comments = await github_client.list_issue_comments(
+            issue_number=pull_request_number,
         )
+    except GithubClientError:
+        return
+    for kind in ("navigation", "overview"):
+        for comment in comments:
+            if not _comment_matches_kind(body=comment.body, kind=kind):
+                continue
+            await delete_stack_comment(
+                comment_id=comment.id,
+                github_client=github_client,
+                kind=kind,
+            )
+
+
+def _comment_matches_kind(*, body: str, kind: StackCommentKind) -> bool:
+    if kind == "navigation":
+        return is_navigation_comment(body)
+    return is_overview_comment(body)
 
 
 def run_landed_review_sweep(

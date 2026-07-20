@@ -49,12 +49,7 @@ def review_pull_request_json(
 def cached_pull_request_json(cached_change: CachedChange | None) -> dict[str, object] | None:
     if cached_change is None:
         return None
-    payload = _json_object(
-        {
-            "number": cached_change.pr_number,
-            "url": cached_change.pr_url,
-        }
-    )
+    payload = _json_object({"number": cached_change.pr_number})
     return payload or None
 
 

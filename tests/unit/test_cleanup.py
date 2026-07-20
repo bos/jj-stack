@@ -78,13 +78,11 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
                 "change-1": CachedChange(
                     bookmark="review/feature-1",
                     pr_number=1,
-                    pr_state="closed",
-                    navigation_comment_id=12,
                 ).model_dump(exclude_none=True),
                 "change-stale": CachedChange(
                     bookmark="review/stale",
+                    link_state="unlinked",
                     pr_number=99,
-                    pr_state="closed",
                 ).model_dump(exclude_none=True),
             }
         }
@@ -164,15 +162,7 @@ def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
         action.kind == "stack navigation comment" and action.status == "applied"
         for action in result.actions
     )
-    assert saved_states[-1].changes["change-1"].navigation_comment_id is None
     assert "change-stale" not in saved_states[-1].changes
-    # The local pass commits before stack-comment cleanup begins, so a snapshot exists
-    # with the stale tracking already dropped but the managed comment still recorded.
-    assert any(
-        "change-stale" not in snapshot.changes
-        and snapshot.changes["change-1"].navigation_comment_id == 12
-        for snapshot in saved_states
-    )
 
 
 def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_deletes(
@@ -272,8 +262,6 @@ def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks
             bookmark_state=BookmarkState(name="review/feature"),
             cached_change=CachedChange(
                 link_state="unlinked",
-                navigation_comment_id=12,
-                overview_comment_id=13,
                 pr_number=1,
             ),
             github_client=cast(GithubClient, FakeGithubClient()),
@@ -485,7 +473,7 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
                     stack=SimpleNamespace(trunk=SimpleNamespace(commit_id="trunk-commit")),
                     status_revisions=(
                         SimpleNamespace(
-                            cached_change=CachedChange(pr_number=1, pr_state="open"),
+                            cached_change=CachedChange(pr_number=1),
                             revision=SimpleNamespace(
                                 change_id="first-survivor-change",
                                 commit_id="first-survivor-commit",
@@ -493,7 +481,7 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
                             ),
                         ),
                         SimpleNamespace(
-                            cached_change=CachedChange(pr_number=2, pr_state="merged"),
+                            cached_change=CachedChange(pr_number=2),
                             revision=SimpleNamespace(
                                 change_id="merged-change",
                                 commit_id="merged-commit",
@@ -501,7 +489,7 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
                             ),
                         ),
                         SimpleNamespace(
-                            cached_change=CachedChange(pr_number=3, pr_state="open"),
+                            cached_change=CachedChange(pr_number=3),
                             revision=SimpleNamespace(
                                 change_id="second-survivor-change",
                                 commit_id="second-survivor-commit",
@@ -553,7 +541,6 @@ def _merged_ancestor_retirement_plan(
         bookmark="review/merged-aaaaaaaa",
         last_submitted_commit_id="merged-commit",
         pr_number=1,
-        pr_state="merged",
     )
     merged_revision = ReviewStatusRevision(
         bookmark="review/merged-aaaaaaaa",

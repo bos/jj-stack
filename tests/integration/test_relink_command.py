@@ -51,10 +51,6 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
     assert "Relinked PR #1" in captured.out
     assert relinked_state.changes[change_id].bookmark == manual_bookmark
     assert relinked_state.changes[change_id].pr_number == 1
-    assert relinked_state.changes[change_id].pr_state == "open"
-    assert relinked_state.changes[change_id].pr_url == (
-        "https://github.test/octo-org/stacked-review/pull/1"
-    )
 
     # The relink journal must persist the saved-state update before mutating the
     # local bookmark and record completion last, so an interrupted relink is
@@ -237,4 +233,3 @@ def test_relink_clears_unlinked_state(
     assert "Relinked PR #1" in captured.out
     assert relinked_change.link_state == "active"
     assert relinked_change.pr_number == 1
-    assert relinked_change.pr_state == "open"

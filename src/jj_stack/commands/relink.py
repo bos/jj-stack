@@ -156,11 +156,8 @@ async def _run_relink_async(
                 "last_submitted_commit_id": remote_commit_id,
                 "link_state": "active",
                 "pr_number": pull_request.number,
-                "pr_review_decision": None,
-                "pr_state": pull_request.state,
-                "pr_url": pull_request.html_url,
             }
-        ).with_cleared_comments()
+        )
         next_state = state.model_copy(
             update={
                 "changes": {

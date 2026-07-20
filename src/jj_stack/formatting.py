@@ -56,7 +56,7 @@ def format_status_annotation(annotation: str) -> str:
 def format_pull_request_label(
     pull_request_number: int,
     *,
-    is_draft: bool,
+    is_draft: bool = False,
     prefix: str = "",
 ) -> str:
     """Render a pull request label for CLI output."""

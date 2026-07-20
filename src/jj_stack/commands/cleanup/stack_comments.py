@@ -100,7 +100,6 @@ async def _apply_stack_comment_cleanup_action(
     record_action: Callable[[CleanupAction], None],
     saver: _CleanupSaver,
 ) -> None:
-    applied_comments = False
     targeted_actions = comment_plan.actions[: len(comment_plan.comments)]
     for action, (comment_id, kind) in zip(
         targeted_actions,
@@ -123,13 +122,10 @@ async def _apply_stack_comment_cleanup_action(
                     raise CliError(
                         f"Could not delete {stack_comment_label(kind)} #{comment_id}"
                     ) from error
-            applied_comments = True
             comment_action = replace(action, status="applied")
         record_action(comment_action)
     for action in comment_plan.actions[len(targeted_actions) :]:
         record_action(action)
-    if applied_comments and change_id in next_changes:
-        next_changes[change_id] = next_changes[change_id].with_cleared_comments()
     saver.save_if_changed(next_changes)
 
 
@@ -169,8 +165,6 @@ async def _plan_stack_comment_cleanup(
             return None
 
     lookups = await _find_managed_comments(
-        cached_navigation_comment_id=cached_change.navigation_comment_id,
-        cached_overview_comment_id=cached_change.overview_comment_id,
         github_client=github_client,
         pull_request_number=pull_request_number,
     )
@@ -274,10 +268,8 @@ def _stack_comment_cleanup_eligibility(
 
     Stack comments may be deleted only when the PR no longer represents a live linked
     stack. Inspecting needs a locatable PR (a saved number, or the bookmark head for an
-    unlinked change) plus evidence worth checking: the change is unlinked, its live PR
-    head may have drifted off the tracked bookmark, or stale tracking still carries
-    cached comment ids. A stale change whose only lead is its bookmark first needs the
-    remote branch confirmed absent ("needs-remote-check").
+    unlinked change). A stale change first needs the remote branch confirmed absent
+    ("needs-remote-check") before its comments are worth a live inspection.
     """
 
     if cached_change.is_unlinked:
@@ -286,16 +278,6 @@ def _stack_comment_cleanup_eligibility(
         return "inspect"
     if cached_change.pr_number is None:
         return "skip"
-    has_cached_comment_ids = (
-        cached_change.navigation_comment_id is not None
-        or cached_change.overview_comment_id is not None
-    )
-    if cached_change.bookmark is None and not has_cached_comment_ids:
-        return "skip"
     if stale_reason is None:
-        return "inspect"
-    if cached_change.pr_state in {"closed", "merged"}:
-        return "skip"
-    if has_cached_comment_ids:
         return "inspect"
     return "needs-remote-check"

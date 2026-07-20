@@ -156,14 +156,17 @@ def plan_merged_ancestor_retirements(
             )
             continue
         if local_revision.immutable:
+            retire_command = (
+                f"unstack --cleanup --pull-request {revision.pull_request_number()}"
+            )
             preservation_actions.append(
                 CleanupAction(
                     kind="abandon",
                     status="skipped",
                     body=(
                         t"preserve merged {_revision_label_template(revision)}: the local "
-                        t"commit is immutable; run {ui.cmd('cleanup')} to retire its "
-                        t"tracking"
+                        t"commit is immutable; run {ui.cmd(retire_command)} to retire "
+                        t"its review"
                     ),
                 )
             )

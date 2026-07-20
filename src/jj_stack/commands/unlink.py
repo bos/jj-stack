@@ -162,7 +162,7 @@ async def _run_unlink_async(
             ),
             "link_state": "unlinked",
         }
-    ).with_cleared_pr_identity().with_cleared_comments()
+    ).with_cleared_pr_identity()
     next_state = state.model_copy(
         update={
             "changes": {

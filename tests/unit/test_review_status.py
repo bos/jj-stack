@@ -207,8 +207,6 @@ def test_locked_status_cache_update_merges_with_current_saved_state(tmp_path) ->
             "aaaaaaaaaaaa": CachedChange(
                 bookmark="review/feature-1-aaaaaaaa",
                 pr_number=1,
-                pr_review_decision="changes_requested",
-                pr_state="open",
             )
         }
     )
@@ -217,13 +215,10 @@ def test_locked_status_cache_update_merges_with_current_saved_state(tmp_path) ->
             "aaaaaaaaaaaa": CachedChange(
                 bookmark="review/feature-1-aaaaaaaa",
                 pr_number=1,
-                pr_review_decision="changes_requested",
-                pr_state="open",
             ),
             "bbbbbbbbbbbb": CachedChange(
                 bookmark="review/other-bbbbbbbb",
                 pr_number=99,
-                pr_state="open",
             ),
         }
     )
@@ -272,7 +267,7 @@ def test_locked_status_cache_update_merges_with_current_saved_state(tmp_path) ->
 
     saved = state_store.load()
     assert skipped is False
-    assert saved.changes["aaaaaaaaaaaa"].pr_review_decision == "approved"
+    assert saved.changes["aaaaaaaaaaaa"].pr_number is not None
     assert saved.changes["bbbbbbbbbbbb"].pr_number == 99
 
 

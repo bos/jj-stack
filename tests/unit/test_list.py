@@ -205,7 +205,6 @@ def test_repo_inspection_limits_bookmark_listing_to_tracked_bookmarks() -> None:
             tracked.change_id: CachedChange(
                 bookmark="review/feature-1-abcdef01",
                 pr_number=1,
-                pr_state="open",
             ),
         }
     )

@@ -899,7 +899,11 @@ async def _process_close_revision(
     revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
 
     if change_status.pr_lifecycle == "missing":
-        if cached_change is not None and cached_change.pr_state == "open":
+        if (
+            cached_change is not None
+            and not cached_change.is_unlinked
+            and cached_change.pr_number is not None
+        ):
             run.record_action(
                 CloseAction(
                     kind="close",
@@ -921,7 +925,6 @@ async def _process_close_revision(
             ).saved_review_identity
         ):
             return False
-        pr_state = cached_change.pr_state or "closed"
     else:
         if lookup is None:
             return False
@@ -932,22 +935,6 @@ async def _process_close_revision(
                 bookmark=revision.bookmark,
                 bookmark_ownership=bookmark_ownership_for_source(revision.bookmark_source),
                 pr_number=lookup.pull_request.number,
-                pr_state=lookup.pull_request.state,
-                pr_url=lookup.pull_request.html_url,
-                navigation_comment_id=(
-                    revision.managed_comments_lookup.navigation_comment.id
-                    if revision.managed_comments_lookup is not None
-                    and revision.managed_comments_lookup.state == "resolved"
-                    and revision.managed_comments_lookup.navigation_comment is not None
-                    else None
-                ),
-                overview_comment_id=(
-                    revision.managed_comments_lookup.overview_comment.id
-                    if revision.managed_comments_lookup is not None
-                    and revision.managed_comments_lookup.state == "resolved"
-                    and revision.managed_comments_lookup.overview_comment is not None
-                    else None
-                ),
             )
         if change_status.pr_lifecycle == "open" and lookup.pull_request is not None:
             pull_request_number = lookup.pull_request.number
@@ -967,20 +954,13 @@ async def _process_close_revision(
                     await run.github_client.close_pull_request(
                         pull_number=pull_request_number,
                     )
-            pr_state = "closed"
         elif change_status.pr_lifecycle in {"closed", "merged"}:
-            github_merged = (
-                lookup.pull_request is not None and change_status.pr_lifecycle == "merged"
-            )
-            pr_state = (
-                "merged" if github_merged or cached_change.pr_state == "merged" else "closed"
-            )
+            pass
         else:
             return False
 
     updated_change = _record_retired_cached_change(
         cached_change=cached_change,
-        pr_state=pr_state,
         revision=revision,
         revision_label=revision_label,
         run=run,
@@ -1004,12 +984,11 @@ async def _process_close_revision(
 def _record_retired_cached_change(
     *,
     cached_change: CachedChange,
-    pr_state: str,
     revision: ReviewStatusRevision,
     revision_label: CloseActionBody,
     run: _CloseMutationRun,
 ) -> CachedChange:
-    updated_change = _retire_cached_change(cached_change, pr_state=pr_state)
+    updated_change = _retire_cached_change(cached_change)
     if updated_change != cached_change:
         run.next_changes[revision.change_id] = updated_change
         run.record_action(
@@ -1056,12 +1035,9 @@ async def _cleanup_revision(
         return
 
     lookups = await _find_managed_comments(
-        cached_navigation_comment_id=cached_change.navigation_comment_id,
-        cached_overview_comment_id=cached_change.overview_comment_id,
         github_client=run.github_client,
         pull_request_number=cached_change.pr_number,
     )
-    cleared_comment = False
     for lookup in lookups:
         if lookup.blocked_reason is not None:
             run.record_action(
@@ -1074,7 +1050,6 @@ async def _cleanup_revision(
             return
         if lookup.comment is None:
             continue
-        cleared_comment = True
         run.record_action(
             CloseAction(
                 kind=stack_comment_label(lookup.kind),
@@ -1097,9 +1072,3 @@ async def _cleanup_revision(
                     comment_id=lookup.comment.id,
                 )
 
-    if (
-        cached_change.navigation_comment_id is not None
-        or cached_change.overview_comment_id is not None
-        or cleared_comment
-    ):
-        run.next_changes[revision.change_id] = cached_change.with_cleared_comments()

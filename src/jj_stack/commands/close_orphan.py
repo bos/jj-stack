@@ -366,10 +366,7 @@ def _retire_blocked_orphan_close_tracking(
     if inspection is None or inspection.state != "closed":
         return
 
-    updated_change = _retire_cached_change(
-        cached_change,
-        pr_state=inspection.pull_request.state,
-    )
+    updated_change = _retire_cached_change(cached_change)
     if updated_change == cached_change:
         return
 
@@ -478,8 +475,6 @@ async def _preflight_orphaned_comment_cleanup(
     recorder: ActionRecorder[CloseAction],
 ) -> tuple[_ResolvedOrphanedComment, ...]:
     lookups = await find_managed_comments(
-        cached_navigation_comment_id=cached_change.navigation_comment_id,
-        cached_overview_comment_id=cached_change.overview_comment_id,
         github_client=github_client,
         pull_request_number=pull_request_number,
     )

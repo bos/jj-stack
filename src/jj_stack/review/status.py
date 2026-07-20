@@ -740,51 +740,13 @@ def _persist_status_cache_updates(
                 if updated_change is None:
                     raise AssertionError("Pull request lookup must create cached state.")
                 pull_request = pull_request_lookup.pull_request
-                # Keep the saved review decision when the live lookup failed to
-                # resolve one.
-                if pull_request_lookup.review_decision_error is None:
-                    review_decision = pull_request_lookup.review_decision
-                else:
-                    review_decision = (
-                        None if cached_change is None else cached_change.pr_review_decision
-                    )
                 updated_change = updated_change.model_copy(
                     update={
                         "bookmark": revision.bookmark,
                         "bookmark_ownership": bookmark_ownership_for_source(
                             revision.bookmark_source
                         ),
-                        "pr_is_draft": pull_request.is_draft,
                         "pr_number": pull_request.number,
-                        "pr_review_decision": review_decision,
-                        "pr_state": pull_request.state,
-                        "pr_url": pull_request.html_url,
-                    }
-                )
-                if change_status.pr_lifecycle != "open":
-                    updated_change = updated_change.with_cleared_comments()
-        managed_comments_lookup = revision.managed_comments_lookup
-        if managed_comments_lookup is not None:
-            if updated_change is None:
-                updated_change = CachedChange(
-                    bookmark=revision.bookmark,
-                    bookmark_ownership=bookmark_ownership_for_source(
-                        revision.bookmark_source
-                    ),
-                )
-            if managed_comments_lookup.state == "resolved":
-                updated_change = updated_change.model_copy(
-                    update={
-                        "navigation_comment_id": (
-                            None
-                            if managed_comments_lookup.navigation_comment is None
-                            else managed_comments_lookup.navigation_comment.id
-                        ),
-                        "overview_comment_id": (
-                            None
-                            if managed_comments_lookup.overview_comment is None
-                            else managed_comments_lookup.overview_comment.id
-                        ),
                     }
                 )
         if updated_change is not None and updated_change != cached_change:

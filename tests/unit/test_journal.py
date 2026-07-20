@@ -22,7 +22,7 @@ def test_operation_journal_appends_jsonl_events(tmp_path: Path) -> None:
     journal.append(
         "saved_state_update",
         {
-            "after": CachedChange(pr_number=1, pr_state="merged"),
+            "after": CachedChange(pr_number=1),
             "before": None,
             "change_id": "change-1",
         },
@@ -74,18 +74,18 @@ def test_operation_journal_records_saved_state_updates(tmp_path: Path) -> None:
         options={},
         resolved_scope={},
     )
-    unchanged = CachedChange(pr_number=2, pr_state="open")
+    unchanged = CachedChange(pr_number=2)
 
     journal.record_saved_state_updates(
         before={
-            "change-a": CachedChange(pr_number=1, pr_state="open"),
+            "change-a": CachedChange(pr_number=1),
             "change-b": unchanged,
-            "change-c": CachedChange(pr_number=3, pr_state="closed"),
+            "change-c": CachedChange(pr_number=3),
         },
         after={
-            "change-a": CachedChange(pr_number=1, pr_state="closed"),
+            "change-a": CachedChange(pr_number=1, link_state="unlinked"),
             "change-b": unchanged,
-            "change-d": CachedChange(pr_number=4, pr_state="open"),
+            "change-d": CachedChange(pr_number=4),
         },
     )
 
@@ -98,8 +98,8 @@ def test_operation_journal_records_saved_state_updates(tmp_path: Path) -> None:
         "change-c",
         "change-d",
     ]
-    assert events[0].data["before"]["pr_state"] == "open"
-    assert events[0].data["after"]["pr_state"] == "closed"
+    assert events[0].data["before"]["link_state"] == "active"
+    assert events[0].data["after"]["link_state"] == "unlinked"
     assert events[1].data["before"]["pr_number"] == 3
     assert events[1].data["after"] is None
     assert events[2].data["before"] is None

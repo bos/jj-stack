@@ -416,7 +416,7 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
     assert "GitHub unavailable for octo-org/stacked-review:" in normalized_err
     assert "repo not found or inaccessible - check GITHUB_TOKEN or gh auth" in normalized_err
     assert "documentation_url" not in captured.out
-    assert "saved PR #1 (open)" in captured.out
+    assert "saved PR #1" in captured.out
 
 
 def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
@@ -528,10 +528,6 @@ def test_view_fetch_surfaces_unlinked_state_without_repopulating_link(
     assert "unlinked PR #1" in captured.out
     assert unlinked_change.link_state == "unlinked"
     assert unlinked_change.pr_number is None
-    assert unlinked_change.pr_state is None
-    assert unlinked_change.pr_url is None
-    assert unlinked_change.navigation_comment_id is None
-    assert unlinked_change.overview_comment_id is None
 
 
 def test_view_reports_unsubmitted_after_state_loss(
@@ -592,7 +588,7 @@ def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
     assert "saved PR #1" not in captured.out
 
 
-def test_view_preserves_cached_pull_request_metadata_when_github_reports_missing(
+def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -605,8 +601,6 @@ def test_view_preserves_cached_pull_request_metadata_when_github_reports_missing
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
     assert initial_state.changes[change_id].pr_number == 1
-    assert initial_state.changes[change_id].navigation_comment_id is None
-    assert initial_state.changes[change_id].overview_comment_id is None
 
     del fake_repo.pull_requests[1]
 
@@ -620,13 +614,6 @@ def test_view_preserves_cached_pull_request_metadata_when_github_reports_missing
     assert_output_contains(captured.out, "jj-stack submit --restart")
     assert change_id in captured.out
     assert refreshed_state.changes[change_id].pr_number == 1
-    assert refreshed_state.changes[change_id].pr_state == "open"
-    assert (
-        refreshed_state.changes[change_id].pr_url
-        == "https://github.test/octo-org/stacked-review/pull/1"
-    )
-    assert refreshed_state.changes[change_id].navigation_comment_id is None
-    assert refreshed_state.changes[change_id].overview_comment_id is None
 
 
 def test_view_reports_merged_pull_request_state(
@@ -645,9 +632,7 @@ def test_view_reports_merged_pull_request_state(
 
     exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()
-    refreshed_state = state_store.load()
+    state_store.load()
 
     assert exit_code == 0
     assert "PR #1 merged into main, cleanup needed" in captured.out
-    assert refreshed_state.changes[change_id].pr_state == "merged"
-    assert refreshed_state.changes[change_id].pr_review_decision is None

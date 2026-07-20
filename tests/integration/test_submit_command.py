@@ -107,7 +107,10 @@ def test_submit_projects_review_bookmarks_to_selected_remote(
     stack = JjClient(repo).discover_review_stack()
     state = ReviewStateStore.for_repo(repo).load()
     first_bookmark = state.changes[stack.revisions[0].change_id].bookmark
-    top_pr_url = state.changes[stack.revisions[-1].change_id].pr_url
+    top_pr_url = fake_repo.pull_requests[2].to_payload(
+        repository=fake_repo,
+        web_origin="https://github.test",
+    )["html_url"]
 
     assert exit_code == 0
     assert (
@@ -126,14 +129,6 @@ def test_submit_projects_review_bookmarks_to_selected_remote(
         bookmark = cached_change.bookmark
         assert bookmark is not None
         assert cached_change.pr_number == index
-        assert cached_change.pr_state == "open"
-        assert (
-            cached_change.pr_url
-            == fake_repo.pull_requests[index].to_payload(
-                repository=fake_repo,
-                web_origin="https://github.test",
-            )["html_url"]
-        )
         assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
 
     assert fake_repo.pull_requests[1].base_ref == "main"
@@ -497,7 +492,6 @@ def test_submit_draft_new_does_not_convert_published_pull_requests_back_to_draft
     capsys.readouterr()
 
     assert not fake_repo.pull_requests[1].is_draft
-    assert ReviewStateStore.for_repo(repo).load().changes[change_id].pr_is_draft is False
 
 
 def test_submit_draft_all_converts_existing_published_stack_to_draft(
@@ -524,15 +518,12 @@ def test_submit_draft_all_converts_existing_published_stack_to_draft(
         stack.revisions[-1].change_id,
     )
     captured = capsys.readouterr()
-    refreshed_state = ReviewStateStore.for_repo(repo).load()
 
     assert exit_code == 0
     assert "draft PR #1 updated" in captured.out
     assert "draft PR #2 updated" in captured.out
     assert fake_repo.pull_requests[1].is_draft
     assert fake_repo.pull_requests[2].is_draft
-    assert refreshed_state.changes[stack.revisions[0].change_id].pr_is_draft is True
-    assert refreshed_state.changes[stack.revisions[1].change_id].pr_is_draft is True
 
 
 def test_submit_invalid_revset_reports_clean_error_without_mutation(
@@ -594,10 +585,7 @@ def test_submit_creates_navigation_comment_for_each_pull_request_in_multi_pr_sta
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    top_change_id = stack.revisions[-1].change_id
-    state = ReviewStateStore.for_repo(repo).load()
+    JjClient(repo).discover_review_stack()
 
     assert _overview_comments(fake_repo, 1) == []
     assert _overview_comments(fake_repo, 2) == []
@@ -613,10 +601,6 @@ def test_submit_creates_navigation_comment_for_each_pull_request_in_multi_pr_sta
     assert "[feature 1](https://github.test/octo-org/stacked-review/pull/1)" in (
         _navigation_comments(fake_repo, 2)[0].body
     )
-    assert state.changes[bottom_change_id].navigation_comment_id is not None
-    assert state.changes[bottom_change_id].overview_comment_id is None
-    assert state.changes[top_change_id].navigation_comment_id is not None
-    assert state.changes[top_change_id].overview_comment_id is None
 
 
 def test_submit_skips_stack_comment_for_single_commit_stack(
@@ -626,14 +610,9 @@ def test_submit_skips_stack_comment_for_single_commit_stack(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state = ReviewStateStore.for_repo(repo).load()
 
     assert issue_comments(fake_repo, 1) == []
     assert fake_repo.pull_requests[1].body == "feature 1"
-    assert state.changes[change_id].navigation_comment_id is None
-    assert state.changes[change_id].overview_comment_id is None
 
 
 def test_submit_persists_topology_pointers_for_each_change(
@@ -951,33 +930,16 @@ def test_submit_rediscovers_and_regenerates_stack_comments_when_cache_is_missing
 
     stack = JjClient(repo).discover_review_stack()
     top_change_id = stack.revisions[-1].change_id
-    bottom_change_id = stack.revisions[0].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    initial_comment_id = initial_state.changes[top_change_id].navigation_comment_id
-    assert initial_comment_id is not None
+    initial_comment_id = _navigation_comments(fake_repo, 2)[0].id
 
     _navigation_comments(fake_repo, 2)[0].body = (
         f"{STACK_NAVIGATION_COMMENT_MARKER}\nmanually edited"
-    )
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    top_change_id: initial_state.changes[top_change_id].model_copy(
-                        update={"navigation_comment_id": None}
-                    ),
-                }
-            }
-        )
     )
 
     run_command(["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed"], repo)
 
     assert run_main(repo, config_path, "submit", top_change_id) == 0
     capsys.readouterr()
-    refreshed_state = state_store.load()
 
     assert len(_navigation_comments(fake_repo, 2)) == 1
     assert _navigation_comments(fake_repo, 2)[0].id == initial_comment_id
@@ -986,8 +948,6 @@ def test_submit_rediscovers_and_regenerates_stack_comments_when_cache_is_missing
         _navigation_comments(fake_repo, 2)[0].body
     )
     assert len(_navigation_comments(fake_repo, 1)) == 1
-    assert refreshed_state.changes[top_change_id].navigation_comment_id == initial_comment_id
-    assert refreshed_state.changes[bottom_change_id].navigation_comment_id is not None
 
 
 def test_submit_moves_managed_stack_comment_to_new_selected_head(
@@ -997,13 +957,8 @@ def test_submit_moves_managed_stack_comment_to_new_selected_head(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    initial_stack = JjClient(repo).discover_review_stack()
-    old_top_change_id = initial_stack.revisions[-1].change_id
-    old_bottom_change_id = initial_stack.revisions[0].change_id
-    initial_state = ReviewStateStore.for_repo(repo).load()
-    initial_comment_id = initial_state.changes[old_top_change_id].navigation_comment_id
+    initial_comment_id = _navigation_comments(fake_repo, 2)[0].id
 
-    assert initial_comment_id is not None
     assert len(_navigation_comments(fake_repo, 1)) == 1
     assert len(_navigation_comments(fake_repo, 2)) == 1
 
@@ -1011,17 +966,10 @@ def test_submit_moves_managed_stack_comment_to_new_selected_head(
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    refreshed_stack = JjClient(repo).discover_review_stack()
-    refreshed_state = ReviewStateStore.for_repo(repo).load()
-    new_top_change_id = refreshed_stack.revisions[-1].change_id
-
     assert len(_navigation_comments(fake_repo, 1)) == 1
     assert len(_navigation_comments(fake_repo, 2)) == 1
     assert len(_navigation_comments(fake_repo, 3)) == 1
-    assert refreshed_state.changes[old_bottom_change_id].navigation_comment_id is not None
-    assert refreshed_state.changes[old_top_change_id].navigation_comment_id is not None
-    assert refreshed_state.changes[new_top_change_id].navigation_comment_id is not None
-    assert refreshed_state.changes[new_top_change_id].navigation_comment_id != initial_comment_id
+    assert _navigation_comments(fake_repo, 3)[0].id != initial_comment_id
 
 
 def test_submit_moves_overview_comment_when_stack_head_advances(
@@ -1075,9 +1023,7 @@ def test_submit_moves_overview_comment_when_stack_head_advances(
     assert new_top_pr_number is not None
 
     assert _overview_comments(fake_repo, initial_top_pr_number) == []
-    assert refreshed_state.changes[initial_top_change_id].overview_comment_id is None
     assert len(_overview_comments(fake_repo, new_top_pr_number)) == 1
-    assert refreshed_state.changes[new_top_change_id].overview_comment_id is not None
 
 
 def test_submit_single_change_clears_stale_managed_stack_comment(
@@ -1087,67 +1033,15 @@ def test_submit_single_change_clears_stale_managed_stack_comment(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    manual_comment = fake_repo.create_issue_comment(
+    fake_repo.create_issue_comment(
         body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nstale stack navigation",
         issue_number=1,
-    )
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    change_id: initial_state.changes[change_id].model_copy(
-                        update={"navigation_comment_id": manual_comment.id}
-                    ),
-                }
-            }
-        )
     )
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    refreshed_state = state_store.load()
 
     assert issue_comments(fake_repo, 1) == []
-    assert refreshed_state.changes[change_id].navigation_comment_id is None
-
-
-def test_submit_rejects_cached_stack_comment_id_for_non_stack_comment(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    manual_comment = fake_repo.create_issue_comment(body="manual note", issue_number=2)
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    change_id: initial_state.changes[change_id].model_copy(
-                        update={"navigation_comment_id": manual_comment.id}
-                    ),
-                }
-            }
-        )
-    )
-
-    exit_code = run_main(repo, config_path, "submit", change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "does not belong to jj-stack" in captured.err
-    assert manual_comment in issue_comments(fake_repo, 2)
 
 
 def test_submit_rejects_ambiguous_discovered_stack_comments(
@@ -1670,35 +1564,6 @@ def test_submit_accepts_stack_forked_from_trunk_ancestor(
     assert read_remote_ref(fake_repo.git_dir, bookmark) == stack.revisions[-1].commit_id
 
 
-def test_submit_preserves_cached_review_decision(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    fake_repo.create_pull_request_review(
-        pull_number=1,
-        reviewer_login="reviewer-1",
-        state="APPROVED",
-    )
-
-    assert run_main(repo, config_path, "view", change_id) == 0
-    capsys.readouterr()
-    assert state_store.load().changes[change_id].pr_review_decision == "approved"
-
-    assert run_main(repo, config_path, "submit", change_id) == 0
-    capsys.readouterr()
-
-    refreshed_state = state_store.load()
-    assert refreshed_state.changes[change_id].pr_review_decision == "approved"
-    assert refreshed_state.changes[change_id].pr_state == "open"
-
-
 def test_submit_open_marks_existing_draft_pull_requests_ready_for_review(
     tmp_path: Path,
     monkeypatch,
@@ -1712,21 +1577,16 @@ def test_submit_open_marks_existing_draft_pull_requests_ready_for_review(
     draft_output = capsys.readouterr().out
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
-    draft_state = ReviewStateStore.for_repo(repo).load()
 
     assert "draft PR #1" in draft_output
     assert fake_repo.pull_requests[1].is_draft is True
-    assert draft_state.changes[change_id].pr_is_draft is True
-    assert draft_state.changes[change_id].pr_state == "open"
 
     exit_code = run_main(repo, config_path, "submit", "--open", change_id)
     captured = capsys.readouterr()
-    refreshed_state = ReviewStateStore.for_repo(repo).load()
 
     assert exit_code == 0
     assert "PR #1 updated" in captured.out
     assert not fake_repo.pull_requests[1].is_draft
-    assert refreshed_state.changes[change_id].pr_is_draft is False
 
 
 def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
@@ -2100,13 +1960,6 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     capsys.readouterr()
 
-    refreshed_state = state_store.load()
-
-    assert refreshed_state.changes[change_id_1].navigation_comment_id == stale_comment_1.id
-    assert refreshed_state.changes[change_id_2].navigation_comment_id == stale_comment_2.id
-    assert refreshed_state.changes[change_id_3].navigation_comment_id == (
-        initial_state.changes[change_id_3].navigation_comment_id
-    )
     assert stale_comment_1.id in updated_comment_ids
     assert stale_comment_2.id in updated_comment_ids
     assert stale_comment_3.id not in updated_comment_ids

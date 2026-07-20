@@ -371,16 +371,6 @@ def _ensure_pull_request_link_is_consistent(
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
-    if cached_change.pr_url not in (None, discovered_pull_request.html_url):
-        raise DriftError(
-            t"Saved pull request URL for bookmark {ui.bookmark(bookmark)} does not "
-            t"match GitHub.",
-            condition="saved_pull_request_mismatch",
-            hint=(
-                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
-                t"with {ui.cmd('relink')} before submitting again."
-            ),
-        )
 
 
 async def _create_pull_request(
@@ -506,19 +496,13 @@ def _updated_cached_change(
             bookmark=bookmark,
             bookmark_ownership=bookmark_ownership_for_source(bookmark_source),
             last_submitted_commit_id=commit_id,
-            pr_is_draft=pull_request.is_draft,
             pr_number=pull_request.number,
-            pr_state=pull_request.state,
-            pr_url=pull_request.html_url,
         )
     return cached_change.model_copy(
         update={
             "bookmark": bookmark,
             "bookmark_ownership": bookmark_ownership_for_source(bookmark_source),
             "last_submitted_commit_id": commit_id,
-            "pr_is_draft": pull_request.is_draft,
             "pr_number": pull_request.number,
-            "pr_state": pull_request.state,
-            "pr_url": pull_request.html_url,
         }
     )

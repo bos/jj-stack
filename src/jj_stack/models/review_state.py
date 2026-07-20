@@ -37,30 +37,13 @@ class CachedChange(BaseModel):
     bookmark_ownership: BookmarkOwnership = "managed"
     last_submitted_commit_id: str | None = None
     link_state: LinkState = "active"
-    pr_is_draft: bool | None = None
     pr_number: int | None = None
-    pr_review_decision: str | None = None
-    pr_state: str | None = None
-    pr_url: str | None = None
-    navigation_comment_id: int | None = None
-    overview_comment_id: int | None = None
 
     @property
     def has_review_identity(self) -> bool:
         """Whether tracking state proves this change was attached to review before."""
 
-        return any(
-            value is not None
-            for value in (
-                self.last_submitted_commit_id,
-                self.pr_number,
-                self.pr_review_decision,
-                self.pr_state,
-                self.pr_url,
-                self.navigation_comment_id,
-                self.overview_comment_id,
-            )
-        )
+        return self.last_submitted_commit_id is not None or self.pr_number is not None
 
     @property
     def is_tracked(self) -> bool:
@@ -80,28 +63,10 @@ class CachedChange(BaseModel):
 
         return self.bookmark_ownership == "managed"
 
-    def with_cleared_comments(self) -> CachedChange:
-        """Return this record without saved managed-comment identities."""
-
-        return self.model_copy(
-            update={
-                "navigation_comment_id": None,
-                "overview_comment_id": None,
-            }
-        )
-
     def with_cleared_pr_identity(self) -> CachedChange:
         """Return this record without saved pull-request identity."""
 
-        return self.model_copy(
-            update={
-                "pr_is_draft": None,
-                "pr_number": None,
-                "pr_review_decision": None,
-                "pr_state": None,
-                "pr_url": None,
-            }
-        )
+        return self.model_copy(update={"pr_number": None})
 
 
 class ReviewState(BaseModel):
