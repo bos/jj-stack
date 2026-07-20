@@ -39,7 +39,6 @@ from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
-    SubmittedStateDisagreement,
     classify_review_status_revision,
     classify_saved_review_change,
 )
@@ -866,51 +865,19 @@ def render_status_advisory_lines(
 
 
 def _submitted_state_disagreement_rows(
-    disagreements: Sequence[SubmittedStateDisagreement],
+    disagreements: Sequence[str],
 ) -> tuple[tuple[ui.TableCell, ui.TableCell], ...]:
-    commit_changed = tuple(
-        disagreement.change_id for disagreement in disagreements if disagreement.commit_changed
+    if not disagreements:
+        return ()
+    return (
+        (
+            "New commit IDs",
+            _format_submit_baseline_reason(
+                change_ids=tuple(disagreements),
+                noun="change",
+            ),
+        ),
     )
-    parent_changed = tuple(
-        disagreement.change_id for disagreement in disagreements if disagreement.parent_changed
-    )
-    stack_head_changed = tuple(
-        disagreement.change_id
-        for disagreement in disagreements
-        if disagreement.stack_head_changed
-    )
-    rows: list[tuple[ui.TableCell, ui.TableCell]] = []
-    if commit_changed:
-        rows.append(
-            (
-                "New commit IDs",
-                _format_submit_baseline_reason(
-                    change_ids=commit_changed,
-                    noun="change",
-                ),
-            )
-        )
-    if parent_changed:
-        rows.append(
-            (
-                "New PR bases",
-                _format_submit_baseline_reason(
-                    change_ids=parent_changed,
-                    noun="change",
-                ),
-            )
-        )
-    if stack_head_changed:
-        rows.append(
-            (
-                "New stack head",
-                _format_submit_baseline_reason(
-                    change_ids=stack_head_changed,
-                    noun="change",
-                ),
-            )
-        )
-    return tuple(rows)
 
 
 def _format_submit_baseline_reason(

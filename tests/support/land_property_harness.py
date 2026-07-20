@@ -1045,8 +1045,6 @@ def _durable_tracking_identity(state: ReviewState, change_id: str) -> tuple[obje
         cached.bookmark,
         cached.bookmark_ownership,
         cached.last_submitted_commit_id,
-        cached.last_submitted_parent_change_id,
-        cached.last_submitted_stack_head_change_id,
         cached.link_state,
         cached.pr_number,
         cached.pr_url,

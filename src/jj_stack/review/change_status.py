@@ -79,16 +79,6 @@ class OrphanedRecord:
     cached_change: CachedChange
 
 
-@dataclass(frozen=True, slots=True)
-class SubmittedStateDisagreement:
-    """One tracked change whose saved submit baseline no longer matches the DAG."""
-
-    change_id: str
-    commit_changed: bool = False
-    parent_changed: bool = False
-    stack_head_changed: bool = False
-
-
 _OPEN_PR_STATES_FOR_ORPHANS = frozenset({"open", "draft"})
 
 
@@ -230,47 +220,17 @@ def submitted_state_disagreement(
     state: ReviewState,
     local_stacks: Sequence[LocalStack],
 ) -> tuple[str, ...]:
-    return tuple(
-        disagreement.change_id
-        for disagreement in submitted_state_disagreements(state, local_stacks)
-    )
+    """Return change_ids whose saved submit baseline no longer matches the DAG."""
 
-
-def submitted_state_disagreements(
-    state: ReviewState,
-    local_stacks: Sequence[LocalStack],
-) -> tuple[SubmittedStateDisagreement, ...]:
-    """Return change_ids whose saved submitted state disagrees with the live DAG."""
-
-    disagreements: list[SubmittedStateDisagreement] = []
+    disagreements: list[str] = []
     for stack in local_stacks:
-        if not stack.revisions:
-            continue
-        live_head = stack.revisions[-1].change_id
-        for index, revision in enumerate(stack.revisions):
+        for revision in stack.revisions:
             cached = state.changes.get(revision.change_id)
             if cached is None or cached.is_unlinked:
                 continue
             saved_commit_id = cached.last_submitted_commit_id
-            commit_changed = saved_commit_id is not None and saved_commit_id != revision.commit_id
-            saved_parent = cached.last_submitted_parent_change_id
-            saved_head = cached.last_submitted_stack_head_change_id
-            parent_changed = False
-            stack_head_changed = False
-            if saved_parent is not None or saved_head is not None:
-                live_parent = _live_parent_change_id(stack, index=index)
-                parent_changed = saved_parent != live_parent
-                stack_head_changed = saved_head != live_head
-            if not commit_changed and not parent_changed and not stack_head_changed:
-                continue
-            disagreements.append(
-                SubmittedStateDisagreement(
-                    change_id=revision.change_id,
-                    commit_changed=commit_changed,
-                    parent_changed=parent_changed,
-                    stack_head_changed=stack_head_changed,
-                )
-            )
+            if saved_commit_id is not None and saved_commit_id != revision.commit_id:
+                disagreements.append(revision.change_id)
     return tuple(disagreements)
 
 
@@ -355,16 +315,3 @@ def _pull_request_review_decision(
         return decision
     return "unknown"
 
-
-def _live_parent_change_id(stack: LocalStack, *, index: int) -> str | None:
-    """Return the live review parent change_id for one stack revision."""
-
-    if index > 0:
-        return stack.revisions[index - 1].change_id
-
-    base_parent = stack.base_parent
-    if stack.base_parent_is_trunk_ancestor or base_parent.commit_id == stack.trunk.commit_id:
-        return None
-    if not base_parent.is_reviewable(allow_divergent=True):
-        return None
-    return base_parent.change_id

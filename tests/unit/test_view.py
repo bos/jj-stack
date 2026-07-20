@@ -11,7 +11,6 @@ from jj_stack.config import RepoConfig
 from jj_stack.models.bookmarks import RemoteBookmarkState
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import CachedChange, LinkState
-from jj_stack.review.change_status import SubmittedStateDisagreement
 from jj_stack.review.status import (
     ManagedCommentsLookup,
     PullRequestLookup,
@@ -121,15 +120,8 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
                     revisions=(),
                     selected_revset="ulxwxsqw",
                     submitted_state_disagreements=(
-                        SubmittedStateDisagreement(
-                            change_id="abcdefghijkl",
-                            commit_changed=True,
-                        ),
-                        SubmittedStateDisagreement(
-                            change_id="bcdefghijklm",
-                            parent_changed=True,
-                            stack_head_changed=True,
-                        ),
+                        "abcdefghijkl",
+                        "bcdefghijklm",
                     ),
                 ),
             ),
@@ -139,12 +131,9 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 
     assert "Advisories:" in lines
-    assert "PR branches are behind the current local stack" in normalized_lines
-    assert "Submit will push the current commit IDs and PR bases" in normalized_lines
-    assert "jj-stack submit ulxwxsqw" in normalized_lines
-    assert "New commit IDs abcdefgh" in normalized_lines
-    assert "New PR bases bcdefghi" in normalized_lines
-    assert "New stack head bcdefghi" in normalized_lines
+    assert "New commit IDs" in normalized_lines
+    assert "abcdefgh" in normalized_lines
+    assert "bcdefghi" in normalized_lines
 
 
 def test_view_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:

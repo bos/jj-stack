@@ -760,7 +760,6 @@ def _assert_new_submit_invariants(
     state = ReviewStateStore.for_repo(repo).load()
     remote_heads = _remote_refs(fake_repo.git_dir)
     bookmarks_by_label: dict[str, str] = {}
-    stack_head_change_id = labels_to_change_ids[scenario.final_live_labels[-1]]
 
     for index, label in enumerate(scenario.final_live_labels):
         revision = stack.revisions[index]
@@ -772,11 +771,6 @@ def _assert_new_submit_invariants(
         bookmarks_by_label[label] = bookmark
 
         pull_request = fake_repo.pull_requests[pr_number]
-        expected_parent_change_id = (
-            labels_to_change_ids[scenario.final_live_labels[index - 1]]
-            if index > 0
-            else None
-        )
         expected_base_ref = (
             bookmarks_by_label[scenario.final_live_labels[index - 1]]
             if index > 0
@@ -789,8 +783,6 @@ def _assert_new_submit_invariants(
         assert pull_request.state == "open"
         assert pull_request.title == subject_for_label(label)
         assert cached_change.last_submitted_commit_id == revision.commit_id
-        assert cached_change.last_submitted_parent_change_id == expected_parent_change_id
-        assert cached_change.last_submitted_stack_head_change_id == stack_head_change_id
 
     assert len(fake_repo.pull_requests) == scenario.initial_size
 
@@ -811,7 +803,6 @@ def _assert_successful_submit_invariants(
     expected_base_by_pr_number: dict[int, str] = {}
     live_pr_numbers: set[int] = set()
     bookmarks_by_label: dict[str, str] = {}
-    stack_head_change_id = labels_to_change_ids[invariants.final_live_labels[-1]]
 
     for index, label in enumerate(invariants.final_live_labels):
         revision = revisions_by_label[label]
@@ -830,9 +821,6 @@ def _assert_successful_submit_invariants(
             assert pr_number not in {submitted.pr_number for submitted in baseline.values()}
 
         pull_request = fake_repo.pull_requests[pr_number]
-        expected_parent_change_id = (
-            labels_to_change_ids[invariants.final_live_labels[index - 1]] if index > 0 else None
-        )
         expected_base_ref = (
             bookmarks_by_label[invariants.final_live_labels[index - 1]] if index > 0 else "main"
         )
@@ -844,8 +832,6 @@ def _assert_successful_submit_invariants(
         assert pull_request.state == "open"
         assert pull_request.title == subject_for_label(label)
         assert cached_change.last_submitted_commit_id == revision.commit_id
-        assert cached_change.last_submitted_parent_change_id == expected_parent_change_id
-        assert cached_change.last_submitted_stack_head_change_id == stack_head_change_id
 
     for label in invariants.orphaned_labels:
         submitted = baseline[label]

@@ -225,9 +225,7 @@ async def _sync_pull_request(
             bookmark_source=prepared_revision.bookmark_source,
             cached_change=cached_change,
             commit_id=prepared_revision.revision.commit_id,
-            parent_change_id=pending_sync.parent_change_id,
             pull_request=pull_request,
-            stack_head_change_id=pending_sync.stack_head_change_id,
         )
     return (
         SubmittedRevision(
@@ -501,17 +499,13 @@ def _updated_cached_change(
     bookmark_source: BookmarkSource,
     cached_change: CachedChange | None,
     commit_id: str,
-    parent_change_id: str | None,
     pull_request: GithubPullRequest,
-    stack_head_change_id: str | None,
 ) -> CachedChange:
     if cached_change is None:
         return CachedChange(
             bookmark=bookmark,
             bookmark_ownership=bookmark_ownership_for_source(bookmark_source),
             last_submitted_commit_id=commit_id,
-            last_submitted_parent_change_id=parent_change_id,
-            last_submitted_stack_head_change_id=stack_head_change_id,
             pr_is_draft=pull_request.is_draft,
             pr_number=pull_request.number,
             pr_state=pull_request.state,
@@ -522,8 +516,6 @@ def _updated_cached_change(
             "bookmark": bookmark,
             "bookmark_ownership": bookmark_ownership_for_source(bookmark_source),
             "last_submitted_commit_id": commit_id,
-            "last_submitted_parent_change_id": parent_change_id,
-            "last_submitted_stack_head_change_id": stack_head_change_id,
             "pr_is_draft": pull_request.is_draft,
             "pr_number": pull_request.number,
             "pr_state": pull_request.state,

@@ -39,15 +39,11 @@ def _stack(
 def _tracked(
     *,
     commit_id: str | None = None,
-    parent: str | None,
-    head: str,
     pr_number: int = 1,
 ) -> CachedChange:
     return CachedChange(
         bookmark="review/example",
         last_submitted_commit_id=commit_id,
-        last_submitted_parent_change_id=parent,
-        last_submitted_stack_head_change_id=head,
         pr_number=pr_number,
         pr_state="open",
         pr_url="https://example.test/pull/1",
@@ -57,115 +53,27 @@ def _tracked(
 def test_submitted_state_disagreement_returns_empty_when_saved_state_matches() -> None:
     a = _revision("change-a")
     b = _revision("change-b")
-    c = _revision("change-c")
-    stack = _stack(a, b, c)
+    stack = _stack(a, b)
     state = ReviewState(
         changes={
-            "change-a": _tracked(parent=None, head="change-c", pr_number=1),
-            "change-b": _tracked(parent="change-a", head="change-c", pr_number=2),
-            "change-c": _tracked(parent="change-b", head="change-c", pr_number=3),
+            "change-a": _tracked(commit_id=a.commit_id, pr_number=1),
+            "change-b": _tracked(commit_id=b.commit_id, pr_number=2),
         }
     )
 
     assert submitted_state_disagreement(state, (stack,)) == ()
 
 
-def test_submitted_state_disagreement_flags_changes_when_head_moved() -> None:
-    a = _revision("change-a")
-    b = _revision("change-b")
-    stack = _stack(a, b)
-    state = ReviewState(
-        changes={
-            "change-a": _tracked(parent=None, head="change-old-head", pr_number=1),
-            "change-b": _tracked(parent="change-a", head="change-old-head", pr_number=2),
-        }
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ("change-a", "change-b")
-
-
-def test_submitted_state_disagreement_flags_rewrite_without_topology_change() -> None:
+def test_submitted_state_disagreement_flags_rewritten_commit() -> None:
     a = _revision("change-a")
     stack = _stack(a)
     state = ReviewState(
         changes={
-            "change-a": _tracked(
-                commit_id="old-commit-change-a",
-                parent=None,
-                head="change-a",
-            ),
+            "change-a": _tracked(commit_id="old-commit-change-a"),
         }
     )
 
     assert submitted_state_disagreement(state, (stack,)) == ("change-a",)
-
-
-def test_submitted_state_disagreement_catches_inserted_change_via_neighbors() -> None:
-    a = _revision("change-a")
-    inserted = _revision("change-inserted")
-    b = _revision("change-b")
-    stack = _stack(a, inserted, b)
-    state = ReviewState(
-        changes={
-            "change-a": _tracked(parent=None, head="change-b", pr_number=1),
-            "change-b": _tracked(parent="change-a", head="change-b", pr_number=2),
-        }
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ("change-b",)
-
-
-def test_submitted_state_disagreement_catches_untracked_insert_below_bottom_change() -> None:
-    inserted = _revision("change-inserted")
-    a = _revision("change-a", parents=(inserted.commit_id,))
-    stack = _stack(a, base_parent=inserted)
-    state = ReviewState(
-        changes={
-            "change-a": _tracked(parent=None, head="change-a", pr_number=1),
-        }
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ("change-a",)
-
-
-def test_submitted_state_disagreement_treats_actual_trunk_parent_as_no_review_parent() -> None:
-    trunk = _revision("trunk-change", parents=("root-commit",))
-    a = _revision("change-a", parents=(trunk.commit_id,))
-    stack = LocalStack(
-        base_parent=trunk,
-        head=a,
-        revisions=(a,),
-        selected_revset="@-",
-        trunk=trunk,
-    )
-    state = ReviewState(
-        changes={
-            "change-a": _tracked(parent=None, head="change-a", pr_number=1),
-        }
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ()
-
-
-def test_submitted_state_disagreement_treats_trunk_ancestor_as_no_review_parent() -> None:
-    old_trunk = _revision("old-trunk", parents=("root-commit",))
-    current_trunk = _revision("trunk-change", parents=(old_trunk.commit_id,))
-    a = _revision("change-a", parents=(old_trunk.commit_id,))
-    stack = LocalStack(
-        base_parent=old_trunk,
-        base_parent_is_trunk_ancestor=True,
-        head=a,
-        revisions=(a,),
-        selected_revset="@-",
-        trunk=current_trunk,
-    )
-    state = ReviewState(
-        changes={
-            "change-a": _tracked(parent=None, head="change-a", pr_number=1),
-        }
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ()
 
 
 def test_submitted_state_disagreement_skips_records_without_saved_baseline() -> None:
@@ -192,8 +100,7 @@ def test_submitted_state_disagreement_skips_unlinked_records_even_when_stale() -
         changes={
             "change-a": CachedChange(
                 bookmark="review/example",
-                last_submitted_parent_change_id="change-other",
-                last_submitted_stack_head_change_id="change-other",
+                last_submitted_commit_id="old-commit-change-a",
                 link_state="unlinked",
             )
         }
@@ -223,7 +130,7 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
     stack = _stack(a)
     state = ReviewState(
         changes={
-            "change-live": _tracked(parent=None, head="change-live", pr_number=1),
+            "change-live": _tracked(commit_id="commit-change-live", pr_number=1),
             "change-orphan": _orphan_record(pr_state="open"),
         }
     )
@@ -282,8 +189,8 @@ def test_submitted_state_disagreement_inspects_each_stack_independently() -> Non
     stack_two = _stack(b)
     state = ReviewState(
         changes={
-            "change-a": _tracked(parent=None, head="change-a", pr_number=1),
-            "change-b": _tracked(parent=None, head="change-other", pr_number=2),
+            "change-a": _tracked(commit_id=a.commit_id, pr_number=1),
+            "change-b": _tracked(commit_id="old-commit-change-b", pr_number=2),
         }
     )
 

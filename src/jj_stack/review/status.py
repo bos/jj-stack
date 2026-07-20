@@ -46,10 +46,9 @@ from jj_stack.review.bookmarks import (
     match_bookmarks_for_revisions,
 )
 from jj_stack.review.change_status import (
-    SubmittedStateDisagreement,
     classify_review_status_revision,
     classify_saved_review_change,
-    submitted_state_disagreements,
+    submitted_state_disagreement,
 )
 from jj_stack.state.operation_lock import try_acquire_operation_lock
 from jj_stack.state.store import ReviewStateStore
@@ -135,7 +134,7 @@ class StatusResult:
     revisions: tuple[ReviewStatusRevision, ...]
     selected_revset: str
     base_parent_subject: str
-    submitted_state_disagreements: tuple[SubmittedStateDisagreement, ...] = ()
+    submitted_state_disagreements: tuple[str, ...] = ()
     cache_update_skipped: bool = False
 
 
@@ -370,7 +369,7 @@ async def stream_status_async(
     base_parent_subject = prepared_status.base_parent_subject
     github_repository = prepared_status.github_repository
     github_repository_error = prepared_status.github_repository_error
-    submitted_disagreements = submitted_state_disagreements(
+    submitted_disagreements = submitted_state_disagreement(
         prepared.state,
         (prepared.stack,),
     )

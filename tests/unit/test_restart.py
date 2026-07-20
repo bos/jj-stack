@@ -22,7 +22,6 @@ def test_restart_state_replaces_review_identity_with_fresh_managed_bookmark() ->
         bookmark="review/old-feature",
         bookmark_ownership="external",
         last_submitted_commit_id="old-commit",
-        last_submitted_stack_head_change_id="head-change",
         pr_number=42,
         pr_state="closed",
         navigation_comment_id=101,

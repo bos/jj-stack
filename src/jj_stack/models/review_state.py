@@ -36,8 +36,6 @@ class CachedChange(BaseModel):
     bookmark: str | None = None
     bookmark_ownership: BookmarkOwnership = "managed"
     last_submitted_commit_id: str | None = None
-    last_submitted_parent_change_id: str | None = None
-    last_submitted_stack_head_change_id: str | None = None
     link_state: LinkState = "active"
     pr_is_draft: bool | None = None
     pr_number: int | None = None

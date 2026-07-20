@@ -202,16 +202,24 @@ def test_view_warns_only_for_connected_stack_built_on_selected_head(
     commit_file(repo, "connected 1", "connected-1.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    commit_file(repo, "connected 2", "connected-2.txt")
     connected_head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    # Rewriting the submitted change gives it a new commit ID, which is the
+    # staleness signal the advisory derives from the DAG.
+    run_command(
+        ["jj", "describe", "-r", connected_head_change_id, "-m", "connected 1 edited"],
+        repo,
+    )
 
     # Unrelated stack forked from trunk, also advanced past its submit.
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "unrelated 1", "unrelated-1.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    commit_file(repo, "unrelated 2", "unrelated-2.txt")
     unrelated_head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    run_command(
+        ["jj", "describe", "-r", unrelated_head_change_id, "-m", "unrelated 1 edited"],
+        repo,
+    )
 
     exit_code = run_main(repo, config_path, "view", alpha_head_change_id)
     captured = capsys.readouterr()

@@ -373,9 +373,6 @@ For every live change after the final submit:
 - the bottom PR targets the resolved trunk branch
 - every other PR targets the previous live change's review branch
 - saved `last_submitted_commit_id` matches the live `commit_id`
-- saved `last_submitted_parent_change_id` matches the previous live `change_id`, or
-  null for the bottom change
-- saved `last_submitted_stack_head_change_id` matches the final live head `change_id`
 - if the original PR had approval reviews, those reviews are still attached to the same
   PR number
 

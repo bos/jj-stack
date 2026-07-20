@@ -94,8 +94,6 @@ def cached_change_needs_restart(cached_change: CachedChange) -> bool:
         value is not None
         for value in (
             cached_change.last_submitted_commit_id,
-            cached_change.last_submitted_parent_change_id,
-            cached_change.last_submitted_stack_head_change_id,
             cached_change.pr_is_draft,
             cached_change.pr_number,
             cached_change.pr_review_decision,
@@ -113,8 +111,6 @@ def restart_cached_change(cached_change: CachedChange, *, new_bookmark: str) -> 
             "bookmark": new_bookmark,
             "bookmark_ownership": "managed",
             "last_submitted_commit_id": None,
-            "last_submitted_parent_change_id": None,
-            "last_submitted_stack_head_change_id": None,
             "link_state": "active",
         }
     ).with_cleared_pr_identity().with_cleared_comments()
