@@ -38,7 +38,7 @@ To stay in sync with GitHub, `jj-stack` uses a small amount of supporting local 
 metadata helps it:
 - remember which GitHub PR goes with which local change
 - keep the branch name of a review stable, even if you rewrite the change or its title
-- safely resume or recover if a command is interrupted
+- safely recover if a command is interrupted, by re-deriving what remains to do
 
 This has a few consequences:
 

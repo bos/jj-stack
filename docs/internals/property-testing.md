@@ -345,8 +345,9 @@ safe rerun that discovers the partial artifacts and converges on the same final 
 state without duplicate PRs or lost metadata.
 
 Interrupted-submit scenarios create a fresh stack, install a one-shot failure at one
-mutation checkpoint, run `submit`, leave the active submit recovery record in place, then
-rerun `submit`. The oracle asserts:
+mutation point, run `submit`, then rerun `submit` with nothing repaired in between —
+recovery derives entirely from the partial artifacts the first run left on GitHub and in
+tracking. The oracle asserts:
 
 - every selected change has exactly one PR after retry
 - remote review branches point at the selected `jj` commits

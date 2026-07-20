@@ -311,48 +311,29 @@ while another mutation is running. The operation lock replaces same-kind PID wai
 `land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `unstack`, and orphaned
 `unstack --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
 events to `operation-log.jsonl` for after-the-fact inspection. `sync` composes
-`cleanup --rebase` and `submit` under one operation lock; each composed phase journals
-as itself. Retry behavior derives from the current jj DAG, saved tracking data, GitHub state,
-explicit user selectors, and — for direct-push `land` only — one typed pending transaction in
-the repo state file. The audit log is never projected back into live command state.
+`cleanup --rebase`, the landed-review sweep, and `submit` under one operation lock; each
+composed phase journals as itself. Retry behavior derives from the current jj DAG, saved
+tracking data, and GitHub state — never from saved operation state, of which there is none.
+The audit log is never projected back into live command state.
 
-The pending direct-land transaction is written durably before local or remote mutation. It
-stores the exact repository, remote, trunk before and after the push, planned review identities,
-whether trunk movement was observed, and finalized change IDs. Every later checkpoint is saved
-atomically with the per-change tracking it describes. The final checkpoint clears the
-transaction and removes landed tracking in the same durable replacement. This gives recovery
-one explicit state machine and one commit point rather than inferring unfinished work from
-relationships among historical audit events.
+Landing recovery is observational (see [design-next.md](design-next.md)). The landed-review
+sweep in `review/landed.py` finds every tracked review whose exact submitted commit is an
+ancestor of trunk and whose current local commit still equals that baseline, finalizes its
+still-open PR (retarget to trunk, close, confirm no longer open, with the head identity
+rechecked on every load), retires its tracking, and forgets safe local bookmarks. It runs
+from `sync` and from every non-dry-run `land`, so an interruption at any point converges on
+the next run of either command. Candidates it cannot prove safe — local edits since submit, a
+moved PR head, a PR closed without merging — are reported with a runnable next step and
+skipped. A message-only land note may explain an interrupted run on the next invocation; no
+execution path reads it.
 
-The command checks that transaction immediately after bootstrap and lock acquisition. Recovery
-resolves only the persisted repository, remote, trunk, commits, bookmarks, and PRs; normal revset
-selection and stack/status preparation start only after an unapplied checkpoint has been cleared.
-An unrelated unsupported local stack therefore cannot prevent completion of a trunk transition
-that already happened.
-
-`commands/land/recovery.py` owns that checkpoint-first workflow: target resolution, remote
-refresh, scope and review-identity verification, the clear-versus-resume decision, and
-construction of the exact resume plan. `commands/land/command.py` owns the ordinary selected-stack
-path and enters it only when recovery reports that no applied checkpoint remains.
-
-Recovery requires every persisted review branch to remain present at its exact commit, including
-branches for PRs that GitHub already finalized. GitHub PR payloads carry the head commit OID as
-well as the branch label; the per-PR finalizer rechecks both on every PR load immediately before
-it retargets, closes, or merges that PR. After a close request, the reloaded PR must also be
-non-open before finalization progress or landed tracking is committed.
-
-`commands/land/pull_requests.py` owns that one-PR GitHub protocol, including retargeting, exact
-head verification, direct-close and merge outcomes, and stack-comment removal. The executor owns
-the bottom-up stack sequence around it: journal events, durable checkpoints, tracking updates,
-bookmark cleanup, and the decision to stop at a blocked PR.
-
-Every state save that contains a pending direct-land transaction is automatically durable,
-including saves made by commands that merely preserve the transaction while updating other
-tracking. A durable replacement fsyncs the file and state directory, suppressing only platform
-errors that specifically mean directory fsync is unsupported; Windows skips the unsupported
-directory operation while still syncing the file. Other failures surface to the caller. Audit
-appends may still be durable for diagnostic quality, but an absent completed marker or malformed
-trailing record cannot reactivate or block a completed land.
+`commands/land/pull_requests.py` owns the one-PR merge protocol for `land --via merge`,
+including retargeting, exact head verification, and merge outcomes; `review/landed.py` owns
+finalization and teardown. The executor in `commands/land/execute.py` owns the bottom-up
+sequence: the leased trunk push with in-process restore on failure, the merge loop that stops
+at the first refused PR, and the sweep invocation. State saves are atomic but not fsync
+durable: tracking is reconstructible, so losing a write costs a re-derivation, never
+correctness.
 The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
 to the last submitted commit, single visible revision, mutable, unambiguous local and remote
 bookmarks, and bookmark policy allowing every local bookmark that points at the commit. It loads

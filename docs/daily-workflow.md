@@ -197,8 +197,10 @@ This retargets each ready PR to trunk and merges it on GitHub, bottom to top, st
 first PR GitHub reports as not mergeable (for example, when required checks are still running).
 The merge method comes from your repo's settings when only one is allowed; otherwise pass
 `--merge-method squash` (or `rebase`/`merge`). Because GitHub does the merging, your local
-commits are not what lands on trunk — afterwards, run `jj-stack sync` to rebase the rest of
-your local stack off the merged changes and refresh the remaining PRs.
+commits are not what lands on trunk — so after GitHub accepts the merges, `land` finishes the
+job itself: it rebases the rest of your local stack off the merged changes and refreshes the
+remaining PRs, the same catch-up `jj-stack sync` performs. If anything interrupts it, rerun
+`jj-stack land` or `jj-stack sync` and it picks up from whatever GitHub reports.
 
 ## 7. Rebase remaining work
 
@@ -229,8 +231,11 @@ GitHub's view of your stack with:
 jj-stack submit
 ```
 
-`jj-stack sync` chains that catch-up flow into one command: it refreshes remote state, runs
-the same merged-ancestor rebase as `cleanup --rebase`, and then resubmits the stack:
+`jj-stack sync` chains that catch-up flow into one command: it refreshes remote state,
+finalizes and retires any of your reviews whose exact commits already reached `trunk()`
+(for example after an interrupted land, or a merge made in the GitHub UI that kept your
+commits), runs the same merged-ancestor rebase as `cleanup --rebase`, and then resubmits the
+stack:
 
 ```bash
 jj-stack sync
