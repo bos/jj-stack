@@ -731,3 +731,16 @@ Remaining follow-ups live in [backlog.md](backlog.md).
 
 This is an implementation inventory, not a production-readiness claim. The foundation still
 requires the separately specified safety and evidence slices before release.
+
+## Accepted merger boundary (not yet implemented)
+
+The accepted merger plan makes ordinary `land` and `sync <selector>` strictly selected-scope
+commands. Repository-wide observational recovery will require explicit `sync --all`, acting only
+through the exact-submitted-snapshot gate. The current rework foundation still runs its landed
+review sweep from ordinary selected commands; that is an implementation gap, not the target
+contract.
+
+The planned live-GitHub experiment has not been run. Direct-push PR lifecycle, retarget-and-close
+behavior, merge-result identity by merge method, merged-head deletion, and expected-head rejection
+therefore remain external evidence gaps. The fake may exercise local control flow around those
+cases, but it cannot establish GitHub behavior.

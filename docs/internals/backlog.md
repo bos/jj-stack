@@ -3,6 +3,23 @@
 Items that need to be implemented or thought through, but are not blocking
 current slices.
 
+## Deferred Live GitHub Landing Evidence
+
+_Benefit: large — these observations determine whether the fake accurately represents the
+external contracts used by landing and recovery._
+
+The merger plan calls for one disposable live-GitHub experiment covering:
+
+- direct-push pull-request lifecycle
+- retarget-and-close behavior
+- `merge_commit_sha` for merge, squash, and rebase methods
+- merged-head branch deletion
+- rejection of a merge request whose expected head is stale
+
+That experiment was deliberately not performed during the merger implementation. Until it is
+separately approved and recorded, fake-dependent conclusions in these families remain
+conditional and release evidence must report the gap rather than treating local tests as proof.
+
 ## Crash and Interrupt Diagnosis
 
 _Benefit: medium — affects users with failed mutating commands, which is uncommon
@@ -55,22 +72,21 @@ The remaining follow-up here is narrower:
 - any residual diagnostics that are still too subtle once the concrete `land`
   flow exists
 
-## Repo-Scoped Sync
+## Explicit Repository-Wide Recovery
 
-_Benefit: medium — useful for operators managing several stacks at once, but
-not blocking the core single-stack workflow._
+_Benefit: large — makes repository-wide mutation explicit and keeps selected commands from
+touching sibling stacks._
 
-A future `checkout` design covers explicit stack materialization for one
-selected stack, and `view --fetch` remains the read-only refresh
-primitive.
+The product boundary is decided: ordinary `land` and `sync <selector>` affect only the selected
+review identities. `sync --all` is the explicit repository-wide observational recovery mode. It
+may finalize only identities whose exact submitted commit is on fetched trunk and whose live
+nominal identity still matches. It must isolate failures per identity, must not rewrite stacks or
+submit work, and must report dependent selected paths rather than retiring their links early.
 
-The remaining open question is whether the product should also grow a
-repo-scoped `sync` command that:
-
-- refreshes remote review observations across more than one selected stack
-- decides when local bookmark materialization should happen automatically
-- coordinates with `cleanup --rebase` without turning refresh into implicit
-  history repair
+The current rework implementation still runs an implicit landed-review sweep from ordinary
+selected commands and has no `sync --all` mode. The selected-scope and explicit-global changes
+belong to the ordered convergence slice; this entry records the accepted boundary rather than an
+open product question.
 
 ## Git Commit Change-ID Header
 
@@ -338,9 +354,6 @@ _Benefit: small each; recorded so residue-tolerance stays a decision, not an acc
   next fetch can leave it behind or conflicted; `land` reports the exact
   `jj bookmark move` repair. If this proves common, teach the report to distinguish the
   remote-contains-local case (safe to fast-forward automatically) from true divergence.
-- Real GitHub's merged-detection may not fire when a stacked PR's base is retargeted to
-  trunk after a direct push, leaving finalized PRs closed-but-not-merged; the fake
-  auto-marks them merged (see the idealization note in tests/support/fake_github.py), so
-  this family is untestable locally. Experiment against a live repo before teaching the
-  landed predicate anything: if closed-not-merged occurs, decide between treating
-  closed+exact-commit-on-trunk+matching-head as finalized or documenting the state.
+- Real GitHub's merged detection after retargeting a directly pushed PR remains part of the
+  deferred live-evidence experiment above. Do not teach the landed predicate from the fake's
+  auto-merge idealization.
