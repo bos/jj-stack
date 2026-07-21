@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.30.1"]
+requires = ["hatchling>=1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -36,14 +36,14 @@ jj-stack = "jj_stack.cli:main"
 
 [dependency-groups]
 dev = [
-  "fastapi>=0.138.2,<0.139",
+  "fastapi>=0.139.0,<0.140",
   "jsonschema>=4.25.1,<5",
   "pyrefly>=1.1.1,<1.2",
   "pytest>=9.1.1,<10",
   "pytest-cov>=7.1.0,<8",
   "pytest-randomly>=4.1.0,<5",
   "pytest-xdist>=3.8.0,<4",
-  "ruff>=0.15.20,<0.16",
+  "ruff>=0.15.21,<0.16",
 ]
 
 [tool.pytest.ini_options]
