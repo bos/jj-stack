@@ -410,7 +410,10 @@ def build_parser() -> ArgumentParser:
     land_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the landing plan without making any changes",
+        help=(
+            "Fetch remote state and preview landing without applying the planned "
+            "mutations"
+        ),
     )
     add_help_argument(
         land_parser,
@@ -504,7 +507,10 @@ def build_parser() -> ArgumentParser:
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print cleanup actions without making any changes",
+        help=(
+            "Preview cleanup actions; --rebase fetches remote state and may update jj's "
+            "remote-bookmark observations"
+        ),
     )
     add_help_argument(
         cleanup_parser,
@@ -532,7 +538,10 @@ def build_parser() -> ArgumentParser:
         sync_parser,
         "--dry-run",
         action="store_true",
-        help="Print the rebase plan and submit preview without making any changes",
+        help=(
+            "Fetch remote state and preview rebase and submit without applying the "
+            "planned mutations"
+        ),
     )
 
     _add_command_parser(

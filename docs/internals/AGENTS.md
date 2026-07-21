@@ -8,10 +8,8 @@ agents working on the codebase. Most users will never open this directory.
 
 ## What belongs here
 
-- `design-next.md` — canonical for current landing, recovery, cleanup, and the
-  tracking-state model while the specifications remain split.
-- `design.md` — authoritative for product behavior outside that scope. Read both
-  documents before changing user-visible behavior.
+- `design.md` — the single canonical product spec and behavioral policy. Read it before changing
+  user-visible behavior.
 - `implementation-strategy.md` — how the tool is built: component boundaries,
   tooling, test strategy. This file is not a changelog. Update it when the
   *strategy* changes (new tool, new component boundary, new test layer), not
@@ -38,9 +36,8 @@ Do not carry that vocabulary into `docs/` (the user-facing guides). See
 
 ## When to update these files
 
-- **design-next.md and design.md**: update the authoritative document for the
-  affected scope when adding a command, changing semantics, or adding a behavioral
-  invariant. Neither document is a changelog.
+- **design.md**: update the relevant section when adding a command, changing semantics, or adding
+  a behavioral invariant. It is not a changelog.
 - **implementation-strategy.md**: update only when the build, test, or
   component strategy changes. `jj log` is the changelog; this file is not.
 - **backlog.md**: add items here instead of leaving inline TODOs or comments

@@ -39,6 +39,7 @@ def test_sync_dry_run_previews_rebase_and_skips_submit_preview(
     assert exit_code == 0
     assert "Planned rebase actions:" in captured.out
     assert "Submit preview skipped" in captured.out
+    assert f"jj-stack sync {top_change_id}" in captured.out
     assert JjClient(repo).resolve_revision(top_change_id).commit_id == top_commit_id
     assert fake_repo.pull_requests[2].base_ref == original_base_ref
 

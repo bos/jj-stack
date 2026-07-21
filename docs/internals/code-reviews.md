@@ -17,9 +17,7 @@ Optimize for finding:
 
 Before raising a finding, anchor yourself in:
 
-- `docs/internals/design-next.md` (canonical for landing, recovery, cleanup, and the
-  tracking-state model)
-- `docs/internals/design.md` for the areas design-next does not cover
+- `docs/internals/design.md`, the single canonical product specification
 - repo invariants from `AGENTS.md`
 - explicit product decisions already made in the thread
 

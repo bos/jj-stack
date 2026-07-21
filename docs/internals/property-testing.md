@@ -240,12 +240,12 @@ transport. Scenario dimensions also cover `--pull-request` selection, which caps
 walk at the selected change, and a second independently submitted bystander stack that
 the land must leave byte-for-byte untouched even though the trunk moves under it.
 
-The walk model stays small because only two properties of an edited change can stop the
-readiness walk: a change whose content no longer matches its remote review branch (a
-rewrite target or a squash destination) is content-divergent, and an inserted change
-without a resubmit has no pull request. Every other rebased change — moved, reordered,
-or rebased past an abandon — is diff-equivalent, which land refreshes and lands. An
-unapproved PR is the natural stopping boundary.
+The walk model is exact rather than diff-based. A change is landable only when its live
+`commit_id`, submitted baseline, review ref, and PR head all identify the same snapshot. Any
+rewrite since submit — including a diff-equivalent rebase, move, reorder, or abandon repair —
+stops the walk. An inserted change without an existing review and an unapproved review are
+also stopping boundaries. `land` never refreshes or creates a review to make a change
+landable; a separate `submit` must first advance the submitted baseline.
 
 For the default direct-push transport, the oracle asserts:
 
@@ -253,19 +253,21 @@ For the default direct-push transport, the oracle asserts:
   ready to land
 - landed PRs are finalized as merged, and their remote review branches are left intact
   at the landed commits
-- landed local review bookmarks are forgotten unless `--skip-cleanup` is present
+- landed local review bookmarks are forgotten unless `--skip-cleanup` is present and only
+  after dependency-aware link retirement proves that no surviving review still uses them
 - local review tracking for the landed prefix is retired; tracking above the landing
   boundary and for orphaned changes is untouched
 - `list --json` stops reporting landed changes and still reports the remaining tracked
   suffix
 
-For `land --via merge`, the oracle asserts the in-command convergence contract: GitHub
-moves trunk by merging the PRs, and before returning `land` retires the merged tracking,
-rebases the surviving selected changes onto the merged trunk, and resubmits them. Survivors
-above a `--pull-request` cap follow the jj rewrite but are not resubmitted; their reviews
-wait for their own next command. A blocked merge-transport scenario marks the first PR after
-the merged prefix as unmergeable; the command must stop there, keep the blocker open and
-tracked, and still converge the accepted prefix.
+For `land --via merge`, the oracle asserts the in-command selected convergence contract:
+GitHub moves trunk by merging the accepted prefix, and before returning `land` finalizes that
+prefix, rebases the surviving selected path onto the merged trunk, and updates only survivors
+that already have reviews and passed fresh identity checks. Trailing unreviewed work remains
+local. Survivors above a `--pull-request` cap are bystanders and must not be rewritten or
+resubmitted. A blocked merge-transport scenario marks the first PR after the merged prefix as
+unmergeable; the command must stop there, keep the blocker open and tracked, and still
+converge the accepted prefix.
 
 Both transports assert transient events, not only final state: a landed PR transitions to
 closed exactly once, and no other original PR sees any state or base event. The one
@@ -278,9 +280,12 @@ Land drift scenarios apply one external transition to a submitted, fully approve
 then run `land` on its default selection so the drifted state must survive the
 in-command fetch. The model predicts one of three outcomes:
 
-- fail closed: an externally advanced trunk, or a bottom PR squash-merged outside the
-  tool, must stop `land` with a classified error before any mutation — no PR events, no
-  remote ref changes, and unchanged saved review identity
+- fail closed: an externally advanced trunk, or an externally merged review whose live merge
+  result is absent from fetched trunk, must stop `land` with a classified error before any
+  mutation — no PR events, no remote ref changes, and unchanged saved review identity
+- rewritten landed result: an externally squash- or rebase-merged selected review may be
+  treated as landed only when GitHub still reports its concrete merge-result commit and that
+  exact commit is reachable from fetched trunk; lifecycle state alone is insufficient
 - prefix stop: an externally closed PR, a draft toggle, a changes-requested review, or a
   deleted mid-stack review branch stops the readiness walk at the drifted change, and
   the prefix below lands normally with the standard direct-push contract
@@ -302,21 +307,22 @@ merged-ancestor check or vice versa.
 
 ## Land Retry Harness
 
-Land retry scenarios interrupt one direct-push land at a fault point, then run `sync` and
-require convergence rather than rollback. There is no saved transaction to resume: recovery
-is observational, so the fault family covers a trunk push whose success acknowledgement is
-lost, a failed load of the first landed PR during finalization, a failure on a later landed
-PR after an earlier one finalized, and a lost tracking-retirement save after every PR
-finalized remotely.
+Land retry scenarios interrupt one direct-push land at a fault point, then run selected `sync`
+and require convergence rather than rollback. There is no saved transaction to resume:
+recovery is observational, so the fault family covers a trunk push whose success
+acknowledgement is lost, a failed load of the first landed PR during finalization, a failure on
+a later landed PR after an earlier one finalized, and a lost tracking-retirement save after
+every PR finalized remotely.
 
 The oracle spans both runs with one event window: each landed PR transitions to closed
 exactly once in total, so the recovery provably finalizes only what the interrupted run
-left unfinished. The recovery must end with the standard direct-push contract and
-`list --json` free of the landed prefix; the unapproved suffix may see legitimate
-convergence events (a base retarget onto trunk) from the recovery's resubmit. The
-deterministic integration suite covers the fail-closed variants where a review branch or
-PR head changes between the runs: the sweep reports and skips such reviews without
-mutating them.
+left unfinished. The recovery must end with the standard direct-push contract and `list --json`
+free of the landed prefix; existing reviews on the selected suffix may see legitimate
+convergence events such as a base retarget onto trunk. The deterministic integration suite
+covers fail-closed variants where a review repository, canonical head identity, review branch,
+or PR head changes between runs: selected `sync` stops that path before rewriting or mutation.
+Independently tracked sibling paths are byte-for-byte bystanders; per-identity skip-and-continue
+behavior belongs only to explicit `sync --all`.
 
 ## Land Handoff Harness
 
@@ -324,8 +330,8 @@ Merge-transport land and external merges both leave documented multi-command rec
 work behind, and the handoff family replays that contract end to end. A prefix reaches
 trunk through GitHub merges — `land --via merge` stopped by an unapproved change, the
 same land interrupted mid-merge by a fault, or squash merges performed outside the tool
-with GitHub's usual head-branch auto-delete. Then `sync` (or `cleanup --rebase` plus
-`submit`) rebuilds the suffix, and a final direct-push land consumes it.
+with GitHub's usual head-branch auto-delete. Then selected `sync` rebuilds the suffix and
+updates its existing reviews, and a final direct-push land consumes it.
 
 The oracle asserts the recovery converged before the final land: every suffix change
 keeps its PR number, bookmark, and pre-handoff approvals, the bottom suffix PR targets
@@ -366,14 +372,15 @@ with external GitHub changes.
 
 For every live change after the final submit:
 
-- local review state has a bookmark and PR number for the change
+- `ReviewIdentity` records the nominal repository, PR number, canonical head owner/ref,
+  bookmark ownership, and link state for the change
 - if the change existed in the initial submitted stack, the PR number is unchanged
 - the remote review branch points at the live `commit_id`
 - the PR is open and unmerged
 - the PR title still identifies the same local change subject
 - the bottom PR targets the resolved trunk branch
 - every other PR targets the previous live change's review branch
-- saved `last_submitted_commit_id` matches the live `commit_id`
+- the distinct `SubmittedBaseline` record matches the live `commit_id`
 - if the original PR had approval reviews, those reviews are still attached to the same
   PR number
 
@@ -393,6 +400,12 @@ For the submitted stack as a whole:
 - final PR bases are derived from the current `jj` DAG
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
+
+The current property harness predates parts of this contract: it still encodes automatic
+diff-equivalent resubmission, the composite tracking-state shape, and mechanism-level journal
+assertions. Those are implementation gaps, not accepted behavior. The exact-snapshot,
+identity, interruption, and observable-outcome oracles replace them in the corresponding
+implementation slices.
 
 ## Efficiency
 

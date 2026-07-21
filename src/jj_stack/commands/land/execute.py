@@ -478,7 +478,12 @@ def render_landed_sweep_actions(
                 LandAction(
                     kind="pull request",
                     body=t"finalizing landed {label} skipped: {result.skip_reason}; "
-                    t"inspect with {ui.cmd('view --fetch')} and rerun {ui.cmd('sync')}",
+                    t"inspect with {ui.cmd('jj-stack view --fetch')} "
+                    t"{ui.change_id(candidate.change_id)}; current sync can retarget or close "
+                    t"PRs for other tracked stacks and can open PRs, so preview "
+                    t"{ui.cmd('jj-stack sync --dry-run')} {ui.change_id(candidate.change_id)} "
+                    t"before running {ui.cmd('jj-stack sync')} "
+                    t"{ui.change_id(candidate.change_id)}",
                     status="blocked",
                 )
             )

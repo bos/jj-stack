@@ -1,25 +1,29 @@
-"""Fetch remote state, drop merged changes, and resubmit the selected stack.
+"""Fetch remote state and repair the selected stack after merges.
 
-This chains the routine catch-up flow into one command: refresh what jj knows about
-the remote, rebase the selected stack off any changes whose pull requests have merged
-(the same repair `cleanup --rebase` performs), finalize and retire any tracked review
-whose exact commit already reached trunk, then run `submit` to refresh the stack's
-pull requests. If the rebase step is blocked, `sync` stops with its diagnostics; if
-everything selected has already merged, it reports that there is nothing left to
-submit.
+The intended behavior is to fetch trunk, recognize merged changes from current GitHub
+and commit data, rebase the remaining selected changes, and update only PRs that already
+exist for them. It does not open a PR for trailing work or change another local stack.
+A separate `sync --all` mode will finish cleanup for reviews whose submitted commits are
+already on trunk, without rebasing or submitting any stack.
 
-`sync` is also the recovery command: it consults no saved operation state, so an
-interrupted `land` (or an interrupted `sync`) converges by rerunning it against
-whatever GitHub and the jj DAG currently report.
+Development status: those boundaries are not implemented yet. The current build still
+checks every tracked review and runs ordinary `submit`, so it may retarget or close PRs
+for other tracked stacks and may open PRs. Preview an explicit selection with
+`sync --dry-run <change-id>` before live recovery until that work lands.
+
+`sync` is also the recovery command. After an interrupted `land` or `sync`, rerun it so
+the command can continue from the current jj and GitHub state.
 
 `sync` only rewrites history to remove merged changes. It does not rebase your stack
 onto newer trunk commits when nothing in the stack has merged; use `jj rebase` for
 that. It also takes no submit flags: runs that need draft handling, descriptions,
 reviewers, or restart behavior use `submit` directly.
 
-With `--dry-run`, `sync` previews the rebase plan and makes no changes. The submit
-preview follows only when no rebase work is planned, because a submit preview taken
-before the rebase would describe the wrong stack.
+With `--dry-run`, `sync` fetches remote state and previews the current build's rebase
+plan. Fetching can update jj's remote-bookmark observations, but the command does not
+apply the planned rebase, push, PR, cleanup, or tracking changes. The submit preview
+follows only when no rebase work is planned, because a submit preview taken before the
+rebase would describe the wrong stack.
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ from jj_stack.review.landed import (
 )
 from jj_stack.state.operation_lock import acquire_operation_lock
 
-HELP = "Fetch, drop merged changes, and resubmit the current stack"
+HELP = "Fetch remote state and repair reviewed stacks after merges"
 
 
 def sync(
@@ -83,9 +87,10 @@ def run_stack_convergence(
 ) -> int:
     """Converge the selected stack with what GitHub and the remote report.
 
-    This is the single convergence routine: `sync` is a thin wrapper around it,
-    and `land` invokes it after GitHub accepts merges. It composes
-    `cleanup --rebase`, the landed-review sweep, and `submit`.
+    This is the current convergence routine: `sync` is a thin wrapper around it,
+    and `land` invokes it after GitHub accepts merges. It composes the legacy
+    cleanup rebase, landed-review sweep, and ordinary submit until selected-only
+    convergence replaces it.
     """
 
     rebase_result = run_cleanup_rebase_command(
@@ -100,8 +105,8 @@ def run_stack_convergence(
         return 1
     if dry_run and any(action.status == "planned" for action in rebase_result.actions):
         console.output(
-            t"Submit preview skipped: run {ui.cmd('sync')} without "
-            t"{ui.cmd('--dry-run')} to apply the rebase first."
+            t"Submit preview skipped: run {ui.cmd('jj-stack sync')} {ui.revset(revset)} "
+            t"without {ui.cmd('--dry-run')} to apply the rebase first."
         )
         return 0
     if rebase_result.fully_merged:

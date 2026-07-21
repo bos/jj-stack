@@ -8,10 +8,8 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 
 ## Authority and contents
 
-- **[design-next.md](design-next.md)** — canonical for current landing, recovery,
-  cleanup, and tracking-state behavior while the specifications remain split.
-- **[design.md](design.md)** — authoritative for product behavior outside that
-  scope. Read both specifications before changing user-visible behavior.
+- **[design.md](design.md)** — the single canonical product specification. Read it before
+  changing user-visible behavior.
 - **[implementation-strategy.md](implementation-strategy.md)** — how the tool
   is built: component structure, tooling, test strategy.
 - **[code-reviews.md](code-reviews.md)** — how to approach reviews for code

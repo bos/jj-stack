@@ -801,20 +801,33 @@ def render_status_advisory_lines(
     if cleanup_revisions:
         rows.append(
             (
-                "Cleanup needed",
+                "Sync needed",
                 "Submit note: descendant PR bases still follow the old local ancestry "
-                "until the remaining local changes are rebased",
+                "until the remaining selected changes are synced",
             )
         )
         rows.append(
             (
-                "Next step",
+                "Development warning",
+                "Current sync can retarget or close PRs for other tracked stacks and can "
+                "open PRs",
+            )
+        )
+        rows.append(
+            (
+                "Preview first",
                 (
-                    ui.cmd("jj-stack cleanup --rebase"),
+                    ui.cmd("jj-stack sync --dry-run"),
                     " ",
                     ui.revset(result.selected_revset),
-                    " or ",
-                    ui.cmd("jj-stack cleanup --rebase --dry-run"),
+                ),
+            )
+        )
+        rows.append(
+            (
+                "If the plan is safe",
+                (
+                    ui.cmd("jj-stack sync"),
                     " ",
                     ui.revset(result.selected_revset),
                 ),

@@ -1,12 +1,11 @@
 # jj-stack implementation strategy
 
-This document covers the implementation choices that follow from the current product
-specifications: [design-next.md](design-next.md) for landing, recovery, cleanup, and tracking
-state, and [design.md](design.md) for the remaining behavior. It defines repository layout,
-component boundaries, tooling, test strategy, and delivery shape.
+This document covers the implementation choices that follow from the single canonical product
+specification, [design.md](design.md). It defines repository layout, component boundaries,
+tooling, test strategy, delivery shape, and the current implementation gaps.
 
-The product specifications are authoritative. This file records how the current code is built,
-not what the product does.
+The canonical product specification is authoritative. This file records how the current code is
+built, not what the product does.
 
 ## Summary
 
@@ -119,7 +118,7 @@ Commands that need nontrivial selection or validation carry that result as an ex
 resolved/prepared target value before mutation. The prepared value should hold the
 selected stack or revision, GitHub and remote observations, parsed options, and the
 `CommandContext` when later phases need shared dependencies. Mutating phases that need
-dry-run mode, journal state, or interim saves use a small run object such as
+dry-run mode or interim saves use a small run object such as
 `SubmitMutationRun`, `LandMutationRun`, `_OrphanCloseRun`, or `AbortRun`.
 The `unstack --cleanup --pull-request orphans` selector snapshots orphan records from
 repo-scoped stack discovery, rejects duplicate PR claims before mutation, and then reuses the
@@ -305,50 +304,22 @@ The repo state directory also contains the operation lock files:
 
 - `operation.lock` is the fixed-path advisory lock sentinel
 - `operation-lock.json` is diagnostic companion metadata for the current holder
-- `operation-log.jsonl` is the repo-level chronological audit log
 
-Mutating commands hold the lock through their full command lifetime. `view` uses the
-non-blocking path only around its best-effort cache write, so live inspection still renders
-while another mutation is running. The operation lock replaces same-kind PID waits.
+Mutating commands hold the lock through their full lifetime. The lock is process coordination
+only. The current implementation also writes the operation journal and may store a land note;
+slice 10 removes both. The target state directory contains no phase, selector, path, or recovery
+checkpoint.
 
-`land`, `submit`, `relink`, `cleanup`, `cleanup --rebase`, `unstack`, and orphaned
-`unstack --cleanup --pull-request` append `begin`, mutation, saved-state, and `completed`
-events to `operation-log.jsonl` for after-the-fact inspection. `sync` composes
-`cleanup --rebase`, the landed-review sweep, and `submit` under one operation lock; each
-composed phase journals as itself. Retry behavior derives from the current jj DAG, saved
-tracking data, and GitHub state — never from saved operation state, of which there is none.
-The audit log is never projected back into live command state.
+The production component boundary, implemented across slices 5–10, shares pure observation and
+classification between landing and sync rather than a durable operation state machine.
+`commands/land/` owns selected readiness and fresh mutation; `commands/sync.py` owns selected
+convergence and explicit global recovery; `review/landed.py` owns the two distinct landed
+classifications. Remote finalization returns an outcome without deciding whether local identity
+can retire. Dependency-aware retirement derives that separate decision from the current DAG.
 
-Landing recovery is observational (see [design-next.md](design-next.md)). The landed-review
-sweep in `review/landed.py` finds every tracked review whose exact submitted commit is an
-ancestor of trunk and whose current local commit still equals that baseline, finalizes its
-still-open PR (retarget to trunk, close, confirm no longer open, with the head identity
-rechecked on every load), retires its tracking, and forgets safe local bookmarks. It runs
-from `sync` and from every non-dry-run `land`, so an interruption at any point converges on
-the next run of either command. Candidates it cannot prove safe — local edits since submit, a
-moved PR head, a PR closed without merging — are reported with a runnable next step and
-skipped. A message-only land note may explain an interrupted run on the next invocation; no
-execution path reads it.
-
-`commands/land/pull_requests.py` owns the one-PR merge protocol for `land --via merge`,
-including retargeting, exact head verification, and merge outcomes; `review/landed.py` owns
-finalization and teardown. The executor in `commands/land/execute.py` owns the bottom-up
-sequence: the leased trunk push with in-process restore on failure, the merge loop that stops
-at the first refused PR, and the sweep invocation. State saves are atomic but not fsync
-durable: tracking is reconstructible, so losing a write costs a re-derivation, never
-correctness.
-The cleanup rebase pass retires merged ancestors it can prove inert — local commit equal
-to the last submitted commit, single visible revision, mutable, unambiguous local and remote
-bookmarks, and bookmark policy allowing every local bookmark that points at the commit. It loads
-one current bookmark snapshot after rebasing, then deletes the verified managed review branch
-before abandoning the local copy and removing tracking. Bookmark conflicts, guarded user
-bookmarks, and remote deletion failures therefore retain both local and saved identity for retry;
-failed removability proofs are preserved with an explanatory action.
-
-That retirement flow lives in `commands/cleanup/retirement.py`. It first computes a pure typed
-plan from the prepared revisions and one current bookmark snapshot, then applies remote deletion,
-local abandonment, and tracking removal in their required order. `cleanup/rebase.py` owns stack
-repair orchestration but does not duplicate the retirement proof or its mutation protocol.
+State saves are atomic but not fsync durable. Identity and baseline preserve wrong-object and
+reviewed-snapshot evidence; a lost reconstructible cleanup write leaves residue that observation
+can classify on retry.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
@@ -516,7 +487,8 @@ most concurrency debt.
 pytest with branch coverage enabled, emits a terminal missing-lines report, and writes
 an HTML report to `htmlcov/index.html`.
 
-Live tests require an explicit flag and explicit credentials.
+Any future live tests require an explicit flag, explicit credentials, and separate approval for
+external mutation. No live suite exists today.
 
 ## Fake GitHub server
 
@@ -547,12 +519,12 @@ branch state, not just JSON responses.
 We use FastAPI for the fake server unless Starlette later proves to offer a clear
 concrete advantage for this test harness.
 
-## Fake GitHub parity tests
+## Planned fake GitHub parity tests
 
-We have tests for the fake layer itself to verify that its behavior actually matches
-GitHub for the subset of functionality we rely on.
+The intended live evidence layer would verify that fake behavior matches GitHub for the subset of
+functionality the tool relies on. It is not current test coverage.
 
-These tests compare observable behavior, not implementation details:
+Those tests should compare observable behavior, not implementation details:
 
 - creating a PR creates the expected remote refs and returns the expected JSON shape
 - updating a PR changes the same fields GitHub changes and leaves alone the same fields
@@ -560,8 +532,8 @@ These tests compare observable behavior, not implementation details:
 - comment creation and update behave like GitHub for the endpoints we use
 - branch and PR visibility in API responses match GitHub for the scenarios we cover
 
-Where practical, parity tests run the same client action once against the fake server
-and once against a live throwaway GitHub repo, then compare the resulting normalized
+Where separately approved and practical, a parity test would run the same client action once
+against the fake server and once against a live throwaway GitHub repo, then compare normalized
 observations.
 
 ## Planned live GitHub test strategy
@@ -653,8 +625,10 @@ When possible, diagnostics point to the exact recovery action:
 - `jj stack cleanup`
 - `jj workspace update-stale`
 
-Unreadable or partially written tracking state is treated as missing data with one
-warning, then commands fall back to rediscovery where the design allows.
+The current implementation rejects an unreadable, invalid, or unsupported top-level tracking
+file, but one malformed record still poisons the whole file. Slice 8 retains that top-level
+fail-closed boundary while adding per-record isolation for independently usable identities and
+baselines.
 
 Process exit codes are formalized and implemented; the contract lives in
 [design.md](./design.md) ("Exit codes") with the user-facing table in
@@ -714,31 +688,28 @@ If we keep the `jj` DAG as the source of truth, keep the GitHub layer narrow, an
 the fake server honest by regularly checking it against real GitHub, the implementation
 should stay understandable and correct as it grows.
 
-## Rework foundation status (2026-07)
+## Merger implementation status (2026-07)
 
-The observational-convergence rework from [design-next.md](design-next.md) is implemented:
+The canonical-design foundation slice is complete: `design.md` is the sole product
+specification, competing target authority has been removed, and subordinate docs distinguish the
+production target from the current rework implementation. The live-GitHub evidence gap remains
+explicit rather than being filled from the fake.
 
-- `land: rebuild recovery on observational convergence` — the landed-review sweep
-  (`review/landed.py`), `sync` as the single convergence routine, the message-only land
-  note, and the removal of the direct-land transaction and its recovery module.
-- `state: drop saved submitted-topology pointers` — staleness derives from commit
-  identity alone.
-- `state: reduce tracking to review identity` — lifecycle caches, comment IDs, and PR
-  URLs removed; managed comments rediscover by body marker; tool-closed reviews retire
-  by unlinking.
+The rework foundation already provides a `jj`-derived stack, sparse lifecycle-free tracking,
+marker-based comment rediscovery, leases, an observational land/sync routine, and real-`jj`
+integration coverage. It is not production-ready. The canonical gap markers in `design.md` map to
+these current implementation facts:
 
-Remaining follow-ups live in [backlog.md](backlog.md).
+- state is one version-1 `CachedChange`; status may overwrite its PR/bookmark fields
+- land accepts diff-equivalent rewrites and refreshes review branches
+- merge mutation does not re-read full readiness or send expected-head SHA
+- the GitHub model and fake expose no live merge-result identity
+- malformed state poisons the whole file, and finalization is coupled to link retirement
+- ordinary selected commands run a repository-wide sweep and selected sync calls plain `submit`
+- `LandNote` and the write-only operation journal remain in code and mechanism-coupled tests
 
-This is an implementation inventory, not a production-readiness claim. The foundation still
-requires the separately specified safety and evidence slices before release.
-
-## Accepted merger boundary (not yet implemented)
-
-The accepted merger plan makes ordinary `land` and `sync <selector>` strictly selected-scope
-commands. Repository-wide observational recovery will require explicit `sync --all`, acting only
-through the exact-submitted-snapshot gate. The current rework foundation still runs its landed
-review sweep from ordinary selected commands; that is an implementation gap, not the target
-contract.
+Each ordered slice removes its corresponding marker and updates this inventory. Non-blocking
+follow-ups live in [backlog.md](backlog.md).
 
 The planned live-GitHub experiment has not been run. Direct-push PR lifecycle, retarget-and-close
 behavior, merge-result identity by merge method, merged-head deletion, and expected-head rejection

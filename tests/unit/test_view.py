@@ -105,8 +105,12 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 
     assert "Advisories:" in lines
-    assert "jj-stack cleanup --rebase @" in normalized_lines
-    assert "jj-stack cleanup --rebase --dry-run @" in normalized_lines
+    assert "jj-stack sync @" in normalized_lines
+    assert "jj-stack sync --dry-run @" in normalized_lines
+    assert "Current sync can retarget or close PRs for other tracked stacks" in normalized_lines
+    assert normalized_lines.index("jj-stack sync --dry-run @") < normalized_lines.index(
+        "jj-stack sync @"
+    )
     assert "PR #5 is merged" in normalized_lines
     assert "merged into team/feature-base" in normalized_lines
 

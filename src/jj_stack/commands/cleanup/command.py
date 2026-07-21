@@ -1,18 +1,19 @@
 """Find and remove stale tracking data and review branches left behind by earlier review work.
 
 By default, this runs a repo-wide cleanup of tracking data and review branches that no longer
-match an active review. With `--rebase [REVSET]`, it works on one local stack instead.
+match an active review.
 
 Open orphaned PRs are preserved. Run `jj-stack list` to see them, then retire one explicitly
 with `jj-stack unstack --cleanup --pull-request <pr>`, or retire all of them with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
-Use `cleanup --rebase` when some changes from your stack have been merged on GitHub as rewritten
-commits (e.g. via a squash merge in the GitHub UI). In this case, your local stack still
-contains the old pre-merge commits, and `cleanup --rebase` will drop those merged ancestors from
-the local stack and rebase the remaining local changes onto the current `trunk()`.
+Development status: `--rebase [REVSET]` still exposes the rebase path used by the current
+`sync` implementation. Rebasing after merged changes will move entirely to `sync`; `cleanup`
+will then only remove stale tracking data and review branches.
 
-Use `--dry-run` to preview cleanup actions without making any changes.
+Use `--dry-run` to preview cleanup actions. With transitional `--rebase`, this fetches remote
+state and can update jj's remote-bookmark observations, but does not apply the planned rebase,
+push, PR, cleanup, or tracking changes.
 
 """
 
@@ -75,7 +76,7 @@ from .stack_comments import (
 )
 from .stale import _plan_orphan_local_bookmark_cleanups, _stale_change_reasons
 
-HELP = "Remove stale tracking data and review branches; optionally rebase one stack"
+HELP = "Remove stale tracking data and review branches"
 
 
 def cleanup(

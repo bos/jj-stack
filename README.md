@@ -184,17 +184,30 @@ Your typical author loop is:
 4. Re-run `jj-stack submit`.
 5. Once the bottom changes are approved, run `jj-stack land`.
 6. If lower changes were merged on GitHub instead of with `jj-stack land`, run
-   `jj-stack cleanup --rebase` when status says cleanup is needed.
+   `jj-stack sync <head-change-id>` when status says convergence is needed.
 
-`land` pushes the ready changes at the bottom of your stack to GitHub trunk, forgets
-the local review bookmarks for the landed changes, and retires their review tracking.
-It stops before the first change that is not ready to land.
+The production target for `land` pushes the ready, exactly submitted changes at the bottom of
+your stack to GitHub trunk, forgets local review bookmarks when no PR above depends on them, and
+retires landed review tracking. It stops before the first change that is not ready or no longer
+matches the snapshot reviewers saw. After any local rewrite, including a rebase with the same
+diff, run `submit` before `land`.
 
-`cleanup --rebase` is helpful when some lower changes were merged on GitHub, for example with a
-squash merge, and your local stack still contains those old merged ancestors. It rebases the
-remaining changes onto `trunk()` and retires the merged ancestors — abandoning each local copy
-it can prove is exactly what reviewers merged, along with its review tracking and review
-branch. Copies it cannot prove inert stay in place with an explanation.
+> **Development status:** the landing safety work described above is not implemented yet. The
+> current rework build can update and land a same-diff rewrite in one `land` run, relies on
+> earlier readiness checks, and can retarget or close PRs for other tracked stacks while finishing
+> landed reviews. Always rerun `submit` after a rewrite, inspect `land --dry-run`, and avoid
+> manually retargeting, editing, or merging PRs while `land` runs until those slices land.
+
+Selected `sync` is the recovery path when lower changes were merged on GitHub, for example with
+a squash merge, and your local stack still contains old merged ancestors. It rebases the
+remaining selected changes onto `trunk()`, updates only PRs that already exist for them, and
+finishes cleanup for merged PRs when no PR above still needs their review branch. Unreviewed
+trailing work stays local, and other local stacks are left alone.
+
+> **Development status:** the promise to leave other stacks and unreviewed changes alone, plus the
+> explicit repository-wide `sync --all` mode, is not implemented yet. The current rework build
+> can retarget or close PRs for other tracked stacks and can open PRs through `sync`; use
+> `jj-stack sync --dry-run <head-change-id>` before a live recovery until that slice lands.
 
 When `list` or `view` says a tracked stack changed since the last submit, inspect that
 stack directly:
@@ -203,7 +216,7 @@ stack directly:
 jj-stack view <head-change-id>
 ```
 
-The status output will show whether the next step is a plain submit or cleanup first.
+The status output will show whether the next step is a plain submit or selected `sync` first.
 
 If `list` shows an `orphan` row, a PR is still open but the local change it reviewed is
 no longer part of any current stack. When you are ready to retire that PR:

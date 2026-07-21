@@ -155,10 +155,15 @@ And also, locally, we need the `jj` state to be clean:
 - it has no unresolved conflicts
 - it has not diverged
 
-If you rebased a reviewed change without changing its diff, `land` refreshes the review branch
-for you before it pushes `trunk()`. If you changed the diff since the last review, you'll need
-to rerun `submit` first; this will update the PR to show your new content, so reviewers can take
-another look.
+If you rewrote a reviewed change, rerun `submit` before landing even when the diff is unchanged.
+The production target accepts only the exact commit last sent for review when both the review
+branch and PR still point to it; `land` will not refresh a review to make the change landable.
+
+> **Development status:** the landing safety work described above is not implemented yet. The
+> current rework build can update and land a same-diff rewrite in one `land` run, relies on
+> earlier readiness checks, and can retarget or close PRs for other tracked stacks while finishing
+> landed reviews. Always rerun `submit` after a rewrite, inspect `land --dry-run`, and avoid
+> manually retargeting, editing, or merging PRs while `land` runs until those slices land.
 
 If you want to preview the landing plan without actually landing your changes:
 
@@ -197,53 +202,41 @@ This retargets each ready PR to trunk and merges it on GitHub, bottom to top, st
 first PR GitHub reports as not mergeable (for example, when required checks are still running).
 The merge method comes from your repo's settings when only one is allowed; otherwise pass
 `--merge-method squash` (or `rebase`/`merge`). Because GitHub does the merging, your local
-commits are not what lands on trunk — so after GitHub accepts the merges, `land` finishes the
-job itself: it rebases the rest of your local stack off the merged changes and refreshes the
-remaining PRs, the same catch-up `jj-stack sync` performs. If anything interrupts it, rerun
-`jj-stack land` or `jj-stack sync` and it picks up from whatever GitHub reports.
+commits are not what lands on trunk. The production target finishes accepted changes in the same
+command: it rebases the remaining selected changes and updates only PRs that already existed for
+them. Unreviewed trailing work stays local. The current rework build still uses the broader
+`sync` behavior described in the development notice below. If anything interrupts it, preview
+and rerun selected `sync`; it continues from the current jj and GitHub state.
 
-## 7. Rebase remaining work
+## 7. Converge remaining reviewed work
 
-`jj-stack cleanup --rebase` is specifically about removing merged ancestors from your local
-stack and rebasing surviving descendants onto `trunk()`. Use it when some lower changes were
-merged on GitHub through different commit IDs and your local stack still contains those
-now-merged ancestors. When it can prove a merged ancestor's local copy is exactly what
-reviewers merged, it also abandons that copy and retires its review tracking and review
-branch, so nothing lingers as cleanup-needed; copies it cannot prove inert are preserved with
-an explanation:
+Use selected `sync` when lower changes were merged on GitHub through different commit IDs and
+your local stack still contains those now-merged ancestors:
 
 ```bash
-jj-stack cleanup --rebase
+jj-stack sync <head-change-id>
 ```
 
-`cleanup --rebase` does not otherwise rewrite history. If your stack simply drifted because
-`trunk()` advanced without anything in your stack landing, rebase with plain `jj`:
+`sync` fetches trunk, verifies which lower PRs actually landed, rebases the remaining selected
+changes, and updates only PRs that already exist for them. It does not open a PR for trailing WIP
+or touch other local stacks. If it cannot safely remove an old local copy, it leaves the change
+alone and prints the next command to run.
+
+`sync` does not otherwise rewrite history. If your stack simply drifted because `trunk()`
+advanced without anything in your stack landing, rebase with plain `jj`:
 
 ```bash
 jj rebase -s <bottom-of-stack> -d 'trunk()'
 ```
 
-After `cleanup --rebase`, there might be open PRs for your remaining not-yet-landed changes on
-GitHub that still point at old branch targets, old parent PRs, or old diffs. You can refresh
-GitHub's view of your stack with:
+Use `sync --dry-run <head-change-id>` to preview the repair. The production target also provides
+`sync --all` as the only repository-wide recovery mode; it finalizes isolated
+PRs whose exact submitted commits are already on trunk but never rewrites or submits a stack.
 
-```bash
-jj-stack submit
-```
-
-`jj-stack sync` chains that catch-up flow into one command: it refreshes remote state,
-finalizes and retires any of your reviews whose exact commits already reached `trunk()`
-(for example after an interrupted land, or a merge made in the GitHub UI that kept your
-commits), runs the same merged-ancestor rebase as `cleanup --rebase`, and then resubmits the
-stack:
-
-```bash
-jj-stack sync
-```
-
-Like `cleanup --rebase`, `sync` only rewrites history to remove merged changes — it never
-rebases your stack onto newer trunk commits when nothing in it has merged. Use
-`sync --dry-run` to preview the rebase plan first.
+> **Development status:** the promise to leave other stacks and unreviewed changes alone, plus
+> `sync --all`, is not implemented yet. The current rework build can retarget or close PRs for
+> other tracked stacks and can open PRs through `sync`; always preview an explicit selection
+> before a live recovery until that implementation slice lands.
 
 ## 8. Unstack abandoned stacks
 
@@ -289,7 +282,7 @@ If `jj-stack list` says another tracked stack changed since its last submit, eit
 `jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another
 stack when that stack is built on top of a change in the stack you are inspecting. Status calls
 out whether commit IDs, PR bases, or the stack head differ from the last successful submit, and
-it will also show if cleanup is needed first.
+it will also show if selected `sync` is needed first.
 
 ## Short version
 
@@ -301,10 +294,10 @@ jj-stack submit
 # edit in jj
 jj-stack submit
 jj-stack land
-jj-stack sync
 ```
 
-(`sync` is shorthand for the `cleanup --rebase` + `submit` catch-up pair.)
+Use selected `sync` only when GitHub merged changes by another route or a landing command was
+interrupted. A successful uninterrupted `land` needs no routine follow-up command.
 
 ## When something goes wrong
 

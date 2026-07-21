@@ -358,8 +358,10 @@ def _landability_decision(
         return _LandabilityDecision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"PR #{pull_request.number} is already merged; run "
-                t"{ui.cmd('cleanup --rebase')} first"
+                t"PR #{pull_request.number} is already merged; current sync can retarget or "
+                t"close PRs for other tracked stacks and can open PRs, so preview "
+                t"{ui.cmd('jj-stack sync --dry-run')} {ui.change_id(revision.change_id)} "
+                t"before running {ui.cmd('jj-stack sync')} {ui.change_id(revision.change_id)}"
             )
         )
     return _LandabilityDecision(

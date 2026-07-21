@@ -98,13 +98,14 @@ Possible causes:
 What to do:
 
 ```bash
-jj-stack cleanup --rebase
-jj-stack submit
+jj-stack sync <head-change-id>
 ```
 
-`cleanup --rebase` drops those merged ancestors from the active local stack
-and rebases the remaining changes above the current `trunk()`. After that,
-`submit` refreshes the open PRs to reflect the new base.
+Selected `sync` verifies which lower PRs landed, rebases the selected remaining changes above the
+current `trunk()`, and updates only PRs that already exist for them. Use
+`jj-stack sync --dry-run <head-change-id>` first while the production rework is in progress:
+the current build can still retarget or close PRs for other tracked stacks and open PRs through
+`sync`.
 
 ## `list` or `view` says another stack changed since its last submit
 
@@ -154,8 +155,8 @@ If you want to notify prior reviewers again after updating the PR, follow with:
 jj-stack submit --re-request
 ```
 
-A pure rebase with the same diff does not need this. In that case, `land` will refresh the review
-branch automatically before pushing `trunk()`.
+A pure rebase with the same diff still changes the reviewed commit identity. Rerun `submit` so
+the review branch, PR, and `jj-stack` tracking all name that exact commit before landing.
 
 ## `land` fails pushing trunk with a protected-branch error
 
@@ -170,17 +171,19 @@ The reason after the `GH006` line decides the fix — read it before changing an
 
 - **"required status checks are expected"** (or pending, or failing): direct pushes are
   allowed here, but the required checks must pass on the exact commits being landed
-  first. This is common right after a rebase: `land` refreshed the review branches, so
-  the checks are re-running against the new commits. Wait for the review-branch checks
-  to finish, then rerun `jj-stack land`. Do not switch to `land --via merge` for this —
+  first. This is common right after a rebase and `submit`: checks are re-running against
+  the newly submitted commits. Wait for the review-branch checks to finish, then rerun
+  `jj-stack land`. Do not switch to `land --via merge` for this —
   the merge API enforces the same required checks and refuses just the same.
 - **"Changes must be made through a pull request"**: the repo forbids direct pushes to
-  trunk entirely. Land through GitHub instead, then rebase the rest of your stack:
+  trunk entirely. Land through GitHub instead:
 
   ```bash
   jj-stack land --via merge
-  jj-stack sync
   ```
+
+  An uninterrupted merge landing rebases and updates the remaining reviewed changes before it
+  returns. Run `jj-stack sync <change-id>` only if that follow-up was interrupted or failed.
 
 - **"You're not authorized to push to this branch"**: an access problem, not a landing
   problem. Fix repo permissions before retrying either transport.
@@ -267,18 +270,19 @@ Re-run the same command, passing the change ID or revset so you don't accidental
 different stack. `jj-stack` derives the current state from jj, tracking data, and GitHub
 instead of replaying a retained recovery record.
 
-| Command that failed         | Re-run                                  |
-| --------------------------- | --------------------------------------- |
-| `submit`                    | `jj-stack submit <revset>`             |
-| `unstack` / `unstack --cleanup` | `jj-stack unstack [--cleanup] <revset>`  |
-| `cleanup --rebase`          | `jj-stack cleanup --rebase <revset>`   |
-| `land`                      | `jj-stack sync <revset>`               |
+| Command that failed              | Next safe step                                      |
+| -------------------------------- | --------------------------------------------------- |
+| `submit`                         | `jj-stack submit <revset>`                          |
+| `unstack` / `unstack --cleanup`  | `jj-stack unstack [--cleanup] <revset>`             |
+| `sync`                           | `jj-stack sync --dry-run <revset>`                  |
+| `land`                           | `jj-stack sync --dry-run <revset>`                  |
 
-For an interrupted `land` specifically: run `jj-stack sync <revset>`. If the trunk push
-already succeeded, the landed commits are already on `trunk()`; `sync` finds every tracked
-review whose exact commit reached `trunk()`, finalizes its pull request, and retires its
-tracking. If GitHub merges were requested but never confirmed, the next `land` or `sync`
-explains what actually merged and converges from the current GitHub state.
+Current `sync` can retarget or close PRs for other tracked stacks and can open PRs. After the
+explicit dry-run is safe, rerun the same selected command without `--dry-run`. For an interrupted
+`land`, that selected `sync` finishes cleanup after a successful trunk push while keeping any
+review branch still needed by a PR above. If GitHub merges were requested but never confirmed, it
+checks the current GitHub result and trunk history, explains what actually merged, and continues
+from current state.
 
 ### Back out
 

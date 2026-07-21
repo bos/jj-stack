@@ -25,16 +25,14 @@ conditional and release evidence must report the gap rather than treating local 
 _Benefit: medium — affects users with failed mutating commands, which is uncommon
 but can leave jj, GitHub, and saved tracking data out of sync._
 
-Mutating commands now use a repo-scoped operation lock and append events to the
-repo-level operation log. Retry behavior derives from the jj DAG, saved tracking
-data, GitHub state, explicit user selectors, and narrow log evidence when `land`
-must prove that an unfinished run already pushed trunk. The log remains audit
-evidence, not a retained recovery model.
+Target retry behavior uses a repo-scoped operation lock and derives from the jj DAG, saved review
+identity and submitted baselines, fetched trunk reachability, and live GitHub state. There is no
+durable transaction, replay phase, or retained path. The current rework still writes an operation
+log; required slice 10 removes it rather than making it part of recovery.
 
 Possible follow-up work:
 
-- add a small diagnostic command that prints recent operation-log entries in a
-  user-facing format
+- make each fail-closed result and residue state print an exact safe next command
 - document how to locate the repo state directory when debugging with support
 
 ## Start-Fresh Review Repair
@@ -59,9 +57,8 @@ Possible follow-up work:
 
 _Benefit: small — remaining edge cases are narrow and infrequent._
 
-The design doc and future `land` design now cover the main recovery shape for
-merged ancestors and the division of labor between `land` and
-`cleanup --rebase`.
+The canonical design covers the main recovery shape for merged ancestors and the division of
+labor between `land`, selected `sync`, and explicit repository-wide `sync --all`.
 
 The remaining follow-up here is narrower:
 
@@ -72,22 +69,6 @@ The remaining follow-up here is narrower:
 - any residual diagnostics that are still too subtle once the concrete `land`
   flow exists
 
-## Explicit Repository-Wide Recovery
-
-_Benefit: large — makes repository-wide mutation explicit and keeps selected commands from
-touching sibling stacks._
-
-The product boundary is decided: ordinary `land` and `sync <selector>` affect only the selected
-review identities. `sync --all` is the explicit repository-wide observational recovery mode. It
-may finalize only identities whose exact submitted commit is on fetched trunk and whose live
-nominal identity still matches. It must isolate failures per identity, must not rewrite stacks or
-submit work, and must report dependent selected paths rather than retiring their links early.
-
-The current rework implementation still runs an implicit landed-review sweep from ordinary
-selected commands and has no `sync --all` mode. The selected-scope and explicit-global changes
-belong to the ordered convergence slice; this entry records the accepted boundary rather than an
-open product question.
-
 ## Git Commit Change-ID Header
 
 _Benefit: unknown — potentially useful for recovery and checkout UX, but not needed for the
@@ -97,9 +78,9 @@ Since `jj` 0.30 the `change-id` header in Git commit objects is written and impo
 default (`git.write-change-id-header`), so change IDs survive ordinary push/fetch round
 trips. The `jj` changelog notes the limits that matter here: `git rebase` and some forges
 drop the header when they rewrite commits, and GitHub squash merges create fresh commits
-without it — which is why the cleanup rebase pass proves a merged ancestor inert from the
-saved last-submitted commit rather than from header identity. The header is not shown by
-normal Git or GitHub commit views, and it should not become a new source of truth for
+without it — which is why selected convergence proves a merged ancestor inert from exact
+submitted or live merge-result reachability rather than from header identity. The header is not
+shown by normal Git or GitHub commit views, and it should not become a new source of truth for
 jj-stack. Still, it may be useful evidence in future recovery flows where the user
 experience should follow a logical `jj` change rather than one exact commit object.
 
@@ -112,29 +93,23 @@ High-level cases where this might help:
 - reducing unnecessary manual relinking when jj-stack can tell that a GitHub PR branch and
   a local change probably share the same underlying `jj` change identity
 
-## Landing Transports and Merge Queues
+## Additional Landing Transports and Merge Queues
 
 _Benefit: medium — high value for teams that require merge queues, but complex
 to design correctly and not blocking the current direct-push flow._
 
-The current `land` model is intentionally narrow: resolve the ready prefix,
-move local history first, then reconcile GitHub state around that result.
+The canonical `land` model supports direct push and GitHub PR merge. The remaining product
+question is whether it should eventually support a landing PR or merge queue while keeping the
+`jj` DAG as the source of truth. Concrete follow-up questions:
 
-The remaining product question is whether landing should eventually support
-more than one transport while keeping the `jj` DAG as the source of truth.
-Concrete follow-up questions:
-
-- whether `land` should grow an explicit transport selector such as direct
-  push to trunk, open a landing PR, or submit the ready prefix to a merge
-  queue
+- whether `land` should add a landing-PR or merge-queue transport
 - how queue-backed landing should report queued, running, failed, and merged
   states in `view` without introducing forge-owned stack metadata as a
   competing source of truth
 - how the queue or landing-PR path should preserve the current fail-closed
   behavior when the ready prefix changes locally while a queued landing is in
   flight
-- whether queue-backed landing needs resumable operation data beyond the
-  operation-log evidence and tracking state used by the direct-push flow
+- whether queue-backed landing can remain observational without durable intent or replay state
 - how repo policy requirements such as required checks, branch protection, and
   review-only `review/*` branches should be diagnosed before a landing attempt
 
@@ -151,8 +126,7 @@ depends heavily on knowing what to run next after a non-trivial state change.
 
 Useful follow-up work here includes:
 
-- richer "next command" guidance after `submit`, `land`, `unstack`, and
-  `cleanup --rebase`
+- richer "next command" guidance after `submit`, `land`, `unstack`, `sync`, and `cleanup`
 - clearer distinction between "inspect only", "safe retry", and "history
   rewrite" recovery paths when something is stale or ambiguous
 - an explicit guided-recovery flow for common cases such as "ancestor already
@@ -277,11 +251,10 @@ The transition vocabulary and required behaviors live in
   adjusted orphan expectations)
 - `view --fetch` in the drift replay, which pulls foreign refs into the local
   view and exercises the fetch-artifact tolerance paths
-- drift replay against `land`, `cleanup --rebase`, and `unstack`, which have
+- drift replay against `land`, `sync`, and `unstack`, which have
   their own mutation surfaces and fail-closed obligations
-- a tracking-store-loss drift (fresh machine, deleted state file with live PRs)
-  once the product decides which proofs let `submit` adopt existing PRs versus
-  requiring `checkout`
+- a tracking-store-loss drift (fresh machine, deleted state file with live PRs) that proves
+  ordinary `submit` refuses adoption and explicit `checkout` or `relink` restores identity
 - typed `DriftError` conditions for the remaining untyped fail-closed guards in `submit`,
   added together with the transition that reaches each one: the conflicted-bookmark guards
   become reachable once the replay fetches between drift and submit (the `view --fetch`
@@ -342,7 +315,7 @@ Possible follow-up work:
 - decide how `checkout` should treat PRs that are linked into a native GitHub
   stack but have no local tracking data
 
-## Post-rework follow-ups from the observational land rebuild
+## Current Rework Land Follow-ups
 
 _Benefit: small each; recorded so residue-tolerance stays a decision, not an accident._
 

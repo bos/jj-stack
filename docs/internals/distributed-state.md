@@ -1,5 +1,8 @@
 # Distributed state model
 
+Status: target executable model. The canonical gap table in [design.md](design.md) identifies the
+state fields and command boundaries that the current rework implementation has not reached yet.
+
 `jj-stack` coordinates four state-holders that can move independently. Every confusing
 bug report and every fail-closed diagnostic is some pair of them disagreeing. This file
 names the holders, the legal transitions that move each one, the invariants that define
@@ -12,7 +15,7 @@ vocabulary.
 1. **Local `jj` view** — the commit DAG, change visibility/mutability, local bookmarks,
    and remembered remote-bookmark observations. Moved by the user's `jj` commands
    (rebase, squash, abandon, new, describe), by `jj git fetch`, and by `jj-stack` itself
-   (bookmark moves, pushes, `cleanup --rebase`).
+   (bookmark moves, pushes, selected `sync`).
 2. **Remote Git refs** — the branch namespace of the GitHub repository. Moved by
    `jj-stack` pushes, by anyone else's pushes (a teammate landing to `main`, an agent
    pushing a branch with plain git), and by branch deletion from the GitHub UI or `gh`.
@@ -20,26 +23,26 @@ vocabulary.
    flags, reviews, labels, comments. Moved by `jj-stack` mutations, by humans and agents
    through the UI or `gh`, and by GitHub itself: it auto-closes an open PR whose head
    becomes reachable from its base, and closes PRs whose head branch is deleted.
-4. **Tracking store** — `jj-stack`'s sparse per-change identity and submitted baseline:
-   bookmark name and ownership, link state, PR number, and last submitted commit. A
-   repository-level land note may affect messaging only. The store is moved only by
-   `jj-stack` commands, but it can go stale relative to everything else because the other
-   three holders never notify it.
+4. **Tracking store** — separate versioned `ReviewIdentity` and `SubmittedBaseline` records
+   keyed by full `change_id`. Identity holds host/repository, PR number, canonical head owner/ref,
+   bookmark ownership, and link state; baseline holds the exact submitted commit. The store is
+   moved only by explicit identity operations and successful or safely adopted `submit`
+   projection. Status observation never writes either record.
 
-The `jj` DAG is the source of truth for stack topology; GitHub is authoritative for PR
-outcomes and remote branch tips; the tracking store is a sparse cache of identity claims
-("change X is reviewed by PR N via branch B") that must be re-verified against the other
-holders before any mutation.
+The `jj` DAG is the source of truth for stack topology and content; fetched configured trunk is
+the remote reachability boundary; GitHub is authoritative for PR identity, lifecycle, reviews,
+and merge-result identity. Tracking is sparse veto evidence, not cached permission. Every
+mutation re-verifies it against the current other holders.
 
 ## Healthy linkage
 
 For each submitted change, health is one chain of agreements:
 
-- the saved bookmark exists locally and points at the change's current commit, or the
-  change was rewritten and `submit` may move it
-- the same-named remote ref points at the saved `last_submitted_commit_id` (or already at
-  the current commit after an interrupted push)
-- GitHub reports exactly one PR for that head branch, open, with the saved PR number
+- current configuration resolves to the saved host and repository
+- the identity's canonical head ref is unambiguous and its owner matches the live PR
+- the remote ref points at the submitted baseline, or at the exact current commit after an
+  interrupted push that `submit` may safely adopt under all nominal checks
+- GitHub reports the saved PR number on that exact head owner/ref
 - the PR base is the parent change's bookmark, or the trunk branch for the bottom change
 
 `submit` re-derives everything else from the DAG on every run, so anything not in this
@@ -59,6 +62,9 @@ against every conceivable corruption.
 | `closed_pr` | GitHub PRs | someone closes a stack PR in the UI | fail closed (exit 1) |
 | `merged_pr` | GitHub PRs | a review-branch PR is merged despite policy | fail closed (1) |
 | `pr_replaced` | GitHub PRs | PR closed, new PR opened on the same branch via `gh` | fail closed (1) |
+| `repository_retargeted` | GitHub/config | configured remote now names another repo | fail closed (1) |
+| `head_ref_renamed` | GitHub PRs | PR head branch is renamed or moved | fail closed (1) |
+| `remote_swapped` | remote refs | same ref and PR number now resolve on another remote | fail closed (1) |
 | `pr_base_retargeted` | GitHub PRs | someone retargets a PR base to `main` | success; base recomputed |
 | `pr_draft_toggled` | GitHub PRs | someone converts a PR to draft | success; draft preserved |
 | `remote_branch_drift` | remote refs | review branch force-pushed elsewhere | fail closed (1) |
@@ -104,13 +110,17 @@ ref on the same commit, and a tracking store still pointing at the closed PR.
   `ConflictedStackError` for local shape), so the harness asserts *which* check fired,
   not just the exit code — a stop for the wrong reason names the wrong repair path and
   must fail the model.
+- **Fresh authorization (mutation class).** Planning observations never authorize a later
+  mutation. Reload the configured repository, live PR identity/head/readiness, and relevant refs
+  immediately before each irreversible action; use an exact lease or expected-head guard.
 - **Report always (inspection class).** `view` must produce a report or a targeted
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.
 
 Recovery stays explicit and narrow: `relink` reattaches a PR to a change, `restart` /
 `submit --restart` mint fresh review identity, `unstack --cleanup --pull-request` retires
-orphans, `cleanup --rebase` repairs local ancestry after merges. Drift never triggers
+orphans, selected `sync` repairs proven landed ancestry, and `sync --all` performs isolated
+exact-snapshot global recovery. Drift never triggers
 silent re-linking or replacement PRs.
 
 ## Why an executable model rather than TLA+/Lean

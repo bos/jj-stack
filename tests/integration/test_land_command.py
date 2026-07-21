@@ -7,6 +7,7 @@ import pytest
 
 import jj_stack.commands.land.execute as land_execute
 from jj_stack.errors import EXIT_FAILURE, EXIT_INCOMPLETE, CliError
+from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.state.journal import read_operation_log
@@ -716,7 +717,8 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
 
     assert first_exit_code == 1
     assert "could not load PR #1" in first_rendered
-    assert "rerun sync" in first_rendered
+    assert "current sync can retarget or close PRs for other tracked stacks" in first_rendered
+    assert f"jj-stack sync --dry-run {short_change_id(landed_change_ids[0])}" in first_rendered
     assert "Finalizing PR #2 for feature 2" in first_rendered
     assert read_remote_ref(fake_repo.git_dir, "main") == landed_commit_id
     assert fake_repo.pull_requests[2].state == "closed"

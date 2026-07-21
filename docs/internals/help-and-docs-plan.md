@@ -8,7 +8,7 @@ model to jj users, and makes recovery paths easy to find. Competitor parity is n
 When this plan conflicts with another internal doc, treat them this way:
 
 1. `docs/AGENTS.md` sets the standard for user-facing language.
-2. `docs/internals/design.md` is the current product spec, but it is not above criticism.
+2. `docs/internals/design.md` is the sole canonical product spec, but it is not above criticism.
 3. `docs/internals/implementation-strategy.md` records how the current surface was built.
 4. this file focuses on whether that surface makes sense to users.
 
@@ -30,7 +30,7 @@ These are strengths worth preserving rather than replacing:
   `docs/internals/`
 - `troubleshooting.md` is already organized by symptom and next command
 - the product already has strong repair and diagnostic commands such as `doctor`,
-  `checkout`, `relink`, and `cleanup --rebase`
+  `checkout`, `relink`, and `sync`
 
 The biggest remaining gap is not "missing feature parity". It is that some important user
 questions still require reading several pages or inferring behavior from command output.
@@ -71,7 +71,7 @@ Highest-value commands should grow 2-3 short examples in long help:
 - `land`
 - `unstack`
 - `checkout`
-- `cleanup --rebase`
+- `sync`
 
 Examples should come from real workflows already documented in `docs/`, not invented toy
 cases. The target is fast recognition:
@@ -131,7 +131,7 @@ The strongest missing page is a focused "respond to review" or "revise and resub
 That page should cover:
 
 - amend vs. rebase from the user's point of view
-- when `submit` is enough and when `cleanup --rebase` is the right next step
+- when `submit` is enough and when selected `sync` is the right next step
 - what happens after part of a stack lands
 - what to do when review state exists on GitHub but not in the current workspace
 
@@ -184,8 +184,8 @@ cover the cases users are likely to hit in real repos:
 - a user pushed to a managed review bookmark manually and later `view` or `submit` fails
   closed
 - `trunk()` advanced, but nothing landed, so the right answer is plain `jj rebase` rather than
-  `cleanup --rebase`
-- `cleanup --rebase` encounters conflicts and the user needs to finish the rewrite in `jj`
+  `sync`
+- `sync` encounters conflicts and the user needs to finish the rewrite in `jj`
 - review state exists on another machine or workspace and needs `checkout`
 
 Each entry should stay in the existing pattern:

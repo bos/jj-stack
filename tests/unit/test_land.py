@@ -272,6 +272,8 @@ def test_stack_not_on_trunk_error_recommends_sync_when_stack_has_landed_change()
     assert plain_text(error.message) == "Selected stack is not based on the current trunk()."
     assert error.hint is not None
     rendered_hint = plain_text(error.hint)
+    assert "Current sync can retarget or close PRs for other tracked stacks" in rendered_hint
+    assert "jj-stack sync --dry-run @-" in rendered_hint
     assert "sync @-" in rendered_hint
     assert "jj rebase -s" not in rendered_hint
 

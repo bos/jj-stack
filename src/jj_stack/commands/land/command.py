@@ -1,6 +1,8 @@
 """Land the consecutive changes above `trunk()` that are ready to land now.
 
-If your stack isn't based off `trunk()`, you'll need to `rebase` before landing.
+If your stack is not based on `trunk()`, inspect it first. Run selected `sync` when a lower PR
+landed through another route; use plain `jj rebase` when trunk advanced without one of your
+changes landing.
 
 To determine what to land, `land` walks up the stack until it reaches the top or a change that
 it cannot land.
@@ -9,7 +11,17 @@ For a change to be landed, it must have no unresolved merge/rebase conflicts. Al
 request must be open, not draft, approved, and have no outstanding changes requested. Use
 `--bypass-readiness` to skip the draft / approval / changes-requested readiness checks.
 
-Use `--dry-run` to inspect the landing plan without changing jj or GitHub state.
+The production target also requires the local commit, the commit last sent for review, the review
+branch, and the PR head to match exactly, and it repeats the GitHub readiness checks immediately
+before each change is landed. Those protections are not implemented yet: the current build can
+update and land a same-diff rewrite in one run and relies on earlier readiness checks. Every
+current land run also checks all tracked reviews and may retarget or close PRs for other tracked
+stacks. Until that work lands, rerun `submit` after any rewrite and do not manually retarget,
+edit, or merge PRs while `land` is running.
+
+Use `--dry-run` to inspect the landing plan. It fetches remote state, which can update jj's
+remote-bookmark observations, but does not apply the planned trunk, review-branch, PR, cleanup, or
+tracking changes.
 
 Use `--pull-request` to select the top of the stack to land by PR number or URL.
 
@@ -17,11 +29,14 @@ By default `land` pushes the trunk branch directly. When branch protection requi
 arrive through pull requests, use `--via merge` instead: each ready PR is retargeted to trunk
 and merged through GitHub, bottom to top, stopping at the first PR GitHub reports as not
 mergeable. The merge method comes from `--merge-method`, or from the repository's settings when
-exactly one method is allowed. After GitHub accepts merges, `land` runs the same convergence as
-`sync`: it drops the merged changes from your local stack and refreshes the surviving pull
-requests before returning.
+exactly one method is allowed. The production target drops accepted changes from the selected
+local stack and updates only surviving PRs that already exist. The current build instead runs the
+broader `sync` implementation, which can retarget or close PRs for other tracked stacks and can
+open PRs.
 
-If `land` is interrupted, rerun `land` or run `sync` to converge from current GitHub state.
+If `land` is interrupted, first run `jj-stack sync --dry-run <change-id>` for that stack. Current
+`sync` can retarget or close PRs for other tracked stacks and can open PRs; run the same selected
+command without `--dry-run` only after the preview is safe.
 If the interruption left the local trunk bookmark ahead of its remote, `land` prints the exact
 `jj bookmark move` command to run before retrying.
 
@@ -414,9 +429,12 @@ def _stack_not_on_trunk_error(
             message,
             condition="merged_ancestor_on_trunk",
             hint=(
-                t"Some lower changes from this stack already landed. Run "
-                t"{ui.cmd('sync')} {ui.revset(status_result.selected_revset)} "
-                t"to converge the remaining local changes before retrying."
+                t"Some lower changes from this stack already landed. Current sync can "
+                t"retarget or close PRs for other tracked stacks and can open PRs. Preview "
+                t"{ui.cmd('jj-stack sync --dry-run')} "
+                t"{ui.revset(status_result.selected_revset)} first; if the plan is safe, run "
+                t"{ui.cmd('jj-stack sync')} {ui.revset(status_result.selected_revset)} "
+                t"before retrying land."
             ),
         )
 
