@@ -1,11 +1,12 @@
 # jj-stack implementation strategy
 
-This document covers the implementation choices that follow from
-[design.md](./design.md): repository layout, component boundaries, tooling, test strategy,
-and delivery shape.
+This document covers the implementation choices that follow from the current product
+specifications: [design-next.md](design-next.md) for landing, recovery, cleanup, and tracking
+state, and [design.md](design.md) for the remaining behavior. It defines repository layout,
+component boundaries, tooling, test strategy, and delivery shape.
 
-[design.md](./design.md) is the canonical product spec. This file is about how we build
-the tool, not what it does.
+The product specifications are authoritative. This file records how the current code is built,
+not what the product does.
 
 ## Summary
 
@@ -20,8 +21,9 @@ The client:
 - uses `pydantic` for typed local and remote data models
 - uses `httpxyz` for GitHub API traffic
 
-We test every behavior first against a local fake GitHub server backed by a real Git
-repo, and then against a real GitHub test repo in an opt-in live mode.
+We test behavior against a local fake GitHub server backed by a real Git repository. The
+repository does not yet contain a live GitHub suite; uncertain forge behavior requires a
+separately approved experiment until that layer exists.
 
 We develop the tool the same way we want people to review with it: logical,
 self-contained, well-described stacked commits.
@@ -34,7 +36,8 @@ self-contained, well-described stacked commits.
 4. Prefer end-to-end feature slices over big batches of infrastructure work.
 5. Make the local fake GitHub environment the default place to develop and debug
    behavior.
-6. Continuously validate the fake environment against real GitHub.
+6. Record the fake's idealizations and validate them against real GitHub when an approved live
+   experiment exists.
 
 ## Non-goals
 
@@ -156,8 +159,8 @@ src/
 tests/
   unit/
   integration/
-  live/
-  fixtures/
+  property/
+  support/
 tools/
   fake_github/
 docs/
@@ -270,8 +273,8 @@ the model-predicted outcome — fail closed with every boundary untouched, or fu
 success — and that `view` still reports on the drifted state. A land oracle starts from
 submitted, partially approved stacks that may have been edited since their last submit;
 it predicts the prefix land's readiness walk consumes and models the transport split —
-direct-push land retires the landed tracking, merge-transport land keeps merged tracking
-so follow-up sync or cleanup can rebase the local stack. Its external-drift family snapshots
+direct-push land retires the landed tracking, while merge-transport land converges the accepted
+prefix and selected survivors before returning. Its external-drift family snapshots
 the stopping change's durable tracking, complete PR payload, actual local and remembered-remote
 bookmark state, and backing remote ref. The deleted-branch case instead asserts the expected
 post-fetch bookmark absence.
@@ -463,14 +466,16 @@ For every user-visible behavior:
 
 1. write tests first
 2. implement against the local fake GitHub server
-3. verify against the live GitHub test repo
-4. keep live behavior as the final arbiter
+3. identify whether confidence depends on real GitHub behavior
+4. when it does, keep the conclusion conditional until an approved live experiment or future
+   live test establishes it
 
-Three layers of tests:
+Two layers are implemented:
 
 - unit tests for parsing, planning, and model behavior
 - local integration tests against the fake GitHub server and a real backing Git repo
-- opt-in live tests against a real GitHub repo
+
+An opt-in live layer remains planned for contracts the fake cannot establish.
 
 Local tests are the default.
 
@@ -559,22 +564,23 @@ Where practical, parity tests run the same client action once against the fake s
 and once against a live throwaway GitHub repo, then compare the resulting normalized
 observations.
 
-## Live GitHub test strategy
+## Planned live GitHub test strategy
 
-The live suite exists from early on, even if small.
+No live suite exists in this repository yet. This section records the intended boundary rather
+than current test coverage.
 
 Its purpose is not exhaustive coverage. It is to catch fake-server drift and real-forge
 edge cases early.
 
-The live suite:
+The planned live suite would:
 
-- runs only when explicitly requested
-- creates a throwaway repo per run
-- uses a dedicated namespace for temporary branches and PR artifacts
-- cleans up after itself as aggressively as practical
-- avoids touching anything outside its namespace
+- run only when explicitly requested
+- create a throwaway repo per run
+- use a dedicated namespace for temporary branches and PR artifacts
+- clean up after itself as aggressively as practical
+- avoid touching anything outside its namespace
 
-The first pass uses:
+The first pass should use:
 
 ```text
 uv run pytest tests/live --live-github
@@ -582,7 +588,7 @@ GITHUB_TOKEN=...
 JJR_GITHUB_TEST_REMOTE=origin
 ```
 
-The live suite may use the `gh` CLI for throwaway repo setup and teardown when that
+The live suite could use the `gh` CLI for throwaway repo setup and teardown when that
 makes the tests materially simpler. We do not use `gh` in the main application client.
 
 ## Development workflow
@@ -687,7 +693,8 @@ A feature slice is done only when:
 
 - tests were written first or at least before the behavior was finalized
 - the local default suite passes
-- relevant live GitHub tests pass
+- any approved live evidence required for the slice has been recorded, or the unsupported claim
+  remains explicitly conditional
 - docs are updated if user-visible behavior changed
 - the implementation lands as a logical stacked-review-quality commit
 
@@ -700,14 +707,14 @@ Optimize for a tight loop:
 
 - write a failing test
 - implement the smallest real slice against the fake GitHub server
-- verify the slice against real GitHub
+- verify external assumptions against real GitHub when the approved evidence boundary requires it
 - land it as a clean stacked commit
 
 If we keep the `jj` DAG as the source of truth, keep the GitHub layer narrow, and keep
 the fake server honest by regularly checking it against real GitHub, the implementation
 should stay understandable and correct as it grows.
 
-## Rework status (2026-07)
+## Rework foundation status (2026-07)
 
 The observational-convergence rework from [design-next.md](design-next.md) is implemented:
 
@@ -721,3 +728,6 @@ The observational-convergence rework from [design-next.md](design-next.md) is im
   by unlinking.
 
 Remaining follow-ups live in [backlog.md](backlog.md).
+
+This is an implementation inventory, not a production-readiness claim. The foundation still
+requires the separately specified safety and evidence slices before release.

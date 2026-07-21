@@ -293,9 +293,9 @@ mid-stack change stays visible because descendants' bookmarks keep it reachable,
 an unreferenced head is abandoned by the fetch. Every drift scenario ends by running
 `view` on the default selection and requiring a report exit rather than a crash.
 In both prefix-stop and fetch-abandon outcomes, the stopping change keeps its durable
-bookmark, PR, and submitted-topology identity plus its exact GitHub PR state; `land`
-owns only the prefix it actually landed and leaves that recovery evidence for explicit
-follow-up. Managed stack-comment IDs may clear as the landed prefix is finalized.
+bookmark, PR number, and submitted baseline, while its live GitHub PR remains unchanged;
+`land` owns only the prefix it actually landed and leaves that recovery evidence for explicit
+follow-up. Derived managed comments on the landed prefix may be deleted during finalization.
 Fail-closed outcomes also assert the typed condition carried by the CLI error, so a
 plain stack fork caused by advanced trunk cannot pass by stopping on the
 merged-ancestor check or vice versa.
@@ -351,7 +351,7 @@ tracking. The oracle asserts:
 
 - every selected change has exactly one PR after retry
 - remote review branches point at the selected `jj` commits
-- PR heads, bases, titles, and saved topology match the selected DAG
+- PR heads, bases, and titles match the selected DAG
 - configured labels and reviewers converge even if the first run failed during metadata
   sync
 - an existing reviewed PR keeps its PR number and approval when the failed run was a PR
@@ -390,7 +390,7 @@ For the submitted stack as a whole:
 
 - the number of PRs equals submitted live changes plus submitted orphaned changes
 - a resubmit that succeeds never replaces an existing live PR with a new PR
-- final PR bases are derived from the current `jj` DAG, not from saved topology
+- final PR bases are derived from the current `jj` DAG
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 

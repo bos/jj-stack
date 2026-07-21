@@ -6,10 +6,12 @@ the project. Most users of the tool will never need to read any of this.
 
 If you are looking for how to use `jj-stack`, see the [user guide](../README.md).
 
-## Contents
+## Authority and contents
 
-- **[design.md](design.md)** — canonical product spec: what the tool is
-  supposed to do and why. Read this before changing any user-visible behavior.
+- **[design-next.md](design-next.md)** — canonical for current landing, recovery,
+  cleanup, and tracking-state behavior while the specifications remain split.
+- **[design.md](design.md)** — authoritative for product behavior outside that
+  scope. Read both specifications before changing user-visible behavior.
 - **[implementation-strategy.md](implementation-strategy.md)** — how the tool
   is built: component structure, tooling, test strategy.
 - **[code-reviews.md](code-reviews.md)** — how to approach reviews for code
@@ -23,7 +25,12 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 - **[property-testing.md](property-testing.md)** — the opt-in property
   harness: scenario families, invariants, and the runner.
 - **[backlog.md](backlog.md)** — deferred features, open design questions,
-  and non-blocking follow-up items.
+  and non-blocking follow-up items. It is not a product specification.
 - **[help-and-docs-plan.md](help-and-docs-plan.md)** — plan for bringing
   built-in help and `docs/` to parity with `gt` and `gh stack`. Shrinks as
   items ship.
+
+Implementation strategy and evidence-policy documents are subordinate to the product
+specifications. An explicitly accepted implementation plan governs its scoped work until its
+decisions are folded into the product specification. Critiques, superseded plans, and completed
+merger reports remain historical evidence rather than behavioral authority.

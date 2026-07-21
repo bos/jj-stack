@@ -20,10 +20,11 @@ vocabulary.
    flags, reviews, labels, comments. Moved by `jj-stack` mutations, by humans and agents
    through the UI or `gh`, and by GitHub itself: it auto-closes an open PR whose head
    becomes reachable from its base, and closes PRs whose head branch is deleted.
-4. **Tracking store** — `jj-stack`'s saved beliefs: per-change bookmark name, PR
-   number/URL, last-known PR state, `last_submitted_*` pointers, unlinked markers. Moved
-   only by `jj-stack` commands, but it can go stale relative to everything else because
-   the other three holders never notify it.
+4. **Tracking store** — `jj-stack`'s sparse per-change identity and submitted baseline:
+   bookmark name and ownership, link state, PR number, and last submitted commit. A
+   repository-level land note may affect messaging only. The store is moved only by
+   `jj-stack` commands, but it can go stale relative to everything else because the other
+   three holders never notify it.
 
 The `jj` DAG is the source of truth for stack topology; GitHub is authoritative for PR
 outcomes and remote branch tips; the tracking store is a sparse cache of identity claims

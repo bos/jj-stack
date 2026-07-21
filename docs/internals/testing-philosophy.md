@@ -123,15 +123,16 @@ replacement gives users a simpler and safer story. These rules keep coverage hon
 ## Choosing the right layer
 
 After a case passes the worthwhile-test gate, use the narrowest layer that exercises the behavior
-at risk. This repo has three layers:
+at risk. This repo currently has two implemented layers and one planned boundary:
 
 - **Unit/component:** parsing, planning, models, and one adapter with controlled collaborators.
   Temporary files and an in-process HTTP transport can still be unit-level.
 - **Local integration:** the CLI against real `jj` and Git repositories and the fake GitHub
   server. Use this when confidence depends on revsets, DAG or workspace behavior, subprocesses,
   or cross-component state transitions.
-- **Live:** opt-in checks against real GitHub. Use these when the external API behavior itself is
-  uncertain and the local fake cannot establish the contract.
+- **Live (planned):** opt-in checks against real GitHub. Until this layer exists, uncertain
+  external behavior needs a separately approved experiment and must remain conditional if that
+  experiment is not run.
 
 An unusual repo state does not automatically require integration coverage. Discovering or
 constructing it through real `jj` belongs in integration; deciding what to do with an

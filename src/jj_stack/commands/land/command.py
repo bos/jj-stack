@@ -21,8 +21,9 @@ exactly one method is allowed. After GitHub accepts merges, `land` runs the same
 `sync`: it drops the merged changes from your local stack and refreshes the surviving pull
 requests before returning.
 
-If `land` is interrupted at any point, no special recovery is needed: rerun `land` or run
-`sync`, and the stack converges from whatever GitHub currently reports.
+If `land` is interrupted, rerun `land` or run `sync` to converge from current GitHub state.
+If the interruption left the local trunk bookmark ahead of its remote, `land` prints the exact
+`jj bookmark move` command to run before retrying.
 
 After a successful land, `jj-stack` forgets the bookmarks it was managing for the changes that
 landed, unless they've been moved or become conflicted. If you used your own bookmarks with

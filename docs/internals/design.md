@@ -213,17 +213,15 @@ All of that already lives in the commit DAG, the change-ID model, and the bookma
 If anything is saved locally, it is a small record per change:
 
 - the pinned bookmark name (once chosen)
-- PR number and URL
-- the navigation/overview comment IDs, if used
-- the last known PR state and review decision, used as a fallback when GitHub is offline
+- whether that bookmark is tool-managed or external
+- the active or explicitly unlinked state
+- the PR number
 - the last submitted `commit_id`, compared against the live commit to detect rewrites
   that keep the same stack position
-- topology pointers `last_submitted_parent_change_id` (or null for trunk) and
-  `last_submitted_stack_head_change_id`. These are compared per change against the
-  current DAG to detect when a tracked chain has changed since the last successful
-  `submit` — never aggregated into a stack-level comparison
-- a durable "unlinked" marker for a change the user explicitly detached, because that is
-  user intent the tool must not silently undo
+
+The repository record may also contain the message-only land note described below. PR URLs,
+lifecycle, review decisions, comment IDs, and submitted topology are live observations or
+derived data rather than tracking fields.
 
 A change can be in one of three link states:
 
@@ -531,13 +529,10 @@ or saved tracking records; command failures and incomplete inspection still use 
 and the process exit status. The machine-readable schema for the public output lives in
 [`docs/json-output.schema.json`](../json-output.schema.json).
 
-`view` may add a repo-level advisory for other tracked stacks when the saved
-submitted state disagrees with the current DAG: either a tracked change's saved
-`last_submitted_commit_id` differs from its current commit, or the saved topology
-pointers (`last_submitted_parent_change_id`, `last_submitted_stack_head_change_id`)
-no longer match the live chain. The advisory names the stack heads and points the
-user at running `view` on each, because the correct follow-up depends on the cause.
-Stale comments alone do not trigger the advisory.
+`view` may add a repo-level advisory for other tracked stacks when a tracked change's saved
+`last_submitted_commit_id` differs from its current commit. The advisory names the stack heads
+and points the user at running `view` on each, because the correct follow-up depends on the
+cause. Topology and stale comments alone do not trigger the advisory.
 
 The stack revisions and the footer row beneath them both render through the user's
 native `jj log` formatting; status-specific suffixes (PR state, etc.) are appended to
@@ -562,8 +557,8 @@ When GitHub data is available, `view`:
 - when the link is stale, closed, or ambiguous, prints a short repair advisory that
   distinguishes reopening the same PR, relinking an open replacement, and running
   `submit --restart` to create fresh PRs
-- when a saved PR link includes a last-known PR state, surfaces that as tracking data
-  rather than implying it is live
+- when only saved PR identity is available, labels it as tracking data rather than implying a
+  live lifecycle result
 - does not inspect managed stack-summary comments. Those comments are derived review
   artifacts, and the commands that create or delete them own their validation.
 - on a successful live run, refreshes the saved link bidirectionally when GitHub

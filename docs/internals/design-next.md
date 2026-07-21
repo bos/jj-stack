@@ -1,10 +1,10 @@
 # jj-stack replacement design: landing, recovery, and state
 
-Status: draft for review. When adopted, this document supersedes the landing, recovery,
-cleanup, and state-model portions of `design.md`; sections of `design.md` it does not cover
-(selector defaults, stack discovery, submit stack metadata, view/list semantics beyond
-caching) carry forward until rewritten. Claims inherited from `design.md` hold only where
-restated here.
+Status: canonical for the current landing, recovery, cleanup, and tracking-state behavior.
+This document supersedes those portions of `design.md`; sections of `design.md` it does not
+cover (selector defaults, stack discovery, submit stack metadata, view/list semantics beyond
+caching) remain authoritative. This explicit transitional split resolves conflicts until the
+specifications are consolidated; neither document authorizes behavior it marks as future work.
 
 This spec exists because the previous landing design grew into a durable-transaction protocol
 over systems that cannot share a transaction. The replacement theory is deliberately less
@@ -69,6 +69,10 @@ Per tracked change, the state file stores exactly:
 - `pr_number`
 - `last_submitted_commit_id` — the submitted baseline
 
+At repository scope, the file may also hold the message-only `LandNote` described below. The
+note is presentation residue, not review identity or operation state, and no execution path may
+use it to select or authorize a mutation.
+
 Nothing else. Explicitly excluded, with the replacement mechanism:
 
 - PR lifecycle (state, review decision, draft, mergeability): live observations, fetched when
@@ -100,7 +104,9 @@ current ordering protocol.
 
 ### sync
 
-The only convergence and recovery command. Two independent parts:
+The explicit convergence and recovery command. `land` invokes the same convergence routine
+after mutation and when a rerun finds accepted work from an earlier attempt. The routine has two
+independent parts:
 
 The **landed-review sweep**, over all saved tracking: a review whose exact submitted
 commit is an ancestor of trunk, whose current local commit still equals that baseline,
@@ -154,13 +160,13 @@ observation: the next `land` or `sync` fetches, applies the landed predicate, an
 converges. `land` runs the sweep on every non-dry-run invocation, so even a run whose
 plan is blocked converges the leftovers of an earlier interruption.
 
-**Message-only intent note.** Before its first non-idempotent remote mutation, `land` may
-write a small note (operation, PR numbers) whose sole purpose is messaging: the next command
-that observes convergence work can explain it ("the previous land was interrupted after
-GitHub accepted #12, #13") instead of changing state silently. The note may influence what
-the tool says, never what it does. It is never validated against the world, never gates any
-mutation, and is deleted after the next convergence pass. If a proposed change would make
-execution read this note, the change is wrong or the note must be removed.
+**Message-only intent note.** Before any remote mutation, including an optional review-branch
+refresh, `land` may write a small note (operation, PR numbers) whose sole purpose is messaging:
+the next command that observes convergence work can explain it ("the previous land was
+interrupted after GitHub accepted #12, #13") instead of changing state silently. The note may
+influence what the tool says, never what it does. It is never validated against the world, never
+gates any mutation, and is deleted after the next convergence pass. If a proposed change would
+make execution read this note, the change is wrong or the note must be removed.
 
 **Lazy convergence.** `land` and `sync` rebase and resubmit the selected stack only.
 Other tracked stacks sharing a landed ancestor are untouched; `view`/`list` may cheaply
@@ -197,19 +203,23 @@ Every implementation slice must answer, in its commit body or review:
 1. What user-visible guarantee is removed?
 2. What exact safe recovery replaces it?
 3. Which destructive failure remains protected?
-4. What is the net line change? Slices that centralize rather than delete do not qualify.
+4. Which mechanism or special case is removed or centralized? If the change must add a safety
+   check, why can no existing rule supply it without creating another durable state or recovery
+   path?
 
 The suite keeps proving: no local work lost, no unrelated ref moved, no unrelated PR mutated,
 interrupted operations converge through `sync`, ambiguity stops before mutation.
 
-## Adoption
+## Implemented rework foundation
 
-Phased, in the `rework` workspace, each phase check-green:
+The current rework foundation was built in these check-green phases:
 
 1. Unwind merge-land reconciliation and all four pending-state models; `land --via merge`
    merges a verified prefix and converges via the `sync` routine.
 2. Reduce the state model to identity-only; move comment identity to marker rediscovery.
 3. Rebuild direct-push land on the shared gate/mutate/converge shape.
-4. Reset tests against this spec (delete transaction-protocol families; keep the safety
-   kernel and ordinary `jj`-workflow coverage) and rewrite `design.md` to match, updating the
-   `AGENTS.md` canonical-spec pointer at the same time.
+4. Reset tests against this spec, deleting transaction-protocol families while retaining the
+   safety kernel and ordinary `jj`-workflow coverage.
+
+This history records the implemented foundation. It is not a claim that the foundation is
+production-ready, and the remaining documentation consolidation belongs to a later slice.
