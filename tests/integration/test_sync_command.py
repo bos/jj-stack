@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from jj_stack.errors import EXIT_USAGE
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
+from jj_stack.models.github import GithubPullRequest
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
@@ -305,6 +307,17 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
             .model_copy(update={"commit_id": f"{index:040x}"})
             .model_dump(mode="json")
         )
+    malformed_change_id = "malformed-baseline"
+    raw_state["review_identities"][malformed_change_id] = (
+        initial_state.review_identities[first.change_id]
+        .model_copy(update={"head_ref": "review/malformed-baseline", "pr_number": 164})
+        .model_dump(mode="json")
+    )
+    raw_state["submitted_baselines"][malformed_change_id] = (
+        initial_state.submitted_baselines[first.change_id]
+        .model_copy(update={"commit_id": "bad'commit"})
+        .model_dump(mode="json")
+    )
     write_file(state_path, json.dumps(raw_state))
 
     usage_exit = run_main(repo, config_path, "sync", "--all", second.change_id)
@@ -321,6 +334,26 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
         target=second.commit_id,
     )
 
+    original_batch = GithubClient.get_pull_requests_by_numbers
+    original_single = GithubClient.get_pull_request
+    failed_batch = False
+
+    async def fail_first_multi_lookup(self, *, pull_numbers):
+        nonlocal failed_batch
+        numbers = tuple(pull_numbers)
+        if len(numbers) > 1 and not failed_batch:
+            failed_batch = True
+            raise GithubClientError("forced batch failure")
+        return await original_batch(self, pull_numbers=numbers)
+
+    async def inject_malformed_fallback(self, *, pull_number):
+        if pull_number == 100:
+            return GithubPullRequest.model_validate({})
+        return await original_single(self, pull_number=pull_number)
+
+    monkeypatch.setattr(GithubClient, "get_pull_requests_by_numbers", fail_first_multi_lookup)
+    monkeypatch.setattr(GithubClient, "get_pull_request", inject_malformed_fallback)
+
     exit_code = run_main(repo, config_path, "sync", "--all")
     captured = capsys.readouterr()
 
@@ -330,12 +363,14 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
     assert "is closed without a result on trunk" in captured.out + captured.err
     assert "last submitted commit is incomplete" in captured.out + captured.err
     assert "could not inspect its current review" in captured.out + captured.err
+    assert "invalid data for PR #100" in captured.out + captured.err
     state = state_store.load()
     assert first.change_id in state.review_identities
     assert second.change_id not in state.review_identities
     assert third.change_id in state.review_identities
     assert "incomplete-change" in state.review_identities
     assert set(missing_change_ids) <= state.review_identities.keys()
+    assert malformed_change_id in state.review_identities
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
     assert fake_repo.pull_requests[3].state == "closed"

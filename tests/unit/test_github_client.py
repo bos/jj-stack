@@ -6,12 +6,14 @@ import json
 import httpxyz
 import pytest
 
+from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.models.github import GithubPullRequest
 
 
-def _github_client(handler) -> GithubClient:
-    return GithubClient(
+def _github_client(handler, *, client_type=GithubClient) -> GithubClient:
+    return client_type(
         httpxyz.AsyncClient(
             base_url="https://api.github.test",
             transport=httpxyz.MockTransport(handler),
@@ -198,12 +200,17 @@ def test_github_client_paginates_pull_request_list() -> None:
 
 
 def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> None:
+    request_sizes: list[int] = []
+
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
         assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-review"}
-        assert "pr_7: pullRequest(number: 7)" in payload["query"]
-        assert "pr_9: pullRequest(number: 9)" in payload["query"]
+        request_sizes.append(payload["query"].count("pullRequest(number:"))
+        if len(request_sizes) == 1:
+            assert "pr_7: pullRequest(number: 7)" in payload["query"]
+            assert "pr_9: pullRequest(number: 9)" in payload["query"]
+            assert "pr_11: pullRequest(number: 11)" in payload["query"]
         return httpxyz.Response(
             200,
             json={
@@ -231,28 +238,81 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
                             "title": "nine",
                             "url": "https://github.test/octo-org/stacked-review/pull/9",
                         },
+                        "pr_11": None,
                     }
                 }
             },
             request=request,
         )
 
-    async def run_test() -> tuple[str, str, str | None]:
+    async def run_test() -> tuple[str, str, str | None, bool]:
         async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_numbers(
-                pull_numbers=(7, 9),
+                pull_numbers=(7, 9, 11, *range(100, 124)),
             )
         pull_request_7 = pull_requests[7]
         pull_request_9 = pull_requests[9]
         if pull_request_7 is None or pull_request_9 is None:
             raise AssertionError("GraphQL lookup should return both pull requests.")
-        return pull_request_7.head.ref, pull_request_9.state, pull_request_7.head.label
+        return (
+            pull_request_7.head.ref,
+            pull_request_9.state,
+            pull_request_7.head.label,
+            pull_requests[11] is None,
+        )
 
     assert asyncio.run(run_test()) == (
         "review/seven",
         "closed",
         "octo-org:review/seven",
+        True,
     )
+    assert request_sizes == [25, 2]
+
+
+def test_github_client_bounds_independent_pull_request_fallbacks() -> None:
+    class FallbackClient(GithubClient):
+        active = 0
+        max_active = 0
+
+        async def get_pull_requests_by_numbers(self, *, pull_numbers):
+            raise GithubClientError("forced batch failure")
+
+        async def get_pull_request(self, *, pull_number):
+            type(self).active += 1
+            type(self).max_active = max(type(self).max_active, type(self).active)
+            await asyncio.sleep(0)
+            try:
+                if pull_number == 1:
+                    raise GithubClientError("one failed")
+                if pull_number == 2:
+                    return GithubPullRequest.model_validate({})
+                return GithubPullRequest(
+                    base={"ref": "main"},
+                    head={"ref": f"review/{pull_number}"},
+                    html_url=f"https://github.test/pull/{pull_number}",
+                    number=pull_number,
+                    state="open",
+                    title=f"PR {pull_number}",
+                )
+            finally:
+                type(self).active -= 1
+
+    def unused_handler(request: httpxyz.Request) -> httpxyz.Response:
+        raise AssertionError(f"unexpected transport request: {request.url}")
+
+    async def run_test():
+        async with _github_client(unused_handler, client_type=FallbackClient) as client:
+            return await client.get_pull_requests_by_numbers_independently(
+                pull_numbers=tuple(range(1, 18)),
+            )
+
+    results = asyncio.run(run_test())
+
+    assert isinstance(results[1], GithubClientError)
+    assert isinstance(results[2], GithubClientError)
+    assert isinstance(results[3], GithubPullRequest)
+    assert FallbackClient.max_active == DEFAULT_BOUNDED_CONCURRENCY
 
 
 def test_github_client_rejects_graphql_payload_missing_repository_data() -> None:

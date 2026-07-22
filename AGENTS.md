@@ -9,6 +9,8 @@ compatibility code, migration code, or the like.
   Do not add a temporary parallel model with a promise to remove it in a later cleanup slice.
 - Give each jj-stack-owned durable policy fact one authority and one representation. Shared
   observation or storage code must not create a second policy path for deciding or changing it.
+- Separate observation from authority: batch independent read-only facts, but keep dependent
+  mutations in order and re-read their authorization facts immediately before changing state.
 - Apply the cumulative complexity budgets after every code slice. CI runs
   `uv run tools/check_complexity.py`; run it locally when SLOCCount is available. A budget
   increase is a design stop that requires explicit review, not routine maintenance of the budget

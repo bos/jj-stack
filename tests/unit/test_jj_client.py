@@ -803,6 +803,65 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation(
     assert "('cand-c' & ::'base-3')" in revset
 
 
+def test_query_present_commit_ancestor_membership_distinguishes_absent_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_commands: list[tuple[str, ...]] = []
+    on_trunk = _revision_line(
+        commit_id="on-trunk",
+        parents=["root"],
+        change_id="on-trunk-change",
+        description="on trunk\n",
+    ).rstrip("\n")
+    off_trunk = _revision_line(
+        commit_id="off-trunk",
+        parents=["root"],
+        change_id="off-trunk-change",
+        description="off trunk\n",
+    ).rstrip("\n")
+
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"{on_trunk}\ttrue\n{off_trunk}\tfalse\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", runner)
+    result = JjClient(Path("/repo")).query_present_commit_ancestor_membership(
+        ("on-trunk", "off-trunk", "absent", "bad'commit"),
+        descendant_commit_id="fetched-trunk",
+    )
+
+    assert result == {"on-trunk": True, "off-trunk": False}
+    assert len(seen_commands) == 1
+    invocation = seen_commands[0]
+    revset = invocation[invocation.index("-r") + 1]
+    assert "present('on-trunk')" in revset
+    assert "present('off-trunk')" in revset
+    assert "present('absent')" in revset
+    assert '''present("bad'commit")''' in revset
+    template = invocation[invocation.index("-T") + 1]
+    assert "contained_in" in template
+    assert "fetched-trunk" in template
+
+    def failing_runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="query failed")
+
+    monkeypatch.setattr(subprocess, "run", failing_runner)
+    failed = JjClient(Path("/repo")).query_present_commit_ancestor_membership(
+        ("one", "two", "three"),
+        descendant_commit_id="fetched-trunk",
+    )
+    assert failed == {}
+    assert len(seen_commands) == 2, "a failed batch must not fan out into per-commit queries"
+
+
 def test_list_remote_branches_resolves_jj_remote_name_to_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -181,6 +181,7 @@ On Windows, use WSL to run the gate locally or rely on the required Linux CI job
 | P2: repair public documentation | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
 | P3: reconcile internal facts | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
 | P4: simplify internal language | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
+| P5: batch recovery reads | 19,743 | 20,964 | 40,707 | 17 | 1,531 | 3,294 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
@@ -221,6 +222,12 @@ P4 removes implementation history, repeated test inventories, and project-specif
 the active internal guides. The historical audit remains unchanged as the record of the failed
 attempt and replacement. This slice changes documentation only, so all measurements remain
 identical to P3.
+
+P5 replaces per-record ancestry and PR reads with chunked `jj` and GraphQL reads. A failed GraphQL
+batch falls back to at most eight concurrent REST reads while retaining a separate error for each
+PR. Mutation and retirement remain sequential and freshly authorized. Reusing the same batched
+ancestry classifier for selected and repository-wide recovery pays for the change without
+increasing the governed recovery surface beyond its 3,295-SLOC ceiling.
 
 ## Test budget
 
@@ -276,14 +283,17 @@ retirement save. These checks establish local observational convergence without 
 power-loss durability or live-GitHub semantics.
 
 The sparse-cache measurement extends the isolated `sync --all` front door with 64 complete records
-whose submitted commits are unavailable, absent GitHub PRs, one incomplete record, one head
-mismatch, one closed off-trunk PR, and one independently recoverable exact review. On the local
-test machine it completed in 5.68 seconds wall time (5.26 seconds inside pytest). The
-implementation starts one submitted-snapshot ancestry subprocess per complete record and one
-sequential GitHub lookup per nonexact record. Some nonexact records repeat the submitted-snapshot
-check while collecting rewritten-result evidence and may add another check for a reported merge
-result. Failures do not stop the exact review from retiring. This is an asymptotic bound, not a
-live-network latency claim.
+whose well-formed submitted commits are unavailable, one malformed submitted commit ID, absent
+GitHub PRs, one incomplete record, one head mismatch, one closed off-trunk PR, and one independently
+recoverable exact review. It now performs one submitted-commit ancestry scan for all 68 complete
+records. The normal PR path needs three GraphQL requests for the 66 nonexact records. The test
+forces fallback, including one malformed REST response, and the independent exact review still
+retires. On the local test machine that slower path completed in 4.14 seconds wall time (3.83
+seconds inside pytest). Focused adapter tests prove the limit of eight concurrent REST requests and
+25 PRs per GraphQL request. Reported merge-result commits, if any, share one further batched
+ancestry pass. This is a local performance and failure-isolation check, not a live-network latency
+claim.
 
-Tests do not assert journal events, internal read counts, helper order, or implicit global sweep
-behavior. Removing a mechanism removes its tests in the same slice.
+Focused adapter tests assert batching where call scaling is the contract. Integration tests assert
+recovery outcomes, not private helper calls. Tests do not assert journal events, private helper
+order, or implicit global sweep behavior. Removing a mechanism removes its tests in the same slice.

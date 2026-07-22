@@ -86,16 +86,9 @@ async def observe_review_mutation(
     identities = {
         change_id: state.review_identities.get(change_id) for change_id in ordered_change_ids
     }
-    head_refs = tuple(
-        dict.fromkeys(
-            identity.head_ref for identity in identities.values() if identity is not None
-        )
-    )
-    pull_numbers = tuple(
-        dict.fromkeys(
-            identity.pr_number for identity in identities.values() if identity is not None
-        )
-    )
+    known_identities = tuple(identity for identity in identities.values() if identity is not None)
+    head_refs = tuple(dict.fromkeys(identity.head_ref for identity in known_identities))
+    pull_numbers = tuple(dict.fromkeys(identity.pr_number for identity in known_identities))
 
     github_repository = await github_client.get_repository()
     pull_requests = await github_client.get_pull_requests_by_numbers(
@@ -114,7 +107,6 @@ async def observe_review_mutation(
     reviews: dict[str, ReviewObservation] = {}
     for change_id in ordered_change_ids:
         identity = identities[change_id]
-        local_revision: LocalRevision | None
         try:
             local_revision = context.jj_client.resolve_revision(change_id)
         except CliError:

@@ -19,7 +19,7 @@ from jj_stack.ui import Message
 from .landed_evidence import (
     LandedEvidenceKind,
     LandedReviewCandidate,
-    classify_commit_ancestry,
+    classify_commit_ancestries,
     classify_exact_snapshot,
     collect_landed_evidence,
 )
@@ -143,11 +143,11 @@ async def _observe_exact_candidate(
     pull_request = observation.reviews[candidate.change_id].pull_request
     if pull_request is None:
         return None, t"GitHub no longer reports PR #{candidate.review_identity.pr_number}"
-    ancestry = classify_commit_ancestry(
-        commit_id=candidate.submitted_baseline.commit_id,
+    ancestry = classify_commit_ancestries(
+        commit_ids=(candidate.submitted_baseline.commit_id,),
         context=finalizer.command,
         trunk_commit_id=finalizer.trunk_commit_id,
-    )
+    )[candidate.submitted_baseline.commit_id]
     evidence = classify_exact_snapshot(
         ancestry=ancestry,
         candidate=candidate,

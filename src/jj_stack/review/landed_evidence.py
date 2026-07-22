@@ -8,7 +8,6 @@ from typing import Literal
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.ui import Message
@@ -83,22 +82,24 @@ def complete_review_candidates(state: ReviewState) -> tuple[LandedReviewCandidat
     )
 
 
-def classify_commit_ancestry(
+def classify_commit_ancestries(
     *,
-    commit_id: str,
+    commit_ids: tuple[str | None, ...],
     context: CommandContext,
     trunk_commit_id: str,
-) -> CommitAncestry:
-    """Keep an unavailable commit distinct from a known off-trunk commit."""
+) -> dict[str, CommitAncestry]:
+    """Classify commits in one scan while keeping unavailable commits distinct."""
 
-    try:
-        landed = context.jj_client.query_commit_ids_ancestors_of(
-            (commit_id,),
-            descendant_commit_id=trunk_commit_id,
-        )
-    except JjCommandError:
-        return "unresolved"
-    return "on_trunk" if commit_id in landed else "not_on_trunk"
+    present_commit_ids = tuple(commit_id for commit_id in commit_ids if commit_id is not None)
+    memberships = context.jj_client.query_present_commit_ancestor_membership(
+        present_commit_ids,
+        descendant_commit_id=trunk_commit_id,
+    )
+    states: dict[bool, CommitAncestry] = {True: "on_trunk", False: "not_on_trunk"}
+    return {
+        commit_id: states[memberships[commit_id]] if commit_id in memberships else "unresolved"
+        for commit_id in dict.fromkeys(present_commit_ids)
+    }
 
 
 def classify_exact_snapshot(
@@ -173,28 +174,20 @@ def collect_landed_evidence(
 ) -> tuple[ExactSnapshotEvidence, RewrittenResultEvidence]:
     """Collect both distinct classifications from one current PR and trunk."""
 
+    ancestries = classify_commit_ancestries(
+        commit_ids=(candidate.submitted_baseline.commit_id, pull_request.merge_commit_sha),
+        context=context,
+        trunk_commit_id=trunk_commit_id,
+    )
     exact = classify_exact_snapshot(
-        ancestry=classify_commit_ancestry(
-            commit_id=candidate.submitted_baseline.commit_id,
-            context=context,
-            trunk_commit_id=trunk_commit_id,
-        ),
+        ancestry=ancestries[candidate.submitted_baseline.commit_id],
         candidate=candidate,
         pull_request=pull_request,
         repository=repository,
     )
-    merge_commit_id = pull_request.merge_commit_sha
     rewritten = classify_rewritten_result(
         candidate=candidate,
-        merge_result_ancestry=(
-            None
-            if merge_commit_id is None
-            else classify_commit_ancestry(
-                commit_id=merge_commit_id,
-                context=context,
-                trunk_commit_id=trunk_commit_id,
-            )
-        ),
+        merge_result_ancestry=ancestries.get(pull_request.merge_commit_sha or ""),
         pull_request=pull_request,
         repository=repository,
     )

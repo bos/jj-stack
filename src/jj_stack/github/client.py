@@ -13,6 +13,7 @@ from textwrap import dedent, indent
 import httpxyz
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import EXIT_GITHUB, SummarizedError
 from jj_stack.github.auth import github_token_for_host, github_token_from_env
 from jj_stack.github.resolution import GithubRepoAddress
@@ -219,6 +220,40 @@ class GithubClient:
                     ),
                 )
         return results
+
+    async def get_pull_requests_by_numbers_independently(
+        self,
+        *,
+        pull_numbers: Sequence[int],
+    ) -> dict[int, GithubPullRequest | GithubClientError | None]:
+        """Batch a lookup, then isolate individual results if the batch fails."""
+
+        numbers = tuple(sorted(set(pull_numbers)))
+        results: dict[int, GithubPullRequest | GithubClientError | None] = {}
+        try:
+            results.update(
+                await self.get_pull_requests_by_numbers(pull_numbers=numbers)
+            )
+            return results
+        except GithubClientError:
+            pass
+
+        async def get_one(number: int) -> GithubPullRequest | GithubClientError:
+            try:
+                return await self.get_pull_request(pull_number=number)
+            except GithubClientError as error:
+                return error
+            except ValidationError:
+                return GithubClientError(
+                    f"GitHub pull request lookup returned invalid data for PR #{number}."
+                )
+
+        fallback_results = await run_bounded_tasks(
+            concurrency=DEFAULT_BOUNDED_CONCURRENCY,
+            items=numbers,
+            run_item=get_one,
+        )
+        return dict(zip(numbers, fallback_results, strict=True))
 
     async def get_pull_requests_by_head_refs(
         self,

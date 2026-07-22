@@ -319,7 +319,7 @@ class JjClient:
             change_id: [] for change_id in ordered_change_ids
         }
         for chunk in _chunked(ordered_change_ids):
-            revisions = self._query_revisions(_present_change_ids_revset(chunk))
+            revisions = self._query_revisions(_present_symbols_revset(chunk))
             for revision in revisions:
                 grouped.setdefault(revision.change_id, []).append(revision)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
@@ -339,7 +339,7 @@ class JjClient:
         ancestor_revset = f"({_union_revset_symbols(ordered_ancestor_commit_ids)})::"
         revisions_by_commit_id: dict[str, LocalRevision] = {}
         for chunk in _chunked(ordered_change_ids):
-            change_ids_revset = _present_change_ids_revset(chunk)
+            change_ids_revset = _present_symbols_revset(chunk)
             for revision in self._query_revisions(f"({change_ids_revset}) & {ancestor_revset}"):
                 revisions_by_commit_id.setdefault(revision.commit_id, revision)
         return tuple(revisions_by_commit_id.values())
@@ -371,18 +371,26 @@ class JjClient:
             ancestor_revset="::trunk()",
         )
 
-    def query_commit_ids_ancestors_of(
+    def query_present_commit_ancestor_membership(
         self,
         commit_ids: Sequence[str],
         *,
         descendant_commit_id: str,
-    ) -> set[str]:
-        """Return supplied commit IDs that are ancestors of one exact commit."""
+    ) -> dict[str, bool]:
+        """Return presence and ancestry together, omitting unavailable commit IDs."""
 
-        return self._query_commit_ids_in_ancestor_revset(
-            commit_ids,
-            ancestor_revset=f"::{descendant_commit_id}",
-        )
+        memberships: dict[str, bool] = {}
+        for chunk in _chunked(tuple(dict.fromkeys(commit_ids))):
+            try:
+                revisions = self._query_revisions_with_membership(
+                    _present_symbols_revset(chunk),
+                    membership_revsets=(f"::{_quote_revset_symbol(descendant_commit_id)}",),
+                )
+            except JjCommandError:
+                continue
+            for revision, (is_ancestor,) in revisions:
+                memberships[revision.commit_id] = is_ancestor
+        return memberships
 
     def _query_commit_ids_in_ancestor_revset(
         self,
@@ -739,7 +747,7 @@ class JjClient:
         rendered: dict[str, str] = {}
         template = _short_change_id_render_template(min_len=min_len)
         for chunk in _chunked(ordered_change_ids):
-            revset = _present_change_ids_revset(chunk)
+            revset = _present_symbols_revset(chunk)
             stdout = self._run_jj(
                 (
                     "--ignore-working-copy",
@@ -1292,14 +1300,24 @@ def _short_change_id_render_template(*, min_len: int) -> str:
 
 
 def _quote_revset_symbol(symbol: str) -> str:
-    return f"'{symbol}'"
+    if "'" not in symbol and all(ord(character) >= 32 for character in symbol):
+        return f"'{symbol}'"
+    escaped: list[str] = []
+    for character in symbol:
+        if character in {'"', "\\"}:
+            escaped.append(f"\\{character}")
+        elif ord(character) < 32:
+            escaped.append(f"\\x{ord(character):02x}")
+        else:
+            escaped.append(character)
+    return f'"{"".join(escaped)}"'
 
 
-def _present_change_ids_revset(change_ids: Sequence[str]) -> str:
-    """Union the change IDs as `present(...)` terms so hidden ones do not fail the query."""
+def _present_symbols_revset(symbols: Sequence[str]) -> str:
+    """Union symbols as `present(...)` terms so unavailable ones do not fail the query."""
 
     return _union_revset_symbols(
-        tuple(f"present({_quote_revset_symbol(change_id)})" for change_id in change_ids),
+        tuple(f"present({_quote_revset_symbol(symbol)})" for symbol in symbols),
         quote=False,
     )
 

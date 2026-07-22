@@ -34,6 +34,7 @@ from jj_stack.github.resolution import (
     resolve_trunk_branch,
 )
 from jj_stack.jj.client import JjCliArgs, JjCommandError, UnsupportedStackError
+from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.convergence import (
     SelectedConvergencePlan,
@@ -51,8 +52,8 @@ from jj_stack.review.landed import (
 from jj_stack.review.landed_evidence import (
     CommitAncestry,
     LandedReviewCandidate,
-    classify_commit_ancestry,
-    collect_landed_evidence,
+    classify_commit_ancestries,
+    classify_rewritten_result,
     complete_review_candidates,
 )
 from jj_stack.review.observation import (
@@ -335,18 +336,15 @@ async def _run_global_recovery(*, context: CommandContext, dry_run: bool) -> int
         )
     all_candidates = complete_review_candidates(state)
     duplicate_change_ids = duplicate_review_claim_change_ids(state.review_identities)
-    ancestry_by_change_id = {
-        candidate.change_id: classify_commit_ancestry(
-            commit_id=candidate.submitted_baseline.commit_id,
-            context=context,
-            trunk_commit_id=trunk.commit_id,
-        )
-        for candidate in all_candidates
-    }
+    ancestry_by_commit_id = classify_commit_ancestries(
+        commit_ids=tuple(candidate.submitted_baseline.commit_id for candidate in all_candidates),
+        context=context,
+        trunk_commit_id=trunk.commit_id,
+    )
     exact_candidates = tuple(
         candidate
         for candidate in all_candidates
-        if ancestry_by_change_id[candidate.change_id] == "on_trunk"
+        if ancestry_by_commit_id[candidate.submitted_baseline.commit_id] == "on_trunk"
     )
     async with build_github_client(repository=target.repository) as github:
         repository_state = await github.get_repository()
@@ -356,19 +354,37 @@ async def _run_global_recovery(*, context: CommandContext, dry_run: bool) -> int
             remote_name=target.remote.name,
             trunk_commit_id=trunk.commit_id,
         )
+        pull_requests = await github.get_pull_requests_by_numbers_independently(
+            pull_numbers=tuple(
+                candidate.review_identity.pr_number
+                for candidate in all_candidates
+                if ancestry_by_commit_id[candidate.submitted_baseline.commit_id] != "on_trunk"
+            )
+        )
+        merge_ancestry = classify_commit_ancestries(
+            commit_ids=tuple(
+                pull_request.merge_commit_sha
+                for pull_request in pull_requests.values()
+                if isinstance(pull_request, GithubPullRequest)
+                and pull_request.merge_commit_sha is not None
+            ),
+            context=context,
+            trunk_commit_id=trunk.commit_id,
+        )
         for candidate in all_candidates:
-            ancestry = ancestry_by_change_id[candidate.change_id]
+            ancestry = ancestry_by_commit_id[candidate.submitted_baseline.commit_id]
             if ancestry == "on_trunk":
                 continue
+            pull_request = pull_requests.get(candidate.review_identity.pr_number)
             had_failure = (
-                await _report_global_nonexact_candidate(
+                _report_global_nonexact_candidate(
                     ancestry=ancestry,
                     candidate=candidate,
                     context=context,
                     duplicate=candidate.change_id in duplicate_change_ids,
-                    github=github,
+                    merge_ancestry=merge_ancestry,
+                    pull_request=pull_request,
                     repository=target.repository,
-                    trunk_commit_id=trunk.commit_id,
                 )
                 or had_failure
             )
@@ -394,32 +410,32 @@ async def _run_global_recovery(*, context: CommandContext, dry_run: bool) -> int
     return 1 if had_failure or any(result.outcome == "skipped" for result in results) else 0
 
 
-async def _report_global_nonexact_candidate(
+def _report_global_nonexact_candidate(
     *,
     ancestry: CommitAncestry,
     candidate: LandedReviewCandidate,
     context: CommandContext,
     duplicate: bool,
-    github: GithubClient,
+    merge_ancestry: dict[str, CommitAncestry],
+    pull_request: GithubPullRequest | GithubClientError | None,
     repository: GithubRepoAddress,
-    trunk_commit_id: str,
 ) -> bool:
     if duplicate:
         _warn_global_preserved(candidate, "another tracked change claims the same review")
         return True
-    try:
-        pull_request = await github.get_pull_request(
-            pull_number=candidate.review_identity.pr_number,
+    if not isinstance(pull_request, GithubPullRequest):
+        reason = (
+            t"could not inspect its current review: {pull_request}"
+            if isinstance(pull_request, GithubClientError)
+            else t"GitHub no longer reports PR #{candidate.review_identity.pr_number}"
         )
-    except GithubClientError as error:
-        _warn_global_preserved(candidate, t"could not inspect its current review: {error}")
+        _warn_global_preserved(candidate, reason)
         return True
-    _, rewritten = collect_landed_evidence(
+    rewritten = classify_rewritten_result(
         candidate=candidate,
-        context=context,
+        merge_result_ancestry=merge_ancestry.get(pull_request.merge_commit_sha or ""),
         pull_request=pull_request,
         repository=repository,
-        trunk_commit_id=trunk_commit_id,
     )
     if rewritten.state == "landed":
         try:

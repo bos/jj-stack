@@ -206,6 +206,13 @@ bounded-parallel GitHub work over one-request-per-item serial loops. Ordering
 constraints stay explicit at the command layer when the visible result needs a specific
 sequence.
 
+`sync --all` reads submitted-commit ancestry in chunks of up to 200 commits, reads PRs through
+GraphQL in chunks of 25, and then checks any reported merge-result commits in another batched
+ancestry read. If a GraphQL batch fails, bounded REST requests preserve a separate result for each
+PR. Missing commits and failed PR reads therefore remain local to their tracked changes. These
+initial reads are diagnostic only: PR updates and local retirement still run one candidate at a
+time, with fresh observations before each change.
+
 `submit` predicts GitHub auto-close risk before pushing rewritten review branches. The behavioral
 rule belongs to the submission algorithm in [design.md](design.md); the implementation uses one
 batched ancestry query over the planned head/base pairs, then pre-retargets only the affected PRs.
