@@ -35,38 +35,42 @@ testing should spend its budget on those cross-system invariants.
   ordinary user, teammate, or agent can perform. The model predicts whether `submit` must
   fail closed without mutating any boundary or succeed with the normal contract, and every
   drifted state must still produce a `view` report instead of a crash. See
-  [distributed-state.md](distributed-state.md) for the state-holder model behind the
+  [distributed-state.md](distributed-state.md) for the sources-of-state model behind the
   vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
   compact operation trace that can be copied into a deterministic regression test.
 - Keep the default suite fast. `./check.py` runs a fixed 16-case property corpus; larger
   generated or randomized pools remain opt-in.
-- Use all available workers when exploration is widened. The core harness should expose
-  generated scenarios as ordinary data so pytest, a future CLI runner, or a long-running
-  explorer can distribute them across cores.
+- Use all available workers when exploration is widened. Scenario modules expose generated cases
+  as ordinary data so pytest can distribute them across cores.
 - Skip duplicate states before test collection. If two generated operation traces produce
-  the same final live stack, orphan set, hazard class, and rewritten-change set, keep one
+  the same final live stack, orphan set, risk category, and rewritten-change set, keep one
   representative instead of replaying both through `jj` and fake GitHub.
 
-## Integration Harness
+## Where the code lives
 
-The core harness should be runner-agnostic. It owns scenario generation, replay, fake
-GitHub event inspection, and invariant checking as plain Python APIs. Pytest is only the
-current execution adapter: it gives the opt-in runner temporary directories,
-monkeypatching, captured output, concise assertion reporting, and `pytest-xdist`
-scheduling.
+- `tests/support/*_property_scenarios.py` defines models, generators, and fixed scenarios.
+- `tests/support/*_property_harness.py` replays them through real `jj` and checks the results.
+- `tests/property/*_property_scenarios.py` adapts the scenarios to pytest.
+- `tests/run_submit_property_scenarios.py` launches larger opt-in runs.
 
-The integration layer generates small `StackEditScenario` values. Submit and land use
-one shared `StackEditOperation` vocabulary and pure order-transition model; each command
-layers its own state projection and real-`jj` replay onto those transitions. Each submit
-scenario has:
+## Integration harness
+
+The scenario modules own generation and expected-result models. The harness modules replay cases,
+inspect fake GitHub events, and check invariants through plain Python APIs. Pytest adapts those
+APIs to temporary directories, monkeypatching, captured output, concise assertion reporting, and
+`pytest-xdist` scheduling.
+
+The scenario modules generate small `StackEditScenario` values. Submit and land use one shared
+`StackEditOperation` vocabulary and pure order-transition model; each command adds its own
+expected results and real-`jj` replay. Each submit scenario has:
 
 - an initial stack size
 - an ordered list of stack-edit operations
 - a stable scenario ID derived from the initial size and operation trace
 - a canonical key based on the final live stack order plus abandoned submitted changes
-- a hazard class, so de-duplication cannot accidentally remove every representative of
-  a known risk class
+- a risk category (`hazard_class` in the scenario data), so de-duplication cannot accidentally
+  remove every representative of a known failure mode
 - enough abstract state to distinguish equivalent-looking final stacks that require
   different remote mutation behavior, such as which changes were rewritten since their
   initial submit
@@ -87,11 +91,10 @@ Replay follows the same shape for every scenario:
 The replay model must track stable `change_id`s for initial and inserted changes.
 Subjects and filenames are only labels that make failure output readable.
 
-The unconfigured adapter keeps one fixed stack-edit representative: squashing a reviewed middle
-change into its predecessor. It combines a rewritten destination with an orphaned reviewed
-identity. Reorder, insertion, abandon, and plain rewrite syntax already have deterministic
-front-door coverage; the generator still explores all of them when an opt-in count exceeds the
-fixed prefix.
+The default corpus keeps one fixed stack-edit representative: squashing a reviewed middle change
+into its predecessor. It combines a rewritten destination with an orphaned reviewed identity.
+Reorder, insertion, abandon, and plain rewrite syntax already have deterministic command coverage;
+the generator still explores all of them when an opt-in count exceeds the fixed set.
 
 The successful-submit operations cover the common linear-stack edit surface:
 
@@ -108,87 +111,33 @@ small enough for quick shrinking by inspection. Separate harness families cover 
 suffix moves, two-stack merges, single-change moves between stacks, and failed-submit retries.
 Duplicate is not represented in the current model.
 
-## Cross-Stack Split Harness
+## Cross-stack harnesses
 
-Some ordinary `jj rebase -s ... -d ...` edits split one submitted stack into two live
-stacks. Those scenarios need a separate oracle because the successful-submit
-invariant is no longer "every surviving submitted change is in the selected stack."
+Three harness families cover edits that involve more than one submitted stack:
 
-Cross-stack split scenarios start from one submitted linear stack, move a suffix onto an
-earlier target so at least one submitted change is left behind on a deferred live stack,
-then submit only the selected resulting stack. The oracle asserts:
+- **Split:** submit one resulting stack. Update its PRs; leave the unselected stack's tracking,
+  branches, PRs, bases, state, and approvals unchanged.
+- **Merge:** submit the combined stack. Reuse every PR and approval by `change_id`; recompute
+  heads and bases; store no topology.
+- **Move:** submit the destination stack. Reuse the moved change's PR; leave the source remainder
+  unchanged.
 
-- the selected resulting stack is rediscovered from the current DAG and submitted
-  normally
-- selected changes keep their PR numbers and approvals, and their PR bases and branch
-  heads match the selected DAG
-- deferred live-stack changes keep their saved local tracking record unchanged
-- deferred PR branches still point at their originally submitted commits
-- deferred PR bases, head branches, state, and approvals are unchanged
-- fake GitHub recorded no base-retarget event for a deferred PR and no state transition
-  for any original PR
+All three families assert that no original PR is unexpectedly closed, merged, or replaced.
+Selected PR bases are recomputed; PRs in the unselected or source remainder must not receive a
+base-retarget event. Fixed cases cover a suffix split, merging two stacks, and moving a middle
+change while leaving a nonempty source remainder. Expanded runs vary directions, sizes, and
+insertion points.
 
-The initial operation family is intentionally suffix moves because that is the common
-linear-stack edit that produces two selected-parent chains without introducing merge
-commits.
-
-## Stack-Merge Harness
-
-Merging two independently submitted linear stacks into one selected stack is a supported
-cross-stack rewrite. The user has kept the same logical `jj` changes and moved them into
-one review chain, so the expected behavior is to keep the existing PRs rather than
-opening replacement reviews.
-
-Stack-merge scenarios create two separate stacks from trunk, submit both, approve every
-PR, rebase one stack root onto the other stack head, then submit the merged stack head.
-The oracle asserts:
-
-- every selected change from both original stacks keeps its PR number
-- original approvals remain attached to those PR numbers
-- every review branch points at the merged-stack commit for that `change_id`
-- every PR base is recalculated from the merged selected DAG
-- no PR is closed, merged, or replaced during the merge submit
-- the current `jj` DAG is rediscovered as one linear selected stack; tracking remains
-  per-change and stores no topology
-
-The initial scenario family covers both directions: appending the second stack after the
-first and appending the first stack after the second, with small stack sizes plus random
-size combinations.
-
-## Stack-Move Harness
-
-Moving one change between two independently submitted linear stacks is also a supported
-cross-stack rewrite. The destination selected stack should adopt the moved change's
-existing review, because the logical `jj` change is the same. The source-stack remainder
-is a deferred live stack, so submitting the destination stack must not silently update its
-PRs or saved local tracking.
-
-Stack-move scenarios create two separate stacks from trunk, submit both, approve every
-PR, then rebase exactly one source-stack revision before or after a target-stack
-revision. The oracle submits only the destination stack head and asserts:
-
-- every selected destination-stack change keeps its PR number
-- the moved source-stack change keeps its PR number and approval
-- selected PR bases and branch heads match the new destination DAG
-- source-stack remainder PR branches still point at their originally submitted commits
-- source-stack remainder PR bases, state, saved tracking, and approvals are unchanged
-- no original PR is closed, merged, or replaced during the move submit
-- fake GitHub recorded no base-retarget event for a deferred source-stack PR
-
-The fixed scenario moves a middle change into another stack while leaving a nonempty source stack
-behind. Random scenarios vary both stack sizes, source direction, source index, target index, and
-insertion side.
-
-## External-drift Harness
+## External-drift harness
 
 Stack-edit scenarios cover successful repair after supported local DAG rewrites. They do
-not cover behavior when another state-holder has moved independently. The external-drift
+not cover behavior when another source of state has moved independently. The external-drift
 family starts from a submitted, approved stack, optionally applies one local stack edit
 from the stack-edit vocabulary, then applies one or two drift operations from a typed
 transition vocabulary. Each drift kind is data: the boundary it mutates, whether it is
 composable with other drifts, whether it targets one submitted change, and the modeled
-`submit` outcome. [distributed-state.md](distributed-state.md) describes the state-holder
-model and lists every drift kind with its expected outcome and recovery path.
+`submit` outcome. [distributed-state.md](distributed-state.md) owns the drift inventory and
+expected outcomes.
 
 Fail-closed kinds (for example an externally closed, merged, or replaced PR, a corrupted
 saved PR number, an explicitly unlinked change, a drifted or deleted remote review branch,
@@ -197,14 +146,13 @@ contractual exit code and one of the kind's expected diagnoses while leaving eve
 boundary untouched: no remote ref changes, no local or remembered-remote bookmark changes,
 no PR, review, or comment mutations, and unchanged loaded tracking records.
 That includes keeping a newly inserted change free of bookmark and tracking state when an
-older submitted change makes preflight fail. The diagnosis is the typed
-identity of the CLI's fail-closed error — a `DriftError` condition or
-`unsupported_stack:<reason>` — captured from the error the CLI
-hands its top-level printer, so a stop that fired for the wrong reason cannot pass on
-exit code alone. Each drift kind owns explicit allowed `(exit code, diagnosis)` pairs;
+older submitted change makes preflight fail. The structured diagnosis comes from the CLI's
+fail-closed error: a `DriftError` condition or `unsupported_stack:<reason>` captured from the
+error handed to the top-level printer. A stop that fired for the wrong reason cannot pass on exit
+code alone. Each drift kind owns explicit allowed `(exit code, diagnosis)` pairs;
 composed scenarios union those pairs without accepting a code from one drift beside the
 diagnosis from another. Success kinds (external trunk advance, an externally retargeted
-PR base, an external draft toggle) must converge on the full successful-submit contract.
+PR base, an external draft toggle) must reach the full successful-submit result.
 
 Drift transitions stay faithful to the platform: deleting a remote review branch also
 closes its PR because GitHub does, and a replacement PR created outside the tool shares
@@ -217,21 +165,17 @@ Every drift scenario, fail-closed or successful, ends by running `view` on the d
 selection and requiring a report exit (`0`, `2`, or `10`) rather than a crash or an
 unclassified error. Exact diagnostic wording stays out of scope.
 
-The fixed corpus includes one composite incident scenario, `agent-recreated-pr`: an agent
-closes a reviewed PR, deletes its review branch, abandons the local change, recreates the
-same work as a new change, pushes it with plain git, opens a replacement PR outside the
-tool, and fetches. The fetched untracked remote bookmark makes the recreated change
-immutable, so `submit` must refuse with the unsupported-stack diagnostic and `view` must
-still report.
+The fixed corpus includes the composite `agent-recreated-pr` scenario described in
+[distributed-state.md](distributed-state.md). `submit` must refuse with the unsupported-stack
+diagnostic, and `view` must still report.
 
-## Land Harness
+## Land harness
 
-Land scenarios compose the states `land` actually meets: a submitted, partially approved
-stack that may have been edited since its last submit. Each scenario starts from a
-submitted linear stack, optionally applies a short trace of stack edits from the shared
+Land scenarios compose the states `land` actually meets. Each starts from a submitted linear
+stack, optionally applies a short trace of stack edits from the shared
 edit vocabulary — rewrite, insert before or after, abandon, reorder, and squash, with or
 without a follow-up resubmit — approves a prefix of the final live stack, then lands through one
-transport. Scenario dimensions also cover `--pull-request` selection, which caps the
+landing mode. Scenario dimensions also cover `--pull-request` selection, which caps the
 walk at the selected change, and a second independently submitted bystander stack whose
 identity, submitted commit, PR, and review branch the land must leave unchanged even though
 trunk moves under it.
@@ -243,35 +187,34 @@ stops the walk. An inserted change without an existing review and an unapproved 
 also stopping boundaries. `land` never refreshes or creates a review to make a change
 landable; a separate `submit` must first advance the submitted baseline.
 
-For the default direct-push transport, the oracle asserts:
+For direct-push landing, the checks require:
 
 - remote trunk points at the last landed local commit, and stays put when nothing is
   ready to land
-- landed PRs are finalized as merged, and their remote review branches are left intact
+- landed PRs are closed as merged, and their remote review branches are left intact
   at the landed commits
-- landed local review bookmarks are forgotten only after dependency-aware link retirement proves
-  that no surviving review still uses them; the `--skip-cleanup` exception has focused command
-  coverage
-- local review tracking for the landed prefix is retired; tracking above the landing
+- landed local review bookmarks are forgotten only after proving that no surviving review still
+  uses them; the `--skip-cleanup` exception has focused command coverage
+- local review tracking for the landed prefix is removed; tracking above the landing
   boundary and for orphaned changes is untouched
 - `list --json` stops reporting landed changes and still reports the remaining tracked
   suffix
 
-For `land --via merge`, the oracle asserts the in-command selected convergence contract:
-GitHub moves trunk by merging the accepted prefix, and before returning `land` finalizes that
-prefix, rebases the surviving selected path onto the merged trunk, and updates only survivors
-that already have reviews and passed fresh identity checks. Trailing unreviewed work remains
-local. Reviews above a `--pull-request` cap are out of scope and are not resubmitted; their local
-commits may still be rewritten as descendants. A blocked merge-transport scenario marks the
-first PR after the merged prefix as unmergeable; the command must stop there, keep the blocker
-open and tracked, and still converge the accepted prefix.
+For `land --via merge`, GitHub moves trunk by merging the accepted changes. Before returning,
+`land` verifies those results, rebases the selected surviving changes onto the merged trunk, and
+updates only survivors that already have reviews and passed current identity checks. Trailing
+unreviewed work remains local. Reviews above a `--pull-request` cap are out of scope and are not
+resubmitted; their local commits may still be rewritten as descendants. A blocked merge scenario
+marks the first PR after the merged changes as unmergeable. The command stops there, keeps the
+blocker open and tracked, verifies accepted merge results, removes proven landed ancestors,
+rebases survivors onto fetched trunk, and updates only existing reviewed survivors.
 
-Both transports assert transient events, not only final state: each landed PR closes exactly
-once, and PRs outside the command's selected mutation scope see no state or base event.
-Merge-transport survivors inside the selection may be updated. The first blocked PR may be
-retargeted to trunk before GitHub refuses the merge, but it must never change state.
+Both landing modes assert transient events, not only final state: each landed PR closes exactly
+once, and PRs outside the command's selected scope see no state or base event. Survivors during
+merge landing may be updated. The first blocked PR may be retargeted to trunk before GitHub
+refuses the merge, but it must never change state.
 
-## Land Drift Harness
+## Land drift harness
 
 Land drift scenarios apply one external transition to a submitted, fully approved stack,
 then run `land` on its default selection so the drifted state must survive the
@@ -294,76 +237,73 @@ an unreferenced head is abandoned by the fetch. Every drift scenario ends by run
 In both prefix-stop and fetch-abandon outcomes, the stopping change keeps its saved bookmark
 name, PR number, and submitted commit, while its live GitHub PR remains unchanged. In the
 fetch-abandon case, the actual `jj` bookmark is gone with the deleted branch. `land` owns only
-the prefix it actually landed and leaves the saved recovery evidence for explicit follow-up.
-Derived managed comments on the landed prefix may be deleted during finalization.
+the prefix it actually landed and leaves the saved identity and baseline for explicit follow-up.
+Derived managed comments on the landed changes may be deleted while finishing the operation.
 Fail-closed outcomes also assert the typed condition carried by the CLI error, so a
 plain stack fork caused by advanced trunk cannot pass by stopping on the
 merged-ancestor check or vice versa.
 
-## Land Retry Harness
+## Land retry harness
 
 Land retry scenarios interrupt one direct-push land at a fault point, then run `sync --all` and
-require convergence rather than rollback. There is no saved transaction to resume. The fixed
-property family covers a mid-finalization failure and a lost tracking-removal save. Expanded
-runs also cover a load failure just after the trunk push and a lost push acknowledgement. The
-deterministic process-death corpus separately terminates a CLI child after
-the accepted trunk push, after an accepted PR merge, and before a retirement save, then recovers
-in a fresh child.
+require successful recovery rather than rollback. There is no saved transaction to resume. The
+fixed property family covers a failure while closing PRs and a lost tracking-removal save.
+Expanded runs also cover a load failure just after the trunk push and a lost push
+acknowledgement. The deterministic process-death corpus separately terminates a CLI child after
+the accepted trunk push, after an accepted PR merge, and before a tracking-removal save, then
+recovers in a fresh child.
 
-The oracle spans both runs with one event window: each landed PR transitions to closed
-exactly once in total, so the recovery provably finalizes only what the interrupted run
-left unfinished. The recovery must end with the standard direct-push contract and `list --json`
-free of the landed prefix; global recovery leaves existing reviews on the suffix unchanged. The
-deterministic integration suite covers
-fail-closed variants where a review repository, canonical head identity, review branch, or PR
-head changes between runs: `sync --all` preserves that exact identity and continues with the
+The checks span both runs with one event window: each landed PR transitions to closed exactly once
+in total, so recovery finishes only what the interrupted run left unfinished. Recovery must end
+with the standard direct-push contract and `list --json` free of the landed prefix; global
+recovery leaves existing reviews on the suffix unchanged. The deterministic integration suite
+covers fail-closed variants where a review repository, canonical head identity, review branch, or
+PR head changes between runs: `sync --all` preserves that exact identity and continues with the
 rest. Independently tracked sibling stacks remain unchanged.
 
-## Land Handoff Harness
+## Land handoff harness
 
 The handoff family replays multi-command recovery end to end. A prefix reaches trunk through an
-interrupted merge-transport land or through squash merges outside the tool with GitHub's usual
+interrupted merge landing or through squash merges outside the tool with GitHub's usual
 head-branch auto-delete. Then selected `sync` rebuilds the suffix and updates its existing
 reviews, and a final direct-push land consumes it.
 
-The oracle asserts the recovery converged before the final land: every suffix change
+The checks require recovery to finish before the final land: every suffix change
 keeps its PR number, bookmark, and pre-handoff approvals, the bottom suffix PR targets
 trunk, review branches point at the rebased commits, and the merged prefix sees no
 further event of any kind after the handoff begins. The recovery run proves the pre-merge local
-copies inert and retires them directly. The chain must end with `list --json` empty and no
-tracking for any original change.
+copies irrelevant to later work and removes their tracking directly. The chain must end with
+`list --json` empty and no tracking for any original change.
 
-## Interrupted-Submit Retry Harness
+## Interrupted-submit retry harness
 
 Boundary-drift scenarios assert that unsafe external state blocks mutation. Retry
 scenarios cover the opposite case: `submit` has already performed some intended
 mutation, then a later operation fails. The expected behavior is not rollback; it is a
-safe rerun that discovers the partial artifacts and converges on the same final review
+safe rerun that discovers partial work and reaches the same final review
 state without duplicate PRs or lost metadata.
 
 Interrupted-submit scenarios create a fresh stack, install a one-shot failure at one mutation
-point, run `submit`, then follow the supported retry path for that fault. The fixed case covers
-adoption after an accepted remote push; opt-in generation also explores PR creation, update, and
-metadata failures. The oracle asserts:
+point, run `submit`, then follow the supported retry path for that fault. The fixed case retries
+after the branch push succeeded but a later step failed; opt-in generation also explores PR
+creation, update, and metadata failures. The checks require:
 
 - every selected change has exactly one PR after retry
 - remote review branches point at the selected `jj` commits
 - PR heads, bases, and titles match the selected DAG
-- configured labels and reviewers converge even if the first run failed during metadata
-  sync
+- configured labels and reviewers match the requested state even if the first run failed during
+  metadata sync
 - an existing reviewed PR keeps its PR number and approval when the failed run was a PR
   update rather than the first submit
 
-The initial failure family covers after remote branch push, after PR creation, after PR
-update, and after PR metadata label sync. Later retry families can add stack-comment
-failures, draft-state mutations, review rerequest mutations, and failures interleaved
-with external GitHub changes.
+The failure family covers failures after a remote branch push, PR creation, PR update, or label
+sync.
 
 ## Invariants
 
 For every live change after the final submit:
 
-- `ReviewIdentity` records the nominal repository, PR number, canonical head owner/ref,
+- `ReviewIdentity` records the saved repository, PR number, canonical head owner/ref,
   bookmark ownership, and link state for the change
 - if the change existed in the initial submitted stack, the PR number is unchanged
 - the remote review branch points at the live `commit_id`
@@ -392,26 +332,10 @@ For the submitted stack as a whole:
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
-Slice R1 separated identity from baseline in the harness and removed mechanism-level journal
-assertions. Slice R2 made every rewritten commit without a later `submit` a stopping boundary,
-including same-diff rebases caused by abandon, move, and reorder edits. Slice R4 reduced the
-unconfigured adapter from 92 scenarios to the 16 fixed points below; larger deterministic random
-pools remain opt-in.
-
-- submit edit, split, merge, move, retry, and drift:
-  `squash-middle-into-previous`, `split-middle-deferred-one`,
-  `merge-second-after-first`, `move-first-middle-after-second-head`,
-  `retry-after-remote-push`, `closed-pr-after-insert`, and `agent-recreated-pr`
-- land projection, scope, and external error:
-  `push-abandon-without-resubmit-stops-at-rebased-survivor`,
-  `push-bystander-stack-untouched-by-partial-land`, and
-  `merge-blocked-at-unmergeable-pr-converges-accepted-prefix`
-- land readiness and ancestry drift: `drift-changes-requested-stops-prefix` and
-  `drift-external-squash-merge-requires-selected-sync`
-- land retry: `retry-mid-finalize-converges-without-double-close` and
-  `retry-before-retirement-save-converges`
-- merge handoff: `handoff-external-squash-merge-then-sync-recovers` and
-  `handoff-interrupted-merge-land-recovers-through-sync`
+The default suite runs 16 fixed scenarios across submit edits, cross-stack changes, drift,
+landing, and retries. Their authoritative names and counts live in
+`tests/support/submit_property_scenarios.py` and `tests/support/land_property_scenarios.py`;
+larger deterministic pools remain opt-in.
 
 ## Efficiency
 
@@ -419,10 +343,9 @@ The harness does not rely on one large state-machine test for integration covera
 stateful test cannot be split across `pytest-xdist` workers, and a failure often minimizes to a
 request-order artifact rather than a user-level scenario.
 
-Instead, the integration layer generates a deterministic pool of candidate scenarios and
-exposes the unique representatives as data. The pytest adapter parameterizes over that data,
-giving expanded runs all-core execution under `pytest -n auto`.
-A future CLI runner can shard the same scenario list without depending on pytest.
+Instead, the scenario modules generate a deterministic pool of candidates and expose the unique
+representatives as data. The pytest adapter parameterizes over that data, giving expanded runs
+all-core execution under `pytest -n auto`.
 
 Expanded property runs are launched by hand:
 
@@ -430,13 +353,8 @@ Expanded property runs are launched by hand:
 $ tests/run_submit_property_scenarios.py 500
 ```
 
-The runner accepts the scenario count as a positional argument. It also supports
-`--seed <int>`, `--random-seed`, `--cross-stack-scenarios <N>`,
-`--stack-merge-scenarios <N>`,
-`--stack-move-scenarios <N>`, `--retry-scenarios <N>`, `--drift-scenarios <N>`,
-`--land-scenarios <N>`, `--land-drift-scenarios <N>`, `--land-retry-scenarios <N>`,
-`--land-handoff-scenarios <N>`, `--jobs <N|auto>`, `--no-sync`, and additional pytest
-arguments after `--`.
+The runner's `--help` is the authority for family counts, seeds, workers, environment setup, and
+additional pytest arguments.
 
 `--random-seed` generates one seed and uses it for both scenario generation and
 pytest-randomly ordering. The runner prints a complete reproduction invocation with the
@@ -460,33 +378,10 @@ stable sorting, no Python hash-order dependence, and concrete caps for stack siz
 length, and attempts. Each replay receives an explicit workspace directory and fake repo
 builder from the caller.
 
-The opt-in runner sets these environment variables for the pytest adapter:
+The runner configures the pytest adapter through internal `JJ_STACK_*` environment variables.
+Those variables are implementation details, not part of the harness contract.
 
-- `JJ_STACK_SUBMIT_PROPERTY_SCENARIOS`: target number of unique generated scenarios
-- `JJ_STACK_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS`: target number of unique cross-stack
-  split scenarios
-- `JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS`: target number of unique two-stack
-  merge scenarios
-- `JJ_STACK_SUBMIT_PROPERTY_STACK_MOVE_SCENARIOS`: target number of unique cross-stack
-  single-change move scenarios
-- `JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS`: target number of unique failed-submit
-  retry scenarios
-- `JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS`: target number of unique external-drift
-  scenarios
-- `JJ_STACK_SUBMIT_PROPERTY_SEED`: deterministic random seed
-- `JJ_STACK_LAND_PROPERTY_SCENARIOS`: target number of unique land scenarios
-- `JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS`: target number of unique land drift
-  scenarios
-- `JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS`: target number of unique interrupted-land
-  retry scenarios
-- `JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS`: target number of unique merged-prefix
-  handoff scenarios
-- `JJ_STACK_LAND_PROPERTY_SEED`: deterministic random seed for all land scenario
-  families
-
-Those variables configure the adapter; they are not part of the core harness contract.
-
-## Relationship To Hypothesis
+## Why this is not a Hypothesis state machine
 
 State-machine tools can still be useful for pure model tests where examples are cheap and
 shrinking is valuable. The integration harness is deliberately shaped differently: it
@@ -494,7 +389,7 @@ prioritizes parallel execution, deterministic scenario IDs, and canonical-state 
 The existing pure transition model uses the shared operation vocabulary and invariants so its
 scenarios replay through the integration harness.
 
-## Promotion Rule
+## Promotion rule
 
 Randomized tests are a discovery mechanism, not the only guardrail. When a generated scenario
 catches a bug, retain the minimized trace in the fixed corpus, or add a focused deterministic

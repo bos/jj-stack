@@ -1,15 +1,16 @@
 # Distributed state model
 
-Status: current executable model. [design.md](design.md) remains the behavioral authority.
+Status: current drift model. [design.md](design.md) remains the behavioral authority.
 
-`jj-stack` coordinates four state-holders that can move independently. Every confusing
-bug report and every fail-closed diagnostic is some pair of them disagreeing. This file
-names the holders, the legal transitions that move each one, the invariants that define
-"healthy", and the required behavior for each drift class. The property harness
-([property-testing.md](property-testing.md)) generates scenarios directly from this
-vocabulary.
+`jj-stack` coordinates four sources of state that can move independently. Drift bugs arise when
+they disagree. This file names those sources, the supported transitions that move them, the
+agreements required for a healthy review, and the required behavior for each kind of drift. The
+property harness ([property-testing.md](property-testing.md)) generates the rows marked "property"
+below; `DRIFT_KIND_SPECS` in `tests/support/submit_property_scenarios.py` is that generated
+inventory. Focused command tests cover the rows marked "deterministic." Rows marked "specified"
+have defined behavior but no dedicated current scenario.
 
-## The four state-holders
+## The four sources of state
 
 1. **Local `jj` view** — the commit DAG, change visibility/mutability, local bookmarks,
    and remembered remote-bookmark observations. Moved by the user's `jj` commands
@@ -25,14 +26,16 @@ vocabulary.
 4. **Tracking store** — separate versioned `ReviewIdentity` and `SubmittedBaseline` records
    keyed by full `change_id`. Identity holds host/repository, PR number, canonical head owner/ref,
    bookmark ownership, and link state; baseline holds the exact submitted commit. Explicit
-   attach, detach, restart, and repair commands change identity; successful or safely adopted
-   `submit` changes the baseline; and landing, recovery, unstacking, or cleanup may remove both.
-   Status observation never writes either record.
+   attach, detach, restart, and repair commands change identity. A successful `submit`, or one
+   that recognizes a completed push after interruption, changes the baseline. Landing, recovery,
+   unstacking, or cleanup may remove both. Status observation never writes either record.
 
-The `jj` DAG is the source of truth for stack topology and content; fetched configured trunk is
-the remote reachability boundary; GitHub is authoritative for PR identity, lifecycle, reviews,
-and merge-result identity. Tracking is sparse veto evidence, not cached permission. Every
-mutation re-verifies it against the current other holders.
+The `jj` DAG determines stack topology and content. The fetched trunk commit for the configured
+remote supplies ancestry evidence for the two landed rules in [design.md](design.md); ancestry
+alone does not authorize a mutation. GitHub determines PR identity, lifecycle, reviews, and
+merge-result identity. Saved identity and baseline records may block a mutation when they disagree
+with current state, but cannot authorize one by themselves. Every mutation rechecks the relevant
+sources.
 
 ## Healthy linkage
 
@@ -41,40 +44,42 @@ For each submitted change, health is one chain of agreements:
 - current configuration resolves to the saved host and repository
 - the identity's canonical head ref is unambiguous and its owner matches the live PR
 - the remote ref points at the submitted baseline, or at the exact current commit after an
-  interrupted push that `submit` may safely adopt under all nominal checks
+  interrupted push that `submit` may safely adopt when all saved identity fields match
 - GitHub reports the saved PR number on that exact head owner/ref
 
-`submit` re-derives everything else from the DAG on every run, so anything not in this
-chain (subjects, diffs, comment prose, base ordering) is allowed to drift freely and is
-simply regenerated.
+`submit` re-derives titles, bodies, comments, and bases from current state. Those fields do not
+prove review identity. GitHub-owned draft state and reviews remain live observations.
 
 ## Legal transitions worth modeling
 
-The model deliberately covers only transitions a well-behaved user, teammate, agent, or
-GitHub itself can perform through supported interfaces. It excludes catastrophic or
-adversarial states (state-file corruption, repo deletion mid-command, hand-edited `.jj`
-internals): the tool promises fail-closed behavior for reachable drift, not defenses
-against every conceivable corruption.
+The model deliberately covers only transitions a well-behaved user, teammate, agent, or GitHub
+itself can perform through supported interfaces. It excludes catastrophic or adversarial states
+(state-file corruption, repo deletion mid-command, hand-edited `.jj` internals): the tool promises
+fail-closed behavior for reachable drift, not defenses against every conceivable corruption.
 
-| Drift kind | Boundary | Wild example | `submit` outcome |
+Current configuration selects the remote and repository to compare. It is an input to linkage,
+not a fifth independently changing state store. "Affected input(s)" names every source involved;
+the generated scenario code records only the source expected to produce the primary diagnosis.
+
+| Drift kind | Affected input(s) | `submit` outcome | Coverage |
 | --- | --- | --- | --- |
-| `closed_pr` | GitHub PRs | someone closes a stack PR in the UI | fail closed (exit 1) |
-| `merged_pr` | GitHub PRs | a review-branch PR is merged despite policy | fail closed (1) |
-| `pr_replaced` | GitHub PRs | PR closed, new PR opened on the same branch via `gh` | fail closed (1) |
-| `repository_retargeted` | GitHub/config | configured remote now names another repo | fail closed (1) |
-| `head_ref_renamed` | GitHub PRs | PR head branch is renamed or moved | fail closed (1) |
-| `remote_swapped` | remote refs | same ref and PR number now resolve on another remote | fail closed (1) |
-| `pr_base_retargeted` | GitHub PRs | someone retargets a PR base to `main` | success; base recomputed |
-| `pr_draft_toggled` | GitHub PRs | someone converts a PR to draft | success; draft preserved |
-| `remote_branch_drift` | remote refs | review branch force-pushed elsewhere | fail closed (1) |
-| `remote_branch_deleted` | remote refs | review branch deleted (GitHub closes its PR) | fail closed (1) |
-| `trunk_advanced` | remote refs | a teammate lands unrelated work on `main` | success |
-| `wrong_saved_pr_number` | tracking store | cross-machine or manual repair left a stale link | fail closed (1) |
-| `unlinked_change` | tracking store | the user ran `unlink` and forgot | fail closed (1) |
-| `foreign_branch_fetched` | local jj | a fetched foreign branch pins a stack commit | fail closed (2) |
-| `conflicted_rebase` | local jj | rebase onto moved trunk left conflicts | fail closed (3) |
-| `merge_commit` | local jj | the selection includes a merge commit | fail closed (2) |
-| `agent_recreated_change` | composite | the recreated-PR incident (below) | fail closed (2) |
+| `closed_pr` | GitHub PRs | fail closed (exit 1) | property |
+| `merged_pr` | GitHub PRs | fail closed (1) | property |
+| `pr_replaced` | GitHub PRs | fail closed (1) | property |
+| `repository_retargeted` | config, GitHub | fail closed (1) | specified |
+| `head_ref_renamed` | GitHub PRs | fail closed (1) | specified |
+| `remote_swapped` | config, remote refs | fail closed (1) | specified |
+| `pr_base_retargeted` | GitHub PRs | success; base recomputed | property |
+| `pr_draft_toggled` | GitHub PRs | success; draft preserved | property |
+| `remote_branch_drift` | remote refs | fail closed (1) | property |
+| `remote_branch_deleted` | remote refs, GitHub PRs | fail closed (1) | property |
+| `trunk_advanced` | remote refs | success | property |
+| `wrong_saved_pr_number` | tracking store | fail closed (1) | property |
+| `unlinked_change` | tracking store | fail closed (1) | property |
+| `foreign_branch_fetched` | remote refs, local `jj` | fail closed (2) | property |
+| `conflicted_rebase` | local `jj` | fail closed (3) | deterministic |
+| `merge_commit` | local `jj` | fail closed (2) | deterministic |
+| `agent_recreated_change` | all four sources | fail closed (2) | property |
 
 Two local-`jj` mechanics deserve emphasis because they are how *remote* actions corrupt
 the *local* stack:
@@ -87,50 +92,44 @@ the *local* stack:
   rewrite already replaced, the fetch resurrects the hidden predecessor and the change
   becomes divergent; even resolving the change ID to a single revision fails.
 
-The composite `agent_recreated_change` scenario is the observed incident that motivated
-this model: an agent closed a reviewed PR, deleted its review branch, abandoned the local
-change, recreated the same work as a new change, pushed it with plain git, opened a
-replacement PR with `gh`, and fetched — leaving an immutable recreated change, a second
-ref on the same commit, and a tracking store still pointing at the closed PR.
+The fixed composite `agent_recreated_change` scenario closes a reviewed PR, deletes its review
+branch, abandons and recreates the local work, pushes it outside the tool, opens a replacement PR,
+and fetches. The result is an immutable recreated change, another ref on the same commit, and
+saved tracking that still points at the closed PR.
 
 ## Required behavior per drift class
 
-- **Self-healing (success class).** Drift that cannot corrupt review identity is repaired
-  or ignored by the next `submit`: bases are recomputed from the DAG, trunk advances are
-  irrelevant to review-branch pushes, and draft state is preserved. The full post-submit
-  contract must hold afterward.
-- **Fail closed (verification class).** Any drift that makes review identity unprovable
+- **Repairable drift.** Drift that cannot corrupt review identity is repaired or ignored by the
+  next `submit`: bases are recomputed from the DAG, trunk advances are irrelevant to review-branch
+  pushes, and draft state is preserved. The full post-submit contract must hold afterward.
+- **Fail closed.** Any drift that makes review identity unprovable
   stops `submit` before *any* mutation — no local bookmark moves, no pushes, no PR
   creates/updates — with a contractual exit code and a targeted diagnostic naming the
   repair path. Verification is ordered: stack shape and conflicts (local), then remote
   ref safety, then PR discovery and saved-link consistency, all before the mutation
-  phase begins. The diagnostic carries a typed identity (`DriftError.condition` for
+  phase begins. The diagnostic carries a structured condition (`DriftError.condition` for
   remote-ref, PR, and tracking-store checks; `UnsupportedStackError.reason` and
   `ConflictedStackError` for local shape), so the harness asserts *which* check fired,
   not just the exit code — a stop for the wrong reason names the wrong repair path and
   must fail the model.
-- **Fresh authorization (mutation class).** Planning observations never authorize a later
-  mutation. Reload the configured repository, live PR identity/head/readiness, and relevant refs
-  immediately before each irreversible action; use an exact lease or expected-head guard.
-- **Report always (inspection class).** `view` must produce a report or a targeted
+- **Recheck before mutation.** Planning observations never authorize a later mutation. Reload the
+  configured repository, live PR identity/head/readiness, and relevant refs immediately before
+  each irreversible action; use an exact lease or expected-head guard.
+- **Inspection must still report.** `view` must produce a report or a targeted
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.
 
-Recovery stays explicit and narrow: `relink` reattaches a PR to a change, `restart` /
-`submit --restart` mint fresh review identity, `unstack --cleanup --pull-request` retires
-orphans, selected `sync` repairs proven landed ancestry, and `sync --all` performs isolated
-exact-snapshot global recovery. Drift never triggers
-silent re-linking or replacement PRs.
+Recovery stays explicit and narrow: `relink` reattaches a PR to a change; `restart` and
+`submit --restart` create new review identity; and `unstack --cleanup --pull-request` closes and
+cleans up each orphan it can verify. Selected `sync` rebases one selected stack after proving that
+ancestors landed. After fresh identity and head checks, `sync --all` may retarget and close landed
+PRs whose exact submitted commits are on trunk and remove tracking when no visible stack still
+needs it. Drift never triggers silent relinking or replacement PRs.
 
 ## Why an executable model rather than TLA+/Lean
 
-The drift vocabulary above is small and its composition rules are shallow (one or two
-drifts over one optional edit), so the interesting verification is not state-space
-search — it is whether the *real* `jj` binary, a faithful GitHub simulation, and the real
-CLI agree with the model's verdicts. A formal spec would have to re-model `jj` rewrite
-semantics, fetch-induced immutability, and GitHub's auto-close rules, and would then
-verify the spec rather than the tool; the executable harness checks the same predictions
-against the actual integration boundary. If the vocabulary ever grows genuinely
-interaction-heavy (concurrent commands, multi-remote), a TLA+ sketch of the transition
-lattice could become worthwhile for oracle-completeness checking; that idea is parked in
-[backlog.md](backlog.md).
+The valuable check is whether the real `jj` binary, fake GitHub server, and CLI agree on the same
+result. A separate formal model would need to reproduce `jj` rewrites, fetch-induced immutability,
+and GitHub auto-close behavior without replaying the implementation boundary. The current
+executable harness checks those predictions directly. Possible extensions for concurrent commands
+or multiple remotes belong in [backlog.md](backlog.md).

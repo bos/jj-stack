@@ -18,7 +18,7 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 - **[testing-philosophy.md](testing-philosophy.md)** — what tests to write
   and how to evaluate them.
 - **[distributed-state.md](distributed-state.md)** — the four independently
-  moving state-holders (local `jj`, remote refs, GitHub PRs, tracking store),
+  moving sources of state (local `jj`, remote refs, GitHub PRs, tracking store),
   their legal transitions, and required behavior per drift class.
 - **[property-testing.md](property-testing.md)** — fixed and expanded property scenarios,
   invariants, and the runner.
@@ -30,7 +30,7 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
   built-in help and `docs/` to parity with `gt` and `gh stack`. Shrinks as
   items ship.
 
-Implementation strategy and evidence-policy documents are subordinate to the product
-specifications. An explicitly accepted implementation plan governs its scoped work until its
-decisions are folded into the product specification. Critiques, superseded plans, and completed
-merger reports remain historical evidence rather than behavioral authority.
+Only [design.md](design.md) defines product behavior. The other documents explain implementation,
+testing, review practice, or deferred work. Accepted plans guide their scoped work but do not
+change behavior until the design is updated. Completed reports and superseded plans are historical
+evidence only.

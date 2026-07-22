@@ -20,9 +20,7 @@ The client:
 - uses `pydantic` for typed local and remote data models
 - uses `httpxyz` for GitHub API traffic
 
-We test behavior against a local fake GitHub server backed by a real Git repository. The
-repository does not yet contain a live GitHub suite; uncertain forge behavior requires a
-separately approved experiment until that layer exists.
+We test behavior against a local fake GitHub server backed by a real Git repository.
 
 We develop the tool the same way we want people to review with it: logical,
 self-contained, well-described stacked commits.
@@ -82,61 +80,23 @@ The curated top-level help is part of that executable surface. `jj-stack help --
 shows the full command list and includes any short command aliases so they stay
 discoverable without reading the README first.
 
-The bundled agent skill in `skills/jj-stack/` is also a supported delivery surface, but
-it is not installed by the `jj-stack` executable. It follows the Agent Skills
-`skills/*/SKILL.md` repository convention, so users install it separately with
-`gh skill install bos/jj-stack jj-stack` or, during local development,
-`gh skill install . jj-stack --from-local ...`. The skill teaches agents to resolve and
-cache the repo's working invocation, whether that is `jj-stack`, `uv run jj-stack`, or a
-`jj` alias such as `jj stack` or `jj stk`; to check, before direct `gh` PR or branch
-mutations, whether `jj-stack` already manages review state in that repo; to cache that
-answer for the session; to use machine-readable `list --json` and `view --json` output
-for stack ownership checks; and to distinguish ordinary PR collaboration metadata from
-structural or lifecycle `gh` mutations that can disrupt jj-stack-managed PRs or review
-branches unless the user has seen the risk and approved the direct mutation.
+The bundled agent skill in `skills/jj-stack/` is installed separately from the executable. It:
 
-Current aliases include `status`, `st`, and `v` for `view`, `ls` for `list`, `sub` for
-`submit`, and `delete` for `unstack`. Commands that select one linked pull request also
-accept `-p` as a short form for `--pull-request`.
-When an option has the same user-facing meaning as `gh stack`, prefer the same spelling;
-for example, `submit --open` marks draft pull requests ready for review.
+- discovers and caches the working invocation for a repository
+- uses `list --json` and `view --json` to recognize locally managed reviews
+- warns before direct `gh` mutations that could disrupt managed PRs or review branches
 
-Command entrypoints bootstrap a `CommandContext` containing config, the `jj` client,
-repo root, runtime options, and the repo state store. CLI boundary code should preserve
-that context until it builds command-specific options or resolved target data, instead
-of reconstructing shared dependencies from the repo root. Argument combinations that do
-not depend on repository state are rejected before bootstrap; for example, the `orphans`
-selector for `unstack` requires `--cleanup`.
+Built-in help and the user guide own the command and alias inventory.
 
-Command-specific options should hold normalized CLI values after argparse-specific
-parsing is complete. Commands with their own behavior flags or selectors use
-command-specific option values at their orchestration boundaries, with `CommandContext`
-carrying shared runtime dependencies. Command code should use the context's state store
-rather than reconstructing one from the repo root.
+Command entrypoints follow four layering rules:
 
-Commands that need nontrivial selection or validation carry that result as an explicit
-resolved/prepared target value before mutation. The prepared value should hold the
-selected stack or revision, GitHub and remote observations, parsed options, and the
-`CommandContext` when later phases need shared dependencies. Mutating phases carry only
-the shared state they need, using narrow values such as `SubmitMutationRun`,
-`LandExecutionInputs`, and `_OrphanCloseRun`.
-The `unstack --cleanup --pull-request orphans` selector snapshots orphan records from
-repo-scoped stack discovery, rejects duplicate PR claims before mutation, and then reuses the
-single-orphan close path in PR-number order. Each applied target reloads tracking state so an
-earlier retirement cannot be restored by a later save.
-Submit resolves prepared PR and stack descriptions while loading local inputs, before
-bookmark, remote, or GitHub mutation, so bad revsets, duplicate targets, and unreadable
-files fail closed.
-Explicit reviewer flags remain mutation intent after preparation: submit synchronizes those
-review requests even when PR content, base, and draft state need no update.
-Purely local mutations should stay out of GitHub inspection paths when they can resolve
-their target from `jj` and saved state alone; for example, `unstack --local` only removes
-saved tracking records for the selected stack and does not enter the close/cleanup stream.
+1. Build one `CommandContext` containing shared configuration, clients, and state storage.
+2. Reject argument errors that need no repository state before bootstrap.
+3. Resolve and validate a typed command target before mutation.
+4. Pass mutation code only the state required for its work.
 
-Do not append command-by-command wiring notes here as new helpers are converted. The rule
-is the stable part: keep argparse values, shared dependencies, selected targets, and live
-mutation state separate, then delete wrapper objects once they only forward those pieces
-to a single caller.
+Argument parsing, shared dependencies, target resolution, and live mutation state stay separate.
+Wrapper objects should be deleted once they only forward values to one caller.
 
 ## Repository layout
 
@@ -207,6 +167,11 @@ There is no separate production Git adapter. `JjClient` uses direct Git subproce
 exact remote-ref leases and remote inspection that `jj` does not expose. Test support owns the
 backing-repository and fake-server Git operations.
 
+Normal `submit` pushes every changed review bookmark in one `jj git push` invocation. The
+auto-close predictor relies on GitHub seeing one atomic ref update rather than a series of
+intermediate branch states. The one-bookmark untracked-remote fallback uses direct
+`git push --force-with-lease`; it is never mixed with another bookmark update.
+
 ### Planning rule
 
 Planning is a layering rule rather than a separate package. Shared classification lives under
@@ -223,19 +188,10 @@ Reviewability comes from `jj` state, not tool-local policy: the planner respects
 repo's configured `immutable_heads()` boundary via `jj`'s `immutable()` / `mutable()`
 semantics.
 
-Derived per-change review state lives in `review/change_status.py`. The
-`ReviewChangeStatus` classifier is observational only: it names the local, saved-link,
-remote-branch, remote-target match, PR-lifecycle, draft, review-decision, and saved-identity axes
-from data the caller already loaded.
-Commands can build policy helpers on top of those axes, but mutation code still writes
-the underlying tracking fields directly.
-
-Read-side status summaries and advisories, cleanup stale-change and rebase planning, close
-cleanup planning, bookmark discovery and matching, unlink active-link checks, relink and
-checkout remote validation, submit untracked-remote repair and metadata sync, failed-submit
-artifact observation, and land trunk/revision readiness checks consume these axes. Direct reads
-of identity, baseline, `PullRequestLookup`, and bookmark targets remain where code renders
-concrete GitHub payload details or applies a narrow mutation that needs the exact target value.
+Derived per-change review state lives in `review/change_status.py`. `ReviewChangeStatus` is a pure
+classifier over local revision state, saved tracking, remote refs, and already-loaded PR data. It
+does not load state, choose a stack, or authorize mutation. Commands apply their own policy to the
+result and keep exact identity, baseline, PR, and bookmark values for concrete mutations.
 
 This is where most correctness lives.
 
@@ -250,40 +206,10 @@ bounded-parallel GitHub work over one-request-per-item serial loops. Ordering
 constraints stay explicit at the command layer when the visible result needs a specific
 sequence.
 
-Before `submit` pushes rewritten review branches, it predicts which open PRs would
-be auto-closed by GitHub's reachability-based merge detection: for each pending PR
-whose head ref is in the push set, it computes the post-push commit IDs of head and
-base — using `jj`'s ancestor revset against the planned new commits — and pre-retargets
-every PR whose post-push head would be reachable from its post-push base to the
-resolved trunk branch. The normal post-push PR sync restores the final stacked base.
-This generalizes the earlier heuristic ("base is a review branch in the submitted
-stack and differs from the new desired base") so that anomalous cases — for example,
-a non-stack base that already contains the head — are handled by the same code path.
-The fixed and expanded property coverage exercises the user-visible semantics for representative
-linear stack edits: moving individual changes, inserting above or below existing
-changes, rewriting a change, squashing a change into its predecessor, and abandoning a
-change while preserving the orphaned PR. A separate cross-stack split oracle exercises
-suffix moves that leave a deferred live stack behind, proving the selected submit does
-not mutate that deferred stack's PRs or saved tracking. A stack-merge oracle exercises
-two independently submitted stacks merged into one selected linear stack, proving PR
-identity and approvals follow `change_id` across the new combined chain. A stack-move
-oracle exercises moving one change between independently submitted stacks, proving the
-destination stack adopts that change's existing PR while the source remainder is left
-untouched. A failed-submit retry oracle injects one-shot failures after remote branch
-push, PR creation, PR update, and metadata label sync, then proves a rerun
-converges without duplicate PRs. An external-drift oracle generates scenarios from the
-typed transition vocabulary in [distributed-state.md](distributed-state.md): after an
-initial submit and an optional stack edit, it perturbs GitHub PR state, remote refs,
-saved tracking, or the local `jj` view through user-reachable transitions, then asserts
-the model-predicted outcome — fail closed with every boundary untouched, or full
-success — and that `view` still reports on the drifted state. A land oracle starts from
-submitted, partially approved stacks that may have been edited since their last submit;
-it predicts the prefix land's readiness walk consumes and models the transport split —
-direct-push land retires the landed tracking, while merge-transport land converges the accepted
-prefix and selected survivors before returning. Prefix-stop external-drift cases snapshot the
-stopping change's tracking, complete PR payload, actual local and remembered-remote bookmark
-state, and backing remote ref. The fetch-abandon case checks saved tracking and PR preservation;
-the re-resolved stack itself demonstrates that the deleted head vanished.
+`submit` predicts GitHub auto-close risk before pushing rewritten review branches. The behavioral
+rule belongs to the submission algorithm in [design.md](design.md); the implementation uses one
+batched ancestry query over the planned head/base pairs, then pre-retargets only the affected PRs.
+Property families and their assertions live in [property-testing.md](property-testing.md).
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page
@@ -318,16 +244,19 @@ selection, and final rendering may happen outside it. The lock is process coordi
 state directory contains no operation journal, land note, phase, selector, path, or recovery
 checkpoint.
 
-The production component boundary shares observation and classification between landing and sync
-rather than a durable operation state machine.
-`commands/land/` owns selected readiness and fresh mutation; `commands/sync.py` owns selected
-convergence and explicit global recovery; `review/landed.py` owns the two distinct landed
-classifications. Remote finalization returns an outcome without deciding whether local identity
-can retire. Dependency-aware retirement derives that separate decision from the current DAG.
+Landing and recovery share current-state observation rather than a durable operation state
+machine:
 
-State saves are atomic but not fsync durable. Identity and baseline preserve wrong-object and
-reviewed-snapshot evidence; a lost reconstructible cleanup write leaves residue that observation
-can classify on retry.
+- `commands/land/` checks and changes one selected stack
+- `commands/sync.py` repairs a selected stack or performs explicit repository-wide recovery
+- `review/landed_evidence.py` distinguishes an exact submitted commit from a rewritten GitHub
+  merge result
+- `review/landed.py` changes landed PRs and removes saved tracking
+- `review/convergence.py` checks whether another visible stack still needs that tracking
+
+State saves are atomic but not fsync durable. The saved identity prevents action on a different PR
+or branch, while the baseline records the exact reviewed commit. If a reconstructible cleanup
+write is lost, the next command rereads current state and reports or completes the remaining work.
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
@@ -337,48 +266,16 @@ Public `--json` command output is a separate user-facing contract. Its schema li
 `list --json` payloads against that file so the emitters cannot accidentally expose tracking-state
 or GitHub-client internals.
 
-Repo-scoped inspection treats orphan-only tracking as first-class output. `list` can
-render those saved orphan rows directly without loading bookmark state when no live
-stacks remain. Text output emits one repo-level cleanup advisory for the complete orphan
-set rather than repeating a per-PR command after every row.
-The text `list` renderer keeps stack rows compact by rendering the exact PR number for
-single-PR stacks and a count for multi-PR stacks; the JSON output remains per-change so
-clients can still recover the full PR list.
-Every valid review identity includes a PR number. Until GitHub is inspected, an active saved
-identity is conservatively treated as potentially open. A record missing required identity data
-is isolated as malformed and must be replaced with `relink`; it is not an ordinary cleanup
-candidate.
-When `view` cannot find a PR by the remembered review branch, it falls back to
-the saved PR number before rendering the result. A missing branch lookup does not
-clear the saved PR identity; read-only status preserves that recovery evidence so
-the user can choose between reopening, relinking, or running `submit --restart` to
-create fresh PRs. The standalone `restart` command and `submit --restart` share the
-same state-reset planner, but `submit --restart` keeps the reset in memory until submit
-successfully creates replacement PR identity.
-Repo-scoped discovered stacks carry both their immediate base parent and the resolved
-`trunk()` revision, plus whether the base parent is on the trunk lineage. Topology-pointer
-checks compare the bottom tracked change against that actual DAG parent when the parent
-is another mutable review change, while still treating `trunk()` and its ancestors as no
-review parent.
-Repo-scoped stale-stack detection compares each tracked change's `SubmittedBaseline.commit_id`
-with the live commit ID, so a rewrite in the same stack position still prompts the user to
-inspect and resubmit. `view` renders the same selected-stack disagreement as a changed commit ID;
-it does not infer whether a rewrite, reparent, or stack-membership change caused it.
-Plain `view` does not run repo-scoped stale-stack discovery. Its "other stack changed" advisory
-is limited to stacks built on top of the stack being rendered; use `list` for the repo-wide view.
-Plain `view` also does not inspect managed stack-summary comments. That keeps status from doing
-one issue-comment request per open PR; `submit`, `unstack`, and `cleanup` own stack-comment
-validation when they mutate those comments.
+Repository-wide discovery supplies current stacks to `commands/list_.py`, which loads tracking
+separately. `review/change_status.py` classifies each change and enumerates orphaned records;
+`commands/_stale_stacks.py` renders stale-stack advisories. Selected discovery supplies `view` and
+mutation targets. All paths preserve malformed or unmatched saved identities for explicit repair
+rather than changing them during inspection. The command behavior is specified in
+[design.md](design.md).
 
-Orphaned `unstack --cleanup --pull-request` uses the same bookmark and stack-comment
-validation as regular close before it mutates GitHub state or prunes saved tracking.
-It verifies the saved PR identity by PR number, then verifies that the PR head is the
-saved branch on the configured GitHub repository before using head-branch lookup only
-to detect duplicate live claims. This lets merged orphan PRs be retired without
-mistaking a same-named fork branch for the review branch.
-The orphan path lives in its own command module because it is a saved-state recovery
-flow rather than normal stack close planning; close action rendering and managed
-stack-comment lookup stay in a shared helper used by both paths.
+Orphan cleanup lives in its own command module because it begins from saved identity rather than
+a selected live stack. It shares PR-head, bookmark, duplicate-claim, and managed-comment checks
+with ordinary close cleanup before it mutates GitHub or removes tracking.
 
 ## Data model
 
@@ -458,24 +355,11 @@ Implemented local coverage includes:
 - local integration tests against the fake GitHub server and a real backing Git repo
 - 16 fixed generated/property cases that replay the integration harness in the default suite
 
-An opt-in live layer remains planned for contracts the fake cannot establish.
-
 Local tests are the default.
 
-Larger generated property pools are opt-in because they are intentionally heavier than the
-default 16-case corpus. Run them by hand with:
-
-```text
-tests/run_submit_property_scenarios.py 500
-```
-
-The runner reuses the fake GitHub integration harness, generates deterministic stack-edit
-scenarios, and runs them through pytest-xdist so the work can spread across available
-cores.
-
-CI runs a bounded expanded-property budget on one Linux/jj-version combination so the submit,
-land, cross-stack, drift, and retry oracles cannot silently rot while keeping the full matrix
-focused on `./check.py`.
+Larger deterministic property pools are opt-in; their families, runner, and reproduction workflow
+are documented in [property-testing.md](property-testing.md). CI runs a bounded expanded pool on
+one Linux/jj-version combination.
 
 The default local verification command is:
 
@@ -498,9 +382,6 @@ most concurrency debt.
 `./check.py --coverage` keeps the same bootstrap, lint, and type-check steps, then runs
 pytest with branch coverage enabled, emits a terminal missing-lines report, and writes
 an HTML report to `htmlcov/index.html`.
-
-Any future live tests require an explicit flag, explicit credentials, and separate approval for
-external mutation. No live suite exists today.
 
 ## Fake GitHub server
 
@@ -531,42 +412,11 @@ branch state, not just JSON responses.
 We use FastAPI for the fake server unless Starlette later proves to offer a clear
 concrete advantage for this test harness.
 
-## Planned fake GitHub parity tests
+## Live GitHub evidence gap
 
-The intended live evidence layer would verify that fake behavior matches GitHub for the subset of
-functionality the tool relies on. It is not current test coverage.
-
-Those tests should compare observable behavior, not implementation details:
-
-- creating a PR creates the expected remote refs and returns the expected JSON shape
-- updating a PR changes the same fields GitHub changes and leaves alone the same fields
-  GitHub leaves alone
-- comment creation and update behave like GitHub for the endpoints we use
-- branch and PR visibility in API responses match GitHub for the scenarios we cover
-
-Where separately approved and practical, a parity test would run the same client action once
-against the fake server and once against a live throwaway GitHub repo, then compare normalized
-observations.
-
-## Planned live GitHub test strategy
-
-No live suite exists in this repository yet. This section records the intended boundary rather
-than current test coverage.
-
-Its purpose is not exhaustive coverage. It is to catch fake-server drift and real-forge
-edge cases early.
-
-The planned live suite would:
-
-- run only when explicitly requested
-- create a throwaway repo per run
-- use a dedicated namespace for temporary branches and PR artifacts
-- clean up after itself as aggressively as practical
-- avoid touching anything outside its namespace
-
-The implemented suite must define its invocation and `JJ_STACK_`-prefixed configuration when it
-is added. It may use the `gh` CLI for throwaway repo setup and teardown when that makes the tests
-materially simpler. The main application client does not use `gh` for API traffic.
+No live suite exists. The exact external contracts still needing evidence are recorded once in
+[backlog.md](backlog.md). Running a future live check requires explicit credentials, a disposable
+repository, and separate approval for the external mutations.
 
 ## Development workflow
 
@@ -681,75 +531,8 @@ A feature slice is done only when:
 Any commit that changes code is made only after the relevant tests for that change are
 passing.
 
-## Bottom line
+## Current status
 
-Optimize for a tight loop:
-
-- write a failing test
-- implement the smallest real slice against the fake GitHub server
-- verify external assumptions against real GitHub when the approved evidence boundary requires it
-- land it as a clean stacked commit
-
-If we keep the `jj` DAG as the source of truth, keep the GitHub layer narrow, and keep
-the fake server honest by regularly checking it against real GitHub, the implementation
-should stay understandable and correct as it grows.
-
-## Merger implementation status (2026-07)
-
-The canonical-design foundation slice is complete: `design.md` is the sole product specification,
-competing target authority has been removed, and subordinate docs distinguish the production
-target from the current rework implementation. The live-GitHub evidence gap remains explicit
-rather than being filled from the fake.
-
-The first implementation of slices 4 through 8 was stopped after it recreated the escaped tree's
-production size and exceeded its total source-plus-test SLOC. It remains available at local jj
-bookmark `archive-complexity-spiral-2026-07-21` as failure evidence, not reusable architecture.
-The replacement sequence and hard budgets are recorded in
-[merger-complexity-audit.md](merger-complexity-audit.md).
-
-The rework now provides a `jj`-derived stack, sparse lifecycle-free tracking, marker-based comment
-rediscovery, leases, one policy-free mutation observation, exact and rewritten landed evidence,
-selected convergence, and real-`jj` integration coverage. The bounded replacement sequence is
-complete; its final validation evidence is recorded in
-[merger-complexity-audit.md](merger-complexity-audit.md).
-
-Replacement slice R1 is complete: it deleted `LandNote`, the write-only operation journal,
-composite `CachedChange` mutation state, and status/bookmark writes. Submit, explicit adoption,
-link-state changes, baseline advancement, and retirement now use separate bounded state
-transitions.
-
-Replacement slice R2 is complete: land consumes only exact submitted snapshots, never refreshes
-review branches, and reloads one policy-free observation immediately before each mutation. Direct
-trunk pushes carry an exact expected-target lease; GitHub merges carry the expected head and
-reauthorize readiness after retargeting.
-
-Replacement slice R3 is complete: exact-snapshot and rewritten-result evidence remain distinct,
-selected `sync` rewrites only one path and updates only reviews that already exist, and explicit
-`sync --all` is the only repository-wide finalization scan. Remote finalization and local
-retirement have independent outcomes, rewritten links survive until every dependent path is
-converged, and the old cleanup rebase and retirement subsystems were deleted.
-
-Replacement slice R4 is complete: the default property adapter contains 16 distinct fixed points,
-replacement-specific deterministic coverage contains 30 collected items, three abrupt CLI child
-terminations converge in fresh processes, and the large sparse-cache `sync --all` journey isolates
-unavailable commits and GitHub failures. Larger randomized property pools remain opt-in.
-
-Replacement slices delete obsolete recovery machinery with the feature that supersedes it. They
-must not stage a second state, authority, evidence, finalization, or retirement model for later
-cleanup. Each slice removes its corresponding marker, updates this inventory, and records its
-complexity measurement. Non-blocking follow-ups live in [backlog.md](backlog.md).
-
-The planned live-GitHub experiment has not been run. Direct-push PR lifecycle, retarget-and-close
-behavior, merge-result identity by merge method, merged-head deletion, and expected-head rejection
-therefore remain external evidence gaps. The fake may exercise local control flow around those
-cases, but it cannot establish GitHub behavior.
-
-The complexity-policy follow-up is complete. The operational rules live in `AGENTS.md` and the
-review guide; a dedicated CI gate enforces the checked-in budgets.
-
-The public-documentation follow-up is complete: user guides and built-in help now describe the
-implemented stack scope, exact recovery commands, and remote effects in ordinary jj/GitHub terms.
-
-The internal factual-reconciliation follow-up is complete: the canonical command inventory,
-module boundaries, tracking behavior, default property corpus, and deferred backlog now match the
-implemented repository. Historical simplification is a separate documentation-only follow-up.
+The current implementation follows the component boundaries in this document and the behavior in
+[design.md](design.md). Complexity budgets, public documentation, and internal documentation are
+checked in and current.

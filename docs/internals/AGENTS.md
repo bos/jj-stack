@@ -19,20 +19,21 @@ agents working on the codebase. Most users will never open this directory.
   open architecture questions. It has no normative authority; add to it rather
   than leaving TODOs in code.
 
-Implementation strategy and evidence-policy documents are subordinate to the product
-specifications. An explicitly accepted implementation plan governs its scoped work until its
-decisions are folded into the product specification. Critiques, superseded plans, and completed
-merger reports are historical evidence, not product specifications.
+Only `design.md` defines product behavior. Other documents explain implementation, testing,
+review practice, or deferred work. Accepted plans guide their scoped work but do not change
+behavior until `design.md` is updated. Completed reports and superseded plans are historical
+evidence only.
 
 ## Vocabulary
 
-Internal files can use the full implementation vocabulary freely: revsets,
-bookmarks, tracking state, operation log, ancestry shape, trunk mapping, ready
-prefix, fail-closed, materialized, etc. That vocabulary is appropriate here
-because these files describe implementation, not user experience.
+Internal files may use standard `jj`, Git, GitHub, and software terms. Project-specific terms are
+appropriate only when they name a real type, field, module, or enduring rule. Define them at first
+use and prefer concrete inputs, checks, and effects over a new taxonomy.
 
-Do not carry that vocabulary into `docs/` (the user-facing guides). See
-`docs/AGENTS.md` for the boundary.
+Active design and strategy documents describe the current system. Do not make readers learn names
+for abandoned mechanisms or completed slices; keep that history in an explicitly historical
+report or `jj` commits. Do not use internal terminology as permission to make user-facing docs or
+help harder to understand. See `docs/AGENTS.md` for the stricter public vocabulary rules.
 
 ## When to update these files
 

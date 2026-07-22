@@ -1,14 +1,13 @@
 # Backlog
 
-Items that need to be implemented or thought through, but are not blocking
-current slices.
+Items that need to be implemented or thought through, but are not blocking current work.
 
-## Deferred Live GitHub Landing Evidence
+## Unverified GitHub landing contracts
 
 _Benefit: large — these observations determine whether the fake accurately represents the
 external contracts used by landing and recovery._
 
-The merger plan calls for one disposable live-GitHub experiment covering:
+A disposable live-GitHub experiment would cover:
 
 - direct-push pull-request lifecycle
 - retarget-and-close behavior
@@ -16,9 +15,9 @@ The merger plan calls for one disposable live-GitHub experiment covering:
 - merged-head branch deletion
 - rejection of a merge request whose expected head is stale
 
-That experiment was deliberately not performed during the merger implementation. Until it is
-separately approved and recorded, fake-dependent conclusions in these families remain
-conditional and release evidence must report the gap rather than treating local tests as proof.
+No live experiment has been run. Until one is separately approved and recorded, fake-dependent
+conclusions in these families remain conditional and release evidence must report the gap rather
+than treating local tests as proof.
 
 ## Crash and Interrupt Diagnosis
 
@@ -42,9 +41,9 @@ Since `jj` 0.30 the `change-id` header in Git commit objects is written and impo
 default (`git.write-change-id-header`), so change IDs survive ordinary push/fetch round
 trips. The `jj` changelog notes the limits that matter here: `git rebase` and some forges
 drop the header when they rewrite commits, and GitHub squash merges create fresh commits
-without it — which is why selected convergence proves a merged ancestor inert from exact
-submitted or live merge-result reachability rather than from header identity. The header is not
-shown by normal Git or GitHub commit views, and it should not become a new source of truth for
+without it. Selected `sync` therefore proves that a merged ancestor is no longer needed from the
+exact submitted commit or live merge-result commit on trunk, not from header identity. Normal Git
+and GitHub commit views do not show the header, and it should not become a new source of truth for
 jj-stack. Still, it may be useful evidence in future recovery flows where the user
 experience should follow a logical `jj` change rather than one exact commit object.
 
@@ -57,7 +56,7 @@ High-level cases where this might help:
 - reducing unnecessary manual relinking when jj-stack can tell that a GitHub PR branch and
   a local change probably share the same underlying `jj` change identity
 
-## Additional Landing Transports and Merge Queues
+## Additional landing modes and merge queues
 
 _Benefit: medium — high value for teams that require merge queues, but complex
 to design correctly and not blocking the current direct-push flow._
@@ -66,14 +65,15 @@ The canonical `land` model supports direct push and GitHub PR merge. The remaini
 question is whether it should eventually support a landing PR or merge queue while keeping the
 `jj` DAG as the source of truth. Concrete follow-up questions:
 
-- whether `land` should add a landing-PR or merge-queue transport
+- whether `land` should add a landing-PR or merge-queue mode
 - how queue-backed landing should report queued, running, failed, and merged
   states in `view` without introducing forge-owned stack metadata as a
   competing source of truth
 - how the queue or landing-PR path should preserve the current fail-closed
-  behavior when the ready prefix changes locally while a queued landing is in
+  behavior when the changes ready to land move locally while a queued landing is in
   flight
-- whether queue-backed landing can remain observational without durable intent or replay state
+- whether queue-backed landing can recover from current state without durable intent or replay
+  data
 - how repo policy requirements such as required checks, branch protection, and
   review-only `review/*` branches should be diagnosed before a landing attempt
 
@@ -128,26 +128,18 @@ open → missing during `submit`. It does not currently distinguish:
 If either of these turns out to bite real users, broaden the detector to
 compare more fields rather than only state.
 
-## Documentation
+## Documentation follow-ups
 
-_Benefit: large — Phases 2–4 increase adoption and reduce confusion;
-without complete task-oriented guides, all other features are underutilized._
-
-Phase 1 is complete: the README has a quickstart, and `docs/` has
-`daily-workflow.md`, `mental-model.md`, and `troubleshooting.md`. Internal
-design and implementation notes live under `docs/internals/`.
+_Benefit: medium — keep task-oriented guides and generated reference material complete as the
+command surface changes._
 
 Remaining work:
 
-- **Phase 2 (partial):** `mental-model.md` exists, but there is no standalone
-  landing/cleanup guide, no importing-existing-PRs guide, and no cheatsheet
-  for operators who already know the model.
-- **Phase 3:** generated or semi-generated command reference pages that stay
-  in sync with the argparse surface; doc drift checks that fail CI when
-  committed reference pages diverge from actual `--help` output; example
-  transcripts captured from the fake GitHub test environment.
-- **Phase 4:** LLM-friendly exports (`llms.txt` / `llms-full.txt`) once the
-  primary docs structure is stable.
+- generated or semi-generated command reference pages that stay in sync with argparse
+- example transcripts captured from the fake GitHub environment
+- LLM-friendly exports (`llms.txt` / `llms-full.txt`) once the primary structure is stable
+- decide whether `--describe-with` should receive richer structured context or remain limited to
+  `--pr <revset>` / `--stack <revset>` and JSON output
 
 Docs should teach the workflow first and enumerate commands second. The primary
 risk is writing reference prose before the task-oriented guides are complete.
@@ -202,11 +194,8 @@ The transition vocabulary and required behaviors live in
   local tracking-configuration limit, not drift.
 - an exhaustive enumeration mode for drift pairs at small stack sizes; the
   space is small enough to enumerate outright instead of sampling
-- a TLA+ sketch of the transition lattice for oracle-completeness checking was
-  considered and deferred: the current vocabulary is shallow, and the valuable
-  check is agreement between the model and the real `jj`/CLI/fake-GitHub
-  boundary, which a spec cannot replay. Revisit if concurrent commands or
-  multi-remote support make interleavings first-class.
+- reconsider a formal state model only if concurrent commands or multiple remotes make the
+  interactions too complex for the current executable scenarios
 
 ## Land Property Harness Follow-ups
 
@@ -214,7 +203,7 @@ _Benefit: small — the land families now cover composed edits, external drift,
 interrupted retries, and the merged-prefix handoff chain; these extensions deepen the
 same models._
 
-- merge-transport variants of the land drift family (the readiness walk is shared, so
+- `--via merge` variants of the land drift family (the readiness walk is shared, so
   push-only coverage was chosen first; the mergeability stop adds one more boundary)
 - composed drift pairs against land, mirroring the submit drift family's dual-drift
   combinations
@@ -230,6 +219,15 @@ submitted-stack templates the way integration tests now do, at the cost of
 aligning the harness's label conventions with the template contents. The
 other audit findings (duplicate `insert-before-middle` fixed scenario,
 per-label remote-ref reads) have been applied.
+
+## Submit retry property follow-ups
+
+_Benefit: small — the current family covers the main mutation boundaries; extend it only if the
+corresponding failures prove important._
+
+- stack-comment failures
+- draft-state and review-rerequest failures
+- retry after an external GitHub change between attempts
 
 ## Native GitHub Stack Metadata via `gh stack link`
 
@@ -251,14 +249,14 @@ Possible follow-up work:
 - decide how `checkout` should treat PRs that are linked into a native GitHub
   stack but have no local tracking data
 
-## Current Rework Land Follow-ups
+## Landing cleanup follow-ups
 
-_Benefit: small each; recorded so residue-tolerance stays a decision, not an accident._
+_Benefit: small each; recorded so leaving safe cleanup work remains an explicit decision._
 
-- Direct-push landed review branches are left on the remote by design (landed handling only
+- Direct-push landed review branches are left on the remote by design (the current land flow only
   forgets local bookmarks). A `cleanup` GC pass could delete tool-owned remote branches
-  whose PRs finalized, but it would need an exact remote-target lease in addition to the
-  existing ownership checks.
+  whose PRs were closed as landed, but it would need an exact remote-target lease in addition to
+  the existing ownership checks.
 - Real GitHub's merged detection after retargeting a directly pushed PR remains part of the
-  deferred live-evidence experiment above. Do not teach the landed predicate from the fake's
-  auto-merge idealization.
+  deferred live-evidence experiment above. Do not change the production landed-state check based
+  only on the fake server's auto-merge behavior.

@@ -92,22 +92,20 @@ test the bad things that are plausible and costly.
 
 ## Keep tests from ratcheting complexity
 
-Tests are the pawl in this repo's historical complexity ratchet: once a defensive
-mechanism has tests, removing the mechanism looks like a regression even when the
-replacement gives users a simpler and safer story. These rules keep coverage honest:
+Tests can accidentally make an unnecessary mechanism look permanent. These rules keep coverage
+focused on behavior users need rather than implementation history:
 
 - **Tests pin contracts, not mechanisms.** Before asserting on internal state — saved
   records, phases, journal contents — restate the assertion as an outcome another system
   could observe: GitHub state, the jj DAG, an exit code plus its message. If it cannot be
   restated, the test is pinning a mechanism, and it will defend that mechanism against
   future deletion.
-- **Prefer convergence properties over interruption matrices.** For interruptible
-  operations, the high-value test is: interrupt, run the documented recovery, and assert
-  the fixed point plus exactly-once external effects. Under a convergent design, one
-  property replaces a matrix of interruption-point cases. Needing a test per interruption
-  point is evidence the design is not convergent — file that as a design bug, not a
-  coverage gap.
-- **Fixtures must be reachable through the front door.** Construct test states through
+- **Prefer recovery outcomes over interruption matrices.** For interruptible operations, the
+  high-value test interrupts the command, runs the documented recovery, and asserts the final
+  state plus exactly-once external effects. One such property can replace many tests tied to
+  individual interruption points. If every point needs different recovery, file a design bug
+  rather than expanding the matrix.
+- **Fixtures must be user-reachable.** Construct test states through
   supported commands, external-system mutations, or documented user actions. If a state
   can only be constructed by forging internal records no command writes, the scenario may
   not be real; the fixture is a smell pointing at either a phantom state or a missing
@@ -120,9 +118,9 @@ replacement gives users a simpler and safer story. These rules keep coverage hon
   untestable locally rather than silently green. Each named gap should point at a live
   check or a stricter fake mode that would establish the real contract.
 
-For the merger replacement, the suite also has a hard total-SLOC ceiling and a fixed-point budget
-defined in [merger-complexity-audit.md](merger-complexity-audit.md). A proposed test beyond that
-budget must replace overlapping coverage in the same slice. More tests are not compensation for a
+Checked-in complexity and test-count budgets are enforced by `tools/check_complexity.py` and
+documented in [merger-complexity-audit.md](merger-complexity-audit.md). A proposed test beyond a
+budget must replace overlapping coverage in the same change. More tests do not compensate for a
 mechanism whose reachable state space is too large.
 
 ## Choosing the right layer

@@ -70,7 +70,7 @@ and every fix — including your own proposed fixes:
 - **Match guard strength to the cost hierarchy.** Name what a proposed guard actually
   protects, against the ranked kernel: lost commits > mutating the wrong PR or ref >
   guessed linkage > metadata consistency. Reconstructible state gets report-and-continue
-  or converge-on-retry, not exact-match validation; a guard stronger than its tier is
+  or repair-on-retry behavior, not exact-match validation; a guard stronger than its tier is
   complexity to delete, not rigor. Every fail-closed stop must name a runnable next
   step — "fix it manually" with no command means the design is incomplete.
 - **Rate of hardening is itself a finding.** If the change under review is the third or

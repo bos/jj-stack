@@ -10,8 +10,9 @@ compatibility code, migration code, or the like.
 - Give each jj-stack-owned durable policy fact one authority and one representation. Shared
   observation or storage code must not create a second policy path for deciding or changing it.
 - Apply the cumulative complexity budgets after every code slice. CI runs
-  `uv run tools/check_complexity.py`; run it locally when SLOCCount is available. A budget increase
-  is a design stop that requires explicit review, not routine maintenance of the budget file.
+  `uv run tools/check_complexity.py`; run it locally when SLOCCount is available. A budget
+  increase is a design stop that requires explicit review, not routine maintenance of the budget
+  file.
 - If the same subsystem needs a third consecutive hardening change, stop patching it and
   re-derive the design from the core invariants.
 
@@ -40,6 +41,12 @@ compatibility code, migration code, or the like.
 - User-facing docs live in `docs/`. See [docs/AGENTS.md](docs/AGENTS.md) for the vocabulary
   rules and the public/internal split. Built-in `--help` text is held to the same standard as
   the user docs: assume jj/git familiarity, avoid `jj-stack` internal design jargon.
+- Active internal docs use ordinary technical language too. Introduce a project-specific term
+  only when it names a real type, field, or enduring rule, define it at first use, and prefer
+  describing concrete inputs and effects. Historical reports may preserve old terminology.
+- `design.md` and `implementation-strategy.md` describe the current product and architecture, not
+  completed slices or abandoned mechanisms. Keep implementation history in `jj` commits or an
+  explicitly historical report.
 
 # Behaviour changes
 
