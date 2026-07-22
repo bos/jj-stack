@@ -108,8 +108,9 @@ other stacks and unreviewed trailing changes alone.
 
 ## `list` or `view` says another stack changed since its last submit
 
-`list` checks every tracked stack in the repo. `view` only checks another stack when that stack
-is built on top of a change in the stack you are inspecting.
+`list` checks every stack known to local tracking. It does not discover GitHub-only stacks.
+`view` checks another locally tracked stack only when that stack is built on top of a change in
+the stack you are inspecting.
 
 Possible causes:
 
@@ -130,9 +131,9 @@ Use the head change ID printed in the warning. To inspect first, run:
 jj-stack view <head-change-id>
 ```
 
-Status reports what changed since the last successful submit: local commits, review parents, or
-stack membership. `submit` refreshes that stack's PR branches and base branches on GitHub so
-reviewers see the current local stack.
+Status identifies tracked changes whose current commits no longer match the last successful
+submit. `submit` refreshes that stack's PR branches and base branches on GitHub so reviewers see
+the current local stack.
 
 ## `land` says the local change differs from what reviewers approved
 
@@ -166,7 +167,7 @@ GH006: Protected branch update failed for refs/heads/main
 7 of 7 required status checks are expected
 ```
 
-The reason after the `GH006` line decides the fix — read it before changing anything:
+The reason after the `GH006` or `GH013` line decides the fix — read it before changing anything:
 
 - **"required status checks are expected"** (or pending, or failing): direct pushes are
   allowed here, but the required checks must pass on the exact commits being landed
@@ -183,6 +184,11 @@ The reason after the `GH006` line decides the fix — read it before changing an
 
   An uninterrupted merge landing rebases and updates the remaining reviewed changes before it
   returns. Run `jj-stack sync <change-id>` only if that follow-up was interrupted or failed.
+
+- **A ruleset requires a merge queue**: `jj-stack` cannot add PRs to GitHub's merge queue. Add the
+  bottom ready PR to the queue and let GitHub merge it. Then run
+  `jj-stack sync --dry-run <head-change-id>` followed by `jj-stack sync <head-change-id>` to
+  rebase the remaining stack and retarget its PRs. Repeat for the next bottom ready PR.
 
 - **"You're not authorized to push to this branch"**: an access problem, not a landing
   problem. Fix repo permissions before retrying either transport.
@@ -204,13 +210,15 @@ Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage
 yet." This command is *not* for rewriting history or changing what is in the stack, only for
 telling `jj-stack` which local changes go with which PRs.
 
-## Old review branches are still around after landing or closing
+## Old review branches or local review bookmarks remain after landing or closing
 
 Possible causes:
 
-- your `land` or `unstack` succeeded, but the follow-up cleanup hasn't run yet
-- you ran `land --skip-cleanup` to keep the review branches on purpose
+- your `unstack` succeeded, but the follow-up cleanup hasn't run yet
+- you ran `land --skip-cleanup` to keep local review bookmarks on purpose
 - something prevented `jj-stack` from cleaning up automatically
+- a direct-push `land` succeeded; it closes the PR and forgets managed local bookmarks, but
+  currently leaves the remote review branch in place
 
 What to do:
 
@@ -219,8 +227,10 @@ jj-stack cleanup --dry-run # optional
 jj-stack cleanup
 ```
 
-Use `--dry-run` if you want first, to preview what it plans to remove. Then run plain `cleanup`
-to delete the old review branches, local review bookmarks, and tracking data it described.
+Use `--dry-run` first to preview what `cleanup` can remove. Then run plain `cleanup` to apply the
+listed actions. A remote branch left by a successful direct-push `land` may no longer have local
+tracking, so `cleanup` will not necessarily list it; delete that branch manually on GitHub if you
+no longer want it.
 
 ## You want to stop reviewing a stack on GitHub
 
@@ -265,23 +275,26 @@ jj-stack view <change-id>
 
 ### Finish what was started
 
-Re-run the same command, passing the change ID or revset so you don't accidentally operate on a
-different stack. `jj-stack` derives the current state from jj, tracking data, and GitHub
-instead of replaying a retained recovery record.
+Use an explicit change ID or revset so you do not accidentally operate on another stack.
+`jj-stack` inspects current jj, tracking, and GitHub state instead of replaying the failed
+command.
 
-| Command that failed              | Next safe step                                      |
-| -------------------------------- | --------------------------------------------------- |
-| `submit`                         | `jj-stack submit <revset>`                          |
-| `unstack` / `unstack --cleanup`  | `jj-stack unstack [--cleanup] <revset>`             |
-| `sync`                           | `jj-stack sync --dry-run <revset>`                  |
-| `land --via merge`               | `jj-stack sync --dry-run <revset>`                  |
-| direct-push `land`               | `jj-stack sync --all --dry-run`                     |
+- `submit`: preview with `jj-stack submit --dry-run <revset>`, then run
+  `jj-stack submit <revset>`.
+- `unstack` or `unstack --cleanup`: add `--dry-run` to the same explicit command, inspect it,
+  then rerun without `--dry-run`.
+- `sync`: preview with `jj-stack sync --dry-run <revset>`, then run
+  `jj-stack sync <revset>`.
+- `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
+  `jj-stack sync --all`.
+- `land --via merge`: preview with `jj-stack sync --dry-run <head-change-id>`, then run
+  `jj-stack sync <head-change-id>`.
+- Direct-push `land`: preview with `jj-stack sync --all --dry-run`, then run
+  `jj-stack sync --all`.
 
-After the explicit dry-run is safe, rerun the same command without `--dry-run`. Selected `sync`
-handles GitHub-created rewritten merge results while keeping any review branch still needed by a
-PR above. For a direct push whose exact commit reached trunk, `sync --all` finalizes and retires
-the remaining exact review state. Both modes inspect current GitHub state and trunk history rather
-than replaying the interrupted operation.
+`sync <head-change-id>` handles commits rewritten by GitHub while keeping a review branch that a
+PR above still needs. `sync --all` handles a direct push whose exact submitted commit already
+reached trunk. Both inspect current GitHub state and trunk history.
 
 ### Back out
 
@@ -292,6 +305,6 @@ jj-stack unstack --cleanup <change-id>
 If a failed `submit` created PRs or review branches that you no longer want, run
 `unstack --cleanup` on the selected stack. If the change was abandoned and only tracking data
 remains, use `jj-stack list` to find the orphaned PR and then
-`jj-stack unstack --cleanup --pull-request <pr>`. To retire every orphan shown by
+`jj-stack unstack --cleanup --pull-request <pr>`. To clean up every orphan shown by
 `jj-stack list`, preview `jj-stack unstack --cleanup --pull-request orphans --dry-run`, then
 run it again without `--dry-run`.

@@ -77,7 +77,7 @@ def _review_authority_error(
             or identity.repository_name.casefold() != expected_repository.repo.casefold()
         )
     ):
-        return f"saved review identity for {label} changed"
+        return f"saved PR tracking for {label} changed"
     if (
         observed.baseline is None
         or observed.baseline.commit_id != planned.commit_id
@@ -87,7 +87,7 @@ def _review_authority_error(
         or local.divergent
         or observed.remote_review_target != planned.commit_id
     ):
-        return f"the exact submitted snapshot for {label} changed"
+        return f"the last submitted commit for {label} changed"
     pull_request = observed.pull_request
     if pull_request is None:
         return f"GitHub no longer reports the saved pull request for {label}"
@@ -100,11 +100,11 @@ def _review_authority_error(
         or pull_request.head.ref != identity.head_ref
         or pull_request.head.sha != planned.commit_id
     ):
-        return f"the live pull request identity or head for {label} changed"
+        return f"the pull request or its head commit for {label} changed"
     if pull_request.state != "open" or (
         expected_bases and pull_request.base.ref not in expected_bases
     ):
-        return f"pull request #{pull_request.number} lifecycle or base changed"
+        return f"pull request #{pull_request.number} state or base branch changed"
     if not bypass_readiness and (
         pull_request.is_draft or pull_request.review_decision != "approved"
     ):

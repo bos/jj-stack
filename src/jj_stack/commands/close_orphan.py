@@ -162,8 +162,8 @@ async def run_orphan_close(
         raise CliError(t"PR #{pull_request_number} is no longer tracked locally.")
     if submitted_baseline is None:
         raise CliError(
-            t"PR #{pull_request_number} has no valid submitted baseline; cannot clean up its "
-            t"orphaned branch.",
+            t"PR #{pull_request_number} has no valid last submitted commit; cannot clean up "
+            t"its orphaned branch.",
             hint=t"Run {ui.cmd('relink')} to repair the saved review before retrying.",
         )
     bookmark = review_identity.head_ref

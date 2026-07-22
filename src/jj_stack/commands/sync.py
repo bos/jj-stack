@@ -1,12 +1,17 @@
-"""Converge one selected reviewed path, or recover exact landed reviews globally.
+"""Update one local stack after GitHub merges, or clean up landed PRs across the repo.
 
-Selected `sync` fetches current trunk, removes a proven landed prefix from one path,
-rebases only that path, and updates only pull requests that already exist. Trailing
-unreviewed work stays local and sibling paths are untouched.
+`sync <head-change-id>` fetches trunk, verifies which lower PRs landed, rebases the remaining
+selected changes so they no longer depend on the old commits, and updates only PRs that already
+exist. Unreviewed trailing work stays local, and other local stacks are not changed.
 
-`sync --all` is the explicit repository-wide recovery mode. It can finalize PRs and remove
-tracking when their exact submitted commits are already on trunk, but never rewrites,
-submits, creates pull requests, or acts on GitHub-created rewritten results.
+`sync --all` checks every locally tracked PR. When a PR's exact submitted commit is already on
+trunk, it may retarget and close the PR, forget its managed local bookmark, and remove its
+tracking data. It never rewrites or submits a stack. If GitHub created a different commit while
+merging, it prints the `sync <head-change-id>` command needed for that stack instead.
+
+Use `--dry-run` to fetch and preview these changes. Fetching can update jj's remembered remote
+bookmark locations, but the preview does not change PRs, local commits, local bookmarks, or
+tracking.
 """
 
 from __future__ import annotations
@@ -59,7 +64,7 @@ from jj_stack.review.status import PreparedStatus, prepare_status, status_prepar
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
-HELP = "Fetch remote state and repair reviewed stacks after merges"
+HELP = "Update a stack after GitHub merges or clean up landed PRs"
 
 
 def sync(
@@ -267,7 +272,7 @@ async def _update_selected_reviews(
         if plan.survivors:
             console.output("No existing reviews to update; trailing work remains local.")
         else:
-            console.output("Nothing to submit: everything on the selected path has landed.")
+            console.output("Nothing to submit: everything in this stack has landed.")
         return 0
     result = await run_submit_async(
         context=context,
@@ -318,11 +323,15 @@ async def _run_global_recovery(*, context: CommandContext, dry_run: bool) -> int
     state = context.state_store.load()
     had_failure = bool(state.record_issues)
     for issue in state.record_issues:
-        incomplete = issue.validation_error.endswith(" is missing.")
-        kind = "incomplete review tracking" if incomplete else f"malformed {issue.record_type}"
+        condition = "incomplete" if issue.validation_error.endswith(" is missing.") else "invalid"
+        component = (
+            "pull request details are"
+            if issue.record_type == "review_identity"
+            else "last submitted commit is"
+        )
         console.warning(
-            t"Skip {kind} for {ui.change_id(issue.change_id)}; repair it explicitly with "
-            t"{ui.cmd('relink')}."
+            t"Skip {ui.change_id(issue.change_id)}: its saved {component} {condition}; "
+            t"repair the tracking with {ui.cmd('relink')}."
         )
     all_candidates = complete_review_candidates(state)
     duplicate_change_ids = duplicate_review_claim_change_ids(state.review_identities)
@@ -419,14 +428,14 @@ async def _report_global_nonexact_candidate(
                 context=context,
             )
         except JjCommandError as error:
-            _warn_global_preserved(candidate, t"could not inspect dependent paths: {error}")
+            _warn_global_preserved(candidate, t"could not inspect other local stacks: {error}")
             return True
         if commands is None:
-            _warn_global_preserved(candidate, "no visible selected path can retire the link")
+            _warn_global_preserved(candidate, "no local stack is available to finish cleanup")
             return True
         console.warning(
-            t"Preserve {ui.change_id(candidate.change_id)}: rewritten merge result needs "
-            t"selected recovery; {commands}."
+            t"Leave {ui.change_id(candidate.change_id)} tracked: GitHub merged it as a "
+            t"different commit; {commands}."
         )
         return False
     if rewritten.state in {"head_mismatch", "identity_mismatch"}:
@@ -441,13 +450,13 @@ async def _report_global_nonexact_candidate(
         )
         return True
     if ancestry == "unresolved":
-        _warn_global_preserved(candidate, "the exact submitted snapshot is unavailable locally")
+        _warn_global_preserved(candidate, "the submitted commit is unavailable locally")
         return True
     return False
 
 
 def _warn_global_preserved(candidate: LandedReviewCandidate, reason: Message) -> None:
-    console.warning(t"Preserve {ui.change_id(candidate.change_id)}: {reason}.")
+    console.warning(t"Leave {ui.change_id(candidate.change_id)} tracked: {reason}.")
 
 
 def render_landed_results(
@@ -457,37 +466,39 @@ def render_landed_results(
 ) -> None:
     if not results:
         return
-    console.output("Planned landed recovery:" if dry_run else "Applied landed recovery:")
+    console.output(
+        "Planned cleanup for landed PRs:" if dry_run else "Applied cleanup for landed PRs:"
+    )
     marker = "•" if dry_run else "✓"
     for result in results:
         candidate = result.candidate
         if result.outcome == "skipped":
             console.output(
-                t"  ! preserve {ui.change_id(candidate.change_id)}: {result.skip_reason}"
+                t"  ! leave {ui.change_id(candidate.change_id)} unchanged: {result.skip_reason}"
             )
             continue
         if result.outcome == "finalized":
-            console.output(t"  {marker} finalize PR #{candidate.review_identity.pr_number}")
+            console.output(t"  {marker} finish landed PR #{candidate.review_identity.pr_number}")
         if result.forgot_bookmark:
             console.output(t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)}")
         if result.cleanup_warning is not None:
-            console.output(t"  ! cleanup residue: {result.cleanup_warning}")
+            console.output(t"  ! cleanup still needed: {result.cleanup_warning}")
         if result.retired_tracking:
-            console.output(t"  {marker} retire {ui.change_id(candidate.change_id)}")
+            console.output(t"  {marker} remove tracking for {ui.change_id(candidate.change_id)}")
         elif result.retirement_skip_reason is not None:
             console.output(
-                t"  ! preserve {ui.change_id(candidate.change_id)}: "
+                t"  ! leave {ui.change_id(candidate.change_id)} tracked: "
                 t"{result.retirement_skip_reason}"
             )
 
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
     if not plan.landed:
-        console.output("No landed changes on the selected path need rebasing.")
+        console.output("No landed changes in this stack need rebasing.")
         return
     status = "Would remove" if dry_run else "Removing"
     console.output(
-        t"{status} landed prefix: "
+        t"{status} landed changes from the bottom of the stack: "
         t"{ui.join(lambda item: ui.change_id(item.candidate.change_id), plan.landed)}"
     )
 

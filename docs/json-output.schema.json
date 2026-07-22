@@ -162,7 +162,8 @@
           "type": "string"
         },
         "status": {
-          "type": "string"
+          "type": "string",
+          "description": "Human-readable stack summary; derive machine state from changes"
         },
         "changes": {
           "type": "array",

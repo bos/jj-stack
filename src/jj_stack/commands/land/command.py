@@ -1,8 +1,8 @@
 """Land the consecutive changes above `trunk()` that are ready to land now.
 
-If your stack is not based on `trunk()`, inspect it first. Run selected `sync` when a lower PR
-landed through another route; use plain `jj rebase` when trunk advanced without one of your
-changes landing.
+If your stack is not based on `trunk()`, inspect it first. Run
+`sync <head-change-id>` when a lower PR landed through another route; use plain `jj rebase` when
+trunk advanced without one of your changes landing.
 
 To determine what to land, `land` walks up the stack until it reaches the top or a change that
 it cannot land.
@@ -13,31 +13,33 @@ request must be open, not draft, approved, and have no outstanding changes reque
 
 The local commit, the commit last sent for review, the review branch, and the PR head must match
 exactly. After any rewrite, including a same-diff rebase, rerun `submit` before `land`.
-Immediately before each mutation, `land` reloads repository, trunk, PR identity, head, and
-readiness; trunk pushes use an exact lease and GitHub merges name the expected head.
+Immediately before changing trunk or a pull request, `land` rechecks the repository, trunk, PR,
+exact commit, and readiness. It stops if any of those changed since planning.
 
 Use `--dry-run` to inspect the landing plan. It fetches remote state, which can update jj's
-remote-bookmark observations, but does not apply the planned trunk, review-branch, PR, cleanup, or
-tracking changes.
+remembered remote bookmark locations, but does not change trunk, review branches, PRs, local
+bookmarks, or tracking data.
 
 Use `--pull-request` to select the top of the stack to land by PR number or URL.
 
-By default `land` pushes the trunk branch directly. When branch protection requires changes to
-arrive through pull requests, use `--via merge` instead: each ready PR is retargeted to trunk
-and merged through GitHub, bottom to top, stopping at the first PR GitHub reports as not
-mergeable. The merge method comes from `--merge-method`, or from the repository's settings when
-exactly one method is allowed. After each accepted merge, `land` drops the landed changes from the
-selected local stack and updates only surviving PRs that already exist. Unreviewed trailing work
-stays local.
+By default `land` pushes the trunk branch directly. When branch protection requires pull requests,
+use `--via merge` unless the repository requires a merge queue, which `jj-stack` cannot drive.
+Each ready PR is retargeted to trunk and merged through GitHub, bottom to top, stopping at the
+first PR GitHub reports as not mergeable. The merge method comes from `--merge-method`, or from
+the repository's settings when exactly one method is allowed. After each accepted merge, `land`
+drops the landed changes from the selected local stack and updates only surviving PRs that already
+exist. Unreviewed trailing work stays local.
 
-If `land --via merge` is interrupted, preview and rerun selected `sync` for that stack. If a
-direct trunk push succeeded but PR finalization did not, use `sync --all`; it handles only exact
-submitted commits already on trunk and never rewrites a stack.
-After a successful land, `jj-stack` forgets the bookmarks it was managing for the changes that
-landed, unless they've been moved or become conflicted. If you used your own bookmarks with
-`submit --use-bookmarks`, they will not be cleaned up by default (override with `--config
-jj-stack.cleanup_user_bookmarks=true`). Use `--skip-cleanup` to keep even `jj-stack`'s own
-review bookmarks.
+If `land --via merge` is interrupted, run `sync --dry-run <head-change-id>` and then
+`sync <head-change-id>`. If a direct trunk push succeeded but PR cleanup did not, run
+`sync --all --dry-run` and then `sync --all`.
+
+After a successful land, `jj-stack` removes tracking for each landed change unless another local
+stack still depends on it. It forgets managed bookmarks when they are safe to remove; bookmarks
+that moved, became conflicted, or are still needed by another stack remain. If you used your own
+bookmarks with `submit --use-bookmarks`, they will not be cleaned up by default (override with
+`--config jj-stack.cleanup_user_bookmarks=true`). Use `--skip-cleanup` to keep even `jj-stack`'s
+own review bookmarks.
 
 `land` does not touch changes above the first that could not be landed. In the direct-push
 path, those remaining local changes keep the same base they already had, so no local rebase is

@@ -736,3 +736,6 @@ cases, but it cannot establish GitHub behavior.
 
 The complexity-policy follow-up is complete. The operational rules live in `AGENTS.md` and the
 review guide; a dedicated CI gate enforces the checked-in budgets.
+
+The public-documentation follow-up is complete: user guides and built-in help now describe the
+implemented stack scope, exact recovery commands, and remote effects in ordinary jj/GitHub terms.

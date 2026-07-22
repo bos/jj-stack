@@ -1,7 +1,7 @@
 """Connect jj-stack to an existing stack of pull requests.
 
-By default, `checkout` tries to match the current stack headed by `@-` to the
-existing pull requests for that stack.
+By default, `checkout` tries to match the local stack ending at `@-` (the completed change below
+the working copy) to its existing pull requests.
 
 Use `--pull-request` to select a specific stack by PR number or URL, or
 `--revset` to point at a different local stack. Use `--pick` to choose from a
@@ -426,7 +426,7 @@ async def _resolve_selection(
         return _Selection(
             default_current_stack=True,
             fetched_tip_commit=None,
-            selector="default current stack (@-)",
+            selector="default local stack (@-)",
             head_bookmark=None,
             selected_revset="@-",
         )

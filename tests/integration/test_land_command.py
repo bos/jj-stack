@@ -93,8 +93,8 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
 
     assert preview_exit_code == 0
     assert "push main to feature 2" in rendered_preview
-    assert "finalize PR #1" in rendered_preview
-    assert "finalize PR #2" in rendered_preview
+    assert "finish landed PR #1" in rendered_preview
+    assert "finish landed PR #2" in rendered_preview
     assert f"forget {bookmark_1}" in rendered_preview
     assert f"forget {bookmark_2}" in rendered_preview
     assert "before feature 3" in rendered_preview
@@ -517,7 +517,7 @@ def test_land_rechecks_exact_review_head_before_direct_push(
     captured = capsys.readouterr()
 
     assert exit_code == 1, (captured.out, captured.err)
-    assert "exact submitted snapshot" in _squash_whitespace(captured.out)
+    assert "last submitted commit" in _squash_whitespace(captured.out)
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert client.get_bookmark_state("main").local_target == trunk_before
     assert fake_repo.pull_requests[1].state == "open"
@@ -826,7 +826,7 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     rerun = capsys.readouterr()
     rerun_rendered = _squash_whitespace(rerun.out)
 
-    assert "retire" in rerun_rendered
+    assert "remove tracking" in rerun_rendered
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is not None
     interrupted_state = state_store.load()
@@ -879,7 +879,7 @@ def test_sync_skips_merged_review_whose_saved_identity_no_longer_matches(
             identity=identity.model_copy(update={"repository_owner": "other-org"}),
             baseline=baseline,
         )
-        expected_message = "live PR identity no longer matches saved review"
+        expected_message = "no longer matches the pull request recorded for"
 
     exit_code = run_main(repo, config_path, "sync", "--all")
     captured = capsys.readouterr()
@@ -917,7 +917,7 @@ def test_sync_skips_landed_review_whose_pull_request_head_moved(
     rendered = _squash_whitespace(captured.out)
 
     assert exit_code == 1, (captured.out, captured.err)
-    assert "preserve" in rendered
+    assert "leave" in rendered
     assert "no longer reports the submitted head" in rendered
     assert fake_repo.pull_requests[1].state == "open"
     state = state_store.load()
@@ -1068,7 +1068,7 @@ def test_sync_retires_review_merged_outside_the_tool_with_preserved_commit(
     rendered = _squash_whitespace(captured.out)
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert "retire" in rendered
+    assert "remove tracking" in rendered
     state = state_store.load()
     assert change_id_1 not in state.review_identities
     assert change_id_1 not in state.submitted_baselines
@@ -1096,7 +1096,7 @@ def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
     assert exit_code == 0, (captured.out, captured.err)
     assert "merge PR #1" in rendered
     assert "merge PR #2" in rendered
-    assert "Nothing to submit: everything on the selected path has landed." in rendered
+    assert "Nothing to submit: everything in this stack has landed." in rendered
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "closed"

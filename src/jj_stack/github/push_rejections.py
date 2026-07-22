@@ -76,11 +76,14 @@ def protected_branch_rejection_hint(reason: PushRejectionReason) -> ErrorHint:
     if reason == "pull_request_required":
         return (
             t"This trunk only accepts changes through pull requests: rerun with "
-            t"{ui.cmd('land --via merge')}, then run {ui.cmd('sync')}."
+            t"{ui.cmd('land --via merge')}. An uninterrupted merge landing updates "
+            t"the remaining local stack before it returns."
         )
     if reason == "merge_queue_required":
         return (
-            t"This trunk uses a merge queue, which jj-stack cannot drive yet. Merge "
-            t"the ready PRs through the queue on GitHub, then run {ui.cmd('sync')}."
+            t"This trunk uses a merge queue, which jj-stack cannot drive yet. Add the "
+            t"bottom ready PR to the queue and wait for GitHub to merge it. Then preview with "
+            t"{ui.cmd('sync --dry-run <head-change-id>')} and run "
+            t"{ui.cmd('sync <head-change-id>')}. Repeat for the next ready PR."
         )
     return "Pushing to this branch needs repository access jj-stack cannot work around."

@@ -159,8 +159,8 @@ If you rewrote a reviewed change, rerun `submit` before landing even when the di
 `land` accepts only the exact commit last sent for review when both the review
 branch and PR still point to it; `land` will not refresh a review to make the change landable.
 
-Immediately before mutation, `land` reloads the repository, trunk, exact PR head, and readiness;
-trunk pushes use an exact lease and GitHub merges name the expected head.
+Immediately before changing trunk or a pull request, `land` rechecks the repository, trunk, PR,
+exact commit, and readiness. It stops if any of those changed since planning.
 
 If you want to preview the landing plan without actually landing your changes:
 
@@ -175,8 +175,9 @@ jj-stack land --pull-request 7
 ```
 
 By default, a successful direct `land` forgets the local review bookmarks for the changes that
-actually landed and retires their review tracking. Use `--skip-cleanup` if you want to keep
-those local review bookmarks.
+actually landed and removes their review tracking. If another local stack still depends on a
+landed change, `land` keeps that bookmark and tracking and prints the `sync` command for the
+dependent stack. Use `--skip-cleanup` if you want to keep local review bookmarks deliberately.
 
 `land` lands the consecutive run of ready PRs at the bottom of your stack. It stops as soon as
 there's a change it cannot land, and will not land changes above a non-landable change. To land
@@ -189,7 +190,8 @@ landed. If someone lands your changes through the GitHub UI, say using a squash 
 need to rebase; read on.
 
 If your repo's branch protection requires changes to arrive through pull requests, the direct
-trunk push is not available. Land through GitHub instead:
+trunk push is not available. Land through GitHub instead, unless the repository requires a merge
+queue (which `jj-stack` cannot drive):
 
 ```bash
 jj-stack land --via merge
@@ -201,13 +203,13 @@ The merge method comes from your repo's settings when only one is allowed; other
 `--merge-method squash` (or `rebase`/`merge`). Because GitHub does the merging, your local
 commits are not what lands on trunk. The command rebases the remaining selected changes and
 updates only PRs that already existed for them. Unreviewed trailing work stays local. If anything
-interrupts it, preview and rerun selected `sync`; it continues from the current jj and GitHub
-state.
+interrupts it, run `jj-stack sync --dry-run <head-change-id>`, then
+`jj-stack sync <head-change-id>`; it continues from the current jj and GitHub state.
 
-## 7. Converge remaining reviewed work
+## 7. Update a stack after GitHub merged lower PRs
 
-Use selected `sync` when lower changes were merged on GitHub through different commit IDs and
-your local stack still contains those now-merged ancestors:
+Use `sync` with the stack's head change ID when GitHub merged lower PRs through different commit
+IDs and your local stack still contains the old commits:
 
 ```bash
 jj-stack sync <head-change-id>
@@ -225,11 +227,11 @@ advanced without anything in your stack landing, rebase with plain `jj`:
 jj rebase -s <bottom-of-stack> -d 'trunk()'
 ```
 
-Use `sync --dry-run <head-change-id>` to preview the repair. `sync --all` is the only
-repository-wide recovery mode; it finalizes isolated PRs whose exact submitted commits are
-already on trunk but never rewrites or submits a stack. When GitHub used a different commit ID,
-`sync --all` leaves tracking in place and prints the selected `sync` commands for each affected
-path.
+Use `sync --dry-run <head-change-id>` to preview the repair. `sync --all` checks every locally
+tracked PR and cleans up those whose exact submitted commits are already on trunk. It may retarget
+and close those PRs, forget managed local bookmarks, and remove their tracking data, but it never
+rewrites or submits a stack. When GitHub used a different commit ID, `sync --all` leaves tracking
+in place and prints a `sync <head-change-id>` command for each affected stack.
 
 ## 8. Unstack abandoned stacks
 
@@ -257,13 +259,13 @@ jj-stack unstack --local
 ```
 
 If `jj-stack list` shows an `orphan` row, the PR is still open but its local change is no
-longer part of any current stack. When you are ready to retire that PR, close it explicitly:
+longer part of any current stack. When you are ready, close it and clean up its tracking:
 
 ```bash
 jj-stack unstack --cleanup --pull-request 7
 ```
 
-To preview and retire every orphan shown by `list` in one operation, run:
+To preview and clean up every orphan shown by `list` in one operation, run:
 
 ```bash
 jj-stack unstack --cleanup --pull-request orphans --dry-run
@@ -274,8 +276,8 @@ If `jj-stack list` says another tracked stack changed since its last submit, eit
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
 `jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another
 stack when that stack is built on top of a change in the stack you are inspecting. Status calls
-out whether commit IDs, PR bases, or the stack head differ from the last successful submit, and
-it will also show if selected `sync` is needed first.
+out which tracked changes no longer match their last submitted commits and whether
+`sync <head-change-id>` is needed first.
 
 ## Short version
 
@@ -289,23 +291,46 @@ jj-stack submit
 jj-stack land
 ```
 
-Use selected `sync` only when GitHub merged changes by another route or a landing command was
-interrupted. A successful uninterrupted `land` needs no routine follow-up command.
+Use `sync <head-change-id>` only when GitHub merged changes by another route or
+`land --via merge` was interrupted. If a direct-push `land` was interrupted after trunk changed,
+use `sync --all`. A successful uninterrupted `land` needs no routine follow-up command.
 
 ## When something goes wrong
 
-If a command is interrupted mid-way (crash, Ctrl-C, network failure), inspect the
-stack and rerun the command you were using with an explicit revset or change ID:
+If a command is interrupted mid-way (crash, Ctrl-C, network failure), inspect the affected stack
+first:
 
 ```bash
-jj-stack view
 jj-stack view <change-id>
+```
+
+Then choose the recovery command based on what was interrupted:
+
+```bash
+# submit or plain unstack: rerun it with the same explicit selector
 jj-stack submit <change-id>
+jj-stack unstack <change-id>
+
+# if the interrupted command was unstack --cleanup, keep that explicit option
 jj-stack unstack --cleanup <change-id>
+
+# sync: retry the same mode explicitly
+jj-stack sync --dry-run <head-change-id>
+jj-stack sync <head-change-id>
+jj-stack sync --all --dry-run
+jj-stack sync --all
+
+# land --via merge: update that stack from current GitHub and jj state
+jj-stack sync --dry-run <head-change-id>
+jj-stack sync <head-change-id>
+
+# direct-push land: find exact submitted commits that already reached trunk
+jj-stack sync --all --dry-run
+jj-stack sync --all
 ```
 
 Use explicit selectors after a failure, not a naked command that falls back to
 the default stack. If you want to undo review work that was partially created,
-use `unstack --cleanup` on the stack you want to retire.
+use `unstack --cleanup` on the stack you want to close and clean up.
 
 See the [troubleshooting guide](troubleshooting.md) for more recovery scenarios.

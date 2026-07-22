@@ -351,8 +351,8 @@ def _ensure_pull_request_link_is_consistent(
     if review_identity is None:
         if submitted_baseline is not None:
             raise CliError(
-                t"Saved review state for {ui.change_id(change_id)} has a baseline "
-                t"but no review identity.",
+                t"Saved PR tracking for {ui.change_id(change_id)} has a last submitted "
+                t"commit but no pull request number or branch.",
                 hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
             )
         if discovered_pull_request is not None:
@@ -365,15 +365,15 @@ def _ensure_pull_request_link_is_consistent(
         return
     if submitted_baseline is None:
         raise CliError(
-            t"Saved review state for {ui.change_id(change_id)} has no submitted baseline.",
+            t"Saved PR tracking for {ui.change_id(change_id)} has no last submitted commit.",
             hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
         )
     if review_identity.head_ref != bookmark:
         raise DriftError(
-            t"Saved review identity for {ui.change_id(change_id)} names bookmark "
+            t"Saved PR tracking for {ui.change_id(change_id)} names bookmark "
             t"{ui.bookmark(review_identity.head_ref)}, not {ui.bookmark(bookmark)}.",
             condition="saved_pull_request_mismatch",
-            hint=t"Repair the identity with {ui.cmd('relink')} before submitting again.",
+            hint=t"Run {ui.cmd('relink')} before submitting again.",
         )
     if discovered_pull_request is None:
         raise DriftError(

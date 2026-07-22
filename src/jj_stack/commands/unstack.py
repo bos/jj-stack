@@ -7,8 +7,8 @@ If you asked `jj-stack` to use your own bookmarks with `submit --use-bookmarks`,
 preserved unless `cleanup_user_bookmarks = true`. Use `--pull-request` to close by PR number or
 URL.
 
-Use `unstack --cleanup --pull-request <pr>` to retire an orphaned PR shown by `list`.
-Use `unstack --cleanup --pull-request orphans` to retire every orphan shown by `list`.
+Use `unstack --cleanup --pull-request <pr>` to close and clean up an orphaned PR shown by `list`.
+Use `unstack --cleanup --pull-request orphans` to clean up every orphan shown by `list`.
 Use `unstack --local` to forget local review tracking without closing PRs or deleting
 bookmarks.
 
@@ -282,7 +282,7 @@ async def _run_orphan_closes(
             for pull_request_number, change_ids in sorted(ambiguous_targets.items())
         )
         raise AmbiguousSelectionError(
-            t"Cannot retire orphaned pull requests because multiple tracking records claim "
+            t"Cannot clean up orphaned pull requests because multiple tracking records claim "
             t"the same PR: {details}.",
             hint=t"Repair the tracking data with {ui.cmd('unlink')} or {ui.cmd('relink')} "
             t"before retrying.",
@@ -301,7 +301,7 @@ async def _run_orphan_closes(
         current_state = context.state_store.load()
         if change_id not in current_state.submitted_baselines:
             console.warning(
-                t"Cannot retire PR #{pull_request_number}: its submitted baseline is "
+                t"Cannot clean up PR #{pull_request_number}: its last submitted commit is "
                 t"unavailable; run {ui.cmd('relink')} to repair the saved review."
             )
             blocked = True
@@ -347,7 +347,7 @@ def _run_local_unstack(
         if review_identity is None or submitted_baseline is None:
             raise CliError(
                 t"Cannot forget tracking for {ui.change_id(revision.change_id)} because its "
-                t"saved identity or submitted baseline is unavailable.",
+                t"saved pull request details or last submitted commit are unavailable.",
                 hint=t"Run {ui.cmd('relink')} to repair the saved review before retrying.",
             )
         retirements.append((revision.change_id, review_identity, submitted_baseline))
@@ -830,9 +830,9 @@ async def _process_close_revision(
         run.record_action(
             CloseAction(
                 kind="tracking",
-                body=t"cannot close {ui.change_id(revision.change_id)} because its saved "
-                t"identity or submitted baseline is unavailable; run {ui.cmd('relink')} "
-                t"before retrying",
+                body=t"cannot close {ui.change_id(revision.change_id)} because its saved pull "
+                t"request details or last submitted commit are unavailable; run "
+                t"{ui.cmd('relink')} before retrying",
                 status="blocked",
             )
         )

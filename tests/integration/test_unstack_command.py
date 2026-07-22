@@ -709,7 +709,7 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_miss
     combined = _combined_output(captured)
 
     assert exit_code == 1
-    assert "no valid submitted baseline" in combined
+    assert "no valid last submitted commit" in combined
     assert f"close PR #{bottom_pr_number}" not in captured.out
     assert fake_repo.pull_requests[bottom_pr_number].state == "open"
     assert issue_comments(fake_repo, bottom_pr_number)

@@ -115,7 +115,7 @@ class LandPlan:
                     )
                 else:
                     pull_request_body = (
-                        t"finalize PR #{landed_revision.identity.pr_number} for "
+                        t"finish landed PR #{landed_revision.identity.pr_number} for "
                         t"{landed_revision.subject} "
                         t"{ui.change_id(landed_revision.change_id)}"
                     )

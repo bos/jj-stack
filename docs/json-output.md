@@ -127,3 +127,8 @@ the `changes` array.
 
 `current: true` on a stack row means that the current working-copy change is part of
 that stack. It is omitted for other stack rows.
+
+A stack row's `status` is a human-readable summary such as the counts of open, approved, or
+unsubmitted changes. Its wording is not a stable machine-readable vocabulary. Scripts should
+inspect the `changes` array and use each change's documented `status` value instead. An orphan
+row always uses `"status": "orphan"`.

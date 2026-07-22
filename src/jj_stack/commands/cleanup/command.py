@@ -3,11 +3,11 @@
 By default, this runs a repo-wide cleanup of tracking data and review branches that no longer
 match an active review.
 
-Open orphaned PRs are preserved. Run `jj-stack list` to see them, then retire one explicitly
-with `jj-stack unstack --cleanup --pull-request <pr>`, or retire all of them with
+Open orphaned PRs are left alone. Run `jj-stack list` to see them, then close and clean up one
+with `jj-stack unstack --cleanup --pull-request <pr>`, or clean up all of them with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
-Use `--dry-run` to preview cleanup actions without applying mutations.
+Use `--dry-run` to preview cleanup without deleting branches, bookmarks, or tracking data.
 
 """
 
@@ -210,8 +210,8 @@ def _run_local_cleanup_pass(
                 CleanupAction(
                     kind="tracking",
                     status="skipped",
-                    body=t"preserve {ui.change_id(change_id)} because its submitted baseline "
-                    t"is unavailable; run {ui.cmd('relink')} to repair the review identity",
+                    body=t"leave {ui.change_id(change_id)} tracked because its last submitted "
+                    t"commit is unavailable; run {ui.cmd('relink')} to repair PR tracking",
                 )
             )
             continue
@@ -312,7 +312,7 @@ def _process_stale_cleanup_change(
         close_hint = ui.cmd("jj-stack unstack --cleanup --pull-request orphans")
         body = (
             t"preserve open orphan {ui.change_id(prepared_change.change_id)} "
-            t"(run {close_hint} to retire all open orphans)"
+            t"(run {close_hint} to close and clean up all open orphans)"
         )
         record_action(
             CleanupAction(

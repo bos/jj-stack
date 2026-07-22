@@ -315,7 +315,8 @@ def render_landed_actions(
             actions.append(
                 LandAction(
                     kind="pull request",
-                    body=t"finalizing landed {label} skipped: {result.skip_reason}; "
+                    body=t"could not finish PR cleanup for landed {label}: "
+                    t"{result.skip_reason}; "
                     t"rerun {ui.cmd('jj-stack sync --all')}",
                     status="blocked",
                 )
@@ -325,7 +326,7 @@ def render_landed_actions(
             actions.append(
                 LandAction(
                     kind="pull request",
-                    body=t"finalize PR #{candidate.review_identity.pr_number} for {label}",
+                    body=t"finish landed PR #{candidate.review_identity.pr_number} for {label}",
                     status="applied",
                 )
             )
@@ -338,7 +339,7 @@ def render_landed_actions(
                 )
             )
         if result.cleanup_warning is not None:
-            console.warning(t"Landed cleanup residue for {label}: {result.cleanup_warning}")
+            console.warning(t"Cleanup still needed for landed {label}: {result.cleanup_warning}")
         if result.retired_tracking:
             actions.append(
                 LandAction(
@@ -351,7 +352,7 @@ def render_landed_actions(
             actions.append(
                 LandAction(
                     kind="tracking",
-                    body=t"preserve tracking for landed {label}: {result.retirement_skip_reason}",
+                    body=t"keep tracking for landed {label}: {result.retirement_skip_reason}",
                     status="blocked",
                 )
             )
@@ -383,7 +384,7 @@ def _push_trunk_bookmark(
     except (CliError, JjCommandError) as error:
         raise CliError(
             "The trunk push may have succeeded, but its remote result could not be refreshed.",
-            hint=t"Inspect trunk, then run {ui.cmd('sync --all')} to finish exact recovery.",
+            hint=t"Inspect trunk, then run {ui.cmd('sync --all')} to clean up landed PRs.",
         ) from error
     if push_error is not None and remote_commit != trunk_revision.commit_id:
         rejection_reason = classify_protected_branch_rejection(str(push_error))
@@ -408,6 +409,6 @@ def _freshness_boundary(revision: LandRevision, reason: str) -> LandAction:
     return LandAction(
         kind="boundary",
         body=t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-        t"{reason}; inspect the changed authority and rerun {ui.cmd('land')}",
+        t"{reason}; inspect the changed repository or PR state and rerun {ui.cmd('land')}",
         status="blocked",
     )

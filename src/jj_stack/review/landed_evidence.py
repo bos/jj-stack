@@ -216,6 +216,7 @@ def _identity_mismatch(
         or pull_request.head.label != f"{identity.head_owner}:{identity.head_ref}"
     ):
         return (
-            t"live PR identity no longer matches saved review {ui.change_id(candidate.change_id)}"
+            t"PR #{pull_request.number} no longer matches the pull request recorded for "
+            t"{ui.change_id(candidate.change_id)}"
         )
     return None

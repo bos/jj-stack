@@ -184,29 +184,24 @@ Your typical author loop is:
 4. Re-run `jj-stack submit`.
 5. Once the bottom changes are approved, run `jj-stack land`.
 6. If lower changes were merged on GitHub instead of with `jj-stack land`, run
-   `jj-stack sync <head-change-id>` when status says convergence is needed.
+   `jj-stack sync <head-change-id>` when status says the remaining stack needs updating.
 
-`land` pushes the ready, exactly submitted changes at the bottom of
-your stack to GitHub trunk, forgets local review bookmarks when no PR above depends on them, and
-retires landed review tracking. It stops before the first change that is not ready or no longer
-matches the snapshot reviewers saw. After any local rewrite, including a rebase with the same
-diff, run `submit` before `land`.
+`land` pushes the ready, exactly submitted changes at the bottom of your stack to GitHub trunk.
+When cleanup is safe, it forgets their managed local review bookmarks and removes their review
+tracking. If another local stack still depends on a landed change, it keeps that bookmark and
+tracking and prints the `sync` command for the dependent stack. It stops before the first change
+that is not ready or no longer matches the snapshot reviewers saw. After any local rewrite,
+including a rebase with the same diff, run `submit` before `land`.
 
-Immediately before mutation, `land` reloads the repository, trunk, exact PR head, and readiness;
-trunk pushes use an exact lease and GitHub merges name the expected head. The remaining merger
-recovery work is still in development: the current build can retarget or close PRs for other
-tracked stacks while finishing landed reviews. Inspect `land --dry-run` until that slice lands.
+Immediately before changing trunk or a pull request, `land` rechecks the repository, trunk, PR,
+exact commit, and readiness. It stops if any of those changed since planning.
 
-Selected `sync` is the recovery path when lower changes were merged on GitHub, for example with
-a squash merge, and your local stack still contains old merged ancestors. It rebases the
-remaining selected changes onto `trunk()`, updates only PRs that already exist for them, and
-finishes cleanup for merged PRs when no PR above still needs their review branch. Unreviewed
-trailing work stays local, and other local stacks are left alone.
-
-> **Development status:** the promise to leave other stacks and unreviewed changes alone, plus the
-> explicit repository-wide `sync --all` mode, is not implemented yet. The current rework build
-> can retarget or close PRs for other tracked stacks and can open PRs through `sync`; use
-> `jj-stack sync --dry-run <head-change-id>` before a live recovery until that slice lands.
+Run `jj-stack sync <head-change-id>` when lower changes were merged on GitHub, for example with a
+squash merge, and your local stack still contains the old commits. It rebases the remaining
+selected changes onto `trunk()`, updates only PRs that already exist for them, and cleans up a
+merged PR when no PR above still needs its review branch. Unreviewed trailing work stays local,
+and other local stacks are left alone. Preview it with
+`jj-stack sync --dry-run <head-change-id>`.
 
 When `list` or `view` says a tracked stack changed since the last submit, inspect that
 stack directly:
@@ -215,16 +210,16 @@ stack directly:
 jj-stack view <head-change-id>
 ```
 
-The status output will show whether the next step is a plain submit or selected `sync` first.
+The status output will show whether the next step is `submit` or `sync <head-change-id>`.
 
 If `list` shows an `orphan` row, a PR is still open but the local change it reviewed is
-no longer part of any current stack. When you are ready to retire that PR:
+no longer part of any current stack. When you are ready to close and clean up that PR:
 
 ```bash
 jj-stack unstack --cleanup --pull-request <pr>
 ```
 
-Use `--pull-request orphans` to preview or retire every orphan in one operation:
+Use `--pull-request orphans` to preview or clean up every orphan in one operation:
 
 ```bash
 jj-stack unstack --cleanup --pull-request orphans --dry-run

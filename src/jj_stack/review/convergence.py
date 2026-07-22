@@ -72,8 +72,9 @@ def build_selected_convergence_plan(
             continue
         if seen_survivor:
             raise CliError(
-                t"Landed {ui.change_id(revision.change_id)} is not in the bottom prefix.",
-                hint=t"Select and repair each affected path explicitly before retrying.",
+                t"Landed {ui.change_id(revision.change_id)} appears above an unlanded change "
+                t"in this stack.",
+                hint="Run sync separately for each affected stack.",
             )
         if revision.commit_id != candidate.submitted_baseline.commit_id:
             rewrite_blocker = (
@@ -97,8 +98,9 @@ def build_selected_convergence_plan(
             continue
         if saw_unreviewed:
             raise CliError(
-                t"Cannot sync a reviewed/unreviewed/reviewed sandwich at "
-                t"{ui.change_id(revision.change_id)}."
+                t"Cannot sync because reviewed {ui.change_id(revision.change_id)} appears "
+                t"above an unreviewed change.",
+                hint="Submit the intervening change or select a stack that ends below it.",
             )
         _validate_surviving_review(
             candidate=candidate,
@@ -127,7 +129,7 @@ def _selected_landed_kind(
 ) -> LandedEvidenceKind | None:
     observed = observation.reviews[candidate.change_id]
     if observed.identity != candidate.review_identity:
-        raise CliError(t"Saved review identity changed for {ui.change_id(candidate.change_id)}.")
+        raise CliError(t"Saved PR tracking changed for {ui.change_id(candidate.change_id)}.")
     if candidate.change_id in observation.duplicate_claim_change_ids:
         raise CliError(t"Multiple saved changes claim the review for {candidate.change_id}.")
     pull_request = observed.pull_request
@@ -145,10 +147,14 @@ def _selected_landed_kind(
     if rewritten.state == "landed":
         return "rewritten"
     if pull_request.normalize_state().state in {"closed", "merged"}:
-        reason = rewritten.reason or exact.reason or f"landed evidence is {rewritten.state}"
+        reason = (
+            rewritten.reason
+            or exact.reason
+            or "neither its submitted commit nor GitHub's merge commit is on trunk"
+        )
         raise CliError(
             t"Cannot remove {ui.change_id(candidate.change_id)}: {reason}.",
-            hint=t"Restore the reported merge result to configured trunk, then rerun sync.",
+            hint="Make GitHub's reported merge commit reachable from trunk, then rerun sync.",
         )
     return None
 
@@ -175,7 +181,8 @@ def _validate_surviving_review(
         or pull_request.normalize_state().state != "open"
     ):
         raise CliError(
-            t"Existing review identity changed for {ui.change_id(candidate.change_id)}."
+            t"The pull request no longer matches saved tracking for "
+            t"{ui.change_id(candidate.change_id)}."
         )
 
 
@@ -187,7 +194,8 @@ def _validate_rebase_scope(
     for revision in plan.survivors:
         if revision.conflict or revision.divergent or len(revision.parents) != 1:
             raise CliError(
-                t"The surviving selected path is nonlinear at {ui.change_id(revision.change_id)}."
+                t"The changes remaining after the merge are not linear at "
+                t"{ui.change_id(revision.change_id)}."
             )
     if not plan.landed or not plan.survivors:
         return
@@ -210,7 +218,10 @@ def _validate_rebase_scope(
     )
     if outside:
         heads = ui.join(lambda revision: ui.change_id(revision.change_id), outside)
-        raise CliError(t"Selected survivors have dependent revisions outside this path: {heads}.")
+        raise CliError(
+            t"Other local changes depend on this stack: {heads}.",
+            hint="Select each affected stack and run sync explicitly.",
+        )
 
 
 def selected_rebase_revision_ids(
@@ -243,7 +254,7 @@ def rewritten_retirement_blocker(
         context=context,
         excluded_commit_ids=landed_commit_ids,
     )
-    return None if recovery is None else t"dependent paths remain; {recovery}"
+    return None if recovery is None else t"another local stack still depends on it; {recovery}"
 
 
 def dependent_path_commands(
@@ -266,7 +277,7 @@ def dependent_path_commands(
         for revision in dependents
     ):
         revisions = ui.join(lambda item: ui.change_id(item.change_id), dependents)
-        return t"repair nonlinear dependent revisions {revisions}"
+        return t"repair these non-linear dependent changes, then rerun sync: {revisions}"
     dependent_commit_ids = {revision.commit_id for revision in dependents}
     parent_commit_ids = {parent for revision in dependents for parent in revision.parents}
     heads = tuple(

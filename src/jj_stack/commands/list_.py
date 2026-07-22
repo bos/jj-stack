@@ -1,10 +1,10 @@
-"""List stacks in this repository.
+"""List stacks known to local jj-stack tracking.
 
-Shows one row per stack in this repo, including the head change ID, stack size, review
-state, and description of the head commit.
+Shows one row per locally known stack, including the head change ID, stack size, review state,
+and description of the head commit. It does not discover stacks that exist only on GitHub.
 
 It also shows orphaned PRs: open PRs that `jj-stack` still knows about, but whose local change
-is no longer part of any current stack. Retire every orphan shown with
+is no longer part of any current stack. Close and clean up every orphan shown with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
 `--fetch` runs a fetch first so the report uses current remote branch locations.
@@ -56,7 +56,7 @@ from jj_stack.review.status import (
     refresh_remote_state_for_status,
 )
 
-HELP = "List stacks in this repo"
+HELP = "List stacks known to local tracking"
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +301,7 @@ def _emit_orphan_hint(orphan_rows: tuple[OrphanRow, ...]) -> None:
     if not orphan_rows:
         return
     command = ui.cmd("unstack --cleanup --pull-request orphans")
-    console.note(t"Orphan cleanup: run {command} to retire every orphan shown.")
+    console.note(t"Orphan cleanup: run {command} to close and clean up every orphan shown.")
 
 
 def _emit_stale_stacks_advisory(

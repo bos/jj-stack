@@ -95,7 +95,9 @@ def _report_review_state_issues(
 ) -> None:
     for issue in issues:
         component = (
-            "review identity" if issue.record_type == "review_identity" else "submitted baseline"
+            "pull request details"
+            if issue.record_type == "review_identity"
+            else "last submitted commit"
         )
         console.warning(
             t"Saved {component} for {ui.change_id(issue.change_id)} is unavailable; "

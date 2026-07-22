@@ -203,7 +203,8 @@ def build_parser() -> ArgumentParser:
         description_text=submit_command.__doc__ or "",
         handler=_forward_handler(submit_command.submit, open_="open"),
         revset_help=(
-            t"Revision to submit; defaults to {ui.revset('@-')} (the current stack head)"
+            t"Revision to submit; defaults to {ui.revset('@-')} (the completed change below "
+            t"the working copy)"
         ),
     )
     add_help_argument(
@@ -403,14 +404,14 @@ def build_parser() -> ArgumentParser:
         description_text=land_command.__doc__ or "",
         handler=_forward_handler(land_command.land),
         revset_help=(
-            t"Revision to land; defaults to {ui.revset('@-')} (the current stack head); "
-            t"cannot be combined with {ui.cmd('--pull-request')}"
+            t"Revision to land; defaults to {ui.revset('@-')} (the completed change below the "
+            t"working copy); cannot be combined with {ui.cmd('--pull-request')}"
         ),
     )
     land_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help=("Fetch remote state and preview landing without applying the planned mutations"),
+        help="Fetch remote state and preview landing without changing trunk, PRs, or tracking",
     )
     add_help_argument(
         land_parser,
@@ -455,8 +456,8 @@ def build_parser() -> ArgumentParser:
         description_text=unstack_command.__doc__ or "",
         handler=_forward_handler(unstack_command.unstack),
         revset_help=(
-            t"Revision to unstack; defaults to {ui.revset('@-')} (the current stack head); "
-            t"cannot be combined with {ui.cmd('--pull-request')}"
+            t"Revision to unstack; defaults to {ui.revset('@-')} (the completed change below "
+            t"the working copy); cannot be combined with {ui.cmd('--pull-request')}"
         ),
     )
     unstack_parser.add_argument(
@@ -480,7 +481,7 @@ def build_parser() -> ArgumentParser:
         metavar="PR",
         help=(
             "Select a stack by PR number or URL, or use 'orphans' with --cleanup "
-            "to retire every orphan"
+            "to close and clean up every orphan"
         ),
     )
     _add_checkout_parser(
@@ -501,7 +502,7 @@ def build_parser() -> ArgumentParser:
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview cleanup actions without applying mutations",
+        help="Preview cleanup without deleting branches, bookmarks, or tracking data",
     )
 
     sync_parser = _add_revision_command(
@@ -510,19 +511,24 @@ def build_parser() -> ArgumentParser:
         help_text=normalized_help_text(sync_command.HELP),
         description_text=sync_command.__doc__ or "",
         handler=_forward_handler(sync_command.sync, all_="all"),
-        revset_help=(t"Revision to sync; defaults to {ui.revset('@-')} (the current stack head)"),
+        revset_help=(
+            t"Revision to sync; defaults to {ui.revset('@-')} (the completed change below the "
+            t"working copy)"
+        ),
     )
     add_help_argument(
         sync_parser,
         "--dry-run",
         action="store_true",
-        help="Fetch remote state and preview convergence without applying mutations",
+        help=(
+            "Fetch and preview without changing PRs, local commits, local bookmarks, or tracking"
+        ),
     )
     add_help_argument(
         sync_parser,
         "--all",
         action="store_true",
-        help="Recover exact submitted snapshots on trunk across the repository",
+        help="Clean up all locally tracked PRs whose exact submitted commits are on trunk",
     )
 
     _add_command_parser(

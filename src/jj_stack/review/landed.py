@@ -120,7 +120,7 @@ async def _finalize_open_review(
         close_conflict = False
     except GithubClientError as error:
         if error.status_code != 422:
-            return None, t"could not finalize PR #{pull_request.number}: {error}"
+            return None, t"could not finish cleanup for PR #{pull_request.number}: {error}"
         close_conflict = True
     reloaded, reason = await _observe_exact_candidate(candidate, finalizer)
     if reason is not None or reloaded is None:
@@ -155,7 +155,7 @@ async def _observe_exact_candidate(
         repository=finalizer.github.repository,
     )
     if evidence.state != "landed":
-        return None, evidence.reason or f"exact submitted snapshot is {evidence.state}"
+        return None, evidence.reason or "the submitted commit is not confirmed on trunk"
     review = observation.reviews[candidate.change_id]
     if pull_request.normalize_state().state == "open" and (
         len(review.head_pull_requests) != 1
@@ -178,7 +178,7 @@ async def observe_landed_candidate(
             trunk_branch=finalizer.trunk_branch,
         )
     except (CliError, GithubClientError, JjCommandError) as error:
-        return None, t"could not reload current review authority: {error}"
+        return None, t"could not recheck the repository and pull request: {error}"
     if observation.remote is None or observation.remote.name != finalizer.remote_name:
         return None, t"Git remote {ui.bookmark(finalizer.remote_name)} is no longer configured"
     if observation.configured_repository != finalizer.github.repository:
@@ -190,7 +190,7 @@ async def observe_landed_candidate(
         return None, "GitHub no longer reports the expected trunk branch as its default"
     fetched_trunk = observation.fetched_trunk
     if fetched_trunk is None or fetched_trunk.commit_id != finalizer.trunk_commit_id:
-        return None, t"fetched {ui.revset('trunk()')} changed during landed handling"
+        return None, t"fetched {ui.revset('trunk()')} changed while checking the landed PR"
     if observation.remote_trunk_target != finalizer.trunk_commit_id:
         return None, "the live trunk ref moved after the last fetch"
     review = observation.reviews[candidate.change_id]
@@ -199,7 +199,7 @@ async def observe_landed_candidate(
         or review.baseline != candidate.submitted_baseline
         or candidate.change_id in observation.duplicate_claim_change_ids
     ):
-        return None, "saved review authority changed during landed handling"
+        return None, "saved PR tracking changed while checking the landed PR"
     return observation, None
 
 
