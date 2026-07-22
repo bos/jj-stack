@@ -156,14 +156,13 @@ And also, locally, we need the `jj` state to be clean:
 - it has not diverged
 
 If you rewrote a reviewed change, rerun `submit` before landing even when the diff is unchanged.
-The production target accepts only the exact commit last sent for review when both the review
+`land` accepts only the exact commit last sent for review when both the review
 branch and PR still point to it; `land` will not refresh a review to make the change landable.
 
-> **Development status:** the landing safety work described above is not implemented yet. The
-> current rework build can update and land a same-diff rewrite in one `land` run, relies on
-> earlier readiness checks, and can retarget or close PRs for other tracked stacks while finishing
-> landed reviews. Always rerun `submit` after a rewrite, inspect `land --dry-run`, and avoid
-> manually retargeting, editing, or merging PRs while `land` runs until those slices land.
+Immediately before mutation, `land` reloads the repository, trunk, exact PR head, and readiness;
+trunk pushes use an exact lease and GitHub merges name the expected head. The remaining merger
+recovery work is still in development: the current build can retarget or close PRs for other
+tracked stacks while finishing landed reviews. Inspect `land --dry-run` until that slice lands.
 
 If you want to preview the landing plan without actually landing your changes:
 

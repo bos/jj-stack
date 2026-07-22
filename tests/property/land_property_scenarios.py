@@ -129,27 +129,29 @@ def test_land_property_interrupted_land_retry_converges(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     app = create_app(FakeGithubState.single_repository(fake_repo))
     fault_pull_number = scenario.fault_pull_number
-    original_push_bookmarks = JjClient.push_bookmarks
+    original_push_bookmark_with_lease = JjClient.push_bookmark_with_lease
     original_retire_review = ReviewStateStore.retire_review
 
     class FaultOnFinalizeLoadClient(GithubClient):
-        async def get_pull_request(self, *, pull_number):
-            if pull_number == fault_pull_number:
+        armed = False
+
+        async def get_pull_requests_by_numbers(self, *, pull_numbers):
+            if self.armed and fault_pull_number in pull_numbers:
                 raise GithubClientError("Simulated finalization failure", status_code=500)
-            return await super().get_pull_request(pull_number=pull_number)
+            return await super().get_pull_requests_by_numbers(pull_numbers=pull_numbers)
 
     def install_fault() -> None:
         if scenario.fault == "after_push_ack_lost":
             failed = False
 
-            def push_then_lose_ack(self, *, remote, bookmarks) -> None:
+            def push_then_lose_ack(self, **kwargs) -> None:
                 nonlocal failed
-                original_push_bookmarks(self, remote=remote, bookmarks=bookmarks)
-                if bookmarks == ("main",) and not failed:
+                original_push_bookmark_with_lease(self, **kwargs)
+                if kwargs["bookmark"] == "main" and not failed:
                     failed = True
                     raise JjCommandError("Simulated lost trunk push acknowledgement")
 
-            monkeypatch.setattr(JjClient, "push_bookmarks", push_then_lose_ack)
+            monkeypatch.setattr(JjClient, "push_bookmark_with_lease", push_then_lose_ack)
             return
         if scenario.fault == "before_retirement_save":
             # Losing the exact retirement write models a crash between remote
@@ -163,6 +165,16 @@ def test_land_property_interrupted_land_retry_converges(
                 lose_retirement_write,
             )
             return
+
+        def push_then_arm_finalization_fault(self, **kwargs) -> None:
+            original_push_bookmark_with_lease(self, **kwargs)
+            FaultOnFinalizeLoadClient.armed = True
+
+        monkeypatch.setattr(
+            JjClient,
+            "push_bookmark_with_lease",
+            push_then_arm_finalization_fault,
+        )
         patch_github_client_builders(
             monkeypatch,
             app=app,
@@ -172,7 +184,11 @@ def test_land_property_interrupted_land_retry_converges(
         )
 
     def restore_github() -> None:
-        monkeypatch.setattr(JjClient, "push_bookmarks", original_push_bookmarks)
+        monkeypatch.setattr(
+            JjClient,
+            "push_bookmark_with_lease",
+            original_push_bookmark_with_lease,
+        )
         monkeypatch.setattr(
             ReviewStateStore,
             "retire_review",
@@ -218,10 +234,20 @@ def test_land_property_merged_prefix_handoff_converges(
     fault_pull_number = scenario.fault_pull_number
 
     class FaultOnMergeClient(GithubClient):
-        async def merge_pull_request(self, *, pull_number: int, merge_method: str) -> None:
+        async def merge_pull_request(
+            self,
+            *,
+            expected_head_sha: str,
+            pull_number: int,
+            merge_method: str,
+        ) -> None:
             if pull_number == fault_pull_number:
                 raise GithubClientError("Simulated merge failure", status_code=500)
-            await super().merge_pull_request(pull_number=pull_number, merge_method=merge_method)
+            await super().merge_pull_request(
+                expected_head_sha=expected_head_sha,
+                pull_number=pull_number,
+                merge_method=merge_method,
+            )
 
     def install_fault() -> None:
         patch_github_client_builders(

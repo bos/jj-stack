@@ -161,7 +161,7 @@ class FakeGithubIssueComment:
 class FakeGithubRepository:
     """Repository metadata plus its backing bare Git repository."""
 
-    default_branch: str
+    default_branch: str | None
     git_dir: Path
     name: str
     owner: str
@@ -170,6 +170,7 @@ class FakeGithubRepository:
     allow_merge_commit: bool = False
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
+    auto_merge_reachable_heads: bool = True
     next_issue_comment_id: int = 1
     next_pull_request_number: int = 1
     next_pull_request_review_id: int = 1
@@ -252,7 +253,7 @@ class FakeGithubRepository:
         # direct push, so the closed-but-not-merged finalization family is
         # untestable against this fake. See the live-experiment entry in
         # docs/internals/backlog.md before relying on merged-detection here.
-        if pull_request.state != "open":
+        if not self.auto_merge_reachable_heads or pull_request.state != "open":
             return
         if branch_heads is None:
             branch_heads = self.branch_heads()
@@ -708,6 +709,11 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
                 status_code=405,
                 detail=f"{merge_method} merges are not allowed on this repository.",
             )
+        expected_head_sha = payload.get("sha")
+        live_head_sha = repository.ref_target(pull_request.head_ref)
+        if not isinstance(live_head_sha, str) or expected_head_sha != live_head_sha:
+            raise HTTPException(status_code=409, detail="Head branch was modified")
+        pull_request.head_sha = live_head_sha
         repository.refresh_pull_request_state(pull_request)
         if (
             pull_request.state != "open"

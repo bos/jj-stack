@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from typing import cast
 
@@ -12,9 +11,6 @@ from jj_stack.commands.land.command import (
     _stack_not_on_trunk_error,
     land,
 )
-from jj_stack.commands.land.execute import (
-    ensure_trunk_branch_matches_selected_trunk,
-)
 from jj_stack.commands.land.models import LandPlan, LandRevision
 from jj_stack.commands.land.plan import (
     _collect_landable_prefix,
@@ -23,12 +19,10 @@ from jj_stack.commands.land.plan import (
 )
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, UsageError
-from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.jj.client import JjCliArgs, JjClient
+from jj_stack.jj.client import JjCliArgs
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest, GithubRepository
-from jj_stack.models.review_state import LinkState
-from jj_stack.review.landed import finalize_landed_pull_request
+from jj_stack.models.review_state import LinkState, SubmittedBaseline
 from jj_stack.review.status import (
     PreparedStatus,
     PullRequestLookup,
@@ -38,20 +32,6 @@ from jj_stack.review.status import (
 )
 from jj_stack.ui import plain_text
 from tests.support.review_state import make_review_identity
-
-
-class _FakeJjClient:
-    def __init__(self, diffs: dict[str, str] | None = None) -> None:
-        self.diffs = diffs or {}
-        self.diff_calls: list[str] = []
-
-    def get_commit_diff(self, commit_id: str) -> str:
-        self.diff_calls.append(commit_id)
-        return self.diffs[commit_id]
-
-
-def _jj_client(diffs: dict[str, str] | None = None) -> JjClient:
-    return cast(JjClient, _FakeJjClient(diffs))
 
 
 def _fake_context() -> CommandContext:
@@ -64,13 +44,11 @@ def _fake_context() -> CommandContext:
 def _land_boundary_message(
     *,
     bypass_readiness: bool,
-    client: JjClient,
     prepared_revision,
     revision,
 ):
     _planned_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=bypass_readiness,
-        client=client,
         path_revisions=((prepared_revision, revision),),
     )
     if boundary_action is None:
@@ -78,77 +56,88 @@ def _land_boundary_message(
     return boundary_action.body
 
 
-def test_landable_prefix_marks_diff_equivalent_revision_for_resubmit() -> None:
+def test_landable_prefix_accepts_exact_review_projection() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     revision = _status_revision(
         change_id="change-1",
         commit_id="commit-1",
-        remote_target="other-tip",
         pull_request=_pull_request(number=1),
         pull_request_state="open",
         review_decision="approved",
         subject="feature 1",
     )
-    client = _FakeJjClient({"commit-1": "same", "other-tip": "same"})
-
     planned_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=False,
-        client=cast(JjClient, client),
         path_revisions=((prepared_revision, revision),),
     )
 
     assert boundary_action is None
-    assert client.diff_calls == ["commit-1", "other-tip"]
     assert len(planned_revisions) == 1
-    assert planned_revisions[0].needs_resubmit is True
 
 
-def test_land_boundary_message_allows_ready_revision_without_remote_state() -> None:
+@pytest.mark.parametrize(
+    (
+        "baseline_commit_id",
+        "remote_target",
+        "pr_head_commit_id",
+        "with_pr_head_sha",
+        "with_remote_state",
+        "with_submitted_baseline",
+    ),
+    [
+        ("old-commit-1", None, None, True, True, True),
+        (None, None, None, True, True, False),
+        (None, "old-commit-1", None, True, True, True),
+        (None, None, None, True, False, True),
+        (None, None, "old-commit-1", True, True, True),
+        (None, None, None, False, True, True),
+    ],
+    ids=(
+        "baseline-mismatch",
+        "baseline-missing",
+        "review-branch-mismatch",
+        "review-branch-missing",
+        "pr-head-mismatch",
+        "pr-head-missing",
+    ),
+)
+def test_land_boundary_message_blocks_inexact_review_projection(
+    baseline_commit_id: str | None,
+    remote_target: str | None,
+    pr_head_commit_id: str | None,
+    with_pr_head_sha: bool,
+    with_remote_state: bool,
+    with_submitted_baseline: bool,
+) -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     revision = _status_revision(
+        baseline_commit_id=baseline_commit_id,
         change_id="change-1",
         commit_id="commit-1",
+        pr_head_commit_id=pr_head_commit_id,
+        remote_target=remote_target,
         pull_request=_pull_request(number=1),
         pull_request_state="open",
         review_decision="approved",
         subject="feature 1",
-        with_remote_state=False,
+        with_pr_head_sha=with_pr_head_sha,
+        with_remote_state=with_remote_state,
+        with_submitted_baseline=with_submitted_baseline,
     )
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        client=_jj_client(),
-        prepared_revision=prepared_revision,
-        revision=revision,
-    )
-
-    assert message is None
-
-
-def test_land_boundary_message_blocks_content_divergent_revision() -> None:
-    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
-    revision = _status_revision(
-        change_id="change-1",
-        commit_id="commit-1",
-        remote_target="old-commit-1",
-        pull_request=_pull_request(number=1),
-        pull_request_state="open",
-        review_decision="approved",
-        subject="feature 1",
-    )
-
-    message = _land_boundary_message(
-        bypass_readiness=False,
-        client=_jj_client({"commit-1": "local", "old-commit-1": "remote"}),
         prepared_revision=prepared_revision,
         revision=revision,
     )
 
     assert message is not None
-    assert "differs from what reviewers approved" in plain_text(message)
+    rendered = plain_text(message)
+    assert "do not all identify the same exact commit" in rendered
+    assert "jj-stack submit change-1" in rendered
 
 
-def test_land_boundary_message_prefers_unlinked_state_over_content_divergence() -> None:
+def test_land_boundary_message_prefers_unlinked_state_over_projection_mismatch() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     revision = _status_revision(
         change_id="change-1",
@@ -163,7 +152,6 @@ def test_land_boundary_message_prefers_unlinked_state_over_content_divergence() 
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        client=_jj_client(),
         prepared_revision=prepared_revision,
         revision=revision,
     )
@@ -171,10 +159,32 @@ def test_land_boundary_message_prefers_unlinked_state_over_content_divergence() 
     assert message is not None
     rendered = plain_text(message)
     assert "unlinked from review tracking" in rendered
-    assert "differs from what reviewers approved" not in rendered
+    assert "do not all identify the same exact commit" not in rendered
 
 
-def test_land_boundary_message_prefers_missing_pr_over_content_divergence() -> None:
+def test_land_boundary_message_does_not_bypass_projection_mismatch() -> None:
+    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
+    revision = _status_revision(
+        change_id="change-1",
+        commit_id="commit-1",
+        remote_target="old-commit-1",
+        pull_request=_pull_request(number=1),
+        pull_request_state="open",
+        review_decision="approved",
+        subject="feature 1",
+    )
+
+    message = _land_boundary_message(
+        bypass_readiness=True,
+        prepared_revision=prepared_revision,
+        revision=revision,
+    )
+
+    assert message is not None
+    assert "jj-stack submit change-1" in plain_text(message)
+
+
+def test_land_boundary_message_prefers_missing_pr_over_projection_mismatch() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     revision = _status_revision(
         change_id="change-1",
@@ -187,7 +197,6 @@ def test_land_boundary_message_prefers_missing_pr_over_content_divergence() -> N
 
     message = _land_boundary_message(
         bypass_readiness=False,
-        client=_jj_client(),
         prepared_revision=prepared_revision,
         revision=revision,
     )
@@ -195,7 +204,7 @@ def test_land_boundary_message_prefers_missing_pr_over_content_divergence() -> N
     assert message is not None
     rendered = plain_text(message)
     assert "GitHub no longer reports a pull request" in rendered
-    assert "differs from what reviewers approved" not in rendered
+    assert "do not all identify the same exact commit" not in rendered
 
 
 def test_stack_not_on_trunk_error_recommends_rebase_when_no_changes_have_landed() -> None:
@@ -279,104 +288,6 @@ def test_stack_not_on_trunk_error_recommends_sync_when_stack_has_landed_change()
     assert "jj rebase -s" not in rendered_hint
 
 
-def test_finalize_landed_pull_request_treats_close_422_as_already_merged() -> None:
-    class CloseRaceGithubClient:
-        repository = SimpleNamespace(owner="octo-org")
-
-        def __init__(self) -> None:
-            self.close_calls = 0
-            self.get_calls = 0
-
-        async def get_pull_request(self, *, pull_number: int) -> GithubPullRequest:
-            self.get_calls += 1
-            if self.get_calls == 1:
-                state = "open"
-            else:
-                state = "merged"
-            return _pull_request(number=pull_number, state=state).model_copy(
-                update={
-                    "head": GithubBranchRef(
-                        label="octo-org:review/feature-1-aaaaaaaa",
-                        ref="review/feature-1-aaaaaaaa",
-                        sha="commit-1",
-                    )
-                }
-            )
-
-        async def close_pull_request(self, *, pull_number: int) -> None:
-            self.close_calls += 1
-            raise GithubClientError(
-                'GitHub request failed: 422 {"message":"Validation Failed"}',
-                status_code=422,
-            )
-
-    github_client = CloseRaceGithubClient()
-
-    pull_request = asyncio.run(
-        finalize_landed_pull_request(
-            bookmark="review/feature-1-aaaaaaaa",
-            change_id="change-1",
-            commit_id="commit-1",
-            github_client=cast(GithubClient, github_client),
-            pull_request_number=1,
-            trunk_branch="main",
-        )
-    )
-
-    assert pull_request.state == "merged"
-    assert github_client.close_calls == 1
-    assert github_client.get_calls == 2
-
-
-def test_finalize_landed_pull_request_does_not_recover_close_422_as_closed() -> None:
-    class CloseRaceGithubClient:
-        repository = SimpleNamespace(owner="octo-org")
-
-        def __init__(self) -> None:
-            self.close_calls = 0
-            self.get_calls = 0
-
-        async def get_pull_request(self, *, pull_number: int) -> GithubPullRequest:
-            self.get_calls += 1
-            if self.get_calls == 1:
-                state = "open"
-            else:
-                state = "closed"
-            return _pull_request(number=pull_number, state=state).model_copy(
-                update={
-                    "head": GithubBranchRef(
-                        label="octo-org:review/feature-1-aaaaaaaa",
-                        ref="review/feature-1-aaaaaaaa",
-                        sha="commit-1",
-                    )
-                }
-            )
-
-        async def close_pull_request(self, *, pull_number: int) -> None:
-            self.close_calls += 1
-            raise GithubClientError(
-                'GitHub request failed: 422 {"message":"Validation Failed"}',
-                status_code=422,
-            )
-
-    github_client = CloseRaceGithubClient()
-
-    with pytest.raises(GithubClientError, match="Validation Failed"):
-        asyncio.run(
-            finalize_landed_pull_request(
-                bookmark="review/feature-1-aaaaaaaa",
-                change_id="change-1",
-                commit_id="commit-1",
-                github_client=cast(GithubClient, github_client),
-                pull_request_number=1,
-                trunk_branch="main",
-            )
-        )
-
-    assert github_client.close_calls == 1
-    assert github_client.get_calls == 2
-
-
 def test_plan_review_bookmark_cleanup_forgets_owned_bookmark() -> None:
     plan = _plan_review_bookmark_cleanup(
         bookmark="bosullivan/feature-aaaaaaaa",
@@ -387,14 +298,12 @@ def test_plan_review_bookmark_cleanup_forgets_owned_bookmark() -> None:
             name="bosullivan/feature-aaaaaaaa",
             local_targets=("commit-1",),
         ),
-        change_id="change-1",
         commit_id="commit-1",
     )
 
     assert plan is not None
-    assert plan.can_forget is True
-    assert plan.action.message == "forget bosullivan/feature-aaaaaaaa"
-    assert plan.action.status == "planned"
+    assert plain_text(plan.body) == "forget bosullivan/feature-aaaaaaaa"
+    assert plan.status == "planned"
 
 
 def test_plan_review_bookmark_cleanup_skips_external_bookmark() -> None:
@@ -407,7 +316,6 @@ def test_plan_review_bookmark_cleanup_skips_external_bookmark() -> None:
             name="review/feature-aaaaaaaa",
             local_targets=("commit-1",),
         ),
-        change_id="change-1",
         commit_id="commit-1",
     )
 
@@ -424,13 +332,11 @@ def test_plan_review_bookmark_cleanup_forgets_external_bookmark_when_configured(
             name="potato/feature-aaaaaaaa",
             local_targets=("commit-1",),
         ),
-        change_id="change-1",
         commit_id="commit-1",
     )
 
     assert plan is not None
-    assert plan.can_forget is True
-    assert plan.action.status == "planned"
+    assert plan.status == "planned"
 
 
 def test_plan_review_bookmark_cleanup_blocks_conflicted_bookmark() -> None:
@@ -443,14 +349,12 @@ def test_plan_review_bookmark_cleanup_blocks_conflicted_bookmark() -> None:
             name="review/feature-aaaaaaaa",
             local_targets=("commit-1", "commit-2"),
         ),
-        change_id="change-1",
         commit_id="commit-1",
     )
 
     assert plan is not None
-    assert plan.can_forget is False
-    assert "is conflicted" in plan.action.message
-    assert plan.action.status == "blocked"
+    assert "is conflicted" in plain_text(plan.body)
+    assert plan.status == "blocked"
 
 
 def test_plan_review_bookmark_cleanup_blocks_moved_bookmark() -> None:
@@ -463,90 +367,20 @@ def test_plan_review_bookmark_cleanup_blocks_moved_bookmark() -> None:
             name="review/feature-aaaaaaaa",
             local_targets=("commit-2",),
         ),
-        change_id="change-1",
         commit_id="commit-1",
     )
 
     assert plan is not None
-    assert plan.can_forget is False
-    assert "points to a different revision" in plan.action.message
-    assert plan.action.status == "blocked"
-
-
-def test_ensure_trunk_branch_matches_selected_trunk_rejects_missing_remote_bookmark() -> None:
-    client = _BookmarkClientStub(BookmarkState(name="main", local_targets=("commit-1",)))
-
-    with pytest.raises(CliError, match="Remote trunk bookmark main@origin is not available"):
-        ensure_trunk_branch_matches_selected_trunk(
-            client=client,
-            remote_name="origin",
-            trunk_branch="main",
-            trunk_commit_id="commit-1",
-        )
-
-
-@pytest.mark.parametrize(
-    ("bookmark_state", "message"),
-    [
-        pytest.param(
-            BookmarkState(
-                name="main",
-                local_targets=("commit-1", "commit-2"),
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
-            ),
-            "Local trunk bookmark main is conflicted",
-            id="conflicted-local",
-        ),
-        pytest.param(
-            BookmarkState(
-                name="main",
-                local_targets=("commit-2",),
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
-            ),
-            "Local bookmark main points to a different revision",
-            id="moved-local",
-        ),
-        pytest.param(
-            BookmarkState(
-                name="main",
-                local_targets=("commit-1",),
-                remote_targets=(
-                    RemoteBookmarkState(remote="origin", targets=("commit-1", "commit-2")),
-                ),
-            ),
-            "Remote trunk bookmark main@origin is conflicted",
-            id="conflicted-remote",
-        ),
-        pytest.param(
-            BookmarkState(
-                name="main",
-                local_targets=("commit-1",),
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-2",)),),
-            ),
-            "Local trunk bookmark main does not match",
-            id="moved-remote",
-        ),
-    ],
-)
-def test_ensure_trunk_branch_matches_selected_trunk_rejects_unsafe_bookmarks(
-    bookmark_state: BookmarkState,
-    message: str,
-) -> None:
-    client = _BookmarkClientStub(bookmark_state)
-
-    with pytest.raises(CliError, match=message):
-        ensure_trunk_branch_matches_selected_trunk(
-            client=client,
-            remote_name="origin",
-            trunk_branch="main",
-            trunk_commit_id="commit-1",
-        )
+    assert "points to a different revision" in plain_text(plan.body)
+    assert plan.status == "blocked"
 
 
 def _status_revision(
     *,
+    baseline_commit_id: str | None = None,
     change_id: str,
     commit_id: str,
+    pr_head_commit_id: str | None = None,
     remote_target: str | None = None,
     with_remote_state: bool = True,
     pull_request: GithubPullRequest,
@@ -555,16 +389,30 @@ def _status_revision(
     review_decision_error: str | None = None,
     subject: str,
     link_state: LinkState = "active",
+    with_pr_head_sha: bool = True,
+    with_submitted_baseline: bool = True,
 ) -> ReviewStatusRevision:
+    bookmark = f"review/{change_id}"
+    resolved_pull_request = pull_request.model_copy(
+        update={
+            "head": pull_request.head.model_copy(
+                update={
+                    "label": f"octocat:{bookmark}",
+                    "ref": bookmark,
+                    "sha": (pr_head_commit_id or commit_id) if with_pr_head_sha else None,
+                }
+            )
+        }
+    )
     return ReviewStatusRevision(
-        bookmark=f"review/{change_id}",
+        bookmark=bookmark,
         bookmark_source="generated",
         change_id=change_id,
         commit_id=commit_id,
         local_divergent=False,
         pull_request_lookup=PullRequestLookup(
             message=None,
-            pull_request=pull_request,
+            pull_request=resolved_pull_request,
             review_decision=review_decision,
             review_decision_error=review_decision_error,
             state=pull_request_state,
@@ -578,11 +426,16 @@ def _status_revision(
             else None
         ),
         review_identity=make_review_identity(
-            head_ref=f"review/{change_id}",
+            head_ref=bookmark,
+            head_owner="octocat",
             link_state=link_state,
             pr_number=pull_request.number,
         ),
-        submitted_baseline=None,
+        submitted_baseline=(
+            SubmittedBaseline(commit_id=baseline_commit_id or commit_id)
+            if with_submitted_baseline
+            else None
+        ),
         managed_comments_lookup=None,
         subject=subject,
     )
@@ -638,15 +491,6 @@ def _prepared_status(
             selected_revset=selected_revset,
         ),
     )
-
-
-class _BookmarkClientStub:
-    def __init__(self, bookmark_state: BookmarkState) -> None:
-        self._bookmark_state = bookmark_state
-
-    def get_bookmark_state(self, bookmark: str) -> BookmarkState:
-        assert bookmark == self._bookmark_state.name
-        return self._bookmark_state
 
 
 def _repository_with_merge_settings(
@@ -731,12 +575,13 @@ def test_resolve_land_merge_method_rejects_repo_that_allows_no_method() -> None:
 def test_land_plan_rejects_rebase_merge_for_multi_pr_prefix() -> None:
     revisions = tuple(
         LandRevision(
-            bookmark=f"review/feature-{number}",
-            bookmark_managed=True,
+            base_ref="main",
             change_id=f"change-{number}",
             commit_id=f"commit-{number}",
-            needs_resubmit=False,
-            pull_request_number=number,
+            identity=make_review_identity(
+                head_ref=f"review/feature-{number}",
+                pr_number=number,
+            ),
             subject=f"feature {number}",
         )
         for number in (1, 2)
@@ -745,7 +590,6 @@ def test_land_plan_rejects_rebase_merge_for_multi_pr_prefix() -> None:
         blocked=False,
         boundary_action=None,
         planned_revisions=revisions,
-        push_trunk=False,
         trunk_branch="main",
         via="merge",
     )

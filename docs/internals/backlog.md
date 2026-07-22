@@ -323,10 +323,6 @@ _Benefit: small each; recorded so residue-tolerance stays a decision, not an acc
   forgets local bookmarks). A `cleanup` GC pass could delete tool-owned remote branches
   whose PRs finalized, under the same lease and ownership rules the merge-transport
   retirement already applies.
-- A trunk push whose acknowledgement is lost restores the local trunk bookmark, so the
-  next fetch can leave it behind or conflicted; `land` reports the exact
-  `jj bookmark move` repair. If this proves common, teach the report to distinguish the
-  remote-contains-local case (safe to fast-forward automatically) from true divergence.
 - Real GitHub's merged detection after retargeting a directly pushed PR remains part of the
   deferred live-evidence experiment above. Do not teach the landed predicate from the fake's
   auto-merge idealization.

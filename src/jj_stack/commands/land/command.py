@@ -11,13 +11,13 @@ For a change to be landed, it must have no unresolved merge/rebase conflicts. Al
 request must be open, not draft, approved, and have no outstanding changes requested. Use
 `--bypass-readiness` to skip the draft / approval / changes-requested readiness checks.
 
-The production target also requires the local commit, the commit last sent for review, the review
-branch, and the PR head to match exactly, and it repeats the GitHub readiness checks immediately
-before each change is landed. Those protections are not implemented yet: the current build can
-update and land a same-diff rewrite in one run and relies on earlier readiness checks. Every
-current land run also checks all tracked reviews and may retarget or close PRs for other tracked
-stacks. Until that work lands, rerun `submit` after any rewrite and do not manually retarget,
-edit, or merge PRs while `land` is running.
+The local commit, the commit last sent for review, the review branch, and the PR head must match
+exactly. After any rewrite, including a same-diff rebase, rerun `submit` before `land`.
+Immediately before each mutation, `land` reloads repository, trunk, PR identity, head, and
+readiness; trunk pushes use an exact lease and GitHub merges name the expected head.
+
+The current recovery sweep can still retarget or close PRs for other tracked stacks. Preview
+`land --dry-run` until the selected-convergence work described in the user guide is complete.
 
 Use `--dry-run` to inspect the landing plan. It fetches remote state, which can update jj's
 remote-bookmark observations, but does not apply the planned trunk, review-branch, PR, cleanup, or
@@ -37,9 +37,6 @@ open PRs.
 If `land` is interrupted, first run `jj-stack sync --dry-run <change-id>` for that stack. Current
 `sync` can retarget or close PRs for other tracked stacks and can open PRs; run the same selected
 command without `--dry-run` only after the preview is safe.
-If the interruption left the local trunk bookmark ahead of its remote, `land` prints the exact
-`jj bookmark move` command to run before retrying.
-
 After a successful land, `jj-stack` forgets the bookmarks it was managing for the changes that
 landed, unless they've been moved or become conflicted. If you used your own bookmarks with
 `submit --use-bookmarks`, they will not be cleaned up by default (override with `--config
@@ -79,10 +76,7 @@ from jj_stack.review.status import (
 )
 from jj_stack.state.operation_lock import acquire_operation_lock
 
-from .execute import (
-    ensure_trunk_branch_matches_selected_trunk,
-    execute_land_plan,
-)
+from .execute import execute_land_plan
 from .models import (
     LandExecutionInputs,
     LandPlan,
@@ -149,7 +143,7 @@ def _run_land(
     revset: str | None,
     via: LandVia,
 ) -> int:
-    selected_pr_number, selected_revset = _resolve_land_target(
+    selected_revset = _resolve_land_target(
         context=context,
         pull_request=pull_request,
         revset=revset,
@@ -162,7 +156,6 @@ def _run_land(
             dry_run=dry_run,
             merge_method=merge_method,
             revset=selected_revset,
-            selected_pr_number=selected_pr_number,
             via=via,
         )
     result = _stream_land(prepared_land=prepared_land)
@@ -183,7 +176,7 @@ def _resolve_land_target(
     context: CommandContext,
     pull_request: str | None,
     revset: str | None,
-) -> tuple[int | None, str | None]:
+) -> str | None:
     if pull_request is not None:
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="land",
@@ -192,15 +185,12 @@ def _resolve_land_target(
             revset=revset,
         )
         console.note(t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}")
-        return pull_request_number, resolved_revset
-    return (
-        None,
-        resolve_selected_revset(
-            command_label="land",
-            default_revset="@-",
-            require_explicit=False,
-            revset=revset,
-        ),
+        return resolved_revset
+    return resolve_selected_revset(
+        command_label="land",
+        default_revset="@-",
+        require_explicit=False,
+        revset=revset,
     )
 
 
@@ -212,7 +202,6 @@ def _prepare_land(
     dry_run: bool,
     merge_method: str | None,
     revset: str | None,
-    selected_pr_number: int | None,
     via: LandVia,
 ) -> PreparedLand:
     """Resolve local landing inputs before GitHub planning and execution."""
@@ -246,7 +235,6 @@ def _prepare_land(
         context=context,
         merge_method=merge_method,
         prepared_status=prepared_status,
-        selected_pr_number=selected_pr_number,
         via=via,
     )
 
@@ -315,7 +303,7 @@ async def _stream_land_async(
                 plan=plan,
             )
             if prepared_land.dry_run:
-                bookmark_cleanup_plans = plan_review_bookmark_cleanup_for_revisions(
+                bookmark_cleanup_actions = plan_review_bookmark_cleanup_for_revisions(
                     bookmark_states=bookmark_states,
                     prefix=prepared_land.context.config.bookmark_prefix,
                     cleanup_bookmarks=prepared_land.cleanup_bookmarks,
@@ -324,10 +312,9 @@ async def _stream_land_async(
                 )
                 return LandResult(
                     actions=plan.planned_actions(
-                        bookmark_cleanup_plans=bookmark_cleanup_plans,
+                        bookmark_cleanup_actions=bookmark_cleanup_actions,
                     ),
                     applied=False,
-                    bypass_readiness=prepared_land.bypass_readiness,
                     blocked=plan.blocked,
                     remote_name=remote.name,
                     selected_revset=status_result.selected_revset,
@@ -340,7 +327,6 @@ async def _stream_land_async(
                     bypass_readiness=prepared_land.bypass_readiness,
                     cleanup_bookmarks=prepared_land.cleanup_bookmarks,
                     context=prepared_land.context,
-                    selected_pr_number=prepared_land.selected_pr_number,
                 ),
                 github_client=github_client,
                 merge_method=resolved_merge_method,
@@ -362,16 +348,8 @@ async def _stream_land_async(
                 status_result=status_result,
             )
 
-        ensure_trunk_branch_matches_selected_trunk(
-            client=prepared.client,
-            remote_name=remote.name,
-            trunk_branch=trunk_branch,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
-        )
-
         plan = build_land_plan(
             bypass_readiness=prepared_land.bypass_readiness,
-            client=prepared.client,
             prepared_status=prepared_status,
             status_result=status_result,
             trunk_branch=trunk_branch,

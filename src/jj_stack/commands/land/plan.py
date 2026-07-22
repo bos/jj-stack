@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Literal
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
-from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.review.bookmarks import (
@@ -33,16 +30,12 @@ from .models import (
     LandPlan,
     LandRevision,
     LandVia,
-    ReviewBookmarkCleanupPlan,
 )
-
-_DivergenceKind = Literal["in_sync", "diff_equivalent", "content_divergent"]
 
 
 @dataclass(frozen=True, slots=True)
 class _LandabilityDecision:
     boundary_message: Message | None
-    needs_resubmit: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,13 +45,6 @@ class _LandPathRevision:
     prepared_revision: PreparedRevision
     revision: ReviewStatusRevision
     status: ReviewChangeStatus
-
-    @property
-    def bookmark_managed(self) -> bool:
-        identity = self.revision.review_identity
-        if identity is not None:
-            return identity.manages_bookmark
-        return self.revision.bookmark_source != "matched"
 
     @property
     def local_commit_id(self) -> str:
@@ -78,11 +64,17 @@ class _LandPathRevision:
             return None
         return remote_state.target
 
+    @property
+    def submitted_baseline(self) -> str | None:
+        baseline = self.revision.submitted_baseline
+        if baseline is None:
+            return None
+        return baseline.commit_id
+
 
 def build_land_plan(
     *,
     bypass_readiness: bool,
-    client: JjClient,
     prepared_status: PreparedStatus,
     status_result: StatusResult,
     trunk_branch: str,
@@ -94,7 +86,6 @@ def build_land_plan(
     )
     planned_revisions, boundary_action = _collect_landable_prefix(
         bypass_readiness=bypass_readiness,
-        client=client,
         path_revisions=path_revisions,
     )
 
@@ -108,7 +99,6 @@ def build_land_plan(
         blocked=not planned_revisions,
         boundary_action=boundary_action,
         planned_revisions=tuple(planned_revisions),
-        push_trunk=bool(planned_revisions) and via == "push",
         trunk_branch=trunk_branch,
         via=via,
     )
@@ -131,26 +121,6 @@ def validate_land_plan_merge_method(
         t"ancestors' commits.",
         hint=t"Use {ui.cmd('--merge-method squash')} or land one PR per run.",
     )
-
-
-def _classify_revision_divergence(
-    *,
-    client: JjClient,
-    local_commit_id: str,
-    remote_target: str | None,
-) -> _DivergenceKind:
-    """Classify how the local commit differs from the remote review branch tip."""
-
-    if remote_target is None or remote_target == local_commit_id:
-        return "in_sync"
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        local_future = pool.submit(client.get_commit_diff, local_commit_id)
-        remote_future = pool.submit(client.get_commit_diff, remote_target)
-        local_diff = local_future.result()
-        remote_diff = remote_future.result()
-    if local_diff == remote_diff:
-        return "diff_equivalent"
-    return "content_divergent"
 
 
 def _resolve_land_path_revisions(
@@ -176,7 +146,6 @@ def _resolve_land_path_revisions(
 def _collect_landable_prefix(
     *,
     bypass_readiness: bool,
-    client: JjClient,
     path_revisions: tuple[tuple[PreparedRevision, ReviewStatusRevision], ...],
 ) -> tuple[tuple[LandRevision, ...], LandAction | None]:
     planned_revisions: list[LandRevision] = []
@@ -187,7 +156,6 @@ def _collect_landable_prefix(
         )
         decision = _landability_decision(
             bypass_readiness=bypass_readiness,
-            client=client,
             land_revision=land_revision,
         )
         if decision.boundary_message is not None:
@@ -199,14 +167,15 @@ def _collect_landable_prefix(
         pull_request = land_revision.pull_request
         if pull_request is None:
             raise AssertionError("Landable revisions require resolved pull requests.")
+        identity = revision.review_identity
+        if identity is None:
+            raise AssertionError("Landable revisions require saved review identity.")
         planned_revisions.append(
             LandRevision(
-                bookmark=revision.bookmark,
-                bookmark_managed=land_revision.bookmark_managed,
+                base_ref=pull_request.base.ref,
                 change_id=revision.change_id,
                 commit_id=land_revision.local_commit_id,
-                needs_resubmit=decision.needs_resubmit,
-                pull_request_number=pull_request.number,
+                identity=identity,
                 subject=revision.subject,
             )
         )
@@ -228,7 +197,6 @@ def _land_path_revision(
 def _landability_decision(
     *,
     bypass_readiness: bool,
-    client: JjClient,
     land_revision: _LandPathRevision,
 ) -> _LandabilityDecision:
     revision = land_revision.revision
@@ -266,6 +234,21 @@ def _landability_decision(
         pull_request = land_revision.pull_request
         if pull_request is None:
             raise AssertionError("Open land boundary requires a pull request payload.")
+        projection_targets = (
+            land_revision.local_commit_id,
+            land_revision.submitted_baseline,
+            land_revision.remote_target,
+            pull_request.head.sha,
+        )
+        if any(target != land_revision.local_commit_id for target in projection_targets):
+            return _LandabilityDecision(
+                boundary_message=(
+                    t"before {revision.subject} {ui.change_id(revision.change_id)} because "
+                    t"the local change, last submitted version, review branch, and pull "
+                    t"request do not all identify the same exact commit; run "
+                    t"{ui.cmd(f'jj-stack submit {revision.change_id}')} before landing"
+                )
+            )
         if change_status.pr_review_decision_error is not None:
             detail = change_status.pr_review_decision_error
             return _LandabilityDecision(
@@ -274,25 +257,9 @@ def _landability_decision(
                     t"because {detail}"
                 )
             )
-        divergence = _classify_revision_divergence(
-            client=client,
-            local_commit_id=land_revision.local_commit_id,
-            remote_target=land_revision.remote_target,
-        )
-        if divergence == "content_divergent":
-            return _LandabilityDecision(
-                boundary_message=(
-                    t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                    t"the local change differs from what reviewers approved; rerun "
-                    t"{ui.cmd('submit')} to update the PR and request re-review"
-                )
-            )
         if change_status.pr_draft is True:
             if bypass_readiness:
-                return _LandabilityDecision(
-                    boundary_message=None,
-                    needs_resubmit=divergence == "diff_equivalent",
-                )
+                return _LandabilityDecision(boundary_message=None)
             return _LandabilityDecision(
                 boundary_message=(
                     t"before {revision.subject} {ui.change_id(revision.change_id)} "
@@ -301,10 +268,7 @@ def _landability_decision(
             )
         if change_status.pr_review_decision == "changes_requested":
             if bypass_readiness:
-                return _LandabilityDecision(
-                    boundary_message=None,
-                    needs_resubmit=divergence == "diff_equivalent",
-                )
+                return _LandabilityDecision(boundary_message=None)
             return _LandabilityDecision(
                 boundary_message=(
                     t"before {revision.subject} {ui.change_id(revision.change_id)} "
@@ -313,20 +277,14 @@ def _landability_decision(
             )
         if change_status.pr_review_decision != "approved":
             if bypass_readiness:
-                return _LandabilityDecision(
-                    boundary_message=None,
-                    needs_resubmit=divergence == "diff_equivalent",
-                )
+                return _LandabilityDecision(boundary_message=None)
             return _LandabilityDecision(
                 boundary_message=(
                     t"before {revision.subject} {ui.change_id(revision.change_id)} "
                     t"because PR #{pull_request.number} is not approved"
                 )
             )
-        return _LandabilityDecision(
-            boundary_message=None,
-            needs_resubmit=divergence == "diff_equivalent",
-        )
+        return _LandabilityDecision(boundary_message=None)
     if change_status.pr_lifecycle == "missing":
         return _LandabilityDecision(
             boundary_message=(
@@ -379,9 +337,8 @@ def _plan_review_bookmark_cleanup(
     cleanup_user_bookmarks: bool,
     prefix: str,
     bookmark_state: BookmarkState,
-    change_id: str,
     commit_id: str,
-) -> ReviewBookmarkCleanupPlan | None:
+) -> LandAction | None:
     """Validate whether `land` can forget one landed local review bookmark."""
 
     if not bookmark_cleanup_allowed(
@@ -398,26 +355,16 @@ def _plan_review_bookmark_cleanup(
         case "absent":
             return None
         case "conflicted" | "diverged" as safety:
-            return ReviewBookmarkCleanupPlan(
-                action=LandAction(
-                    kind="local bookmark",
-                    body=local_bookmark_forget_blocked_body(bookmark, safety),
-                    status="blocked",
-                ),
-                bookmark=bookmark,
-                can_forget=False,
-                change_id=change_id,
+            return LandAction(
+                kind="local bookmark",
+                body=local_bookmark_forget_blocked_body(bookmark, safety),
+                status="blocked",
             )
         case _:
-            return ReviewBookmarkCleanupPlan(
-                action=LandAction(
-                    kind="local bookmark",
-                    body=t"forget {ui.bookmark(bookmark)}",
-                    status="planned",
-                ),
-                bookmark=bookmark,
-                can_forget=True,
-                change_id=change_id,
+            return LandAction(
+                kind="local bookmark",
+                body=t"forget {ui.bookmark(bookmark)}",
+                status="planned",
             )
 
 
@@ -428,25 +375,24 @@ def plan_review_bookmark_cleanup_for_revisions(
     cleanup_bookmarks: bool,
     cleanup_user_bookmarks: bool,
     planned_revisions: tuple[LandRevision, ...],
-) -> tuple[ReviewBookmarkCleanupPlan, ...]:
+) -> dict[str, LandAction]:
     """Plan which landed local review bookmarks `land` should forget."""
 
     if not cleanup_bookmarks:
-        return ()
-    cleanup_plans: list[ReviewBookmarkCleanupPlan] = []
+        return {}
+    cleanup_actions: dict[str, LandAction] = {}
     for landed_revision in planned_revisions:
         cleanup_plan = _plan_review_bookmark_cleanup(
-            bookmark=landed_revision.bookmark,
-            bookmark_managed=landed_revision.bookmark_managed,
+            bookmark=landed_revision.identity.head_ref,
+            bookmark_managed=landed_revision.identity.manages_bookmark,
             cleanup_user_bookmarks=cleanup_user_bookmarks,
             prefix=prefix,
             bookmark_state=bookmark_states.get(
-                landed_revision.bookmark,
-                BookmarkState(name=landed_revision.bookmark),
+                landed_revision.identity.head_ref,
+                BookmarkState(name=landed_revision.identity.head_ref),
             ),
-            change_id=landed_revision.change_id,
             commit_id=landed_revision.commit_id,
         )
         if cleanup_plan is not None:
-            cleanup_plans.append(cleanup_plan)
-    return tuple(cleanup_plans)
+            cleanup_actions[landed_revision.change_id] = cleanup_plan
+    return cleanup_actions

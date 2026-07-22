@@ -491,13 +491,14 @@ class GithubClient:
     async def merge_pull_request(
         self,
         *,
+        expected_head_sha: str,
         pull_number: int,
         merge_method: str,
     ) -> None:
         response = await self._request(
             "PUT",
             f"{self._repo_path}/pulls/{pull_number}/merge",
-            json={"merge_method": merge_method},
+            json={"merge_method": merge_method, "sha": expected_head_sha},
         )
         self._expect_success(response)
 

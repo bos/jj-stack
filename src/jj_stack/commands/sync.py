@@ -39,11 +39,7 @@ from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
 from jj_stack.github.resolution import GithubTarget, resolve_github_target
 from jj_stack.jj.client import JjCliArgs
-from jj_stack.review.landed import (
-    BookmarkCleanupPolicy,
-    LandedReviewResult,
-    run_landed_review_sweep,
-)
+from jj_stack.review.landed import LandedReviewResult, run_landed_review_sweep
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 HELP = "Fetch remote state and repair reviewed stacks after merges"
@@ -140,16 +136,11 @@ def sweep_landed_reviews(*, context: CommandContext, dry_run: bool) -> None:
         return
     trunk_commit_id = context.jj_client.resolve_revision("trunk()").commit_id
     results = run_landed_review_sweep(
-        bookmark_policy=BookmarkCleanupPolicy(
-            cleanup_bookmarks=True,
-            cleanup_user_bookmarks=context.config.cleanup_user_bookmarks,
-            prefix=context.config.bookmark_prefix,
-        ),
+        cleanup_bookmarks=True,
+        context=context,
         dry_run=dry_run,
-        jj_client=context.jj_client,
         remote_name=target.remote.name,
         repository=target.repository,
-        state_store=context.state_store,
         trunk_commit_id=trunk_commit_id,
     )
     render_sweep_results(dry_run=dry_run, results=results)

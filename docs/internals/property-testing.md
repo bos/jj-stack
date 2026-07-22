@@ -401,11 +401,10 @@ For the submitted stack as a whole:
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
-The current property harness still encodes automatic diff-equivalent resubmission. That is an
-implementation gap, not accepted behavior. Slice R1 separated identity from baseline in the
-harness and removed mechanism-level journal assertions. The exact-snapshot, interruption, and
-observable-outcome oracles replace the remaining gap in the corresponding implementation
-slices.
+Slice R1 separated identity from baseline in the harness and removed mechanism-level journal
+assertions. Slice R2 made every rewritten commit without a later `submit` a stopping boundary,
+including same-diff rebases caused by abandon, move, and reorder edits. Interruption and broader
+observable fixed-point reduction remain in the later replacement slices.
 
 ## Efficiency
 

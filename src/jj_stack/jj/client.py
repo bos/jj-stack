@@ -778,20 +778,6 @@ class JjClient:
         combined_revset = f"({private_commits_revset}) & ({commit_ids_revset})"
         return tuple(self.query_revisions(combined_revset))
 
-    def get_commit_diff(self, revision: str) -> str:
-        """Return the `jj diff` output for one revision against its parent."""
-
-        return self._run_jj(
-            (
-                "diff",
-                "--git",
-                "--no-pager",
-                "-r",
-                _quote_revset_symbol(revision),
-            ),
-            ignore_working_copy=True,
-        )
-
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
         """List configured Git remotes for the repository."""
 
@@ -907,6 +893,25 @@ class JjClient:
         for bookmark in ordered_bookmarks:
             command.extend(["--bookmark", bookmark])
         self._run_jj(command)
+
+    def push_bookmark_with_lease(
+        self,
+        *,
+        remote_target: str,
+        bookmark: str,
+        desired_target: str,
+        expected_remote_target: str,
+    ) -> None:
+        """Move one remote bookmark only from its exact expected target."""
+
+        self._run_git(
+            (
+                "push",
+                f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}",
+                remote_target,
+                f"{desired_target}:refs/heads/{bookmark}",
+            )
+        )
 
     def fetch_remote(
         self,

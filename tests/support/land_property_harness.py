@@ -1159,9 +1159,7 @@ def replay_land_retry_scenario(
     install_fault()
     exit_code = run_cli(("land",))
     captured = read_output()
-    # Every fault surfaces as a failed run: ambiguous push loss and a lost
-    # retirement save raise, and a failed finalization load is reported as a
-    # skipped landed review. None of them leaves replay state behind.
+    # Every fault surfaces as a failed run. None of these paths needs replay state.
     assert exit_code == EXIT_FAILURE, (
         scenario.trace,
         captured.out,

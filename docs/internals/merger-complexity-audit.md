@@ -147,7 +147,8 @@ sloccount \
   src/jj_stack/commands/cleanup/retirement.py \
   src/jj_stack/models/review_state.py \
   src/jj_stack/state/store.py \
-  src/jj_stack/review/landed.py
+  src/jj_stack/review/landed.py \
+  src/jj_stack/review/observation.py
 .venv/bin/ruff check src/jj_stack --select C901 \
   --config 'lint.mccabe.max-complexity=10' --output-format concise
 ```
@@ -161,9 +162,16 @@ evidence, finalization, or equivalent module updates that command before adding 
 | Slice | Production SLOC | Test SLOC | Total SLOC | C901 | Land SLOC | Governed SLOC |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | R1: bound persistent state | 19,656 | 21,120 | 40,776 | 20 | 1,563 | 3,244 |
+| R2: unify mutation authority | 19,713 | 21,234 | 40,947 | 19 | 1,511 | 3,295 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
+
+R2 adds 57 production SLOC and 114 test SLOC relative to R1. The shared observation,
+exact leases, and expected-head guards replace land's diff comparison, review-branch refresh,
+approval-after-refresh, local-trunk rollback machinery, and redundant land-plan fields in the same
+slice. Land shrinks by 52 SLOC, the governed surface meets its final 3,295-SLOC ceiling, and its
+largest module is `commands/cleanup/rebase.py` at 438 SLOC.
 
 ## Test budget
 

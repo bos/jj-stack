@@ -38,7 +38,6 @@ measurement land together.
 
 | Slice | Unimplemented target |
 | --- | --- |
-| R2 | One shared authority observation, reloaded per mutation; exact projection, no refresh. |
 | R3 | Pure landed evidence, selected convergence, shared retirement, and explicit `sync --all`. |
 | R4 | Reduced cross-system, interruption, hostile-scenario, and sparse-cache validation. |
 

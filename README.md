@@ -186,17 +186,16 @@ Your typical author loop is:
 6. If lower changes were merged on GitHub instead of with `jj-stack land`, run
    `jj-stack sync <head-change-id>` when status says convergence is needed.
 
-The production target for `land` pushes the ready, exactly submitted changes at the bottom of
+`land` pushes the ready, exactly submitted changes at the bottom of
 your stack to GitHub trunk, forgets local review bookmarks when no PR above depends on them, and
 retires landed review tracking. It stops before the first change that is not ready or no longer
 matches the snapshot reviewers saw. After any local rewrite, including a rebase with the same
 diff, run `submit` before `land`.
 
-> **Development status:** the landing safety work described above is not implemented yet. The
-> current rework build can update and land a same-diff rewrite in one `land` run, relies on
-> earlier readiness checks, and can retarget or close PRs for other tracked stacks while finishing
-> landed reviews. Always rerun `submit` after a rewrite, inspect `land --dry-run`, and avoid
-> manually retargeting, editing, or merging PRs while `land` runs until those slices land.
+Immediately before mutation, `land` reloads the repository, trunk, exact PR head, and readiness;
+trunk pushes use an exact lease and GitHub merges name the expected head. The remaining merger
+recovery work is still in development: the current build can retarget or close PRs for other
+tracked stacks while finishing landed reviews. Inspect `land --dry-run` until that slice lands.
 
 Selected `sync` is the recovery path when lower changes were merged on GitHub, for example with
 a squash merge, and your local stack still contains old merged ancestors. It rebases the

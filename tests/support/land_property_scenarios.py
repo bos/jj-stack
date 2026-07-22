@@ -7,11 +7,9 @@ stack edits (with or without a follow-up resubmit), approves a prefix of the
 final live stack, then models the prefix `land` must consume and the boundary
 where it must stop.
 
-The walk model stays small because only two properties of an edited change can
-stop the readiness walk: a change whose content no longer matches its remote
-review branch (a rewrite target or a squash destination) is content-divergent,
-and an inserted change without a resubmit has no pull request. Every other
-rebased change is diff-equivalent, which land refreshes and lands.
+The walk stops at the first rewritten commit that was not resubmitted, even when
+its diff is unchanged. An inserted change without a resubmit also has no pull
+request. `land` never repairs either projection boundary itself.
 """
 
 from __future__ import annotations
@@ -55,7 +53,7 @@ def simulate_land_edits(
     edits: tuple[LandEditOperation, ...],
     initial_labels: tuple[str, ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...], frozenset[str]]:
-    """Return (final live labels, orphaned labels, content-divergent labels).
+    """Return (final live labels, orphaned labels, rewritten labels).
 
     Raises ValueError for edit traces that are not reachable in order, so both
     scenario validation and random generation share one source of truth.
@@ -63,14 +61,14 @@ def simulate_land_edits(
 
     live = initial_labels
     orphaned: list[str] = []
-    divergent: set[str] = set()
+    rewritten: set[str] = set()
     for operation in edits:
         effect = apply_stack_edit(live, operation)
         live = effect.live_labels
         if effect.removed_label is not None:
             orphaned.append(effect.removed_label)
-        divergent.update(effect.content_divergent_labels)
-    return live, tuple(orphaned), frozenset(divergent)
+        rewritten.update(effect.rewritten_labels)
+    return live, tuple(orphaned), frozenset(rewritten)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +128,7 @@ class LandScenario:
         return self._simulate()[1]
 
     @property
-    def divergent_labels(self) -> frozenset[str]:
+    def rewritten_labels(self) -> frozenset[str]:
         return self._simulate()[2]
 
     def label_has_pull_request(self, label: str) -> bool:
@@ -148,9 +146,7 @@ class LandScenario:
             return True
         if not self.label_has_pull_request(label):
             return True
-        if not self.resubmit_after_edit and label in self.divergent_labels:
-            # The remote review branch still holds the pre-edit commit, so the
-            # local change differs from what reviewers approved.
+        if not self.resubmit_after_edit and label in self.rewritten_labels:
             return True
         return False
 
@@ -342,34 +338,12 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             approved_prefix=3,
         ),
         LandScenario(
-            name="push-abandon-auto-resubmits-rebased-survivors",
+            name="push-abandon-without-resubmit-stops-at-rebased-survivor",
             initial_size=3,
             via="push",
             edits=(LandEditOperation(kind="abandon", label=initial_land_label(2)),),
             resubmit_after_edit=False,
             approved_prefix=2,
-        ),
-        LandScenario(
-            name="push-reorder-without-resubmit-auto-resubmits-moved-prefix",
-            initial_size=3,
-            via="push",
-            edits=(LandEditOperation(kind="move_to_top", label=initial_land_label(1)),),
-            resubmit_after_edit=False,
-            approved_prefix=3,
-        ),
-        LandScenario(
-            name="push-move-after-without-resubmit-auto-resubmits-moved-prefix",
-            initial_size=3,
-            via="push",
-            edits=(
-                LandEditOperation(
-                    kind="move_after",
-                    label=initial_land_label(1),
-                    target_label=initial_land_label(2),
-                ),
-            ),
-            resubmit_after_edit=False,
-            approved_prefix=3,
         ),
         LandScenario(
             name="push-squash-without-resubmit-stops-at-divergent-destination",
@@ -434,7 +408,7 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             unmergeable_pull_number=2,
         ),
         LandScenario(
-            name="merge-abandon-auto-resubmits-then-merges-survivors",
+            name="merge-abandon-without-resubmit-stops-at-rebased-survivor",
             initial_size=3,
             via="merge",
             edits=(LandEditOperation(kind="abandon", label=initial_land_label(2)),),
@@ -442,7 +416,7 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             approved_prefix=2,
         ),
         LandScenario(
-            name="merge-reorder-without-resubmit-merges-reordered-prefix",
+            name="merge-reorder-without-resubmit-stops-at-rewritten-prefix",
             initial_size=3,
             via="merge",
             edits=(
