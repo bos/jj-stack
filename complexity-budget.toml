@@ -13,7 +13,31 @@ governed_c901 = 0
 
 [pytest]
 fixed_property = 16
-merger_replacement = 30
+landing_recovery = 30
+
+[labels]
+production = "Production"
+tests = "Tests"
+total = "Production and tests combined"
+checker = "Complexity checker"
+land = "Landing command"
+governed = "Landing and recovery code"
+c901 = "Production"
+governed_c901 = "Landing and recovery code"
+fixed_property = "Property-test cases"
+landing_recovery = "Landing and recovery cases"
+
+[units]
+production = "line"
+tests = "line"
+total = "line"
+checker = "line"
+land = "line"
+governed = "line"
+c901 = "function"
+governed_c901 = "function"
+fixed_property = "case"
+landing_recovery = "case"
 
 [paths]
 production = ["src"]
@@ -34,4 +58,4 @@ fixed_property = [
   "tests/property/submit_property_scenarios.py",
   "tests/property/land_property_scenarios.py",
 ]
-merger_replacement = ["tests"]
+landing_recovery = ["tests"]

@@ -169,6 +169,14 @@ fixed-property and replacement-specific pytest items. The dedicated Linux CI job
 SLOCCount dependency; the normal verification matrix remains cross-platform.
 On Windows, use WSL to run the gate locally or rely on the required Linux CI job.
 
+The report groups code size, functions above the complexity threshold, fixed test-case limits,
+and landing/recovery file sizes. Each row says how much room remains, whether the limit is full,
+or how far it is over. When every governed file passes, the report shows only the three closest to
+the per-file limit; a failure shows every file over the limit. Source-line measurements are
+physical lines counted by SLOCCount. Ruff `C901` findings count functions over the configured
+McCabe complexity threshold of 10. The collected-test limits cap deterministic test growth; they
+are not coverage targets.
+
 ## Replacement measurements
 
 | Slice | Production SLOC | Test SLOC | Total SLOC | C901 | Land SLOC | Governed SLOC |
@@ -183,6 +191,8 @@ On Windows, use WSL to run the gate locally or rely on the required Linux CI job
 | P4: simplify internal language | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
 | P5: batch recovery reads | 19,743 | 20,964 | 40,707 | 17 | 1,531 | 3,294 |
 | P6: close cross-slice audit | 19,743 | 20,928 | 40,671 | 17 | 1,531 | 3,294 |
+| P7: explain budget reports | 19,743 | 20,969 | 40,712 | 17 | 1,531 | 3,294 |
+| P8: simplify budget reports | 19,743 | 21,008 | 40,751 | 17 | 1,531 | 3,294 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
@@ -237,6 +247,21 @@ replacement-test budget; overlapping authority variants and a duplicate recovery
 consolidated to keep that budget at 30. Active guides no longer certify their own status or direct
 contributors to record future slice history there; `jj` remains the implementation record.
 Production is unchanged, while the test tree shrinks by 36 SLOC.
+
+P7 uses the checker's remaining 10-SLOC headroom to make every reported number interpretable in
+CI and local runs. Each row now names its scope and unit, distinguishes a passing measurement from
+a full or failed budget, and shows its signed margin. One reporter-boundary test covers
+below-limit, at-limit, and over-limit rows, failure order, final result, and exit status.
+Production is unchanged; the test tree grows by 41 SLOC, and the checker reaches but does not
+exceed its 150-SLOC limit.
+
+P8 removes the glossary-style preamble, status codes, signed margins, and the full list of
+passing governed files introduced by P7. Plain section names and direct phrases make the result
+readable without first learning the gate's vocabulary. The output says `lines available`, `at
+limit`, or `over limit by`. The reporter shows the three governed files closest to the limit when
+they all pass and every failing file otherwise. Production and checker size are unchanged; the
+reporter-boundary test grows by 39 SLOC to protect the simpler output, passing summary, and
+complete failure list.
 
 ## Test budget
 

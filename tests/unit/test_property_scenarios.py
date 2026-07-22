@@ -24,7 +24,7 @@ from tests.support.submit_property_scenarios import (
 )
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_default_property_corpus_stays_within_its_sixteen_case_budget() -> None:
     assert (
         sum(

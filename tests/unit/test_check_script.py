@@ -83,3 +83,90 @@ def test_complexity_collection_ignores_property_and_pytest_overrides(
     assert "PYTEST_ADDOPTS" not in environment
     assert "JJ_STACK_SUBMIT_PROPERTY_SCENARIOS" not in environment
     assert environment["UNRELATED_SETTING"] == "kept"
+
+
+def test_complexity_report_explains_numbers_and_owns_its_exit_status(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    labels = {
+        "production": "Production",
+        "tests": "Tests",
+        "total": "Production and tests combined",
+        "checker": "Complexity checker",
+        "land": "Landing command",
+        "governed": "Landing and recovery code",
+        "c901": "Production",
+        "governed_c901": "Landing and recovery code",
+        "fixed_property": "Property-test cases",
+        "landing_recovery": "Landing and recovery cases",
+    }
+    limits = {name: 10 for name in labels} | {"governed_module": 5}
+    limits["governed_c901"] = 0
+    measured = {name: 8 for name in labels}
+    measured |= {"checker": 10, "land": 12, "governed": 11, "governed_c901": 0}
+    units = {
+        name: "line" for name in ("production", "tests", "total", "checker", "land", "governed")
+    }
+    units |= {"c901": "function", "governed_c901": "function"}
+    units |= {"fixed_property": "case", "landing_recovery": "case"}
+
+    exit_code = complexity_script._report(
+        labels,
+        limits,
+        measured,
+        {Path("safe.py"): 4, Path("over.py"): 6, Path("highest.py"): 7},
+        units,
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Code size" in captured.out
+    assert "Production: 8 lines (limit 10 lines; 2 lines available)" in captured.out
+    assert "Complexity checker: 10 lines (limit 10 lines; at limit)" in captured.out
+    assert "Landing command: 12 lines (limit 10 lines; OVER LIMIT by 2 lines)" in captured.out
+    assert "Functions with a complexity score above 10" in captured.out
+    assert (
+        "Landing and recovery code: 0 functions (limit 0 functions; requirement met)"
+        in captured.out
+    )
+    assert "Fixed test-case limits" in captured.out
+    assert "Landing/recovery file sizes (3 files; 5-line limit each)" in captured.out
+    assert "Over limit:" in captured.out
+    assert "highest.py: 7 lines (limit 5 lines; OVER LIMIT by 2 lines)" in captured.out
+    assert "over.py: 6 lines (limit 5 lines; OVER LIMIT by 1 line)" in captured.out
+    assert "safe.py" not in captured.out
+    assert "Margin is limit minus measured" not in captured.out
+    assert "quality scores" not in captured.out
+    assert "Result: failed" in captured.err
+    assert "highest.py: OVER LIMIT by 2 lines" in captured.err
+    assert "over.py: OVER LIMIT by 1 line" in captured.err
+    assert captured.err.index("Landing command") < captured.err.index("Landing and recovery code")
+    assert captured.err.index("highest.py") < captured.err.index("over.py")
+
+    passing_measured = {name: min(value, limits[name]) for name, value in measured.items()}
+    passing_exit_code = complexity_script._report(
+        labels,
+        limits,
+        passing_measured,
+        {
+            Path("hidden.py"): 1,
+            Path("z-tie.py"): 3,
+            Path("second.py"): 3,
+            Path("near.py"): 4,
+            Path("fourth.py"): 2,
+        },
+        units,
+    )
+    passing = capsys.readouterr()
+
+    assert passing_exit_code == 0
+    assert "Closest to the limit:" in passing.out
+    assert "near.py" in passing.out
+    assert "second.py" in passing.out
+    assert "z-tie.py" in passing.out
+    assert passing.out.index("near.py") < passing.out.index("second.py")
+    assert passing.out.index("second.py") < passing.out.index("z-tie.py")
+    assert "fourth.py" not in passing.out
+    assert "hidden.py" not in passing.out
+    assert "Result: all 15 limits passed" in passing.out
+    assert passing.err == ""

@@ -322,7 +322,7 @@ def test_land_bypass_readiness_previews_and_finalizes_unapproved_change(
     assert read_remote_ref(fake_repo.git_dir, "main") == stack.revisions[0].commit_id
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_requires_submit_after_diff_equivalent_rebase(
     tmp_path: Path,
     monkeypatch,
@@ -471,7 +471,7 @@ def test_land_rerun_after_failed_push_replans_from_current_state(
     assert read_remote_ref(fake_repo.git_dir, "main") == first_landable_commit_id
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_rechecks_exact_review_head_before_direct_push(
     tmp_path: Path,
     monkeypatch,
@@ -521,7 +521,7 @@ def test_land_rechecks_exact_review_head_before_direct_push(
     assert state_store.load() == state_before
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_does_not_overwrite_a_concurrent_local_trunk_move(
     tmp_path: Path,
     monkeypatch,
@@ -554,7 +554,7 @@ def test_land_does_not_overwrite_a_concurrent_local_trunk_move(
     assert client.get_bookmark_state("main").local_target == concurrent_target
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_exact_lease_rejects_concurrent_trunk_move(
     tmp_path: Path,
     monkeypatch,
@@ -588,7 +588,7 @@ def test_land_exact_lease_rejects_concurrent_trunk_move(
     assert state_store.load() == state_before
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_reauthorizes_after_retarget_before_closing_direct_push_review(
     tmp_path: Path,
     monkeypatch,
@@ -636,7 +636,7 @@ def test_land_reauthorizes_after_retarget_before_closing_direct_push_review(
     assert second.change_id in state_store.load().review_identities
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_rechecks_duplicate_saved_identity_claims_after_planning(
     tmp_path: Path,
     monkeypatch,
@@ -775,7 +775,7 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     assert fake_repo.pull_requests[3].base_ref == "main"
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_sync_preserves_merged_review_whose_saved_repository_no_longer_matches(
     tmp_path: Path,
     monkeypatch,
@@ -814,7 +814,7 @@ def test_sync_preserves_merged_review_whose_saved_repository_no_longer_matches(
     assert change_id_1 in state.submitted_baselines
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_selected_sync_preserves_landed_review_with_local_edits_since_submit(
     tmp_path: Path,
     monkeypatch,
@@ -855,7 +855,7 @@ def test_selected_sync_preserves_landed_review_with_local_edits_since_submit(
     assert change_id_1 in state.submitted_baselines
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_with_clean_plan_does_not_touch_an_unrelated_straggler(
     tmp_path: Path,
     monkeypatch,
@@ -1001,7 +1001,7 @@ def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
         assert change_id not in state.submitted_baselines
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_via_merge_reports_an_accepted_prefix_when_trunk_refresh_fails(
     tmp_path: Path,
     monkeypatch,
@@ -1035,7 +1035,7 @@ def test_land_via_merge_reports_an_accepted_prefix_when_trunk_refresh_fails(
     assert revision.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_via_merge_rechecks_readiness_after_retarget(
     tmp_path: Path,
     monkeypatch,
@@ -1080,7 +1080,7 @@ def test_land_via_merge_rechecks_readiness_after_retarget(
     assert fake_repo.pull_requests[2].merged_at is None
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_via_merge_expected_head_guard_rejects_race(
     tmp_path: Path,
     monkeypatch,

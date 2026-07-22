@@ -45,7 +45,7 @@ def _pull_request(**updates: object) -> GithubPullRequest:
     return pull_request.model_copy(update=updates)
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
     rows = (
         ("on_trunk", _pull_request(), "octo-org", "landed"),
@@ -87,7 +87,7 @@ def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
         assert result.state == expected
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
     rows = (
         (_pull_request(), None, "not_merged"),

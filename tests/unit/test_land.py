@@ -60,7 +60,7 @@ class _ProjectionCase:
     with_submitted_baseline: bool = True
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_projection_table_covers_exactness_and_boundary_precedence() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     projection_message = "do not all identify the same exact commit"
@@ -145,7 +145,7 @@ def test_land_projection_table_covers_exactness_and_boundary_precedence() -> Non
             assert projection_message not in rendered, case.name
 
 
-@pytest.mark.merger_replacement
+@pytest.mark.landing_recovery
 def test_land_repository_authority_table_covers_repository_and_default_branch_drift() -> None:
     expected_repository = GithubRepoAddress(
         host="github.test",
