@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
@@ -43,13 +43,15 @@ def review_pull_request_json(
                 "url": pull_request.html_url,
             }
         )
-    return cached_pull_request_json(revision.cached_change)
+    return saved_pull_request_json(revision.review_identity)
 
 
-def cached_pull_request_json(cached_change: CachedChange | None) -> dict[str, object] | None:
-    if cached_change is None:
+def saved_pull_request_json(
+    review_identity: ReviewIdentity | None,
+) -> dict[str, object] | None:
+    if review_identity is None:
         return None
-    payload = _json_object({"number": cached_change.pr_number})
+    payload = _json_object({"number": review_identity.pr_number})
     return payload or None
 
 

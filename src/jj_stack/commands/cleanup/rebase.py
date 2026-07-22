@@ -15,11 +15,9 @@ from jj_stack.review.bookmarks import (
 )
 from jj_stack.review.change_status import (
     classify_review_status_revision,
-    classify_saved_review_change,
 )
 from jj_stack.review.selection import resolve_selected_revset
 from jj_stack.review.status import (
-    PreparedStack,
     PreparedStatus,
     ReviewStatusRevision,
     StatusResult,
@@ -27,7 +25,6 @@ from jj_stack.review.status import (
     status_preparation_cli_error,
     stream_status,
 )
-from jj_stack.state.journal import OperationJournal
 
 from .retirement import retire_merged_ancestors
 from .shared import (
@@ -118,8 +115,7 @@ def _prepared_rebase_has_potential_work(*, prepared_status: PreparedStatus) -> b
     """
 
     for prepared_revision in prepared_status.prepared.status_revisions:
-        cached = prepared_revision.cached_change
-        if classify_saved_review_change(cached, local="present").saved_review_identity:
+        if prepared_revision.review_identity is not None:
             return True
     return False
 
@@ -180,104 +176,48 @@ def _stream_rebase(
     for action in operation_plan.pre_actions:
         recorder.record(action)
 
-    rebase_journal = _start_rebase_operation_log(
-        blocked=blocked,
-        prepared=prepared,
-        prepared_rebase=prepared_rebase,
-        selected_revset=status_result.selected_revset,
-    )
-
     client = prepared.client
-    _rebase_succeeded = False
-    try:
-        _run_rebase_pass(
-            blocked=blocked,
-            client=client,
-            closed_unmerged_revisions=closed_unmerged_revisions,
-            prepared_rebase=prepared_rebase,
-            rebase_plans=operation_plan.rebase_plans,
-            record_action=recorder.record,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
-        )
-
-        retire_merged_ancestors(
-            blocked=blocked,
-            client=client,
-            journal=rebase_journal,
-            merged_revisions=merged_revisions,
-            prepared_rebase=prepared_rebase,
-            prepared_status=prepared_status,
-            record_action=recorder.record,
-        )
-
-        _record_rebase_policy_actions(
-            prefix=prepared_rebase.context.config.bookmark_prefix,
-            merged_revisions=merged_revisions,
-            record_action=recorder.record,
-        )
-
-        if not recorder.actions and merged_revisions:
-            recorder.record(
-                CleanupAction(
-                    kind="rebase",
-                    status="planned" if prepared_rebase.dry_run else "applied",
-                    body=t"merged changes remain on the selected stack "
-                    t"({ui.join(_revision_label_template, merged_revisions)}), but no "
-                    t"surviving descendants need to move",
-                )
-            )
-
-        _rebase_succeeded = True
-        return RebaseResult(
-            actions=recorder.as_tuple(),
-            blocked=blocked,
-            fully_merged=bool(path_revisions)
-            and len(merged_revisions) == len(path_revisions),
-        )
-    finally:
-        if _rebase_succeeded:
-            ordered_change_ids = tuple(
-                prepared_revision.revision.change_id
-                for prepared_revision in prepared.status_revisions
-            )
-            rebase_journal.append(
-                "completed",
-                {"ordered_change_ids": ordered_change_ids},
-            )
-
-
-def _start_rebase_operation_log(
-    *,
-    blocked: bool,
-    prepared: PreparedStack,
-    prepared_rebase: PreparedRebase,
-    selected_revset: str,
-) -> OperationJournal:
-    """Write a rebase operation log entry before live rebases begin."""
-
-    if blocked or prepared_rebase.dry_run:
-        return OperationJournal.disabled()
-
-    ordered_change_ids = tuple(
-        str(prepared_revision.revision.change_id)
-        for prepared_revision in prepared.status_revisions
+    _run_rebase_pass(
+        blocked=blocked,
+        client=client,
+        closed_unmerged_revisions=closed_unmerged_revisions,
+        prepared_rebase=prepared_rebase,
+        rebase_plans=operation_plan.rebase_plans,
+        record_action=recorder.record,
+        trunk_commit_id=prepared.stack.trunk.commit_id,
     )
-    ordered_commit_ids = tuple(
-        str(prepared_revision.revision.commit_id)
-        for prepared_revision in prepared.status_revisions
+
+    retire_merged_ancestors(
+        blocked=blocked,
+        client=client,
+        merged_revisions=merged_revisions,
+        prepared_rebase=prepared_rebase,
+        prepared_status=prepared_status,
+        record_action=recorder.record,
     )
-    state_dir = prepared.state_store.require_writable()
-    journal = OperationJournal.begin(
-        state_dir,
-        operation="cleanup-rebase",
-        options={},
-        resolved_scope={
-            "ordered_change_ids": ordered_change_ids,
-            "ordered_commit_ids": ordered_commit_ids,
-            "selected_revset": selected_revset,
-        },
+
+    _record_rebase_policy_actions(
+        prefix=prepared_rebase.context.config.bookmark_prefix,
+        merged_revisions=merged_revisions,
+        record_action=recorder.record,
     )
-    return journal
+
+    if not recorder.actions and merged_revisions:
+        recorder.record(
+            CleanupAction(
+                kind="rebase",
+                status="planned" if prepared_rebase.dry_run else "applied",
+                body=t"merged changes remain on the selected stack "
+                t"({ui.join(_revision_label_template, merged_revisions)}), but no "
+                t"surviving descendants need to move",
+            )
+        )
+
+    return RebaseResult(
+        actions=recorder.as_tuple(),
+        blocked=blocked,
+        fully_merged=bool(path_revisions) and len(merged_revisions) == len(path_revisions),
+    )
 
 
 def _record_rebase_policy_actions(
@@ -376,8 +316,6 @@ def _run_rebase_pass(
         )
 
 
-
-
 def _rebase_destination_commit_id(
     *,
     client: JjClient,
@@ -412,8 +350,7 @@ def _plan_rebase_operations(
         if classified.status.pr_lifecycle == "closed"
     )
     classified_revisions_by_change_id = {
-        classified.revision.change_id: classified
-        for classified in classified_path_revisions
+        classified.revision.change_id: classified for classified in classified_path_revisions
     }
     current_commit_id_by_change_id = {
         prepared_revision.revision.change_id: prepared_revision.revision.commit_id
@@ -470,11 +407,11 @@ def _collect_rebase_pre_actions(
 
     for classified in merged_revisions:
         revision = classified.revision
-        cached_change = revision.cached_change
-        if cached_change is None or cached_change.last_submitted_commit_id is None:
+        baseline = revision.submitted_baseline
+        if baseline is None:
             continue
         current_commit_id = current_commit_id_by_change_id[revision.change_id]
-        if current_commit_id == cached_change.last_submitted_commit_id:
+        if current_commit_id == baseline.commit_id:
             continue
         blocked = True
         actions.append(

@@ -212,8 +212,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         land_handoff_scenarios = max(5, args.scenarios // 40)
     env["JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS"] = str(land_handoff_scenarios)
 
-    venv_python = REPO_ROOT / ".venv" / (
-        Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+    venv_python = (
+        REPO_ROOT
+        / ".venv"
+        / (Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python"))
     )
     test_files = [str(path.relative_to(REPO_ROOT)) for path in PROPERTY_TEST_FILES]
     command = [

@@ -15,20 +15,9 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.errors import CliError
 from jj_stack.jj.client import JjCliArgs
-from jj_stack.models.review_state import CachedChange
-from jj_stack.review.bookmarks import bookmark_ownership_for_source
-from jj_stack.review.change_status import (
-    ReviewChangeStatus,
-    classify_review_status_revision,
-    classify_saved_review_change,
-)
 from jj_stack.review.selection import resolve_selected_revset
 from jj_stack.review.status import (
-    PreparedRevision,
-    ReviewStatusRevision,
-    StatusResult,
     prepare_status,
-    stream_status_async,
 )
 from jj_stack.state.operation_lock import acquire_operation_lock
 
@@ -102,48 +91,17 @@ async def _run_unlink_async(
         prepared_status = prepare_status(
             context=context,
             fetch_remote_state=False,
-            persist_bookmarks=False,
             revset=revset,
         )
     prepared = prepared_status.prepared
     if not prepared.status_revisions:
         raise CliError("The selected stack has no changes to review.")
 
-    progress_total = prepared_status.github_inspection_count()
-    with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
-        status_result = await stream_status_async(
-            persist_cache_updates=False,
-            prepared_status=prepared_status,
-            on_revision=lambda _revision, _github_available: progress.advance(),
-        )
     prepared_revision = prepared.status_revisions[-1]
-    status_revision = _status_revision_for_change(
-        status_result=status_result,
-        change_id=prepared_revision.revision.change_id,
-    )
     state = context.state_store.load()
-    cached_change = state.changes.get(prepared_revision.revision.change_id)
-    bookmark = _resolved_unlink_bookmark(
-        cached_change=cached_change,
-        prepared_revision=prepared_revision,
-        status_revision=status_revision,
-    )
-    review_status = classify_review_status_revision(status_revision)
-    if review_status.link == "unlinked":
-        return UnlinkResult(
-            already_unlinked=True,
-            bookmark=bookmark,
-            change_id=prepared_revision.revision.change_id,
-            subject=prepared_revision.revision.subject,
-        )
-
-    if not _revision_has_active_review_link(
-        bookmark=bookmark,
-        cached_change=cached_change,
-        context=context,
-        prepared_revision=prepared_revision,
-        review_status=review_status,
-    ):
+    change_id = prepared_revision.revision.change_id
+    identity = state.review_identities.get(change_id)
+    if identity is None:
         raise CliError(
             t"The selected change has no active review tracking link to unlink.",
             hint=(
@@ -151,77 +109,21 @@ async def _run_unlink_async(
                 t"intentionally."
             ),
         )
-
-    updated_change = (cached_change or CachedChange(bookmark=bookmark)).model_copy(
-        update={
-            "bookmark": bookmark,
-            "bookmark_ownership": (
-                cached_change.bookmark_ownership
-                if cached_change is not None
-                else bookmark_ownership_for_source(status_revision.bookmark_source)
-            ),
-            "link_state": "unlinked",
-        }
-    ).with_cleared_pr_identity()
-    next_state = state.model_copy(
-        update={
-            "changes": {
-                **state.changes,
-                prepared_revision.revision.change_id: updated_change,
-            }
-        }
+    if identity.is_unlinked:
+        return UnlinkResult(
+            already_unlinked=True,
+            bookmark=identity.head_ref,
+            change_id=change_id,
+            subject=prepared_revision.revision.subject,
+        )
+    context.state_store.set_link_state(
+        change_id,
+        expected_identity=identity,
+        link_state="unlinked",
     )
-    context.state_store.save(next_state)
     return UnlinkResult(
         already_unlinked=False,
-        bookmark=bookmark,
-        change_id=prepared_revision.revision.change_id,
+        bookmark=identity.head_ref,
+        change_id=change_id,
         subject=prepared_revision.revision.subject,
     )
-
-
-def _resolved_unlink_bookmark(
-    *,
-    cached_change: CachedChange | None,
-    prepared_revision: PreparedRevision,
-    status_revision: ReviewStatusRevision,
-) -> str | None:
-    if cached_change is not None and cached_change.bookmark is not None:
-        return cached_change.bookmark
-    pull_request_lookup = status_revision.pull_request_lookup
-    if pull_request_lookup is not None and pull_request_lookup.pull_request is not None:
-        return pull_request_lookup.pull_request.head.ref
-    if prepared_revision.bookmark_source != "generated":
-        return prepared_revision.bookmark
-    return None
-
-
-def _revision_has_active_review_link(
-    *,
-    bookmark: str | None,
-    cached_change: CachedChange | None,
-    context: CommandContext,
-    prepared_revision: PreparedRevision,
-    review_status: ReviewChangeStatus,
-) -> bool:
-    cached_status = classify_saved_review_change(cached_change, local="present")
-    if cached_status.link == "active" and cached_status.saved_review_identity:
-        return True
-    if bookmark is not None:
-        bookmark_state = context.jj_client.get_bookmark_state(bookmark)
-        if bookmark_state.local_target == prepared_revision.revision.commit_id:
-            return True
-    if review_status.remote_branch != "absent":
-        return True
-    return review_status.pr_lifecycle in {"open", "closed", "merged"}
-
-
-def _status_revision_for_change(
-    *,
-    status_result: StatusResult,
-    change_id: str,
-) -> ReviewStatusRevision:
-    for revision in status_result.revisions:
-        if revision.change_id == change_id:
-            return revision
-    raise AssertionError("Selected unlink change is missing from the status result.")

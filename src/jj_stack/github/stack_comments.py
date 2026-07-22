@@ -62,6 +62,4 @@ async def delete_stack_comment(
     except GithubClientError as error:
         if error.status_code == 404:
             return
-        raise CliError(
-            f"Could not delete {stack_comment_label(kind)} #{comment_id}"
-        ) from error
+        raise CliError(f"Could not delete {stack_comment_label(kind)} #{comment_id}") from error

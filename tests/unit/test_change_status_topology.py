@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from jj_stack.models.review_state import CachedChange, LinkState, ReviewState
+from jj_stack.models.review_state import (
+    LinkState,
+    ReviewIdentity,
+    ReviewState,
+    SubmittedBaseline,
+)
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.change_status import (
     enumerate_orphaned_records,
@@ -36,15 +41,20 @@ def _stack(
     )
 
 
-def _tracked(
+def _identity(
     *,
-    commit_id: str | None = None,
+    link_state: LinkState = "active",
     pr_number: int = 1,
-) -> CachedChange:
-    return CachedChange(
-        bookmark="review/example",
-        last_submitted_commit_id=commit_id,
+) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="stacked-review",
         pr_number=pr_number,
+        head_owner="octo-org",
+        head_ref="review/example",
+        bookmark_ownership="managed",
+        link_state=link_state,
     )
 
 
@@ -53,10 +63,14 @@ def test_submitted_state_disagreement_returns_empty_when_saved_state_matches() -
     b = _revision("change-b")
     stack = _stack(a, b)
     state = ReviewState(
-        changes={
-            "change-a": _tracked(commit_id=a.commit_id, pr_number=1),
-            "change-b": _tracked(commit_id=b.commit_id, pr_number=2),
-        }
+        review_identities={
+            "change-a": _identity(pr_number=1),
+            "change-b": _identity(pr_number=2),
+        },
+        submitted_baselines={
+            "change-a": SubmittedBaseline(commit_id=a.commit_id),
+            "change-b": SubmittedBaseline(commit_id=b.commit_id),
+        },
     )
 
     assert submitted_state_disagreement(state, (stack,)) == ()
@@ -66,9 +80,8 @@ def test_submitted_state_disagreement_flags_rewritten_commit() -> None:
     a = _revision("change-a")
     stack = _stack(a)
     state = ReviewState(
-        changes={
-            "change-a": _tracked(commit_id="old-commit-change-a"),
-        }
+        review_identities={"change-a": _identity()},
+        submitted_baselines={"change-a": SubmittedBaseline(commit_id="old-commit-change-a")},
     )
 
     assert submitted_state_disagreement(state, (stack,)) == ("change-a",)
@@ -77,14 +90,7 @@ def test_submitted_state_disagreement_flags_rewritten_commit() -> None:
 def test_submitted_state_disagreement_skips_records_without_saved_baseline() -> None:
     a = _revision("change-a")
     stack = _stack(a)
-    state = ReviewState(
-        changes={
-            "change-a": CachedChange(
-                bookmark="review/example",
-                pr_number=1,
-            )
-        }
-    )
+    state = ReviewState(review_identities={"change-a": _identity()})
 
     assert submitted_state_disagreement(state, (stack,)) == ()
 
@@ -93,13 +99,8 @@ def test_submitted_state_disagreement_skips_unlinked_records_even_when_stale() -
     a = _revision("change-a")
     stack = _stack(a)
     state = ReviewState(
-        changes={
-            "change-a": CachedChange(
-                bookmark="review/example",
-                last_submitted_commit_id="old-commit-change-a",
-                link_state="unlinked",
-            )
-        }
+        review_identities={"change-a": _identity(link_state="unlinked")},
+        submitted_baselines={"change-a": SubmittedBaseline(commit_id="old-commit-change-a")},
     )
 
     assert submitted_state_disagreement(state, (stack,)) == ()
@@ -107,12 +108,10 @@ def test_submitted_state_disagreement_skips_unlinked_records_even_when_stale() -
 
 def _orphan_record(
     *,
-    pr_number: int | None = 42,
+    pr_number: int = 42,
     link_state: LinkState = "active",
-    bookmark: str | None = "review/example",
-) -> CachedChange:
-    return CachedChange(
-        bookmark=bookmark,
+) -> ReviewIdentity:
+    return _identity(
         link_state=link_state,
         pr_number=pr_number,
     )
@@ -122,10 +121,11 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
     a = _revision("change-live")
     stack = _stack(a)
     state = ReviewState(
-        changes={
-            "change-live": _tracked(commit_id="commit-change-live", pr_number=1),
+        review_identities={
+            "change-live": _identity(pr_number=1),
             "change-orphan": _orphan_record(),
-        }
+        },
+        submitted_baselines={"change-live": SubmittedBaseline(commit_id="commit-change-live")},
     )
 
     orphans = enumerate_orphaned_records(state, (stack,))
@@ -134,29 +134,16 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
 
 
 def test_enumerate_orphaned_records_reports_every_active_record_with_a_pr() -> None:
-    state = ReviewState(
-        changes={"change-orphan": _orphan_record()}
-    )
+    state = ReviewState(review_identities={"change-orphan": _orphan_record()})
 
     orphans = enumerate_orphaned_records(state, ())
 
     assert tuple(orphan.change_id for orphan in orphans) == ("change-orphan",)
 
 
-def test_enumerate_orphaned_records_skips_records_without_pr_number() -> None:
-    state = ReviewState(
-        changes={
-            "change-open": _orphan_record(pr_number=None),
-            "change-unknown": _orphan_record(pr_number=None),
-        }
-    )
-
-    assert enumerate_orphaned_records(state, ()) == ()
-
-
 def test_enumerate_orphaned_records_skips_unlinked_records() -> None:
     state = ReviewState(
-        changes={
+        review_identities={
             "change-detached": _orphan_record(link_state="unlinked"),
         }
     )
@@ -170,10 +157,14 @@ def test_submitted_state_disagreement_inspects_each_stack_independently() -> Non
     stack_one = _stack(a)
     stack_two = _stack(b)
     state = ReviewState(
-        changes={
-            "change-a": _tracked(commit_id=a.commit_id, pr_number=1),
-            "change-b": _tracked(commit_id="old-commit-change-b", pr_number=2),
-        }
+        review_identities={
+            "change-a": _identity(pr_number=1),
+            "change-b": _identity(pr_number=2),
+        },
+        submitted_baselines={
+            "change-a": SubmittedBaseline(commit_id=a.commit_id),
+            "change-b": SubmittedBaseline(commit_id="old-commit-change-b"),
+        },
     )
 
     assert submitted_state_disagreement(state, (stack_one, stack_two)) == ("change-b",)

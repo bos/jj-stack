@@ -59,7 +59,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands.sync import report_land_note, run_stack_convergence
+from jj_stack.commands.sync import run_stack_convergence
 from jj_stack.errors import CliError, DriftError, UsageError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClientError, build_github_client
@@ -116,9 +116,7 @@ def land(
     """CLI entrypoint for `land`."""
 
     if merge_method is not None and via != "merge":
-        raise UsageError(
-            t"{ui.cmd('--merge-method')} is only used with {ui.cmd('--via merge')}."
-        )
+        raise UsageError(t"{ui.cmd('--merge-method')} is only used with {ui.cmd('--via merge')}.")
     context = bootstrap_context(
         repository=repository,
         cli_args=cli_args,
@@ -128,7 +126,6 @@ def land(
         context.state_store.require_writable(),
         command="land",
     ):
-        report_land_note(context=context, clear=not dry_run)
         return _run_land(
             bypass_readiness=bypass_readiness,
             cleanup_bookmarks=not skip_cleanup,
@@ -194,9 +191,7 @@ def _resolve_land_target(
             pull_request_reference=pull_request,
             revset=revset,
         )
-        console.note(
-            t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}"
-        )
+        console.note(t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}")
         return pull_request_number, resolved_revset
     return (
         None,
@@ -229,6 +224,12 @@ def _prepare_land(
         revset=revset,
     )
     prepared = prepared_status.prepared
+    for revision in prepared.stack.revisions:
+        if prepared.state.issues_for(revision.change_id):
+            raise CliError(
+                t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
+                hint=t"Repair it with {ui.cmd('relink')} before landing the review.",
+            )
     if prepared.remote is None:
         message = prepared.remote_error or t"Could not determine which Git remote to use."
         raise CliError(message)
@@ -237,7 +238,7 @@ def _prepare_land(
         raise CliError(message)
 
     if not dry_run:
-        prepared.state_store.require_writable()
+        context.state_store.require_writable()
     return PreparedLand(
         cleanup_bookmarks=cleanup_bookmarks,
         dry_run=dry_run,
@@ -318,9 +319,7 @@ async def _stream_land_async(
                     bookmark_states=bookmark_states,
                     prefix=prepared_land.context.config.bookmark_prefix,
                     cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-                    cleanup_user_bookmarks=(
-                        prepared_land.context.config.cleanup_user_bookmarks
-                    ),
+                    cleanup_user_bookmarks=(prepared_land.context.config.cleanup_user_bookmarks),
                     planned_revisions=plan.planned_revisions,
                 )
                 return LandResult(

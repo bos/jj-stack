@@ -93,9 +93,7 @@ def load_config(*, jj_client: JjClient) -> AppConfig:
     try:
         stdout = jj_client.read_jj_stack_config_list_output()
     except JjCommandError as error:
-        raise CliError(
-            f"Could not load jj-stack config: {_jj_error_detail(error)}"
-        ) from error
+        raise CliError(f"Could not load jj-stack config: {_jj_error_detail(error)}") from error
     raw = parse_jj_stack_config_toml(stdout)
     _raise_on_likely_config_typos(config_data=raw, source="jj config")
     return _validate_config(raw, source="jj config")
@@ -125,14 +123,10 @@ def parse_jj_stack_config_toml(text: str) -> dict[str, object]:
     try:
         parsed = tomllib.loads(stripped)
     except tomllib.TOMLDecodeError as error:
-        raise CliError(
-            f"Could not parse jj-stack config from jj: {error}"
-        ) from error
+        raise CliError(f"Could not parse jj-stack config from jj: {error}") from error
     section = parsed.get(CONFIG_SECTION, {})
     if not isinstance(section, Mapping):
-        raise CliError(
-            f"Invalid jj-stack config from jj: [{CONFIG_SECTION}] must be a table."
-        )
+        raise CliError(f"Invalid jj-stack config from jj: [{CONFIG_SECTION}] must be a table.")
     return dict(section)
 
 

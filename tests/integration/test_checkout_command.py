@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jj_stack.cli import main
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -31,9 +33,9 @@ def test_checkout_bootstraps_local_review_state_from_pull_request(
     state_before = ReviewStateStore.for_repo(repo).load()
     review_bookmarks = sorted(
         {
-            change.bookmark
-            for change in state_before.changes.values()
-            if change.bookmark is not None and change.bookmark.startswith("review/")
+            identity.head_ref
+            for identity in state_before.review_identities.values()
+            if identity.head_ref.startswith("review/")
         }
     )
     for bookmark in review_bookmarks:
@@ -48,11 +50,7 @@ def test_checkout_bootstraps_local_review_state_from_pull_request(
     assert "Fetched tip commit:" in captured.out
     state_after = ReviewStateStore.for_repo(repo).load()
     bookmarks_after = sorted(
-        {
-            change.bookmark
-            for change in state_after.changes.values()
-            if change.bookmark is not None
-        }
+        identity.head_ref for identity in state_after.review_identities.values()
     )
     assert bookmarks_after == review_bookmarks
     bookmark_states = JjClient(repo).list_bookmark_states(review_bookmarks)
@@ -72,9 +70,9 @@ def test_checkout_current_rejects_remote_branches_without_pull_requests(
     state_before = ReviewStateStore.for_repo(repo).load()
     review_bookmarks = sorted(
         {
-            change.bookmark
-            for change in state_before.changes.values()
-            if change.bookmark is not None and change.bookmark.startswith("review/")
+            identity.head_ref
+            for identity in state_before.review_identities.values()
+            if identity.head_ref.startswith("review/")
         }
     )
     fake_repo.pull_requests.clear()
@@ -88,7 +86,9 @@ def test_checkout_current_rejects_remote_branches_without_pull_requests(
     assert exit_code == 1
     assert "selected head already has a pull request" in captured.err
     assert "Missing pull request for:" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
 
 
 def test_checkout_pull_request_rejects_cross_repository_heads(
@@ -108,7 +108,7 @@ def test_checkout_pull_request_rejects_cross_repository_heads(
     assert exit_code == 1
     assert "does not belong to" in captured.err
     assert "same-repository pull request branches" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == state_before.changes
+    assert ReviewStateStore.for_repo(repo).load() == state_before
 
 
 def test_checkout_reports_up_to_date_when_selected_stack_is_already_imported(
@@ -127,6 +127,39 @@ def test_checkout_reports_up_to_date_when_selected_stack_is_already_imported(
     assert "no changes to review" not in captured.out
 
 
+@pytest.mark.parametrize("link_state", ["active", "unlinked"])
+def test_checkout_preserves_saved_bookmark_policy(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    link_state: str,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    state = state_store.load()
+    change_id, identity = next(iter(state.review_identities.items()))
+    preserved_identity = identity.model_copy(
+        update={
+            "bookmark_ownership": "external",
+            "link_state": link_state,
+        }
+    )
+    preserved_state = state_store.relink_review(
+        change_id,
+        expected_identity=identity,
+        expected_baseline=state.submitted_baselines[change_id],
+        identity=preserved_identity,
+        baseline=state.submitted_baselines[change_id],
+    )
+
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "1")
+    capsys.readouterr()
+
+    assert exit_code == 0
+    assert state_store.load() == preserved_state
+
+
 def test_checkout_current_fails_closed_when_head_has_no_discoverable_remote_review_link(
     tmp_path: Path,
     monkeypatch,
@@ -141,7 +174,9 @@ def test_checkout_current_fails_closed_when_head_has_no_discoverable_remote_revi
 
     assert exit_code == 1
     assert "current stack has no matching remote pull request" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     assert not {
         bookmark
         for bookmark in JjClient(repo).list_bookmark_states()
@@ -160,8 +195,7 @@ def test_checkout_pull_request_fails_closed_when_head_branch_matches_multiple_pu
     stack = JjClient(repo).discover_review_stack()
     top_change_id = stack.revisions[-1].change_id
     initial_state = ReviewStateStore.for_repo(repo).load()
-    top_bookmark = initial_state.changes[top_change_id].bookmark
-    assert top_bookmark is not None
+    top_bookmark = initial_state.review_identities[top_change_id].head_ref
     fake_repo.create_pull_request(
         base_ref=fake_repo.pull_requests[2].base_ref,
         body="duplicate link",
@@ -176,7 +210,7 @@ def test_checkout_pull_request_fails_closed_when_head_branch_matches_multiple_pu
     assert "multiple pull requests" in captured.err
     assert "view --fetch" in captured.err
     assert "status --fetch" not in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == initial_state.changes
+    assert ReviewStateStore.for_repo(repo).load() == initial_state
 
 
 def test_checkout_fails_closed_when_stack_would_need_generated_bookmarks(
@@ -191,10 +225,8 @@ def test_checkout_fails_closed_when_stack_would_need_generated_bookmarks(
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
     top_change_id = stack.revisions[-1].change_id
-    bottom_bookmark = state_before.changes[bottom_change_id].bookmark
-    top_bookmark = state_before.changes[top_change_id].bookmark
-    assert bottom_bookmark is not None
-    assert top_bookmark is not None
+    bottom_bookmark = state_before.review_identities[bottom_change_id].head_ref
+    top_bookmark = state_before.review_identities[top_change_id].head_ref
 
     for bookmark in (bottom_bookmark, top_bookmark):
         run_command(["jj", "bookmark", "forget", bookmark], repo)
@@ -219,7 +251,9 @@ def test_checkout_fails_closed_when_stack_would_need_generated_bookmarks(
     assert "is not present on the selected remote" in captured.err
     assert "view --fetch" in captured.err
     assert "status --fetch" not in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     bookmark_states = JjClient(repo).list_bookmark_states((bottom_bookmark, top_bookmark))
     assert bookmark_states[bottom_bookmark].local_target is None
     assert bookmark_states[top_bookmark].local_target is None
@@ -237,10 +271,8 @@ def test_checkout_fails_closed_without_partial_local_bookmark_updates(
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
     top_change_id = stack.revisions[-1].change_id
-    bottom_bookmark = state_before.changes[bottom_change_id].bookmark
-    top_bookmark = state_before.changes[top_change_id].bookmark
-    assert bottom_bookmark is not None
-    assert top_bookmark is not None
+    bottom_bookmark = state_before.review_identities[bottom_change_id].head_ref
+    top_bookmark = state_before.review_identities[top_change_id].head_ref
 
     for bookmark in (bottom_bookmark, top_bookmark):
         run_command(["jj", "bookmark", "forget", bookmark], repo)
@@ -257,7 +289,7 @@ def test_checkout_fails_closed_without_partial_local_bookmark_updates(
     assert bookmark_states[top_bookmark].local_target == main_target
 
 
-def test_checkout_prefers_exact_remote_bookmarks_over_stale_cached_names(
+def test_checkout_prefers_exact_remote_bookmarks_over_stale_saved_identity(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -269,23 +301,18 @@ def test_checkout_prefers_exact_remote_bookmarks_over_stale_cached_names(
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
     top_change_id = stack.revisions[-1].change_id
-    bottom_bookmark = state_before.changes[bottom_change_id].bookmark
-    top_bookmark = state_before.changes[top_change_id].bookmark
-    assert bottom_bookmark is not None
-    assert top_bookmark is not None
+    bottom_bookmark = state_before.review_identities[bottom_change_id].head_ref
+    top_bookmark = state_before.review_identities[top_change_id].head_ref
 
     stale_bookmark = f"review/stale-name-{bottom_change_id[:8]}"
-    state_store.save(
-        state_before.model_copy(
-            update={
-                "changes": {
-                    **state_before.changes,
-                    bottom_change_id: state_before.changes[bottom_change_id].model_copy(
-                        update={"bookmark": stale_bookmark}
-                    ),
-                }
-            }
-        )
+    identity = state_before.review_identities[bottom_change_id]
+    baseline = state_before.submitted_baselines[bottom_change_id]
+    state_store.relink_review(
+        bottom_change_id,
+        expected_identity=identity,
+        expected_baseline=baseline,
+        identity=identity.model_copy(update={"head_ref": stale_bookmark}),
+        baseline=baseline,
     )
     for bookmark in (bottom_bookmark, top_bookmark):
         run_command(["jj", "bookmark", "forget", bookmark], repo)
@@ -294,13 +321,13 @@ def test_checkout_prefers_exact_remote_bookmarks_over_stale_cached_names(
 
     assert exit_code == 0
     state_after = state_store.load()
-    assert state_after.changes[bottom_change_id].bookmark == bottom_bookmark
+    assert state_after.review_identities[bottom_change_id].head_ref == bottom_bookmark
     bookmark_states = JjClient(repo).list_bookmark_states((bottom_bookmark, stale_bookmark))
     assert bookmark_states[bottom_bookmark].local_target is not None
     assert bookmark_states[stale_bookmark].local_target is None
 
 
-def test_checkout_current_rejects_cache_only_link(
+def test_checkout_current_rejects_saved_identity_without_live_link(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -311,8 +338,7 @@ def test_checkout_current_rejects_cache_only_link(
     state_before = ReviewStateStore.for_repo(repo).load()
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
-    bookmark = state_before.changes[change_id].bookmark
-    assert bookmark is not None
+    bookmark = state_before.review_identities[change_id].head_ref
 
     run_command(["jj", "bookmark", "forget", bookmark], repo)
     fake_repo.pull_requests.clear()
@@ -333,7 +359,7 @@ def test_checkout_current_rejects_cache_only_link(
 
     assert exit_code == 1
     assert "current stack has no matching remote pull request" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == state_before.changes
+    assert ReviewStateStore.for_repo(repo).load() == state_before
 
 
 def test_checkout_revset_rejects_generated_bookmarks_without_selected_remote(
@@ -348,10 +374,8 @@ def test_checkout_revset_rejects_generated_bookmarks_without_selected_remote(
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
     top_change_id = stack.revisions[-1].change_id
-    bottom_bookmark = state_before.changes[bottom_change_id].bookmark
-    top_bookmark = state_before.changes[top_change_id].bookmark
-    assert bottom_bookmark is not None
-    assert top_bookmark is not None
+    bottom_bookmark = state_before.review_identities[bottom_change_id].head_ref
+    top_bookmark = state_before.review_identities[top_change_id].head_ref
 
     for bookmark in (bottom_bookmark, top_bookmark):
         run_command(["jj", "bookmark", "forget", bookmark], repo)
@@ -363,7 +387,9 @@ def test_checkout_revset_rejects_generated_bookmarks_without_selected_remote(
 
     assert exit_code == 1
     assert "selected head already has a pull request" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     bookmark_states = JjClient(repo).list_bookmark_states((bottom_bookmark, top_bookmark))
     assert bookmark_states[bottom_bookmark].local_target is None
     assert bookmark_states[top_bookmark].local_target is None
@@ -421,4 +447,3 @@ def test_checkout_pick_lists_tracked_stacks_and_checks_out_the_selection(
     # option 2 picks the feature 1 stack.
     assert "Picked stack" in captured.out
     assert "(feature 1)" in captured.out
-

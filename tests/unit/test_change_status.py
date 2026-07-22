@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from jj_stack.models.bookmarks import RemoteBookmarkState
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.change_status import (
     classify_review_change,
 )
@@ -23,9 +23,20 @@ def _pull_request(*, draft: bool = False, state: str = "open") -> GithubPullRequ
     ).normalize_state()
 
 
+def _identity(*, pr_number: int = 1) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="stacked-review",
+        pr_number=pr_number,
+        head_owner="octo-org",
+        head_ref="review/change",
+        bookmark_ownership="managed",
+    )
+
+
 def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(pr_number=1),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
@@ -36,6 +47,7 @@ def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
             state="open",
         ),
         remote_state=None,
+        review_identity=_identity(),
     )
 
     assert status.pr_lifecycle == "open"
@@ -45,7 +57,6 @@ def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
 
 def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(pr_number=1),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
@@ -56,28 +67,27 @@ def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() 
             state="missing",
         ),
         remote_state=None,
+        review_identity=_identity(),
     )
 
     assert status.pr_lifecycle == "missing"
     assert status.has_stale_pull_request_link is True
 
 
-def test_classifier_keeps_saved_review_identity_broader_than_pr_identity() -> None:
+def test_classifier_reports_saved_review_identity() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(last_submitted_commit_id="commit-1"),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=None,
         remote_state=None,
+        review_identity=_identity(),
     )
 
     assert status.saved_review_identity is True
-    assert status.saved_pull_request_identity is False
 
 
 def test_classifier_keeps_untracked_remote_branch_distinct_from_current() -> None:
     untracked_status = classify_review_change(
-        cached_change=CachedChange(bookmark="review/change"),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=None,
@@ -88,7 +98,6 @@ def test_classifier_keeps_untracked_remote_branch_distinct_from_current() -> Non
         ),
     )
     current_status = classify_review_change(
-        cached_change=CachedChange(bookmark="review/change"),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=None,
@@ -107,7 +116,6 @@ def test_classifier_keeps_untracked_remote_branch_distinct_from_current() -> Non
 
 def test_classifier_marks_single_remote_target_that_does_not_match_commit() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(bookmark="review/change"),
         commit_id="commit-2",
         local="present",
         pull_request_lookup=None,
@@ -124,7 +132,6 @@ def test_classifier_marks_single_remote_target_that_does_not_match_commit() -> N
 
 def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None:
     status = classify_review_change(
-        cached_change=CachedChange(pr_number=1),
         commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
@@ -135,6 +142,7 @@ def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None
             state="open",
         ),
         remote_state=None,
+        review_identity=_identity(),
     )
 
     assert status.pr_lifecycle == "open"

@@ -8,10 +8,9 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError, DriftError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.bookmarks import (
-    BookmarkResolutionResult,
     BookmarkSource,
     ResolvedBookmark,
 )
@@ -37,10 +36,11 @@ class _ClassifiedRevision:
     bookmark: str
     bookmark_source: BookmarkSource
     bookmark_state: BookmarkState
-    cached_change: CachedChange | None
+    review_identity: ReviewIdentity | None
     remote_state: RemoteBookmarkState | None
     review_status: ReviewChangeStatus
     revision: LocalRevision
+    submitted_baseline: SubmittedBaseline | None
 
 
 def _classify_revision(
@@ -55,30 +55,33 @@ def _classify_revision(
         resolution.bookmark,
         BookmarkState(name=resolution.bookmark),
     )
-    cached_change = state.changes.get(revision.change_id)
+    review_identity = state.review_identities.get(revision.change_id)
+    submitted_baseline = state.submitted_baselines.get(revision.change_id)
     remote_state = bookmark_state.remote_target(remote.name)
     return _ClassifiedRevision(
         bookmark=resolution.bookmark,
         bookmark_source=resolution.source,
         bookmark_state=bookmark_state,
-        cached_change=cached_change,
+        review_identity=review_identity,
         remote_state=remote_state,
         review_status=classify_review_change_without_pull_request(
-            cached_change=cached_change,
+            review_identity=review_identity,
             commit_id=revision.commit_id,
             remote_state=remote_state,
         ),
         revision=revision,
+        submitted_baseline=submitted_baseline,
     )
 
 
 def prepare_submit_revisions(
     *,
-    bookmark_result: BookmarkResolutionResult,
+    bookmark_resolutions: tuple[ResolvedBookmark, ...],
     bookmark_states: dict[str, BookmarkState],
     client: JjClient,
     remote: GitRemote,
     stack: LocalStack,
+    state: ReviewState,
 ) -> tuple[PreparedSubmitRevision, ...]:
     """Resolve bookmark mutations and push strategy for each stack revision."""
 
@@ -88,10 +91,10 @@ def prepare_submit_revisions(
             remote=remote,
             resolution=resolution,
             revision=revision,
-            state=bookmark_result.state,
+            state=state,
         )
         for resolution, revision in zip(
-            bookmark_result.resolutions,
+            bookmark_resolutions,
             stack.revisions,
             strict=True,
         )
@@ -145,13 +148,13 @@ def prepare_submit_revisions(
 
 def sync_local_bookmarks(
     *,
-    bookmark_result: BookmarkResolutionResult,
     bookmark_states: dict[str, BookmarkState],
     client: JjClient,
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
     run: SubmitMutationRun,
+    state: ReviewState,
 ) -> None:
-    """Apply prepared local bookmark moves under the submit mutation journal."""
+    """Apply prepared local bookmark moves."""
 
     bookmark_updates = tuple(
         prepared_revision
@@ -160,31 +163,15 @@ def sync_local_bookmarks(
     )
     if not bookmark_updates:
         return
-    run.journal.append(
-        "planned_mutation",
-        {
-            "bookmarks": tuple(
-                {
-                    "action": prepared_revision.local_action,
-                    "bookmark": prepared_revision.bookmark,
-                    "change_id": prepared_revision.revision.change_id,
-                    "commit_id": prepared_revision.revision.commit_id,
-                }
-                for prepared_revision in bookmark_updates
-            ),
-            "mutation": "sync_local_bookmarks",
-        },
-    )
     if run.dry_run:
         return
 
     local_target_change_ids = _resolve_local_target_change_ids_for_bookmark_updates(
-        bookmark_result=bookmark_result,
         bookmark_states=bookmark_states,
         client=client,
         bookmark_updates=bookmark_updates,
+        state=state,
     )
-    applied: list[dict[str, str]] = []
     for prepared_revision in bookmark_updates:
         bookmark_state = bookmark_states.get(
             prepared_revision.bookmark,
@@ -193,7 +180,7 @@ def sync_local_bookmarks(
         allow_backwards = _bookmark_is_already_managed_for_change(
             bookmark=prepared_revision.bookmark,
             bookmark_state=bookmark_state,
-            cached_change=bookmark_result.state.changes.get(prepared_revision.revision.change_id),
+            review_identity=state.review_identities.get(prepared_revision.revision.change_id),
             change_id=prepared_revision.revision.change_id,
             local_target_change_ids=local_target_change_ids,
         )
@@ -202,37 +189,21 @@ def sync_local_bookmarks(
             prepared_revision.revision.commit_id,
             allow_backwards=allow_backwards,
         )
-        applied.append(
-            {
-                "action": prepared_revision.local_action,
-                "bookmark": prepared_revision.bookmark,
-                "change_id": prepared_revision.revision.change_id,
-                "commit_id": prepared_revision.revision.commit_id,
-            }
-        )
-
-    run.journal.append(
-        "mutation_applied",
-        {
-            "bookmarks": tuple(applied),
-            "mutation": "sync_local_bookmarks",
-        },
-    )
 
 
 def _resolve_local_target_change_ids_for_bookmark_updates(
     *,
-    bookmark_result: BookmarkResolutionResult,
     bookmark_states: dict[str, BookmarkState],
     client: JjClient,
     bookmark_updates: tuple[PreparedSubmitRevision, ...],
+    state: ReviewState,
 ) -> dict[str, str]:
     local_targets: list[str] = []
     for prepared_revision in bookmark_updates:
-        cached_change = bookmark_result.state.changes.get(prepared_revision.revision.change_id)
-        if _cached_change_manages_bookmark(
+        review_identity = state.review_identities.get(prepared_revision.revision.change_id)
+        if _identity_manages_bookmark(
             bookmark=prepared_revision.bookmark,
-            cached_change=cached_change,
+            review_identity=review_identity,
         ):
             continue
         bookmark_state = bookmark_states.get(
@@ -246,10 +217,7 @@ def _resolve_local_target_change_ids_for_bookmark_updates(
     if not local_targets:
         return {}
     revset = " | ".join(f"present('{target}')" for target in dict.fromkeys(local_targets))
-    return {
-        revision.commit_id: revision.change_id
-        for revision in client.query_revisions(revset)
-    }
+    return {revision.commit_id: revision.change_id for revision in client.query_revisions(revset)}
 
 
 def _remote_push_plan(
@@ -327,14 +295,16 @@ def _load_actual_remote_targets_for_saved_bookmarks(
 def _saved_remote_target(entry: _ClassifiedRevision) -> str | None:
     """The submitted commit the saved record expects the remote branch to hold."""
 
-    cached_change = entry.cached_change
+    review_identity = entry.review_identity
+    submitted_baseline = entry.submitted_baseline
     if (
-        cached_change is None
+        review_identity is None
+        or submitted_baseline is None
         or entry.review_status.link != "active"
-        or cached_change.bookmark != entry.bookmark
+        or review_identity.head_ref != entry.bookmark
     ):
         return None
-    return cached_change.last_submitted_commit_id
+    return submitted_baseline.commit_id
 
 
 def _ensure_actual_remote_target_is_safe(
@@ -373,7 +343,7 @@ def _bookmark_is_already_managed_for_change(
     *,
     bookmark: str,
     bookmark_state: BookmarkState,
-    cached_change: CachedChange | None,
+    review_identity: ReviewIdentity | None,
     change_id: str,
     local_target_change_ids: dict[str, str],
 ) -> bool:
@@ -395,7 +365,10 @@ def _bookmark_is_already_managed_for_change(
     identity that we cannot prove.
     """
 
-    if _cached_change_manages_bookmark(bookmark=bookmark, cached_change=cached_change):
+    if _identity_manages_bookmark(
+        bookmark=bookmark,
+        review_identity=review_identity,
+    ):
         return True
     local_target = bookmark_state.local_target
     if local_target is None:
@@ -403,15 +376,15 @@ def _bookmark_is_already_managed_for_change(
     return local_target_change_ids.get(local_target) == change_id
 
 
-def _cached_change_manages_bookmark(
+def _identity_manages_bookmark(
     *,
     bookmark: str,
-    cached_change: CachedChange | None,
+    review_identity: ReviewIdentity | None,
 ) -> bool:
     return (
-        cached_change is not None
-        and cached_change.manages_bookmark
-        and cached_change.bookmark == bookmark
+        review_identity is not None
+        and review_identity.manages_bookmark
+        and review_identity.head_ref == bookmark
     )
 
 
@@ -464,8 +437,8 @@ def _bookmark_link_is_proven(entry: _ClassifiedRevision) -> bool:
         return False
     return (
         entry.review_status.link == "active"
-        and entry.cached_change is not None
-        and entry.cached_change.bookmark == entry.bookmark
+        and entry.review_identity is not None
+        and entry.review_identity.head_ref == entry.bookmark
     )
 
 
@@ -482,41 +455,15 @@ def sync_remote_bookmarks(
         if prepared_revision.push_operation == "batch"
     )
     if batch_push_bookmarks:
-        run.journal.append(
-            "planned_mutation",
-            {
-                "bookmarks": batch_push_bookmarks,
-                "mutation": "push_review_bookmarks",
-                "remote": remote.name,
-            },
-        )
         if not run.dry_run:
             client.push_bookmarks(
                 remote=remote.name,
                 bookmarks=batch_push_bookmarks,
             )
-            run.journal.append(
-                "mutation_applied",
-                {
-                    "bookmarks": batch_push_bookmarks,
-                    "mutation": "push_review_bookmarks",
-                    "remote": remote.name,
-                },
-            )
 
     for prepared_revision in prepared_revisions:
         if prepared_revision.push_operation != "git_update":
             continue
-        run.journal.append(
-            "planned_mutation",
-            {
-                "bookmark": prepared_revision.bookmark,
-                "change_id": prepared_revision.revision.change_id,
-                "commit_id": prepared_revision.revision.commit_id,
-                "mutation": "update_untracked_remote_bookmark",
-                "remote": remote.name,
-            },
-        )
         if not run.dry_run:
             if prepared_revision.expected_remote_target is None:
                 raise AssertionError("Git remote update requires an expected target.")
@@ -525,16 +472,6 @@ def sync_remote_bookmarks(
                 bookmark=prepared_revision.bookmark,
                 desired_target=prepared_revision.revision.commit_id,
                 expected_remote_target=prepared_revision.expected_remote_target,
-            )
-            run.journal.append(
-                "mutation_applied",
-                {
-                    "bookmark": prepared_revision.bookmark,
-                    "change_id": prepared_revision.revision.change_id,
-                    "commit_id": prepared_revision.revision.commit_id,
-                    "mutation": "update_untracked_remote_bookmark",
-                    "remote": remote.name,
-                },
             )
 
 

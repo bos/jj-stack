@@ -2,31 +2,33 @@ from __future__ import annotations
 
 from jj_stack.config import RepoConfig
 from jj_stack.formatting import short_change_id
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.bookmarks import BookmarkState
+from jj_stack.models.review_state import ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.restart import (
     RestartedChange,
-    cached_change_needs_restart,
     restart_state_for_stack,
 )
+from tests.support.review_state import make_review_identity
 from tests.support.revision_helpers import make_revision
 
 
-def test_restart_state_replaces_review_identity_with_fresh_managed_bookmark() -> None:
+def test_restart_state_retires_review_pair_and_selects_fresh_bookmark() -> None:
     revision = make_revision(
         commit_id="commit-1",
         change_id="abcdefghijk",
         description="feature one\n",
     )
-    cached_change = CachedChange(
-        bookmark="review/old-feature",
+    identity = make_review_identity(
+        head_ref="review/old-feature",
         bookmark_ownership="external",
-        last_submitted_commit_id="old-commit",
         pr_number=42,
     )
-    state = ReviewState(changes={revision.change_id: cached_change})
-
-    assert cached_change_needs_restart(cached_change)
+    baseline = SubmittedBaseline(commit_id="old-commit")
+    state = ReviewState(
+        review_identities={revision.change_id: identity},
+        submitted_baselines={revision.change_id: baseline},
+    )
 
     result = restart_state_for_stack(
         bookmark_states={},
@@ -35,16 +37,12 @@ def test_restart_state_replaces_review_identity_with_fresh_managed_bookmark() ->
         state=state,
     )
 
-    restarted = result.state.changes[revision.change_id]
-    new_bookmark = restarted.bookmark
-    assert new_bookmark is not None
+    new_bookmark = result.changed[0].new_bookmark
     assert new_bookmark == (
         f"review/feature-one-fresh-pr42-{short_change_id(revision.change_id)}"
     )
-    assert restarted.bookmark_ownership == "managed"
-    assert restarted.link_state == "active"
-    assert not cached_change_needs_restart(restarted)
-    assert not restarted.has_review_identity
+    assert revision.change_id not in result.state.review_identities
+    assert revision.change_id not in result.state.submitted_baselines
     assert result.changed == (
         RestartedChange(
             change_id=revision.change_id,
@@ -54,6 +52,34 @@ def test_restart_state_replaces_review_identity_with_fresh_managed_bookmark() ->
             subject="feature one",
         ),
     )
+
+
+def test_restart_state_reuses_an_interrupted_fresh_local_bookmark() -> None:
+    revision = make_revision(
+        commit_id="commit-1",
+        change_id="abcdefghijk",
+        description="feature one\n",
+    )
+    identity = make_review_identity(head_ref="review/old-feature", pr_number=42)
+    baseline = SubmittedBaseline(commit_id="old-commit")
+    fresh_bookmark = f"review/feature-one-fresh-pr42-{short_change_id(revision.change_id)}"
+
+    result = restart_state_for_stack(
+        bookmark_states={
+            fresh_bookmark: BookmarkState(
+                name=fresh_bookmark,
+                local_targets=(revision.commit_id,),
+            )
+        },
+        config=RepoConfig(),
+        stack=_stack(revision),
+        state=ReviewState(
+            review_identities={revision.change_id: identity},
+            submitted_baselines={revision.change_id: baseline},
+        ),
+    )
+
+    assert result.changed[0].new_bookmark == fresh_bookmark
 
 
 def _stack(revision: LocalRevision) -> LocalStack:

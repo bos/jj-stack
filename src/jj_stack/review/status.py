@@ -35,23 +35,19 @@ from jj_stack.github.stack_comments import (
 from jj_stack.jj.client import JjClient, UnsupportedStackError
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
-from jj_stack.models.review_state import CachedChange, LinkState, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.bookmarks import (
     BookmarkResolver,
     BookmarkSource,
-    bookmark_ownership_for_source,
     discover_bookmarks_for_revisions,
     ensure_unique_bookmarks,
     match_bookmarks_for_revisions,
 )
 from jj_stack.review.change_status import (
     classify_review_status_revision,
-    classify_saved_review_change,
     submitted_state_disagreement,
 )
-from jj_stack.state.operation_lock import try_acquire_operation_lock
-from jj_stack.state.store import ReviewStateStore
 from jj_stack.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -93,11 +89,11 @@ class ReviewStatusRevision:
 
     bookmark: str
     bookmark_source: BookmarkSource
-    cached_change: CachedChange | None
     change_id: str
     commit_id: str
-    link_state: LinkState
     local_divergent: bool
+    review_identity: ReviewIdentity | None
+    submitted_baseline: SubmittedBaseline | None
     pull_request_lookup: PullRequestLookup | None
     remote_state: RemoteBookmarkState | None
     managed_comments_lookup: ManagedCommentsLookup | None
@@ -135,7 +131,6 @@ class StatusResult:
     selected_revset: str
     base_parent_subject: str
     submitted_state_disagreements: tuple[str, ...] = ()
-    cache_update_skipped: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,14 +171,11 @@ class PreparedStack:
     """Prepared local stack inputs shared across inspection-driven commands."""
 
     bookmark_states: dict[str, BookmarkState]
-    bookmark_result_changed: bool
     client: JjClient
     remote: GitRemote | None
     remote_error: ErrorMessage | None
     stack: LocalStack
     state: ReviewState
-    state_changes: dict[str, CachedChange]
-    state_store: ReviewStateStore
     status_revisions: tuple[PreparedRevision, ...]
 
 
@@ -193,8 +185,9 @@ class PreparedRevision:
 
     bookmark: str
     bookmark_source: BookmarkSource
-    cached_change: CachedChange | None
     revision: LocalRevision
+    review_identity: ReviewIdentity | None
+    submitted_baseline: SubmittedBaseline | None
 
 
 def status_preparation_cli_error(error: UnsupportedStackError) -> CliError:
@@ -223,7 +216,6 @@ def prepare_status(
     context: CommandContext,
     fetch_remote_state: bool = False,
     fetch_only_when_tracked: bool = False,
-    persist_bookmarks: bool = False,
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
 ) -> PreparedStatus:
@@ -248,7 +240,6 @@ def prepare_status(
 
     prepared = prepare_stack_for_status(
         context=context,
-        persist_bookmarks=persist_bookmarks,
         remote=github_target.remote,
         remote_error=github_target.remote_error,
         stack=stack,
@@ -294,9 +285,7 @@ def _resolve_selected_stack(
     """
 
     def resolve() -> LocalStack:
-        return jj_client.discover_review_stack(
-            revset, allow_divergent=True, allow_immutable=True
-        )
+        return jj_client.discover_review_stack(revset, allow_divergent=True, allow_immutable=True)
 
     if remote is None or not fetch_remote_state:
         return resolve(), False
@@ -306,10 +295,7 @@ def _resolve_selected_stack(
 
     stack = resolve()
     if fetch_only_when_tracked and not any(
-        classify_saved_review_change(
-            state.changes.get(revision.change_id),
-            local="present",
-        ).saved_review_identity
+        state.review_identities.get(revision.change_id) is not None
         for revision in stack.revisions
     ):
         return stack, False
@@ -336,8 +322,6 @@ def stream_status(
     *,
     discover_remote_review: bool = False,
     inspect_stack_comments: bool = False,
-    lock_cache_update: bool = False,
-    persist_cache_updates: bool = True,
     prepared_status: PreparedStatus,
     on_revision: Callable[[ReviewStatusRevision, bool], None] | None = None,
 ) -> StatusResult:
@@ -347,9 +331,7 @@ def stream_status(
         stream_status_async(
             discover_remote_review=discover_remote_review,
             inspect_stack_comments=inspect_stack_comments,
-            lock_cache_update=lock_cache_update,
             on_revision=on_revision,
-            persist_cache_updates=persist_cache_updates,
             prepared_status=prepared_status,
         )
     )
@@ -359,9 +341,7 @@ async def stream_status_async(
     *,
     discover_remote_review: bool = False,
     inspect_stack_comments: bool = False,
-    lock_cache_update: bool = False,
     on_revision: Callable[[ReviewStatusRevision, bool], None] | None,
-    persist_cache_updates: bool = True,
     prepared_status: PreparedStatus,
 ) -> StatusResult:
     prepared = prepared_status.prepared
@@ -369,6 +349,7 @@ async def stream_status_async(
     base_parent_subject = prepared_status.base_parent_subject
     github_repository = prepared_status.github_repository
     github_repository_error = prepared_status.github_repository_error
+    state_incomplete = bool(prepared.state.record_issues)
     submitted_disagreements = submitted_state_disagreement(
         prepared.state,
         (prepared.stack,),
@@ -413,7 +394,7 @@ async def stream_status_async(
         return StatusResult(
             github_error=None,
             github_repository=github_repository,
-            incomplete=False,
+            incomplete=state_incomplete,
             remote=prepared.remote,
             remote_error=None,
             revisions=(),
@@ -435,7 +416,7 @@ async def stream_status_async(
         return StatusResult(
             github_error=None,
             github_repository=github_repository,
-            incomplete=_status_is_incomplete(fallback_revisions),
+            incomplete=state_incomplete or _status_is_incomplete(fallback_revisions),
             remote=prepared.remote,
             remote_error=None,
             revisions=fallback_revisions,
@@ -479,18 +460,10 @@ async def stream_status_async(
         revisions_by_change_id.get(revision.change_id, revision)
         for revision in fallback_revisions
     )
-    cache_update_skipped = False
-    if persist_cache_updates:
-        cache_update_skipped = _persist_status_cache_updates_with_optional_lock(
-            lock_cache_update=lock_cache_update,
-            prepared=prepared,
-            revisions=display_revisions,
-        )
     return StatusResult(
-        cache_update_skipped=cache_update_skipped,
         github_error=None,
         github_repository=github_repository,
-        incomplete=_status_is_incomplete(display_revisions),
+        incomplete=state_incomplete or _status_is_incomplete(display_revisions),
         remote=prepared.remote,
         remote_error=None,
         revisions=display_revisions,
@@ -500,39 +473,9 @@ async def stream_status_async(
     )
 
 
-def _persist_status_cache_updates_with_optional_lock(
-    *,
-    lock_cache_update: bool,
-    prepared: PreparedStack,
-    revisions: tuple[ReviewStatusRevision, ...],
-) -> bool:
-    """Persist status cache updates, returning True when lock contention skips them."""
-
-    if not lock_cache_update:
-        _persist_status_cache_updates(prepared=prepared, revisions=revisions)
-        return False
-
-    lock = try_acquire_operation_lock(
-        prepared.state_store.require_writable(),
-        command="view",
-    )
-    if lock is None:
-        return True
-    with lock:
-        current_state = prepared.state_store.load()
-        _persist_status_cache_updates(
-            base_state=current_state,
-            prepared=prepared,
-            revisions=revisions,
-            state_changes=dict(current_state.changes),
-        )
-    return False
-
-
 def prepare_stack_for_status(
     *,
     context: CommandContext,
-    persist_bookmarks: bool,
     remote: GitRemote | None,
     remote_error: ErrorMessage | None,
     stack: LocalStack,
@@ -543,7 +486,6 @@ def prepare_stack_for_status(
 
     config = context.config
     jj_client = context.jj_client
-    state_store = context.state_store
     pinned_bookmarks = pinned_bookmarks_for_revisions(revisions=stack.revisions, state=state)
     if bookmark_states is None:
         bookmark_states = {}
@@ -565,42 +507,35 @@ def prepare_stack_for_status(
             revisions=stack.revisions,
         )
 
-    bookmark_result = BookmarkResolver(
-        state,
+    bookmark_resolutions = BookmarkResolver(
+        state.review_identities,
         prefix=config.bookmark_prefix,
         matched_bookmarks=matched_bookmarks,
         discovered_bookmarks=discovered_bookmarks,
-    ).pin_revisions(stack.revisions)
-    ensure_unique_bookmarks(bookmark_result.resolutions)
-    if persist_bookmarks and bookmark_result.changed:
-        state_store.save(bookmark_result.state)
+    ).resolve_revisions(stack.revisions)
+    ensure_unique_bookmarks(bookmark_resolutions)
 
-    state_changes = dict(bookmark_result.state.changes if persist_bookmarks else state.changes)
     status_revisions = tuple(
         PreparedRevision(
             bookmark=resolution.bookmark,
             bookmark_source=resolution.source,
-            cached_change=(
-                state_changes.get(revision.change_id) or state.changes.get(revision.change_id)
-            ),
             revision=revision,
+            review_identity=state.review_identities.get(revision.change_id),
+            submitted_baseline=state.submitted_baselines.get(revision.change_id),
         )
         for resolution, revision in zip(
-            bookmark_result.resolutions,
+            bookmark_resolutions,
             stack.revisions,
             strict=True,
         )
     )
     return PreparedStack(
         bookmark_states=bookmark_states,
-        bookmark_result_changed=persist_bookmarks and bookmark_result.changed,
         client=jj_client,
         remote=remote,
         remote_error=remote_error,
         stack=stack,
         state=state,
-        state_changes=state_changes,
-        state_store=state_store,
         status_revisions=status_revisions,
     )
 
@@ -619,9 +554,9 @@ def pinned_bookmarks_for_revisions(
 
     pinned: list[str] = []
     for revision in revisions:
-        cached = state.changes.get(revision.change_id)
-        if cached is not None and cached.bookmark:
-            pinned.append(cached.bookmark)
+        review_identity = state.review_identities.get(revision.change_id)
+        if review_identity is not None:
+            pinned.append(review_identity.head_ref)
             continue
         return None
     return tuple(dict.fromkeys(pinned))
@@ -636,14 +571,8 @@ def build_status_revisions_for_prepared_stack(
         ReviewStatusRevision(
             bookmark=revision.bookmark,
             bookmark_source=revision.bookmark_source,
-            cached_change=revision.cached_change,
             change_id=revision.revision.change_id,
             commit_id=revision.revision.commit_id,
-            link_state=(
-                revision.cached_change.link_state
-                if revision.cached_change is not None
-                else "active"
-            ),
             local_divergent=revision.revision.divergent,
             pull_request_lookup=(
                 pull_request_lookups.get(revision.bookmark)
@@ -658,6 +587,8 @@ def build_status_revisions_for_prepared_stack(
                 if prepared.remote is not None
                 else None
             ),
+            review_identity=revision.review_identity,
+            submitted_baseline=revision.submitted_baseline,
             managed_comments_lookup=None,
             subject=revision.revision.subject,
         )
@@ -672,10 +603,7 @@ def _needs_github_inspection(
 ) -> bool:
     if discover_remote_review:
         return True
-    return classify_saved_review_change(
-        prepared_revision.cached_change,
-        local="present",
-    ).saved_review_identity
+    return prepared_revision.review_identity is not None
 
 
 def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:
@@ -696,65 +624,6 @@ def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:
         }:
             return True
     return False
-
-
-def _persist_status_cache_updates(
-    *,
-    base_state: ReviewState | None = None,
-    prepared: PreparedStack,
-    revisions: tuple[ReviewStatusRevision, ...],
-    state_changes: dict[str, CachedChange] | None = None,
-) -> None:
-    base_state = prepared.state if base_state is None else base_state
-    state_changes = dict(prepared.state_changes if state_changes is None else state_changes)
-    for revision in revisions:
-        change_status = classify_review_status_revision(revision)
-        cached_change = state_changes.get(revision.change_id) or base_state.changes.get(
-            revision.change_id
-        )
-        updated_change = cached_change
-        if cached_change is not None and cached_change.is_unlinked:
-            if updated_change != cached_change:
-                state_changes[revision.change_id] = cached_change
-            continue
-        pull_request_lookup = revision.pull_request_lookup
-        if pull_request_lookup is not None:
-            if updated_change is None and change_status.pr_lifecycle != "missing":
-                updated_change = CachedChange(
-                    bookmark=revision.bookmark,
-                    bookmark_ownership=bookmark_ownership_for_source(
-                        revision.bookmark_source
-                    ),
-                )
-            if change_status.pr_lifecycle == "missing":
-                if updated_change is not None:
-                    updated_change = updated_change.model_copy(
-                        update={
-                            "bookmark": revision.bookmark,
-                            "bookmark_ownership": bookmark_ownership_for_source(
-                                revision.bookmark_source
-                            ),
-                        }
-                    )
-            elif pull_request_lookup.pull_request is not None:
-                if updated_change is None:
-                    raise AssertionError("Pull request lookup must create cached state.")
-                pull_request = pull_request_lookup.pull_request
-                updated_change = updated_change.model_copy(
-                    update={
-                        "bookmark": revision.bookmark,
-                        "bookmark_ownership": bookmark_ownership_for_source(
-                            revision.bookmark_source
-                        ),
-                        "pr_number": pull_request.number,
-                    }
-                )
-        if updated_change is not None and updated_change != cached_change:
-            state_changes[revision.change_id] = updated_change
-
-    next_state = base_state.model_copy(update={"changes": state_changes})
-    if next_state != base_state:
-        prepared.state_store.save(next_state)
 
 
 async def _iter_status_revisions_with_github(
@@ -865,17 +734,13 @@ async def _inspect_revision_with_github(
         return ReviewStatusRevision(
             bookmark=prepared_revision.bookmark,
             bookmark_source=prepared_revision.bookmark_source,
-            cached_change=prepared_revision.cached_change,
             change_id=prepared_revision.revision.change_id,
             commit_id=prepared_revision.revision.commit_id,
-            link_state=(
-                prepared_revision.cached_change.link_state
-                if prepared_revision.cached_change is not None
-                else "active"
-            ),
             local_divergent=prepared_revision.revision.divergent,
             pull_request_lookup=pull_request_lookup,
             remote_state=remote_state,
+            review_identity=prepared_revision.review_identity,
+            submitted_baseline=prepared_revision.submitted_baseline,
             managed_comments_lookup=managed_comments_lookup,
             subject=prepared_revision.revision.subject,
         )
@@ -902,8 +767,7 @@ async def _discover_pull_request_lookups(
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> dict[str, PullRequestLookup]:
     prepared_revisions_by_bookmark = {
-        prepared_revision.bookmark: prepared_revision
-        for prepared_revision in prepared_revisions
+        prepared_revision.bookmark: prepared_revision for prepared_revision in prepared_revisions
     }
     bookmarks = tuple(prepared_revisions_by_bookmark)
     if not bookmarks:
@@ -942,11 +806,9 @@ async def _discover_pull_request_lookups(
         for bookmark in bookmarks
     }
     remembered_numbers = tuple(
-        prepared_revision.cached_change.pr_number
+        prepared_revision.review_identity.pr_number
         for bookmark, prepared_revision in prepared_revisions_by_bookmark.items()
-        if lookups[bookmark].state == "missing"
-        and prepared_revision.cached_change is not None
-        and prepared_revision.cached_change.pr_number is not None
+        if lookups[bookmark].state == "missing" and prepared_revision.review_identity is not None
     )
     if not remembered_numbers:
         return lookups
@@ -962,12 +824,8 @@ async def _discover_pull_request_lookups(
         )
         failed_lookups: dict[str, PullRequestLookup] = {}
         for bookmark, lookup in lookups.items():
-            cached_change = prepared_revisions_by_bookmark[bookmark].cached_change
-            if (
-                lookup.state == "missing"
-                and cached_change is not None
-                and cached_change.pr_number is not None
-            ):
+            review_identity = prepared_revisions_by_bookmark[bookmark].review_identity
+            if lookup.state == "missing" and review_identity is not None:
                 failed_lookups[bookmark] = PullRequestLookup(
                     message=lookup_error,
                     pull_request=None,
@@ -981,10 +839,10 @@ async def _discover_pull_request_lookups(
     for bookmark, lookup in tuple(lookups.items()):
         if lookup.state != "missing":
             continue
-        cached_change = prepared_revisions_by_bookmark[bookmark].cached_change
-        if cached_change is None or cached_change.pr_number is None:
+        review_identity = prepared_revisions_by_bookmark[bookmark].review_identity
+        if review_identity is None:
             continue
-        remembered_pull_request = remembered_pull_requests.get(cached_change.pr_number)
+        remembered_pull_request = remembered_pull_requests.get(review_identity.pr_number)
         if remembered_pull_request is None:
             continue
         lookups[bookmark] = _pull_request_lookup_from_remembered(
@@ -1010,8 +868,7 @@ def _pull_request_lookup_from_discovered(
         numbers = ", ".join(str(pull_request.number) for pull_request in pull_requests)
         return PullRequestLookup(
             message=(
-                t"GitHub reports multiple pull requests for head branch "
-                t"{head_label}: {numbers}."
+                t"GitHub reports multiple pull requests for head branch {head_label}: {numbers}."
             ),
             pull_request=None,
             repository_error=None,
@@ -1036,9 +893,7 @@ def _pull_request_lookup_from_discovered(
         message=None,
         pull_request=effective_pull_request,
         review_decision=(
-            None
-            if effective_pull_request.is_draft
-            else effective_pull_request.review_decision
+            None if effective_pull_request.is_draft else effective_pull_request.review_decision
         ),
         review_decision_error=None,
         repository_error=None,
@@ -1072,9 +927,7 @@ def _pull_request_lookup_from_remembered(
         message=message,
         pull_request=effective_pull_request,
         review_decision=(
-            None
-            if effective_pull_request.is_draft
-            else effective_pull_request.review_decision
+            None if effective_pull_request.is_draft else effective_pull_request.review_decision
         ),
         review_decision_error=None,
         repository_error=None,

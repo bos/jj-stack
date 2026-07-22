@@ -12,7 +12,7 @@ from jj_stack.commands.list_ import (
 from jj_stack.config import RepoConfig
 from jj_stack.github.resolution import GithubTarget
 from jj_stack.models.bookmarks import GitRemote
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.discovery import discover_connected_tracked_stacks, discover_tracked_stacks
 
@@ -55,6 +55,18 @@ def _revision(
     )
 
 
+def _identity(*, bookmark: str = "review/feature-abcdefgh", pr_number: int = 1) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="repo",
+        pr_number=pr_number,
+        head_owner="octo-org",
+        head_ref=bookmark,
+        bookmark_ownership="managed",
+    )
+
+
 def test_discover_stacks_extends_only_tracked_heads_for_fully_tracked_linear_stack() -> None:
     root = _revision("a" * 32, "commit-a", parent="main", subject="feature 1")
     middle = _revision("b" * 32, "commit-b", parent="commit-a", subject="feature 2")
@@ -88,10 +100,11 @@ def test_discover_stacks_extends_only_tracked_heads_for_fully_tracked_linear_sta
         ),
     )
     state = ReviewState(
-        changes={
-            revision.change_id: CachedChange(last_submitted_commit_id=revision.commit_id)
+        review_identities={revision.change_id: _identity() for revision in (root, middle, head)},
+        submitted_baselines={
+            revision.change_id: SubmittedBaseline(commit_id=revision.commit_id)
             for revision in (root, middle, head)
-        }
+        },
     )
 
     discovered = discover_tracked_stacks(jj_client=jj_client, state=state)
@@ -129,10 +142,14 @@ def test_connected_stacks_skip_descendant_walk_when_other_tracking_is_unrelated(
         ),
     )
     state = ReviewState(
-        changes={
-            selected.change_id: CachedChange(last_submitted_commit_id=selected.commit_id),
-            unrelated.change_id: CachedChange(last_submitted_commit_id=unrelated.commit_id),
-        }
+        review_identities={
+            selected.change_id: _identity(),
+            unrelated.change_id: _identity(),
+        },
+        submitted_baselines={
+            selected.change_id: SubmittedBaseline(commit_id=selected.commit_id),
+            unrelated.change_id: SubmittedBaseline(commit_id=unrelated.commit_id),
+        },
     )
 
     discovered = discover_connected_tracked_stacks(
@@ -165,18 +182,23 @@ def test_connected_stacks_warn_for_tracked_change_built_on_selected_stack() -> N
     jj_client = cast(
         Any,
         SimpleNamespace(
-            query_revisions_by_change_ids_descending_from=lambda _change_ids,
-            _ancestor_commit_ids: (connected,),
+            query_revisions_by_change_ids_descending_from=(
+                lambda _change_ids, _ancestor_commit_ids: (connected,)
+            ),
             query_descendant_revisions=query_descendants,
             query_revisions_by_commit_ids=lambda _commit_ids: (),
             query_trunk_ancestor_commit_ids=lambda commit_ids: set(commit_ids),
         ),
     )
     state = ReviewState(
-        changes={
-            selected.change_id: CachedChange(last_submitted_commit_id=selected.commit_id),
-            connected.change_id: CachedChange(last_submitted_commit_id=connected.commit_id),
-        }
+        review_identities={
+            selected.change_id: _identity(),
+            connected.change_id: _identity(),
+        },
+        submitted_baselines={
+            selected.change_id: SubmittedBaseline(commit_id=selected.commit_id),
+            connected.change_id: SubmittedBaseline(commit_id=connected.commit_id),
+        },
     )
 
     discovered = discover_connected_tracked_stacks(
@@ -201,11 +223,8 @@ def test_repo_inspection_limits_bookmark_listing_to_tracked_bookmarks() -> None:
         trunk=trunk,
     )
     state = ReviewState(
-        changes={
-            tracked.change_id: CachedChange(
-                bookmark="review/feature-1-abcdef01",
-                pr_number=1,
-            ),
+        review_identities={
+            tracked.change_id: _identity(bookmark="review/feature-1-abcdef01"),
         }
     )
     bookmark_calls: list[tuple[str, ...] | None] = []
@@ -215,9 +234,7 @@ def test_repo_inspection_limits_bookmark_listing_to_tracked_bookmarks() -> None:
             list_git_remotes=lambda: (
                 GitRemote(name="origin", url="https://github.com/octo-org/repo.git"),
             ),
-            list_bookmark_states=lambda bookmarks=None: (
-                bookmark_calls.append(bookmarks) or {}
-            ),
+            list_bookmark_states=lambda bookmarks=None: bookmark_calls.append(bookmarks) or {},
         ),
     )
     context = cast(Any, SimpleNamespace(config=RepoConfig(), jj_client=jj_client))

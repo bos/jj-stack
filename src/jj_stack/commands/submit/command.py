@@ -54,14 +54,13 @@ from jj_stack.github.resolution import (
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote
 from jj_stack.models.github import GithubPullRequest
+from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalStack
-from jj_stack.review.bookmarks import BookmarkResolutionResult
-from jj_stack.review.change_status import classify_saved_review_change
+from jj_stack.review.change_status import classify_saved_review_identity
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
 )
-from jj_stack.state.journal import OperationJournal
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from .auto_close import (
@@ -251,14 +250,10 @@ def _resolve_submit_options(
         labels=config.labels if options.labels is None else options.labels,
         reviewers=config.reviewers if options.reviewers is None else options.reviewers,
         team_reviewers=(
-            config.team_reviewers
-            if options.team_reviewers is None
-            else options.team_reviewers
+            config.team_reviewers if options.team_reviewers is None else options.team_reviewers
         ),
         use_bookmarks=tuple(
-            config.use_bookmarks
-            if options.use_bookmarks is None
-            else options.use_bookmarks
+            config.use_bookmarks if options.use_bookmarks is None else options.use_bookmarks
         ),
     )
 
@@ -292,12 +287,12 @@ def _build_submit_result(
 def _build_local_only_dry_run_result(
     *,
     client: JjClient,
-    bookmark_result: BookmarkResolutionResult,
     bookmark_states: dict[str, BookmarkState],
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
     remote: GitRemote,
     remote_name: str,
     stack: LocalStack,
+    state: ReviewState,
 ) -> SubmitResult | None:
     """Return a local-only dry-run result when no GitHub inspection is needed."""
 
@@ -311,9 +306,9 @@ def _build_local_only_dry_run_result(
 
     revisions: list[SubmittedRevision] = []
     for prepared_revision in prepared_revisions:
-        cached_change = bookmark_result.state.changes.get(prepared_revision.revision.change_id)
-        if classify_saved_review_change(
-            cached_change,
+        review_identity = state.review_identities.get(prepared_revision.revision.change_id)
+        if classify_saved_review_identity(
+            review_identity,
             local="present",
         ).saved_review_identity:
             return None
@@ -438,12 +433,10 @@ async def _run_submit_async(
     remote = prepared_inputs.remote
     stack = prepared_inputs.stack
     bookmark_states = prepared_inputs.bookmark_states
-    bookmark_result = prepared_inputs.bookmark_result
+    bookmark_resolutions = prepared_inputs.bookmark_resolutions
     state = prepared_inputs.state
 
     if not stack.revisions:
-        if bookmark_result.changed and not dry_run:
-            state_store.save(bookmark_result.state)
         trunk_branch = stack.trunk.subject
         remote_bookmarks = remote_bookmarks_pointing_at_commit(
             bookmark_states=client.list_bookmark_states(),
@@ -463,185 +456,142 @@ async def _run_submit_async(
 
     github_repository = require_github_repo(remote)
     prepared_revisions = prepare_submit_revisions(
-        bookmark_result=bookmark_result,
+        bookmark_resolutions=bookmark_resolutions,
         bookmark_states=bookmark_states,
         client=client,
         remote=remote,
         stack=stack,
+        state=state,
     )
-    state_changes = dict(bookmark_result.state.changes)
-    journal = OperationJournal.disabled()
     if not dry_run:
-        state_dir = state_store.require_writable()
-        journal = OperationJournal.begin(
-            state_dir,
-            operation="submit",
-            options={
-                "remote_name": remote.name,
-                "github_host": github_repository.host,
-                "github_owner": github_repository.owner,
-                "github_repo": github_repository.repo,
-            },
-            resolved_scope={
-                "bookmarks": {
-                    revision.change_id: resolution.bookmark
-                    for revision, resolution in zip(
-                        stack.revisions,
-                        bookmark_result.resolutions,
-                        strict=True,
-                    )
-                },
-                "ordered_change_ids": tuple(
-                    revision.change_id for revision in stack.revisions
-                ),
-                "ordered_commit_ids": tuple(
-                    revision.commit_id for revision in stack.revisions
-                ),
-                "selected_revset": stack.selected_revset,
-            },
-        )
+        state_store.require_writable()
     mutation_run = SubmitMutationRun(
         dry_run=dry_run,
-        journal=journal,
-        state=bookmark_result.state,
-        state_changes=state_changes,
+        restarted_reviews={
+            restarted.change.change_id: restarted
+            for restarted in prepared_inputs.restarted_reviews
+        },
+        state=state,
         state_store=state_store,
     )
     if dry_run:
         if not prepared_inputs.restarted_change_ids:
             local_only_dry_run = _build_local_only_dry_run_result(
                 client=client,
-                bookmark_result=bookmark_result,
                 bookmark_states=bookmark_states,
                 prepared_revisions=prepared_revisions,
                 remote=remote,
                 remote_name=remote.name,
                 stack=stack,
+                state=state,
             )
             if local_only_dry_run is not None:
                 return local_only_dry_run
 
-    succeeded = False
     submitted_revisions: tuple[SubmittedRevision, ...] = ()
-    try:
-        async with build_github_client(repository=github_repository) as github_client:
-            with console.spinner(description="Inspecting GitHub"):
-                try:
-                    github_repository_state, discovered_pull_requests = await asyncio.gather(
-                        github_client.get_repository(
+    async with build_github_client(repository=github_repository) as github_client:
+        with console.spinner(description="Inspecting GitHub"):
+            try:
+                github_repository_state, discovered_pull_requests = await asyncio.gather(
+                    github_client.get_repository(),
+                    discover_pull_requests_by_bookmark(
+                        github_client=github_client,
+                        bookmarks=tuple(
+                            resolution.bookmark for resolution in bookmark_resolutions
                         ),
-                        discover_pull_requests_by_bookmark(
-                            github_client=github_client,
-                            bookmarks=tuple(
-                                resolution.bookmark
-                                for resolution in bookmark_result.resolutions
-                            ),
-                        ),
-                    )
-                except GithubClientError as error:
-                    raise CliError(
-                        f"Could not load GitHub repository {github_repository.full_name}"
-                    ) from error
-                trunk_branch = resolve_trunk_branch(
-                    bookmark_states=bookmark_states,
-                    github_repository_state=github_repository_state,
-                    remote_name=remote.name,
-                    trunk_commit_id=stack.trunk.commit_id,
+                    ),
                 )
+            except GithubClientError as error:
+                raise CliError(
+                    f"Could not load GitHub repository {github_repository.full_name}"
+                ) from error
+            trunk_branch = resolve_trunk_branch(
+                bookmark_states=bookmark_states,
+                github_repository_state=github_repository_state,
+                remote_name=remote.name,
+                trunk_commit_id=stack.trunk.commit_id,
+            )
 
-            pending_syncs = _pending_pull_request_syncs(
-                discovered_pull_requests=discovered_pull_requests,
-                generated_descriptions=prepared_inputs.generated_pull_request_descriptions,
+        pending_syncs = _pending_pull_request_syncs(
+            discovered_pull_requests=discovered_pull_requests,
+            generated_descriptions=prepared_inputs.generated_pull_request_descriptions,
+            prepared_revisions=prepared_revisions,
+            trunk_branch=trunk_branch,
+        )
+        _reject_restart_pull_request_collisions(
+            discovered_pull_requests=discovered_pull_requests,
+            prepared_revisions=prepared_revisions,
+            restarted_change_ids=prepared_inputs.restarted_change_ids,
+        )
+        ensure_pull_request_links_are_consistent(
+            pending_syncs=pending_syncs,
+            state=mutation_run.state,
+        )
+        sync_local_bookmarks(
+            bookmark_states=bookmark_states,
+            client=client,
+            prepared_revisions=prepared_revisions,
+            run=mutation_run,
+            state=mutation_run.state,
+        )
+        if not dry_run and any(
+            revision.remote_action == "pushed" for revision in prepared_revisions
+        ):
+            await retarget_review_bases_before_branch_push(
+                bookmark_states=bookmark_states,
+                github_client=github_client,
+                jj_client=client,
+                pending_syncs=pending_syncs,
                 prepared_revisions=prepared_revisions,
+                remote_name=remote.name,
                 trunk_branch=trunk_branch,
             )
-            _reject_restart_pull_request_collisions(
-                discovered_pull_requests=discovered_pull_requests,
-                prepared_revisions=prepared_revisions,
-                restarted_change_ids=prepared_inputs.restarted_change_ids,
-            )
-            ensure_pull_request_links_are_consistent(
-                pending_syncs=pending_syncs,
-                state=mutation_run.state,
-            )
-            sync_local_bookmarks(
-                bookmark_result=bookmark_result,
-                bookmark_states=bookmark_states,
-                client=client,
-                prepared_revisions=prepared_revisions,
-                run=mutation_run,
-            )
-            if not dry_run and any(
-                revision.remote_action == "pushed" for revision in prepared_revisions
-            ):
-                await retarget_review_bases_before_branch_push(
-                    bookmark_states=bookmark_states,
-                    github_client=github_client,
-                    jj_client=client,
-                    pending_syncs=pending_syncs,
-                    prepared_revisions=prepared_revisions,
-                    remote_name=remote.name,
-                    trunk_branch=trunk_branch,
-                )
-                with console.spinner(description="Pushing review branches"):
-                    sync_remote_bookmarks(
-                        client=client,
-                        prepared_revisions=prepared_revisions,
-                        remote=remote,
-                        run=mutation_run,
-                    )
-            else:
+            with console.spinner(description="Pushing review branches"):
                 sync_remote_bookmarks(
                     client=client,
                     prepared_revisions=prepared_revisions,
                     remote=remote,
                     run=mutation_run,
                 )
-            with console.progress(
-                description="Syncing pull requests",
-                total=len(prepared_revisions),
-            ) as progress:
-                submitted_revisions = await sync_pull_requests(
-                    github_client=github_client,
-                    on_progress=progress.advance,
-                    options=options,
-                    pending_syncs=pending_syncs,
-                    resolved_options=resolved_options,
-                    run=mutation_run,
-                )
-
-            if not dry_run:
-                await sync_stack_comments(
-                    concurrency=_GITHUB_INSPECTION_CONCURRENCY,
-                    generated_stack_description=prepared_inputs.generated_stack_description,
-                    github_client=github_client,
-                    revisions=submitted_revisions,
-                    run=mutation_run,
-                    trunk_branch=trunk_branch,
-                )
-                await verify_no_unexpected_pull_request_closures(
-                    discovered_pull_requests=discovered_pull_requests,
-                    github_client=github_client,
-                )
+        else:
+            sync_remote_bookmarks(
+                client=client,
+                prepared_revisions=prepared_revisions,
+                remote=remote,
+                run=mutation_run,
+            )
+        with console.progress(
+            description="Syncing pull requests",
+            total=len(prepared_revisions),
+        ) as progress:
+            submitted_revisions = await sync_pull_requests(
+                github_client=github_client,
+                on_progress=progress.advance,
+                options=options,
+                pending_syncs=pending_syncs,
+                resolved_options=resolved_options,
+                run=mutation_run,
+            )
 
         if not dry_run:
-            next_state = bookmark_result.state.model_copy(update={"changes": state_changes})
-            if bookmark_result.changed or next_state != state:
-                state_store.save(next_state)
-
-        succeeded = True
-        return _build_submit_result(
-            client=client,
-            dry_run=dry_run,
-            remote=remote,
-            revisions=submitted_revisions,
-            stack=stack,
-            trunk_branch=trunk_branch,
-        )
-    finally:
-        if succeeded:
-            completed_change_ids = tuple(revision.change_id for revision in stack.revisions)
-            journal.append(
-                "completed",
-                {"ordered_change_ids": completed_change_ids},
+            await sync_stack_comments(
+                concurrency=_GITHUB_INSPECTION_CONCURRENCY,
+                generated_stack_description=prepared_inputs.generated_stack_description,
+                github_client=github_client,
+                revisions=submitted_revisions,
+                run=mutation_run,
+                trunk_branch=trunk_branch,
             )
+            await verify_no_unexpected_pull_request_closures(
+                discovered_pull_requests=discovered_pull_requests,
+                github_client=github_client,
+            )
+
+    return _build_submit_result(
+        client=client,
+        dry_run=dry_run,
+        remote=remote,
+        revisions=submitted_revisions,
+        stack=stack,
+        trunk_branch=trunk_branch,
+    )

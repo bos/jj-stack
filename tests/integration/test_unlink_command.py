@@ -29,18 +29,22 @@ def test_unlink_detaches_change_and_preserves_local_bookmark(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().changes[change_id].bookmark
-    assert bookmark is not None
+    submitted_state = state_store.load()
+    identity = submitted_state.review_identities[change_id]
+    bookmark = identity.head_ref
+    baseline = submitted_state.submitted_baselines[change_id]
 
     exit_code = run_main(repo, config_path, "unlink", change_id)
     captured = capsys.readouterr()
-    unlinked_change = state_store.load().changes[change_id]
+    unlinked_state = state_store.load()
+    unlinked_identity = unlinked_state.review_identities[change_id]
 
     assert exit_code == 0
     assert "Stopped review tracking for" in captured.out
-    assert unlinked_change.bookmark == bookmark
-    assert unlinked_change.link_state == "unlinked"
-    assert unlinked_change.pr_number is None
+    assert unlinked_identity.head_ref == bookmark
+    assert unlinked_identity.link_state == "unlinked"
+    assert unlinked_identity.pr_number == identity.pr_number
+    assert unlinked_state.submitted_baselines[change_id] == baseline
     assert JjClient(repo).get_bookmark_state(bookmark).local_target is not None
     assert fake_repo.pull_requests[1].state == "open"
     assert issue_comments(fake_repo, 1) == []
@@ -66,8 +70,7 @@ def test_unlink_stays_local_and_does_not_import_drifted_remote_state(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().changes[change_id].bookmark
-    assert bookmark is not None
+    bookmark = state_store.load().review_identities[change_id].head_ref
 
     run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 rewritten"], repo)
     main_target = run_command(
@@ -91,7 +94,7 @@ def test_unlink_stays_local_and_does_not_import_drifted_remote_state(
     rediscovered = JjClient(repo).discover_review_stack(change_id)
 
     assert exit_code == 0
-    assert state_store.load().changes[change_id].link_state == "unlinked"
+    assert state_store.load().review_identities[change_id].link_state == "unlinked"
     assert not rediscovered.head.divergent
     remembered_remote = JjClient(repo).get_bookmark_state(bookmark).remote_target("origin")
     assert remembered_remote is not None

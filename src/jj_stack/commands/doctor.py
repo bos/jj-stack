@@ -186,8 +186,7 @@ async def _check_github_connectivity(
                 CheckResult(
                     "connectivity",
                     "fail",
-                    f"{parsed_repo.host}/{parsed_repo.full_name}: "
-                    f"{error.user_facing_reason()}",
+                    f"{parsed_repo.host}/{parsed_repo.full_name}: {error.user_facing_reason()}",
                 ),
                 None,
             )

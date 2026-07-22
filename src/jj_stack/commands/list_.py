@@ -21,8 +21,8 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._json_status import (
-    cached_pull_request_json,
     review_change_json,
+    saved_pull_request_json,
 )
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.console import requested_color_mode
@@ -34,13 +34,13 @@ from jj_stack.github.resolution import (
 )
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.change_status import (
     OrphanedRecord,
     ReviewChangeStatus,
     classify_review_status_revision,
-    classify_saved_review_change,
+    classify_saved_review_identity,
     enumerate_orphaned_records,
 )
 from jj_stack.review.discovery import discover_tracked_stacks
@@ -128,6 +128,7 @@ def _run_list(
         refresh_remote_state_for_status(jj_client=context.jj_client)
 
     state = context.state_store.load()
+    state_incomplete = bool(state.record_issues)
     with console.spinner(description="Inspecting local stacks"):
         discovered = discover_tracked_stacks(jj_client=context.jj_client, state=state)
 
@@ -147,10 +148,10 @@ def _run_list(
                     indent=2,
                 )
             )
-            return 0
+            return EXIT_INCOMPLETE if state_incomplete else 0
         if not orphan_rows:
             console.output("No stacks.")
-            return 0
+            return EXIT_INCOMPLETE if state_incomplete else 0
         color_when = context.jj_client.resolve_color_when(
             cli_color=requested_color_mode(),
             stdout_is_tty=sys.stdout.isatty(),
@@ -168,7 +169,7 @@ def _run_list(
             )
         )
         _emit_orphan_hint(orphan_rows)
-        return 0
+        return EXIT_INCOMPLETE if state_incomplete else 0
     with console.spinner(description="Loading bookmark state"):
         repo_inspection = _prepare_repo_inspection_context(
             context=context,
@@ -185,7 +186,6 @@ def _run_list(
             prepared=prepare_stack_for_status(
                 bookmark_states=repo_inspection.bookmark_states,
                 context=context,
-                persist_bookmarks=False,
                 remote=github_target.remote,
                 remote_error=github_target.remote_error,
                 stack=stack,
@@ -215,7 +215,7 @@ def _run_list(
                 indent=2,
             )
         )
-        return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
+        return EXIT_INCOMPLETE if state_incomplete or any(row.incomplete for row in rows) else 0
     color_when = context.jj_client.resolve_color_when(
         cli_color=requested_color_mode(),
         stdout_is_tty=sys.stdout.isatty(),
@@ -237,16 +237,16 @@ def _run_list(
     )
     _emit_orphan_hint(orphan_rows)
     _emit_stale_stacks_advisory(discovered=ordered, state=state)
-    return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
+    return EXIT_INCOMPLETE if state_incomplete or any(row.incomplete for row in rows) else 0
 
 
 def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:
-    pr_number = orphan.cached_change.pr_number
+    pr_number = orphan.review_identity.pr_number
     return OrphanRow(
-        bookmark=orphan.cached_change.bookmark,
+        bookmark=orphan.review_identity.head_ref,
         change_id=orphan.change_id,
-        pull_request=cached_pull_request_json(orphan.cached_change),
-        review=f"PR #{pr_number}" if pr_number is not None else "(no PR number)",
+        pull_request=saved_pull_request_json(orphan.review_identity),
+        review=f"PR #{pr_number}",
         state=ui.semantic_text("orphan", "warning", "heading"),
         subject="local change missing",
     )
@@ -569,9 +569,9 @@ def _pull_request_numbers_from_revisions(
         if lookup is not None and lookup.pull_request is not None:
             numbers.append(lookup.pull_request.number)
             continue
-        cached_change = revision.cached_change
-        if cached_change is not None and cached_change.pr_number is not None:
-            numbers.append(cached_change.pr_number)
+        review_identity = revision.review_identity
+        if review_identity is not None:
+            numbers.append(review_identity.pr_number)
     return tuple(sorted(dict.fromkeys(numbers)))
 
 
@@ -613,9 +613,9 @@ def _tracked_prepared_revisions_by_bookmark(
     prepared_revisions_by_bookmark: dict[str, PreparedRevision] = {}
     for item in prepared_discovered:
         for prepared_revision in item.prepared.status_revisions:
-            cached_change = prepared_revision.cached_change
-            if not classify_saved_review_change(
-                cached_change,
+            review_identity = prepared_revision.review_identity
+            if not classify_saved_review_identity(
+                review_identity,
                 local="present",
             ).saved_review_identity:
                 continue
@@ -639,8 +639,8 @@ def _tracked_pinned_bookmarks_for_repo_inspection(
     tracked_revisions = tuple(
         revision
         for revision in revisions
-        if (cached := state.changes.get(revision.change_id)) is not None
-        and _saved_change_requires_bookmark_inspection(cached)
+        if (identity := state.review_identities.get(revision.change_id)) is not None
+        and _saved_identity_requires_bookmark_inspection(identity)
     )
     return pinned_bookmarks_for_revisions(
         revisions=tracked_revisions,
@@ -648,8 +648,8 @@ def _tracked_pinned_bookmarks_for_repo_inspection(
     )
 
 
-def _saved_change_requires_bookmark_inspection(cached_change: CachedChange) -> bool:
-    review_status = classify_saved_review_change(cached_change, local="present")
+def _saved_identity_requires_bookmark_inspection(review_identity: ReviewIdentity) -> bool:
+    review_status = classify_saved_review_identity(review_identity, local="present")
     return review_status.saved_review_identity or review_status.link == "unlinked"
 
 

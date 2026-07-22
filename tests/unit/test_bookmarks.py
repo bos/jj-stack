@@ -4,11 +4,12 @@ import pytest
 
 from jj_stack.errors import CliError
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import LinkState, ReviewIdentity
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.bookmarks import (
     BookmarkResolver,
     ResolvedBookmark,
+    bookmark_matches_restart_change_id,
     discover_bookmarks_for_revisions,
     ensure_unique_bookmarks,
     find_changes_by_bookmark,
@@ -38,39 +39,52 @@ def test_generate_bookmark_name_falls_back_for_blank_subject() -> None:
     assert bookmark == "review/change-abcdefgh"
 
 
-def test_bookmark_resolver_generates_and_pins_bookmark_when_no_mapping_exists() -> None:
+def test_restart_bookmark_matcher_accepts_two_digit_attempts() -> None:
+    assert bookmark_matches_restart_change_id(
+        "review/change-fresh-10-abcdefgh",
+        "abcdefghijklmno",
+    )
+
+
+@pytest.mark.parametrize(
+    "bookmark",
+    (
+        "review/change-fresh-0-abcdefgh",
+        "review/change-fresh-1-abcdefgh",
+        "review/change-fresh-01-abcdefgh",
+    ),
+)
+def test_restart_bookmark_matcher_rejects_attempts_the_generator_cannot_make(
+    bookmark: str,
+) -> None:
+    assert not bookmark_matches_restart_change_id(bookmark, "abcdefghijklmno")
+
+
+def test_bookmark_resolver_generates_bookmark_when_no_identity_exists() -> None:
     revision = _revision(
         change_id="zvlywqkxtmnpqrstu",
         description="Fix cache invalidation\n",
     )
 
-    result = BookmarkResolver(ReviewState()).pin_revisions((revision,))
+    resolutions = BookmarkResolver({}).resolve_revisions((revision,))
 
-    assert result.changed is True
-    assert result.resolutions[0].bookmark == "review/fix-cache-invalidation-zvlywqkx"
-    assert result.resolutions[0].source == "generated"
-    assert (
-        result.state.changes["zvlywqkxtmnpqrstu"].bookmark
-        == "review/fix-cache-invalidation-zvlywqkx"
-    )
+    assert resolutions[0].bookmark == "review/fix-cache-invalidation-zvlywqkx"
+    assert resolutions[0].source == "generated"
 
 
 def test_bookmark_resolver_keeps_cached_bookmark_stable_after_subject_change() -> None:
-    state = ReviewState(
-        changes={
-            "zvlywqkxtmnpqrstu": CachedChange(bookmark="review/fix-cache-invalidation-zvlywqkx")
-        }
-    )
+    identities = {
+        "zvlywqkxtmnpqrstu": _identity(head_ref="review/fix-cache-invalidation-zvlywqkx")
+    }
     renamed_revision = _revision(
         change_id="zvlywqkxtmnpqrstu",
         description="Rewrite cache invalidation from scratch\n",
     )
 
-    result = BookmarkResolver(state).pin_revisions((renamed_revision,))
+    resolutions = BookmarkResolver(identities).resolve_revisions((renamed_revision,))
 
-    assert result.changed is False
-    assert result.resolutions[0].bookmark == "review/fix-cache-invalidation-zvlywqkx"
-    assert result.resolutions[0].source == "saved"
+    assert resolutions[0].bookmark == "review/fix-cache-invalidation-zvlywqkx"
+    assert resolutions[0].source == "saved"
 
 
 def test_bookmark_resolver_uses_matched_bookmark_when_cache_is_missing() -> None:
@@ -80,13 +94,12 @@ def test_bookmark_resolver_uses_matched_bookmark_when_cache_is_missing() -> None
     )
 
     result = BookmarkResolver(
-        ReviewState(),
+        {},
         matched_bookmarks={"zvlywqkxtmnpqrstu": "potato/custom-name"},
-    ).pin_revisions((revision,))
+    ).resolve_revisions((revision,))
 
-    assert result.changed is True
-    assert result.resolutions[0].bookmark == "potato/custom-name"
-    assert result.resolutions[0].source == "matched"
+    assert result[0].bookmark == "potato/custom-name"
+    assert result[0].source == "matched"
 
 
 def test_bookmark_resolver_reuses_discovered_bookmark_when_cache_is_missing() -> None:
@@ -96,17 +109,12 @@ def test_bookmark_resolver_reuses_discovered_bookmark_when_cache_is_missing() ->
     )
 
     result = BookmarkResolver(
-        ReviewState(),
+        {},
         discovered_bookmarks={"zvlywqkxtmnpqrstu": "review/fix-cache-invalidation-zvlywqkx"},
-    ).pin_revisions((renamed_revision,))
+    ).resolve_revisions((renamed_revision,))
 
-    assert result.changed is True
-    assert result.resolutions[0].bookmark == "review/fix-cache-invalidation-zvlywqkx"
-    assert result.resolutions[0].source == "discovered"
-    assert (
-        result.state.changes["zvlywqkxtmnpqrstu"].bookmark
-        == "review/fix-cache-invalidation-zvlywqkx"
-    )
+    assert result[0].bookmark == "review/fix-cache-invalidation-zvlywqkx"
+    assert result[0].source == "discovered"
 
 
 def test_discover_bookmarks_reuses_unique_remote_bookmark_by_change_id_suffix() -> None:
@@ -146,6 +154,30 @@ def test_discover_bookmarks_for_revisions_rejects_ambiguous_matches() -> None:
             },
             remote_name="origin",
             revisions=(_revision(change_id="zvlywqkxtmnpqrstu", description=""),),
+        )
+
+
+def test_discovery_does_not_prefer_an_arbitrary_local_suffix_match() -> None:
+    change_id = "zvlywqkxtmnpqrstu"
+    revision = _revision(change_id=change_id, description="")
+
+    with pytest.raises(CliError, match="multiple existing bookmarks match"):
+        discover_bookmarks_for_revisions(
+            bookmark_states={
+                "review/original-zvlywqkx": BookmarkState(
+                    name="review/original-zvlywqkx",
+                    local_targets=(revision.commit_id,),
+                    remote_targets=(
+                        RemoteBookmarkState(remote="origin", targets=(revision.commit_id,)),
+                    ),
+                ),
+                "review/alternate-zvlywqkx": BookmarkState(
+                    name="review/alternate-zvlywqkx",
+                    local_targets=(revision.commit_id,),
+                ),
+            },
+            remote_name="origin",
+            revisions=(revision,),
         )
 
 
@@ -205,17 +237,32 @@ def test_ensure_unique_bookmarks_rejects_multiple_changes_resolving_to_same_book
         ensure_unique_bookmarks(resolutions)
 
 
-def test_find_changes_by_bookmark_includes_unlinked_records_to_block_silent_overwrite() -> None:
-    state = ReviewState(
-        changes={
-            "change-unlinked": CachedChange(
-                bookmark="review/shared",
-                link_state="unlinked",
-            ),
-        }
-    )
+def test_find_changes_by_bookmark_includes_unlinked_identity_to_block_overwrite() -> None:
+    review_identities = {
+        "change-unlinked": _identity(
+            head_ref="review/shared",
+            link_state="unlinked",
+        )
+    }
 
-    assert find_changes_by_bookmark(state, "review/shared") == ("change-unlinked",)
+    assert find_changes_by_bookmark(review_identities, "review/shared") == ("change-unlinked",)
+
+
+def _identity(
+    *,
+    head_ref: str,
+    link_state: LinkState = "active",
+) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="stacked-review",
+        pr_number=1,
+        head_owner="octo-org",
+        head_ref=head_ref,
+        bookmark_ownership="managed",
+        link_state=link_state,
+    )
 
 
 def _revision(*, change_id: str, description: str) -> LocalRevision:

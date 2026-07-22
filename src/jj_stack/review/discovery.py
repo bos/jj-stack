@@ -18,9 +18,8 @@ from dataclasses import dataclass
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.change_status import classify_saved_review_change
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,11 +37,7 @@ def discover_tracked_stacks(
 ) -> DiscoveredTrackedStacks:
     """Return every tracked review stack reachable from the live DAG."""
 
-    tracked_change_ids = tuple(
-        change_id
-        for change_id, cached_change in state.changes.items()
-        if _saved_change_is_discoverable(cached_change)
-    )
+    tracked_change_ids = tuple(state.review_identities)
     revisions_by_change_id = jj_client.query_revisions_by_change_ids(tracked_change_ids)
     tracked_revisions = tuple(
         revision
@@ -85,11 +80,7 @@ def discover_connected_tracked_stacks(
 
     if not selected_stacks:
         return ()
-    tracked_change_ids = {
-        change_id
-        for change_id, cached_change in state.changes.items()
-        if _saved_change_is_discoverable(cached_change)
-    }
+    tracked_change_ids = set(state.review_identities)
     if not tracked_change_ids:
         return ()
     selected_revisions = tuple(
@@ -101,10 +92,7 @@ def discover_connected_tracked_stacks(
     if tracked_change_ids.isdisjoint(selected_change_ids):
         return ()
     outside_tracked_change_ids = tuple(
-        change_id
-        for change_id, cached_change in state.changes.items()
-        if change_id not in selected_change_ids
-        and _saved_change_is_discoverable(cached_change)
+        change_id for change_id in state.review_identities if change_id not in selected_change_ids
     )
     if not outside_tracked_change_ids:
         return ()
@@ -157,11 +145,6 @@ def discover_stacks_from_revisions(
         revisions=(*descendants, *reviewable_revisions),
         trunk=trunk,
     )
-
-
-def _saved_change_is_discoverable(cached_change: CachedChange) -> bool:
-    review_status = classify_saved_review_change(cached_change, local="present")
-    return review_status.saved_review_identity or review_status.link == "unlinked"
 
 
 def _discover_stacks_from_revisions(

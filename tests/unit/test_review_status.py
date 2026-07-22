@@ -11,7 +11,7 @@ from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review import status as status_module
 from jj_stack.review.status import (
@@ -47,8 +47,8 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
                 state=ReviewState(),
                 status_revisions=(
                     SimpleNamespace(
-                        cached_change=CachedChange(pr_number=1),
                         change_id="aaaaaaaaaaaa",
+                        review_identity=_identity(pr_number=1),
                     ),
                 ),
             ),
@@ -60,26 +60,26 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
         ReviewStatusRevision(
             bookmark="review/feature-1-aaaaaaaa",
             bookmark_source="generated",
-            cached_change=None,
             change_id="aaaaaaaaaaaa",
             commit_id="commit-1",
-            link_state="active",
             local_divergent=False,
             pull_request_lookup=None,
             remote_state=None,
+            review_identity=None,
+            submitted_baseline=None,
             managed_comments_lookup=None,
             subject="feature 1",
         ),
         ReviewStatusRevision(
             bookmark="review/feature-2-bbbbbbbb",
             bookmark_source="generated",
-            cached_change=None,
             change_id="bbbbbbbbbbbb",
             commit_id="commit-2",
-            link_state="active",
             local_divergent=False,
             pull_request_lookup=None,
             remote_state=None,
+            review_identity=None,
+            submitted_baseline=None,
             managed_comments_lookup=None,
             subject="feature 2",
         ),
@@ -128,13 +128,13 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
         ReviewStatusRevision(
             bookmark="review/feature-1-aaaaaaaa",
             bookmark_source="generated",
-            cached_change=None,
             change_id="aaaaaaaaaaaa",
             commit_id="commit-1",
-            link_state="active",
             local_divergent=False,
             pull_request_lookup=None,
             remote_state=None,
+            review_identity=None,
+            submitted_baseline=None,
             managed_comments_lookup=None,
             subject="feature 1",
         ),
@@ -159,12 +159,13 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
                     SimpleNamespace(
                         bookmark="review/feature-1-aaaaaaaa",
                         bookmark_source="generated",
-                        cached_change=None,
                         revision=SimpleNamespace(
                             change_id="aaaaaaaaaaaa",
                             commit_id="commit-1",
                             subject="feature 1",
                         ),
+                        review_identity=None,
+                        submitted_baseline=None,
                     ),
                 ),
             ),
@@ -200,77 +201,6 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
     assert result.revisions == local_only_revisions
 
 
-def test_locked_status_cache_update_merges_with_current_saved_state(tmp_path) -> None:
-    state_store = ReviewStateStore(tmp_path / "state.json")
-    prepared_state = ReviewState(
-        changes={
-            "aaaaaaaaaaaa": CachedChange(
-                bookmark="review/feature-1-aaaaaaaa",
-                pr_number=1,
-            )
-        }
-    )
-    current_state = ReviewState(
-        changes={
-            "aaaaaaaaaaaa": CachedChange(
-                bookmark="review/feature-1-aaaaaaaa",
-                pr_number=1,
-            ),
-            "bbbbbbbbbbbb": CachedChange(
-                bookmark="review/other-bbbbbbbb",
-                pr_number=99,
-            ),
-        }
-    )
-    state_store.save(current_state)
-    pull_request = GithubPullRequest(
-        base={"ref": "main"},
-        head={"ref": "review/feature-1-aaaaaaaa"},
-        html_url="https://github.test/octo-org/stacked-review/pull/1",
-        number=1,
-        review_decision="approved",
-        state="open",
-        title="feature 1",
-    )
-    status_revision = ReviewStatusRevision(
-        bookmark="review/feature-1-aaaaaaaa",
-        bookmark_source="saved",
-        cached_change=prepared_state.changes["aaaaaaaaaaaa"],
-        change_id="aaaaaaaaaaaa",
-        commit_id="commit-1",
-        link_state="active",
-        local_divergent=False,
-        pull_request_lookup=status_module.PullRequestLookup(
-            message=None,
-            pull_request=pull_request,
-            review_decision="approved",
-            review_decision_error=None,
-            state="open",
-        ),
-        remote_state=None,
-        managed_comments_lookup=None,
-        subject="feature 1",
-    )
-
-    skipped = status_module._persist_status_cache_updates_with_optional_lock(
-        lock_cache_update=True,
-        prepared=cast(
-            PreparedStack,
-            SimpleNamespace(
-                state=prepared_state,
-                state_changes=dict(prepared_state.changes),
-                state_store=state_store,
-            ),
-        ),
-        revisions=(status_revision,),
-    )
-
-    saved = state_store.load()
-    assert skipped is False
-    assert saved.changes["aaaaaaaaaaaa"].pr_number is not None
-    assert saved.changes["bbbbbbbbbbbb"].pr_number == 99
-
-
 def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_misses() -> None:
     class FakeGithubClient:
         repository = GithubRepoAddress(
@@ -304,8 +234,8 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
 
     prepared_revision = SimpleNamespace(
         bookmark="review/old-branch",
-        cached_change=CachedChange(
-            bookmark="review/old-branch",
+        review_identity=_identity(
+            head_ref="review/old-branch",
             pr_number=7,
         ),
     )
@@ -325,9 +255,7 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
     assert lookup.pull_request.state == "merged"
 
 
-def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
-    tmp_path,
-) -> None:
+def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned() -> None:
     first = make_revision(
         commit_id="commit-1",
         description="feature 1",
@@ -341,9 +269,9 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
     stack = _stack_for_status(first, second)
 
     pinned_state = ReviewState(
-        changes={
-            "aaaaaaaa1234": CachedChange(bookmark="review/feature-1-aaaaaaaa"),
-            "bbbbbbbb5678": CachedChange(bookmark="review/feature-2-bbbbbbbb"),
+        review_identities={
+            "aaaaaaaa1234": _identity(head_ref="review/feature-1-aaaaaaaa"),
+            "bbbbbbbb5678": _identity(head_ref="review/feature-2-bbbbbbbb"),
         }
     )
     client = _PrepareStatusClient(stack)
@@ -361,7 +289,7 @@ def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned(
     client = _PrepareStatusClient(stack)
     state_store = _StateStoreStub(
         ReviewState(
-            changes={"aaaaaaaa1234": CachedChange(bookmark="review/feature-1-aaaaaaaa")}
+            review_identities={"aaaaaaaa1234": _identity(head_ref="review/feature-1-aaaaaaaa")}
         )
     )
     _prepare_status_for_test(
@@ -381,13 +309,11 @@ def test_prepare_status_reloads_saved_state_after_fetch() -> None:
     )
     stack = _stack_for_status(revision)
     stale_state = ReviewState(
-        changes={
-            revision.change_id: CachedChange(bookmark="review/stale", pr_number=1)
-        }
+        review_identities={revision.change_id: _identity(head_ref="review/stale", pr_number=1)}
     )
     refreshed_state = ReviewState(
-        changes={
-            revision.change_id: CachedChange(bookmark="review/refreshed", pr_number=2)
+        review_identities={
+            revision.change_id: _identity(head_ref="review/refreshed", pr_number=2)
         }
     )
 
@@ -405,7 +331,9 @@ def test_prepare_status_reloads_saved_state_after_fetch() -> None:
     assert client.fetches == ["origin"]
     assert client.list_calls == [("review/refreshed",)]
     prepared_revision = prepared_status.prepared.status_revisions[0]
-    assert prepared_revision.cached_change == refreshed_state.changes[revision.change_id]
+    assert (
+        prepared_revision.review_identity == refreshed_state.review_identities[revision.change_id]
+    )
 
 
 def test_pull_request_lookup_ignores_draft_review_decision() -> None:
@@ -428,7 +356,7 @@ def test_pull_request_lookup_ignores_draft_review_decision() -> None:
     assert lookup.review_decision is None
 
 
-def test_prepare_stack_for_status_does_not_persist_generated_bookmarks() -> None:
+def test_prepare_stack_for_status_leaves_generated_bookmarks_observational() -> None:
     revision = LocalRevision(
         change_id="aaaaaaaa1234",
         commit_id="commit-1",
@@ -459,39 +387,41 @@ def test_prepare_stack_for_status_does_not_persist_generated_bookmarks() -> None
         trunk=trunk,
     )
 
-    class FakeStateStore:
-        def __init__(self) -> None:
-            self.saved_states: list[ReviewState] = []
-
-        def save(self, state: ReviewState) -> None:
-            self.saved_states.append(state)
-
-    state_store = FakeStateStore()
     prepared = prepare_stack_for_status(
         context=cast(
             CommandContext,
             SimpleNamespace(
                 config=RepoConfig(),
                 jj_client=cast(JjClient, SimpleNamespace(list_bookmark_states=lambda _: {})),
-                state_store=cast(ReviewStateStore, state_store),
             ),
         ),
-        persist_bookmarks=False,
         remote=None,
         remote_error=None,
         stack=stack,
         state=ReviewState(),
     )
 
-    assert state_store.saved_states == []
-    assert prepared.bookmark_result_changed is False
-    assert prepared.state.changes == {}
-    assert prepared.state_changes == {}
     assert prepared.status_revisions[0].bookmark_source == "generated"
-    assert prepared.status_revisions[0].cached_change is None
+    assert prepared.status_revisions[0].review_identity is None
 
 
 _STATUS_REMOTE = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
+
+
+def _identity(
+    *,
+    head_ref: str = "review/change",
+    pr_number: int = 1,
+) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="stacked-review",
+        pr_number=pr_number,
+        head_owner="octo-org",
+        head_ref=head_ref,
+        bookmark_ownership="managed",
+    )
 
 
 def _stack_for_status(*revisions: LocalRevision) -> LocalStack:

@@ -6,7 +6,7 @@ import pytest
 from jj_stack.errors import EXIT_AMBIGUOUS, CliError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import GitRemote
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
@@ -36,7 +36,7 @@ def test_resolve_selected_revset_requires_explicit_selection() -> None:
 def test_resolve_linked_change_for_pull_request_uses_action_specific_guidance(
     monkeypatch,
 ) -> None:
-    state = ReviewState(changes={"change-1": CachedChange(pr_number=17)})
+    state = ReviewState(review_identities={"change-1": _identity(pr_number=17)})
     monkeypatch.setattr(
         "jj_stack.review.selection.ReviewStateStore.for_repo",
         lambda repo_root: _StateStoreStub(state),
@@ -54,9 +54,9 @@ def test_resolve_linked_change_for_pull_request_uses_action_specific_guidance(
 
 def test_resolve_orphaned_pull_request_uses_supported_stack_membership() -> None:
     state = ReviewState(
-        changes={
-            "change-1": CachedChange(
-                bookmark="review/change-1",
+        review_identities={
+            "change-1": _identity(
+                head_ref="review/change-1",
                 pr_number=17,
             )
         }
@@ -83,9 +83,9 @@ def test_resolve_orphaned_pull_request_uses_supported_stack_membership() -> None
 
 def test_resolve_orphaned_pull_request_fails_closed_on_multiple_matches() -> None:
     state = ReviewState(
-        changes={
-            "change-1": CachedChange(pr_number=17),
-            "change-2": CachedChange(pr_number=17),
+        review_identities={
+            "change-1": _identity(pr_number=17),
+            "change-2": _identity(pr_number=17),
         }
     )
     jj_client = _JjClientStub(_REPO_ROOT)
@@ -104,6 +104,22 @@ def test_resolve_orphaned_pull_request_fails_closed_on_multiple_matches() -> Non
 
 
 _REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _identity(
+    *,
+    head_ref: str = "review/change",
+    pr_number: int,
+) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="stacked-review",
+        pr_number=pr_number,
+        head_owner="octo-org",
+        head_ref=head_ref,
+        bookmark_ownership="managed",
+    )
 
 
 class _StateStoreStub:
@@ -131,8 +147,7 @@ class _JjClientStub:
 
     def query_revisions_by_change_ids(self, change_ids):
         return {
-            change_id: self._revisions_by_change_id.get(change_id, ())
-            for change_id in change_ids
+            change_id: self._revisions_by_change_id.get(change_id, ()) for change_id in change_ids
         }
 
 

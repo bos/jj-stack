@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 import jj_stack.console as console
-import jj_stack.ui as ui
 from jj_stack.commands._close_actions import find_managed_comments as _find_managed_comments
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError
@@ -16,17 +15,11 @@ from jj_stack.github.stack_comments import (
     StackCommentKind,
     stack_comment_label,
 )
-from jj_stack.models.bookmarks import BookmarkState, GitRemote
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.change_status import ReviewChangeStatus
-from jj_stack.state.journal import OperationJournal
 
-from .shared import (
-    CleanupAction,
-    PreparedCleanup,
-    PreparedCleanupChange,
-    _CleanupSaver,
-)
+from .shared import CleanupAction, PreparedCleanup, PreparedCleanupChange
 
 _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
 
@@ -44,12 +37,9 @@ class StackCommentCleanupPlan:
 async def _run_stack_comment_cleanup_pass(
     *,
     github_client: GithubClient,
-    journal: OperationJournal,
-    next_changes: dict[str, CachedChange],
     prepared_changes: tuple[PreparedCleanupChange, ...],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
-    saver: _CleanupSaver,
 ) -> None:
     stack_comment_changes = tuple(
         prepared_change
@@ -64,41 +54,28 @@ async def _run_stack_comment_cleanup_pass(
             concurrency=_GITHUB_INSPECTION_CONCURRENCY,
             items=stack_comment_changes,
             run_item=lambda prepared_change: _plan_stack_comment_cleanup(
-                cached_change=prepared_change.cached_change,
-                bookmark_state=prepared_change.bookmark_state,
                 github_client=github_client,
+                review_identity=prepared_change.review_identity,
             ),
             on_success=lambda _index, _result: progress.advance(),
         )
-    for prepared_change, comment_plan in zip(
-        stack_comment_changes,
-        comment_plans,
-        strict=True,
-    ):
+    for comment_plan in comment_plans:
         if comment_plan is None:
             continue
         await _apply_stack_comment_cleanup_action(
             comment_plan=comment_plan,
-            change_id=prepared_change.change_id,
             github_client=github_client,
-            journal=journal,
-            next_changes=next_changes,
             prepared_cleanup=prepared_cleanup,
             record_action=record_action,
-            saver=saver,
         )
 
 
 async def _apply_stack_comment_cleanup_action(
     *,
     comment_plan: StackCommentCleanupPlan,
-    change_id: str,
     github_client: GithubClient,
-    journal: OperationJournal,
-    next_changes: dict[str, CachedChange],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
-    saver: _CleanupSaver,
 ) -> None:
     targeted_actions = comment_plan.actions[: len(comment_plan.comments)]
     for action, (comment_id, kind) in zip(
@@ -108,44 +85,26 @@ async def _apply_stack_comment_cleanup_action(
     ):
         comment_action = action
         if not prepared_cleanup.dry_run and comment_action.status == "planned":
-            with journal.mutation(
-                "delete_issue_comment",
-                change_id=change_id,
-                comment_id=comment_id,
-                kind=kind,
-            ):
-                try:
-                    await github_client.delete_issue_comment(
-                        comment_id=comment_id,
-                    )
-                except GithubClientError as error:
-                    raise CliError(
-                        f"Could not delete {stack_comment_label(kind)} #{comment_id}"
-                    ) from error
+            try:
+                await github_client.delete_issue_comment(
+                    comment_id=comment_id,
+                )
+            except GithubClientError as error:
+                raise CliError(
+                    f"Could not delete {stack_comment_label(kind)} #{comment_id}"
+                ) from error
             comment_action = replace(action, status="applied")
         record_action(comment_action)
     for action in comment_plan.actions[len(targeted_actions) :]:
         record_action(action)
-    saver.save_if_changed(next_changes)
 
 
 async def _plan_stack_comment_cleanup(
     *,
-    cached_change: CachedChange,
-    bookmark_state: BookmarkState,
     github_client: GithubClient,
+    review_identity: ReviewIdentity,
 ) -> StackCommentCleanupPlan | None:
-    pull_request_number = cached_change.pr_number
-    if pull_request_number is None and cached_change.is_unlinked:
-        pull_request_number = await _resolve_unlinked_pull_request_number(
-            bookmark_state=bookmark_state,
-            github_client=github_client,
-        )
-        if isinstance(pull_request_number, CleanupAction):
-            return StackCommentCleanupPlan(actions=(pull_request_number,))
-
-    if pull_request_number is None:
-        return None
+    pull_request_number = review_identity.pr_number
 
     try:
         pull_request = await github_client.get_pull_request(
@@ -156,12 +115,12 @@ async def _plan_stack_comment_cleanup(
             return None
         raise CliError(f"Could not load pull request #{pull_request_number}") from error
 
-    if not cached_change.is_unlinked:
-        bookmark = cached_change.bookmark
-        if bookmark is None:
-            return None
-        expected_label = f"{github_client.repository.owner}:{bookmark}"
-        if pull_request.head.ref == bookmark and pull_request.head.label == expected_label:
+    if not review_identity.is_unlinked:
+        expected_label = f"{review_identity.head_owner}:{review_identity.head_ref}"
+        if (
+            pull_request.head.ref == review_identity.head_ref
+            and pull_request.head.label == expected_label
+        ):
             return None
 
     lookups = await _find_managed_comments(
@@ -206,48 +165,15 @@ async def _plan_stack_comment_cleanup(
     )
 
 
-async def _resolve_unlinked_pull_request_number(
-    *,
-    bookmark_state: BookmarkState,
-    github_client: GithubClient,
-) -> int | CleanupAction | None:
-    if bookmark_state.name == "":
-        return None
-
-    try:
-        pull_requests = await github_client.list_pull_requests(
-            head=f"{github_client.repository.owner}:{bookmark_state.name}",
-            state="all",
-        )
-    except GithubClientError as error:
-        raise CliError(
-            t"Could not list pull requests for unlinked bookmark "
-            t"{ui.bookmark(bookmark_state.name)}"
-        ) from error
-
-    if not pull_requests:
-        return None
-    if len(pull_requests) > 1:
-        return CleanupAction(
-            kind="stack navigation comment",
-            status="blocked",
-            body=(
-                t"cannot delete stack navigation comments because GitHub reports multiple "
-                t"pull requests for unlinked bookmark {ui.bookmark(bookmark_state.name)}"
-            ),
-        )
-    return pull_requests[0].number
-
-
 def _should_inspect_stack_comment_cleanup(
     *,
-    cached_change: CachedChange,
     remote: GitRemote | None,
+    review_identity: ReviewIdentity,
     review_status: ReviewChangeStatus,
     stale_reason: str | None,
 ) -> bool:
     eligibility = _stack_comment_cleanup_eligibility(
-        cached_change=cached_change,
+        review_identity=review_identity,
         stale_reason=stale_reason,
     )
     if eligibility == "inspect":
@@ -261,7 +187,7 @@ def _should_inspect_stack_comment_cleanup(
 
 def _stack_comment_cleanup_eligibility(
     *,
-    cached_change: CachedChange,
+    review_identity: ReviewIdentity,
     stale_reason: str | None,
 ) -> StackCommentCleanupEligibility:
     """Classify whether cleanup can inspect stack comments for this change.
@@ -272,12 +198,8 @@ def _stack_comment_cleanup_eligibility(
     ("needs-remote-check") before its comments are worth a live inspection.
     """
 
-    if cached_change.is_unlinked:
-        if cached_change.pr_number is None and cached_change.bookmark is None:
-            return "skip"
+    if review_identity.is_unlinked:
         return "inspect"
-    if cached_change.pr_number is None:
-        return "skip"
     if stale_reason is None:
         return "inspect"
     return "needs-remote-check"

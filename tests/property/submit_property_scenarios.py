@@ -227,12 +227,34 @@ def test_submit_property_failed_submit_retry_converges(
         args = () if revset is None else (revset,)
         return run_main(repo, config_path, "submit", *args)
 
+    def relink(pull_request_number: int, change_id: str) -> int:
+        return run_main(
+            repo,
+            config_path,
+            "relink",
+            str(pull_request_number),
+            change_id,
+        )
+
+    def submit_after_relink(revset: str | None) -> int:
+        args = () if revset is None else (revset,)
+        return run_main(
+            repo,
+            config_path,
+            "submit",
+            "--reviewers",
+            "alice",
+            *args,
+        )
+
     replay_failed_submit_retry_scenario(
         discard_output=capsys.readouterr,
         fake_repo=fake_repo,
+        relink=relink,
         repo=repo,
         scenario=scenario,
         submit=submit,
+        submit_after_relink=submit_after_relink,
     )
 
 

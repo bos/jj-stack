@@ -81,8 +81,18 @@ def _run_restart(
         stack=stack,
         state=state,
     )
-    if restart_result.changed and not dry_run:
-        state_store.save(restart_result.state)
+    if not dry_run:
+        for restarted in restart_result.restarted:
+            context.jj_client.set_bookmark(
+                restarted.change.new_bookmark,
+                restarted.commit_id,
+            )
+        for restarted in restart_result.restarted:
+            state_store.retire_review(
+                restarted.change.change_id,
+                expected_identity=restarted.identity,
+                expected_baseline=restarted.baseline,
+            )
     return RestartResult(
         changed=restart_result.changed,
         dry_run=dry_run,
@@ -101,9 +111,7 @@ def _render_restart_result(result: RestartResult) -> None:
     console.output(f"{action} fresh review tracking for {change_count} {noun}:")
     for item in result.changed:
         old = (
-            f"PR #{item.old_pr_number}"
-            if item.old_pr_number is not None
-            else "previous tracking"
+            f"PR #{item.old_pr_number}" if item.old_pr_number is not None else "previous tracking"
         )
         console.output(
             t"  {ui.change_id(item.change_id)} {item.subject}: {old} -> "

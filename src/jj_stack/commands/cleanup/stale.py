@@ -69,9 +69,7 @@ def _supported_review_commit_ids_for_revisions(
         jj_client=context.jj_client,
         revisions=revisions,
     )
-    return {
-        revision.commit_id for stack in stacks for revision in stack.revisions
-    }
+    return {revision.commit_id for stack in stacks for revision in stack.revisions}
 
 
 def _plan_orphan_local_bookmark_cleanups(

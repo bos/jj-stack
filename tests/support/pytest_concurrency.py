@@ -368,7 +368,5 @@ def _requested_slots(config: pytest.Config) -> int:
     return 1
 
 
-
-
 def _report_root_for(config: pytest.Config) -> Path:
     return Path(config.rootpath) / ".pytest_cache" / _REPORT_DIR_NAME

@@ -8,10 +8,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.config import AppConfig, load_config
 from jj_stack.errors import CliError
 from jj_stack.jj.client import JjCliArgs, JjClient
+from jj_stack.models.review_state import ReviewStateRecordIssue
 from jj_stack.state.store import ReviewStateStore
 
 _MINIMUM_JJ_VERSION = (0, 39, 0)
@@ -81,7 +83,30 @@ def bootstrap_context(
             repository=repository,
         ),
         repo_root=repo_root,
-        state_store=ReviewStateStore.for_repo(repo_root),
+        state_store=ReviewStateStore.for_repo(
+            repo_root,
+            issue_reporter=_report_review_state_issues,
+        ),
+    )
+
+
+def _report_review_state_issues(
+    issues: tuple[ReviewStateRecordIssue, ...],
+) -> None:
+    for issue in issues:
+        component = (
+            "review identity" if issue.record_type == "review_identity" else "submitted baseline"
+        )
+        console.warning(
+            t"Saved {component} for {ui.change_id(issue.change_id)} is unavailable; "
+            t"unrelated reviews will continue."
+        )
+    console.warning(
+        ui.prefixed_line(
+            "Hint: ",
+            t"Run {ui.cmd('jj-stack relink --help')} to replace an unavailable record "
+            t"from its live pull request.",
+        )
     )
 
 
@@ -111,9 +136,7 @@ def _resolve_logging_level(level_name: str, *, original_value: str) -> int:
     level_names = logging.getLevelNamesMapping()
     if level_name not in level_names:
         valid_levels = ", ".join(sorted(level_names))
-        raise CliError(
-            f"Invalid logging level {original_value}. Expected one of: {valid_levels}"
-        )
+        raise CliError(f"Invalid logging level {original_value}. Expected one of: {valid_levels}")
     return level_names[level_name]
 
 

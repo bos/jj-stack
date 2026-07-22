@@ -94,8 +94,5 @@ def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
     assert sync_exit_code == 0
     assert "No merged changes on the selected stack need rebasing." in captured.out
     # Convergence is idempotent: the survivor did not move again.
-    assert (
-        JjClient(repo).resolve_revision(top_change_id).commit_id
-        == rewritten_top.commit_id
-    )
+    assert JjClient(repo).resolve_revision(top_change_id).commit_id == rewritten_top.commit_id
     assert fake_repo.pull_requests[2].state == "open"

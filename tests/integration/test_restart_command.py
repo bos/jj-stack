@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jj_stack.formatting import short_change_id
 from jj_stack.jj.client import JjClient
-from jj_stack.models.review_state import CachedChange
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
+    write_file,
 )
 from .submit_command_helpers import configure_submit_environment, run_main
 
@@ -33,10 +34,13 @@ def test_restart_prepares_submitted_stack_for_fresh_pull_requests(
     change_ids = tuple(revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    old_records = {change_id: initial_state.changes[change_id] for change_id in change_ids}
-    old_bookmarks = {change_id: old_records[change_id].bookmark for change_id in change_ids}
-    old_pr_numbers = {change_id: old_records[change_id].pr_number for change_id in change_ids}
-    assert all(pr_number is not None for pr_number in old_pr_numbers.values())
+    old_bookmarks = {
+        change_id: initial_state.review_identities[change_id].head_ref for change_id in change_ids
+    }
+    old_pr_numbers = {
+        change_id: initial_state.review_identities[change_id].pr_number
+        for change_id in change_ids
+    }
     for pr_number in old_pr_numbers.values():
         assert pr_number is not None
         fake_repo.pull_requests[pr_number].state = "closed"
@@ -49,16 +53,15 @@ def test_restart_prepares_submitted_stack_for_fresh_pull_requests(
     assert "Prepared fresh review tracking for 2 changes" in captured.out
     assert f"jj-stack submit {head_change_id}" in captured.out
     for change_id in change_ids:
-        restarted = restarted_state.changes[change_id]
-        assert restarted.bookmark is not None
-        assert restarted.bookmark != old_bookmarks[change_id]
-        assert restarted.bookmark.endswith(f"-{short_change_id(change_id)}")
+        assert change_id not in restarted_state.review_identities
+        assert change_id not in restarted_state.submitted_baselines
 
     assert run_main(repo, config_path, "submit", head_change_id) == 0
     capsys.readouterr()
     resubmitted_state = state_store.load()
     new_pr_numbers = {
-        change_id: resubmitted_state.changes[change_id].pr_number for change_id in change_ids
+        change_id: resubmitted_state.review_identities[change_id].pr_number
+        for change_id in change_ids
     }
 
     assert all(pr_number is not None for pr_number in new_pr_numbers.values())
@@ -67,7 +70,10 @@ def test_restart_prepares_submitted_stack_for_fresh_pull_requests(
         assert new_pr_number is not None
         pull_request = fake_repo.pull_requests[new_pr_number]
         assert pull_request.state == "open"
-        assert pull_request.head_ref == resubmitted_state.changes[change_id].bookmark
+        new_bookmark = resubmitted_state.review_identities[change_id].head_ref
+        assert new_bookmark != old_bookmarks[change_id]
+        assert new_bookmark.endswith(f"-{short_change_id(change_id)}")
+        assert pull_request.head_ref == new_bookmark
 
 
 def test_restart_dry_run_leaves_tracking_data_unchanged(
@@ -90,6 +96,29 @@ def test_restart_dry_run_leaves_tracking_data_unchanged(
     assert state_store.load() == initial_state
 
 
+def test_restart_rejects_selected_malformed_identity_without_local_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    state_path = resolve_state_path(repo)
+    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    raw_state["review_identities"][change_id] = {"version": 9}
+    write_file(state_path, json.dumps(raw_state))
+    bookmarks_before = JjClient(repo).list_bookmark_states()
+
+    exit_code = run_main(repo, config_path, "restart", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "relink" in captured.err
+    assert JjClient(repo).list_bookmark_states() == bookmarks_before
+    assert json.loads(state_path.read_text(encoding="utf-8")) == raw_state
+
+
 def test_submit_restart_creates_fresh_pr_on_regenerated_branch_after_head_branch_rename(
     tmp_path: Path,
     monkeypatch,
@@ -101,34 +130,28 @@ def test_submit_restart_creates_fresh_pr_on_regenerated_branch_after_head_branch
     change_id = JjClient(repo).discover_review_stack().head.change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    original_change = state.changes[change_id]
-    generated_bookmark = original_change.bookmark
-    assert generated_bookmark is not None
+    original_identity = state.review_identities[change_id]
+    generated_bookmark = original_identity.head_ref
     stale_bookmark = f"review/stale-{short_change_id(change_id)}"
-    state_store.save(
-        state.model_copy(
-            update={
-                "changes": {
-                    **state.changes,
-                    change_id: original_change.model_copy(
-                        update={"bookmark": stale_bookmark}
-                    ),
-                }
-            }
-        )
+    baseline = state.submitted_baselines[change_id]
+    state_store.relink_review(
+        change_id,
+        expected_identity=original_identity,
+        expected_baseline=baseline,
+        identity=original_identity.model_copy(update={"head_ref": stale_bookmark}),
+        baseline=baseline,
     )
 
     exit_code = run_main(repo, config_path, "submit", "--restart", change_id)
     capsys.readouterr()
-    restarted_change = state_store.load().changes[change_id]
+    restarted_identity = state_store.load().review_identities[change_id]
 
     assert exit_code == 0
-    assert restarted_change.pr_number == 2
-    assert restarted_change.bookmark is not None
-    assert restarted_change.bookmark not in {stale_bookmark, generated_bookmark}
-    assert restarted_change.bookmark.endswith(f"-{short_change_id(change_id)}")
+    assert restarted_identity.pr_number == 2
+    assert restarted_identity.head_ref not in {stale_bookmark, generated_bookmark}
+    assert restarted_identity.head_ref.endswith(f"-{short_change_id(change_id)}")
     assert fake_repo.pull_requests[1].head_ref == generated_bookmark
-    assert fake_repo.pull_requests[2].head_ref == restarted_change.bookmark
+    assert fake_repo.pull_requests[2].head_ref == restarted_identity.head_ref
 
 
 def test_submit_restart_preserves_old_tracking_when_fresh_branch_has_pr(
@@ -143,17 +166,19 @@ def test_submit_restart_preserves_old_tracking_when_fresh_branch_has_pr(
     short_id = short_change_id(change_id)
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    original_change = state.changes[change_id]
-    assert original_change.bookmark is not None
-    fresh_bookmark = original_change.bookmark.removesuffix(
-        f"-{short_id}"
-    ) + f"-fresh-pr1-{short_id}"
+    original_identity = state.review_identities[change_id]
+    fresh_bookmark = (
+        original_identity.head_ref.removesuffix(f"-{short_id}") + f"-fresh-pr1-{short_id}"
+    )
     stale_bookmark = f"review/stale-{short_id}"
-    stale_change = original_change.model_copy(update={"bookmark": stale_bookmark})
-    state_store.save(
-        state.model_copy(
-            update={"changes": {**state.changes, change_id: stale_change}}
-        )
+    stale_identity = original_identity.model_copy(update={"head_ref": stale_bookmark})
+    baseline = state.submitted_baselines[change_id]
+    stale_state = state_store.relink_review(
+        change_id,
+        expected_identity=original_identity,
+        expected_baseline=baseline,
+        identity=stale_identity,
+        baseline=baseline,
     )
     fake_repo.create_pull_request(
         base_ref="main",
@@ -167,7 +192,7 @@ def test_submit_restart_preserves_old_tracking_when_fresh_branch_has_pr(
 
     assert exit_code == 1
     assert "GitHub already reports PR #2" in captured.err
-    assert state_store.load().changes[change_id] == stale_change
+    assert state_store.load() == stale_state
 
 
 def test_restart_rejects_unlinked_change_without_rewriting_tracking_state(
@@ -186,15 +211,12 @@ def test_restart_rejects_unlinked_change_without_rewriting_tracking_state(
     second_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     submitted_state = state_store.load()
-    unlinked_state = submitted_state.model_copy(
-        update={
-            "changes": {
-                **submitted_state.changes,
-                second_change_id: CachedChange(link_state="unlinked"),
-            }
-        }
+    state_store.set_link_state(
+        second_change_id,
+        expected_identity=submitted_state.review_identities[second_change_id],
+        link_state="unlinked",
     )
-    state_store.save(unlinked_state)
+    unlinked_state = state_store.load()
 
     exit_code = run_main(repo, config_path, "restart", stack.head.change_id)
     captured = capsys.readouterr()

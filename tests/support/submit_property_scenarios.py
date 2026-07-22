@@ -1136,9 +1136,7 @@ def _random_drift_operations(
     *,
     model: _ScenarioModel,
 ) -> tuple[DriftOperation, ...]:
-    live_initial_labels = [
-        label for label in model.live_labels if label.startswith("c")
-    ]
+    live_initial_labels = [label for label in model.live_labels if label.startswith("c")]
     drift_count = rng.choice((1, 1, 2))
     kinds = rng.sample(
         _COMPOSABLE_DRIFT_KINDS,
@@ -1583,9 +1581,7 @@ def _available_operations(
 
         squashable = tuple(model.live_labels[1:])
         squash_label = rng.choice(squashable)
-        operations.append(
-            StackEditOperation(kind="squash_into_previous", label=squash_label)
-        )
+        operations.append(StackEditOperation(kind="squash_into_previous", label=squash_label))
 
     rewrite_label = rng.choice(model.live_labels)
     operations.append(StackEditOperation(kind="rewrite", label=rewrite_label))

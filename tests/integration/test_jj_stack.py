@@ -50,4 +50,3 @@ def _current_parent_commit_id(repo: Path) -> str:
         repo,
     )
     return completed.stdout.strip()
-

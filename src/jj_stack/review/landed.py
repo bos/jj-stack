@@ -32,7 +32,7 @@ from jj_stack.github.stack_comments import (
 from jj_stack.jj.client import JjClient, JjCommandError, UnsupportedStackError
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.bookmarks import (
     bookmark_cleanup_allowed,
     classify_local_bookmark_forget,
@@ -47,11 +47,9 @@ LandedReviewOutcome = Literal["finalized", "already_merged", "skipped"]
 class LandedReviewCandidate:
     """One tracked review whose submitted commit is an ancestor of trunk."""
 
-    bookmark: str
-    bookmark_managed: bool
     change_id: str
-    commit_id: str
-    pull_request_number: int
+    review_identity: ReviewIdentity
+    submitted_baseline: SubmittedBaseline
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,31 +84,30 @@ def landed_review_candidates(
     """Return tracked reviews whose exact submitted commit is an ancestor of trunk."""
 
     saved: list[LandedReviewCandidate] = []
-    for change_id, cached in sorted(state.changes.items()):
-        if cached.link_state != "active":
+    for change_id, review_identity in sorted(state.review_identities.items()):
+        if not review_identity.is_tracked:
             continue
-        if (
-            cached.bookmark is None
-            or cached.pr_number is None
-            or cached.last_submitted_commit_id is None
-        ):
+        submitted_baseline = state.submitted_baselines.get(change_id)
+        if submitted_baseline is None:
             continue
         saved.append(
             LandedReviewCandidate(
-                bookmark=cached.bookmark,
-                bookmark_managed=cached.manages_bookmark,
                 change_id=change_id,
-                commit_id=cached.last_submitted_commit_id,
-                pull_request_number=cached.pr_number,
+                review_identity=review_identity,
+                submitted_baseline=submitted_baseline,
             )
         )
     if not saved:
         return ()
     landed_commit_ids = jj_client.query_commit_ids_ancestors_of(
-        tuple(candidate.commit_id for candidate in saved),
+        tuple(candidate.submitted_baseline.commit_id for candidate in saved),
         descendant_commit_id=trunk_commit_id,
     )
-    return tuple(candidate for candidate in saved if candidate.commit_id in landed_commit_ids)
+    return tuple(
+        candidate
+        for candidate in saved
+        if candidate.submitted_baseline.commit_id in landed_commit_ids
+    )
 
 
 async def finalize_landed_reviews(
@@ -155,15 +152,15 @@ async def finalize_landed_reviews(
         )
     )
     bookmark_states = jj_client.list_bookmark_states(
-        tuple(candidate.bookmark for candidate in candidates)
+        tuple(candidate.review_identity.head_ref for candidate in candidates)
     )
     results: list[LandedReviewResult] = []
-    retired_change_ids: list[str] = []
     for candidate in candidates:
         result = await _finalize_landed_review(
             bookmark_policy=bookmark_policy,
             bookmark_state=bookmark_states.get(
-                candidate.bookmark, BookmarkState(name=candidate.bookmark)
+                candidate.review_identity.head_ref,
+                BookmarkState(name=candidate.review_identity.head_ref),
             ),
             candidate=candidate,
             dry_run=dry_run,
@@ -173,14 +170,12 @@ async def finalize_landed_reviews(
             trunk_branch=trunk_branch,
         )
         results.append(result)
-        if result.retired:
-            retired_change_ids.append(candidate.change_id)
-    if retired_change_ids and not dry_run:
-        current_state = state_store.load()
-        next_changes = dict(current_state.changes)
-        for change_id in retired_change_ids:
-            next_changes.pop(change_id, None)
-        state_store.save(current_state.model_copy(update={"changes": next_changes}))
+        if result.retired and not dry_run:
+            state_store.retire_review(
+                candidate.change_id,
+                expected_identity=candidate.review_identity,
+                expected_baseline=candidate.submitted_baseline,
+            )
     return tuple(results)
 
 
@@ -212,26 +207,27 @@ async def _finalize_landed_review(
             else t"{ui.change_id(candidate.change_id)}"
         )
         console.output(
-            t"Finalizing PR #{candidate.pull_request_number} for {rendered_label}..."
+            t"Finalizing PR #{candidate.review_identity.pr_number} for {rendered_label}..."
         )
     try:
         pull_request = await github_client.get_pull_request(
-            pull_number=candidate.pull_request_number,
+            pull_number=candidate.review_identity.pr_number,
         )
     except GithubClientError as error:
         return LandedReviewResult(
             candidate=candidate,
             outcome="skipped",
-            skip_reason=t"could not load PR #{candidate.pull_request_number}: {error}",
+            skip_reason=t"could not load PR #{candidate.review_identity.pr_number}: {error}",
         )
     pull_request = pull_request.normalize_state()
 
     # Every mutation path — finalizing an open PR or tearing down a merged
     # one — requires the head to still identify this exact review.
     head_mismatch = landed_pull_request_head_mismatch(
-        bookmark=candidate.bookmark,
-        commit_id=candidate.commit_id,
+        bookmark=candidate.review_identity.head_ref,
+        commit_id=candidate.submitted_baseline.commit_id,
         github_client=github_client,
+        head_owner=candidate.review_identity.head_owner,
         pull_request=pull_request,
     )
     if head_mismatch is not None:
@@ -245,12 +241,13 @@ async def _finalize_landed_review(
         if not dry_run:
             try:
                 pull_request = await finalize_landed_pull_request(
-                    bookmark=candidate.bookmark,
+                    bookmark=candidate.review_identity.head_ref,
                     change_id=candidate.change_id,
-                    commit_id=candidate.commit_id,
+                    commit_id=candidate.submitted_baseline.commit_id,
                     github_client=github_client,
+                    head_owner=candidate.review_identity.head_owner,
                     pull_request=pull_request,
-                    pull_request_number=candidate.pull_request_number,
+                    pull_request_number=candidate.review_identity.pr_number,
                     trunk_branch=trunk_branch,
                 )
             except GithubClientError as error:
@@ -258,24 +255,24 @@ async def _finalize_landed_review(
                     candidate=candidate,
                     outcome="skipped",
                     skip_reason=t"could not finalize PR "
-                    t"#{candidate.pull_request_number}: {error}",
+                    t"#{candidate.review_identity.pr_number}: {error}",
                 )
             if pull_request.state == "open":
                 return LandedReviewResult(
                     candidate=candidate,
                     outcome="skipped",
                     skip_reason=t"GitHub still reports PR "
-                    t"#{candidate.pull_request_number} open after the close request",
+                    t"#{candidate.review_identity.pr_number} open after the close request",
                 )
         outcome: LandedReviewOutcome = "finalized"
     elif pull_request.state == "merged":
         outcome = "already_merged"
     else:
-        retire_command = f"unstack --cleanup --pull-request {candidate.pull_request_number}"
+        retire_command = f"unstack --cleanup --pull-request {candidate.review_identity.pr_number}"
         return LandedReviewResult(
             candidate=candidate,
             outcome="skipped",
-            skip_reason=t"PR #{candidate.pull_request_number} is closed without merge "
+            skip_reason=t"PR #{candidate.review_identity.pr_number} is closed without merge "
             t"although its commit is on {ui.revset('trunk()')}; reopen it, or retire "
             t"the review with {ui.cmd(retire_command)}",
         )
@@ -287,10 +284,10 @@ async def _finalize_landed_review(
     )
     if not dry_run:
         if forget_bookmark:
-            jj_client.forget_bookmarks((candidate.bookmark,))
+            jj_client.forget_bookmarks((candidate.review_identity.head_ref,))
         await delete_landed_stack_comments(
             github_client=github_client,
-            pull_request_number=candidate.pull_request_number,
+            pull_request_number=candidate.review_identity.pr_number,
         )
     return LandedReviewResult(
         candidate=candidate,
@@ -308,8 +305,8 @@ def _may_forget_landed_bookmark(
     if not bookmark_policy.cleanup_bookmarks:
         return False
     if not bookmark_cleanup_allowed(
-        bookmark=candidate.bookmark,
-        bookmark_managed=candidate.bookmark_managed,
+        bookmark=candidate.review_identity.head_ref,
+        bookmark_managed=candidate.review_identity.manages_bookmark,
         cleanup_user_bookmarks=bookmark_policy.cleanup_user_bookmarks,
         prefix=bookmark_policy.prefix,
     ):
@@ -317,7 +314,7 @@ def _may_forget_landed_bookmark(
     return (
         classify_local_bookmark_forget(
             bookmark_state=bookmark_state,
-            expected_commit_id=candidate.commit_id,
+            expected_commit_id=candidate.submitted_baseline.commit_id,
         )
         == "safe"
     )
@@ -330,12 +327,12 @@ def _local_edits_skip_reason(
 ) -> Message | None:
     try:
         live_commit_id = jj_client.resolve_revision(candidate.change_id).commit_id
-    except (JjCommandError, UnsupportedStackError):
+    except JjCommandError, UnsupportedStackError:
         return (
             t"{ui.change_id(candidate.change_id)} does not resolve to one local "
             t"revision; inspect it with {ui.cmd('view --fetch')}"
         )
-    if live_commit_id == candidate.commit_id:
+    if live_commit_id == candidate.submitted_baseline.commit_id:
         return None
     return (
         t"{ui.change_id(candidate.change_id)} has local edits since its last "
@@ -348,11 +345,12 @@ def landed_pull_request_head_mismatch(
     bookmark: str,
     commit_id: str,
     github_client: GithubClient,
+    head_owner: str | None = None,
     pull_request: GithubPullRequest,
 ) -> Message | None:
     """Explain why a PR head no longer identifies the landed review, if it doesn't."""
 
-    expected_head_label = f"{github_client.repository.owner}:{bookmark}"
+    expected_head_label = f"{head_owner or github_client.repository.owner}:{bookmark}"
     if (
         pull_request.head.ref == bookmark
         and pull_request.head.label == expected_head_label
@@ -371,6 +369,7 @@ async def finalize_landed_pull_request(
     change_id: str,
     commit_id: str,
     github_client: GithubClient,
+    head_owner: str | None = None,
     pull_request: GithubPullRequest | None = None,
     pull_request_number: int,
     trunk_branch: str,
@@ -400,6 +399,7 @@ async def finalize_landed_pull_request(
                 bookmark=bookmark,
                 commit_id=commit_id,
                 github_client=github_client,
+                head_owner=head_owner,
                 pull_request=pull_request,
             )
             if mismatch is not None:
@@ -442,9 +442,7 @@ async def delete_landed_stack_comments(
         return
     for kind in ("navigation", "overview"):
         matches = [
-            comment
-            for comment in comments
-            if _comment_matches_kind(body=comment.body, kind=kind)
+            comment for comment in comments if _comment_matches_kind(body=comment.body, kind=kind)
         ]
         # The same multiplicity stance as submit and cleanup: more than one
         # marker match is ambiguous, so leave the residue for inspection.

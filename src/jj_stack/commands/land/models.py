@@ -110,8 +110,7 @@ class LandPlan:
 
         actions: list[LandAction] = []
         bookmark_cleanup_by_change_id = {
-            cleanup_plan.change_id: cleanup_plan.action
-            for cleanup_plan in bookmark_cleanup_plans
+            cleanup_plan.change_id: cleanup_plan.action for cleanup_plan in bookmark_cleanup_plans
         }
         if self.planned_revisions:
             for resubmit_revision in self.resubmit_revisions:

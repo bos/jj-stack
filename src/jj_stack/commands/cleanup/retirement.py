@@ -12,7 +12,6 @@ from jj_stack.models.stack import LocalRevision
 from jj_stack.review.bookmarks import bookmark_cleanup_allowed
 from jj_stack.review.change_status import classify_review_status_revision
 from jj_stack.review.status import PreparedStatus, ReviewStatusRevision
-from jj_stack.state.journal import OperationJournal
 
 from .shared import CleanupAction, PreparedRebase, _revision_label_template
 
@@ -37,7 +36,6 @@ def retire_merged_ancestors(
     *,
     blocked: bool,
     client: JjClient,
-    journal: OperationJournal,
     merged_revisions: tuple[ReviewStatusRevision, ...],
     prepared_rebase: PreparedRebase,
     prepared_status: PreparedStatus,
@@ -51,9 +49,7 @@ def retire_merged_ancestors(
     prepared = prepared_status.prepared
     plan = plan_merged_ancestor_retirements(
         bookmark_states=client.list_bookmark_states(),
-        cleanup_user_bookmarks=(
-            prepared_rebase.context.config.cleanup_user_bookmarks
-        ),
+        cleanup_user_bookmarks=(prepared_rebase.context.config.cleanup_user_bookmarks),
         local_revisions_by_change_id={
             prepared_revision.revision.change_id: prepared_revision.revision
             for prepared_revision in prepared.status_revisions
@@ -65,7 +61,6 @@ def retire_merged_ancestors(
         record_action(action)
     _apply_merged_ancestor_retirement_plan(
         client=client,
-        journal=journal,
         plan=plan,
         prepared_rebase=prepared_rebase,
         prepared_status=prepared_status,
@@ -92,12 +87,14 @@ def plan_merged_ancestor_retirements(
     retirements: list[MergedAncestorRetirement] = []
 
     for revision in merged_revisions:
-        cached_change = revision.cached_change
+        review_identity = revision.review_identity
+        submitted_baseline = revision.submitted_baseline
         local_revision = local_revisions_by_change_id.get(revision.change_id)
         if (
-            cached_change is None
+            review_identity is None
+            or submitted_baseline is None
             or local_revision is None
-            or cached_change.last_submitted_commit_id != local_revision.commit_id
+            or submitted_baseline.commit_id != local_revision.commit_id
         ):
             # A rewritten merged change is already reported as a blocking rebase
             # condition before retirement planning. Missing proof stays untouched.
@@ -156,9 +153,7 @@ def plan_merged_ancestor_retirements(
             )
             continue
         if local_revision.immutable:
-            retire_command = (
-                f"unstack --cleanup --pull-request {revision.pull_request_number()}"
-            )
+            retire_command = f"unstack --cleanup --pull-request {revision.pull_request_number()}"
             preservation_actions.append(
                 CleanupAction(
                     kind="abandon",
@@ -173,7 +168,7 @@ def plan_merged_ancestor_retirements(
             continue
         cleanup_review_bookmark = bookmark_cleanup_allowed(
             bookmark=revision.bookmark,
-            bookmark_managed=cached_change.manages_bookmark,
+            bookmark_managed=review_identity.manages_bookmark,
             cleanup_user_bookmarks=cleanup_user_bookmarks,
             prefix=prefix,
         )
@@ -184,7 +179,7 @@ def plan_merged_ancestor_retirements(
                 if not bookmark_cleanup_allowed(
                     bookmark=bookmark_state.name,
                     bookmark_managed=(
-                        cached_change.manages_bookmark
+                        review_identity.manages_bookmark
                         if bookmark_state.name == revision.bookmark
                         else False
                     ),
@@ -224,7 +219,6 @@ def plan_merged_ancestor_retirements(
 def _apply_merged_ancestor_retirement_plan(
     *,
     client: JjClient,
-    journal: OperationJournal,
     plan: MergedAncestorRetirementPlan,
     prepared_rebase: PreparedRebase,
     prepared_status: PreparedStatus,
@@ -291,21 +285,22 @@ def _apply_merged_ancestor_retirement_plan(
         client.fetch_remote(remote=remote.name)
 
     if not dry_run:
-        state = prepared.state_store.load()
-        previous_changes = dict(state.changes)
-        next_changes = dict(state.changes)
         for retirement in plan.retirements:
-            next_changes.pop(retirement.revision.change_id, None)
-        prepared.state_store.save(state.model_copy(update={"changes": next_changes}))
-        journal.record_saved_state_updates(before=previous_changes, after=next_changes)
+            revision = retirement.revision
+            if revision.review_identity is None or revision.submitted_baseline is None:
+                raise AssertionError("Planned retirement requires complete tracking records.")
+            prepared_rebase.context.state_store.retire_review(
+                revision.change_id,
+                expected_identity=revision.review_identity,
+                expected_baseline=revision.submitted_baseline,
+            )
     for retirement in plan.retirements:
         record_action(
             CleanupAction(
                 kind="tracking",
                 status=status,
                 body=(
-                    t"remove tracking for landed "
-                    t"{_revision_label_template(retirement.revision)}"
+                    t"remove tracking for landed {_revision_label_template(retirement.revision)}"
                 ),
             )
         )

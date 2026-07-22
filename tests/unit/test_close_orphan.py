@@ -11,10 +11,22 @@ from jj_stack.commands.close_orphan import (
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import ReviewIdentity
 
 _BOOKMARK = "review/feature-aaaaaaaa"
 _OWNER = "octo-org"
+
+
+def _review_identity() -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner=_OWNER,
+        repository_name="stacked-review",
+        pr_number=1,
+        head_owner=_OWNER,
+        head_ref=_BOOKMARK,
+        bookmark_ownership="managed",
+    )
 
 
 def _pull_request(
@@ -75,9 +87,9 @@ def _lookup(
 ) -> tuple[_OrphanedPullRequestInspection | None, CloseAction | None]:
     return asyncio.run(
         _lookup_orphaned_pull_request(
-            cached_change=CachedChange(bookmark=_BOOKMARK),
             github_client=cast(GithubClient, github_client),
             pull_request_number=pull_request_number,
+            review_identity=_review_identity(),
         )
     )
 

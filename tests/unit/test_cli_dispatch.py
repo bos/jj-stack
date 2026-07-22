@@ -103,9 +103,7 @@ def test_config_overrides_leave_malformed_flag_for_argparse_to_report() -> None:
     eating the option as the value.
     """
 
-    cli_args, remaining = _extract_config_overrides(
-        ["--config", "--repository", ".", "view"]
-    )
+    cli_args, remaining = _extract_config_overrides(["--config", "--repository", ".", "view"])
 
     assert cli_args.to_argv() == ()
     assert remaining == ["--config", "--repository", ".", "view"]
@@ -114,9 +112,7 @@ def test_config_overrides_leave_malformed_flag_for_argparse_to_report() -> None:
 def test_config_overrides_stop_at_end_of_options_marker() -> None:
     """Tokens after ``--`` are positional and must not be pulled out as overrides."""
 
-    cli_args, remaining = _extract_config_overrides(
-        ["view", "--", "--config", "x=1"]
-    )
+    cli_args, remaining = _extract_config_overrides(["view", "--", "--config", "x=1"])
 
     assert cli_args.to_argv() == ()
     assert remaining == ["view", "--", "--config", "x=1"]

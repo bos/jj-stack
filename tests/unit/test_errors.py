@@ -26,10 +26,7 @@ def test_error_message_appends_github_cause_reason() -> None:
             plain_text(error_message(error))
             == "Could not load pull request #7: request failed (Connection refused)"
         )
-        assert (
-            str(error)
-            == "Could not load pull request #7: request failed (Connection refused)"
-        )
+        assert str(error) == "Could not load pull request #7: request failed (Connection refused)"
 
 
 def test_error_message_uses_github_cause_reason_when_message_is_empty(

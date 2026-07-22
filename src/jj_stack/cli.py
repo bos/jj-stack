@@ -410,10 +410,7 @@ def build_parser() -> ArgumentParser:
     land_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help=(
-            "Fetch remote state and preview landing without applying the planned "
-            "mutations"
-        ),
+        help=("Fetch remote state and preview landing without applying the planned mutations"),
     )
     add_help_argument(
         land_parser,
@@ -530,9 +527,7 @@ def build_parser() -> ArgumentParser:
         help_text=normalized_help_text(sync_command.HELP),
         description_text=sync_command.__doc__ or "",
         handler=_forward_handler(sync_command.sync),
-        revset_help=(
-            t"Revision to sync; defaults to {ui.revset('@-')} (the current stack head)"
-        ),
+        revset_help=(t"Revision to sync; defaults to {ui.revset('@-')} (the current stack head)"),
     )
     add_help_argument(
         sync_parser,
@@ -702,7 +697,7 @@ def _load_configured_jj_color(
             cwd=cwd,
             text=True,
         )
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError, OSError:
         return None
 
     if completed.returncode != 0:

@@ -55,9 +55,9 @@ class _LandPathRevision:
 
     @property
     def bookmark_managed(self) -> bool:
-        cached_change = self.revision.cached_change
-        if cached_change is not None:
-            return cached_change.manages_bookmark
+        identity = self.revision.review_identity
+        if identity is not None:
+            return identity.manages_bookmark
         return self.revision.bookmark_source != "matched"
 
     @property

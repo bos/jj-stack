@@ -3,39 +3,73 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import shlex
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Never
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from jj_stack.errors import CliError
-from jj_stack.models.review_state import ReviewState
+from jj_stack.models.review_state import (
+    LinkState,
+    ReviewIdentity,
+    ReviewState,
+    ReviewStateRecordIssue,
+    ReviewStateRecordType,
+    SubmittedBaseline,
+)
 
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
+
+type ReviewStateIssueReporter = Callable[[tuple[ReviewStateRecordIssue, ...]], None]
 
 
 class ReviewStateError(CliError):
     """Raised when the tracking data is unreadable or invalid."""
 
 
+class ReviewStateConflictError(ReviewStateError):
+    """Raised when a record changed after a caller observed it."""
+
+
+class _StoredReviewState(BaseModel):
+    """Strict envelope that keeps each record opaque until isolated validation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: int
+    review_identities: dict[str, JsonValue] = Field(default_factory=dict)
+    submitted_baselines: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class ReviewStateStore:
-    """Load and save jj-stack data in a user state directory.
+    """Load tracking state and atomically compare-and-write individual records."""
 
-    Tracking data is a reconstructible convenience (`checkout` and `relink`
-    re-adopt reviews from GitHub), so writes are atomic but not fsync-durable:
-    losing a write costs a re-derivation, never correctness.
-    """
-
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        issue_reporter: ReviewStateIssueReporter | None = None,
+    ) -> None:
         self._path = path
+        self._issue_reporter = issue_reporter
+        self._reported_issues: set[tuple[ReviewStateRecordType, str, str]] = set()
 
     @classmethod
-    def for_repo(cls, repo_root: Path) -> ReviewStateStore:
+    def for_repo(
+        cls,
+        repo_root: Path,
+        *,
+        issue_reporter: ReviewStateIssueReporter | None = None,
+    ) -> ReviewStateStore:
         """Build a jj-stack data store for the supplied repository root."""
 
-        return cls(resolve_state_path(repo_root))
+        return cls(resolve_state_path(repo_root), issue_reporter=issue_reporter)
 
     @property
     def state_dir(self) -> Path:
@@ -53,17 +87,145 @@ class ReviewStateStore:
         return self._path.parent
 
     def load(self) -> ReviewState:
-        """Load tracking data, or defaults when the file is missing."""
+        """Load valid records and isolate malformed entries without interpreting them."""
 
+        return self._observe(self._load_envelope())
+
+    def create_review(
+        self,
+        change_id: str,
+        *,
+        identity: ReviewIdentity,
+        baseline: SubmittedBaseline,
+    ) -> ReviewState:
+        """Atomically create an identity and baseline when both records are absent."""
+
+        envelope = self._load_envelope()
+        if change_id in envelope.review_identities or change_id in envelope.submitted_baselines:
+            self._raise_conflict(change_id, "create review")
+        envelope.review_identities[change_id] = identity.model_dump(mode="json")
+        envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
+        return self._persist(envelope)
+
+    def relink_review(
+        self,
+        change_id: str,
+        *,
+        expected_identity: ReviewIdentity | None,
+        expected_baseline: SubmittedBaseline | None,
+        expected_issues: tuple[ReviewStateRecordIssue, ...] = (),
+        identity: ReviewIdentity,
+        baseline: SubmittedBaseline,
+    ) -> ReviewState:
+        """Atomically replace the two records after comparing their prior values."""
+
+        envelope = self._load_envelope()
+        issue_fingerprints = {
+            issue.record_type: issue.fingerprint
+            for issue in expected_issues
+            if issue.change_id == change_id
+        }
+        self._compare_identity(
+            envelope,
+            change_id,
+            expected_identity,
+            "relink review",
+            invalid_fingerprint=issue_fingerprints.get("review_identity"),
+        )
+        self._compare_baseline(
+            envelope,
+            change_id,
+            expected_baseline,
+            "relink review",
+            invalid_fingerprint=issue_fingerprints.get("submitted_baseline"),
+        )
+        envelope.review_identities[change_id] = identity.model_dump(mode="json")
+        envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
+        return self._persist(envelope)
+
+    def set_link_state(
+        self,
+        change_id: str,
+        *,
+        expected_identity: ReviewIdentity,
+        link_state: LinkState,
+    ) -> ReviewState:
+        """Atomically change only the explicit link state of one identity."""
+
+        envelope = self._load_envelope()
+        self._compare_identity(envelope, change_id, expected_identity, "set link state")
+        identity = expected_identity.model_copy(update={"link_state": link_state})
+        envelope.review_identities[change_id] = identity.model_dump(mode="json")
+        return self._persist(envelope)
+
+    def advance_baseline(
+        self,
+        change_id: str,
+        *,
+        expected_identity: ReviewIdentity,
+        expected_baseline: SubmittedBaseline,
+        baseline: SubmittedBaseline,
+    ) -> ReviewState:
+        """Atomically advance a baseline while the nominal identity stays exact."""
+
+        envelope = self._load_envelope()
+        self._compare_identity(envelope, change_id, expected_identity, "advance baseline")
+        self._compare_baseline(envelope, change_id, expected_baseline, "advance baseline")
+        envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
+        return self._persist(envelope)
+
+    def retire_review(
+        self,
+        change_id: str,
+        *,
+        expected_identity: ReviewIdentity,
+        expected_baseline: SubmittedBaseline,
+    ) -> ReviewState:
+        """Atomically remove one exact identity and baseline pair."""
+
+        envelope = self._load_envelope()
+        self._compare_identity(envelope, change_id, expected_identity, "retire review")
+        self._compare_baseline(envelope, change_id, expected_baseline, "retire review")
+        del envelope.review_identities[change_id]
+        del envelope.submitted_baselines[change_id]
+        return self._persist(envelope)
+
+    def _load_envelope(self) -> _StoredReviewState:
+        if not self._path.exists():
+            return _StoredReviewState(version=2)
+        if not self._path.is_file():
+            raise self._invalid_state_error(f"jj-stack data path is not a file: {self._path}")
         try:
-            return self._load_state()
+            rendered = self._path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise self._invalid_state_error(
+                f"Could not read jj-stack data file {self._path}: {error}"
+            ) from error
+        try:
+            raw = json.loads(rendered)
+        except json.JSONDecodeError as error:
+            raise self._invalid_state_error(
+                f"Invalid jj-stack data in {self._path}: {error}"
+            ) from error
+        if not isinstance(raw, dict):
+            raise self._invalid_state_error(
+                f"Invalid jj-stack data in {self._path}: top level must be an object"
+            )
+        version = raw.get("version")
+        if version != 2:
+            raise self._invalid_state_error(
+                f"Invalid jj-stack data in {self._path}: unsupported version {version!r}"
+            )
+        try:
+            envelope = _StoredReviewState.model_validate(raw)
         except ValidationError as error:
-            raise ReviewStateError(f"Invalid jj-stack data in {self._path}: {error}") from error
+            raise self._invalid_state_error(
+                f"Invalid jj-stack data in {self._path}: {error}"
+            ) from error
+        return envelope
 
-    def save(self, state: ReviewState) -> None:
-        """Persist the supplied jj-stack data atomically."""
-
-        rendered = state.model_dump_json(exclude_none=True, indent=2) + "\n"
+    def _persist(self, envelope: _StoredReviewState) -> ReviewState:
+        rendered = envelope.model_dump_json(exclude_none=True, indent=2) + "\n"
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp_name = tempfile.mkstemp(
@@ -82,18 +244,183 @@ class ReviewStateStore:
             raise ReviewStateError(
                 f"Could not write jj-stack data file {self._path}: {error}"
             ) from error
+        return self._observe(envelope)
 
-    def _load_state(self) -> ReviewState:
-        if not self._path.exists():
-            return ReviewState()
-        if not self._path.is_file():
-            raise ReviewStateError(f"jj-stack data path is not a file: {self._path}")
+    def _observe(self, envelope: _StoredReviewState) -> ReviewState:
+        state = _isolate_records(envelope)
+        if self._issue_reporter is None:
+            return state
+        unreported = tuple(
+            issue
+            for issue in state.record_issues
+            if (issue.record_type, issue.change_id, issue.fingerprint)
+            not in self._reported_issues
+        )
+        if unreported:
+            self._issue_reporter(unreported)
+            self._reported_issues.update(
+                (issue.record_type, issue.change_id, issue.fingerprint) for issue in unreported
+            )
+        return state
+
+    def _invalid_state_error(self, message: str) -> ReviewStateError:
+        backup_path = self._path.with_name(f"{self._path.name}.bak")
+        move_command = f"mv -i {shlex.quote(str(self._path))} {shlex.quote(str(backup_path))}"
+        return ReviewStateError(
+            message,
+            hint=(
+                f"Move the file aside with `{move_command}`, then explicitly re-adopt reviews "
+                "with `jj-stack checkout --pull-request PR` or "
+                "`jj-stack relink PR CHANGE`."
+            ),
+        )
+
+    def _compare_identity(
+        self,
+        envelope: _StoredReviewState,
+        change_id: str,
+        expected: ReviewIdentity | None,
+        operation: str,
+        invalid_fingerprint: str | None = None,
+    ) -> None:
+        if change_id not in envelope.review_identities:
+            if expected is not None:
+                self._raise_conflict(change_id, operation)
+            if invalid_fingerprint is not None and invalid_fingerprint != _record_fingerprint(
+                None,
+                present=False,
+            ):
+                self._raise_conflict(change_id, operation)
+            return
+        record = envelope.review_identities.get(change_id)
         try:
-            return ReviewState.model_validate_json(self._path.read_text(encoding="utf-8"))
-        except OSError as error:
-            raise ReviewStateError(
-                f"Could not read jj-stack data file {self._path}: {error}"
-            ) from error
+            current = _validate_identity(record)
+        except ValidationError, ValueError:
+            if expected is None and invalid_fingerprint == _record_fingerprint(record):
+                return
+            self._raise_conflict(change_id, operation)
+        if expected is None or current != expected:
+            self._raise_conflict(change_id, operation)
+
+    def _compare_baseline(
+        self,
+        envelope: _StoredReviewState,
+        change_id: str,
+        expected: SubmittedBaseline | None,
+        operation: str,
+        invalid_fingerprint: str | None = None,
+    ) -> None:
+        if change_id not in envelope.submitted_baselines:
+            if expected is not None:
+                self._raise_conflict(change_id, operation)
+            if invalid_fingerprint is not None and invalid_fingerprint != _record_fingerprint(
+                None,
+                present=False,
+            ):
+                self._raise_conflict(change_id, operation)
+            return
+        record = envelope.submitted_baselines.get(change_id)
+        try:
+            current = _validate_baseline(record)
+        except ValidationError, ValueError:
+            if expected is None and invalid_fingerprint == _record_fingerprint(record):
+                return
+            self._raise_conflict(change_id, operation)
+        if expected is None or current != expected:
+            self._raise_conflict(change_id, operation)
+
+    def _raise_conflict(self, change_id: str, operation: str) -> Never:
+        raise ReviewStateConflictError(
+            f"Tracking data for {change_id} changed before {operation}; reload and retry."
+        )
+
+
+def _isolate_records(envelope: _StoredReviewState) -> ReviewState:
+    identities: dict[str, ReviewIdentity] = {}
+    baselines: dict[str, SubmittedBaseline] = {}
+    issues: list[ReviewStateRecordIssue] = []
+    for change_id, record in envelope.review_identities.items():
+        try:
+            identities[change_id] = _validate_identity(record)
+        except (ValidationError, ValueError) as error:
+            issues.append(
+                _record_issue("review_identity", change_id, record, validation_error=str(error))
+            )
+    for change_id, record in envelope.submitted_baselines.items():
+        try:
+            baselines[change_id] = _validate_baseline(record)
+        except (ValidationError, ValueError) as error:
+            issues.append(
+                _record_issue(
+                    "submitted_baseline",
+                    change_id,
+                    record,
+                    validation_error=str(error),
+                )
+            )
+    for change_id in identities.keys() - envelope.submitted_baselines.keys():
+        issues.append(
+            _record_issue(
+                "submitted_baseline",
+                change_id,
+                None,
+                missing=True,
+                validation_error="Submitted baseline is missing.",
+            )
+        )
+    for change_id in baselines.keys() - envelope.review_identities.keys():
+        issues.append(
+            _record_issue(
+                "review_identity",
+                change_id,
+                None,
+                missing=True,
+                validation_error="Review identity is missing.",
+            )
+        )
+    return ReviewState(
+        review_identities=identities,
+        submitted_baselines=baselines,
+        record_issues=tuple(issues),
+    )
+
+
+def _record_issue(
+    record_type: ReviewStateRecordType,
+    change_id: str,
+    record: JsonValue | None,
+    *,
+    missing: bool = False,
+    validation_error: str,
+) -> ReviewStateRecordIssue:
+    return ReviewStateRecordIssue(
+        record_type=record_type,
+        change_id=change_id,
+        fingerprint=_record_fingerprint(record, present=not missing),
+        validation_error=validation_error,
+    )
+
+
+def _record_fingerprint(record: JsonValue | None, *, present: bool = True) -> str:
+    rendered = json.dumps(
+        [present, record],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+
+def _validate_identity(record: JsonValue | None) -> ReviewIdentity:
+    if not isinstance(record, dict) or "version" not in record:
+        raise ValueError("Persisted review identity is missing its version.")
+    return ReviewIdentity.model_validate(record)
+
+
+def _validate_baseline(record: JsonValue | None) -> SubmittedBaseline:
+    if not isinstance(record, dict) or "version" not in record:
+        raise ValueError("Persisted submitted baseline is missing its version.")
+    return SubmittedBaseline.model_validate(record)
 
 
 def resolve_state_path(repo_root: Path) -> Path:

@@ -675,7 +675,7 @@ def _parse_retry_after_header(value: str | None) -> float | None:
         pass
     try:
         retry_after_at = parsedate_to_datetime(value)
-    except (TypeError, ValueError, IndexError):
+    except TypeError, ValueError, IndexError:
         return None
     return max(retry_after_at.timestamp() - time.time(), 0.0)
 

@@ -13,7 +13,7 @@ from jj_stack.config import DEFAULT_BOOKMARK_PREFIX
 from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import BookmarkOwnership, CachedChange, ReviewState
+from jj_stack.models.review_state import BookmarkOwnership, ReviewIdentity
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.change_status import classify_review_change_without_pull_request
 from jj_stack.ui import Message
@@ -33,15 +33,6 @@ class ResolvedBookmark:
     source: BookmarkSource
 
 
-@dataclass(frozen=True, slots=True)
-class BookmarkResolutionResult:
-    """Bookmark resolutions plus the updated tracking data."""
-
-    changed: bool
-    resolutions: tuple[ResolvedBookmark, ...]
-    state: ReviewState
-
-
 class RevisionWithChangeId(Protocol):
     """Minimal revision shape needed for bookmark discovery."""
 
@@ -53,50 +44,40 @@ class RevisionWithChangeId(Protocol):
 
 
 class BookmarkResolver:
-    """Resolve bookmark names using saved-data-first semantics."""
+    """Resolve bookmark names without changing tracking state."""
 
     def __init__(
         self,
-        state: ReviewState,
+        review_identities: Mapping[str, ReviewIdentity],
         *,
         prefix: str = DEFAULT_BOOKMARK_PREFIX,
         matched_bookmarks: Mapping[str, str] | None = None,
         discovered_bookmarks: Mapping[str, str] | None = None,
     ) -> None:
-        self._state = state
+        self._review_identities = review_identities
         self._prefix = prefix
         self._matched_bookmarks = matched_bookmarks or {}
         self._discovered_bookmarks = discovered_bookmarks or {}
 
-    def pin_revisions(
+    def resolve_revisions(
         self,
         revisions: tuple[LocalRevision, ...],
-    ) -> BookmarkResolutionResult:
-        """Resolve bookmarks and pin generated names into the returned state."""
+    ) -> tuple[ResolvedBookmark, ...]:
+        """Resolve bookmarks from identity, explicit matches, discovery, or naming."""
 
-        changed = False
-        changes = dict(self._state.changes)
         resolutions: list[ResolvedBookmark] = []
         for revision in revisions:
-            cached_change = changes.get(revision.change_id)
-            if cached_change and cached_change.bookmark:
+            review_identity = self._review_identities.get(revision.change_id)
+            if review_identity is not None:
                 resolutions.append(
                     ResolvedBookmark(
-                        bookmark=cached_change.bookmark,
+                        bookmark=review_identity.head_ref,
                         change_id=revision.change_id,
                         source="saved",
                     )
                 )
                 continue
             if matched_bookmark := self._matched_bookmarks.get(revision.change_id):
-                updated_change = _updated_cached_change(
-                    cached_change,
-                    matched_bookmark,
-                    bookmark_ownership=bookmark_ownership_for_source("matched"),
-                )
-                if updated_change != cached_change:
-                    changes[revision.change_id] = updated_change
-                    changed = True
                 resolutions.append(
                     ResolvedBookmark(
                         bookmark=matched_bookmark,
@@ -106,10 +87,6 @@ class BookmarkResolver:
                 )
                 continue
             if discovered_bookmark := self._discovered_bookmarks.get(revision.change_id):
-                changes[revision.change_id] = _updated_cached_change(
-                    cached_change,
-                    discovered_bookmark,
-                )
                 resolutions.append(
                     ResolvedBookmark(
                         bookmark=discovered_bookmark,
@@ -117,14 +94,12 @@ class BookmarkResolver:
                         source="discovered",
                     )
                 )
-                changed = True
                 continue
 
             bookmark = generate_bookmark_name(
                 revision,
                 prefix=self._prefix,
             )
-            changes[revision.change_id] = _updated_cached_change(cached_change, bookmark)
             resolutions.append(
                 ResolvedBookmark(
                     bookmark=bookmark,
@@ -132,13 +107,7 @@ class BookmarkResolver:
                     source="generated",
                 )
             )
-            changed = True
-
-        return BookmarkResolutionResult(
-            changed=changed,
-            resolutions=tuple(resolutions),
-            state=self._state.model_copy(update={"changes": changes}),
-        )
+        return tuple(resolutions)
 
 
 def bookmark_glob(prefix: str) -> str:
@@ -202,8 +171,7 @@ def local_bookmark_forget_blocked_body(
     if safety == "conflicted":
         return t"cannot forget {ui.bookmark(bookmark)} because it is conflicted"
     return (
-        t"cannot forget {ui.bookmark(bookmark)} because it already points "
-        t"to a different revision"
+        t"cannot forget {ui.bookmark(bookmark)} because it already points to a different revision"
     )
 
 
@@ -279,6 +247,20 @@ def discover_bookmarks_for_revisions(
             continue
         unique_candidates = sorted(set(candidates))
         if len(unique_candidates) > 1:
+            local_candidates = [
+                bookmark
+                for bookmark in unique_candidates
+                if bookmark_matches_restart_change_id(
+                    bookmark,
+                    revision.change_id,
+                    prefix=prefix,
+                )
+                and bookmark_states[bookmark].local_target == revision.commit_id
+                and bookmark_states[bookmark].remote_target(remote_name) is None
+            ]
+            if len(local_candidates) == 1:
+                discovered[revision.change_id] = local_candidates[0]
+                continue
             raise CliError(
                 t"Could not safely rediscover the bookmark for change "
                 t"{ui.change_id(revision.change_id)}: multiple existing bookmarks match "
@@ -312,7 +294,7 @@ def ensure_unique_bookmarks(resolutions: tuple[ResolvedBookmark, ...]) -> None:
 
 
 def find_changes_by_bookmark(
-    state: ReviewState,
+    review_identities: Mapping[str, ReviewIdentity],
     bookmark: str,
 ) -> tuple[str, ...]:
     """Return change_ids of any saved record whose bookmark matches.
@@ -328,8 +310,8 @@ def find_changes_by_bookmark(
 
     return tuple(
         change_id
-        for change_id, cached_change in state.changes.items()
-        if cached_change.bookmark == bookmark
+        for change_id, review_identity in review_identities.items()
+        if review_identity.head_ref == bookmark
     )
 
 
@@ -343,6 +325,25 @@ def bookmark_matches_generated_change_id(
         bookmark,
         prefix=prefix,
     ) and bookmark.endswith(f"-{short_change_id(change_id)}")
+
+
+def bookmark_matches_restart_change_id(
+    bookmark: str,
+    change_id: str,
+    *,
+    prefix: str = DEFAULT_BOOKMARK_PREFIX,
+) -> bool:
+    """Whether a bookmark uses the explicit fresh-review naming protocol."""
+
+    short_id = re.escape(short_change_id(change_id))
+    escaped_prefix = re.escape(prefix)
+    return (
+        re.fullmatch(
+            rf"{escaped_prefix}/.+-fresh(?:-pr[1-9]\d*|-(?:[2-9]|[1-9]\d))?-{short_id}",
+            bookmark,
+        )
+        is not None
+    )
 
 
 def bookmark_ownership_for_source(source: BookmarkSource) -> BookmarkOwnership:
@@ -378,22 +379,3 @@ def _bookmark_state_matches_revision(
         remote_state=remote_state,
     )
     return remote_status.remote_branch_matches_commit is True
-
-
-def _updated_cached_change(
-    cached_change: CachedChange | None,
-    bookmark: str,
-    *,
-    bookmark_ownership: BookmarkOwnership = "managed",
-) -> CachedChange:
-    if cached_change is None:
-        return CachedChange(
-            bookmark=bookmark,
-            bookmark_ownership=bookmark_ownership,
-        )
-    return cached_change.model_copy(
-        update={
-            "bookmark": bookmark,
-            "bookmark_ownership": bookmark_ownership,
-        }
-    )

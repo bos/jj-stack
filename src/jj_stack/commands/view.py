@@ -34,13 +34,13 @@ from jj_stack.github.error_messages import (
     remote_unavailable_message,
 )
 from jj_stack.jj.client import JjCliArgs, UnsupportedStackError
-from jj_stack.models.review_state import ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.bookmarks import bookmark_glob, is_review_bookmark
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
-    classify_saved_review_change,
+    classify_saved_review_identity,
 )
 from jj_stack.review.discovery import discover_connected_tracked_stacks
 from jj_stack.review.selection import (
@@ -192,8 +192,7 @@ def _run_status(
             continue
 
         change_ids = tuple(
-            revision.revision.change_id
-            for revision in prepared_status.prepared.status_revisions
+            revision.revision.change_id for revision in prepared_status.prepared.status_revisions
         )
         stack_key = (prepared_status.prepared.stack.base_parent.commit_id, *change_ids)
         if stack_key in rendered_stack_keys:
@@ -258,7 +257,7 @@ def _emit_connected_stale_stacks_advisory(
     inspect or warn about unrelated review work.
     """
 
-    if not state.changes:
+    if not state.review_identities:
         return
     discovered = discover_connected_tracked_stacks(
         jj_client=context.jj_client,
@@ -298,10 +297,10 @@ def _stack_has_tracked_change_outside_selection(
     for revision in stack.revisions:
         if revision.change_id in rendered_change_ids:
             continue
-        cached_change = state.changes.get(revision.change_id)
-        if cached_change is None:
+        review_identity = state.review_identities.get(revision.change_id)
+        if review_identity is None:
             continue
-        change_status = classify_saved_review_change(cached_change, local="present")
+        change_status = classify_saved_review_identity(review_identity, local="present")
         if change_status.saved_review_identity or change_status.link == "unlinked":
             return True
     return False
@@ -368,7 +367,6 @@ def _prepare_status_for_revset(
         return prepare_status(
             context=context,
             fetch_remote_state=False,
-            persist_bookmarks=False,
             revset=revset,
         )
     except UnsupportedStackError as error:
@@ -401,7 +399,6 @@ def _json_prepared_status(
     progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         result = stream_status(
-            lock_cache_update=True,
             on_revision=lambda _revision, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
@@ -477,12 +474,9 @@ def _render_prepared_status(
     progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         result = stream_status(
-            lock_cache_update=True,
             on_revision=lambda _revision, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
-    if result.cache_update_skipped:
-        console.warning("Cache not refreshed: another jj-stack operation is running.")
 
     github_message = github_unavailable_message(
         github_error=result.github_error,
@@ -1053,8 +1047,8 @@ def _format_status_summary(
 ) -> str:
     revision = classified.revision
     lookup = revision.pull_request_lookup
-    cached_change = revision.cached_change
-    cached_label = _format_cached_pull_request_label(cached_change)
+    review_identity = revision.review_identity
+    saved_label = _format_saved_pull_request_label(review_identity)
     change_status = classified.status
     summary: str
     if change_status.link == "unlinked":
@@ -1073,8 +1067,8 @@ def _format_status_summary(
         else:
             summary = "unlinked"
     elif change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
-        if cached_label is not None:
-            summary = cached_label
+        if saved_label is not None:
+            summary = saved_label
         elif change_status.saved_review_identity:
             summary = "submitted, GitHub status unknown"
         elif github_available:
@@ -1101,8 +1095,8 @@ def _format_status_summary(
         elif review_decision == "changes_requested":
             summary = f"{summary} changes requested"
     elif change_status.pr_lifecycle == "missing":
-        if cached_label is not None:
-            summary = f"{cached_label}, no PR found for branch"
+        if saved_label is not None:
+            summary = f"{saved_label}, no PR found for branch"
         elif change_status.saved_review_identity:
             summary = "submitted, no PR found for branch"
         else:
@@ -1127,8 +1121,8 @@ def _format_status_summary(
             if lookup is not None and lookup.message is not None
             else "GitHub lookup failed"
         )
-        if cached_label is not None:
-            summary = f"{cached_label}, {message}"
+        if saved_label is not None:
+            summary = f"{saved_label}, {message}"
         else:
             summary = message
 
@@ -1166,11 +1160,11 @@ def _emit_lines(
         emitter(line, soft_wrap=soft_wrap)
 
 
-def _format_cached_pull_request_label(cached_change) -> str | None:
-    if cached_change is None or cached_change.pr_number is None:
+def _format_saved_pull_request_label(review_identity: ReviewIdentity | None) -> str | None:
+    if review_identity is None:
         return None
     # Identity-only tracking has no lifecycle to show; --fetch reports it live.
-    return format_pull_request_label(cached_change.pr_number, prefix="saved ")
+    return format_pull_request_label(review_identity.pr_number, prefix="saved ")
 
 
 def _classified_revision_has_link_advisory(
@@ -1205,15 +1199,16 @@ def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> ui.Message
     if change_status.pr_lifecycle == "ambiguous":
         return lookup.message or "GitHub reports more than one matching pull request"
     if change_status.pr_lifecycle == "missing":
-        cached_change = revision.cached_change
-        if cached_change is not None and cached_change.pr_number is not None:
+        review_identity = revision.review_identity
+        if review_identity is not None:
             return (
-                f"GitHub did not report remembered PR #{cached_change.pr_number} for this branch"
+                f"GitHub did not report remembered PR #{review_identity.pr_number} "
+                "for this branch"
             )
-        cached_label = _format_cached_pull_request_label(cached_change)
-        if cached_label is None:
+        saved_label = _format_saved_pull_request_label(review_identity)
+        if saved_label is None:
             return "GitHub did not report a pull request for this branch"
-        return f"GitHub did not report {cached_label} for this branch"
+        return f"GitHub did not report {saved_label} for this branch"
     if change_status.pr_lifecycle == "closed":
         pull_request = lookup.pull_request
         if pull_request is None:

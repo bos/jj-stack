@@ -55,9 +55,7 @@ SIMPLE = rich_box.SIMPLE
 ColorMode = Literal["auto", "always", "never"]
 RequestedColorMode = Literal["always", "auto", "debug", "never"]
 StyleArg = Style | str
-type ConsoleObject = (
-    ui.Renderable | ConsoleRenderable | RichCast
-)
+type ConsoleObject = ui.Renderable | ConsoleRenderable | RichCast
 
 
 class ProgressLike(Protocol):
@@ -649,9 +647,7 @@ def _render_prefixed_line(line: ui.PrefixedLine) -> _HangingIndentRenderable:
     else:
         message_cell: RenderableType = rich_text(line.body, style=message_style)
 
-    prefix_style = (
-        semantic_style(*line.prefix_labels) if line.prefix_labels is not None else None
-    )
+    prefix_style = semantic_style(*line.prefix_labels) if line.prefix_labels is not None else None
     prefix_cell: RenderableType = rich_text(line.prefix, style=prefix_style)
     return _HangingIndentRenderable(
         prefix=prefix_cell,

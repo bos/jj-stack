@@ -42,13 +42,11 @@ def print_land_result(result: LandResult) -> None:
             )
     if result.via == "merge" and result.applied and _any_applied_pull_request(result):
         console.output(
-            t"GitHub accepted the merges; converging the local stack off the merged "
-            t"changes..."
+            t"GitHub accepted the merges; converging the local stack off the merged changes..."
         )
 
 
 def _any_applied_pull_request(result: LandResult) -> bool:
     return any(
-        action.kind == "pull request" and action.status == "applied"
-        for action in result.actions
+        action.kind == "pull request" and action.status == "applied" for action in result.actions
     )

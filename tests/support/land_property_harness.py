@@ -13,7 +13,7 @@ from typing import Any
 from jj_stack.errors import EXIT_FAILURE, EXIT_GITHUB, EXIT_INCOMPLETE, DriftError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
@@ -37,8 +37,10 @@ OutputReader = Callable[[], Any]
 
 @dataclass(frozen=True, slots=True)
 class _TrackedChange:
+    baseline: SubmittedBaseline
     bookmark: str
     change_id: str
+    identity: ReviewIdentity
     pull_number: int
 
 
@@ -46,7 +48,8 @@ class _TrackedChange:
 class _BystanderSnapshot:
     """Everything about the second, unselected stack that land must not touch."""
 
-    cached_records: dict[str, dict[str, Any]]
+    review_identities: dict[str, dict[str, Any]]
+    submitted_baselines: dict[str, dict[str, Any]]
     pull_numbers: tuple[int, ...]
     pull_request_states: dict[int, tuple[str, str, str]]
     remote_refs: dict[str, str]
@@ -98,9 +101,7 @@ def replay_land_scenario(
     if scenario.with_second_stack:
         bystander_snapshot = _capture_bystander_snapshot(fake_repo=fake_repo, repo=repo)
 
-    current_commit_ids = {
-        revision.change_id: revision.commit_id for revision in stack.revisions
-    }
+    current_commit_ids = {revision.change_id: revision.commit_id for revision in stack.revisions}
     original_main = _remote_ref(fake_repo.git_dir, "main")
     fake_repo.pull_request_events.clear()
 
@@ -124,14 +125,12 @@ def replay_land_scenario(
     landed_labels = scenario.expected_landed_labels
     remaining_labels = scenario.final_live_labels[len(landed_labels) :]
     landed = tuple(tracked[label] for label in landed_labels)
-    remaining_tracked = tuple(
-        tracked[label] for label in remaining_labels if label in tracked
-    )
+    remaining_tracked = tuple(tracked[label] for label in remaining_labels if label in tracked)
     state = ReviewStateStore.for_repo(repo).load()
 
-    untouched_pull_numbers = {
-        change.pull_number for change in tracked.values()
-    } - {change.pull_number for change in landed}
+    untouched_pull_numbers = {change.pull_number for change in tracked.values()} - {
+        change.pull_number for change in landed
+    }
     if scenario.unmergeable_pull_number is not None:
         untouched_pull_numbers.discard(scenario.unmergeable_pull_number)
     if bystander_snapshot is not None:
@@ -152,9 +151,7 @@ def replay_land_scenario(
         _assert_list_reflects_landed_prefix(
             landed_change_ids=tuple(change.change_id for change in landed),
             read_output=read_output,
-            remaining_tracked_change_ids=tuple(
-                change.change_id for change in remaining_tracked
-            ),
+            remaining_tracked_change_ids=tuple(change.change_id for change in remaining_tracked),
             run_cli=run_cli,
             trace=scenario.trace,
         )
@@ -164,16 +161,12 @@ def replay_land_scenario(
             if scenario.land_target_position is not None
             else len(scenario.final_live_labels)
         )
-        within_selection_labels = scenario.final_live_labels[
-            len(landed_labels) : selection_cap
-        ]
+        within_selection_labels = scenario.final_live_labels[len(landed_labels) : selection_cap]
         remaining_within_selection = tuple(
             tracked[label] for label in within_selection_labels if label in tracked
         )
         remaining_above_selection = tuple(
-            change
-            for change in remaining_tracked
-            if change not in remaining_within_selection
+            change for change in remaining_tracked if change not in remaining_within_selection
         )
         # Survivors inside the selection are legitimately resubmitted by the
         # in-command convergence, so only reviews outside it must stay silent.
@@ -258,32 +251,31 @@ def _capture_bystander_snapshot(
     repo: Path,
 ) -> _BystanderSnapshot:
     state = ReviewStateStore.for_repo(repo).load()
-    cached_records: dict[str, dict[str, Any]] = {}
+    review_identities: dict[str, dict[str, Any]] = {}
+    submitted_baselines: dict[str, dict[str, Any]] = {}
     pull_numbers: list[int] = []
     pull_request_states: dict[int, tuple[str, str, str]] = {}
     remote_refs: dict[str, str] = {}
-    bystander_subjects = {
-        subject_for_land_label(label) for label in BYSTANDER_LABELS
-    }
-    for change_id, cached in state.changes.items():
-        pull_number = cached.pr_number
-        if pull_number is None:
-            continue
+    bystander_subjects = {subject_for_land_label(label) for label in BYSTANDER_LABELS}
+    for change_id, identity in state.review_identities.items():
+        pull_number = identity.pr_number
         pull_request = fake_repo.pull_requests[pull_number]
         if pull_request.title not in bystander_subjects:
             continue
-        cached_records[change_id] = cached.model_dump()
+        baseline = state.submitted_baselines[change_id]
+        review_identities[change_id] = identity.model_dump()
+        submitted_baselines[change_id] = baseline.model_dump()
         pull_numbers.append(pull_number)
         pull_request_states[pull_number] = (
             pull_request.state,
             pull_request.base_ref,
             pull_request.head_ref,
         )
-        if cached.bookmark is not None:
-            remote_refs[cached.bookmark] = _remote_ref(fake_repo.git_dir, cached.bookmark)
+        remote_refs[identity.head_ref] = _remote_ref(fake_repo.git_dir, identity.head_ref)
     assert len(pull_numbers) == len(BYSTANDER_LABELS)
     return _BystanderSnapshot(
-        cached_records=cached_records,
+        review_identities=review_identities,
+        submitted_baselines=submitted_baselines,
         pull_numbers=tuple(sorted(pull_numbers)),
         pull_request_states=pull_request_states,
         remote_refs=remote_refs,
@@ -298,10 +290,16 @@ def _assert_bystander_untouched(
     trace: str,
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
-    for change_id, expected_record in snapshot.cached_records.items():
-        cached = state.changes.get(change_id)
-        assert cached is not None, (change_id, trace)
-        assert cached.model_dump() == expected_record, (change_id, trace)
+    for change_id, expected_identity in snapshot.review_identities.items():
+        identity = state.review_identities.get(change_id)
+        baseline = state.submitted_baselines.get(change_id)
+        assert identity is not None, (change_id, trace)
+        assert baseline is not None, (change_id, trace)
+        assert identity.model_dump() == expected_identity, (change_id, trace)
+        assert baseline.model_dump() == snapshot.submitted_baselines[change_id], (
+            change_id,
+            trace,
+        )
     for pull_number, expected in snapshot.pull_request_states.items():
         pull_request = fake_repo.pull_requests[pull_number]
         actual = (pull_request.state, pull_request.base_ref, pull_request.head_ref)
@@ -462,13 +460,16 @@ def _capture_tracked_changes(
         if not scenario.label_has_pull_request(label):
             continue
         change_id = labels_to_change_ids[label]
-        cached = state.changes.get(change_id)
-        if cached is None or cached.bookmark is None or cached.pr_number is None:
+        identity = state.review_identities.get(change_id)
+        baseline = state.submitted_baselines.get(change_id)
+        if identity is None or baseline is None:
             raise AssertionError(("missing review identity", label, scenario.trace))
         tracked[label] = _TrackedChange(
-            bookmark=cached.bookmark,
+            baseline=baseline,
+            bookmark=identity.head_ref,
             change_id=change_id,
-            pull_number=cached.pr_number,
+            identity=identity,
+            pull_number=identity.pr_number,
         )
     return tracked
 
@@ -518,7 +519,7 @@ def assert_push_landing(
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "closed", (change.pull_number, trace)
         assert pull_request.merged_at is not None, (change.pull_number, trace)
-        assert change.change_id not in state.changes, (change.pull_number, trace)
+        _assert_review_retired(state, change.change_id, trace)
         # Remote review branches for landed PRs stay intact at the landed commit.
         landed_commit = current_commit_ids[change.change_id]
         assert _remote_ref(fake_repo.git_dir, change.bookmark) == landed_commit, (
@@ -543,7 +544,7 @@ def assert_push_landing(
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "open", (change.pull_number, trace)
         assert pull_request.merged_at is None, (change.pull_number, trace)
-        assert change.change_id in state.changes, (change.pull_number, trace)
+        _assert_review_tracked(state, change.change_id, trace)
 
 
 def _assert_merge_transport_result(
@@ -572,21 +573,21 @@ def _assert_merge_transport_result(
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "closed", (change.pull_number, trace)
         assert pull_request.merged_at is not None, (change.pull_number, trace)
-        assert change.change_id not in state.changes, (change.pull_number, trace)
+        _assert_review_retired(state, change.change_id, trace)
 
     for change in remaining_within_selection:
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "open", (change.pull_number, trace)
         assert pull_request.merged_at is None, (change.pull_number, trace)
-        cached = state.changes.get(change.change_id)
-        assert cached is not None, (change.pull_number, trace)
+        _assert_review_tracked(state, change.change_id, trace)
+        baseline = state.submitted_baselines[change.change_id]
         live_commit = client.resolve_revision(change.change_id).commit_id
         if landed:
             assert live_commit != current_commit_ids[change.change_id], (
                 change.pull_number,
                 trace,
             )
-        assert cached.last_submitted_commit_id == live_commit, (
+        assert baseline.commit_id == live_commit, (
             change.pull_number,
             trace,
         )
@@ -601,14 +602,16 @@ def _assert_merge_transport_result(
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "open", (change.pull_number, trace)
         assert pull_request.merged_at is None, (change.pull_number, trace)
-        cached = state.changes.get(change.change_id)
-        assert cached is not None, (change.pull_number, trace)
-        assert cached.last_submitted_commit_id == current_commit_ids[
-            change.change_id
-        ], (change.pull_number, trace)
-        assert _remote_ref(fake_repo.git_dir, change.bookmark) == current_commit_ids[
-            change.change_id
-        ], (change.pull_number, trace)
+        _assert_review_tracked(state, change.change_id, trace)
+        baseline = state.submitted_baselines[change.change_id]
+        assert baseline.commit_id == current_commit_ids[change.change_id], (
+            change.pull_number,
+            trace,
+        )
+        assert (
+            _remote_ref(fake_repo.git_dir, change.bookmark)
+            == current_commit_ids[change.change_id]
+        ), (change.pull_number, trace)
 
 
 def _assert_orphans_untouched(
@@ -627,9 +630,12 @@ def _assert_orphans_untouched(
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "open", (label, scenario.trace)
         assert pull_request.merged_at is None, (label, scenario.trace)
-        cached = state.changes.get(change.change_id)
-        assert cached is not None, (label, scenario.trace)
-        assert cached.pr_number == change.pull_number, (label, scenario.trace)
+        identity = state.review_identities.get(change.change_id)
+        baseline = state.submitted_baselines.get(change.change_id)
+        assert identity is not None, (label, scenario.trace)
+        assert baseline is not None, (label, scenario.trace)
+        assert identity == change.identity, (label, scenario.trace)
+        assert baseline == change.baseline, (label, scenario.trace)
 
 
 def assert_event_contract(
@@ -669,14 +675,8 @@ def _assert_list_reflects_landed_prefix(
 
     payload = json.loads(captured.out)
     rows = payload.get("rows", ())
-    listed_change_ids = {
-        change["change_id"]
-        for row in rows
-        for change in row.get("changes", ())
-    }
-    listed_change_ids.update(
-        row["change_id"] for row in rows if row.get("type") == "orphan"
-    )
+    listed_change_ids = {change["change_id"] for row in rows for change in row.get("changes", ())}
+    listed_change_ids.update(row["change_id"] for row in rows if row.get("type") == "orphan")
     assert set(landed_change_ids).isdisjoint(listed_change_ids), trace
     assert set(remaining_tracked_change_ids) <= listed_change_ids, trace
 
@@ -757,15 +757,18 @@ def replay_land_drift_scenario(
     state = ReviewStateStore.for_repo(repo).load()
     tracked: dict[str, _TrackedChange] = {}
     for label in scenario.initial_labels:
-        cached = state.changes[labels_to_change_ids[label]]
-        assert cached.bookmark is not None and cached.pr_number is not None
+        change_id = labels_to_change_ids[label]
+        identity = state.review_identities[change_id]
+        baseline = state.submitted_baselines[change_id]
         tracked[label] = _TrackedChange(
-            bookmark=cached.bookmark,
-            change_id=labels_to_change_ids[label],
-            pull_number=cached.pr_number,
+            baseline=baseline,
+            bookmark=identity.head_ref,
+            change_id=change_id,
+            identity=identity,
+            pull_number=identity.pr_number,
         )
         fake_repo.create_pull_request_review(
-            pull_number=cached.pr_number,
+            pull_number=identity.pr_number,
             reviewer_login=f"land-reviewer-{label}",
             state="APPROVED",
         )
@@ -813,9 +816,7 @@ def replay_land_drift_scenario(
         )
     else:
         assert scenario.target_position is not None
-        landed = tuple(
-            tracked[label] for label in scenario.expected_landed_labels
-        )
+        landed = tuple(tracked[label] for label in scenario.expected_landed_labels)
         remaining_labels: tuple[str, ...] = ()
         if scenario.outcome == "prefix_stop":
             remaining_labels = scenario.initial_labels[scenario.target_position :]
@@ -844,9 +845,7 @@ def replay_land_drift_scenario(
             fake_repo=fake_repo,
             landed_pull_numbers=landed_pull_numbers,
             trace=scenario.trace,
-            untouched_pull_numbers={
-                change.pull_number for change in tracked.values()
-            }
+            untouched_pull_numbers={change.pull_number for change in tracked.values()}
             - landed_pull_numbers,
         )
         assert stopping_change_snapshot is not None
@@ -882,17 +881,11 @@ def _apply_land_drift(
 
     if scenario.kind == "pr_merged_externally":
         fake_repo.apply_squash_merge(pull_request)
-        pull_request.merged_at = (
-            datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        )
-        fake_repo.update_pull_request_state(
-            pull_request, state="closed", reason="external_merge"
-        )
+        pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        fake_repo.update_pull_request_state(pull_request, state="closed", reason="external_merge")
         return
     if scenario.kind == "pr_closed":
-        fake_repo.update_pull_request_state(
-            pull_request, state="closed", reason="external_close"
-        )
+        fake_repo.update_pull_request_state(pull_request, state="closed", reason="external_close")
         return
     if scenario.kind == "review_branch_deleted":
         # GitHub closes a pull request when its head branch is deleted, so the
@@ -935,8 +928,7 @@ def _capture_boundary_snapshot(
 ) -> _BoundarySnapshot:
     state = ReviewStateStore.for_repo(repo).load()
     review_identities = {
-        change.change_id: _review_identity(state, change.change_id)
-        for change in tracked.values()
+        change.change_id: _review_identity(state, change.change_id) for change in tracked.values()
     }
     pull_request_states = {}
     remote_refs = {"main": _remote_ref(fake_repo.git_dir, "main")}
@@ -996,7 +988,7 @@ def _assert_drift_stopping_change_preserved(
     trace: str,
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
-    assert snapshot.change_id in state.changes, (snapshot.change_id, trace)
+    _assert_review_tracked(state, snapshot.change_id, trace)
     actual_tracking = _durable_tracking_identity(state, snapshot.change_id)
     assert actual_tracking == snapshot.tracking_identity, (
         snapshot.change_id,
@@ -1040,13 +1032,14 @@ def _assert_drift_stopping_change_preserved(
 
 
 def _durable_tracking_identity(state: ReviewState, change_id: str) -> tuple[object, ...]:
-    cached = state.changes[change_id]
+    identity = state.review_identities[change_id]
+    baseline = state.submitted_baselines[change_id]
     return (
-        cached.bookmark,
-        cached.bookmark_ownership,
-        cached.last_submitted_commit_id,
-        cached.link_state,
-        cached.pr_number,
+        identity.head_ref,
+        identity.bookmark_ownership,
+        baseline.commit_id,
+        identity.link_state,
+        identity.pr_number,
     )
 
 
@@ -1075,13 +1068,24 @@ def _pull_request_snapshot(
 
 
 def _review_identity(state: ReviewState, change_id: str) -> tuple[object, ...]:
-    cached = state.changes[change_id]
+    identity = state.review_identities[change_id]
+    baseline = state.submitted_baselines[change_id]
     return (
-        cached.bookmark,
-        cached.pr_number,
-        cached.link_state,
-        cached.last_submitted_commit_id,
+        identity.head_ref,
+        identity.pr_number,
+        identity.link_state,
+        baseline.commit_id,
     )
+
+
+def _assert_review_tracked(state: ReviewState, change_id: str, trace: str) -> None:
+    assert change_id in state.review_identities, (change_id, trace)
+    assert change_id in state.submitted_baselines, (change_id, trace)
+
+
+def _assert_review_retired(state: ReviewState, change_id: str, trace: str) -> None:
+    assert change_id not in state.review_identities, (change_id, trace)
+    assert change_id not in state.submitted_baselines, (change_id, trace)
 
 
 def _assert_boundaries_untouched(
@@ -1093,7 +1097,7 @@ def _assert_boundaries_untouched(
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
     for change_id, expected_identity in snapshot.review_identities.items():
-        assert change_id in state.changes, (change_id, trace)
+        _assert_review_tracked(state, change_id, trace)
         assert _review_identity(state, change_id) == expected_identity, (change_id, trace)
     for pull_number, expected in snapshot.pull_request_states.items():
         pull_request = fake_repo.pull_requests[pull_number]
@@ -1128,18 +1132,19 @@ def replay_land_retry_scenario(
         trace=scenario.trace,
     )
     stack = JjClient(repo).discover_review_stack()
-    current_commit_ids = {
-        revision.change_id: revision.commit_id for revision in stack.revisions
-    }
+    current_commit_ids = {revision.change_id: revision.commit_id for revision in stack.revisions}
     state = ReviewStateStore.for_repo(repo).load()
     tracked: dict[str, _TrackedChange] = {}
     for label in scenario.initial_labels:
-        cached = state.changes[labels_to_change_ids[label]]
-        assert cached.bookmark is not None and cached.pr_number is not None
+        change_id = labels_to_change_ids[label]
+        identity = state.review_identities[change_id]
+        baseline = state.submitted_baselines[change_id]
         tracked[label] = _TrackedChange(
-            bookmark=cached.bookmark,
-            change_id=labels_to_change_ids[label],
-            pull_number=cached.pr_number,
+            baseline=baseline,
+            bookmark=identity.head_ref,
+            change_id=change_id,
+            identity=identity,
+            pull_number=identity.pr_number,
         )
     for label in scenario.landed_labels:
         fake_repo.create_pull_request_review(
@@ -1175,8 +1180,7 @@ def replay_land_retry_scenario(
     assert rerun_exit_code == 0, (scenario.trace, captured.out, captured.err)
 
     remaining_tracked = tuple(
-        tracked[label]
-        for label in scenario.initial_labels[scenario.approved_prefix :]
+        tracked[label] for label in scenario.initial_labels[scenario.approved_prefix :]
     )
     assert_push_landing(
         current_commit_ids=current_commit_ids,
@@ -1203,9 +1207,7 @@ def replay_land_retry_scenario(
     _assert_list_reflects_landed_prefix(
         landed_change_ids=tuple(change.change_id for change in landed),
         read_output=read_output,
-        remaining_tracked_change_ids=tuple(
-            change.change_id for change in remaining_tracked
-        ),
+        remaining_tracked_change_ids=tuple(change.change_id for change in remaining_tracked),
         run_cli=run_cli,
         trace=scenario.trace,
     )
@@ -1231,12 +1233,15 @@ def replay_land_handoff_scenario(
     state = ReviewStateStore.for_repo(repo).load()
     tracked: dict[str, _TrackedChange] = {}
     for label in scenario.initial_labels:
-        cached = state.changes[labels_to_change_ids[label]]
-        assert cached.bookmark is not None and cached.pr_number is not None
+        change_id = labels_to_change_ids[label]
+        identity = state.review_identities[change_id]
+        baseline = state.submitted_baselines[change_id]
         tracked[label] = _TrackedChange(
-            bookmark=cached.bookmark,
-            change_id=labels_to_change_ids[label],
-            pull_number=cached.pr_number,
+            baseline=baseline,
+            bookmark=identity.head_ref,
+            change_id=change_id,
+            identity=identity,
+            pull_number=identity.pr_number,
         )
     for position, label in enumerate(scenario.initial_labels, start=1):
         if position == scenario.withheld_position:
@@ -1279,8 +1284,7 @@ def replay_land_handoff_scenario(
     suffix = tuple(tracked[label] for label in scenario.suffix_labels)
     client = JjClient(repo)
     current_commit_ids = {
-        change.change_id: client.resolve_revision(change.change_id).commit_id
-        for change in suffix
+        change.change_id: client.resolve_revision(change.change_id).commit_id for change in suffix
     }
     original_main = _remote_ref(fake_repo.git_dir, "main")
 
@@ -1303,9 +1307,7 @@ def replay_land_handoff_scenario(
         fake_repo=fake_repo,
         landed_pull_numbers={change.pull_number for change in suffix},
         trace=scenario.trace,
-        untouched_pull_numbers={
-            tracked[label].pull_number for label in scenario.merged_labels
-        },
+        untouched_pull_numbers={tracked[label].pull_number for label in scenario.merged_labels},
     )
 
     # A closing cleanup must find nothing left to do: convergence already
@@ -1315,10 +1317,7 @@ def replay_land_handoff_scenario(
     assert exit_code == 0, (scenario.trace, captured.out, captured.err)
     final_state = ReviewStateStore.for_repo(repo).load()
     for change in tracked.values():
-        assert change.change_id not in final_state.changes, (
-            change.change_id,
-            scenario.trace,
-        )
+        _assert_review_retired(final_state, change.change_id, scenario.trace)
     _assert_list_reflects_landed_prefix(
         landed_change_ids=tuple(change.change_id for change in tracked.values()),
         read_output=read_output,
@@ -1353,9 +1352,7 @@ def _apply_handoff_origin(
                 pull_request, base_ref="main", reason="external_retarget"
             )
             fake_repo.apply_squash_merge(pull_request)
-            pull_request.merged_at = (
-                datetime.now(UTC).isoformat().replace("+00:00", "Z")
-            )
+            pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             fake_repo.update_pull_request_state(
                 pull_request, state="closed", reason="external_merge"
             )
@@ -1420,15 +1417,18 @@ def _assert_recovery_converged(
     previous_bookmark: str | None = None
     for position, label in enumerate(scenario.suffix_labels):
         change = tracked[label]
-        cached = state.changes.get(change.change_id)
-        assert cached is not None, (label, scenario.trace)
-        assert cached.pr_number == change.pull_number, (label, scenario.trace)
-        assert cached.bookmark == change.bookmark, (label, scenario.trace)
+        identity = state.review_identities.get(change.change_id)
+        baseline = state.submitted_baselines.get(change.change_id)
+        assert identity is not None, (label, scenario.trace)
+        assert baseline is not None, (label, scenario.trace)
+        assert identity == change.identity, (label, scenario.trace)
+        assert identity.head_ref == change.bookmark, (label, scenario.trace)
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "open", (label, scenario.trace)
         expected_base = "main" if position == 0 else previous_bookmark
         assert pull_request.base_ref == expected_base, (label, scenario.trace)
         commit_id = client.resolve_revision(change.change_id).commit_id
+        assert baseline.commit_id == commit_id, (label, scenario.trace)
         assert _remote_ref(fake_repo.git_dir, change.bookmark) == commit_id, (
             label,
             scenario.trace,
@@ -1444,10 +1444,7 @@ def _assert_recovery_converged(
     # for external merges and faulted lands) proves the pre-merge local copies
     # inert and retires their tracking directly.
     for label in scenario.merged_labels:
-        assert tracked[label].change_id not in state.changes, (
-            label,
-            scenario.trace,
-        )
+        _assert_review_retired(state, tracked[label].change_id, scenario.trace)
 
     # Approvals granted before the handoff stay attached to the same PRs.
     pre_approved = (
@@ -1458,8 +1455,7 @@ def _assert_recovery_converged(
     for label in pre_approved:
         reviews = fake_repo.list_pull_request_reviews(tracked[label].pull_number)
         assert any(
-            review.state == "APPROVED"
-            and review.reviewer_login == f"land-reviewer-{label}"
+            review.state == "APPROVED" and review.reviewer_login == f"land-reviewer-{label}"
             for review in reviews
         ), (label, scenario.trace)
 

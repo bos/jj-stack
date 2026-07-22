@@ -42,9 +42,7 @@ async def sync_stack_comments(
 
     head_change_id = revisions[-1].change_id
     has_navigation_comments = len(revisions) > 1
-    overview_description_lines = _render_generated_stack_description(
-        generated_stack_description
-    )
+    overview_description_lines = _render_generated_stack_description(generated_stack_description)
     has_overview_comment = has_navigation_comments and bool(overview_description_lines)
     pending: list[PendingStackCommentSync] = []
     for revision in revisions:

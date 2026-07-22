@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -13,7 +12,6 @@ from jj_stack.commands._close_actions import ManagedCommentLookup
 from jj_stack.commands.cleanup.command import (
     _apply_stale_cleanup_mutation_plans,
     _plan_remote_branch_cleanup,
-    _run_cleanup_async,
 )
 from jj_stack.commands.cleanup.rebase import _stream_rebase
 from jj_stack.commands.cleanup.retirement import (
@@ -25,7 +23,6 @@ from jj_stack.commands.cleanup.shared import (
     PreparedCleanup,
     PreparedRebase,
     RemoteBranchCleanupPlan,
-    _CleanupSaver,
     _StaleCleanupMutationPlan,
 )
 from jj_stack.commands.cleanup.stack_comments import (
@@ -39,10 +36,15 @@ from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubIssueComment
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import (
+    BookmarkOwnership,
+    LinkState,
+    ReviewIdentity,
+    ReviewState,
+    SubmittedBaseline,
+)
 from jj_stack.review.change_status import classify_review_change_without_pull_request
 from jj_stack.review.status import PreparedStatus, ReviewStatusRevision
-from jj_stack.state.journal import OperationJournal
 from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
@@ -65,109 +67,26 @@ def _fake_context(
     )
 
 
-def test_cleanup_persists_local_pass_and_clears_stack_comment_across_phases(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    """Stack-comment cleanup clears the cached id, and the local pass is persisted
-    before stack-comment cleanup starts so an interrupted run keeps the local work."""
-
-    state = ReviewState.model_validate(
-        {
-            "changes": {
-                "change-1": CachedChange(
-                    bookmark="review/feature-1",
-                    pr_number=1,
-                ).model_dump(exclude_none=True),
-                "change-stale": CachedChange(
-                    bookmark="review/stale",
-                    link_state="unlinked",
-                    pr_number=99,
-                ).model_dump(exclude_none=True),
-            }
-        }
-    )
-    saved_states: list[ReviewState] = []
-    deleted_comment_ids: list[int] = []
-    state_store = cast(
-        ReviewStateStore,
-        SimpleNamespace(
-            require_writable=lambda: tmp_path,
-            save=saved_states.append,
-        ),
-    )
-    prepared_cleanup = PreparedCleanup(
-        context=_fake_context(state_store=state_store),
-        bookmark_states={},
-        github_target=GithubTarget(
-            remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
-            repository=GithubRepoAddress(
-                host="github.com",
-                owner="octo-org",
-                repo="stacked-review",
-            ),
-        ),
-        dry_run=False,
-        state=state,
+def _review_identity(
+    *,
+    bookmark: str = "review/feature-aaaaaaaa",
+    bookmark_ownership: BookmarkOwnership = "managed",
+    link_state: LinkState = "active",
+    pr_number: int = 1,
+) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="stacked-review",
+        pr_number=pr_number,
+        head_owner="octo-org",
+        head_ref=bookmark,
+        bookmark_ownership=bookmark_ownership,
+        link_state=link_state,
     )
 
-    class FakeGithubClientContext:
-        async def __aenter__(self):
-            return SimpleNamespace(
-                delete_issue_comment=lambda *, comment_id: _record_deleted_comment(comment_id)
-            )
 
-        async def __aexit__(self, exc_type, exc, tb) -> None:
-            return None
-
-    async def _record_deleted_comment(comment_id: int) -> None:
-        deleted_comment_ids.append(comment_id)
-
-    monkeypatch.setattr(
-        "jj_stack.commands.cleanup.command.build_github_client",
-        lambda **kwargs: FakeGithubClientContext(),
-    )
-
-    async def fake_plan_stack_comment_cleanup(*, cached_change, **kwargs):
-        if cached_change.pr_number != 1:
-            return None
-        return StackCommentCleanupPlan(
-            actions=(
-                CleanupAction(
-                    kind="stack navigation comment",
-                    body="delete stack navigation comment #12 from PR #1",
-                    status="planned",
-                ),
-            ),
-            comments=((12, "navigation"),),
-        )
-
-    monkeypatch.setattr(
-        "jj_stack.commands.cleanup.command._stale_change_reasons",
-        lambda **kwargs: {"change-1": None, "change-stale": "no live ref"},
-    )
-    monkeypatch.setattr(
-        "jj_stack.commands.cleanup.stack_comments._plan_stack_comment_cleanup",
-        fake_plan_stack_comment_cleanup,
-    )
-    result = asyncio.run(
-        _run_cleanup_async(
-            on_action=None,
-            prepared_cleanup=prepared_cleanup,
-        )
-    )
-
-    assert deleted_comment_ids == [12]
-    assert any(
-        action.kind == "stack navigation comment" and action.status == "applied"
-        for action in result.actions
-    )
-    assert "change-stale" not in saved_states[-1].changes
-
-
-def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_deletes(
-    tmp_path: Path,
-) -> None:
+def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_deletes() -> None:
     """A blocked stack-comment plan surfaces the blocked action and deletes nothing.
 
     The github_client below is a bare SimpleNamespace with no methods: any
@@ -175,15 +94,8 @@ def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_delet
     itself the proof that no GitHub deletes were performed.
     """
 
-    state_store = cast(
-        ReviewStateStore,
-        SimpleNamespace(
-            require_writable=lambda: tmp_path,
-            save=lambda _state: None,
-        ),
-    )
     prepared_cleanup = PreparedCleanup(
-        context=_fake_context(state_store=state_store),
+        context=_fake_context(),
         bookmark_states={},
         github_target=GithubTarget(
             remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
@@ -206,17 +118,9 @@ def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_delet
     asyncio.run(
         _apply_stack_comment_cleanup_action(
             comment_plan=StackCommentCleanupPlan(actions=(blocked_action,)),
-            change_id="change-1",
             github_client=cast(GithubClient, SimpleNamespace()),
-            journal=OperationJournal.disabled(),
-            next_changes={},
             prepared_cleanup=prepared_cleanup,
             record_action=recorded_actions.append,
-            saver=_CleanupSaver(
-                journal=OperationJournal.disabled(),
-                last_persisted={},
-                prepared_cleanup=prepared_cleanup,
-            ),
         )
     )
 
@@ -259,8 +163,8 @@ def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks
 
     plan = asyncio.run(
         _plan_stack_comment_cleanup(
-            bookmark_state=BookmarkState(name="review/feature"),
-            cached_change=CachedChange(
+            review_identity=_review_identity(
+                bookmark="review/feature",
                 link_state="unlinked",
                 pr_number=1,
             ),
@@ -302,10 +206,13 @@ def test_cleanup_command_exits_nonzero_when_cleanup_result_blocks(
     monkeypatch.setattr(cleanup_module, "_stale_change_reasons", lambda **kwargs: {})
     monkeypatch.setattr(cleanup_module, "_run_cleanup_async", fake_run_cleanup_async)
 
-    assert cleanup_module._run_cleanup_command(
-        context=_fake_context(),
-        dry_run=False,
-    ) == 1
+    assert (
+        cleanup_module._run_cleanup_command(
+            context=_fake_context(),
+            dry_run=False,
+        )
+        == 1
+    )
 
 
 def test_stale_change_reasons_reports_changes_outside_supported_stacks(monkeypatch) -> None:
@@ -343,10 +250,7 @@ def test_stale_change_reasons_reports_changes_outside_supported_stacks(monkeypat
     )
 
     assert reasons["live-change"] is None
-    assert (
-        reasons["stale-change"]
-        == "local change no longer participates in a supported stack"
-    )
+    assert reasons["stale-change"] == "local change no longer participates in a supported stack"
 
 
 def test_orphan_local_bookmark_cleanup_keeps_supported_targets_only(monkeypatch) -> None:
@@ -408,11 +312,14 @@ def _status_revision(
     pull_request_state: str,
     subject: str,
 ) -> SimpleNamespace:
+    commit_id = change_id.replace("-change", "-commit")
+    review_identity = _review_identity(
+        bookmark=f"review/{change_id}",
+        pr_number=number,
+    )
     return SimpleNamespace(
-        cached_change=None,
         change_id=change_id,
-        commit_id=f"{change_id}-commit",
-        link_state="active",
+        commit_id=commit_id,
         local_divergent=False,
         managed_comments_lookup=None,
         pull_request_lookup=SimpleNamespace(
@@ -430,6 +337,8 @@ def _status_revision(
             state="closed" if pull_request_state == "merged" else "open",
         ),
         remote_state=None,
+        review_identity=review_identity,
+        submitted_baseline=SubmittedBaseline(commit_id=commit_id),
         pull_request_base_ref=lambda: "main",
         pull_request_number=lambda: number,
         subject=subject,
@@ -467,13 +376,13 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
                 github_repository=None,
                 prepared=SimpleNamespace(
                     client=SimpleNamespace(),
-                    state_store=SimpleNamespace(
-                        require_writable=lambda: Path("/tmp"),
-                    ),
                     stack=SimpleNamespace(trunk=SimpleNamespace(commit_id="trunk-commit")),
                     status_revisions=(
                         SimpleNamespace(
-                            cached_change=CachedChange(pr_number=1),
+                            review_identity=_review_identity(pr_number=1),
+                            submitted_baseline=SubmittedBaseline(
+                                commit_id="first-survivor-commit"
+                            ),
                             revision=SimpleNamespace(
                                 change_id="first-survivor-change",
                                 commit_id="first-survivor-commit",
@@ -481,7 +390,8 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
                             ),
                         ),
                         SimpleNamespace(
-                            cached_change=CachedChange(pr_number=2),
+                            review_identity=_review_identity(pr_number=2),
+                            submitted_baseline=SubmittedBaseline(commit_id="merged-commit"),
                             revision=SimpleNamespace(
                                 change_id="merged-change",
                                 commit_id="merged-commit",
@@ -489,7 +399,10 @@ def test_stream_rebase_blocks_survivor_rebase_onto_another_survivor(
                             ),
                         ),
                         SimpleNamespace(
-                            cached_change=CachedChange(pr_number=3),
+                            review_identity=_review_identity(pr_number=3),
+                            submitted_baseline=SubmittedBaseline(
+                                commit_id="second-survivor-commit"
+                            ),
                             revision=SimpleNamespace(
                                 change_id="second-survivor-change",
                                 commit_id="second-survivor-commit",
@@ -537,22 +450,21 @@ def _merged_ancestor_retirement_plan(
     bookmark_states: dict[str, BookmarkState],
     remote_state: RemoteBookmarkState | None,
 ) -> MergedAncestorRetirementPlan:
-    cached_change = CachedChange(
+    review_identity = _review_identity(
         bookmark="review/merged-aaaaaaaa",
-        last_submitted_commit_id="merged-commit",
         pr_number=1,
     )
     merged_revision = ReviewStatusRevision(
         bookmark="review/merged-aaaaaaaa",
         bookmark_source="saved",
-        cached_change=cached_change,
         change_id="merged-change",
         commit_id="merged-commit",
-        link_state="active",
         local_divergent=False,
         managed_comments_lookup=None,
         pull_request_lookup=None,
         remote_state=remote_state,
+        review_identity=review_identity,
+        submitted_baseline=SubmittedBaseline(commit_id="merged-commit"),
         subject="merged feature",
     )
     local_revision = make_revision(
@@ -614,7 +526,7 @@ def test_retire_merged_ancestor_preserves_conflicted_local_bookmark() -> None:
 
 def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned() -> None:
     remote_state = RemoteBookmarkState(remote="origin", targets=("commit-1",))
-    cached_change = CachedChange(
+    review_identity = _review_identity(
         bookmark="bosullivan/feature-aaaaaaaa",
         pr_number=1,
     )
@@ -626,47 +538,21 @@ def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned()
             remote_targets=(remote_state,),
         ),
         prefix="bosullivan",
-        cached_change=cached_change,
         local_bookmark_forget_planned=True,
         remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
         remote_state=remote_state,
+        review_identity=review_identity,
         review_status=classify_review_change_without_pull_request(
-            cached_change=cached_change,
             commit_id=None,
             local="orphaned",
             remote_state=remote_state,
+            review_identity=review_identity,
         ),
     )
 
     assert plan is not None
     assert plan.action.status == "planned"
     assert plan.expected_remote_target == "commit-1"
-
-
-def test_plan_remote_branch_cleanup_skips_records_without_saved_pr_number() -> None:
-    remote_state = RemoteBookmarkState(remote="origin", targets=("commit-1",))
-    cached_change = CachedChange(bookmark="bosullivan/feature-aaaaaaaa")
-    plan = _plan_remote_branch_cleanup(
-        cleanup_user_bookmarks=False,
-        bookmark_state=BookmarkState(
-            name="bosullivan/feature-aaaaaaaa",
-            local_targets=(),
-            remote_targets=(remote_state,),
-        ),
-        prefix="bosullivan",
-        cached_change=cached_change,
-        local_bookmark_forget_planned=True,
-        remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
-        remote_state=remote_state,
-        review_status=classify_review_change_without_pull_request(
-            cached_change=cached_change,
-            commit_id=None,
-            local="orphaned",
-            remote_state=remote_state,
-        ),
-    )
-
-    assert plan is None
 
 
 def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_once() -> None:
@@ -699,7 +585,6 @@ def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_on
 
     def mutation_plan(bookmark: str, expected_target: str) -> _StaleCleanupMutationPlan:
         return _StaleCleanupMutationPlan(
-            cached_change=CachedChange(bookmark=bookmark, pr_number=1),
             local_bookmark_action=CleanupAction(
                 kind="local bookmark",
                 status="planned",
@@ -713,11 +598,11 @@ def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_on
                 ),
                 expected_remote_target=expected_target,
             ),
+            review_identity=_review_identity(bookmark=bookmark),
         )
 
     recorded_actions: list[CleanupAction] = []
     _apply_stale_cleanup_mutation_plans(
-        journal=OperationJournal.disabled(),
         mutation_plans=(
             mutation_plan("review/feature-1", "commit-1"),
             mutation_plan("review/feature-2", "commit-2"),
@@ -749,11 +634,11 @@ def test_plan_local_bookmark_cleanup_forgets_safe_review_bookmark() -> None:
             local_targets=("commit-1",),
         ),
         prefix="bosullivan",
-        cached_change=CachedChange(
+        review_identity=_review_identity(
             bookmark="bosullivan/feature-aaaaaaaa",
-            last_submitted_commit_id="commit-1",
         ),
         stale_reason="local change is no longer reviewable",
+        submitted_baseline=SubmittedBaseline(commit_id="commit-1"),
     )
 
     assert plan is not None

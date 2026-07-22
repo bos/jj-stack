@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -16,7 +17,6 @@ from jj_stack.github.stack_comments import (
     is_overview_comment,
 )
 from jj_stack.jj.client import JjClient
-from jj_stack.state.journal import read_operation_log
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
@@ -70,11 +70,9 @@ def _assert_stack_pull_requests_match_dag(
     bookmarks_by_change: dict[str, str] = {}
     pull_requests_by_change = {}
     for revision in stack.revisions:
-        cached_change = state.changes[revision.change_id]
-        bookmark = cached_change.bookmark
-        pr_number = cached_change.pr_number
-        assert bookmark is not None
-        assert pr_number is not None
+        identity = state.review_identities[revision.change_id]
+        bookmark = identity.head_ref
+        pr_number = identity.pr_number
         bookmarks_by_change[revision.change_id] = bookmark
         pull_requests_by_change[revision.change_id] = fake_repo.pull_requests[pr_number]
         assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
@@ -106,7 +104,7 @@ def test_submit_projects_review_bookmarks_to_selected_remote(
     captured = capsys.readouterr()
     stack = JjClient(repo).discover_review_stack()
     state = ReviewStateStore.for_repo(repo).load()
-    first_bookmark = state.changes[stack.revisions[0].change_id].bookmark
+    first_bookmark = state.review_identities[stack.revisions[0].change_id].head_ref
     top_pr_url = fake_repo.pull_requests[2].to_payload(
         repository=fake_repo,
         web_origin="https://github.test",
@@ -125,10 +123,9 @@ def test_submit_projects_review_bookmarks_to_selected_remote(
     assert captured.out.index("feature 1") < captured.out.index(stack.trunk.subject)
     assert len(fake_repo.pull_requests) == 2
     for index, revision in enumerate(stack.revisions, start=1):
-        cached_change = state.changes[revision.change_id]
-        bookmark = cached_change.bookmark
-        assert bookmark is not None
-        assert cached_change.pr_number == index
+        identity = state.review_identities[revision.change_id]
+        bookmark = identity.head_ref
+        assert identity.pr_number == index
         assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
 
     assert fake_repo.pull_requests[1].base_ref == "main"
@@ -168,7 +165,7 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
 
     refreshed_state = ReviewStateStore.for_repo(repo).load()
     bookmarks_by_subject = {
-        revision.subject: refreshed_state.changes[revision.change_id].bookmark
+        revision.subject: refreshed_state.review_identities[revision.change_id].head_ref
         for revision in reordered_stack.revisions
     }
     pull_requests_by_title = {
@@ -261,8 +258,9 @@ def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
     initial_state = ReviewStateStore.for_repo(repo).load()
-    original_middle_pr_number = initial_state.changes[original_middle_change_id].pr_number
-    assert original_middle_pr_number is not None
+    original_middle_pr_number = initial_state.review_identities[
+        original_middle_change_id
+    ].pr_number
 
     monkeypatch.setenv("EDITOR", "true")
     monkeypatch.setenv("VISUAL", "true")
@@ -282,20 +280,15 @@ def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
 
     refreshed_state = ReviewStateStore.for_repo(repo).load()
     assert (
-        refreshed_state.changes[original_middle_change_id].pr_number
+        refreshed_state.review_identities[original_middle_change_id].pr_number
         == original_middle_pr_number
     )
     pr_numbers = {
-        refreshed_state.changes[revision.change_id].pr_number
+        refreshed_state.review_identities[revision.change_id].pr_number
         for revision in split_stack.revisions
     }
-    assert None not in pr_numbers
     assert len(pr_numbers) == 4
-    assert all(
-        fake_repo.pull_requests[pr_number].state == "open"
-        for pr_number in pr_numbers
-        if pr_number is not None
-    )
+    assert all(fake_repo.pull_requests[pr_number].state == "open" for pr_number in pr_numbers)
     assert len(fake_repo.pull_requests) == 4
 
 
@@ -320,13 +313,12 @@ def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
     initial_state = ReviewStateStore.for_repo(repo).load()
-    surviving_pr_number = initial_state.changes[change_ids_by_subject["feature 1"]].pr_number
-    orphaned_change = initial_state.changes[change_ids_by_subject["feature 2"]]
-    orphaned_pr_number = orphaned_change.pr_number
-    orphaned_bookmark = orphaned_change.bookmark
-    assert surviving_pr_number is not None
-    assert orphaned_pr_number is not None
-    assert orphaned_bookmark is not None
+    surviving_pr_number = initial_state.review_identities[
+        change_ids_by_subject["feature 1"]
+    ].pr_number
+    orphaned_identity = initial_state.review_identities[change_ids_by_subject["feature 2"]]
+    orphaned_pr_number = orphaned_identity.pr_number
+    orphaned_bookmark = orphaned_identity.head_ref
     orphaned_remote_target = read_remote_ref(fake_repo.git_dir, orphaned_bookmark)
     orphaned_pr_base_ref = fake_repo.pull_requests[orphaned_pr_number].base_ref
 
@@ -345,9 +337,7 @@ def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
         repo,
     )
 
-    surviving_stack = JjClient(repo).discover_review_stack(
-        change_ids_by_subject["feature 3"]
-    )
+    surviving_stack = JjClient(repo).discover_review_stack(change_ids_by_subject["feature 3"])
     assert [revision.subject for revision in surviving_stack.revisions] == [
         "feature 1",
         "feature 3",
@@ -363,7 +353,7 @@ def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
 
     refreshed_state = ReviewStateStore.for_repo(repo).load()
     assert (
-        refreshed_state.changes[change_ids_by_subject["feature 1"]].pr_number
+        refreshed_state.review_identities[change_ids_by_subject["feature 1"]].pr_number
         == surviving_pr_number
     )
     orphaned_pr = fake_repo.pull_requests[orphaned_pr_number]
@@ -431,16 +421,11 @@ def test_submit_uses_configured_bookmark_prefix(
     assert run_main(repo, config_path, "submit") == 0
     state = ReviewStateStore.for_repo(repo).load()
 
-    bookmarks = [
-        cached_change.bookmark
-        for cached_change in state.changes.values()
-        if cached_change.bookmark is not None
-    ]
+    bookmarks = [identity.head_ref for identity in state.review_identities.values()]
     assert len(bookmarks) == 2
     assert all(bookmark.startswith("bosullivan/") for bookmark in bookmarks)
     assert all(
-        f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
-        for bookmark in bookmarks
+        f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
     )
 
 
@@ -468,10 +453,12 @@ def test_submit_uses_configured_use_bookmarks(
     assert run_main(repo, config_path, "submit") == 0
     state = ReviewStateStore.for_repo(repo).load()
 
-    assert state.changes[stack.revisions[0].change_id].bookmark == "potato/feature-1"
-    assert state.changes[stack.revisions[0].change_id].bookmark_ownership == "external"
-    assert state.changes[stack.revisions[1].change_id].bookmark == "spam/eggs"
-    assert state.changes[stack.revisions[1].change_id].bookmark_ownership == "external"
+    first_identity = state.review_identities[stack.revisions[0].change_id]
+    second_identity = state.review_identities[stack.revisions[1].change_id]
+    assert first_identity.head_ref == "potato/feature-1"
+    assert first_identity.bookmark_ownership == "external"
+    assert second_identity.head_ref == "spam/eggs"
+    assert second_identity.bookmark_ownership == "external"
     assert "refs/heads/potato/feature-1" in remote_refs(fake_repo.git_dir)
     assert "refs/heads/spam/eggs" in remote_refs(fake_repo.git_dir)
 
@@ -541,7 +528,9 @@ def test_submit_invalid_revset_reports_clean_error_without_mutation(
     assert exit_code == 1
     assert "Error: Revision `xporz` doesn't exist" in captured.err
     assert "jj log --no-graph" not in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
     assert fake_repo.pull_requests == {}
 
@@ -573,7 +562,9 @@ def test_submit_blocks_unresolved_conflicted_rebase_without_mutation(
 
     assert exit_code == EXIT_CONFLICTS
     assert "unresolved conflicts" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
     assert fake_repo.pull_requests == {}
 
@@ -613,21 +604,6 @@ def test_submit_skips_stack_comment_for_single_commit_stack(
 
     assert issue_comments(fake_repo, 1) == []
     assert fake_repo.pull_requests[1].body == "feature 1"
-
-
-def test_submit_persists_topology_pointers_for_each_change(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    commit_file(repo, "feature 3", "feature-3.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
 
 
 def test_submit_describe_reads_pull_request_and_stack_bodies_from_files(
@@ -694,7 +670,9 @@ def test_submit_describe_rejects_target_outside_selected_stack_before_mutation(
 
     assert exit_code == EXIT_USAGE
     assert "--describe target trunk() is not in the selected stack" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
     assert fake_repo.pull_requests == {}
     assert issue_comments(fake_repo, 1) == []
@@ -816,7 +794,9 @@ def test_submit_describe_with_failure_aborts_before_mutation(
 
     assert exit_code == 1
     assert "returned invalid JSON" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
     assert fake_repo.pull_requests == {}
     assert issue_comments(fake_repo, 1) == []
@@ -932,9 +912,9 @@ def test_submit_rediscovers_and_regenerates_stack_comments_when_cache_is_missing
     top_change_id = stack.revisions[-1].change_id
     initial_comment_id = _navigation_comments(fake_repo, 2)[0].id
 
-    _navigation_comments(fake_repo, 2)[0].body = (
-        f"{STACK_NAVIGATION_COMMENT_MARKER}\nmanually edited"
-    )
+    _navigation_comments(fake_repo, 2)[
+        0
+    ].body = f"{STACK_NAVIGATION_COMMENT_MARKER}\nmanually edited"
 
     run_command(["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed"], repo)
 
@@ -1008,9 +988,8 @@ def test_submit_moves_overview_comment_when_stack_head_advances(
     initial_stack = JjClient(repo).discover_review_stack()
     initial_top_change_id = initial_stack.revisions[-1].change_id
     initial_top_pr_number = (
-        ReviewStateStore.for_repo(repo).load().changes[initial_top_change_id].pr_number
+        ReviewStateStore.for_repo(repo).load().review_identities[initial_top_change_id].pr_number
     )
-    assert initial_top_pr_number is not None
     assert len(_overview_comments(fake_repo, initial_top_pr_number)) == 1
 
     commit_file(repo, "feature 3", "feature-3.txt")
@@ -1019,8 +998,7 @@ def test_submit_moves_overview_comment_when_stack_head_advances(
     refreshed_stack = JjClient(repo).discover_review_stack()
     new_top_change_id = refreshed_stack.revisions[-1].change_id
     refreshed_state = ReviewStateStore.for_repo(repo).load()
-    new_top_pr_number = refreshed_state.changes[new_top_change_id].pr_number
-    assert new_top_pr_number is not None
+    new_top_pr_number = refreshed_state.review_identities[new_top_change_id].pr_number
 
     assert _overview_comments(fake_repo, initial_top_pr_number) == []
     assert len(_overview_comments(fake_repo, new_top_pr_number)) == 1
@@ -1054,23 +1032,9 @@ def test_submit_rejects_ambiguous_discovered_stack_comments(
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
     fake_repo.create_issue_comment(
         body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nextra",
         issue_number=2,
-    )
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    change_id: initial_state.changes[change_id].model_copy(
-                        update={"navigation_comment_id": None}
-                    ),
-                }
-            }
-        )
     )
 
     exit_code = run_main(repo, config_path, "submit", change_id)
@@ -1178,10 +1142,9 @@ def test_submit_updates_existing_pull_request_after_change_rewrite(
 
     first_stack = JjClient(repo).discover_review_stack()
     top_change_id = first_stack.revisions[-1].change_id
-    initial_bookmark = ReviewStateStore.for_repo(repo).load().changes[top_change_id].bookmark
-    assert initial_bookmark is not None
-    initial_pr_number = ReviewStateStore.for_repo(repo).load().changes[top_change_id].pr_number
-    assert initial_pr_number is not None
+    initial_identity = ReviewStateStore.for_repo(repo).load().review_identities[top_change_id]
+    initial_bookmark = initial_identity.head_ref
+    initial_pr_number = initial_identity.pr_number
 
     run_command(
         ["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed\n\nupdated body"],
@@ -1192,7 +1155,7 @@ def test_submit_updates_existing_pull_request_after_change_rewrite(
     captured = capsys.readouterr()
     rewritten_stack = JjClient(repo).discover_review_stack(top_change_id)
     rewritten_state = ReviewStateStore.for_repo(repo).load()
-    rewritten_bookmark = rewritten_state.changes[top_change_id].bookmark
+    rewritten_bookmark = rewritten_state.review_identities[top_change_id].head_ref
 
     assert exit_code == 0
     assert rewritten_bookmark == initial_bookmark
@@ -1215,11 +1178,9 @@ def test_submit_updates_existing_untracked_remote_bookmark(
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
-    cached_change = ReviewStateStore.for_repo(repo).load().changes[change_id]
-    bookmark = cached_change.bookmark
-    pr_number = cached_change.pr_number
-    assert bookmark is not None
-    assert pr_number is not None
+    identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
+    bookmark = identity.head_ref
+    pr_number = identity.pr_number
 
     run_command(["jj", "bookmark", "forget", bookmark], repo)
     run_command(
@@ -1252,11 +1213,9 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
-    cached_change = ReviewStateStore.for_repo(repo).load().changes[change_id]
-    bookmark = cached_change.bookmark
-    pr_number = cached_change.pr_number
-    assert bookmark is not None
-    assert pr_number is not None
+    identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
+    bookmark = identity.head_ref
+    pr_number = identity.pr_number
 
     run_command(["jj", "bookmark", "forget", bookmark], repo)
     run_command(
@@ -1312,7 +1271,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
     assert fake_repo.pull_requests[pr_number].title == "feature 1 renamed"
 
 
-def test_submit_rediscovers_review_branch_after_state_and_local_bookmark_loss(
+def test_submit_requires_relink_after_state_and_local_bookmark_loss(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1323,11 +1282,9 @@ def test_submit_rediscovers_review_branch_after_state_and_local_bookmark_loss(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    cached_change = state_store.load().changes[change_id]
-    bookmark = cached_change.bookmark
-    pr_number = cached_change.pr_number
-    assert bookmark is not None
-    assert pr_number is not None
+    identity = state_store.load().review_identities[change_id]
+    bookmark = identity.head_ref
+    pr_number = identity.pr_number
 
     state_path = resolve_state_path(repo)
     state_path.unlink()
@@ -1337,6 +1294,12 @@ def test_submit_rediscovers_review_branch_after_state_and_local_bookmark_loss(
         repo,
     )
 
+    assert run_main(repo, config_path, "submit", change_id) == 1
+    rejected = capsys.readouterr()
+    assert "Adopt that PR explicitly with relink" in rejected.err
+
+    assert run_main(repo, config_path, "relink", str(pr_number), change_id) == 0
+    capsys.readouterr()
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
     rewritten_stack = JjClient(repo).discover_review_stack(change_id)
@@ -1345,8 +1308,8 @@ def test_submit_rediscovers_review_branch_after_state_and_local_bookmark_loss(
     assert exit_code == 0
     assert "PR #1 updated" in captured.out
     assert set(fake_repo.pull_requests) == {pr_number}
-    assert rewritten_state.changes[change_id].bookmark == bookmark
-    assert rewritten_state.changes[change_id].pr_number == pr_number
+    assert rewritten_state.review_identities[change_id].head_ref == bookmark
+    assert rewritten_state.review_identities[change_id].pr_number == pr_number
     assert read_remote_ref(fake_repo.git_dir, bookmark) == rewritten_stack.revisions[-1].commit_id
     assert fake_repo.pull_requests[pr_number].title == "feature 1 renamed"
 
@@ -1363,8 +1326,7 @@ def test_submit_fails_closed_when_cached_pull_request_is_missing_on_github(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    bookmark = initial_state.changes[change_id].bookmark
-    assert bookmark is not None
+    bookmark = initial_state.review_identities[change_id].head_ref
     initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
 
     del fake_repo.pull_requests[1]
@@ -1400,22 +1362,18 @@ def test_submit_stops_before_push_when_saved_link_mismatch_has_pending_rewrite(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    bookmark = initial_state.changes[change_id].bookmark
-    assert bookmark is not None
+    bookmark = initial_state.review_identities[change_id].head_ref
     initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
 
     run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 rewritten"], repo)
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    change_id: initial_state.changes[change_id].model_copy(
-                        update={"pr_number": 999_999}
-                    ),
-                }
-            }
-        )
+    identity = initial_state.review_identities[change_id]
+    baseline = initial_state.submitted_baselines[change_id]
+    state_store.relink_review(
+        change_id,
+        expected_identity=identity,
+        expected_baseline=baseline,
+        identity=identity.model_copy(update={"pr_number": 999_999}),
+        baseline=baseline,
     )
     corrupted_state = state_store.load()
 
@@ -1427,6 +1385,32 @@ def test_submit_stops_before_push_when_saved_link_mismatch_has_pending_rewrite(
     assert state_store.load() == corrupted_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
     assert fake_repo.pull_requests[1].title == "feature 1"
+
+
+def test_submit_rejects_isolated_malformed_identity_before_github_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    change_id = stack.revisions[-1].change_id
+    state_path = resolve_state_path(repo)
+    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    raw_state["review_identities"][change_id] = {"version": 9}
+    write_file(state_path, json.dumps(raw_state))
+    remote_refs_before = remote_refs(fake_repo.git_dir)
+    fake_repo.pull_request_events.clear()
+
+    exit_code = run_main(repo, config_path, "submit", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "relink" in captured.err
+    assert remote_refs(fake_repo.git_dir) == remote_refs_before
+    assert fake_repo.pull_request_events == []
+    assert json.loads(state_path.read_text(encoding="utf-8")) == raw_state
 
 
 def test_submit_fails_closed_when_github_reports_multiple_pull_requests(
@@ -1441,8 +1425,7 @@ def test_submit_fails_closed_when_github_reports_multiple_pull_requests(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    bookmark = initial_state.changes[change_id].bookmark
-    assert bookmark is not None
+    bookmark = initial_state.review_identities[change_id].head_ref
     initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
     fake_repo.create_pull_request(
         base_ref="main",
@@ -1481,10 +1464,8 @@ def test_submit_fails_closed_when_saved_remote_branch_drifted_externally(
     top_change_id = stack.revisions[2].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    middle_bookmark = initial_state.changes[middle_change_id].bookmark
-    top_target = initial_state.changes[top_change_id].last_submitted_commit_id
-    assert middle_bookmark is not None
-    assert top_target is not None
+    middle_bookmark = initial_state.review_identities[middle_change_id].head_ref
+    top_target = initial_state.submitted_baselines[top_change_id].commit_id
 
     run_command(
         [
@@ -1553,14 +1534,13 @@ def test_submit_accepts_stack_forked_from_trunk_ancestor(
     captured = capsys.readouterr()
     state = ReviewStateStore.for_repo(repo).load()
     change_id = stack.revisions[-1].change_id
-    bookmark = state.changes[change_id].bookmark
+    bookmark = state.review_identities[change_id].head_ref
 
     assert exit_code == 0
     assert "Submitted changes:" in captured.out
     assert stack.revisions[-1].subject in captured.out
     assert len(fake_repo.pull_requests) == 1
     assert fake_repo.pull_requests[1].base_ref == "main"
-    assert bookmark is not None
     assert read_remote_ref(fake_repo.git_dir, bookmark) == stack.revisions[-1].commit_id
 
 
@@ -1645,10 +1625,10 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
     assert exit_code != 0
 
     state = ReviewStateStore.for_repo(repo).load()
-    assert state.changes.get(change_id_1) is not None
-    assert state.changes[change_id_1].pr_number is not None
-    change2 = state.changes.get(change_id_2)
-    assert change2 is None or change2.pr_number is None
+    assert state.review_identities[change_id_1].pr_number == 1
+    assert change_id_1 in state.submitted_baselines
+    assert change_id_2 not in state.review_identities
+    assert change_id_2 not in state.submitted_baselines
     assert len(fake_repo.pull_requests) == 1
     assert fake_repo.pull_requests[1].title == "feature 1"
     pushed_review_refs = {
@@ -1660,35 +1640,6 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
     assert set(pushed_review_refs.values()) == {
         revision.commit_id for revision in stack.revisions
     }
-
-    submit_events = [
-        event
-        for event in read_operation_log(resolve_state_path(repo).parent)
-        if event.operation == "submit"
-    ]
-    submit_event_names = [event.event for event in submit_events]
-    assert submit_event_names[0] == "begin"
-    assert "completed" not in submit_event_names
-    assert any(
-        event.event == "mutation_applied"
-        and event.data["mutation"] == "sync_local_bookmarks"
-        for event in submit_events
-    )
-    assert any(
-        event.event == "mutation_applied"
-        and event.data["mutation"] == "push_review_bookmarks"
-        for event in submit_events
-    )
-    begin_data = submit_events[0].data
-    assert begin_data["options"]["remote_name"] == "origin"
-    assert begin_data["options"]["github_host"] == "github.test"
-    assert begin_data["options"]["github_owner"] == "octo-org"
-    assert begin_data["options"]["github_repo"] == "stacked-review"
-    stored_ids = begin_data["resolved_scope"]["ordered_change_ids"]
-    stored_commit_ids = begin_data["resolved_scope"]["ordered_commit_ids"]
-    assert change_id_1 in stored_ids
-    assert change_id_2 in stored_ids
-    assert stored_commit_ids == [revision.commit_id for revision in stack.revisions]
 
 
 def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failure(
@@ -1730,7 +1681,7 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
+        modules=("jj_stack.commands.submit.command", "jj_stack.commands.relink"),
         client_type=FlakyMetadataClient,
     )
 
@@ -1739,18 +1690,26 @@ def test_submit_rerun_converges_pull_request_metadata_after_partial_create_failu
 
     state_after_failure = ReviewStateStore.for_repo(repo).load()
     assert len(fake_repo.pull_requests) == 1
-    assert state_after_failure.changes == {}
+    assert state_after_failure.review_identities == {}
+    assert state_after_failure.submitted_baselines == {}
     assert fake_repo.pull_requests[1].requested_reviewers == ["alice"]
     assert fake_repo.pull_requests[1].requested_team_reviewers == ["platform"]
     assert fake_repo.pull_requests[1].labels == []
 
-    assert run_main(repo, config_path, "submit") == 0
+    stack = JjClient(repo).discover_review_stack()
+    change_id = stack.revisions[0].change_id
+    assert run_main(repo, config_path, "submit") == 1
+    rejected = capsys.readouterr()
+    assert "Adopt that PR explicitly with relink" in rejected.err
+
+    assert run_main(repo, config_path, "relink", "1", change_id) == 0
+    capsys.readouterr()
+    assert run_main(repo, config_path, "submit", "--reviewers", "alice") == 0
     capsys.readouterr()
 
-    stack = JjClient(repo).discover_review_stack()
     state_after_rerun = ReviewStateStore.for_repo(repo).load()
 
-    assert state_after_rerun.changes[stack.revisions[0].change_id].pr_number == 1
+    assert state_after_rerun.review_identities[change_id].pr_number == 1
     assert fake_repo.pull_requests[1].requested_reviewers == ["alice"]
     assert fake_repo.pull_requests[1].requested_team_reviewers == ["platform"]
     assert fake_repo.pull_requests[1].labels == ["needs-review"]
@@ -1917,11 +1876,9 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
     change_id_1 = stack.revisions[0].change_id
     change_id_2 = stack.revisions[1].change_id
     change_id_3 = stack.revisions[2].change_id
-    issue_number_1 = initial_state.changes[change_id_1].pr_number
-    issue_number_2 = initial_state.changes[change_id_2].pr_number
-    issue_number_3 = initial_state.changes[change_id_3].pr_number
-    if issue_number_1 is None or issue_number_2 is None or issue_number_3 is None:
-        raise AssertionError("Expected pull request numbers after initial submit.")
+    issue_number_1 = initial_state.review_identities[change_id_1].pr_number
+    issue_number_2 = initial_state.review_identities[change_id_2].pr_number
+    issue_number_3 = initial_state.review_identities[change_id_3].pr_number
 
     stale_comment_1 = _navigation_comments(fake_repo, issue_number_1)[0]
     stale_comment_2 = _navigation_comments(fake_repo, issue_number_2)[0]
@@ -1968,40 +1925,6 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
     assert len(issue_comments(fake_repo, issue_number_3)) == 1
 
 
-def test_submit_completes_operation_journal_after_successful_submit(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-
-    exit_code = run_main(repo, config_path, "submit")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    submit_events = [
-        event
-        for event in read_operation_log(resolve_state_path(repo).parent)
-        if event.operation == "submit"
-    ]
-    submit_event_names = [event.event for event in submit_events]
-    assert submit_event_names[0] == "begin"
-    assert submit_event_names[-1] == "completed"
-    assert any(
-        event.event == "mutation_applied"
-        and event.data["mutation"] == "sync_local_bookmarks"
-        for event in submit_events
-    )
-    assert any(
-        event.event == "mutation_applied"
-        and event.data["mutation"] == "push_review_bookmarks"
-        for event in submit_events
-    )
-    assert any(event.event == "saved_state_update" for event in submit_events)
-
-
 def _write_edit_editor(tmp_path: Path, name: str, body_lines: list[str]) -> str:
     import sys as _sys
 
@@ -2046,6 +1969,8 @@ def test_submit_edit_malformed_document_aborts_before_mutation(
 
     assert exit_code == 1
     assert "missing change" in captured.err
-    assert ReviewStateStore.for_repo(repo).load().changes == {}
+    empty_state = ReviewStateStore.for_repo(repo).load()
+    assert empty_state.review_identities == {}
+    assert empty_state.submitted_baselines == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
     assert fake_repo.pull_requests == {}

@@ -11,7 +11,7 @@ from typing import Any
 
 from jj_stack.errors import ConflictedStackError, DriftError
 from jj_stack.jj.client import JjClient, UnsupportedStackError
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline as StoredBaseline
 from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
@@ -32,6 +32,7 @@ from .submit_property_scenarios import (
 )
 
 SubmitRunner = Callable[[str | None], int]
+RelinkRunner = Callable[[int, str], int]
 CliRunner = Callable[[tuple[str, ...]], int]
 CliErrorReader = Callable[[], BaseException | None]
 OutputDiscarder = Callable[[], Any]
@@ -46,11 +47,12 @@ VIEW_REPORT_EXIT_CODES = frozenset({0, 2, 10})
 @dataclass(frozen=True, slots=True)
 class SubmittedBaseline:
     bookmark: str
-    cached_change: CachedChange
     change_id: str
     pr_base_ref: str
     pr_number: int
+    review_identity: ReviewIdentity
     remote_target: str
+    submitted_baseline: StoredBaseline
 
 
 def replay_successful_stack_edit_scenario(
@@ -214,9 +216,11 @@ def replay_failed_submit_retry_scenario(
     *,
     discard_output: OutputDiscarder,
     fake_repo: FakeGithubRepository,
+    relink: RelinkRunner,
     repo: Path,
     scenario: SubmitRetryScenario,
     submit: SubmitRunner,
+    submit_after_relink: SubmitRunner,
 ) -> None:
     """Replay one failed submit and assert rerunning converges the selected stack."""
 
@@ -232,9 +236,11 @@ def replay_failed_submit_retry_scenario(
         _replay_failed_first_submit(
             discard_output=discard_output,
             fake_repo=fake_repo,
+            relink=relink,
             repo=repo,
             scenario=scenario,
             submit=submit,
+            submit_after_relink=submit_after_relink,
         )
 
 
@@ -242,9 +248,11 @@ def _replay_failed_first_submit(
     *,
     discard_output: OutputDiscarder,
     fake_repo: FakeGithubRepository,
+    relink: RelinkRunner,
     repo: Path,
     scenario: SubmitRetryScenario,
     submit: SubmitRunner,
+    submit_after_relink: SubmitRunner,
 ) -> None:
     """The first submit failed mid-mutation; the rerun must build state from scratch."""
 
@@ -253,7 +261,21 @@ def _replay_failed_first_submit(
     assert submit(None) != 0
     discard_output()
 
-    assert submit(None) == 0
+    retry_submit = submit
+    if scenario.failure_point in {"create_pull_request", "pull_request_metadata"}:
+        assert submit(None) != 0
+        discard_output()
+        failed_change_id = labels_to_change_ids[scenario.failure_label]
+        failed_pull_request = next(
+            pull_request
+            for pull_request in fake_repo.pull_requests.values()
+            if pull_request.title == subject_for_label(scenario.failure_label)
+        )
+        assert relink(failed_pull_request.number, failed_change_id) == 0
+        discard_output()
+        retry_submit = submit_after_relink
+
+    assert retry_submit(None) == 0
     discard_output()
 
     stack = _discover_stack_for_labels(
@@ -392,9 +414,7 @@ def replay_stack_merge_scenario(
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
 
-    labels_to_change_ids.update(
-        _create_labeled_stack(repo, scenario.second_stack_labels)
-    )
+    labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
 
@@ -447,9 +467,7 @@ def replay_stack_move_scenario(
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
 
-    labels_to_change_ids.update(
-        _create_labeled_stack(repo, scenario.second_stack_labels)
-    )
+    labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
 
@@ -528,19 +546,19 @@ def _capture_submitted_baseline(
     remote_heads = _remote_refs(fake_repo.git_dir)
     baseline: dict[str, SubmittedBaseline] = {}
     for label, change_id in labels_to_change_ids.items():
-        cached_change = state.changes[change_id]
-        bookmark = cached_change.bookmark
-        pr_number = cached_change.pr_number
-        assert bookmark is not None
-        assert pr_number is not None
+        review_identity = state.review_identities[change_id]
+        submitted_baseline = state.submitted_baselines[change_id]
+        bookmark = review_identity.head_ref
+        pr_number = review_identity.pr_number
         pull_request = fake_repo.pull_requests[pr_number]
         baseline[label] = SubmittedBaseline(
             bookmark=bookmark,
-            cached_change=cached_change,
             change_id=change_id,
             pr_base_ref=pull_request.base_ref,
             pr_number=pr_number,
+            review_identity=review_identity,
             remote_target=_remote_head(remote_heads, bookmark),
+            submitted_baseline=submitted_baseline,
         )
     return baseline
 
@@ -763,18 +781,14 @@ def _assert_new_submit_invariants(
 
     for index, label in enumerate(scenario.final_live_labels):
         revision = stack.revisions[index]
-        cached_change = state.changes[revision.change_id]
-        bookmark = cached_change.bookmark
-        pr_number = cached_change.pr_number
-        assert bookmark is not None, scenario.trace
-        assert pr_number is not None, scenario.trace
+        review_identity = state.review_identities[revision.change_id]
+        bookmark = review_identity.head_ref
+        pr_number = review_identity.pr_number
         bookmarks_by_label[label] = bookmark
 
         pull_request = fake_repo.pull_requests[pr_number]
         expected_base_ref = (
-            bookmarks_by_label[scenario.final_live_labels[index - 1]]
-            if index > 0
-            else "main"
+            bookmarks_by_label[scenario.final_live_labels[index - 1]] if index > 0 else "main"
         )
         assert _remote_head(remote_heads, bookmark) == revision.commit_id
         assert pull_request.base_ref == expected_base_ref
@@ -782,7 +796,7 @@ def _assert_new_submit_invariants(
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         assert pull_request.title == subject_for_label(label)
-        assert cached_change.last_submitted_commit_id == revision.commit_id
+        assert state.submitted_baselines[revision.change_id].commit_id == revision.commit_id
 
     assert len(fake_repo.pull_requests) == scenario.initial_size
 
@@ -806,11 +820,9 @@ def _assert_successful_submit_invariants(
 
     for index, label in enumerate(invariants.final_live_labels):
         revision = revisions_by_label[label]
-        cached_change = state.changes[revision.change_id]
-        bookmark = cached_change.bookmark
-        pr_number = cached_change.pr_number
-        assert bookmark is not None, invariants.trace
-        assert pr_number is not None, invariants.trace
+        review_identity = state.review_identities[revision.change_id]
+        bookmark = review_identity.head_ref
+        pr_number = review_identity.pr_number
         bookmarks_by_label[label] = bookmark
         live_pr_numbers.add(pr_number)
         if label in baseline:
@@ -831,15 +843,16 @@ def _assert_successful_submit_invariants(
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         assert pull_request.title == subject_for_label(label)
-        assert cached_change.last_submitted_commit_id == revision.commit_id
+        assert state.submitted_baselines[revision.change_id].commit_id == revision.commit_id
 
     for label in invariants.orphaned_labels:
         submitted = baseline[label]
-        cached_change = state.changes[submitted.change_id]
+        review_identity = state.review_identities[submitted.change_id]
+        submitted_baseline = state.submitted_baselines[submitted.change_id]
         pull_request = fake_repo.pull_requests[submitted.pr_number]
         assert submitted.pr_number not in live_pr_numbers
-        assert cached_change.bookmark == submitted.bookmark
-        assert cached_change.pr_number == submitted.pr_number
+        assert review_identity == submitted.review_identity
+        assert submitted_baseline == submitted.submitted_baseline
         assert _remote_head(remote_heads, submitted.bookmark) == submitted.remote_target
         assert pull_request.base_ref == submitted.pr_base_ref
         assert pull_request.head_ref == submitted.bookmark
@@ -920,14 +933,14 @@ def _assert_deferred_labels_untouched(
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
     remote_heads = _remote_refs(fake_repo.git_dir)
-    deferred_pr_numbers = {
-        baseline[label].pr_number for label in deferred_labels
-    }
+    deferred_pr_numbers = {baseline[label].pr_number for label in deferred_labels}
     for label in deferred_labels:
         submitted = baseline[label]
-        cached_change = state.changes[submitted.change_id]
+        review_identity = state.review_identities[submitted.change_id]
+        submitted_baseline = state.submitted_baselines[submitted.change_id]
         pull_request = fake_repo.pull_requests[submitted.pr_number]
-        assert cached_change == submitted.cached_change
+        assert review_identity == submitted.review_identity
+        assert submitted_baseline == submitted.submitted_baseline
         assert _remote_head(remote_heads, submitted.bookmark) == submitted.remote_target
         assert pull_request.base_ref == submitted.pr_base_ref
         assert pull_request.head_ref == submitted.bookmark
@@ -1009,17 +1022,14 @@ def _apply_drift_operation(
     if drift.kind == "wrong_saved_pr_number":
         state_store = ReviewStateStore.for_repo(repo)
         state = state_store.load()
-        state_store.save(
-            state.model_copy(
-                update={
-                    "changes": {
-                        **state.changes,
-                        submitted.change_id: state.changes[submitted.change_id].model_copy(
-                            update={"pr_number": 999_999}
-                        ),
-                    }
-                }
-            )
+        identity = state.review_identities[submitted.change_id]
+        stored_baseline = state.submitted_baselines[submitted.change_id]
+        state_store.relink_review(
+            submitted.change_id,
+            expected_identity=identity,
+            expected_baseline=stored_baseline,
+            identity=identity.model_copy(update={"pr_number": 999_999}),
+            baseline=stored_baseline,
         )
         return None
     if drift.kind == "unlinked_change":
@@ -1131,9 +1141,9 @@ def _recreate_change_outside_jj_stack(
         ],
         fake_repo.git_dir.parent,
     )
-    recreated_commit_id = JjClient(repo).resolve_revision(
-        labels_to_change_ids[new_label]
-    ).commit_id
+    recreated_commit_id = (
+        JjClient(repo).resolve_revision(labels_to_change_ids[new_label]).commit_id
+    )
     recreated_branch = f"agent/recreated-{new_label}"
     run_command(
         [

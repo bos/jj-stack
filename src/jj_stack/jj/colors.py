@@ -100,7 +100,7 @@ def load_semantic_styles(
             cwd=cwd,
             text=True,
         )
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError, OSError:
         return None
 
     if completed.returncode != 0:
@@ -139,8 +139,7 @@ def _semantic_style_rules_from_config_list(stdout: str) -> tuple[_SemanticStyleR
         grouped_styles[label_set] = style if existing is None else existing + style
 
     return tuple(
-        _SemanticStyleRule(labels=labels, style=style)
-        for labels, style in grouped_styles.items()
+        _SemanticStyleRule(labels=labels, style=style) for labels, style in grouped_styles.items()
     )
 
 

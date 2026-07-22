@@ -4,8 +4,7 @@ from pathlib import Path
 
 from jj_stack.errors import EXIT_GITHUB
 from jj_stack.jj.client import JjClient
-from jj_stack.state.journal import read_operation_log
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.state.store import ReviewStateStore
 
 from ..support.integration_helpers import (
     commit_file,
@@ -49,29 +48,8 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
 
     assert exit_code == 0
     assert "Relinked PR #1" in captured.out
-    assert relinked_state.changes[change_id].bookmark == manual_bookmark
-    assert relinked_state.changes[change_id].pr_number == 1
-
-    # The relink journal must persist the saved-state update before mutating the
-    # local bookmark and record completion last, so an interrupted relink is
-    # recoverable.
-    state_dir = resolve_state_path(repo).parent
-    journal_events = tuple(
-        event for event in read_operation_log(state_dir) if event.operation == "relink"
-    )
-    saved_state_update_index = next(
-        index
-        for index, event in enumerate(journal_events)
-        if event.event == "saved_state_update"
-    )
-    bookmark_mutation_index = next(
-        index
-        for index, event in enumerate(journal_events)
-        if event.event == "mutation_applied"
-        and event.data["mutation"] == "set_local_bookmark"
-    )
-    assert saved_state_update_index < bookmark_mutation_index
-    assert journal_events[-1].event == "completed"
+    assert relinked_state.review_identities[change_id].head_ref == manual_bookmark
+    assert relinked_state.review_identities[change_id].pr_number == 1
 
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
@@ -98,23 +76,17 @@ def test_relink_replaces_stale_submitted_commit_with_remote_pr_head(
     change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    cached_change = initial_state.changes[change_id]
-    bookmark = cached_change.bookmark
-    assert bookmark is not None
+    identity = initial_state.review_identities[change_id]
+    bookmark = identity.head_ref
     remote_pr_head = read_remote_ref(fake_repo.git_dir, bookmark)
     stale_submitted_commit = read_remote_ref(fake_repo.git_dir, "main")
     assert stale_submitted_commit != remote_pr_head
-    state_store.save(
-        initial_state.model_copy(
-            update={
-                "changes": {
-                    **initial_state.changes,
-                    change_id: cached_change.model_copy(
-                        update={"last_submitted_commit_id": stale_submitted_commit}
-                    ),
-                }
-            }
-        )
+    baseline = initial_state.submitted_baselines[change_id]
+    state_store.advance_baseline(
+        change_id,
+        expected_identity=identity,
+        expected_baseline=baseline,
+        baseline=baseline.model_copy(update={"commit_id": stale_submitted_commit}),
     )
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature repaired"],
@@ -123,10 +95,10 @@ def test_relink_replaces_stale_submitted_commit_with_remote_pr_head(
 
     exit_code = run_main(repo, config_path, "relink", "1", change_id)
     capsys.readouterr()
-    relinked_change = state_store.load().changes[change_id]
+    relinked_baseline = state_store.load().submitted_baselines[change_id]
 
     assert exit_code == 0
-    assert relinked_change.last_submitted_commit_id == remote_pr_head
+    assert relinked_baseline.commit_id == remote_pr_head
 
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
@@ -227,9 +199,9 @@ def test_relink_clears_unlinked_state(
 
     exit_code = run_main(repo, config_path, "relink", "1", change_id)
     captured = capsys.readouterr()
-    relinked_change = ReviewStateStore.for_repo(repo).load().changes[change_id]
+    relinked_identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
 
     assert exit_code == 0
     assert "Relinked PR #1" in captured.out
-    assert relinked_change.link_state == "active"
-    assert relinked_change.pr_number == 1
+    assert relinked_identity.link_state == "active"
+    assert relinked_identity.pr_number == 1

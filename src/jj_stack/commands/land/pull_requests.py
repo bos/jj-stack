@@ -51,8 +51,7 @@ async def merge_landed_pull_request(
             )
         except GithubClientError as error:
             raise CliError(
-                t"Could not retarget PR #{pull_request.number} to "
-                t"{ui.bookmark(trunk_branch)}"
+                t"Could not retarget PR #{pull_request.number} to {ui.bookmark(trunk_branch)}"
             ) from error
         pull_request = pull_request.normalize_state()
         _ensure_landed_pull_request_head(
@@ -76,17 +75,13 @@ async def merge_landed_pull_request(
                     t"it mergeable and rerun {ui.cmd('land --via merge')}",
                     status="blocked",
                 )
-            raise CliError(
-                t"Could not merge PR #{pull_request.number} on GitHub"
-            ) from error
+            raise CliError(t"Could not merge PR #{pull_request.number} on GitHub") from error
         try:
             pull_request = await github_client.get_pull_request(
                 pull_number=pull_request.number,
             )
         except GithubClientError as error:
-            raise CliError(
-                t"Could not reload PR #{pull_request.number} after merging"
-            ) from error
+            raise CliError(t"Could not reload PR #{pull_request.number} after merging") from error
         pull_request = pull_request.normalize_state()
         _ensure_landed_pull_request_head(
             github_client=github_client,

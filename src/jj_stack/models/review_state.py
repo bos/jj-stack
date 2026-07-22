@@ -8,72 +8,78 @@ from pydantic import BaseModel, ConfigDict, Field
 
 LinkState = Literal["active", "unlinked"]
 BookmarkOwnership = Literal["managed", "external"]
+ReviewStateRecordType = Literal["review_identity", "submitted_baseline"]
 
 
-class LandNote(BaseModel):
-    """Message-only record of a land whose GitHub outcome may be unconfirmed.
-
-    The note exists so the next command can say why state is about to change
-    ("an earlier land was interrupted...") instead of changing it silently. It
-    only ever influences what the tool says, never what it does: no execution
-    path may read it to gate or select a mutation. Convergence is always
-    computed from what GitHub and the jj DAG currently report, and the note is
-    cleared whenever a command finishes with full knowledge of the outcome.
-    """
+class ReviewIdentity(BaseModel):
+    """Pinned nominal identity for one review."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    pull_request_numbers: tuple[int, ...]
-    trunk_branch: str
-    via: Literal["push", "merge"]
-
-
-class CachedChange(BaseModel):
-    """Tracking data for one logical `jj` change."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    bookmark: str | None = None
-    bookmark_ownership: BookmarkOwnership = "managed"
-    last_submitted_commit_id: str | None = None
+    version: Literal[1] = 1
+    github_host: str
+    repository_owner: str
+    repository_name: str
+    pr_number: int
+    head_owner: str
+    head_ref: str
+    bookmark_ownership: BookmarkOwnership
     link_state: LinkState = "active"
-    pr_number: int | None = None
-
-    @property
-    def has_review_identity(self) -> bool:
-        """Whether tracking state proves this change was attached to review before."""
-
-        return self.last_submitted_commit_id is not None or self.pr_number is not None
 
     @property
     def is_tracked(self) -> bool:
-        """Whether this change is actively tracked for review."""
+        """Whether commands may inspect and update this review."""
 
-        return self.link_state == "active" and self.has_review_identity
+        return self.link_state == "active"
 
     @property
     def is_unlinked(self) -> bool:
-        """Whether this change has been intentionally unlinked from review tracking."""
+        """Whether the user explicitly detached this review."""
 
         return self.link_state == "unlinked"
 
     @property
     def manages_bookmark(self) -> bool:
-        """Whether jj-stack should clean up this bookmark automatically."""
+        """Whether jj-stack may retire the review bookmark."""
 
         return self.bookmark_ownership == "managed"
 
-    def with_cleared_pr_identity(self) -> CachedChange:
-        """Return this record without saved pull-request identity."""
 
-        return self.model_copy(update={"pr_number": None})
-
-
-class ReviewState(BaseModel):
-    """Saved tracking data."""
+class SubmittedBaseline(BaseModel):
+    """Exact snapshot most recently acknowledged for one review identity."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Literal[1] = 1
-    changes: dict[str, CachedChange] = Field(default_factory=dict)
-    land_note: LandNote | None = None
+    commit_id: str
+
+
+class ReviewStateRecordIssue(BaseModel):
+    """One opaque tracking record that could not be validated independently."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record_type: ReviewStateRecordType
+    change_id: str
+    fingerprint: str
+    validation_error: str
+
+
+class ReviewState(BaseModel):
+    """Validated tracking records plus non-persisted record diagnostics."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal[2] = 2
+    review_identities: dict[str, ReviewIdentity] = Field(default_factory=dict)
+    submitted_baselines: dict[str, SubmittedBaseline] = Field(default_factory=dict)
+    record_issues: tuple[ReviewStateRecordIssue, ...] = Field(
+        default=(),
+        exclude=True,
+        repr=False,
+    )
+
+    def issues_for(self, change_id: str) -> tuple[ReviewStateRecordIssue, ...]:
+        """Return isolated record problems for one exact change ID."""
+
+        return tuple(issue for issue in self.record_issues if issue.change_id == change_id)

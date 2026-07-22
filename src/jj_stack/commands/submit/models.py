@@ -8,10 +8,10 @@ from typing import Literal, Protocol
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.bookmarks import BookmarkResolutionResult, BookmarkSource
-from jj_stack.state.journal import OperationJournal
+from jj_stack.review.bookmarks import BookmarkSource, ResolvedBookmark
+from jj_stack.review.restart import RestartedReview
 from jj_stack.state.store import ReviewStateStore
 
 LocalBookmarkAction = Literal["created", "moved", "unchanged"]
@@ -132,12 +132,13 @@ class PreparedSubmitInputs:
     """Local submit inputs prepared before GitHub mutations begin."""
 
     bookmark_states: dict[str, BookmarkState]
-    bookmark_result: BookmarkResolutionResult
+    bookmark_resolutions: tuple[ResolvedBookmark, ...]
     client: JjClient
     generated_pull_request_descriptions: dict[str, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
     remote: GitRemote
     restarted_change_ids: frozenset[str]
+    restarted_reviews: tuple[RestartedReview, ...]
     stack: LocalStack
     state: ReviewState
 
@@ -147,33 +148,49 @@ class SubmitMutationRun:
     """Mutable submit state shared by mutation phases."""
 
     dry_run: bool
-    journal: OperationJournal
+    restarted_reviews: dict[str, RestartedReview]
     state: ReviewState
-    state_changes: dict[str, CachedChange]
     state_store: ReviewStateStore
 
-    def save_interim_state(self) -> None:
-        if self.dry_run:
-            return
-        interim_state = self.state.model_copy(update={"changes": dict(self.state_changes)})
-        self.state_store.save(interim_state)
-
-    def record_saved_state_update(
+    def record_submission(
         self,
         *,
-        after: CachedChange | None,
-        before: CachedChange | None,
+        baseline: SubmittedBaseline,
         change_id: str,
+        identity: ReviewIdentity,
     ) -> None:
-        if self.dry_run or before == after:
+        """Save one GitHub-acknowledged review snapshot."""
+
+        if self.dry_run:
             return
-        self.journal.append(
-            "saved_state_update",
-            {
-                "after": after,
-                "before": before,
-                "change_id": change_id,
-            },
+        restarted = self.restarted_reviews.get(change_id)
+        if restarted is not None:
+            self.state = self.state_store.relink_review(
+                change_id,
+                expected_identity=restarted.identity,
+                expected_baseline=restarted.baseline,
+                identity=identity,
+                baseline=baseline,
+            )
+            return
+        expected_identity = self.state.review_identities.get(change_id)
+        expected_baseline = self.state.submitted_baselines.get(change_id)
+        if expected_identity is None and expected_baseline is None:
+            self.state = self.state_store.create_review(
+                change_id,
+                identity=identity,
+                baseline=baseline,
+            )
+            return
+        if expected_identity is None or expected_baseline is None:
+            raise RuntimeError(f"Incomplete review state for {change_id}.")
+        if identity != expected_identity:
+            raise RuntimeError(f"Review identity changed during submit for {change_id}.")
+        self.state = self.state_store.advance_baseline(
+            change_id,
+            expected_identity=expected_identity,
+            expected_baseline=expected_baseline,
+            baseline=baseline,
         )
 
 

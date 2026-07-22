@@ -138,7 +138,7 @@ def read_operation_lock_holder(state_dir: Path) -> OperationLockHolder | None:
     holder_path = state_dir / HOLDER_FILENAME
     try:
         raw = json.loads(holder_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     try:
         return OperationLockHolder(
@@ -146,7 +146,7 @@ def read_operation_lock_holder(state_dir: Path) -> OperationLockHolder | None:
             pid=int(raw["pid"]),
             started_at=str(raw["started_at"]),
         )
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None
 
 

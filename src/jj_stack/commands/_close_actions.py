@@ -18,14 +18,13 @@ from jj_stack.github.stack_comments import (
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubIssueComment
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.bookmarks import (
     bookmark_cleanup_allowed,
     classify_local_bookmark_forget,
     local_bookmark_forget_blocked_body,
 )
 from jj_stack.review.change_status import classify_review_change
-from jj_stack.state.journal import OperationJournal
 from jj_stack.ui import Message, plain_text
 
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -45,12 +44,10 @@ class BookmarkCleanupRun(Protocol):
     """Execution state needed to apply bookmark cleanup mutations."""
 
     @property
-    def dry_run(self) -> bool:
-        ...
+    def dry_run(self) -> bool: ...
 
     @property
-    def jj_client(self) -> JjClient:
-        ...
+    def jj_client(self) -> JjClient: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,18 +224,18 @@ def _action_presentation(
     return ("  ?", None, None)
 
 
-def retire_cached_change(cached_change: CachedChange) -> CachedChange:
+def retire_review_identity(review_identity: ReviewIdentity) -> ReviewIdentity:
     # A closed review keeps its identity but is unlinked: list stops reporting
     # it as an open orphan, submit will not silently reattach it, and cleanup
     # can still locate its artifacts. relink re-adopts it explicitly.
-    return cached_change.model_copy(update={"link_state": "unlinked"})
+    return review_identity.model_copy(update={"link_state": "unlinked"})
 
 
 def plan_bookmark_cleanup(
     *,
     bookmark: str,
     bookmark_state: BookmarkState,
-    cached_change: CachedChange,
+    review_identity: ReviewIdentity,
     cleanup_user_bookmarks: bool,
     commit_id: str | None,
     prefix: str,
@@ -249,7 +246,7 @@ def plan_bookmark_cleanup(
 
     if not bookmark_cleanup_allowed(
         bookmark=bookmark,
-        bookmark_managed=cached_change.manages_bookmark,
+        bookmark_managed=review_identity.manages_bookmark,
         cleanup_user_bookmarks=cleanup_user_bookmarks,
         prefix=prefix,
     ):
@@ -282,11 +279,11 @@ def plan_bookmark_cleanup(
     remote_state = bookmark_state.remote_target(remote_name) if remote_name is not None else None
     if commit_id is not None:
         review_status = classify_review_change(
-            cached_change=cached_change,
             commit_id=commit_id,
             local="orphaned",
             pull_request_lookup=None,
             remote_state=remote_state,
+            review_identity=review_identity,
         )
         if review_status.remote_branch == "conflicted":
             record_action(
@@ -329,7 +326,6 @@ def apply_bookmark_cleanup(
     bookmark: str,
     cleanup_plan: BookmarkCleanupPlan,
     commit_id: str | None,
-    journal: OperationJournal,
     record_action: Callable[[CloseAction], None],
     remote_name: str | None,
     run: BookmarkCleanupRun,
@@ -349,16 +345,10 @@ def apply_bookmark_cleanup(
         if not dry_run:
             if remote_name is None or commit_id is None:
                 raise AssertionError("Planned remote branch deletion requires a target.")
-            with journal.mutation(
-                "delete_remote_bookmark",
-                bookmark=bookmark,
-                commit_id=commit_id,
+            run.jj_client.delete_remote_bookmarks(
                 remote=remote_name,
-            ):
-                run.jj_client.delete_remote_bookmarks(
-                    remote=remote_name,
-                    deletions=((bookmark, commit_id),),
-                )
+                deletions=((bookmark, commit_id),),
+            )
     if cleanup_plan.local_forget:
         record_action(
             CloseAction(
@@ -368,5 +358,4 @@ def apply_bookmark_cleanup(
             )
         )
         if not dry_run:
-            with journal.mutation("forget_local_bookmark", bookmark=bookmark):
-                run.jj_client.forget_bookmarks((bookmark,))
+            run.jj_client.forget_bookmarks((bookmark,))

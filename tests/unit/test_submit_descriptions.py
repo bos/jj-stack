@@ -47,9 +47,7 @@ def test_bodyless_change_uses_pull_request_template(tmp_path: Path) -> None:
 def test_change_description_body_wins_over_pull_request_template(tmp_path: Path) -> None:
     (tmp_path / "PULL_REQUEST_TEMPLATE.md").write_text("## Template\n", encoding="utf-8")
 
-    body = _resolve_default_bodies(
-        tmp_path, description="fix: subject\n\nReal body paragraph.\n"
-    )
+    body = _resolve_default_bodies(tmp_path, description="fix: subject\n\nReal body paragraph.\n")
 
     assert body == "Real body paragraph."
 
@@ -94,9 +92,7 @@ def test_edit_document_round_trips_titles_and_bodies() -> None:
         "topchange": GeneratedDescription(body="", title="feature 2"),
     }
 
-    document = render_description_edit_document(
-        descriptions=descriptions, revisions=revisions
-    )
+    document = render_description_edit_document(descriptions=descriptions, revisions=revisions)
     parsed = parse_description_edit_document(document, revisions=revisions)
 
     assert parsed == descriptions
@@ -126,10 +122,7 @@ def test_edit_document_parse_rejects_repeated_change_section() -> None:
 
 def test_edit_document_parse_rejects_section_without_title() -> None:
     revisions = _two_change_stack()
-    document = (
-        "====== change topchange\nfeature 2\n"
-        "====== change bottomchange\n\n   \n"
-    )
+    document = "====== change topchange\nfeature 2\n====== change bottomchange\n\n   \n"
 
     with pytest.raises(CliError, match="no title line"):
         parse_description_edit_document(document, revisions=revisions)
@@ -138,9 +131,7 @@ def test_edit_document_parse_rejects_section_without_title() -> None:
 def test_edit_document_parse_rejects_content_before_first_separator() -> None:
     revisions = _two_change_stack()
     document = (
-        "stray text\n"
-        "====== change topchange\nfeature 2\n"
-        "====== change bottomchange\nfeature 1\n"
+        "stray text\n====== change topchange\nfeature 2\n====== change bottomchange\nfeature 1\n"
     )
 
     with pytest.raises(CliError, match="before the first change separator"):

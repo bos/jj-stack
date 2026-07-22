@@ -43,13 +43,13 @@ def test_fragile_test_output_check_rejects_exact_captured_output(
 ) -> None:
     tests_dir = tmp_path / "tests" / "unit"
     tests_dir.mkdir(parents=True)
+    fragile_assertion = "".join(("    assert captured.out ", "== ''"))
     (tests_dir / "test_fragile.py").write_text(
         "\n".join(
             [
                 "def test_output(capsys) -> None:",
                 "    captured = capsys.readouterr()",
-                "    assert captured.out "
-                "== ''",
+                fragile_assertion,
             ]
         )
         + "\n",

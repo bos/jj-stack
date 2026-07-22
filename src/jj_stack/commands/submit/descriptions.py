@@ -176,8 +176,7 @@ def parse_description_edit_document(
                 )
             if change_id in sections:
                 raise CliError(
-                    t"Edited pull request descriptions repeat change "
-                    t"{ui.change_id(change_id)}."
+                    t"Edited pull request descriptions repeat change {ui.change_id(change_id)}."
                 )
             current_section = sections[change_id] = []
             continue
@@ -261,9 +260,7 @@ def _edit_descriptions_in_editor(
                 cwd=jj_client.repo_root,
             )
         except FileNotFoundError as error:
-            raise CliError(
-                t"Editor {ui.cmd(editor_command[0])} was not found."
-            ) from error
+            raise CliError(t"Editor {ui.cmd(editor_command[0])} was not found.") from error
         except OSError as error:
             raise CliError(
                 t"Could not run editor {ui.cmd(editor_command[0])}: {error}"
@@ -345,11 +342,7 @@ def _resolve_description_target(
         ) from error
 
     matching_revision = next(
-        (
-            revision
-            for revision in revisions
-            if revision.change_id == target_revision.change_id
-        ),
+        (revision for revision in revisions if revision.change_id == target_revision.change_id),
         None,
     )
     if matching_revision is None:
@@ -364,9 +357,7 @@ def _read_description_file(path_text: str) -> str:
     try:
         return path.read_text(encoding="utf-8").rstrip()
     except (OSError, UnicodeDecodeError) as error:
-        raise CliError(
-            t"Could not read description file {ui.cmd(str(path))}: {error}"
-        ) from error
+        raise CliError(t"Could not read description file {ui.cmd(str(path))}: {error}") from error
 
 
 def _build_stack_description_input(

@@ -220,15 +220,12 @@ submitted-baseline, and saved-identity axes from data the caller already loaded.
 Commands can build policy helpers on top of those axes, but mutation code still writes
 the underlying tracking fields directly.
 
-The classifier migration is intentionally incremental. Read-side status summaries and
-advisories, status cache persistence decisions, cleanup stale-change and rebase planning,
-close cleanup planning, bookmark discovery and matching, unlink active-link checks, relink
-remote validation, checkout remote validation and branch refresh decisions, submit
-untracked-remote repair, submit metadata sync, failed-submit artifact observation, and
-land trunk/revision readiness checks consume these axes.
-Direct reads of `CachedChange`, `PullRequestLookup`, and bookmark target fields remain
-where code is copying underlying data into tracking state, rendering concrete GitHub
-payload details, or applying mutations that need the exact target value.
+Read-side status summaries and advisories, cleanup stale-change and rebase planning, close
+cleanup planning, bookmark discovery and matching, unlink active-link checks, relink and
+checkout remote validation, submit untracked-remote repair and metadata sync, failed-submit
+artifact observation, and land trunk/revision readiness checks consume these axes. Direct reads
+of identity, baseline, `PullRequestLookup`, and bookmark targets remain where code renders
+concrete GitHub payload details or applies a narrow mutation that needs the exact target value.
 
 This is where most correctness lives.
 
@@ -306,12 +303,11 @@ The repo state directory also contains the operation lock files:
 - `operation-lock.json` is diagnostic companion metadata for the current holder
 
 Mutating commands hold the lock through their full lifetime. The lock is process coordination
-only. The current implementation also writes the operation journal and may store a land note;
-slice 10 removes both. The target state directory contains no phase, selector, path, or recovery
-checkpoint.
+only. The state directory contains no operation journal, land note, phase, selector, path, or
+recovery checkpoint.
 
-The production component boundary, implemented across slices 5–10, shares pure observation and
-classification between landing and sync rather than a durable operation state machine.
+The production component boundary shares observation and classification between landing and sync
+rather than a durable operation state machine.
 `commands/land/` owns selected readiness and fresh mutation; `commands/sync.py` owns selected
 convergence and explicit global recovery; `review/landed.py` owns the two distinct landed
 classifications. Remote finalization returns an outcome without deciding whether local identity
@@ -706,13 +702,18 @@ marker-based comment rediscovery, leases, an observational land/sync routine, an
 integration coverage. It is not production-ready. The canonical gap markers in `design.md` map to
 these current implementation facts:
 
-- state is one version-1 `CachedChange`; status may overwrite its PR/bookmark fields
+- state is version 2 with separate nominal review identities and exact submitted baselines;
+  malformed entries are isolated and preserved, and only narrow exact-record mutations write it
 - land accepts diff-equivalent rewrites and refreshes review branches
 - merge mutation does not re-read full readiness or send expected-head SHA
 - the GitHub model and fake expose no live merge-result identity
-- malformed state poisons the whole file, and finalization is coupled to link retirement
+- finalization is coupled to link retirement
 - ordinary selected commands run a repository-wide sweep and selected sync calls plain `submit`
-- `LandNote` and the write-only operation journal remain in code and mechanism-coupled tests
+
+Replacement slice R1 is complete: it deleted `LandNote`, the write-only operation journal,
+composite `CachedChange` mutation state, and status/bookmark writes. Submit, explicit adoption,
+link-state changes, baseline advancement, and retirement now use separate bounded state
+transitions. The remaining facts above belong to R2 and R3.
 
 Replacement slices delete obsolete recovery machinery with the feature that supersedes it. They
 must not stage a second state, authority, evidence, finalization, or retirement model for later

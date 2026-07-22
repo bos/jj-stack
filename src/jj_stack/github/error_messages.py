@@ -87,4 +87,3 @@ def remote_and_github_unavailable_messages(
     if github_message is not None:
         messages.append(github_message)
     return tuple(messages)
-

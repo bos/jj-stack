@@ -85,11 +85,7 @@ def predict_pull_requests_auto_closed_by_push(
     auto_close_heads = jj_client.query_paired_ancestor_membership(
         tuple((head, base) for head, base, _ in candidates),
     )
-    return tuple(
-        pending_sync
-        for head, _, pending_sync in candidates
-        if head in auto_close_heads
-    )
+    return tuple(pending_sync for head, _, pending_sync in candidates if head in auto_close_heads)
 
 
 def _resolve_post_push_commit(

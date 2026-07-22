@@ -10,7 +10,6 @@ from jj_stack.errors import EXIT_FAILURE, EXIT_INCOMPLETE, CliError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient, JjCommandError
-from jj_stack.state.journal import read_operation_log
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -62,6 +61,32 @@ def test_land_blocks_unlinked_change(
     assert "unlinked from review tracking" in rendered
 
 
+def test_land_rejects_malformed_selected_baseline_before_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    approve_pull_requests(fake_repo, 1)
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    state_path = resolve_state_path(repo)
+    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    raw_state["submitted_baselines"][change_id] = {"version": 9}
+    write_file(state_path, json.dumps(raw_state))
+    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
+    fake_repo.pull_request_events.clear()
+
+    exit_code = run_main(repo, config_path, "land", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "relink" in captured.err
+    assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
+    assert fake_repo.pull_request_events == []
+    assert json.loads(state_path.read_text(encoding="utf-8")) == raw_state
+
+
 def test_land_previews_and_finalizes_maximal_ready_prefix(
     tmp_path: Path,
     monkeypatch,
@@ -77,10 +102,8 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
     change_id_1 = stack.revisions[0].change_id
     change_id_2 = stack.revisions[1].change_id
     change_id_3 = stack.revisions[2].change_id
-    bookmark_1 = submitted_state.changes[change_id_1].bookmark
-    bookmark_2 = submitted_state.changes[change_id_2].bookmark
-    if bookmark_1 is None or bookmark_2 is None:
-        raise AssertionError("Expected saved bookmarks after submit.")
+    bookmark_1 = submitted_state.review_identities[change_id_1].head_ref
+    bookmark_2 = submitted_state.review_identities[change_id_2].head_ref
 
     fake_repo.pull_requests[3].state = "closed"
 
@@ -121,20 +144,10 @@ def test_land_previews_and_finalizes_maximal_ready_prefix(
     assert read_remote_ref(fake_repo.git_dir, bookmark_2) == stack.revisions[1].commit_id
 
     landed_state = state_store.load()
-    assert change_id_1 not in landed_state.changes
-    assert change_id_2 not in landed_state.changes
-    state_dir = resolve_state_path(repo).parent
-    journal_events = tuple(
-        event for event in read_operation_log(state_dir) if event.operation == "land"
-    )
-    assert journal_events[0].event == "begin"
-    assert any(
-        event.event == "mutation_applied" and event.data["mutation"] == "push_trunk"
-        for event in journal_events
-    )
-    assert journal_events[-1].event == "completed"
-    assert set(journal_events[-1].data["retired_change_ids"]) == {change_id_1, change_id_2}
-
+    assert change_id_1 not in landed_state.review_identities
+    assert change_id_1 not in landed_state.submitted_baselines
+    assert change_id_2 not in landed_state.review_identities
+    assert change_id_2 not in landed_state.submitted_baselines
     list_exit_code = run_main(repo, config_path, "list", "--json")
     listed = capsys.readouterr()
     assert list_exit_code in (0, EXIT_INCOMPLETE)
@@ -148,9 +161,7 @@ def _list_json_change_ids(list_output: str) -> set[str]:
     """Every change id `list --json` reports, across stack and orphan rows."""
 
     rows = json.loads(list_output).get("rows", ())
-    change_ids = {
-        change["change_id"] for row in rows for change in row.get("changes", ())
-    }
+    change_ids = {change["change_id"] for row in rows for change in row.get("changes", ())}
     change_ids.update(row["change_id"] for row in rows if row.get("type") == "orphan")
     return change_ids
 
@@ -168,9 +179,7 @@ def test_land_skip_cleanup_keeps_landed_local_review_bookmark(
     state_store = ReviewStateStore.for_repo(repo)
     submitted_state = state_store.load()
     change_id = stack.revisions[0].change_id
-    bookmark = submitted_state.changes[change_id].bookmark
-    if bookmark is None:
-        raise AssertionError("Expected saved bookmark after submit.")
+    bookmark = submitted_state.review_identities[change_id].head_ref
 
     exit_code = run_main(repo, config_path, "land", "--skip-cleanup")
     captured = capsys.readouterr()
@@ -179,7 +188,9 @@ def test_land_skip_cleanup_keeps_landed_local_review_bookmark(
     assert f"forget local bookmark {bookmark}" not in captured.out
     bookmark_state = JjClient(repo).get_bookmark_state(bookmark)
     assert bookmark_state.local_target == stack.revisions[0].commit_id
-    assert change_id not in state_store.load().changes
+    landed_state = state_store.load()
+    assert change_id not in landed_state.review_identities
+    assert change_id not in landed_state.submitted_baselines
 
 
 def test_land_rejects_stack_forked_from_trunk_ancestor(
@@ -284,9 +295,7 @@ def test_land_pull_request_selects_the_landed_prefix(
     submitted_state = state_store.load()
     change_id_2 = stack.revisions[1].change_id
     change_id_3 = stack.revisions[2].change_id
-    bookmark_3 = submitted_state.changes[change_id_3].bookmark
-    if bookmark_3 is None:
-        raise AssertionError("Expected saved bookmark for feature 3 after submit.")
+    bookmark_3 = submitted_state.review_identities[change_id_3].head_ref
 
     exit_code = run_main(repo, config_path, "land", "--pull-request", "2")
     captured = capsys.readouterr()
@@ -351,9 +360,7 @@ def test_land_auto_resubmits_rebased_branch_before_landing(
     change_id = stack.revisions[0].change_id
     old_commit_id = stack.revisions[0].commit_id
     submitted_state = ReviewStateStore.for_repo(repo).load()
-    bookmark = submitted_state.changes[change_id].bookmark
-    if bookmark is None:
-        raise AssertionError("Expected saved bookmark after submit.")
+    bookmark = submitted_state.review_identities[change_id].head_ref
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "trunk 1", "trunk-1.txt")
@@ -385,7 +392,8 @@ def test_land_auto_resubmits_rebased_branch_before_landing(
     assert read_remote_ref(fake_repo.git_dir, bookmark) == rebased_commit_id
     assert fake_repo.pull_requests[1].state == "closed"
     state = ReviewStateStore.for_repo(repo).load()
-    assert change_id not in state.changes
+    assert change_id not in state.review_identities
+    assert change_id not in state.submitted_baselines
 
 
 def test_land_blocks_content_divergent_rebased_change(
@@ -401,9 +409,7 @@ def test_land_blocks_content_divergent_rebased_change(
     change_id = stack.revisions[0].change_id
     old_commit_id = stack.revisions[0].commit_id
     submitted_state = ReviewStateStore.for_repo(repo).load()
-    bookmark = submitted_state.changes[change_id].bookmark
-    if bookmark is None:
-        raise AssertionError("Expected saved bookmark after submit.")
+    bookmark = submitted_state.review_identities[change_id].head_ref
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "trunk 1", "trunk-1.txt")
@@ -436,9 +442,7 @@ def test_land_blocks_dismissed_approval_after_resubmit(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[0].change_id
     submitted_state = ReviewStateStore.for_repo(repo).load()
-    bookmark = submitted_state.changes[change_id].bookmark
-    if bookmark is None:
-        raise AssertionError("Expected saved bookmark after submit.")
+    bookmark = submitted_state.review_identities[change_id].head_ref
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "trunk 1", "trunk-1.txt")
@@ -689,11 +693,9 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     state_store = ReviewStateStore.for_repo(repo)
     submitted_state = state_store.load()
     bookmarks = tuple(
-        submitted_state.changes[change_id].bookmark for change_id in landed_change_ids
+        submitted_state.review_identities[change_id].head_ref for change_id in landed_change_ids
     )
-    if any(bookmark is None for bookmark in bookmarks):
-        raise AssertionError("Expected saved bookmarks after submit.")
-    saved_bookmarks = tuple(bookmark for bookmark in bookmarks if bookmark is not None)
+    saved_bookmarks = bookmarks
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
@@ -724,8 +726,10 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     assert fake_repo.pull_requests[2].state == "closed"
     assert fake_repo.pull_requests[2].merged_at is not None
     interrupted_state = state_store.load()
-    assert landed_change_ids[0] in interrupted_state.changes
-    assert landed_change_ids[1] not in interrupted_state.changes
+    assert landed_change_ids[0] in interrupted_state.review_identities
+    assert landed_change_ids[0] in interrupted_state.submitted_baselines
+    assert landed_change_ids[1] not in interrupted_state.review_identities
+    assert landed_change_ids[1] not in interrupted_state.submitted_baselines
 
     patch_github_client_builders(
         monkeypatch,
@@ -745,7 +749,8 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is not None
     interrupted_state = state_store.load()
-    assert landed_change_ids[0] not in interrupted_state.changes
+    assert landed_change_ids[0] not in interrupted_state.review_identities
+    assert landed_change_ids[0] not in interrupted_state.submitted_baselines
     bookmark_states = JjClient(repo).list_bookmark_states(saved_bookmarks)
     for bookmark in saved_bookmarks:
         assert bookmark_states[bookmark].local_target is None
@@ -773,8 +778,7 @@ def test_sync_skips_merged_review_whose_pull_request_head_moved(
     commit_2 = stack.revisions[1].commit_id
     change_id_1 = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark_1 = state_store.load().changes[change_id_1].bookmark
-    assert bookmark_1 is not None
+    bookmark_1 = state_store.load().review_identities[change_id_1].head_ref
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-07-20T12:00:00Z"
     update_remote_ref(fake_repo, branch="main", target=commit_1)
@@ -786,7 +790,9 @@ def test_sync_skips_merged_review_whose_pull_request_head_moved(
 
     assert exit_code == 0, (captured.out, captured.err)
     assert "head no longer matches" in rendered
-    assert change_id_1 in state_store.load().changes
+    state = state_store.load()
+    assert change_id_1 in state.review_identities
+    assert change_id_1 in state.submitted_baselines
 
 
 def test_sync_skips_landed_review_whose_pull_request_head_moved(
@@ -803,8 +809,7 @@ def test_sync_skips_landed_review_whose_pull_request_head_moved(
     commit_2 = stack.revisions[1].commit_id
     change_id_1 = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark_1 = state_store.load().changes[change_id_1].bookmark
-    assert bookmark_1 is not None
+    bookmark_1 = state_store.load().review_identities[change_id_1].head_ref
     # The exact commit reached trunk outside the tool, but the review branch
     # (and so the PR head) was force-moved to unrelated work afterwards.
     update_remote_ref(fake_repo, branch="main", target=commit_1)
@@ -818,7 +823,9 @@ def test_sync_skips_landed_review_whose_pull_request_head_moved(
     assert "skip landed" in rendered
     assert "head no longer matches" in rendered
     assert fake_repo.pull_requests[1].state == "open"
-    assert change_id_1 in state_store.load().changes
+    state = state_store.load()
+    assert change_id_1 in state.review_identities
+    assert change_id_1 in state.submitted_baselines
 
 
 def test_sweep_skips_landed_review_with_local_edits_since_submit(
@@ -858,7 +865,9 @@ def test_sweep_skips_landed_review_with_local_edits_since_submit(
     # PR state is not a usable signal here: the fake auto-marks reachable
     # heads merged (see its idealization note). The contract is that the
     # sweep neither finalized nor retired the edited review.
-    assert change_id_1 in state_store.load().changes
+    state = state_store.load()
+    assert change_id_1 in state.review_identities
+    assert change_id_1 in state.submitted_baselines
 
 
 def test_land_with_clean_plan_is_not_blocked_by_an_unrelated_straggler(
@@ -874,8 +883,6 @@ def test_land_with_clean_plan_is_not_blocked_by_an_unrelated_straggler(
     stack = JjClient(repo).discover_review_stack()
     change_id_1 = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark_1 = state_store.load().changes[change_id_1].bookmark
-    assert bookmark_1 is not None
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
@@ -894,7 +901,9 @@ def test_land_with_clean_plan_is_not_blocked_by_an_unrelated_straggler(
     )
     assert run_main(repo, config_path, "land") == 1
     capsys.readouterr()
-    assert change_id_1 in state_store.load().changes
+    state = state_store.load()
+    assert change_id_1 in state.review_identities
+    assert change_id_1 in state.submitted_baselines
 
     # The straggler's PR is closed without merging (its commit is on trunk),
     # a state the sweep reports and skips on every later run.
@@ -921,7 +930,9 @@ def test_land_with_clean_plan_is_not_blocked_by_an_unrelated_straggler(
     # The straggler is untouched and still tracked for inspection.
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[1].merged_at is None
-    assert change_id_1 in state_store.load().changes
+    state = state_store.load()
+    assert change_id_1 in state.review_identities
+    assert change_id_1 in state.submitted_baselines
 
 
 def test_sweep_tolerates_comment_deletion_failure_and_still_retires(
@@ -960,7 +971,9 @@ def test_sweep_tolerates_comment_deletion_failure_and_still_retires(
 
     assert exit_code == 0, (captured.out, captured.err)
     assert "remove tracking for landed" in _squash_whitespace(captured.out)
-    assert change_id_1 not in state_store.load().changes
+    state = state_store.load()
+    assert change_id_1 not in state.review_identities
+    assert change_id_1 not in state.submitted_baselines
 
 
 def test_sync_retires_review_merged_outside_the_tool_with_preserved_commit(
@@ -976,8 +989,7 @@ def test_sync_retires_review_merged_outside_the_tool_with_preserved_commit(
     commit_1 = stack.revisions[0].commit_id
     change_id_1 = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark_1 = state_store.load().changes[change_id_1].bookmark
-    assert bookmark_1 is not None
+    bookmark_1 = state_store.load().review_identities[change_id_1].head_ref
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
     update_remote_ref(fake_repo, branch="main", target=commit_1)
@@ -988,56 +1000,10 @@ def test_sync_retires_review_merged_outside_the_tool_with_preserved_commit(
 
     assert exit_code == 0, (captured.out, captured.err)
     assert "remove tracking for landed" in rendered
-    assert change_id_1 not in state_store.load().changes
+    state = state_store.load()
+    assert change_id_1 not in state.review_identities
+    assert change_id_1 not in state.submitted_baselines
     assert JjClient(repo).list_bookmark_states((bookmark_1,))[bookmark_1].local_target is None
-
-
-def test_interrupted_merge_land_is_explained_once_by_the_next_command(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """An unconfirmed merge request is explained by the next run, then forgotten."""
-
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailOnMergeClient(GithubClient):
-        async def merge_pull_request(self, *, pull_number, merge_method):
-            raise GithubClientError("Simulated merge outage", status_code=500)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=FailOnMergeClient,
-    )
-
-    first_exit_code = run_main(repo, config_path, "land", "--via", "merge")
-    first_run = capsys.readouterr()
-    assert first_exit_code != 0
-    assert "Could not merge PR #1" in first_run.err
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-    )
-
-    second_exit_code = run_main(repo, config_path, "sync")
-    second_run = capsys.readouterr()
-    assert second_exit_code == 0, (second_run.out, second_run.err)
-    assert "An earlier" in second_run.out
-    assert "interrupted before confirming" in second_run.out
-
-    third_exit_code = run_main(repo, config_path, "sync")
-    third_run = capsys.readouterr()
-    assert third_exit_code == 0
-    assert "interrupted before confirming" not in third_run.out
 
 
 def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
@@ -1073,7 +1039,8 @@ def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
     # The merged changes were reconciled out of tracking by the convergence run.
     state = ReviewStateStore.for_repo(repo).load()
     for change_id in change_ids:
-        assert change_id not in state.changes
+        assert change_id not in state.review_identities
+        assert change_id not in state.submitted_baselines
 
 
 def test_land_via_merge_stops_fail_closed_then_converges_accepted_prefix(
@@ -1102,10 +1069,11 @@ def test_land_via_merge_stops_fail_closed_then_converges_accepted_prefix(
     # The accepted prefix converged: its tracking retired, and the surviving
     # change was rebased onto the merged trunk and resubmitted.
     state = ReviewStateStore.for_repo(repo).load()
-    assert change_id_1 not in state.changes
+    assert change_id_1 not in state.review_identities
+    assert change_id_1 not in state.submitted_baselines
     surviving_commit = JjClient(repo).resolve_revision(change_id_2).commit_id
     assert surviving_commit != original_commit_2
-    assert state.changes[change_id_2].last_submitted_commit_id == surviving_commit
+    assert state.submitted_baselines[change_id_2].commit_id == surviving_commit
     assert fake_repo.pull_requests[2].base_ref == "main"
 
 

@@ -249,9 +249,7 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
         (template_root / "fake_repo.pkl").write_bytes(pickle.dumps(fake_repo))
         # The template directory may be renamed after the build completes, so
         # the state-home key derived from the build path must be recorded now.
-        (template_root / "repo-state-hash").write_text(
-            _repo_state_hash(repo), encoding="utf-8"
-        )
+        (template_root / "repo-state-hash").write_text(_repo_state_hash(repo), encoding="utf-8")
     finally:
         for mod, attr, original in saved_attrs:
             setattr(mod, attr, original)
@@ -315,15 +313,11 @@ def _build_manual_pr_template(template_root: Path) -> None:
     `fake_repo` carry state. The manual bookmark is left in place; tests that
     need it forgotten do so as a cheap per-test step.
     """
-    repo, fake_repo = _copy_fake_github_repo_from_template(
-        template_root, _get_cached_template()
-    )
+    repo, fake_repo = _copy_fake_github_repo_from_template(template_root, _get_cached_template())
     manual_bookmark = "review/manual-feature-1"
     commit_file(repo, "feature 1", "feature-1.txt")
     run_command(["jj", "bookmark", "create", manual_bookmark, "-r", "@-"], repo)
-    run_command(
-        ["jj", "git", "push", "--remote", "origin", "--bookmark", manual_bookmark], repo
-    )
+    run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", manual_bookmark], repo)
     fake_repo.create_pull_request(
         base_ref="main",
         body="manual body",

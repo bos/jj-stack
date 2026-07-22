@@ -69,7 +69,6 @@ def sync(
         context.state_store.require_writable(),
         command="sync",
     ):
-        report_land_note(context=context, clear=not dry_run)
         return run_stack_convergence(
             context=context,
             dry_run=dry_run,
@@ -134,7 +133,7 @@ def sweep_landed_reviews(*, context: CommandContext, dry_run: bool) -> None:
     """
 
     state = context.state_store.load()
-    if not state.changes:
+    if not state.review_identities or not state.submitted_baselines:
         return
     target = resolve_github_target(context.jj_client.list_git_remotes())
     if not isinstance(target, GithubTarget):
@@ -156,27 +155,6 @@ def sweep_landed_reviews(*, context: CommandContext, dry_run: bool) -> None:
     render_sweep_results(dry_run=dry_run, results=results)
 
 
-def report_land_note(*, clear: bool, context: CommandContext) -> None:
-    """Explain an interrupted land before its effects surface, then move on.
-
-    The note is message-only: it changes nothing about what this command does,
-    and losing it costs an explanation, never correctness.
-    """
-
-    state = context.state_store.load()
-    note = state.land_note
-    if note is None:
-        return
-    numbers = ", ".join(f"#{number}" for number in note.pull_request_numbers)
-    console.note(
-        t"An earlier {ui.cmd(f'land --via {note.via}')} was interrupted before "
-        t"confirming PRs {numbers} on {ui.bookmark(note.trunk_branch)}; continuing "
-        t"from what GitHub reports now."
-    )
-    if clear:
-        context.state_store.save(state.model_copy(update={"land_note": None}))
-
-
 def render_sweep_results(
     *,
     dry_run: bool,
@@ -184,26 +162,23 @@ def render_sweep_results(
 ) -> None:
     if not results:
         return
-    console.output(
-        "Planned post-land cleanup:" if dry_run else "Applied post-land cleanup:"
-    )
+    console.output("Planned post-land cleanup:" if dry_run else "Applied post-land cleanup:")
     marker = "•" if dry_run else "✓"
     for result in results:
         candidate = result.candidate
         if result.outcome == "skipped":
             console.output(
-                t"  ! skip landed {ui.change_id(candidate.change_id)}: "
-                t"{result.skip_reason}"
+                t"  ! skip landed {ui.change_id(candidate.change_id)}: {result.skip_reason}"
             )
             continue
         if result.outcome == "finalized":
             console.output(
-                t"  {marker} finalize PR #{candidate.pull_request_number} for "
+                t"  {marker} finalize PR #{candidate.review_identity.pr_number} for "
                 t"{ui.change_id(candidate.change_id)}"
             )
         if result.forgot_bookmark:
             console.output(
-                t"  {marker} forget {ui.bookmark(candidate.bookmark)} for "
+                t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)} for "
                 t"{ui.change_id(candidate.change_id)}"
             )
         console.output(

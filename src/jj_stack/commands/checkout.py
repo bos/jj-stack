@@ -36,7 +36,11 @@ from jj_stack.github.resolution import (
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import CachedChange
+from jj_stack.models.review_state import (
+    ReviewIdentity,
+    ReviewStateRecordIssue,
+    SubmittedBaseline,
+)
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.bookmarks import (
     bookmark_matches_generated_change_id,
@@ -54,6 +58,7 @@ from jj_stack.review.status import (
     stream_status_async,
 )
 from jj_stack.state.operation_lock import acquire_operation_lock
+from jj_stack.state.store import ReviewStateStore
 from jj_stack.ui import Message, plain_text
 
 HELP = "Connect jj-stack to an existing stack of pull requests"
@@ -108,6 +113,18 @@ class _PlannedCheckout:
     track_remote: bool
     update_local_bookmark: bool
     update_local_target: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PlannedReviewAdoption:
+    """One exact PR-backed identity to save after local checkout succeeds."""
+
+    baseline: SubmittedBaseline
+    change_id: str
+    expected_baseline: SubmittedBaseline | None
+    expected_identity: ReviewIdentity | None
+    expected_issues: tuple[ReviewStateRecordIssue, ...]
+    identity: ReviewIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,9 +242,7 @@ def _pick_tracked_stack_head(context: CommandContext) -> str:
             t"expected 1-{len(stacks)}."
         )
     picked = stacks[int(selection) - 1]
-    console.output(
-        t"Picked stack {ui.change_id(picked.head.change_id)} ({picked.head.subject})"
-    )
+    console.output(t"Picked stack {ui.change_id(picked.head.change_id)} ({picked.head.subject})")
     return picked.head.change_id
 
 
@@ -256,6 +271,7 @@ async def _run_checkout_async(
         status_result=prepared_checkout.status_result,
         bookmark_by_change_id=prepared_checkout.bookmark_by_change_id,
         bookmark_states=prepared_checkout.bookmark_states,
+        state_store=context.state_store,
     )
     return _checkout_result(
         actions=actions,
@@ -294,7 +310,6 @@ async def _prepare_checkout(
         prepared_status = prepare_status(
             context=context,
             fetch_remote_state=fetch and selection.head_bookmark is None,
-            persist_bookmarks=False,
             revset=selection.selected_revset,
         )
     if (
@@ -311,7 +326,6 @@ async def _prepare_checkout(
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = await stream_status_async(
             discover_remote_review=True,
-            persist_cache_updates=False,
             prepared_status=prepared_status,
             on_revision=lambda _revision, _github_available: progress.advance(),
         )
@@ -713,14 +727,15 @@ def _checkout_local_state(
     status_result: StatusResult,
     bookmark_by_change_id: dict[str, str],
     bookmark_states: dict[str, BookmarkState],
+    state_store: ReviewStateStore,
 ) -> tuple[ImportAction, ...]:
     prepared = prepared_status.prepared
-    state_store = prepared.state_store
     current_state = state_store.load()
-    next_changes = dict(current_state.changes)
     actions: list[ImportAction] = []
     selected_remote_name = prepared.remote.name if prepared.remote is not None else None
     planned_checkouts: list[_PlannedCheckout] = []
+    planned_review_adoptions: list[_PlannedReviewAdoption] = []
+    github_repository = prepared_status.github_repository
 
     seen_bookmarks: set[str] = set()
     for prepared_revision in prepared.status_revisions:
@@ -759,19 +774,43 @@ def _checkout_local_state(
             and remote_status.remote_branch_matches_commit is True
         )
 
-        existing_change = next_changes.get(
-            prepared_revision.revision.change_id
-        ) or current_state.changes.get(prepared_revision.revision.change_id)
-        cached_change = existing_change or CachedChange(bookmark=bookmark)
-        updated_change = _update_cached_change_from_status(
-            cached_change=cached_change,
-            bookmark=bookmark,
-            status_revision=_find_status_revision(
-                status_result.revisions, prepared_revision.revision.change_id
-            ),
-        )
-        if existing_change is None or updated_change != cached_change:
-            next_changes[prepared_revision.revision.change_id] = updated_change
+        change_id = prepared_revision.revision.change_id
+        status_revision = _find_status_revision(status_result.revisions, change_id)
+        pull_request = status_revision.pull_request()
+        if pull_request is not None:
+            if github_repository is None:
+                raise AssertionError("PR-backed checkout requires a GitHub repository.")
+            identity = ReviewIdentity(
+                github_host=github_repository.host,
+                repository_owner=github_repository.owner,
+                repository_name=github_repository.repo,
+                pr_number=pull_request.number,
+                head_owner=github_repository.owner,
+                head_ref=bookmark,
+                bookmark_ownership=bookmark_ownership_for_source(status_revision.bookmark_source),
+            )
+            baseline = SubmittedBaseline(commit_id=prepared_revision.revision.commit_id)
+            expected_identity = current_state.review_identities.get(change_id)
+            expected_baseline = current_state.submitted_baselines.get(change_id)
+            if expected_identity is not None:
+                identity = identity.model_copy(
+                    update={"link_state": expected_identity.link_state}
+                )
+                if expected_identity.head_ref == bookmark:
+                    identity = identity.model_copy(
+                        update={"bookmark_ownership": expected_identity.bookmark_ownership}
+                    )
+            if identity != expected_identity or baseline != expected_baseline:
+                planned_review_adoptions.append(
+                    _PlannedReviewAdoption(
+                        baseline=baseline,
+                        change_id=change_id,
+                        expected_baseline=expected_baseline,
+                        expected_identity=expected_identity,
+                        expected_issues=current_state.issues_for(change_id),
+                        identity=identity,
+                    )
+                )
         planned_checkouts.append(
             _PlannedCheckout(
                 bookmark=bookmark,
@@ -808,9 +847,16 @@ def _checkout_local_state(
                 )
             )
 
-    next_state = current_state.model_copy(update={"changes": next_changes})
-    if next_state != current_state:
-        state_store.save(next_state)
+    if planned_review_adoptions:
+        for adoption in planned_review_adoptions:
+            state_store.relink_review(
+                adoption.change_id,
+                expected_identity=adoption.expected_identity,
+                expected_baseline=adoption.expected_baseline,
+                expected_issues=adoption.expected_issues,
+                identity=adoption.identity,
+                baseline=adoption.baseline,
+            )
         actions.append(
             ImportAction(
                 kind="tracking",
@@ -876,31 +922,6 @@ def _find_status_revision(
         if revision.change_id == change_id:
             return revision
     raise AssertionError("Status revision for checked-out change was not found.")
-
-
-def _update_cached_change_from_status(
-    *,
-    cached_change: CachedChange,
-    bookmark: str,
-    status_revision: ReviewStatusRevision,
-) -> CachedChange:
-    updated_change = cached_change.model_copy(
-        update={
-            "bookmark": bookmark,
-            "bookmark_ownership": bookmark_ownership_for_source(status_revision.bookmark_source),
-        }
-    )
-    if cached_change.is_unlinked:
-        return updated_change
-    pull_request_lookup = status_revision.pull_request_lookup
-    if pull_request_lookup is not None:
-        if pull_request_lookup.state == "missing":
-            updated_change = updated_change.with_cleared_pr_identity()
-        elif pull_request_lookup.pull_request is not None:
-            updated_change = updated_change.model_copy(
-                update={"pr_number": pull_request_lookup.pull_request.number}
-            )
-    return updated_change
 
 
 def _prepared_status_has_discoverable_remote_link(

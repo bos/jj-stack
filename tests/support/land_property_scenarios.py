@@ -375,9 +375,7 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             name="push-squash-without-resubmit-stops-at-divergent-destination",
             initial_size=3,
             via="push",
-            edits=(
-                LandEditOperation(kind="squash_into_previous", label=initial_land_label(2)),
-            ),
+            edits=(LandEditOperation(kind="squash_into_previous", label=initial_land_label(2)),),
             resubmit_after_edit=False,
             approved_prefix=2,
         ),
@@ -385,9 +383,7 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             name="push-squash-with-resubmit-lands-survivor-and-keeps-orphan",
             initial_size=2,
             via="push",
-            edits=(
-                LandEditOperation(kind="squash_into_previous", label=initial_land_label(2)),
-            ),
+            edits=(LandEditOperation(kind="squash_into_previous", label=initial_land_label(2)),),
             resubmit_after_edit=True,
             approved_prefix=1,
         ),
@@ -468,14 +464,10 @@ DEFAULT_LAND_SCENARIO_COUNT = len(_fixed_land_scenarios())
 def _random_land_scenario(*, rng: random.Random, name: str) -> LandScenario:
     via: LandVia = rng.choice(("push", "merge"))
     initial_size = rng.randint(2, 4)
-    initial_labels = tuple(
-        initial_land_label(index) for index in range(1, initial_size + 1)
-    )
+    initial_labels = tuple(initial_land_label(index) for index in range(1, initial_size + 1))
     edits = _random_land_edits(rng=rng, initial_labels=initial_labels)
     resubmit_after_edit = bool(edits) and rng.choice((False, True))
-    final_live_labels, _, _ = simulate_land_edits(
-        edits=edits, initial_labels=initial_labels
-    )
+    final_live_labels, _, _ = simulate_land_edits(edits=edits, initial_labels=initial_labels)
     land_target_position: int | None = None
     if rng.random() < 0.25:
         eligible = [
@@ -569,9 +561,7 @@ class LandDriftScenario:
         assert self.target_position is not None
         target_label = self.initial_labels[self.target_position - 1]
         if self.outcome == "fetch_abandons":
-            return tuple(
-                label for label in self.initial_labels if label != target_label
-            )
+            return tuple(label for label in self.initial_labels if label != target_label)
         return self.initial_labels[: self.target_position - 1]
 
     @property
@@ -642,9 +632,7 @@ def generate_land_drift_scenarios(
     max_attempts = max(count * MAX_LAND_ATTEMPTS_MULTIPLIER, 1)
     while len(scenarios) < count and attempts < max_attempts:
         attempts += 1
-        scenario = _random_land_drift_scenario(
-            rng=rng, name=f"land-drift-random-{attempts:03d}"
-        )
+        scenario = _random_land_drift_scenario(rng=rng, name=f"land-drift-random-{attempts:03d}")
         if scenario.canonical_key in seen:
             continue
         scenarios.append(scenario)
@@ -725,7 +713,7 @@ def _random_land_drift_scenario(
 LandRetryFault = Literal[
     "after_push_ack_lost",
     "after_push_trunk",
-    "before_state_commit",
+    "before_retirement_save",
     "mid_finalize",
 ]
 
@@ -734,12 +722,11 @@ LandRetryFault = Literal[
 class LandRetryScenario:
     """One interrupted direct-push land followed by a converging rerun.
 
-    `after_push_ack_lost` moves remote trunk but fails before the successful push
-    is journaled; `after_push_trunk` fails loading the first landed PR after the
-    successful push is journaled;
+    `after_push_ack_lost` moves remote trunk before the push reports success;
+    `after_push_trunk` fails loading the first landed PR after the successful push;
     `mid_finalize` fails on the second landed PR after the first finalized;
-    `before_state_commit` fails after every PR finalized but before the pending
-    transaction and landed tracking are cleared atomically.
+    `before_retirement_save` fails after every PR finalized but before landed tracking
+    is retired.
     """
 
     name: str
@@ -822,9 +809,7 @@ def generate_land_retry_scenarios(
     max_attempts = max(count * MAX_LAND_ATTEMPTS_MULTIPLIER, 1)
     while len(scenarios) < count and attempts < max_attempts:
         attempts += 1
-        scenario = _random_land_retry_scenario(
-            rng=rng, name=f"land-retry-random-{attempts:03d}"
-        )
+        scenario = _random_land_retry_scenario(rng=rng, name=f"land-retry-random-{attempts:03d}")
         if scenario.canonical_key in seen:
             continue
         scenarios.append(scenario)
@@ -854,10 +839,10 @@ def _fixed_land_retry_scenarios() -> tuple[LandRetryScenario, ...]:
             fault="mid_finalize",
         ),
         LandRetryScenario(
-            name="retry-before-direct-land-state-commit-converges",
+            name="retry-before-retirement-save-converges",
             initial_size=2,
             approved_prefix=1,
-            fault="before_state_commit",
+            fault="before_retirement_save",
         ),
     )
 
@@ -873,7 +858,7 @@ def _random_land_retry_scenario(
     faults: tuple[LandRetryFault, ...] = (
         "after_push_ack_lost",
         "after_push_trunk",
-        "before_state_commit",
+        "before_retirement_save",
         "mid_finalize",
     )
     fault = rng.choice(faults)
@@ -1095,8 +1080,7 @@ def _random_land_edits(
         kinds: list[LandEditKind] = ["rewrite"]
         if len(live) >= 2:
             kinds.extend(
-                ("abandon", "move_after", "move_before", "move_to_top",
-                 "squash_into_previous")
+                ("abandon", "move_after", "move_before", "move_to_top", "squash_into_previous")
             )
         if not inserted:
             kinds.extend(("insert_after", "insert_before"))
@@ -1123,9 +1107,5 @@ def _random_land_edits(
         else:
             operation = LandEditOperation(kind=kind, label=rng.choice(live[1:]))
         edits.append(operation)
-        live = list(
-            simulate_land_edits(
-                edits=tuple(edits), initial_labels=initial_labels
-            )[0]
-        )
+        live = list(simulate_land_edits(edits=tuple(edits), initial_labels=initial_labels)[0])
     return tuple(edits)

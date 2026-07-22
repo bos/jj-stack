@@ -37,6 +37,7 @@ from jj_stack.review.status import (
     StatusResult,
 )
 from jj_stack.ui import plain_text
+from tests.support.review_state import make_review_identity
 
 
 class _FakeJjClient:
@@ -558,10 +559,8 @@ def _status_revision(
     return ReviewStatusRevision(
         bookmark=f"review/{change_id}",
         bookmark_source="generated",
-        cached_change=None,
         change_id=change_id,
         commit_id=commit_id,
-        link_state=link_state,
         local_divergent=False,
         pull_request_lookup=PullRequestLookup(
             message=None,
@@ -578,6 +577,12 @@ def _status_revision(
             if with_remote_state
             else None
         ),
+        review_identity=make_review_identity(
+            head_ref=f"review/{change_id}",
+            link_state=link_state,
+            pr_number=pull_request.number,
+        ),
+        submitted_baseline=None,
         managed_comments_lookup=None,
         subject=subject,
     )
@@ -687,10 +692,7 @@ def test_resolve_land_merge_method_uses_the_only_allowed_method() -> None:
         allow_squash_merge=True,
     )
 
-    assert (
-        _resolve_land_merge_method(merge_method=None, repository_state=repository)
-        == "squash"
-    )
+    assert _resolve_land_merge_method(merge_method=None, repository_state=repository) == "squash"
 
 
 def test_resolve_land_merge_method_requires_choice_when_several_are_allowed() -> None:

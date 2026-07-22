@@ -10,9 +10,12 @@ from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.bookmarks import generate_bookmark_name
+from jj_stack.review.bookmarks import (
+    bookmark_matches_restart_change_id,
+    generate_bookmark_name,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,11 +30,27 @@ class RestartedChange:
 
 
 @dataclass(frozen=True, slots=True)
+class RestartedReview:
+    """One exact saved pair to retire before starting a fresh review."""
+
+    baseline: SubmittedBaseline
+    change: RestartedChange
+    commit_id: str
+    identity: ReviewIdentity
+
+
+@dataclass(frozen=True, slots=True)
 class RestartStateResult:
     """Tracking state prepared for fresh pull requests."""
 
-    changed: tuple[RestartedChange, ...]
+    restarted: tuple[RestartedReview, ...]
     state: ReviewState
+
+    @property
+    def changed(self) -> tuple[RestartedChange, ...]:
+        """Return the user-facing restart descriptions."""
+
+        return tuple(item.change for item in self.restarted)
 
 
 def restart_state_for_stack(
@@ -46,65 +65,94 @@ def restart_state_for_stack(
 
     _ensure_stack_has_no_unlinked_changes(stack=stack, state=state)
     used_bookmarks = {
-        bookmark
-        for bookmark in (
-            *(cached.bookmark for cached in state.changes.values()),
-            *bookmark_states,
-            *reserved_bookmarks,
-        )
-        if bookmark is not None
+        *(identity.head_ref for identity in state.review_identities.values()),
+        *bookmark_states,
+        *reserved_bookmarks,
     }
 
-    changes = dict(state.changes)
-    restarted: list[RestartedChange] = []
+    identities = dict(state.review_identities)
+    baselines = dict(state.submitted_baselines)
+    restarted: list[RestartedReview] = []
     for revision in stack.revisions:
-        cached_change = state.changes.get(revision.change_id)
-        if cached_change is None or not cached_change_needs_restart(cached_change):
+        if state.issues_for(revision.change_id):
+            raise CliError(
+                t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
+                hint=t"Repair it with {ui.cmd('relink')} before restarting the review.",
+            )
+        identity = state.review_identities.get(revision.change_id)
+        baseline = state.submitted_baselines.get(revision.change_id)
+        if identity is None and baseline is None:
             continue
-        new_bookmark = fresh_bookmark_name(
+        if identity is None or baseline is None:
+            raise CliError(
+                t"Saved review state for {ui.change_id(revision.change_id)} is incomplete.",
+                hint=t"Repair it with {ui.cmd('relink')} before restarting the review.",
+            )
+        new_bookmark = _existing_fresh_bookmark(
+            bookmark_states=bookmark_states,
+            config=config,
+            old_bookmark=identity.head_ref,
+            revision=revision,
+        ) or fresh_bookmark_name(
             config=config,
             revision=revision,
-            old_bookmark=cached_change.bookmark,
-            old_pr_number=cached_change.pr_number,
+            old_bookmark=identity.head_ref,
+            old_pr_number=identity.pr_number,
             used_bookmarks=used_bookmarks,
         )
         used_bookmarks.add(new_bookmark)
-        changes[revision.change_id] = restart_cached_change(
-            cached_change,
-            new_bookmark=new_bookmark,
-        )
+        identities.pop(revision.change_id)
+        baselines.pop(revision.change_id)
         restarted.append(
-            RestartedChange(
-                change_id=revision.change_id,
-                new_bookmark=new_bookmark,
-                old_bookmark=cached_change.bookmark,
-                old_pr_number=cached_change.pr_number,
-                subject=revision.subject,
+            RestartedReview(
+                baseline=baseline,
+                change=RestartedChange(
+                    change_id=revision.change_id,
+                    new_bookmark=new_bookmark,
+                    old_bookmark=identity.head_ref,
+                    old_pr_number=identity.pr_number,
+                    subject=revision.subject,
+                ),
+                commit_id=revision.commit_id,
+                identity=identity,
             )
         )
 
     return RestartStateResult(
-        changed=tuple(restarted),
-        state=state.model_copy(update={"changes": changes}) if restarted else state,
+        restarted=tuple(restarted),
+        state=ReviewState(
+            review_identities=identities,
+            submitted_baselines=baselines,
+            record_issues=state.record_issues,
+        ),
     )
 
 
-def cached_change_needs_restart(cached_change: CachedChange) -> bool:
-    return (
-        cached_change.last_submitted_commit_id is not None
-        or cached_change.pr_number is not None
+def _existing_fresh_bookmark(
+    *,
+    bookmark_states: dict[str, BookmarkState],
+    config: RepoConfig,
+    old_bookmark: str,
+    revision: LocalRevision,
+) -> str | None:
+    candidates = sorted(
+        bookmark
+        for bookmark, bookmark_state in bookmark_states.items()
+        if bookmark != old_bookmark
+        and bookmark_matches_restart_change_id(
+            bookmark,
+            revision.change_id,
+            prefix=config.bookmark_prefix,
+        )
+        and bookmark_state.local_target == revision.commit_id
+        and not bookmark_state.remote_targets
     )
-
-
-def restart_cached_change(cached_change: CachedChange, *, new_bookmark: str) -> CachedChange:
-    return cached_change.model_copy(
-        update={
-            "bookmark": new_bookmark,
-            "bookmark_ownership": "managed",
-            "last_submitted_commit_id": None,
-            "link_state": "active",
-        }
-    ).with_cleared_pr_identity()
+    if len(candidates) > 1:
+        raise CliError(
+            t"Could not safely resume restart for {ui.change_id(revision.change_id)}: "
+            t"multiple fresh local bookmarks exist: {ui.join(ui.bookmark, candidates)}."
+        )
+    return candidates[0] if candidates else None
 
 
 def fresh_bookmark_name(
@@ -126,8 +174,7 @@ def fresh_bookmark_name(
             continue
         return candidate
     raise CliError(
-        t"Could not choose a fresh review bookmark for "
-        t"{ui.change_id(revision.change_id)}."
+        t"Could not choose a fresh review bookmark for {ui.change_id(revision.change_id)}."
     )
 
 
@@ -147,8 +194,8 @@ def _ensure_stack_has_no_unlinked_changes(
     unlinked = tuple(
         revision
         for revision in stack.revisions
-        if (cached := state.changes.get(revision.change_id)) is not None
-        and cached.is_unlinked
+        if (identity := state.review_identities.get(revision.change_id)) is not None
+        and identity.is_unlinked
     )
     if not unlinked:
         return

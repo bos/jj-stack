@@ -33,14 +33,14 @@ from jj_stack.commands._close_actions import (
     emit_close_actions,
     find_managed_comments as _find_managed_comments,
     plan_bookmark_cleanup,
-    retire_cached_change as _retire_cached_change,
+    retire_review_identity,
 )
 from jj_stack.commands.close_orphan import (
     run_orphan_close,
     run_untracked_cleanup_pull_request,
     state_has_pull_request_record,
 )
-from jj_stack.errors import AmbiguousSelectionError, ErrorMessage, UsageError
+from jj_stack.errors import AmbiguousSelectionError, CliError, ErrorMessage, UsageError
 from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
@@ -50,14 +50,10 @@ from jj_stack.github.resolution import (
 from jj_stack.github.stack_comments import stack_comment_label
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote
-from jj_stack.models.review_state import CachedChange, ReviewState
-from jj_stack.review.bookmarks import (
-    bookmark_ownership_for_source,
-)
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
-    classify_saved_review_change,
     enumerate_orphaned_records,
 )
 from jj_stack.review.discovery import discover_tracked_stacks
@@ -76,7 +72,6 @@ from jj_stack.review.status import (
     prepare_status,
     stream_status,
 )
-from jj_stack.state.journal import OperationJournal
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 HELP = "Stop reviewing a jj stack on GitHub"
@@ -131,10 +126,9 @@ class _CloseMutationRun:
     commit_ids_by_change_id: dict[str, str]
     current_state: ReviewState
     github_client: GithubClient
-    next_changes: dict[str, CachedChange]
+    review_identities: dict[str, ReviewIdentity]
     prepared_close: PreparedClose
     record_action: Callable[[CloseAction], None]
-    journal: OperationJournal = OperationJournal.disabled()
 
     @property
     def bookmark_prefix(self) -> str:
@@ -264,8 +258,7 @@ async def _run_orphan_closes(
     orphaned_records = enumerate_orphaned_records(state, discovered.stacks)
     orphan_targets_by_pull_request: dict[int, list[str]] = {}
     for orphan in orphaned_records:
-        pull_request_number = orphan.cached_change.pr_number
-        assert pull_request_number is not None
+        pull_request_number = orphan.review_identity.pr_number
         orphan_targets_by_pull_request.setdefault(pull_request_number, []).append(
             orphan.change_id
         )
@@ -273,9 +266,8 @@ async def _run_orphan_closes(
     active_claims_by_pull_request = {
         pull_request_number: [
             change_id
-            for change_id, cached_change in state.changes.items()
-            if cached_change.pr_number == pull_request_number
-            and classify_saved_review_change(cached_change, local="present").link == "active"
+            for change_id, review_identity in state.review_identities.items()
+            if review_identity.pr_number == pull_request_number and review_identity.is_tracked
         ]
         for pull_request_number in orphan_targets_by_pull_request
     }
@@ -298,9 +290,7 @@ async def _run_orphan_closes(
 
     targets = tuple(
         (pull_request_number, change_ids[0])
-        for pull_request_number, change_ids in sorted(
-            orphan_targets_by_pull_request.items()
-        )
+        for pull_request_number, change_ids in sorted(orphan_targets_by_pull_request.items())
     )
     if not targets:
         console.output("No orphaned pull requests are tracked.")
@@ -309,6 +299,13 @@ async def _run_orphan_closes(
     blocked = False
     for pull_request_number, change_id in targets:
         current_state = context.state_store.load()
+        if change_id not in current_state.submitted_baselines:
+            console.warning(
+                t"Cannot retire PR #{pull_request_number}: its submitted baseline is "
+                t"unavailable; run {ui.cmd('relink')} to repair the saved review."
+            )
+            blocked = True
+            continue
         exit_code = await run_orphan_close(
             change_id=change_id,
             context=context,
@@ -340,21 +337,34 @@ def _run_local_unstack(
             allow_immutable=True,
         )
     state = context.state_store.load()
-    next_changes = dict(state.changes)
     actions: list[LocalUnstackAction] = []
+    retirements: list[tuple[str, ReviewIdentity, SubmittedBaseline]] = []
     for revision in stack.revisions:
-        cached_change = next_changes.pop(revision.change_id, None)
-        if cached_change is None:
+        review_identity = state.review_identities.get(revision.change_id)
+        submitted_baseline = state.submitted_baselines.get(revision.change_id)
+        if review_identity is None and submitted_baseline is None:
             continue
+        if review_identity is None or submitted_baseline is None:
+            raise CliError(
+                t"Cannot forget tracking for {ui.change_id(revision.change_id)} because its "
+                t"saved identity or submitted baseline is unavailable.",
+                hint=t"Run {ui.cmd('relink')} to repair the saved review before retrying.",
+            )
+        retirements.append((revision.change_id, review_identity, submitted_baseline))
         actions.append(
             LocalUnstackAction(
-                bookmark=cached_change.bookmark,
+                bookmark=review_identity.head_ref,
                 change_id=revision.change_id,
                 subject=revision.subject,
             )
         )
     if actions and not dry_run:
-        context.state_store.save(state.model_copy(update={"changes": next_changes}))
+        for change_id, review_identity, submitted_baseline in retirements:
+            context.state_store.retire_review(
+                change_id,
+                expected_identity=review_identity,
+                expected_baseline=submitted_baseline,
+            )
     return LocalUnstackResult(actions=tuple(actions), dry_run=dry_run)
 
 
@@ -569,7 +579,6 @@ def prepare_close(
             context=context,
             fetch_remote_state=cleanup,
             fetch_only_when_tracked=True,
-            persist_bookmarks=False,
             revset=revset,
         ),
     )
@@ -599,18 +608,16 @@ def _prepare_untracked_close_fast_path(
 
     status_revisions: list[PreparedRevision] = []
     for revision in stack.revisions:
-        cached_change = state.changes.get(revision.change_id)
-        if classify_saved_review_change(
-            cached_change,
-            local="present",
-        ).saved_review_identity:
+        review_identity = state.review_identities.get(revision.change_id)
+        if review_identity is not None:
             return None
         status_revisions.append(
             PreparedRevision(
-                bookmark=(cached_change.bookmark or "") if cached_change is not None else "",
+                bookmark="",
                 bookmark_source="generated",
-                cached_change=cached_change,
                 revision=revision,
+                review_identity=None,
+                submitted_baseline=state.submitted_baselines.get(revision.change_id),
             )
         )
 
@@ -618,14 +625,11 @@ def _prepare_untracked_close_fast_path(
 
     prepared = PreparedStack(
         bookmark_states={},
-        bookmark_result_changed=False,
         client=client,
         remote=github_target.remote,
         remote_error=github_target.remote_error,
         stack=stack,
         state=state,
-        state_changes=dict(state.changes),
-        state_store=state_store,
         status_revisions=tuple(status_revisions),
     )
     return PreparedStatus(
@@ -648,7 +652,6 @@ def stream_close(
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = stream_status(
             inspect_stack_comments=True,
-            persist_cache_updates=False,
             on_revision=lambda _revision, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
@@ -707,76 +710,59 @@ async def _stream_close_async(
             prepared_close=prepared_close,
         )
 
-    current_state = prepared.state_store.load() if not prepared_close.dry_run else prepared.state
-    completed = False
-    close_journal = OperationJournal.disabled()
-    try:
-        close_journal = _start_close_operation_log(
-            prepared_close=prepared_close,
-        )
-
-        if no_work:
-            completed = True
-            return _close_result(
-                actions=(),
-                applied=False,
-                blocked=False,
-                github_error=status_result.github_error,
-                github_repository=github_repository,
-                prepared_close=prepared_close,
-            )
-
-        assert github_repository is not None
-        blocked = False
-        async with build_github_client(repository=github_repository) as github_client:
-            run = _CloseMutationRun(
-                commit_ids_by_change_id={
-                    prepared_revision.revision.change_id: prepared_revision.revision.commit_id
-                    for prepared_revision in prepared.status_revisions
-                },
-                current_state=current_state,
-                github_client=github_client,
-                journal=close_journal,
-                next_changes=dict(current_state.changes),
-                prepared_close=prepared_close,
-                record_action=recorder.record,
-            )
-            progress_total = len(status_result.revisions) if on_action is None else 0
-            with console.progress(
-                description="Processing close actions",
-                total=progress_total,
-            ) as progress:
-                # Process each revision in order, stopping on the first fail-closed block.
-                for revision in status_result.revisions:
-                    should_stop = await _process_close_revision(
-                        change_status=classify_review_status_revision(revision),
-                        revision=revision,
-                        run=run,
-                    )
-                    progress.advance()
-                    if should_stop:
-                        blocked = True
-                        break
-
-        _save_close_progress(run=run)
-        completed = True
+    current_state = (
+        prepared_close.context.state_store.load()
+        if not prepared_close.dry_run
+        else prepared.state
+    )
+    if no_work:
         return _close_result(
-            actions=recorder.as_tuple(),
-            blocked=blocked or recorder.blocked,
+            actions=(),
+            applied=False,
+            blocked=False,
             github_error=status_result.github_error,
             github_repository=github_repository,
             prepared_close=prepared_close,
         )
-    finally:
-        if completed:
-            completed_change_ids = tuple(
-                prepared_revision.revision.change_id
+
+    assert github_repository is not None
+    blocked = False
+    async with build_github_client(repository=github_repository) as github_client:
+        run = _CloseMutationRun(
+            commit_ids_by_change_id={
+                prepared_revision.revision.change_id: prepared_revision.revision.commit_id
                 for prepared_revision in prepared.status_revisions
-            )
-            close_journal.append(
-                "completed",
-                {"ordered_change_ids": completed_change_ids},
-            )
+            },
+            current_state=current_state,
+            github_client=github_client,
+            review_identities=dict(current_state.review_identities),
+            prepared_close=prepared_close,
+            record_action=recorder.record,
+        )
+        progress_total = len(status_result.revisions) if on_action is None else 0
+        with console.progress(
+            description="Processing close actions",
+            total=progress_total,
+        ) as progress:
+            # Process each revision in order, stopping on the first fail-closed block.
+            for revision in status_result.revisions:
+                should_stop = await _process_close_revision(
+                    change_status=classify_review_status_revision(revision),
+                    revision=revision,
+                    run=run,
+                )
+                progress.advance()
+                if should_stop:
+                    blocked = True
+                    break
+
+    return _close_result(
+        actions=recorder.as_tuple(),
+        blocked=blocked or recorder.blocked,
+        github_error=status_result.github_error,
+        github_repository=github_repository,
+        prepared_close=prepared_close,
+    )
 
 
 def _inspected_close_has_no_work(*, revisions: tuple[ReviewStatusRevision, ...]) -> bool:
@@ -790,57 +776,10 @@ def _inspected_close_has_no_work(*, revisions: tuple[ReviewStatusRevision, ...])
     we never pushed that branch and must not delete it.
     """
 
-    for revision in revisions:
-        cached = revision.cached_change
-        if classify_saved_review_change(cached, local="present").saved_review_identity:
-            return False
-    return True
-
-
-def _save_close_progress(*, run: _CloseMutationRun) -> None:
-    """Persist saved close state when a live run changed tracked metadata."""
-
-    if run.dry_run or run.next_changes == run.current_state.changes:
-        return
-    run.journal.record_saved_state_updates(
-        before=run.current_state.changes,
-        after=run.next_changes,
+    return not any(
+        revision.review_identity is not None or revision.submitted_baseline is not None
+        for revision in revisions
     )
-    run.prepared_close.prepared_status.prepared.state_store.save(
-        run.current_state.model_copy(update={"changes": run.next_changes})
-    )
-
-
-def _start_close_operation_log(
-    *,
-    prepared_close: PreparedClose,
-) -> OperationJournal:
-    """Write close operation log metadata for live runs."""
-
-    if prepared_close.dry_run:
-        return OperationJournal.disabled()
-
-    prepared_status = prepared_close.prepared_status
-    state_dir = prepared_status.prepared.state_store.require_writable()
-    ordered_change_ids = tuple(
-        prepared_revision.revision.change_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    ordered_commit_ids = tuple(
-        prepared_revision.revision.commit_id
-        for prepared_revision in prepared_status.prepared.status_revisions
-    )
-    journal = OperationJournal.begin(
-        state_dir,
-        operation="unstack",
-        options={"cleanup": prepared_close.cleanup},
-        resolved_scope={
-            "ordered_change_ids": ordered_change_ids,
-            "ordered_commit_ids": ordered_commit_ids,
-            "selected_revset": prepared_status.selected_revset,
-        },
-    )
-    return journal
 
 
 def _close_result(
@@ -877,6 +816,28 @@ async def _process_close_revision(
     Returns True when the revision fails closed and processing must stop.
     """
 
+    review_identity = (
+        revision.review_identity if run.dry_run else run.review_identities.get(revision.change_id)
+    )
+    submitted_baseline = (
+        revision.submitted_baseline
+        if run.dry_run
+        else run.current_state.submitted_baselines.get(revision.change_id)
+    )
+    if review_identity is None or submitted_baseline is None:
+        if review_identity is None and submitted_baseline is None:
+            return False
+        run.record_action(
+            CloseAction(
+                kind="tracking",
+                body=t"cannot close {ui.change_id(revision.change_id)} because its saved "
+                t"identity or submitted baseline is unavailable; run {ui.cmd('relink')} "
+                t"before retrying",
+                status="blocked",
+            )
+        )
+        return True
+
     lookup = revision.pull_request_lookup
     if lookup is None and not change_status.has_pull_request_lookup_failure:
         return False
@@ -895,15 +856,10 @@ async def _process_close_revision(
         )
         return True
 
-    cached_change = revision.cached_change or run.current_state.changes.get(revision.change_id)
     revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
 
     if change_status.pr_lifecycle == "missing":
-        if (
-            cached_change is not None
-            and not cached_change.is_unlinked
-            and cached_change.pr_number is not None
-        ):
+        if not review_identity.is_unlinked:
             run.record_action(
                 CloseAction(
                     kind="close",
@@ -916,26 +872,11 @@ async def _process_close_revision(
                 )
             )
             return True
-        if (
-            not run.prepared_close.cleanup
-            or cached_change is None
-            or not classify_saved_review_change(
-                cached_change,
-                local="present",
-            ).saved_review_identity
-        ):
+        if not run.prepared_close.cleanup or not change_status.saved_review_identity:
             return False
     else:
         if lookup is None:
             return False
-        if cached_change is None:
-            if lookup.pull_request is None:
-                return False
-            cached_change = CachedChange(
-                bookmark=revision.bookmark,
-                bookmark_ownership=bookmark_ownership_for_source(revision.bookmark_source),
-                pr_number=lookup.pull_request.number,
-            )
         if change_status.pr_lifecycle == "open" and lookup.pull_request is not None:
             pull_request_number = lookup.pull_request.number
             run.record_action(
@@ -946,26 +887,27 @@ async def _process_close_revision(
                 )
             )
             if not run.dry_run:
-                with run.journal.mutation(
-                    "close_pull_request",
-                    change_id=revision.change_id,
-                    pull_request_number=pull_request_number,
-                ):
-                    await run.github_client.close_pull_request(
-                        pull_number=pull_request_number,
-                    )
+                await run.github_client.close_pull_request(
+                    pull_number=pull_request_number,
+                )
         elif change_status.pr_lifecycle in {"closed", "merged"}:
             pass
         else:
             return False
 
-    updated_change = _record_retired_cached_change(
-        cached_change=cached_change,
+    updated_identity = _record_retired_review_identity(
+        review_identity=review_identity,
         revision=revision,
         revision_label=revision_label,
         run=run,
     )
     if not run.prepared_close.cleanup:
+        _persist_retired_review_identity(
+            change_id=revision.change_id,
+            previous_identity=review_identity,
+            updated_identity=updated_identity,
+            run=run,
+        )
         return False
     bookmark_states = run.prepared_close.prepared_status.prepared.bookmark_states
     await _cleanup_revision(
@@ -973,24 +915,29 @@ async def _process_close_revision(
             revision.bookmark,
             BookmarkState(name=revision.bookmark),
         ),
-        cached_change=updated_change,
+        review_identity=updated_identity,
         commit_id=run.commit_ids_by_change_id.get(revision.change_id),
         revision=revision,
+        run=run,
+    )
+    _persist_retired_review_identity(
+        change_id=revision.change_id,
+        previous_identity=review_identity,
+        updated_identity=updated_identity,
         run=run,
     )
     return False
 
 
-def _record_retired_cached_change(
+def _record_retired_review_identity(
     *,
-    cached_change: CachedChange,
+    review_identity: ReviewIdentity,
     revision: ReviewStatusRevision,
     revision_label: CloseActionBody,
     run: _CloseMutationRun,
-) -> CachedChange:
-    updated_change = _retire_cached_change(cached_change)
-    if updated_change != cached_change:
-        run.next_changes[revision.change_id] = updated_change
+) -> ReviewIdentity:
+    updated_identity = retire_review_identity(review_identity)
+    if updated_identity != review_identity:
         run.record_action(
             CloseAction(
                 kind="tracking",
@@ -998,45 +945,57 @@ def _record_retired_cached_change(
                 status="planned" if run.dry_run else "applied",
             )
         )
-    return updated_change
+    return updated_identity
+
+
+def _persist_retired_review_identity(
+    *,
+    change_id: str,
+    previous_identity: ReviewIdentity,
+    updated_identity: ReviewIdentity,
+    run: _CloseMutationRun,
+) -> None:
+    if run.dry_run or updated_identity == previous_identity:
+        return
+    run.prepared_close.context.state_store.set_link_state(
+        change_id,
+        expected_identity=previous_identity,
+        link_state="unlinked",
+    )
+    run.review_identities[change_id] = updated_identity
 
 
 async def _cleanup_revision(
     *,
     bookmark_state: BookmarkState,
-    cached_change: CachedChange,
+    review_identity: ReviewIdentity,
     commit_id: str | None,
     revision: ReviewStatusRevision,
     run: _CloseMutationRun,
 ) -> None:
-    bookmark = cached_change.bookmark
-    if bookmark is not None:
-        cleanup_plan = plan_bookmark_cleanup(
-            bookmark=bookmark,
-            bookmark_state=bookmark_state,
-            cached_change=cached_change,
-            cleanup_user_bookmarks=run.cleanup_user_bookmarks,
-            commit_id=commit_id,
-            prefix=run.bookmark_prefix,
-            record_action=run.record_action,
-            remote_name=run.remote_name,
-        )
-        apply_bookmark_cleanup(
-            bookmark=bookmark,
-            cleanup_plan=cleanup_plan,
-            commit_id=commit_id,
-            journal=run.journal,
-            record_action=run.record_action,
-            remote_name=run.remote_name,
-            run=run,
-        )
-
-    if cached_change.pr_number is None:
-        return
+    bookmark = review_identity.head_ref
+    cleanup_plan = plan_bookmark_cleanup(
+        bookmark=bookmark,
+        bookmark_state=bookmark_state,
+        cleanup_user_bookmarks=run.cleanup_user_bookmarks,
+        commit_id=commit_id,
+        prefix=run.bookmark_prefix,
+        record_action=run.record_action,
+        remote_name=run.remote_name,
+        review_identity=review_identity,
+    )
+    apply_bookmark_cleanup(
+        bookmark=bookmark,
+        cleanup_plan=cleanup_plan,
+        commit_id=commit_id,
+        record_action=run.record_action,
+        remote_name=run.remote_name,
+        run=run,
+    )
 
     lookups = await _find_managed_comments(
         github_client=run.github_client,
-        pull_request_number=cached_change.pr_number,
+        pull_request_number=review_identity.pr_number,
     )
     for lookup in lookups:
         if lookup.blocked_reason is not None:
@@ -1055,20 +1014,12 @@ async def _cleanup_revision(
                 kind=stack_comment_label(lookup.kind),
                 body=(
                     f"delete {stack_comment_label(lookup.kind)} #{lookup.comment.id} from PR "
-                    f"#{cached_change.pr_number}"
+                    f"#{review_identity.pr_number}"
                 ),
                 status="planned" if run.dry_run else "applied",
             )
         )
         if not run.dry_run:
-            with run.journal.mutation(
-                "delete_issue_comment",
-                change_id=revision.change_id,
+            await run.github_client.delete_issue_comment(
                 comment_id=lookup.comment.id,
-                kind=lookup.kind,
-                pull_request_number=cached_change.pr_number,
-            ):
-                await run.github_client.delete_issue_comment(
-                    comment_id=lookup.comment.id,
-                )
-
+            )

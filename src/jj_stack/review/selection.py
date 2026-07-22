@@ -12,8 +12,7 @@ from jj_stack.github.pull_request_refs import (
 )
 from jj_stack.github.resolution import parse_github_repo, select_submit_remote
 from jj_stack.jj.client import JjClient
-from jj_stack.models.review_state import CachedChange, ReviewState
-from jj_stack.review.change_status import classify_saved_review_change
+from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.state.store import ReviewStateStore
 
@@ -30,9 +29,7 @@ def resolve_selected_revset(
     if revset is not None:
         return revset
     if require_explicit:
-        raise UsageError(
-            t"{ui.cmd(command_label)} requires an explicit revision selection."
-        )
+        raise UsageError(t"{ui.cmd(command_label)} requires an explicit revision selection.")
     return default_revset
 
 
@@ -139,8 +136,7 @@ def resolve_linked_change_for_pull_request(
     action_label = action_name.capitalize()
     if revset is not None:
         raise UsageError(
-            t"Use either {ui.cmd('<revset>')} or {ui.cmd('--pull-request')}, "
-            t"not both."
+            t"Use either {ui.cmd('<revset>')} or {ui.cmd('--pull-request')}, not both."
         )
 
     pull_request_number = _parse_repo_pull_request_number(
@@ -193,24 +189,20 @@ def _active_change_ids_for_pull_request(
 ) -> list[str]:
     return [
         change_id
-        for change_id, cached_change in state.changes.items()
-        if _saved_change_links_pull_request(
-            cached_change,
+        for change_id, review_identity in state.review_identities.items()
+        if _identity_links_pull_request(
+            review_identity,
             pull_request_number=pull_request_number,
         )
     ]
 
 
-def _saved_change_links_pull_request(
-    cached_change: CachedChange,
+def _identity_links_pull_request(
+    review_identity: ReviewIdentity,
     *,
     pull_request_number: int,
 ) -> bool:
-    review_status = classify_saved_review_change(cached_change, local="present")
-    return (
-        review_status.link == "active"
-        and cached_change.pr_number == pull_request_number
-    )
+    return review_identity.is_tracked and review_identity.pr_number == pull_request_number
 
 
 def _parse_repo_pull_request_number(

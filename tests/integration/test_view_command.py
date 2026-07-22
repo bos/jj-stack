@@ -15,6 +15,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    write_file,
 )
 from ..support.json_schema import assert_json_output_matches_schema
 from ..support.output_assertions import assert_output_contains
@@ -68,6 +69,27 @@ def test_view_json_reports_public_stack_status(
     assert revision["pull_request"]["number"] == 1
     assert "remote_branch" not in revision
     assert "saved_pull_request" not in revision
+
+
+def test_view_marks_isolated_malformed_state_as_incomplete(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    state_path = resolve_state_path(repo)
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["submitted_baselines"][change_id] = {"version": 9}
+    write_file(state_path, json.dumps(state_payload))
+
+    exit_code = run_main(repo, config_path, "view")
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_INCOMPLETE
+    assert "Saved submitted baseline" in captured.err
+    assert "jj-stack relink --help" in captured.err
 
 
 def test_view_rejects_empty_working_copy_from_another_workspace(
@@ -161,10 +183,8 @@ def test_view_can_select_a_stack_by_pull_request_number(
     first_change_id = stack.revisions[0].change_id
     second_change_id = stack.revisions[1].change_id
     state = ReviewStateStore.for_repo(repo).load()
-    first_pr_number = state.changes[first_change_id].pr_number
-    second_pr_number = state.changes[second_change_id].pr_number
-    assert first_pr_number is not None
-    assert second_pr_number is not None
+    first_pr_number = state.review_identities[first_change_id].pr_number
+    second_pr_number = state.review_identities[second_change_id].pr_number
 
     exit_code = run_main(
         repo,
@@ -463,8 +483,7 @@ def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
-    bookmark = state_before.changes[change_id].bookmark
-    assert bookmark is not None
+    bookmark = state_before.review_identities[change_id].head_ref
     fake_repo.create_pull_request(
         base_ref="main",
         body="duplicate",
@@ -522,12 +541,12 @@ def test_view_fetch_surfaces_unlinked_state_without_repopulating_link(
 
     exit_code = run_main(repo, config_path, "view", "--fetch", change_id)
     captured = capsys.readouterr()
-    unlinked_change = ReviewStateStore.for_repo(repo).load().changes[change_id]
+    unlinked_identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
 
     assert exit_code == 0
     assert "unlinked PR #1" in captured.out
-    assert unlinked_change.link_state == "unlinked"
-    assert unlinked_change.pr_number is None
+    assert unlinked_identity.link_state == "unlinked"
+    assert unlinked_identity.pr_number == 1
 
 
 def test_view_reports_unsubmitted_after_state_loss(
@@ -549,7 +568,8 @@ def test_view_reports_unsubmitted_after_state_loss(
     assert exit_code == 0
     assert "Unsubmitted stack:" in captured.out
     assert "PR #1" not in captured.out
-    assert refreshed_state.changes == {}
+    assert refreshed_state.review_identities == {}
+    assert refreshed_state.submitted_baselines == {}
 
 
 def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
@@ -600,7 +620,7 @@ def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    assert initial_state.changes[change_id].pr_number == 1
+    assert initial_state.review_identities[change_id].pr_number == 1
 
     del fake_repo.pull_requests[1]
 
@@ -613,7 +633,7 @@ def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
     assert "remembered PR #1" in captured.out
     assert_output_contains(captured.out, "jj-stack submit --restart")
     assert change_id in captured.out
-    assert refreshed_state.changes[change_id].pr_number == 1
+    assert refreshed_state.review_identities[change_id].pr_number == 1
 
 
 def test_view_reports_merged_pull_request_state(

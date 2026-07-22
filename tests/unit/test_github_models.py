@@ -19,9 +19,7 @@ def _graphql_pull_request_payload(review_decision: object) -> dict[str, object]:
 
 def test_graphql_review_decision_normalizes_known_states_and_drops_unknown() -> None:
     approved = GithubPullRequest.model_validate(_graphql_pull_request_payload("APPROVED"))
-    changes = GithubPullRequest.model_validate(
-        _graphql_pull_request_payload("CHANGES_REQUESTED")
-    )
+    changes = GithubPullRequest.model_validate(_graphql_pull_request_payload("CHANGES_REQUESTED"))
     unknown = GithubPullRequest.model_validate(_graphql_pull_request_payload("REVIEW_REQUIRED"))
 
     assert approved.review_decision == "approved"

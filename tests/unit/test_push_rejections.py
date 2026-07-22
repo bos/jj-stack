@@ -43,7 +43,7 @@ def test_required_checks_rejection_classifies_as_checks_not_passed() -> None:
 
 def test_single_named_check_rejection_classifies_as_checks_not_passed() -> None:
     output = (
-        'remote: error: GH006: Protected branch update failed for refs/heads/main.\n'
+        "remote: error: GH006: Protected branch update failed for refs/heads/main.\n"
         'remote: error: Required status check "ci/build" is expected.\n'
     )
 
@@ -51,10 +51,7 @@ def test_single_named_check_rejection_classifies_as_checks_not_passed() -> None:
 
 
 def test_pull_request_required_rejection_classifies_as_pull_request_required() -> None:
-    assert (
-        classify_protected_branch_rejection(_PULL_REQUEST_REQUIRED)
-        == "pull_request_required"
-    )
+    assert classify_protected_branch_rejection(_PULL_REQUEST_REQUIRED) == "pull_request_required"
 
 
 def test_ruleset_rejection_with_both_violations_prefers_pull_request_required() -> None:

@@ -9,11 +9,12 @@ from jj_stack.github.resolution import select_submit_remote
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.bookmarks import (
     BookmarkResolver,
+    ResolvedBookmark,
     discover_bookmarks_for_revisions,
     ensure_unique_bookmarks,
     match_bookmarks_for_revisions,
 )
-from jj_stack.review.restart import restart_state_for_stack
+from jj_stack.review.restart import RestartedReview, restart_state_for_stack
 
 from .descriptions import resolve_generated_descriptions
 from .models import (
@@ -38,8 +39,16 @@ def prepare_submit_inputs(
     remote = select_submit_remote(client.list_git_remotes())
     stack = client.discover_review_stack(options.revset)
     state = state_store.load()
+    for revision in stack.revisions:
+        if state.issues_for(revision.change_id):
+            raise CliError(
+                t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
+                hint=t"Repair it with {ui.cmd('relink')} before submitting the review.",
+            )
     bookmark_states = client.list_bookmark_states()
     restarted_change_ids: frozenset[str] = frozenset()
+    restarted_reviews: tuple[RestartedReview, ...] = ()
+    forced_bookmarks: dict[str, str] = {}
     if options.restart:
         restart_result = restart_state_for_stack(
             bookmark_states=bookmark_states,
@@ -48,9 +57,13 @@ def prepare_submit_inputs(
             state=state,
         )
         state = restart_result.state
+        restarted_reviews = restart_result.restarted
         restarted_change_ids = frozenset(
             restarted.change_id for restarted in restart_result.changed
         )
+        forced_bookmarks = {
+            restarted.change_id: restarted.new_bookmark for restarted in restart_result.changed
+        }
     matched_bookmarks = match_bookmarks_for_revisions(
         bookmark_states=bookmark_states,
         patterns=resolved_options.use_bookmarks,
@@ -63,13 +76,24 @@ def prepare_submit_inputs(
         remote_name=remote.name,
         revisions=stack.revisions,
     )
-    bookmark_result = BookmarkResolver(
-        state,
+    bookmark_resolutions = BookmarkResolver(
+        state.review_identities,
         prefix=config.bookmark_prefix,
         matched_bookmarks=matched_bookmarks,
         discovered_bookmarks=discovered_bookmarks,
-    ).pin_revisions(stack.revisions)
-    ensure_unique_bookmarks(bookmark_result.resolutions)
+    ).resolve_revisions(stack.revisions)
+    if forced_bookmarks:
+        bookmark_resolutions = tuple(
+            ResolvedBookmark(
+                bookmark=forced_bookmarks[resolution.change_id],
+                change_id=resolution.change_id,
+                source="generated",
+            )
+            if resolution.change_id in forced_bookmarks
+            else resolution
+            for resolution in bookmark_resolutions
+        )
+    ensure_unique_bookmarks(bookmark_resolutions)
     preflight_conflicted_revisions(stack.revisions)
     preflight_private_commits(client, stack.revisions)
     (
@@ -85,12 +109,13 @@ def prepare_submit_inputs(
     )
     return PreparedSubmitInputs(
         bookmark_states=bookmark_states,
-        bookmark_result=bookmark_result,
+        bookmark_resolutions=bookmark_resolutions,
         client=client,
         generated_pull_request_descriptions=generated_pull_request_descriptions,
         generated_stack_description=generated_stack_description,
         remote=remote,
         restarted_change_ids=restarted_change_ids,
+        restarted_reviews=restarted_reviews,
         stack=stack,
         state=state,
     )
@@ -108,8 +133,7 @@ def preflight_private_commits(
         private,
     )
     raise CliError(
-        t"Stack contains commits blocked by "
-        t"{ui.code('git.private-commits')}: {subjects}.",
+        t"Stack contains commits blocked by {ui.code('git.private-commits')}: {subjects}.",
         hint="Remove these changes from the stack before submitting.",
     )
 

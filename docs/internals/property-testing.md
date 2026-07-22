@@ -401,11 +401,11 @@ For the submitted stack as a whole:
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
-The current property harness predates parts of this contract: it still encodes automatic
-diff-equivalent resubmission, the composite tracking-state shape, and mechanism-level journal
-assertions. Those are implementation gaps, not accepted behavior. The exact-snapshot,
-identity, interruption, and observable-outcome oracles replace them in the corresponding
-implementation slices.
+The current property harness still encodes automatic diff-equivalent resubmission. That is an
+implementation gap, not accepted behavior. Slice R1 separated identity from baseline in the
+harness and removed mechanism-level journal assertions. The exact-snapshot, interruption, and
+observable-outcome oracles replace the remaining gap in the corresponding implementation
+slices.
 
 ## Efficiency
 

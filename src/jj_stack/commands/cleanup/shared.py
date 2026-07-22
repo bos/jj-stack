@@ -18,10 +18,13 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
 )
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import (
+    ReviewIdentity,
+    ReviewState,
+    SubmittedBaseline,
+)
 from jj_stack.review.change_status import ReviewChangeStatus
 from jj_stack.review.status import PreparedStatus, ReviewStatusRevision
-from jj_stack.state.journal import OperationJournal
 from jj_stack.ui import Message, plain_text
 
 CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -68,27 +71,6 @@ class PreparedCleanup:
         return self.github_target.remote if self.github_target is not None else None
 
 
-@dataclass(slots=True)
-class _CleanupSaver:
-    """Persist cleanup state and emit saved_state_update events per disk write."""
-
-    journal: OperationJournal
-    last_persisted: dict[str, CachedChange]
-    prepared_cleanup: PreparedCleanup
-
-    def save_if_changed(self, next_changes: dict[str, CachedChange]) -> None:
-        if self.prepared_cleanup.dry_run or next_changes == self.last_persisted:
-            return
-        self.journal.record_saved_state_updates(
-            before=self.last_persisted,
-            after=next_changes,
-        )
-        self.prepared_cleanup.context.state_store.save(
-            self.prepared_cleanup.state.model_copy(update={"changes": dict(next_changes)})
-        )
-        self.last_persisted = dict(next_changes)
-
-
 @dataclass(frozen=True, slots=True)
 class RemoteBranchCleanupPlan:
     """Planned or blocked remote-branch cleanup details."""
@@ -107,24 +89,25 @@ class OrphanLocalBookmarkCleanupPlan:
 
 @dataclass(frozen=True, slots=True)
 class PreparedCleanupChange:
-    """Locally prepared cleanup state for one cached change."""
+    """Locally prepared cleanup state for one complete tracked review."""
 
     bookmark_state: BookmarkState
-    cached_change: CachedChange
     change_id: str
     inspect_stack_comment: bool
     remote_state: RemoteBookmarkState | None
+    review_identity: ReviewIdentity
     review_status: ReviewChangeStatus
     stale_reason: str | None
+    submitted_baseline: SubmittedBaseline
 
 
 @dataclass(frozen=True, slots=True)
 class _StaleCleanupMutationPlan:
     """Planned local bookmark and remote branch mutations for one stale change."""
 
-    cached_change: CachedChange
     local_bookmark_action: CleanupAction | None
     remote_plan: RemoteBranchCleanupPlan | None
+    review_identity: ReviewIdentity
 
 
 @dataclass(frozen=True, slots=True)

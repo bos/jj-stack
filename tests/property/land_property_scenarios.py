@@ -130,14 +130,12 @@ def test_land_property_interrupted_land_retry_converges(
     app = create_app(FakeGithubState.single_repository(fake_repo))
     fault_pull_number = scenario.fault_pull_number
     original_push_bookmarks = JjClient.push_bookmarks
-    original_save = ReviewStateStore.save
+    original_retire_review = ReviewStateStore.retire_review
 
     class FaultOnFinalizeLoadClient(GithubClient):
         async def get_pull_request(self, *, pull_number):
             if pull_number == fault_pull_number:
-                raise GithubClientError(
-                    "Simulated finalization failure", status_code=500
-                )
+                raise GithubClientError("Simulated finalization failure", status_code=500)
             return await super().get_pull_request(pull_number=pull_number)
 
     def install_fault() -> None:
@@ -153,19 +151,17 @@ def test_land_property_interrupted_land_retry_converges(
 
             monkeypatch.setattr(JjClient, "push_bookmarks", push_then_lose_ack)
             return
-        if scenario.fault == "before_state_commit":
-            # The first save that drops a tracked change is the retirement
-            # commit; losing it models a crash between remote finalization and
-            # the local tracking update.
-            def lose_retirement_save(self, state) -> None:
-                existing = ReviewStateStore.load(self)
-                if set(existing.changes) - set(state.changes):
-                    raise CliError(
-                        "Simulated crash before tracking retirement was saved"
-                    )
-                original_save(self, state)
+        if scenario.fault == "before_retirement_save":
+            # Losing the exact retirement write models a crash between remote
+            # finalization and the local tracking update.
+            def lose_retirement_write(self, *args, **kwargs):
+                raise CliError("Simulated crash before tracking retirement was saved")
 
-            monkeypatch.setattr(ReviewStateStore, "save", lose_retirement_save)
+            monkeypatch.setattr(
+                ReviewStateStore,
+                "retire_review",
+                lose_retirement_write,
+            )
             return
         patch_github_client_builders(
             monkeypatch,
@@ -177,7 +173,11 @@ def test_land_property_interrupted_land_retry_converges(
 
     def restore_github() -> None:
         monkeypatch.setattr(JjClient, "push_bookmarks", original_push_bookmarks)
-        monkeypatch.setattr(ReviewStateStore, "save", original_save)
+        monkeypatch.setattr(
+            ReviewStateStore,
+            "retire_review",
+            original_retire_review,
+        )
         patch_github_client_builders(
             monkeypatch,
             app=app,
@@ -221,9 +221,7 @@ def test_land_property_merged_prefix_handoff_converges(
         async def merge_pull_request(self, *, pull_number: int, merge_method: str) -> None:
             if pull_number == fault_pull_number:
                 raise GithubClientError("Simulated merge failure", status_code=500)
-            await super().merge_pull_request(
-                pull_number=pull_number, merge_method=merge_method
-            )
+            await super().merge_pull_request(pull_number=pull_number, merge_method=merge_method)
 
     def install_fault() -> None:
         patch_github_client_builders(

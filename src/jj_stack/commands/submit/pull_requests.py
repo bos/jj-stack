@@ -9,9 +9,12 @@ from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError, DriftError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
-from jj_stack.models.review_state import CachedChange, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.bookmarks import BookmarkSource, bookmark_ownership_for_source
-from jj_stack.review.change_status import ReviewChangeStatus, classify_saved_review_change
+from jj_stack.review.change_status import (
+    ReviewChangeStatus,
+    classify_saved_review_identity,
+)
 
 from .models import (
     PendingPullRequestSync,
@@ -64,13 +67,18 @@ def ensure_pull_request_links_are_consistent(
     for pending_sync in pending_syncs:
         prepared_revision = pending_sync.prepared
         change_id = prepared_revision.revision.change_id
-        cached_change = state.changes.get(change_id)
+        review_identity = state.review_identities.get(change_id)
+        submitted_baseline = state.submitted_baselines.get(change_id)
         _ensure_pull_request_link_is_consistent(
             bookmark=prepared_revision.bookmark,
-            cached_change=cached_change,
             change_id=change_id,
             discovered_pull_request=pending_sync.discovered_pull_request,
-            saved_status=classify_saved_review_change(cached_change, local="present"),
+            review_identity=review_identity,
+            saved_status=classify_saved_review_identity(
+                review_identity,
+                local="present",
+            ),
+            submitted_baseline=submitted_baseline,
         )
 
 
@@ -85,21 +93,19 @@ async def sync_pull_requests(
 ) -> tuple[SubmittedRevision, ...]:
     def handle_success(
         _index: int,
-        submitted: tuple[SubmittedRevision, CachedChange | None],
+        submitted: tuple[
+            SubmittedRevision,
+            ReviewIdentity | None,
+            SubmittedBaseline | None,
+        ],
     ) -> None:
-        submitted_revision, cached_change = submitted
-        previous_change = (
-            run.state_changes.get(submitted_revision.change_id)
-            or run.state.changes.get(submitted_revision.change_id)
-        )
-        if cached_change is not None:
-            run.state_changes[submitted_revision.change_id] = cached_change
-            run.record_saved_state_update(
-                after=cached_change,
-                before=previous_change,
+        submitted_revision, identity, baseline = submitted
+        if identity is not None and baseline is not None:
+            run.record_submission(
+                baseline=baseline,
                 change_id=submitted_revision.change_id,
+                identity=identity,
             )
-        run.save_interim_state()
         if on_progress is not None:
             on_progress()
 
@@ -115,7 +121,7 @@ async def sync_pull_requests(
         ),
         on_success=handle_success,
     )
-    return tuple(submitted_revision for submitted_revision, _ in submitted_revisions)
+    return tuple(submitted_revision for submitted_revision, _, _ in submitted_revisions)
 
 
 async def _sync_pull_request(
@@ -125,13 +131,12 @@ async def _sync_pull_request(
     pending_sync: PendingPullRequestSync,
     resolved_options: ResolvedSubmitOptions,
     run: SubmitMutationRun,
-) -> tuple[SubmittedRevision, CachedChange | None]:
+) -> tuple[SubmittedRevision, ReviewIdentity | None, SubmittedBaseline | None]:
     prepared_revision = pending_sync.prepared
     bookmark = prepared_revision.bookmark
     change_id = prepared_revision.revision.change_id
     discovered_pull_request = pending_sync.discovered_pull_request
-    cached_change = run.state.changes.get(change_id)
-    saved_status = classify_saved_review_change(cached_change, local="present")
+    review_identity = run.state.review_identities.get(change_id)
 
     title = pending_sync.generated_description.title
     body = pending_sync.generated_description.body
@@ -187,7 +192,7 @@ async def _sync_pull_request(
         and pull_request is not None
         and (
             action != "unchanged"
-            or not saved_status.saved_pull_request_identity
+            or review_identity is None
             or options.reviewers is not None
             or options.team_reviewers is not None
         )
@@ -218,33 +223,28 @@ async def _sync_pull_request(
                 team_reviewers=[],
             )
 
-    next_cached_change: CachedChange | None = None
+    next_identity: ReviewIdentity | None = None
+    next_baseline: SubmittedBaseline | None = None
     if pull_request is not None:
-        next_cached_change = _updated_cached_change(
+        next_identity = _submitted_identity(
             bookmark=bookmark,
             bookmark_source=prepared_revision.bookmark_source,
-            cached_change=cached_change,
-            commit_id=prepared_revision.revision.commit_id,
+            github_client=github_client,
             pull_request=pull_request,
+            review_identity=review_identity,
         )
+        next_baseline = SubmittedBaseline(commit_id=prepared_revision.revision.commit_id)
     return (
         SubmittedRevision(
             prepared=prepared_revision,
             pull_request_action=action,
-            pull_request_is_draft=(
-                pull_request.is_draft if pull_request is not None else None
-            ),
-            pull_request_number=(
-                pull_request.number if pull_request is not None else None
-            ),
-            pull_request_title=(
-                pull_request.title if pull_request is not None else None
-            ),
-            pull_request_url=(
-                pull_request.html_url if pull_request is not None else None
-            ),
+            pull_request_is_draft=(pull_request.is_draft if pull_request is not None else None),
+            pull_request_number=(pull_request.number if pull_request is not None else None),
+            pull_request_title=(pull_request.title if pull_request is not None else None),
+            pull_request_url=(pull_request.html_url if pull_request is not None else None),
         ),
-        next_cached_change,
+        next_identity,
+        next_baseline,
     )
 
 
@@ -310,8 +310,7 @@ def _select_discovered_pull_request(
 ) -> GithubPullRequest | None:
     if len(pull_requests) > 1:
         raise DriftError(
-            t"GitHub reports multiple pull requests for head branch "
-            t"{ui.bookmark(head_label)}.",
+            t"GitHub reports multiple pull requests for head branch {ui.bookmark(head_label)}.",
             condition="pull_request_ambiguous",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
@@ -337,19 +336,43 @@ def _select_discovered_pull_request(
 def _ensure_pull_request_link_is_consistent(
     *,
     bookmark: str,
-    cached_change: CachedChange | None,
     change_id: str,
     discovered_pull_request: GithubPullRequest | None,
+    review_identity: ReviewIdentity | None,
     saved_status: ReviewChangeStatus,
+    submitted_baseline: SubmittedBaseline | None,
 ) -> None:
     ensure_change_is_not_unlinked(
         change_id=change_id,
         review_status=saved_status,
     )
-    if not saved_status.saved_pull_request_identity:
+    if review_identity is None:
+        if submitted_baseline is not None:
+            raise CliError(
+                t"Saved review state for {ui.change_id(change_id)} has a baseline "
+                t"but no review identity.",
+                hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
+            )
+        if discovered_pull_request is not None:
+            raise DriftError(
+                t"GitHub already reports PR #{discovered_pull_request.number} for "
+                t"untracked bookmark {ui.bookmark(bookmark)}.",
+                condition="saved_pull_request_missing",
+                hint=t"Adopt that PR explicitly with {ui.cmd('relink')} before submitting.",
+            )
         return
-    if cached_change is None:
-        raise AssertionError("Saved pull request identity requires cached state.")
+    if submitted_baseline is None:
+        raise CliError(
+            t"Saved review state for {ui.change_id(change_id)} has no submitted baseline.",
+            hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
+        )
+    if review_identity.head_ref != bookmark:
+        raise DriftError(
+            t"Saved review identity for {ui.change_id(change_id)} names bookmark "
+            t"{ui.bookmark(review_identity.head_ref)}, not {ui.bookmark(bookmark)}.",
+            condition="saved_pull_request_mismatch",
+            hint=t"Repair the identity with {ui.cmd('relink')} before submitting again.",
+        )
     if discovered_pull_request is None:
         raise DriftError(
             t"Saved pull request link exists for bookmark {ui.bookmark(bookmark)}, "
@@ -360,9 +383,9 @@ def _ensure_pull_request_link_is_consistent(
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
-    if cached_change.pr_number not in (None, discovered_pull_request.number):
+    if review_identity.pr_number != discovered_pull_request.number:
         raise DriftError(
-            t"Saved pull request #{cached_change.pr_number} does not match the PR "
+            t"Saved pull request #{review_identity.pr_number} does not match the PR "
             t"GitHub reports for bookmark {ui.bookmark(bookmark)} "
             t"(#{discovered_pull_request.number}).",
             condition="saved_pull_request_mismatch",
@@ -483,26 +506,22 @@ async def _update_pull_request(
         raise CliError(f"Could not update pull request #{pull_request.number}") from error
 
 
-def _updated_cached_change(
+def _submitted_identity(
     *,
     bookmark: str,
     bookmark_source: BookmarkSource,
-    cached_change: CachedChange | None,
-    commit_id: str,
+    github_client: GithubClient,
     pull_request: GithubPullRequest,
-) -> CachedChange:
-    if cached_change is None:
-        return CachedChange(
-            bookmark=bookmark,
-            bookmark_ownership=bookmark_ownership_for_source(bookmark_source),
-            last_submitted_commit_id=commit_id,
+    review_identity: ReviewIdentity | None,
+) -> ReviewIdentity:
+    if review_identity is None:
+        return ReviewIdentity(
+            github_host=github_client.repository.host,
+            repository_owner=github_client.repository.owner,
+            repository_name=github_client.repository.repo,
             pr_number=pull_request.number,
+            head_owner=github_client.repository.owner,
+            head_ref=bookmark,
+            bookmark_ownership=bookmark_ownership_for_source(bookmark_source),
         )
-    return cached_change.model_copy(
-        update={
-            "bookmark": bookmark,
-            "bookmark_ownership": bookmark_ownership_for_source(bookmark_source),
-            "last_submitted_commit_id": commit_id,
-            "pr_number": pull_request.number,
-        }
-    )
+    return review_identity

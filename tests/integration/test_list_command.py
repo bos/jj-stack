@@ -6,7 +6,7 @@ from typing import ClassVar
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -71,8 +71,7 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     stack = JjClient(repo).discover_review_stack()
     orphaned_change_id = stack.revisions[0].change_id
     state = ReviewStateStore.for_repo(repo).load()
-    orphaned_pr_number = state.changes[orphaned_change_id].pr_number
-    assert orphaned_pr_number is not None
+    orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
 
     run_command(["jj", "abandon", orphaned_change_id], repo)
 
@@ -212,9 +211,11 @@ def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
     middle_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    changes = dict(state.changes)
-    del changes[middle_change_id]
-    state_store.save(state.model_copy(update={"changes": changes}))
+    state_store.retire_review(
+        middle_change_id,
+        expected_identity=state.review_identities[middle_change_id],
+        expected_baseline=state.submitted_baselines[middle_change_id],
+    )
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -342,14 +343,12 @@ def test_list_fails_closed_when_tracked_changes_share_bookmark(
 
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    change_ids = tuple(state.changes)
-    shared_bookmark = state.changes[change_ids[0]].bookmark
-    assert shared_bookmark is not None
-    changes = dict(state.changes)
-    changes[change_ids[1]] = changes[change_ids[1]].model_copy(
-        update={"bookmark": shared_bookmark}
-    )
-    state_store.save(state.model_copy(update={"changes": changes}))
+    change_ids = tuple(state.review_identities)
+    shared_bookmark = state.review_identities[change_ids[0]].head_ref
+    state_path = resolve_state_path(repo)
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["review_identities"][change_ids[1]]["head_ref"] = shared_bookmark
+    write_file(state_path, json.dumps(state_payload))
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -357,6 +356,30 @@ def test_list_fails_closed_when_tracked_changes_share_bookmark(
     assert exit_code == 1
     assert "Could not safely inspect stacks" in captured.err
     assert "same bookmark" in captured.err
+
+
+def test_list_reports_malformed_record_while_inspecting_independent_tracking(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_path = resolve_state_path(repo)
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    malformed_change_id = next(iter(state_payload["review_identities"]))
+    state_payload["review_identities"][malformed_change_id] = {"version": 9}
+    write_file(state_path, json.dumps(state_payload))
+
+    exit_code = run_main(repo, config_path, "list")
+    captured = capsys.readouterr()
+    rendered_error = " ".join(captured.err.split())
+
+    assert exit_code == EXIT_INCOMPLETE
+    assert "Saved review identity" in rendered_error
+    assert "unrelated reviews will continue" in rendered_error
+    assert "jj-stack relink --help" in rendered_error
+    assert "No stacks." not in captured.out
 
 
 def test_list_reports_no_stacks_when_state_is_empty(

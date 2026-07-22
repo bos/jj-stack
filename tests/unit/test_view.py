@@ -10,7 +10,7 @@ import jj_stack.ui as ui_module
 from jj_stack.config import RepoConfig
 from jj_stack.models.bookmarks import RemoteBookmarkState
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import CachedChange, LinkState
+from jj_stack.models.review_state import LinkState, ReviewIdentity, SubmittedBaseline
 from jj_stack.review.status import (
     ManagedCommentsLookup,
     PullRequestLookup,
@@ -43,28 +43,43 @@ def _lookup(
 def _status_revision(
     *,
     bookmark: str = "",
-    cached_change: CachedChange | None = None,
     change_id: str,
     commit_id: str = "commit-1",
-    link_state: LinkState = "active",
     local_divergent: bool = False,
     managed_comments_lookup: ManagedCommentsLookup | None = None,
     pull_request_lookup: PullRequestLookup | None = None,
+    review_identity: ReviewIdentity | None = None,
     remote_state: RemoteBookmarkState | None = None,
+    submitted_baseline: SubmittedBaseline | None = None,
     subject: str = "feature",
 ) -> ReviewStatusRevision:
     return ReviewStatusRevision(
         bookmark=bookmark,
         bookmark_source="generated",
-        cached_change=cached_change,
         change_id=change_id,
         commit_id=commit_id,
-        link_state=link_state,
         local_divergent=local_divergent,
         managed_comments_lookup=managed_comments_lookup,
         pull_request_lookup=pull_request_lookup,
+        review_identity=review_identity,
         remote_state=remote_state,
+        submitted_baseline=submitted_baseline,
         subject=subject,
+    )
+
+
+def _identity(
+    *, bookmark: str, pr_number: int, link_state: LinkState = "active"
+) -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="repo",
+        pr_number=pr_number,
+        head_owner="octo-org",
+        head_ref=bookmark,
+        bookmark_ownership="managed",
+        link_state=link_state,
     )
 
 
@@ -174,7 +189,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
 
 def test_view_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
     revision = _status_revision(
-        cached_change=CachedChange(
+        review_identity=_identity(
             bookmark="review/feature-8-abcdefgh",
             pr_number=42,
         ),
@@ -211,9 +226,9 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
 def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
     revision = _status_revision(
         bookmark="review/feature-8-abcdefgh",
-        cached_change=CachedChange(
+        review_identity=_identity(
             bookmark="review/feature-8-abcdefgh",
-            last_submitted_commit_id="submitted-commit",
+            pr_number=8,
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
@@ -240,7 +255,7 @@ def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
 
     assert lines == (
         "Submitted stack:",
-        "○  abcdefgh 12345678: submitted, no PR found for branch",
+        "○  abcdefgh 12345678: saved PR #8, no PR found for branch",
         "│  feature 8",
         "",
     )
@@ -249,7 +264,7 @@ def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
 def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() -> None:
     revision = _status_revision(
         bookmark="review/feature-7-abcdefgh",
-        cached_change=CachedChange(
+        review_identity=_identity(
             bookmark="review/feature-7-abcdefgh",
             pr_number=7,
         ),
@@ -292,7 +307,7 @@ def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() ->
 def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
     revision = _status_revision(
         bookmark="review/feature-1-abcdefgh",
-        cached_change=CachedChange(
+        review_identity=_identity(
             bookmark="review/feature-1-abcdefgh",
             pr_number=1,
         ),

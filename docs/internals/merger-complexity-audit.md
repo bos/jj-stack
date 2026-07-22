@@ -126,7 +126,7 @@ future equivalents:
 
 - `commands/land/`, `commands/sync.py`, `commands/cleanup/rebase.py`, and
   `commands/cleanup/retirement.py`;
-- `models/review_state.py`, `state/store.py`, and the journal until it is deleted; and
+- `models/review_state.py` and `state/store.py`; and
 - landed, authority, evidence, and finalization modules under `review/`.
 
 That surface starts at 3,305 SLOC on the canonical-design foundation and may not exceed that in
@@ -147,7 +147,6 @@ sloccount \
   src/jj_stack/commands/cleanup/retirement.py \
   src/jj_stack/models/review_state.py \
   src/jj_stack/state/store.py \
-  src/jj_stack/state/journal.py \
   src/jj_stack/review/landed.py
 .venv/bin/ruff check src/jj_stack --select C901 \
   --config 'lint.mccabe.max-complexity=10' --output-format concise
@@ -156,6 +155,15 @@ sloccount \
 The Ruff count covers production code under `src/jj_stack`, not tests. The multi-path `sloccount`
 command is the governed recovery-surface manifest. A slice that adds or renames an authority,
 evidence, finalization, or equivalent module updates that command before adding its code.
+
+## Replacement measurements
+
+| Slice | Production SLOC | Test SLOC | Total SLOC | C901 | Land SLOC | Governed SLOC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| R1: bound persistent state | 19,656 | 21,120 | 40,776 | 20 | 1,563 | 3,244 |
+
+R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
+Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
 
 ## Test budget
 
@@ -174,6 +182,11 @@ The replacement suite keeps convergence properties rather than interruption matr
 Replacement-specific deterministic coverage is limited to 30 collected pytest items. Every
 parameter expansion counts separately. The default fixed property corpus is limited to 16 cases;
 broader generation remains opt-in.
+
+R1 preserves the existing fixed scenario factories while replacing their composite state
+oracles with separate identity and baseline comparisons. With no environment overrides, those
+factories currently expand to 96 cases. R4 must reduce or explicitly map them to at most 16
+before its marker is removed.
 
 Tests do not assert journal events, internal read counts, helper order, or implicit global sweep
 behavior. Removing a mechanism removes its tests in the same slice.
