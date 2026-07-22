@@ -20,8 +20,8 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 - **[distributed-state.md](distributed-state.md)** — the four independently
   moving state-holders (local `jj`, remote refs, GitHub PRs, tracking store),
   their legal transitions, and required behavior per drift class.
-- **[property-testing.md](property-testing.md)** — the opt-in property
-  harness: scenario families, invariants, and the runner.
+- **[property-testing.md](property-testing.md)** — fixed and expanded property scenarios,
+  invariants, and the runner.
 - **[merger-complexity-audit.md](merger-complexity-audit.md)** — why the first merger
   implementation was stopped and the hard budgets governing its replacement.
 - **[backlog.md](backlog.md)** — deferred features, open design questions,

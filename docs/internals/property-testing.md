@@ -39,8 +39,8 @@ testing should spend its budget on those cross-system invariants.
   vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
   compact operation trace that can be copied into a deterministic regression test.
-- Keep the default suite fast. Property scenarios are opt-in and must not run from the
-  default `./check.py` pytest pass.
+- Keep the default suite fast. `./check.py` runs a fixed 16-case property corpus; larger
+  generated or randomized pools remain opt-in.
 - Use all available workers when exploration is widened. The core harness should expose
   generated scenarios as ordinary data so pytest, a future CLI runner, or a long-running
   explorer can distribute them across cores.
@@ -93,8 +93,7 @@ identity. Reorder, insertion, abandon, and plain rewrite syntax already have det
 front-door coverage; the generator still explores all of them when an opt-in count exceeds the
 fixed prefix.
 
-The supported successful-submit operations should cover the common linear-stack edit
-surface:
+The successful-submit operations cover the common linear-stack edit surface:
 
 - move an existing live change to the top of the current stack
 - move an existing live change before or after another live change
@@ -105,9 +104,9 @@ surface:
 - squash a live change into its predecessor
 
 Those operations cover the common single-selected-stack failure classes while staying
-small enough for quick shrinking by inspection. Broader operations such as multi-stack
-merges, duplicate, split, and failed-submit injection can be added once their
-expected product semantics are represented directly in the scenario model.
+small enough for quick shrinking by inspection. Separate harness families cover split-stack
+suffix moves, two-stack merges, single-change moves between stacks, and failed-submit retries.
+Duplicate is not represented in the current model.
 
 ## Cross-Stack Split Harness
 
@@ -149,7 +148,8 @@ The oracle asserts:
 - every review branch points at the merged-stack commit for that `change_id`
 - every PR base is recalculated from the merged selected DAG
 - no PR is closed, merged, or replaced during the merge submit
-- the merged stack has one selected-stack topology in tracking state
+- the current `jj` DAG is rediscovered as one linear selected stack; tracking remains
+  per-change and stores no topology
 
 The initial scenario family covers both directions: appending the second stack after the
 first and appending the first stack after the second, with small stack sizes plus random
@@ -195,7 +195,7 @@ saved PR number, an explicitly unlinked change, a drifted or deleted remote revi
 or a foreign branch fetch that makes a stack change immutable or divergent) must produce a
 contractual exit code and one of the kind's expected diagnoses while leaving every
 boundary untouched: no remote ref changes, no local or remembered-remote bookmark changes,
-no PR, review, or comment mutations, and byte-for-byte-equivalent saved tracking state.
+no PR, review, or comment mutations, and unchanged loaded tracking records.
 That includes keeping a newly inserted change free of bookmark and tracking state when an
 older submitted change makes preflight fail. The diagnosis is the typed
 identity of the CLI's fail-closed error — a `DriftError` condition or
@@ -232,8 +232,9 @@ submitted linear stack, optionally applies a short trace of stack edits from the
 edit vocabulary — rewrite, insert before or after, abandon, reorder, and squash, with or
 without a follow-up resubmit — approves a prefix of the final live stack, then lands through one
 transport. Scenario dimensions also cover `--pull-request` selection, which caps the
-walk at the selected change, and a second independently submitted bystander stack that
-the land must leave byte-for-byte untouched even though the trunk moves under it.
+walk at the selected change, and a second independently submitted bystander stack whose
+identity, submitted commit, PR, and review branch the land must leave unchanged even though
+trunk moves under it.
 
 The walk model is exact rather than diff-based. A change is landable only when its live
 `commit_id`, submitted baseline, review ref, and PR head all identify the same snapshot. Any
@@ -260,15 +261,15 @@ For `land --via merge`, the oracle asserts the in-command selected convergence c
 GitHub moves trunk by merging the accepted prefix, and before returning `land` finalizes that
 prefix, rebases the surviving selected path onto the merged trunk, and updates only survivors
 that already have reviews and passed fresh identity checks. Trailing unreviewed work remains
-local. Survivors above a `--pull-request` cap are bystanders and must not be rewritten or
-resubmitted. A blocked merge-transport scenario marks the first PR after the merged prefix as
-unmergeable; the command must stop there, keep the blocker open and tracked, and still
-converge the accepted prefix.
+local. Reviews above a `--pull-request` cap are out of scope and are not resubmitted; their local
+commits may still be rewritten as descendants. A blocked merge-transport scenario marks the
+first PR after the merged prefix as unmergeable; the command must stop there, keep the blocker
+open and tracked, and still converge the accepted prefix.
 
-Both transports assert transient events, not only final state: a landed PR transitions to
-closed exactly once, and no other original PR sees any state or base event. The one
-exception is the first blocked merge-transport PR, which may be retargeted to trunk
-before GitHub refuses the merge but must never change state.
+Both transports assert transient events, not only final state: each landed PR closes exactly
+once, and PRs outside the command's selected mutation scope see no state or base event.
+Merge-transport survivors inside the selection may be updated. The first blocked PR may be
+retargeted to trunk before GitHub refuses the merge, but it must never change state.
 
 ## Land Drift Harness
 
@@ -276,12 +277,9 @@ Land drift scenarios apply one external transition to a submitted, fully approve
 then run `land` on its default selection so the drifted state must survive the
 in-command fetch. The model predicts one of three outcomes:
 
-- fail closed: an externally advanced trunk, or an externally merged review whose live merge
-  result is absent from fetched trunk, must stop `land` with a classified error before any
-  mutation — no PR events, no remote ref changes, and unchanged saved review identity
-- rewritten landed result: an externally squash- or rebase-merged selected review may be
-  treated as landed only when GitHub still reports its concrete merge-result commit and that
-  exact commit is reachable from fetched trunk; lifecycle state alone is insufficient
+- fail closed: an externally advanced trunk or externally merged selected review must stop
+  `land` before mutation. The external-merge case is handed to selected `sync` even when its
+  merge result is reachable from fetched trunk
 - prefix stop: an externally closed PR, a draft toggle, a changes-requested review, or a
   deleted mid-stack review branch stops the readiness walk at the drifted change, and
   the prefix below lands normally with the standard direct-push contract
@@ -293,10 +291,11 @@ The mid-stack versus head split for deleted branches mirrors jj's own semantics:
 mid-stack change stays visible because descendants' bookmarks keep it reachable, while
 an unreferenced head is abandoned by the fetch. Every drift scenario ends by running
 `view` on the default selection and requiring a report exit rather than a crash.
-In both prefix-stop and fetch-abandon outcomes, the stopping change keeps its durable
-bookmark, PR number, and submitted baseline, while its live GitHub PR remains unchanged;
-`land` owns only the prefix it actually landed and leaves that recovery evidence for explicit
-follow-up. Derived managed comments on the landed prefix may be deleted during finalization.
+In both prefix-stop and fetch-abandon outcomes, the stopping change keeps its saved bookmark
+name, PR number, and submitted commit, while its live GitHub PR remains unchanged. In the
+fetch-abandon case, the actual `jj` bookmark is gone with the deleted branch. `land` owns only
+the prefix it actually landed and leaves the saved recovery evidence for explicit follow-up.
+Derived managed comments on the landed prefix may be deleted during finalization.
 Fail-closed outcomes also assert the typed condition carried by the CLI error, so a
 plain stack fork caused by advanced trunk cannot pass by stopping on the
 merged-ancestor check or vice versa.
@@ -305,9 +304,9 @@ merged-ancestor check or vice versa.
 
 Land retry scenarios interrupt one direct-push land at a fault point, then run `sync --all` and
 require convergence rather than rollback. There is no saved transaction to resume. The fixed
-property family covers a failed load after the trunk push, a later finalization failure after an
-earlier PR completed, and a lost tracking-retirement save. Randomized runs also inject lost push
-acknowledgement. The deterministic process-death corpus separately terminates a CLI child after
+property family covers a mid-finalization failure and a lost tracking-removal save. Expanded
+runs also cover a load failure just after the trunk push and a lost push acknowledgement. The
+deterministic process-death corpus separately terminates a CLI child after
 the accepted trunk push, after an accepted PR merge, and before a retirement save, then recovers
 in a fresh child.
 
@@ -318,7 +317,7 @@ free of the landed prefix; global recovery leaves existing reviews on the suffix
 deterministic integration suite covers
 fail-closed variants where a review repository, canonical head identity, review branch, or PR
 head changes between runs: `sync --all` preserves that exact identity and continues with the
-rest. Independently tracked sibling paths are byte-for-byte bystanders.
+rest. Independently tracked sibling stacks remain unchanged.
 
 ## Land Handoff Harness
 
@@ -416,17 +415,16 @@ pools remain opt-in.
 
 ## Efficiency
 
-The harness should not rely on one large Hypothesis state-machine test for integration
-coverage. A single stateful test cannot be split across `pytest-xdist` workers, and a
-failure often minimizes to a request-order artifact rather than a user-level scenario.
+The harness does not rely on one large state-machine test for integration coverage. A single
+stateful test cannot be split across `pytest-xdist` workers, and a failure often minimizes to a
+request-order artifact rather than a user-level scenario.
 
-Instead, the integration layer should generate a deterministic pool of candidate
-scenarios and expose the unique representatives as data. The pytest adapter can
-parameterize over that data, giving the opt-in runner all-core execution under
-`pytest -n auto`.
+Instead, the integration layer generates a deterministic pool of candidate scenarios and
+exposes the unique representatives as data. The pytest adapter parameterizes over that data,
+giving expanded runs all-core execution under `pytest -n auto`.
 A future CLI runner can shard the same scenario list without depending on pytest.
 
-Property scenarios are launched by hand:
+Expanded property runs are launched by hand:
 
 ```console
 $ tests/run_submit_property_scenarios.py 500
@@ -490,14 +488,15 @@ Those variables configure the adapter; they are not part of the core harness con
 
 ## Relationship To Hypothesis
 
-Hypothesis is still useful for pure model tests where examples are cheap and shrinking is
-valuable. The integration harness is deliberately shaped differently: it prioritizes
-parallel execution, deterministic scenario IDs, and canonical-state de-duplication. If a
-pure transition model is added later, it should use the same scenario vocabulary and the
-same invariants so counterexamples can replay through the integration harness.
+State-machine tools can still be useful for pure model tests where examples are cheap and
+shrinking is valuable. The integration harness is deliberately shaped differently: it
+prioritizes parallel execution, deterministic scenario IDs, and canonical-state de-duplication.
+The existing pure transition model uses the shared operation vocabulary and invariants so its
+scenarios replay through the integration harness.
 
 ## Promotion Rule
 
-Randomized tests are a discovery mechanism, not the only guardrail. When a generated
-scenario catches a bug, keep the property test and promote the minimized operation trace
-into a deterministic integration test with a name that states the protected behavior.
+Randomized tests are a discovery mechanism, not the only guardrail. When a generated scenario
+catches a bug, retain the minimized trace in the fixed corpus, or add a focused deterministic
+case only if it protects a distinct boundary. Consolidate overlapping coverage and stay within
+the fixed-case and SLOC budgets.

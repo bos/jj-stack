@@ -175,9 +175,10 @@ review/fix-bookmark-resolution-ypvmkkuo
 ```
 
 The slug helps reviewers using the GitHub UI or plain Git. The `change_id` suffix keeps
-the name tied to the logical change without becoming noisy. Eight characters is stable,
-readable, and effectively unique once combined with the slug. If a collision is ever
-detected, the tool can extend the suffix or fall back to the saved name.
+the name tied to the logical change without becoming noisy. Eight characters is fixed,
+readable, and effectively unique once combined with the slug. If two resolved names collide,
+`submit` stops; the user must resolve the collision, for example with distinct bookmarks,
+narrower `--use-bookmarks` patterns, or a different subject for an untracked change.
 
 The slug is only an input to the *initial* default name. Once a bookmark is created it is
 not automatically renamed when the commit subject changes — title churn must not cause
@@ -967,41 +968,43 @@ graph.
 
 ## CLI shape
 
-The full command surface:
+The command surface is summarized below; built-in `--help` is the syntax authority for flags:
 
-- `jj stack submit [--draft[=new|all] | --open]
+- `jj stack submit [--dry-run] [--draft[=new|all] | --open]
+  [--label <label[,label...]>]
   [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
+  [--use-bookmarks <bookmark[,bookmark...]>]
   [--describe <change>=<file> | --describe stack=<file> | --describe-with <helper>]
   [--edit] [--re-request] [--restart] [<revset>]`
-- `jj stack view [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
-- `jj stack status [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
-- `jj stack st [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
-- `jj stack v [--fetch] [--json] [{--pull-request <pr>} | {<revset>}] ...`
+- `jj stack view [--fetch] [--json] [--verbose]
+  [{--pull-request <pr>} | {<revset>}] ...`
 - `jj stack list [--fetch] [--json]`
-- `jj stack ls [--fetch] [--json]`
 - `jj stack restart [--dry-run] <revset>`
 - `jj stack relink <pr> <revset>`
 - `jj stack unlink <revset>`
 - `jj stack unstack [--local | --cleanup] [--dry-run]
   [--pull-request <pr|orphans> | <revset>]`
-- `jj stack delete [--local | --cleanup] [--dry-run] [--pull-request <pr> | <revset>]`
 - `jj stack cleanup [--dry-run]`
 - `jj stack sync [--dry-run] [<revset> | --all]`
 - `jj stack checkout [--fetch] [--pick | --pull-request <pr> | --revset <revset>]`
-- `jj stack land [--dry-run] [--via <push|merge>] [--merge-method <merge|squash|rebase>]
+- `jj stack land [--dry-run] [--bypass-readiness] [--skip-cleanup]
+  [--via <push|merge>] [--merge-method <merge|squash|rebase>]
   [--pull-request <pr> | <revset>]`
+- `jj stack doctor`
 - `jj stack completion <bash|zsh|fish>`
+- `jj stack help [--all] [<command>]`
 
 `completion` is auxiliary CLI glue. It prints shell completion scripts. It is not a
 review-state command and does not inspect the repo, the tracking-state file, or
 GitHub.
 
-`status` is a long alias for `view`; `st` and `v` are short aliases. Run with no
-subcommand, the executable behaves the same as `jj stack view` on the current stack.
+`sub` aliases `submit`; `status`, `st`, and `v` alias `view`; `ls` aliases `list`; and `delete`
+aliases `unstack`. Run with no subcommand, the executable behaves the same as `jj stack view` on
+the current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `view`, `land`, `unstack`) plus support commands
-(`cleanup`, `checkout`, `sync`). Repair commands (`restart`, `relink`, `unlink`) and
+(`cleanup`, `checkout`, `sync`, `doctor`). Repair commands (`restart`, `relink`, `unlink`) and
 shell-integration glue (`completion`) stay hidden by default and only appear in
 `jj stack help --all`. The `help` command itself is hidden parser glue: `jj stack help`
 is the same as
@@ -1273,12 +1276,15 @@ be landed now. That means:
   changes-requested, or not-yet-approved change
   - if none of those changes can be landed, say so directly
 
-`land` may also offer an explicit readiness-bypass flag for users who want to preview or
-apply the open prefix anyway, but the bypass stays narrow:
+`land --bypass-readiness` lets users preview or apply the open bottom changes without the
+normal draft and review-decision checks, but the bypass stays narrow:
 
 - it may bypass readiness checks such as draft or review-decision state
 - it must not bypass ambiguous or missing PR linkage
 - it must not bypass trunk push protection or other integrity checks
+
+`land --skip-cleanup` keeps the landed changes' local review bookmarks. It does not preserve
+tracking once retirement is otherwise safe, and it does not weaken landing or PR checks.
 
 This is intentionally not "the entire stack no matter what" and not "whatever open PR
 the user typed". It keeps the command aligned with the local DAG and avoids
@@ -1303,7 +1309,7 @@ the push.
 
 That direct trunk push is the default landing transport. `land --via merge` is the
 alternative for repos where trunk cannot be pushed directly at all (branch protection
-that requires PRs, required checks, merge queues): instead of replaying commits
+that requires PRs or required checks): instead of replaying commits
 locally and moving trunk itself, `land` finalizes each landable PR bottom-up on
 GitHub — retargeting its base to the resolved trunk branch when needed, then merging
 it through the pull request merge API. This never merges a PR whose base is a `review/*` branch:
@@ -1381,7 +1387,6 @@ Broader cleanup remains the job of `cleanup`:
 - pruning saved entries outside the landed changes
 - deleting stale PR branches or stack-summary comments not proven to belong to the
   just-landed changes
-- removing fetched side copies
 - any ambiguous or indirect repair that still needs user confirmation
 
 ## Tracking-state file format
@@ -1444,7 +1449,8 @@ tracking-state file.
 
 Supported:
 
-- one remote
+- one selected review remote per invocation; resolution prefers `origin` or an unambiguous sole
+  remote
 - one GitHub repo target
 - linear stacks
 - visible mutable changes
@@ -1472,13 +1478,16 @@ to GitHub's branch-based PR API with stable bookmarks.
 
 ## References
 
-The design above relies on a small set of `jj` concepts and docs:
+The design above relies on these upstream `jj` references:
 
-- `docs/glossary.md` for `change_id`, bookmarks, rewrites, and visible commits
-- `docs/bookmarks.md` for bookmark behavior, tracking, and push safety
-- `docs/github.md` for the current GitHub workflow and `gh` caveats
-- `docs/config.md` for generated bookmark names on `jj git push --change`
-- `docs/templates.md` for machine-readable template output
-- `docs/FAQ.md` for guidance on integrating with `jj`
-- `docs/technical/architecture.md` for why `.jj` internals should not be treated as an
-  external extension surface
+- [glossary](https://docs.jj-vcs.dev/latest/glossary/) for change IDs, rewrites, and visible
+  commits
+- [bookmarks](https://docs.jj-vcs.dev/latest/bookmarks/) for bookmark behavior, tracking, and
+  push safety
+- [GitHub workflow](https://docs.jj-vcs.dev/latest/github/) for GitHub integration and `gh`
+  caveats
+- [configuration](https://docs.jj-vcs.dev/latest/config/) for `jj` configuration
+- [templates](https://docs.jj-vcs.dev/latest/templates/) for machine-readable template output
+- [FAQ](https://docs.jj-vcs.dev/latest/faq/) for integration guidance
+- [technical architecture](https://docs.jj-vcs.dev/latest/technical/architecture/) for why
+  `.jj` internals are not an external extension surface

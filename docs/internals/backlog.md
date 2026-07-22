@@ -31,42 +31,7 @@ durable transaction, replay phase, retained path, or operation log.
 
 Possible follow-up work:
 
-- make each fail-closed result and residue state print an exact safe next command
 - document how to locate the repo state directory when debugging with support
-
-## Start-Fresh Review Repair
-
-_Benefit: medium — important when a previous jj-stack bug, manual GitHub
-operation, or branch cleanup leaves local changes attached to closed or unusable
-PRs._
-
-`view` can now preserve and show remembered PR identity even when the saved
-review branch no longer has a matching PR, and `restart` gives users an explicit
-local repair command that clears stale PR identity, avoids reusing the old review
-branches, and leaves the next `submit` to create fresh PRs.
-The normal user-facing flow is `submit --restart`, which computes that reset in
-memory and persists only the replacement PR identity after submit succeeds.
-
-Possible follow-up work:
-
-- consider whether status advisories should suggest a narrower per-change restart when
-  only one change in a selected stack has stale PR tracking
-
-## Ancestor Merged on GitHub
-
-_Benefit: small — remaining edge cases are narrow and infrequent._
-
-The canonical design covers the main recovery shape for merged ancestors and the division of
-labor between `land`, selected `sync`, and explicit repository-wide `sync --all`.
-
-The remaining follow-up here is narrower:
-
-- edge cases around partial-stack landing boundaries after some earlier changes
-  have already landed
-- whether future landing transports impose extra constraints on how descendants
-  are rediscovered and resubmitted
-- any residual diagnostics that are still too subtle once the concrete `land`
-  flow exists
 
 ## Git Commit Change-ID Header
 
@@ -115,30 +80,6 @@ question is whether it should eventually support a landing PR or merge queue whi
 This should be designed explicitly rather than bolted onto the current `land`
 flow piecemeal.
 
-## Guided Recovery and Next-Step UX
-
-_Benefit: large — daily operator quality of life; makes the safe next action
-obvious without requiring users to read internal design notes._
-
-The command surface is intentionally small, but the operator experience still
-depends heavily on knowing what to run next after a non-trivial state change.
-
-Useful follow-up work here includes:
-
-- richer "next command" guidance after `submit`, `land`, `unstack`, `sync`, and `cleanup`
-- clearer distinction between "inspect only", "safe retry", and "history
-  rewrite" recovery paths when something is stale or ambiguous
-- an explicit guided-recovery flow for common cases such as "ancestor already
-  landed", "remote branch disappeared", or "tracking state no longer matches the
-  selected stack"
-- whether some of the current recovery-oriented guidance should eventually live
-  behind a dedicated helper command rather than being repeated ad hoc in
-  diagnostics
-
-This is partly presentation, but it is also a real product capability: the
-tool should make the safe next action obvious without requiring the operator to
-read internal design notes.
-
 ## Pre-Push Auto-Close Predictor — Out-of-Stack Base Coverage
 
 _Benefit: small — protects an unusual case (a PR base that already contains
@@ -162,16 +103,12 @@ fixture, not the simulator.
 _Benefit: small — a safety-net branch with no direct test today, easy to
 let rot._
 
-The bookmark-managed check that decides whether to pass `allow_backwards`
-to `set_bookmark` has two arms: a fast path off the saved cached state's
-`manages_bookmark` record, and a fallback that asks `jj` whether the
-bookmark's current local target resolves to the same `change_id` as the
-desired commit. The split integration test exercises only the first arm
-because the prior submit always populates the cache. A focused fixture
-that wipes or constructs a state without the managed record (e.g., an
-imported or relinked stack on its first submit, or a state file mutated
-between submits) would lock in the fallback so a future refactor cannot
-silently break it.
+The bookmark-managed check that decides whether to pass `allow_backwards` to `set_bookmark` has
+two arms: a fast path where a matching managed `ReviewIdentity` proves ownership, and a fallback
+that asks `jj` whether the bookmark's current local target resolves to the same `change_id` as
+the desired commit. The split integration test exercises only the first arm because the prior
+submit creates the identity. A focused untracked or external-identity fixture would lock in the
+fallback so a future refactor cannot silently break it.
 
 ## Post-Submit Closure Detector — Coverage Gaps
 
@@ -250,8 +187,8 @@ The transition vocabulary and required behaviors live in
   adjusted orphan expectations)
 - `view --fetch` in the drift replay, which pulls foreign refs into the local
   view and exercises the fetch-artifact tolerance paths
-- drift replay against `land`, `sync`, and `unstack`, which have
-  their own mutation surfaces and fail-closed obligations
+- drift replay against `sync` and `unstack`, which have their own mutation surfaces and
+  fail-closed obligations
 - a tracking-store-loss drift (fresh machine, deleted state file with live PRs) that proves
   ordinary `submit` refuses adoption and explicit `checkout` or `relink` restores identity
 - typed `DriftError` conditions for the remaining untyped fail-closed guards in `submit`,
@@ -284,10 +221,10 @@ same models._
 
 ## Property Harness Cost Trims
 
-_Benefit: small — the property suite is opt-in, so this only affects the CI
-smoke job and manual runs._
+_Benefit: small — fixed representatives run by default, but expanded randomized pools affect
+the CI smoke job and manual runs._
 
-Remaining from the test audit: the harness rebuilds and submits each
+Remaining from the test audit: the submit property harness rebuilds and submits each
 scenario's initial stack from scratch and could reuse per-size cached
 submitted-stack templates the way integration tests now do, at the cost of
 aligning the harness's label conventions with the template contents. The
@@ -320,8 +257,8 @@ _Benefit: small each; recorded so residue-tolerance stays a decision, not an acc
 
 - Direct-push landed review branches are left on the remote by design (landed handling only
   forgets local bookmarks). A `cleanup` GC pass could delete tool-owned remote branches
-  whose PRs finalized, under the same lease and ownership rules the merge-transport
-  retirement already applies.
+  whose PRs finalized, but it would need an exact remote-target lease in addition to the
+  existing ownership checks.
 - Real GitHub's merged detection after retargeting a directly pushed PR remains part of the
   deferred live-evidence experiment above. Do not teach the landed predicate from the fake's
   auto-merge idealization.

@@ -279,7 +279,7 @@ through `use_bookmarks` should be preserved during later cleanup. Set it to `tru
 if you want `cleanup`, `unstack --cleanup`, and `land` to delete those reused bookmarks too
 when that cleanup is otherwise safe.
 
-For authentication, `jj-stack` checks `GH_TOKEN`, then `GITHUB_TOKEN`, then falls back
+For authentication, `jj-stack` checks `GITHUB_TOKEN`, then `GH_TOKEN`, then falls back
 to `gh auth token` if `gh`, the GitHub CLI, is installed and authenticated.
 
 ## Why use it

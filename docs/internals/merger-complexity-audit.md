@@ -179,6 +179,7 @@ On Windows, use WSL to run the gate locally or rely on the required Linux CI job
 | R4: validate observable fixed points | 19,687 | 20,782 | 40,469 | 18 | 1,550 | 3,295 |
 | P1: enforce cumulative budgets | 19,667 | 20,830 | 40,497 | 17 | 1,530 | 3,275 |
 | P2: repair public documentation | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
+| P3: reconcile internal facts | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
@@ -211,6 +212,9 @@ P2 adds 27 production SLOC and no test SLOC to make built-in help and recovery o
 concrete commands, remote effects, and safe next steps. It removes stale public warnings,
 distinguishes merge and direct-push recovery, and keeps all cumulative and governed limits below
 their ceilings.
+
+P3 changes documentation only. Production, test, and governed measurements therefore remain
+identical to P2.
 
 ## Test budget
 

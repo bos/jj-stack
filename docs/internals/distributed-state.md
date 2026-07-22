@@ -1,7 +1,6 @@
 # Distributed state model
 
-Status: target executable model. The canonical gap table in [design.md](design.md) identifies the
-state fields and command boundaries that the current rework implementation has not reached yet.
+Status: current executable model. [design.md](design.md) remains the behavioral authority.
 
 `jj-stack` coordinates four state-holders that can move independently. Every confusing
 bug report and every fail-closed diagnostic is some pair of them disagreeing. This file
@@ -25,9 +24,10 @@ vocabulary.
    becomes reachable from its base, and closes PRs whose head branch is deleted.
 4. **Tracking store** — separate versioned `ReviewIdentity` and `SubmittedBaseline` records
    keyed by full `change_id`. Identity holds host/repository, PR number, canonical head owner/ref,
-   bookmark ownership, and link state; baseline holds the exact submitted commit. The store is
-   moved only by explicit identity operations and successful or safely adopted `submit`
-   projection. Status observation never writes either record.
+   bookmark ownership, and link state; baseline holds the exact submitted commit. Explicit
+   attach, detach, restart, and repair commands change identity; successful or safely adopted
+   `submit` changes the baseline; and landing, recovery, unstacking, or cleanup may remove both.
+   Status observation never writes either record.
 
 The `jj` DAG is the source of truth for stack topology and content; fetched configured trunk is
 the remote reachability boundary; GitHub is authoritative for PR identity, lifecycle, reviews,
@@ -43,7 +43,6 @@ For each submitted change, health is one chain of agreements:
 - the remote ref points at the submitted baseline, or at the exact current commit after an
   interrupted push that `submit` may safely adopt under all nominal checks
 - GitHub reports the saved PR number on that exact head owner/ref
-- the PR base is the parent change's bookmark, or the trunk branch for the bottom change
 
 `submit` re-derives everything else from the DAG on every run, so anything not in this
 chain (subjects, diffs, comment prose, base ordering) is allowed to drift freely and is

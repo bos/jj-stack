@@ -50,14 +50,14 @@ Reviewer and label assignment are in scope for PR creation and update flows.
 
 ## Implementation model
 
-Each command follows the same shape:
+Mutating review commands generally follow this shape:
 
-1. Read local `jj` and `git` state.
+1. Read the required local `jj` and Git state.
 2. Compute the desired tracking state.
-3. Read relevant GitHub state.
+3. Read relevant GitHub state when the command crosses that boundary.
 4. Reconcile actual remote state with desired state.
-5. Apply mutations in a controlled order.
-6. Persist only minimal tracking state and user-authored overrides.
+5. Apply any mutations in a controlled order.
+6. Persist only the minimal tracking changes the command actually made.
 
 Keep code separated along these boundaries so that planning logic can be tested without
 network or subprocess side effects.
@@ -117,9 +117,9 @@ rather than reconstructing one from the repo root.
 Commands that need nontrivial selection or validation carry that result as an explicit
 resolved/prepared target value before mutation. The prepared value should hold the
 selected stack or revision, GitHub and remote observations, parsed options, and the
-`CommandContext` when later phases need shared dependencies. Mutating phases that need
-dry-run mode or interim saves use a small run object such as
-`SubmitMutationRun`, `LandMutationRun`, `_OrphanCloseRun`, or `AbortRun`.
+`CommandContext` when later phases need shared dependencies. Mutating phases carry only
+the shared state they need, using narrow values such as `SubmitMutationRun`,
+`LandExecutionInputs`, and `_OrphanCloseRun`.
 The `unstack --cleanup --pull-request orphans` selector snapshots orphan records from
 repo-scoped stack discovery, rejects duplicate PR claims before mutation, and then reuses the
 single-orphan close path in PR-number order. Each applied target reloads tracking state so an
@@ -151,17 +151,25 @@ src/
     ...
     models/
     commands/
+      cleanup/
+      land/
+      submit/
     jj/
-    git/
     github/
-    planning/
+    review/
+    state/
 tests/
   unit/
   integration/
   property/
   support/
 tools/
-  fake_github/
+  check_complexity.py
+  check_jj_release_updates.py
+  install-jj-release.sh
+scripts/
+skills/
+  jj-stack/
 docs/
   mental-model.md
   daily-workflow.md
@@ -193,15 +201,17 @@ Revision templates capture both `current_working_copy` and the names returned by
 `working_copies`: the former marks the invoking workspace, while the latter lets repo-scoped
 discovery recognize working-copy commits owned by any workspace.
 
-### Git adapter
+### Git boundary
 
-Narrower than the `jj` adapter. We mainly need it for backing-repo inspection in tests,
-remote branch verification, fake-server internals, and a few compatibility checks where
-Git is the actual remote boundary.
+There is no separate production Git adapter. `JjClient` uses direct Git subprocesses only for
+exact remote-ref leases and remote inspection that `jj` does not expose. Test support owns the
+backing-repository and fake-server Git operations.
 
-### Planning layer
+### Planning rule
 
-Pure (or close to). Given typed local and remote state, decides:
+Planning is a layering rule rather than a separate package. Shared classification lives under
+`review/`, while command-specific planning lives beside the command, such as
+`commands/land/plan.py` and the submit modules. Given typed local and remote state, it decides:
 
 - which changes are reviewable
 - which bookmark each change should use
@@ -215,8 +225,8 @@ semantics.
 
 Derived per-change review state lives in `review/change_status.py`. The
 `ReviewChangeStatus` classifier is observational only: it names the local, saved-link,
-remote-branch, remote-target match, PR-lifecycle, draft, review-decision,
-submitted-baseline, and saved-identity axes from data the caller already loaded.
+remote-branch, remote-target match, PR-lifecycle, draft, review-decision, and saved-identity axes
+from data the caller already loaded.
 Commands can build policy helpers on top of those axes, but mutation code still writes
 the underlying tracking fields directly.
 
@@ -232,8 +242,8 @@ This is where most correctness lives.
 ### GitHub client
 
 Thin `httpxyz` wrapper plus typed `pydantic` models. Knows how to fetch PR state, batch PR
-lookup by known head branch, create PRs, update PRs, assign reviewers and labels, manage
-stack-summary comments, and handle endpoint-specific pagination or retry.
+lookup by PR number or known head branch, create PRs, update PRs, assign reviewers and labels,
+manage stack-summary comments, and handle endpoint-specific pagination or retry.
 
 When endpoint semantics allow it, the client and command layers prefer batched or
 bounded-parallel GitHub work over one-request-per-item serial loops. Ordering
@@ -249,7 +259,7 @@ resolved trunk branch. The normal post-push PR sync restores the final stacked b
 This generalizes the earlier heuristic ("base is a review branch in the submitted
 stack and differs from the new desired base") so that anomalous cases — for example,
 a non-stack base that already contains the head — are handled by the same code path.
-The opt-in property coverage exercises the user-visible semantics for representative
+The fixed and expanded property coverage exercises the user-visible semantics for representative
 linear stack edits: moving individual changes, inserting above or below existing
 changes, rewriting a change, squashing a change into its predecessor, and abandoning a
 change while preserving the orphaned PR. A separate cross-stack split oracle exercises
@@ -270,10 +280,10 @@ success — and that `view` still reports on the drifted state. A land oracle st
 submitted, partially approved stacks that may have been edited since their last submit;
 it predicts the prefix land's readiness walk consumes and models the transport split —
 direct-push land retires the landed tracking, while merge-transport land converges the accepted
-prefix and selected survivors before returning. Its external-drift family snapshots
-the stopping change's durable tracking, complete PR payload, actual local and remembered-remote
-bookmark state, and backing remote ref. The deleted-branch case instead asserts the expected
-post-fetch bookmark absence.
+prefix and selected survivors before returning. Prefix-stop external-drift cases snapshot the
+stopping change's tracking, complete PR payload, actual local and remembered-remote bookmark
+state, and backing remote ref. The fetch-abandon case checks saved tracking and PR preservation;
+the re-resolved stack itself demonstrates that the deleted head vanished.
 
 `submit` batches stack-comment reads by PR number through GraphQL before mutating the
 managed comments, falling back to REST pagination only for PRs whose first comment page
@@ -288,7 +298,8 @@ It does not decide stack topology or branch naming.
 - we do not duplicate `jj`'s config resolution in Python: reads go through
   `jj config list 'jj-stack'`, which inherits user/repo/workspace precedence plus
   effective `--config` / `--config-file` overrides on every `jj` invocation
-- tracking state lives in `~/.local/state/jj-stack/repos/<repo-id>/state.json`
+- tracking state lives in
+  `${XDG_STATE_HOME:-~/.local/state}/jj-stack/repos/<repo-id>/state.json`
 - `<repo-id>` is derived from the canonical `.jj/repo` storage path so every workspace
   for the same repo shares one state location. Primary workspaces expose that path as a
   directory; additional workspaces expose a path file whose contents are resolved relative
@@ -302,9 +313,10 @@ The repo state directory also contains the operation lock files:
 - `operation.lock` is the fixed-path advisory lock sentinel
 - `operation-lock.json` is diagnostic companion metadata for the current holder
 
-Mutating commands hold the lock through their full lifetime. The lock is process coordination
-only. The state directory contains no operation journal, land note, phase, selector, path, or
-recovery checkpoint.
+Mutating commands hold the lock through their mutation phase. Bootstrap, validation, interactive
+selection, and final rendering may happen outside it. The lock is process coordination only. The
+state directory contains no operation journal, land note, phase, selector, path, or recovery
+checkpoint.
 
 The production component boundary shares observation and classification between landing and sync
 rather than a durable operation state machine.
@@ -332,10 +344,10 @@ set rather than repeating a per-PR command after every row.
 The text `list` renderer keeps stack rows compact by rendering the exact PR number for
 single-PR stacks and a count for multi-PR stacks; the JSON output remains per-change so
 clients can still recover the full PR list.
-Unknown saved PR state is treated as open only when the record has a saved PR number.
-Records without a PR number are not actionable orphan PRs and can be pruned by cleanup.
-Remote branch cleanup still requires a saved PR number, because without one the tool
-cannot prove whether an open PR still uses the branch.
+Every valid review identity includes a PR number. Until GitHub is inspected, an active saved
+identity is conservatively treated as potentially open. A record missing required identity data
+is isolated as malformed and must be replaced with `relink`; it is not an ordinary cleanup
+candidate.
 When `view` cannot find a PR by the remembered review branch, it falls back to
 the saved PR number before rendering the result. A missing branch lookup does not
 clear the saved PR identity; read-only status preserves that recovery evidence so
@@ -348,11 +360,10 @@ Repo-scoped discovered stacks carry both their immediate base parent and the res
 checks compare the bottom tracked change against that actual DAG parent when the parent
 is another mutable review change, while still treating `trunk()` and its ancestors as no
 review parent.
-Repo-scoped stale-stack detection also compares each tracked change's saved
-`last_submitted_commit_id` against the live commit ID, so a rewrite in the same stack
-position still prompts the user to inspect and resubmit. `view` renders the same selected-stack
-disagreement inline, including whether the saved submit baseline differs because of a local commit
-rewrite, a changed review parent, or changed stack membership.
+Repo-scoped stale-stack detection compares each tracked change's `SubmittedBaseline.commit_id`
+with the live commit ID, so a rewrite in the same stack position still prompts the user to
+inspect and resubmit. `view` renders the same selected-stack disagreement as a changed commit ID;
+it does not infer whether a rewrite, reparent, or stack-membership change caused it.
 Plain `view` does not run repo-scoped stale-stack discovery. Its "other stack changed" advisory
 is limited to stacks built on top of the stack being rendered; use `list` for the repo-wide view.
 Plain `view` also does not inspect managed stack-summary comments. That keeps status from doing
@@ -371,13 +382,14 @@ stack-comment lookup stay in a shared helper used by both paths.
 
 ## Data model
 
-Define `pydantic` models early and use them consistently across the real client and the
-fake server. Important model families:
+Use `pydantic` at serialized or untrusted boundaries: configuration, tracking files, `jj`
+template records, and GitHub responses. Use typed dataclasses for in-process plans, results, and
+mutable fake-server state. Important model families include:
 
 - local stack models
 - bookmark and remote-branch models
 - GitHub PR and comment models
-- mutation plan models
+- mutation plan and result values
 - config and tracking-state file models
 
 Repo defaults used for resolution belong in config, not in tracking state.
@@ -405,11 +417,12 @@ Ambiguity is a hard stop, not something the tool guesses past.
 
 GitHub credentials resolve in this order:
 
-- `GH_TOKEN`, if set
 - `GITHUB_TOKEN`, if set
+- `GH_TOKEN`, if set
 - `gh auth token --hostname <resolved-github-host>`, if `gh` is installed and
   authenticated
-- otherwise fail with an explicit authentication error
+- otherwise send no authentication header; `doctor` reports the missing token, and ordinary
+  commands fail if GitHub rejects the request
 
 The application client uses `httpxyz` directly for GitHub calls. If we reuse `gh`
 credentials, we go through the supported `gh auth token` command, not by reading `gh`
@@ -421,6 +434,8 @@ config files, keychain entries, or other internal storage.
 - `uv run` for local command execution
 - `uv tool run` only where it clearly improves ergonomics
 - `./check.py` as the default local verification entrypoint
+- `complexity-budget.toml` plus `uv run tools/check_complexity.py` as the separately enforced
+  cumulative size and test-count gate
 - `pyrefly` for static type checking
 - `ruff` for linting and formatting
 - `pytest` for the test runner
@@ -437,17 +452,18 @@ For every user-visible behavior:
 4. when it does, keep the conclusion conditional until an approved live experiment or future
    live test establishes it
 
-Two layers are implemented:
+Implemented local coverage includes:
 
 - unit tests for parsing, planning, and model behavior
 - local integration tests against the fake GitHub server and a real backing Git repo
+- 16 fixed generated/property cases that replay the integration harness in the default suite
 
 An opt-in live layer remains planned for contracts the fake cannot establish.
 
 Local tests are the default.
 
-Property-style submit stack exploration is opt-in because larger scenario budgets are
-intentionally heavier than the default check. Run it by hand with:
+Larger generated property pools are opt-in because they are intentionally heavier than the
+default 16-case corpus. Run them by hand with:
 
 ```text
 tests/run_submit_property_scenarios.py 500
@@ -457,9 +473,9 @@ The runner reuses the fake GitHub integration harness, generates deterministic s
 scenarios, and runs them through pytest-xdist so the work can spread across available
 cores.
 
-CI runs a small submit-property smoke budget on one Linux/jj-version combination so the
-generated stack-edit, cross-stack, and retry oracles cannot silently rot while keeping the
-full matrix focused on `./check.py`.
+CI runs a bounded expanded-property budget on one Linux/jj-version combination so the submit,
+land, cross-stack, drift, and retry oracles cannot silently rot while keeping the full matrix
+focused on `./check.py`.
 
 The default local verification command is:
 
@@ -548,16 +564,9 @@ The planned live suite would:
 - clean up after itself as aggressively as practical
 - avoid touching anything outside its namespace
 
-The first pass should use:
-
-```text
-uv run pytest tests/live --live-github
-GITHUB_TOKEN=...
-JJR_GITHUB_TEST_REMOTE=origin
-```
-
-The live suite could use the `gh` CLI for throwaway repo setup and teardown when that
-makes the tests materially simpler. We do not use `gh` in the main application client.
+The implemented suite must define its invocation and `JJ_STACK_`-prefixed configuration when it
+is added. It may use the `gh` CLI for throwaway repo setup and teardown when that makes the tests
+materially simpler. The main application client does not use `gh` for API traffic.
 
 ## Development workflow
 
@@ -621,10 +630,10 @@ When possible, diagnostics point to the exact recovery action:
 - `jj stack cleanup`
 - `jj workspace update-stale`
 
-The current implementation rejects an unreadable, invalid, or unsupported top-level tracking
-file, but one malformed record still poisons the whole file. Slice 8 retains that top-level
-fail-closed boundary while adding per-record isolation for independently usable identities and
-baselines.
+Unreadable JSON and invalid top-level shape, version, or envelope fail the load. Individual
+malformed or missing identity and baseline records are isolated and reported, so unrelated
+reviews remain usable; a command needing the damaged record fails closed until `relink` replaces
+it.
 
 Process exit codes are formalized and implemented; the contract lives in
 [design.md](./design.md) ("Exit codes") with the user-facing table in
@@ -638,7 +647,7 @@ incomplete-report code directly when a printed report is degraded.
 Fail-closed verification stops share exit code 1, so `DriftError` in `errors.py` also
 carries a `condition` naming which cross-system check failed (a missing or moved remote
 review branch, a non-open or ambiguous discovered PR, a saved-link mismatch, an unlinked
-change, a moved remote trunk, or a selected land stack left off current trunk). The
+change, or a selected land stack left off current trunk). The
 condition is not printed; it exists so the drift property harness
 ([distributed-state.md](./distributed-state.md)) can assert that a fail-closed stop
 fired for the drift it was aimed at rather than merely with the right exit code.
@@ -654,8 +663,9 @@ Easy to debug without making normal output noisy:
 - enough plan logging to explain why a change is being created, updated, skipped, or
   rejected
 
-Tests primarily assert on typed plan objects. Snapshot tests are used sparingly for
-user-facing rendered output where the exact textual shape is part of the contract.
+Tests prefer typed results and semantic output fragments. Exact presentation assertions are
+reserved for genuinely stable machine or recovery contracts; the suite does not maintain broad
+rendered-output snapshots.
 
 ## Definition of done
 
@@ -739,3 +749,7 @@ review guide; a dedicated CI gate enforces the checked-in budgets.
 
 The public-documentation follow-up is complete: user guides and built-in help now describe the
 implemented stack scope, exact recovery commands, and remote effects in ordinary jj/GitHub terms.
+
+The internal factual-reconciliation follow-up is complete: the canonical command inventory,
+module boundaries, tracking behavior, default property corpus, and deferred backlog now match the
+implemented repository. Historical simplification is a separate documentation-only follow-up.
