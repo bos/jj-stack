@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import cast
 
@@ -41,170 +42,103 @@ def _fake_context() -> CommandContext:
     )
 
 
-def _land_boundary_message(
-    *,
-    bypass_readiness: bool,
-    prepared_revision,
-    revision,
-):
-    _planned_revisions, boundary_action = _collect_landable_prefix(
-        bypass_readiness=bypass_readiness,
-        path_revisions=((prepared_revision, revision),),
-    )
-    if boundary_action is None:
-        return None
-    return boundary_action.body
+@dataclass(frozen=True, slots=True)
+class _ProjectionCase:
+    name: str
+    expected_message: str | None
+    baseline_commit_id: str | None = None
+    bypass_readiness: bool = False
+    link_state: LinkState = "active"
+    pr_head_commit_id: str | None = None
+    pull_request_state: PullRequestLookupState = "open"
+    remote_target: str | None = None
+    with_pr_head_sha: bool = True
+    with_remote_state: bool = True
+    with_submitted_baseline: bool = True
 
 
-def test_landable_prefix_accepts_exact_review_projection() -> None:
+def test_land_projection_table_covers_exactness_and_boundary_precedence() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
-    revision = _status_revision(
-        change_id="change-1",
-        commit_id="commit-1",
-        pull_request=_pull_request(number=1),
-        pull_request_state="open",
-        review_decision="approved",
-        subject="feature 1",
+    projection_message = "do not all identify the same exact commit"
+    cases = (
+        _ProjectionCase("exact", None),
+        _ProjectionCase(
+            "baseline mismatch",
+            projection_message,
+            baseline_commit_id="old-commit-1",
+        ),
+        _ProjectionCase(
+            "baseline missing",
+            projection_message,
+            with_submitted_baseline=False,
+        ),
+        _ProjectionCase(
+            "review branch mismatch",
+            projection_message,
+            remote_target="old-commit-1",
+        ),
+        _ProjectionCase(
+            "review branch missing",
+            projection_message,
+            with_remote_state=False,
+        ),
+        _ProjectionCase(
+            "PR head mismatch",
+            projection_message,
+            pr_head_commit_id="old-commit-1",
+        ),
+        _ProjectionCase("PR head missing", projection_message, with_pr_head_sha=False),
+        _ProjectionCase(
+            "unlinked precedence",
+            "unlinked from review tracking",
+            link_state="unlinked",
+            remote_target="old-commit-1",
+        ),
+        _ProjectionCase(
+            "bypass remains exact",
+            projection_message,
+            bypass_readiness=True,
+            remote_target="old-commit-1",
+        ),
+        _ProjectionCase(
+            "missing PR precedence",
+            "GitHub no longer reports a pull request",
+            pull_request_state="missing",
+            remote_target="old-commit-1",
+        ),
     )
-    planned_revisions, boundary_action = _collect_landable_prefix(
-        bypass_readiness=False,
-        path_revisions=((prepared_revision, revision),),
-    )
+    for case in cases:
+        revision = _status_revision(
+            baseline_commit_id=case.baseline_commit_id,
+            change_id="change-1",
+            commit_id="commit-1",
+            link_state=case.link_state,
+            pr_head_commit_id=case.pr_head_commit_id,
+            pull_request=_pull_request(number=1),
+            pull_request_state=case.pull_request_state,
+            remote_target=case.remote_target,
+            review_decision="approved",
+            subject="feature 1",
+            with_pr_head_sha=case.with_pr_head_sha,
+            with_remote_state=case.with_remote_state,
+            with_submitted_baseline=case.with_submitted_baseline,
+        )
+        planned, boundary = _collect_landable_prefix(
+            bypass_readiness=case.bypass_readiness,
+            path_revisions=((prepared_revision, revision),),
+        )
 
-    assert boundary_action is None
-    assert len(planned_revisions) == 1
-
-
-@pytest.mark.parametrize(
-    (
-        "baseline_commit_id",
-        "remote_target",
-        "pr_head_commit_id",
-        "with_pr_head_sha",
-        "with_remote_state",
-        "with_submitted_baseline",
-    ),
-    [
-        ("old-commit-1", None, None, True, True, True),
-        (None, None, None, True, True, False),
-        (None, "old-commit-1", None, True, True, True),
-        (None, None, None, True, False, True),
-        (None, None, "old-commit-1", True, True, True),
-        (None, None, None, False, True, True),
-    ],
-    ids=(
-        "baseline-mismatch",
-        "baseline-missing",
-        "review-branch-mismatch",
-        "review-branch-missing",
-        "pr-head-mismatch",
-        "pr-head-missing",
-    ),
-)
-def test_land_boundary_message_blocks_inexact_review_projection(
-    baseline_commit_id: str | None,
-    remote_target: str | None,
-    pr_head_commit_id: str | None,
-    with_pr_head_sha: bool,
-    with_remote_state: bool,
-    with_submitted_baseline: bool,
-) -> None:
-    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
-    revision = _status_revision(
-        baseline_commit_id=baseline_commit_id,
-        change_id="change-1",
-        commit_id="commit-1",
-        pr_head_commit_id=pr_head_commit_id,
-        remote_target=remote_target,
-        pull_request=_pull_request(number=1),
-        pull_request_state="open",
-        review_decision="approved",
-        subject="feature 1",
-        with_pr_head_sha=with_pr_head_sha,
-        with_remote_state=with_remote_state,
-        with_submitted_baseline=with_submitted_baseline,
-    )
-
-    message = _land_boundary_message(
-        bypass_readiness=False,
-        prepared_revision=prepared_revision,
-        revision=revision,
-    )
-
-    assert message is not None
-    rendered = plain_text(message)
-    assert "do not all identify the same exact commit" in rendered
-    assert "jj-stack submit change-1" in rendered
-
-
-def test_land_boundary_message_prefers_unlinked_state_over_projection_mismatch() -> None:
-    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
-    revision = _status_revision(
-        change_id="change-1",
-        commit_id="commit-1",
-        link_state="unlinked",
-        remote_target="old-commit-1",
-        pull_request=_pull_request(number=1),
-        pull_request_state="open",
-        review_decision="approved",
-        subject="feature 1",
-    )
-
-    message = _land_boundary_message(
-        bypass_readiness=False,
-        prepared_revision=prepared_revision,
-        revision=revision,
-    )
-
-    assert message is not None
-    rendered = plain_text(message)
-    assert "unlinked from review tracking" in rendered
-    assert "do not all identify the same exact commit" not in rendered
-
-
-def test_land_boundary_message_does_not_bypass_projection_mismatch() -> None:
-    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
-    revision = _status_revision(
-        change_id="change-1",
-        commit_id="commit-1",
-        remote_target="old-commit-1",
-        pull_request=_pull_request(number=1),
-        pull_request_state="open",
-        review_decision="approved",
-        subject="feature 1",
-    )
-
-    message = _land_boundary_message(
-        bypass_readiness=True,
-        prepared_revision=prepared_revision,
-        revision=revision,
-    )
-
-    assert message is not None
-    assert "jj-stack submit change-1" in plain_text(message)
-
-
-def test_land_boundary_message_prefers_missing_pr_over_projection_mismatch() -> None:
-    prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
-    revision = _status_revision(
-        change_id="change-1",
-        commit_id="commit-1",
-        remote_target="old-commit-1",
-        pull_request=_pull_request(number=1),
-        pull_request_state="missing",
-        subject="feature 1",
-    )
-
-    message = _land_boundary_message(
-        bypass_readiness=False,
-        prepared_revision=prepared_revision,
-        revision=revision,
-    )
-
-    assert message is not None
-    rendered = plain_text(message)
-    assert "GitHub no longer reports a pull request" in rendered
-    assert "do not all identify the same exact commit" not in rendered
+        if case.expected_message is None:
+            assert boundary is None, case.name
+            assert len(planned) == 1, case.name
+            continue
+        assert boundary is not None, case.name
+        rendered = plain_text(boundary.body)
+        assert case.expected_message in rendered, case.name
+        if case.expected_message == projection_message:
+            assert "jj-stack submit change-1" in rendered, case.name
+        else:
+            assert projection_message not in rendered, case.name
 
 
 def test_stack_not_on_trunk_error_recommends_rebase_when_no_changes_have_landed() -> None:

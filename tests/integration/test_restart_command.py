@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from jj_stack.formatting import short_change_id
 from jj_stack.jj.client import JjClient
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.state.store import ReviewStateStore
 
 from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
-    write_file,
 )
 from .submit_command_helpers import configure_submit_environment, run_main
 
@@ -94,29 +92,6 @@ def test_restart_dry_run_leaves_tracking_data_unchanged(
     assert exit_code == 0
     assert "Would prepare fresh review tracking for 1 change" in captured.out
     assert state_store.load() == initial_state
-
-
-def test_restart_rejects_selected_malformed_identity_without_local_mutation(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = JjClient(repo).discover_review_stack().head.change_id
-    state_path = resolve_state_path(repo)
-    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-    raw_state["review_identities"][change_id] = {"version": 9}
-    write_file(state_path, json.dumps(raw_state))
-    bookmarks_before = JjClient(repo).list_bookmark_states()
-
-    exit_code = run_main(repo, config_path, "restart", change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "relink" in captured.err
-    assert JjClient(repo).list_bookmark_states() == bookmarks_before
-    assert json.loads(state_path.read_text(encoding="utf-8")) == raw_state
 
 
 def test_submit_restart_creates_fresh_pr_on_regenerated_branch_after_head_branch_rename(

@@ -25,24 +25,21 @@ the remote reachability boundary. GitHub is authoritative for PR identity, lifec
 and merge-result identity. Tracking is sparse wrong-object and reviewed-snapshot evidence, never
 cached permission or a second topology model.
 
-## Implementation gaps
+## Implementation status
 
 The canonical behavior below is the production target. The first attempt at implementation slices
 4 through 8 recreated the escaped implementation's size and recovery complexity before selected
 convergence was implemented. That attempt is archived and rejected; see
 [merger-complexity-audit.md](merger-complexity-audit.md).
 
-The replacement sequence combines deletion with the behavior that makes the deleted mechanism
-unnecessary. Each marker is removed only when its code, docs, worthwhile tests, and complexity
-measurement land together.
+The replacement sequence combined deletion with the behavior that made the deleted mechanism
+unnecessary. R1 through R4 are complete: the local child-process interruption, reduced hostile
+scenario, and large sparse-cache checks are recorded in
+[merger-complexity-audit.md](merger-complexity-audit.md).
 
-| Slice | Unimplemented target |
-| --- | --- |
-| R4 | Reduced cross-system, interruption, hostile-scenario, and sparse-cache validation. |
-
-Cross-system validation remains incomplete until the child-process, hostile-scenario, and sparse
-cache checks run. The live-GitHub experiment was deliberately not performed, so conclusions about
-the fake's external idealizations remain conditional.
+The live-GitHub experiment was deliberately not performed. Conclusions about direct-push PR
+lifecycle, merge-result identity, merged-head deletion, retarget-and-close behavior, and
+expected-head rejection therefore remain conditional on the fake's external idealizations.
 
 The replacement implementation is also constrained by the audit's hard complexity budgets. A
 budget breach is evidence that the theory has started distributing policy again and stops the

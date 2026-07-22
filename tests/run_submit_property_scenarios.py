@@ -108,23 +108,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=_non_negative_int,
         help=(
             "Number of generated external-drift scenarios to run "
-            "(default: max(20, scenarios // 5); 20 covers the fixed corpus)."
+            "(default: max(20, scenarios // 5))."
         ),
     )
     parser.add_argument(
         "--land-scenarios",
         type=_non_negative_int,
-        help=(
-            "Number of generated land scenarios to run "
-            "(default: max(20, scenarios // 20); 20 covers the fixed corpus)."
-        ),
+        help=("Number of generated land scenarios to run (default: max(20, scenarios // 20))."),
     )
     parser.add_argument(
         "--land-drift-scenarios",
         type=_non_negative_int,
         help=(
-            "Number of generated land drift scenarios to run "
-            "(default: max(6, scenarios // 40); 6 covers the fixed corpus)."
+            "Number of generated land drift scenarios to run (default: max(6, scenarios // 40))."
         ),
     )
     parser.add_argument(
@@ -132,7 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=_non_negative_int,
         help=(
             "Number of generated interrupted-land retry scenarios to run "
-            "(default: max(4, scenarios // 40); 4 covers the fixed corpus)."
+            "(default: max(4, scenarios // 40))."
         ),
     )
     parser.add_argument(
@@ -140,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=_non_negative_int,
         help=(
             "Number of generated merged-prefix handoff scenarios to run "
-            "(default: max(5, scenarios // 40); 5 covers the fixed corpus)."
+            "(default: max(5, scenarios // 40))."
         ),
     )
     parser.add_argument(

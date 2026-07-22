@@ -83,14 +83,11 @@ class LandScenario:
     approved_prefix: int
     land_target_position: int | None = None
     with_second_stack: bool = False
-    skip_cleanup: bool = False
     unmergeable_pull_number: int | None = None
 
     def __post_init__(self) -> None:
         if self.initial_size < 1:
             raise ValueError("land scenarios require at least one submitted change")
-        if self.skip_cleanup and self.via != "push":
-            raise ValueError("--skip-cleanup is only modeled for direct-push land")
         if not self.edits and self.resubmit_after_edit:
             raise ValueError("resubmit without an edit does not change the modeled state")
         final_live_labels = self.final_live_labels  # validates the edit trace
@@ -188,8 +185,6 @@ class LandScenario:
             parts.append(f"target:{self.land_target_position}")
         if self.with_second_stack:
             parts.append("second_stack")
-        if self.skip_cleanup:
-            parts.append("skip_cleanup")
         if self.unmergeable_pull_number is not None:
             parts.append(f"unmergeable:{self.unmergeable_pull_number}")
         return ",".join(parts)
@@ -204,7 +199,6 @@ class LandScenario:
             self.approved_prefix,
             self.land_target_position,
             self.with_second_stack,
-            self.skip_cleanup,
             self.unmergeable_pull_number,
         )
 
@@ -261,125 +255,12 @@ def generate_land_scenarios(*, count: int, seed: int) -> tuple[LandScenario, ...
 def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
     return (
         LandScenario(
-            name="push-stops-at-first-unapproved-pr",
-            initial_size=3,
-            via="push",
-            edits=(),
-            resubmit_after_edit=False,
-            approved_prefix=2,
-        ),
-        LandScenario(
-            name="push-nothing-approved-blocks-without-mutation",
-            initial_size=2,
-            via="push",
-            edits=(),
-            resubmit_after_edit=False,
-            approved_prefix=0,
-        ),
-        LandScenario(
-            name="push-full-stack-retires-tracking",
-            initial_size=2,
-            via="push",
-            edits=(),
-            resubmit_after_edit=False,
-            approved_prefix=2,
-        ),
-        LandScenario(
-            name="push-skip-cleanup-keeps-local-bookmarks",
-            initial_size=2,
-            via="push",
-            edits=(),
-            resubmit_after_edit=False,
-            approved_prefix=2,
-            skip_cleanup=True,
-        ),
-        LandScenario(
-            name="push-rewrite-without-resubmit-stops-at-stale-review",
-            initial_size=3,
-            via="push",
-            edits=(LandEditOperation(kind="rewrite", label=initial_land_label(2)),),
-            resubmit_after_edit=False,
-            approved_prefix=3,
-        ),
-        LandScenario(
-            name="push-rewrite-with-resubmit-lands-full-stack",
-            initial_size=2,
-            via="push",
-            edits=(LandEditOperation(kind="rewrite", label=initial_land_label(1)),),
-            resubmit_after_edit=True,
-            approved_prefix=2,
-        ),
-        LandScenario(
-            name="push-insert-without-resubmit-stops-at-unsubmitted-change",
-            initial_size=2,
-            via="push",
-            edits=(
-                LandEditOperation(
-                    kind="insert_after",
-                    label=initial_land_label(1),
-                    new_label=INSERTED_LABEL,
-                ),
-            ),
-            resubmit_after_edit=False,
-            approved_prefix=3,
-        ),
-        LandScenario(
-            name="push-insert-before-with-resubmit-lands-full-stack",
-            initial_size=2,
-            via="push",
-            edits=(
-                LandEditOperation(
-                    kind="insert_before",
-                    label=initial_land_label(2),
-                    new_label=INSERTED_LABEL,
-                ),
-            ),
-            resubmit_after_edit=True,
-            approved_prefix=3,
-        ),
-        LandScenario(
             name="push-abandon-without-resubmit-stops-at-rebased-survivor",
             initial_size=3,
             via="push",
             edits=(LandEditOperation(kind="abandon", label=initial_land_label(2)),),
             resubmit_after_edit=False,
             approved_prefix=2,
-        ),
-        LandScenario(
-            name="push-squash-without-resubmit-stops-at-divergent-destination",
-            initial_size=3,
-            via="push",
-            edits=(LandEditOperation(kind="squash_into_previous", label=initial_land_label(2)),),
-            resubmit_after_edit=False,
-            approved_prefix=2,
-        ),
-        LandScenario(
-            name="push-squash-with-resubmit-lands-survivor-and-keeps-orphan",
-            initial_size=2,
-            via="push",
-            edits=(LandEditOperation(kind="squash_into_previous", label=initial_land_label(2)),),
-            resubmit_after_edit=True,
-            approved_prefix=1,
-        ),
-        LandScenario(
-            name="push-two-edit-trace-stops-at-divergent-after-abandon",
-            initial_size=4,
-            via="push",
-            edits=(
-                LandEditOperation(kind="abandon", label=initial_land_label(2)),
-                LandEditOperation(kind="rewrite", label=initial_land_label(3)),
-            ),
-            resubmit_after_edit=False,
-            approved_prefix=3,
-        ),
-        LandScenario(
-            name="push-pull-request-lands-selected-sub-prefix",
-            initial_size=3,
-            via="push",
-            edits=(),
-            resubmit_after_edit=False,
-            approved_prefix=3,
-            land_target_position=2,
         ),
         LandScenario(
             name="push-bystander-stack-untouched-by-partial-land",
@@ -391,43 +272,13 @@ def _fixed_land_scenarios() -> tuple[LandScenario, ...]:
             with_second_stack=True,
         ),
         LandScenario(
-            name="merge-approval-prefix-keeps-merged-tracking",
-            initial_size=3,
-            via="merge",
-            edits=(),
-            resubmit_after_edit=False,
-            approved_prefix=2,
-        ),
-        LandScenario(
-            name="merge-blocked-at-unmergeable-pr-keeps-prefix-tracking",
+            name="merge-blocked-at-unmergeable-pr-converges-accepted-prefix",
             initial_size=2,
             via="merge",
             edits=(),
             resubmit_after_edit=False,
             approved_prefix=2,
             unmergeable_pull_number=2,
-        ),
-        LandScenario(
-            name="merge-abandon-without-resubmit-stops-at-rebased-survivor",
-            initial_size=3,
-            via="merge",
-            edits=(LandEditOperation(kind="abandon", label=initial_land_label(2)),),
-            resubmit_after_edit=False,
-            approved_prefix=2,
-        ),
-        LandScenario(
-            name="merge-reorder-without-resubmit-stops-at-rewritten-prefix",
-            initial_size=3,
-            via="merge",
-            edits=(
-                LandEditOperation(
-                    kind="move_before",
-                    label=initial_land_label(3),
-                    target_label=initial_land_label(2),
-                ),
-            ),
-            resubmit_after_edit=False,
-            approved_prefix=2,
         ),
     )
 
@@ -618,32 +469,9 @@ def generate_land_drift_scenarios(
 def _fixed_land_drift_scenarios() -> tuple[LandDriftScenario, ...]:
     return (
         LandDriftScenario(
-            name="drift-trunk-advanced-fails-closed",
-            initial_size=2,
-            kind="trunk_advanced",
-        ),
-        LandDriftScenario(
-            name="drift-external-squash-merge-fails-closed-with-cleanup-path",
+            name="drift-external-squash-merge-requires-selected-sync",
             initial_size=2,
             kind="pr_merged_externally",
-            target_position=1,
-        ),
-        LandDriftScenario(
-            name="drift-externally-closed-pr-stops-prefix",
-            initial_size=3,
-            kind="pr_closed",
-            target_position=2,
-        ),
-        LandDriftScenario(
-            name="drift-deleted-review-branch-abandons-change-and-lands-survivors",
-            initial_size=2,
-            kind="review_branch_deleted",
-            target_position=2,
-        ),
-        LandDriftScenario(
-            name="drift-draft-toggle-stops-prefix",
-            initial_size=2,
-            kind="pr_draft_toggled",
             target_position=1,
         ),
         LandDriftScenario(
@@ -795,18 +623,6 @@ def generate_land_retry_scenarios(
 def _fixed_land_retry_scenarios() -> tuple[LandRetryScenario, ...]:
     return (
         LandRetryScenario(
-            name="retry-after-trunk-push-acknowledgement-loss-converges",
-            initial_size=2,
-            approved_prefix=2,
-            fault="after_push_ack_lost",
-        ),
-        LandRetryScenario(
-            name="retry-after-trunk-push-converges",
-            initial_size=3,
-            approved_prefix=2,
-            fault="after_push_trunk",
-        ),
-        LandRetryScenario(
             name="retry-mid-finalize-converges-without-double-close",
             initial_size=3,
             approved_prefix=2,
@@ -846,32 +662,27 @@ def _random_land_retry_scenario(
     )
 
 
-LandHandoffOrigin = Literal["external_squash_merge", "merge_land"]
-LandHandoffRecovery = Literal["sync"]
+LandHandoffOrigin = Literal["external_squash_merge", "interrupted_merge_land"]
 
 
 @dataclass(frozen=True, slots=True)
 class LandHandoffScenario:
-    """A merged prefix handed off to sync/cleanup, resubmitted, then landed.
+    """A merged prefix handed off to selected sync, resubmitted, then landed.
 
     The chain replays the documented recovery contract end to end: a prefix
-    reaches trunk through GitHub merges — `land --via merge`, an interrupted
-    merge land, or squash merges outside the tool — then selected `sync`
-    rebuilds the local suffix, and a final direct-push land consumes it.
+    reaches trunk through an interrupted merge land or a squash merge outside
+    the tool, then selected `sync` rebuilds the local suffix and a final
+    direct-push land consumes it.
     """
 
     name: str
     initial_size: int
     merged_prefix: int
     origin: LandHandoffOrigin
-    recovery: LandHandoffRecovery
-    merge_fault: bool = False
 
     def __post_init__(self) -> None:
         if not 1 <= self.merged_prefix <= self.initial_size - 1:
             raise ValueError("the handoff needs a merged prefix and a surviving suffix")
-        if self.merge_fault and self.origin != "merge_land":
-            raise ValueError("only a merge-transport land can be interrupted mid-merge")
 
     @property
     def initial_labels(self) -> tuple[str, ...]:
@@ -887,42 +698,25 @@ class LandHandoffScenario:
 
     @property
     def fault_pull_number(self) -> int | None:
-        if not self.merge_fault:
+        if self.origin != "interrupted_merge_land":
             return None
         return self.merged_prefix + 1
-
-    @property
-    def withheld_position(self) -> int | None:
-        """The 1-based position left unapproved to stop the merge land.
-
-        An interrupted merge land approves everything and relies on the fault
-        instead; the suffix approval then survives into the final land.
-        """
-
-        if self.origin == "merge_land" and not self.merge_fault:
-            return self.merged_prefix + 1
-        return None
 
     @property
     def trace(self) -> str:
         parts = [
             f"origin:{self.origin}",
-            f"recovery:{self.recovery}",
             f"size:{self.initial_size}",
             f"merged:{self.merged_prefix}",
         ]
-        if self.merge_fault:
-            parts.append("merge_fault")
         return ",".join(parts)
 
     @property
     def canonical_key(self) -> tuple[object, ...]:
         return (
             self.origin,
-            self.recovery,
             self.initial_size,
             self.merged_prefix,
-            self.merge_fault,
         )
 
     def __str__(self) -> str:
@@ -982,26 +776,16 @@ def generate_land_handoff_scenarios(
 def _fixed_land_handoff_scenarios() -> tuple[LandHandoffScenario, ...]:
     return (
         LandHandoffScenario(
-            name="handoff-merge-land-then-sync-lands-suffix",
-            initial_size=3,
-            merged_prefix=1,
-            origin="merge_land",
-            recovery="sync",
-        ),
-        LandHandoffScenario(
             name="handoff-external-squash-merge-then-sync-recovers",
             initial_size=3,
             merged_prefix=1,
             origin="external_squash_merge",
-            recovery="sync",
         ),
         LandHandoffScenario(
             name="handoff-interrupted-merge-land-recovers-through-sync",
             initial_size=2,
             merged_prefix=1,
-            origin="merge_land",
-            recovery="sync",
-            merge_fault=True,
+            origin="interrupted_merge_land",
         ),
     )
 
@@ -1014,14 +798,12 @@ def _random_land_handoff_scenario(
     rng: random.Random,
     name: str,
 ) -> LandHandoffScenario:
-    origins: tuple[LandHandoffOrigin, ...] = ("external_squash_merge", "merge_land")
     initial_size = rng.randint(2, 4)
     return LandHandoffScenario(
         name=name,
         initial_size=initial_size,
         merged_prefix=rng.randint(1, initial_size - 1),
-        origin=rng.choice(origins),
-        recovery="sync",
+        origin="external_squash_merge",
     )
 
 

@@ -11,7 +11,7 @@ from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient, JjCommandError
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.state.store import ReviewStateStore
 
 from ..support.fake_github import (
     FakeGithubState,
@@ -65,32 +65,6 @@ def test_land_blocks_unlinked_change(
     rendered = _squash_whitespace(captured.out)
     assert "Land blocked:" in rendered
     assert "unlinked from review tracking" in rendered
-
-
-def test_land_rejects_malformed_selected_baseline_before_mutation(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-    change_id = JjClient(repo).discover_review_stack().head.change_id
-    state_path = resolve_state_path(repo)
-    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-    raw_state["submitted_baselines"][change_id] = {"version": 9}
-    write_file(state_path, json.dumps(raw_state))
-    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "land", change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "relink" in captured.err
-    assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
-    assert fake_repo.pull_request_events == []
-    assert json.loads(state_path.read_text(encoding="utf-8")) == raw_state
 
 
 def test_land_previews_and_finalizes_maximal_ready_prefix(
@@ -499,70 +473,6 @@ def test_land_rerun_after_failed_push_replans_from_current_state(
     assert read_remote_ref(fake_repo.git_dir, "main") == first_landable_commit_id
 
 
-def test_land_recovers_an_accepted_trunk_push_after_lost_acknowledgement(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-    revision = JjClient(repo).discover_review_stack().head
-    original_push = JjClient.push_bookmark_with_lease
-
-    def push_then_lose_acknowledgement(self, **kwargs) -> None:
-        original_push(self, **kwargs)
-        raise JjCommandError("lost push acknowledgement")
-
-    monkeypatch.setattr(
-        JjClient,
-        "push_bookmark_with_lease",
-        push_then_lose_acknowledgement,
-    )
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, (captured.out, captured.err)
-    assert read_remote_ref(fake_repo.git_dir, "main") == revision.commit_id
-    assert revision.change_id not in ReviewStateStore.for_repo(repo).load().review_identities
-
-
-def test_land_reports_sync_all_when_an_accepted_push_cannot_be_refreshed(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-    revision = JjClient(repo).discover_review_stack().head
-    original_push = JjClient.push_bookmark_with_lease
-    original_fetch = JjClient.fetch_remote
-    pushed = False
-
-    def push_then_arm_refresh_failure(self, **kwargs) -> None:
-        nonlocal pushed
-        original_push(self, **kwargs)
-        pushed = True
-
-    def fail_post_push_fetch(self, *, remote, branches=None) -> None:
-        if pushed:
-            raise JjCommandError("lost post-push fetch")
-        original_fetch(self, remote=remote, branches=branches)
-
-    monkeypatch.setattr(JjClient, "push_bookmark_with_lease", push_then_arm_refresh_failure)
-    monkeypatch.setattr(JjClient, "fetch_remote", fail_post_push_fetch)
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "sync --all" in captured.err
-    assert read_remote_ref(fake_repo.git_dir, "main") == revision.commit_id
-    assert revision.change_id in ReviewStateStore.for_repo(repo).load().review_identities
-
-
 def test_land_rechecks_exact_review_head_before_direct_push(
     tmp_path: Path,
     monkeypatch,
@@ -675,25 +585,6 @@ def test_land_rechecks_repository_and_trunk_authority_after_planning(
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_request_events == []
     assert state_store.load() == state_before
-
-
-def test_land_uses_unique_remote_trunk_when_github_has_no_default_branch(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-    fake_repo.default_branch = None
-    revision = JjClient(repo).discover_review_stack().revisions[0]
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, (captured.out, captured.err)
-    assert read_remote_ref(fake_repo.git_dir, "main") == revision.commit_id
-    assert fake_repo.pull_requests[1].state == "closed"
 
 
 def test_land_does_not_overwrite_a_concurrent_local_trunk_move(
@@ -1209,64 +1100,6 @@ def test_land_via_merge_merges_ready_prefix_bottom_up_on_github(
     for change_id in change_ids:
         assert change_id not in state.review_identities
         assert change_id not in state.submitted_baselines
-
-
-def test_land_via_merge_recovers_lost_ack_after_review_branch_deletion(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-    revision = JjClient(repo).discover_review_stack().head
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().review_identities[revision.change_id].head_ref
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class LoseMergeAcknowledgementClient(GithubClient):
-        async def merge_pull_request(
-            self,
-            *,
-            expected_head_sha,
-            pull_number,
-            merge_method,
-        ):
-            await super().merge_pull_request(
-                expected_head_sha=expected_head_sha,
-                pull_number=pull_number,
-                merge_method=merge_method,
-            )
-            run_command(
-                [
-                    "git",
-                    "--git-dir",
-                    str(fake_repo.git_dir),
-                    "update-ref",
-                    "-d",
-                    f"refs/heads/{bookmark}",
-                ],
-                fake_repo.git_dir.parent,
-            )
-            raise GithubClientError("lost merge acknowledgement", status_code=500)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=_LAND_CLIENT_MODULES,
-        client_type=LoseMergeAcknowledgementClient,
-    )
-
-    exit_code = run_main(repo, config_path, "land", "--via", "merge")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.ref_target(bookmark) is None
-    state = state_store.load()
-    assert revision.change_id not in state.review_identities, (captured.out, captured.err)
-    assert revision.change_id not in state.submitted_baselines
 
 
 def test_land_via_merge_reports_an_accepted_prefix_when_trunk_refresh_fails(

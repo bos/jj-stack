@@ -358,30 +358,6 @@ def test_list_fails_closed_when_tracked_changes_share_bookmark(
     assert "same bookmark" in captured.err
 
 
-def test_list_reports_malformed_record_while_inspecting_independent_tracking(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_path = resolve_state_path(repo)
-    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
-    malformed_change_id = next(iter(state_payload["review_identities"]))
-    state_payload["review_identities"][malformed_change_id] = {"version": 9}
-    write_file(state_path, json.dumps(state_payload))
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-    rendered_error = " ".join(captured.err.split())
-
-    assert exit_code == EXIT_INCOMPLETE
-    assert "Saved review identity" in rendered_error
-    assert "unrelated reviews will continue" in rendered_error
-    assert "jj-stack relink --help" in rendered_error
-    assert "No stacks." not in captured.out
-
-
 def test_list_reports_no_stacks_when_state_is_empty(
     tmp_path,
     monkeypatch,

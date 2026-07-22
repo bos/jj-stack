@@ -1,5 +1,11 @@
 import pytest
 
+from tests.support.land_property_scenarios import (
+    DEFAULT_LAND_DRIFT_SCENARIO_COUNT,
+    DEFAULT_LAND_HANDOFF_SCENARIO_COUNT,
+    DEFAULT_LAND_RETRY_SCENARIO_COUNT,
+    DEFAULT_LAND_SCENARIO_COUNT,
+)
 from tests.support.stack_edit_scenarios import (
     StackEditOperation,
     apply_stack_edit,
@@ -7,9 +13,35 @@ from tests.support.stack_edit_scenarios import (
     move_before_candidates,
 )
 from tests.support.submit_property_scenarios import (
+    DEFAULT_CROSS_STACK_SCENARIO_COUNT,
+    DEFAULT_EXTERNAL_DRIFT_SCENARIO_COUNT,
+    DEFAULT_STACK_EDIT_SCENARIO_COUNT,
+    DEFAULT_STACK_MERGE_SCENARIO_COUNT,
+    DEFAULT_STACK_MOVE_SCENARIO_COUNT,
+    DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT,
     DriftOperation,
     ExternalDriftScenario,
 )
+
+
+def test_default_property_corpus_stays_within_its_sixteen_case_budget() -> None:
+    assert (
+        sum(
+            (
+                DEFAULT_STACK_EDIT_SCENARIO_COUNT,
+                DEFAULT_CROSS_STACK_SCENARIO_COUNT,
+                DEFAULT_STACK_MERGE_SCENARIO_COUNT,
+                DEFAULT_STACK_MOVE_SCENARIO_COUNT,
+                DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT,
+                DEFAULT_EXTERNAL_DRIFT_SCENARIO_COUNT,
+                DEFAULT_LAND_SCENARIO_COUNT,
+                DEFAULT_LAND_DRIFT_SCENARIO_COUNT,
+                DEFAULT_LAND_RETRY_SCENARIO_COUNT,
+                DEFAULT_LAND_HANDOFF_SCENARIO_COUNT,
+            )
+        )
+        <= 16
+    )
 
 
 @pytest.mark.parametrize(

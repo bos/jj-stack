@@ -1076,25 +1076,6 @@ def _apply_drift_operation(
         )
         run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
         return None
-    if drift.kind == "conflicted_rebase":
-        conflicted_label = initial_label(1)
-        run_command(["jj", "new", "main"], repo)
-        write_file(repo / filename_for_label(conflicted_label), "trunk conflicting edit\n")
-        run_command(["jj", "commit", "-m", "trunk conflicting edit"], repo)
-        run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
-        run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "main"], repo)
-        run_command(
-            ["jj", "rebase", "-s", labels_to_change_ids[conflicted_label], "-d", "main"],
-            repo,
-        )
-        return labels_to_change_ids[label]
-    if drift.kind == "merge_commit":
-        run_command(["jj", "new", "main"], repo)
-        commit_file(repo, "side branch", "side-branch.txt")
-        side_change_id = JjClient(repo).resolve_revision("@-").change_id
-        run_command(["jj", "new", labels_to_change_ids[label], side_change_id], repo)
-        commit_file(repo, "merge commit", "merge-commit.txt")
-        return JjClient(repo).resolve_revision("@-").change_id
     if drift.kind == "agent_recreated_change":
         new_label = drift.new_label
         assert new_label is not None, drift.trace

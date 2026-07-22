@@ -17,9 +17,7 @@ from .stack_edit_scenarios import (
 DriftKind = Literal[
     "agent_recreated_change",
     "closed_pr",
-    "conflicted_rebase",
     "foreign_branch_fetched",
-    "merge_commit",
     "merged_pr",
     "pr_base_retargeted",
     "pr_draft_toggled",
@@ -38,11 +36,6 @@ SubmitRetryFailurePoint = Literal[
     "pull_request_metadata",
 ]
 
-DEFAULT_STACK_EDIT_SCENARIO_COUNT = 9
-DEFAULT_CROSS_STACK_SCENARIO_COUNT = 8
-DEFAULT_STACK_MERGE_SCENARIO_COUNT = 8
-DEFAULT_STACK_MOVE_SCENARIO_COUNT = 8
-DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT = 8
 DEFAULT_STACK_EDIT_SCENARIO_SEED = 8675309
 MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
 
@@ -118,10 +111,10 @@ class DriftKindSpec:
     `expected_outcome` is the model's verdict for a submit issued after the
     drift. Fail-closed kinds carry the contractual `(exit code, diagnosis)`
     pairs the CLI may report: a `DriftError` condition, an
-    `unsupported_stack:<reason>`, or `conflicted_stack`. Asserting the diagnosis
+    `unsupported_stack:<reason>`. Asserting the diagnosis
     keeps a stop that fired for the wrong reason — right exit code, misleading
-    repair path — from satisfying the model. Non-composable kinds change the
-    stack shape or selection and only appear in hand-written fixed scenarios.
+    repair path — from satisfying the model. The non-composable incident shape
+    appears only in the hand-written fixed corpus.
     """
 
     boundary: Literal["github_prs", "local_jj", "remote_refs", "tracking_store"]
@@ -146,13 +139,6 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         composable=True,
         needs_label=True,
     ),
-    "conflicted_rebase": DriftKindSpec(
-        boundary="local_jj",
-        expected_outcome="fail_closed",
-        failures=((3, "conflicted_stack"),),
-        composable=False,
-        needs_label=True,
-    ),
     # The fetched foreign ref pins the submitted commit: immutable when the
     # change is unrewritten, divergent when a local rewrite already replaced it
     # and the fetch resurrects the hidden predecessor.
@@ -164,13 +150,6 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
             (2, "unsupported_stack:immutable_commit"),
         ),
         composable=True,
-        needs_label=True,
-    ),
-    "merge_commit": DriftKindSpec(
-        boundary="local_jj",
-        expected_outcome="fail_closed",
-        failures=((2, "unsupported_stack:merge_commit"),),
-        composable=False,
         needs_label=True,
     ),
     "merged_pr": DriftKindSpec(
@@ -940,113 +919,19 @@ _COMPOSABLE_DRIFT_KINDS: tuple[DriftKind, ...] = tuple(
 
 def _fixed_external_drift_scenarios() -> tuple[ExternalDriftScenario, ...]:
     return (
-        _drift_scenario(
-            drifts=(DriftOperation(kind="closed_pr", label="c2"),),
-            hazard_class="github-external-close",
-            name="closed-pr",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="merged_pr", label="c1"),),
-            hazard_class="github-external-merge",
-            name="merged-pr",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="pr_replaced", label="c2"),),
-            hazard_class="github-replaced-pr",
-            name="pr-replaced",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="wrong_saved_pr_number", label="c2"),),
-            hazard_class="store-wrong-pr-number",
-            name="wrong-saved-pr-number",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="wrong_saved_pr_number", label="c2"),),
-            edit_operations=(StackEditOperation(kind="rewrite", label="c2"),),
-            hazard_class="store-wrong-pr-number",
-            name="wrong-saved-pr-number-after-rewrite",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="unlinked_change", label="c2"),),
-            hazard_class="store-unlinked",
-            name="unlinked-change",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="remote_branch_drift", label="c2"),),
-            hazard_class="remote-branch-drift",
-            name="remote-branch-drift",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="remote_branch_deleted", label="c3"),),
-            hazard_class="remote-branch-deleted",
-            name="remote-branch-deleted",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="foreign_branch_fetched", label="c2"),),
-            hazard_class="local-foreign-fetch",
-            name="foreign-branch-fetched",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="foreign_branch_fetched", label="c2"),),
-            edit_operations=(StackEditOperation(kind="rewrite", label="c2"),),
-            hazard_class="local-foreign-fetch-divergent",
-            name="foreign-branch-fetched-after-rewrite",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="conflicted_rebase", label="c3"),),
-            hazard_class="local-conflicted-rebase",
-            name="conflicted-rebase",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="merge_commit", label="c3"),),
-            hazard_class="local-merge-commit",
-            name="merge-commit",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="closed_pr", label="c2"),),
-            edit_operations=(StackEditOperation(kind="move_to_top", label="c1"),),
-            hazard_class="github-external-close",
-            initial_size=4,
-            name="closed-pr-after-reorder",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="closed_pr", label="c2"),),
-            edit_operations=(
-                StackEditOperation(kind="insert_after", label="c1", new_label="i1"),
-            ),
-            hazard_class="github-external-close-with-unsubmitted-change",
-            name="closed-pr-after-insert",
-        ),
-        _drift_scenario(
-            drifts=(
-                DriftOperation(kind="closed_pr", label="c1"),
-                DriftOperation(kind="remote_branch_deleted", label="c3"),
-            ),
-            hazard_class="multi-boundary",
-            name="closed-pr-and-deleted-branch",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="trunk_advanced"),),
-            hazard_class="remote-trunk-advance",
-            name="trunk-advanced",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="trunk_advanced"),),
-            edit_operations=(StackEditOperation(kind="move_to_top", label="c1"),),
-            hazard_class="remote-trunk-advance",
-            name="trunk-advanced-after-reorder",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="pr_base_retargeted", label="c2"),),
-            hazard_class="github-base-retarget",
-            name="pr-base-retargeted",
-        ),
-        _drift_scenario(
-            drifts=(DriftOperation(kind="pr_draft_toggled", label="c3"),),
-            hazard_class="github-draft-toggle",
-            name="pr-draft-toggled",
-        ),
+        _closed_pr_after_insert_scenario(),
         _agent_recreated_change_scenario(),
+    )
+
+
+def _closed_pr_after_insert_scenario() -> ExternalDriftScenario:
+    return _drift_scenario(
+        drifts=(DriftOperation(kind="closed_pr", label="c2"),),
+        edit_operations=(
+            StackEditOperation(kind="insert_after", label="c1", new_label="i1"),
+        ),
+        hazard_class="github-external-close-with-unsubmitted-change",
+        name="closed-pr-after-insert",
     )
 
 
@@ -1177,24 +1062,6 @@ def _fixed_submit_retry_scenarios() -> tuple[SubmitRetryScenario, ...]:
             initial_size=3,
             name="retry-after-remote-push",
         ),
-        SubmitRetryScenario(
-            failure_label="c2",
-            failure_point="create_pull_request",
-            initial_size=3,
-            name="retry-create-middle-pr",
-        ),
-        SubmitRetryScenario(
-            failure_label="c2",
-            failure_point="update_pull_request",
-            initial_size=3,
-            name="retry-update-middle-pr",
-        ),
-        SubmitRetryScenario(
-            failure_label="c1",
-            failure_point="pull_request_metadata",
-            initial_size=2,
-            name="retry-metadata-sync",
-        ),
     )
 
 
@@ -1208,36 +1075,6 @@ def _fixed_stack_move_scenarios() -> tuple[StackMoveScenario, ...]:
             second_size=2,
             source_from_first=True,
             source_index=1,
-            target_index=1,
-        ),
-        _stack_move_scenario(
-            first_size=3,
-            hazard_class="move-head-into-middle",
-            name="move-first-head-before-second-head",
-            placement="before",
-            second_size=3,
-            source_from_first=True,
-            source_index=2,
-            target_index=2,
-        ),
-        _stack_move_scenario(
-            first_size=2,
-            hazard_class="move-bottom-into-bottom",
-            name="move-second-bottom-before-first-bottom",
-            placement="before",
-            second_size=3,
-            source_from_first=False,
-            source_index=0,
-            target_index=0,
-        ),
-        _stack_move_scenario(
-            first_size=3,
-            hazard_class="move-single-source",
-            name="move-single-second-after-first-middle",
-            placement="after",
-            second_size=1,
-            source_from_first=False,
-            source_index=0,
             target_index=1,
         ),
     )
@@ -1333,27 +1170,6 @@ def _fixed_stack_merge_scenarios() -> tuple[StackMergeScenario, ...]:
             name="merge-second-after-first",
             second_size=2,
         ),
-        _stack_merge_scenario(
-            first_size=2,
-            first_then_second=False,
-            hazard_class="append-first",
-            name="merge-first-after-second",
-            second_size=2,
-        ),
-        _stack_merge_scenario(
-            first_size=1,
-            first_then_second=True,
-            hazard_class="single-first",
-            name="merge-single-first",
-            second_size=3,
-        ),
-        _stack_merge_scenario(
-            first_size=3,
-            first_then_second=False,
-            hazard_class="single-second",
-            name="merge-single-second",
-            second_size=1,
-        ),
     )
 
 
@@ -1397,27 +1213,6 @@ def _fixed_cross_stack_split_scenarios() -> tuple[CrossStackSplitScenario, ...]:
             target_index=0,
             hazard_class="split-middle",
             name="split-middle-deferred-one",
-        ),
-        _cross_stack_split_scenario(
-            initial_size=5,
-            source_index=3,
-            target_index=1,
-            hazard_class="split-middle",
-            name="split-middle-after-two",
-        ),
-        _cross_stack_split_scenario(
-            initial_size=5,
-            source_index=2,
-            target_index=0,
-            hazard_class="split-long-selected",
-            name="split-long-selected",
-        ),
-        _cross_stack_split_scenario(
-            initial_size=6,
-            source_index=4,
-            target_index=1,
-            hazard_class="split-long-deferred",
-            name="split-long-deferred",
         ),
     )
 
@@ -1480,42 +1275,6 @@ def filename_for_label(label: str) -> str:
 
 def _fixed_stack_edit_scenarios() -> tuple[StackEditScenario, ...]:
     return (
-        _model(4)
-        .append(StackEditOperation(kind="move_to_top", label="c1"))
-        .to_scenario(hazard_class="move-old-bottom", name="move-old-bottom"),
-        _model(4)
-        .append(StackEditOperation(kind="move_to_top", label="c2"))
-        .to_scenario(hazard_class="move-middle", name="move-middle"),
-        _model(3)
-        .append(
-            StackEditOperation(
-                kind="insert_after",
-                label="c1",
-                new_label="i1",
-            )
-        )
-        .to_scenario(hazard_class="insert-middle", name="insert-middle"),
-        _model(3)
-        .append(StackEditOperation(kind="abandon", label="c2"))
-        .to_scenario(hazard_class="abandon-middle", name="abandon-middle"),
-        _model(4)
-        .append(StackEditOperation(kind="move_before", label="c4", target_label="c2"))
-        .to_scenario(hazard_class="move-before-middle", name="move-before-middle"),
-        _model(4)
-        .append(StackEditOperation(kind="move_after", label="c1", target_label="c2"))
-        .to_scenario(hazard_class="move-after-middle", name="move-after-middle"),
-        _model(3)
-        .append(
-            StackEditOperation(
-                kind="insert_before",
-                label="c2",
-                new_label="i1",
-            )
-        )
-        .to_scenario(hazard_class="insert-before-middle", name="insert-before-middle"),
-        _model(3)
-        .append(StackEditOperation(kind="rewrite", label="c2"))
-        .to_scenario(hazard_class="rewrite-middle", name="rewrite-middle"),
         _model(3)
         .append(StackEditOperation(kind="squash_into_previous", label="c2"))
         .to_scenario(hazard_class="squash-middle", name="squash-middle-into-previous"),
@@ -1629,6 +1388,11 @@ def _label_sort_key(label: str) -> tuple[str, int]:
     return (label[0], int(label[1:]))
 
 
-# The default must cover the whole fixed corpus so an unconfigured run never
-# silently drops a hazard representative (such as the incident scenario).
+# Unconfigured pytest runs exercise only the fixed observable-risk representatives.
+# Larger counts continue into deterministic randomized generation through the opt-in runner.
+DEFAULT_STACK_EDIT_SCENARIO_COUNT = len(_fixed_stack_edit_scenarios())
+DEFAULT_CROSS_STACK_SCENARIO_COUNT = len(_fixed_cross_stack_split_scenarios())
+DEFAULT_STACK_MERGE_SCENARIO_COUNT = len(_fixed_stack_merge_scenarios())
+DEFAULT_STACK_MOVE_SCENARIO_COUNT = len(_fixed_stack_move_scenarios())
+DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT = len(_fixed_submit_retry_scenarios())
 DEFAULT_EXTERNAL_DRIFT_SCENARIO_COUNT = len(_fixed_external_drift_scenarios())

@@ -112,8 +112,6 @@ def replay_land_scenario(
         args = ["land", stack.head.change_id]
     if scenario.via == "merge":
         args.extend(("--via", "merge"))
-    if scenario.skip_cleanup:
-        args.append("--skip-cleanup")
     exit_code = run_cli(tuple(args))
     captured = read_output()
     assert exit_code == scenario.expected_exit_code, (
@@ -144,7 +142,6 @@ def replay_land_scenario(
             original_main=original_main,
             remaining_tracked=remaining_tracked,
             repo=repo,
-            skip_cleanup=scenario.skip_cleanup,
             state=state,
             trace=scenario.trace,
         )
@@ -503,7 +500,6 @@ def assert_push_landing(
     original_main: str,
     remaining_tracked: tuple[_TrackedChange, ...],
     repo: Path,
-    skip_cleanup: bool,
     state: ReviewState,
     trace: str,
 ) -> None:
@@ -532,13 +528,7 @@ def assert_push_landing(
     )
     for change in landed:
         local_target = bookmark_states[change.bookmark].local_target
-        if skip_cleanup:
-            assert local_target == current_commit_ids[change.change_id], (
-                change.pull_number,
-                trace,
-            )
-        else:
-            assert local_target is None, (change.pull_number, trace)
+        assert local_target is None, (change.pull_number, trace)
 
     for change in remaining_tracked:
         pull_request = fake_repo.pull_requests[change.pull_number]
@@ -839,7 +829,6 @@ def replay_land_drift_scenario(
             original_main=original_main,
             remaining_tracked=remaining_tracked,
             repo=repo,
-            skip_cleanup=False,
             state=ReviewStateStore.for_repo(repo).load(),
             trace=scenario.trace,
         )
@@ -1165,9 +1154,7 @@ def replay_land_retry_scenario(
     # An exact remote result makes lost acknowledgement and later retirement residue
     # successful outcomes; earlier observation faults still fail without replay state.
     expected_exit = (
-        0
-        if scenario.fault in {"after_push_ack_lost", "before_retirement_save"}
-        else EXIT_FAILURE
+        0 if scenario.fault in {"after_push_ack_lost", "before_retirement_save"} else EXIT_FAILURE
     )
     assert exit_code == expected_exit, (
         scenario.trace,
@@ -1196,7 +1183,6 @@ def replay_land_retry_scenario(
         original_main=original_main,
         remaining_tracked=remaining_tracked,
         repo=repo,
-        skip_cleanup=False,
         state=ReviewStateStore.for_repo(repo).load(),
         trace=scenario.trace,
     )
@@ -1249,9 +1235,7 @@ def replay_land_handoff_scenario(
             identity=identity,
             pull_number=identity.pr_number,
         )
-    for position, label in enumerate(scenario.initial_labels, start=1):
-        if position == scenario.withheld_position:
-            continue
+    for label in scenario.initial_labels:
         fake_repo.create_pull_request_review(
             pull_number=tracked[label].pull_number,
             reviewer_login=f"land-reviewer-{label}",
@@ -1279,14 +1263,6 @@ def replay_land_handoff_scenario(
         tracked=tracked,
     )
 
-    if scenario.withheld_position is not None:
-        withheld_label = scenario.initial_labels[scenario.withheld_position - 1]
-        fake_repo.create_pull_request_review(
-            pull_number=tracked[withheld_label].pull_number,
-            reviewer_login=f"land-reviewer-{withheld_label}",
-            state="APPROVED",
-        )
-
     suffix = tuple(tracked[label] for label in scenario.suffix_labels)
     client = JjClient(repo)
     current_commit_ids = {
@@ -1305,7 +1281,6 @@ def replay_land_handoff_scenario(
         original_main=original_main,
         remaining_tracked=(),
         repo=repo,
-        skip_cleanup=False,
         state=ReviewStateStore.for_repo(repo).load(),
         trace=scenario.trace,
     )
@@ -1373,16 +1348,12 @@ def _apply_handoff_origin(
                 ],
                 fake_repo.git_dir.parent,
             )
-    elif scenario.merge_fault:
+    else:
         install_fault()
         exit_code = run_cli(("land", "--via", "merge"))
         captured = read_output()
         assert exit_code == EXIT_GITHUB, (scenario.trace, captured.out, captured.err)
         restore_github()
-    else:
-        exit_code = run_cli(("land", "--via", "merge"))
-        captured = read_output()
-        assert exit_code == 0, (scenario.trace, captured.out, captured.err)
 
     for label in scenario.merged_labels:
         pull_request = fake_repo.pull_requests[tracked[label].pull_number]
@@ -1438,19 +1409,13 @@ def _assert_recovery_converged(
         assert pull_request.state == "closed", (label, scenario.trace)
         assert pull_request.merged_at is not None, (label, scenario.trace)
 
-    # The convergence pass (in-command for land --via merge, the recovery run
-    # for external merges and faulted lands) proves the pre-merge local copies
-    # inert and retires their tracking directly.
+    # The recovery run proves the pre-merge local copies inert and retires
+    # their tracking directly.
     for label in scenario.merged_labels:
         _assert_review_retired(state, tracked[label].change_id, scenario.trace)
 
     # Approvals granted before the handoff stay attached to the same PRs.
-    pre_approved = (
-        scenario.suffix_labels
-        if scenario.withheld_position is None
-        else scenario.suffix_labels[1:]
-    )
-    for label in pre_approved:
+    for label in scenario.suffix_labels:
         reviews = fake_repo.list_pull_request_reviews(tracked[label].pull_number)
         assert any(
             review.state == "APPROVED" and review.reviewer_login == f"land-reviewer-{label}"

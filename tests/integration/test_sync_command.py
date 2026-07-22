@@ -280,11 +280,23 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
     initial_state = state_store.load()
     state_path = resolve_state_path(repo)
     raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-    raw_state["review_identities"]["incomplete-change"] = initial_state.review_identities[
-        first.change_id
-    ].model_copy(
-        update={"head_ref": "review/incomplete-change", "pr_number": 99}
-    ).model_dump(mode="json")
+    raw_state["review_identities"]["incomplete-change"] = (
+        initial_state.review_identities[first.change_id]
+        .model_copy(update={"head_ref": "review/incomplete-change", "pr_number": 99})
+        .model_dump(mode="json")
+    )
+    missing_change_ids = tuple(f"missing-change-{index:02d}" for index in range(64))
+    for index, change_id in enumerate(missing_change_ids, start=100):
+        raw_state["review_identities"][change_id] = (
+            initial_state.review_identities[first.change_id]
+            .model_copy(update={"head_ref": f"review/{change_id}", "pr_number": index})
+            .model_dump(mode="json")
+        )
+        raw_state["submitted_baselines"][change_id] = (
+            initial_state.submitted_baselines[first.change_id]
+            .model_copy(update={"commit_id": f"{index:040x}"})
+            .model_dump(mode="json")
+        )
     write_file(state_path, json.dumps(raw_state))
 
     usage_exit = run_main(repo, config_path, "sync", "--all", second.change_id)
@@ -309,11 +321,13 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
     assert "submitted head" in captured.out
     assert "is closed without a result on trunk" in captured.out + captured.err
     assert "incomplete review tracking" in captured.out + captured.err
+    assert "could not inspect its current review" in captured.out + captured.err
     state = state_store.load()
     assert first.change_id in state.review_identities
     assert second.change_id not in state.review_identities
     assert third.change_id in state.review_identities
     assert "incomplete-change" in state.review_identities
+    assert set(missing_change_ids) <= state.review_identities.keys()
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
     assert fake_repo.pull_requests[3].state == "closed"

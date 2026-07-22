@@ -87,17 +87,11 @@ Replay follows the same shape for every scenario:
 The replay model must track stable `change_id`s for initial and inserted changes.
 Subjects and filenames are only labels that make failure output readable.
 
-The generated pool should start with a fixed corpus that always covers:
-
-- moving the old bottom change
-- moving a middle change
-- inserting a new change below existing submitted descendants
-- inserting a new change above existing submitted ancestors
-- abandoning a middle change
-- rewriting a reviewed change without changing topology
-- squashing one reviewed change into its predecessor
-
-Random generation then fills the remaining budget with unique scenario representatives.
+The unconfigured adapter keeps one fixed stack-edit representative: squashing a reviewed middle
+change into its predecessor. It combines a rewritten destination with an orphaned reviewed
+identity. Reorder, insertion, abandon, and plain rewrite syntax already have deterministic
+front-door coverage; the generator still explores all of them when an opt-in count exceeds the
+fixed prefix.
 
 The supported successful-submit operations should cover the common linear-stack edit
 surface:
@@ -181,9 +175,9 @@ revision. The oracle submits only the destination stack head and asserts:
 - no original PR is closed, merged, or replaced during the move submit
 - fake GitHub recorded no base-retarget event for a deferred source-stack PR
 
-The fixed scenario family covers moving a middle, head, bottom, and single-stack-source
-change, with insertion before and after destination revisions. Random scenarios vary both
-stack sizes, source direction, source index, target index, and insertion side.
+The fixed scenario moves a middle change into another stack while leaving a nonempty source stack
+behind. Random scenarios vary both stack sizes, source direction, source index, target index, and
+insertion side.
 
 ## External-drift Harness
 
@@ -204,8 +198,8 @@ boundary untouched: no remote ref changes, no local or remembered-remote bookmar
 no PR, review, or comment mutations, and byte-for-byte-equivalent saved tracking state.
 That includes keeping a newly inserted change free of bookmark and tracking state when an
 older submitted change makes preflight fail. The diagnosis is the typed
-identity of the CLI's fail-closed error — a `DriftError` condition, an
-`unsupported_stack:<reason>`, or `conflicted_stack` — captured from the error the CLI
+identity of the CLI's fail-closed error — a `DriftError` condition or
+`unsupported_stack:<reason>` — captured from the error the CLI
 hands its top-level printer, so a stop that fired for the wrong reason cannot pass on
 exit code alone. Each drift kind owns explicit allowed `(exit code, diagnosis)` pairs;
 composed scenarios union those pairs without accepting a code from one drift beside the
@@ -215,8 +209,9 @@ PR base, an external draft toggle) must converge on the full successful-submit c
 Drift transitions stay faithful to the platform: deleting a remote review branch also
 closes its PR because GitHub does, and a replacement PR created outside the tool shares
 the original head branch. The generator composes drifts only in reachable combinations —
-label-targeted drifts pick distinct live submitted changes, and shape-changing kinds
-(conflicted rebase, merge commit, the recreated-change incident) stay in fixed scenarios.
+label-targeted drifts pick distinct live submitted changes. The shape-changing recreated-change
+incident stays in the fixed corpus; conflict and merge-commit boundaries are covered by focused
+deterministic command tests.
 
 Every drift scenario, fail-closed or successful, ends by running `view` on the drifted
 selection and requiring a report exit (`0`, `2`, or `10`) rather than a crash or an
@@ -253,8 +248,9 @@ For the default direct-push transport, the oracle asserts:
   ready to land
 - landed PRs are finalized as merged, and their remote review branches are left intact
   at the landed commits
-- landed local review bookmarks are forgotten unless `--skip-cleanup` is present and only
-  after dependency-aware link retirement proves that no surviving review still uses them
+- landed local review bookmarks are forgotten only after dependency-aware link retirement proves
+  that no surviving review still uses them; the `--skip-cleanup` exception has focused command
+  coverage
 - local review tracking for the landed prefix is retired; tracking above the landing
   boundary and for orphaned changes is untouched
 - `list --json` stops reporting landed changes and still reports the remaining tracked
@@ -308,11 +304,12 @@ merged-ancestor check or vice versa.
 ## Land Retry Harness
 
 Land retry scenarios interrupt one direct-push land at a fault point, then run `sync --all` and
-require convergence rather than rollback. There is no saved transaction to resume:
-recovery is observational, so the fault family covers a trunk push whose success
-acknowledgement is lost, a failed load of the first landed PR during finalization, a failure on
-a later landed PR after an earlier one finalized, and a lost tracking-retirement save after
-every PR finalized remotely.
+require convergence rather than rollback. There is no saved transaction to resume. The fixed
+property family covers a failed load after the trunk push, a later finalization failure after an
+earlier PR completed, and a lost tracking-retirement save. Randomized runs also inject lost push
+acknowledgement. The deterministic process-death corpus separately terminates a CLI child after
+the accepted trunk push, after an accepted PR merge, and before a retirement save, then recovers
+in a fresh child.
 
 The oracle spans both runs with one event window: each landed PR transitions to closed
 exactly once in total, so the recovery provably finalizes only what the interrupted run
@@ -325,21 +322,17 @@ rest. Independently tracked sibling paths are byte-for-byte bystanders.
 
 ## Land Handoff Harness
 
-Merge-transport land and external merges both leave documented multi-command recovery
-work behind, and the handoff family replays that contract end to end. A prefix reaches
-trunk through GitHub merges — `land --via merge` stopped by an unapproved change, the
-same land interrupted mid-merge by a fault, or squash merges performed outside the tool
-with GitHub's usual head-branch auto-delete. Then selected `sync` rebuilds the suffix and
-updates its existing reviews, and a final direct-push land consumes it.
+The handoff family replays multi-command recovery end to end. A prefix reaches trunk through an
+interrupted merge-transport land or through squash merges outside the tool with GitHub's usual
+head-branch auto-delete. Then selected `sync` rebuilds the suffix and updates its existing
+reviews, and a final direct-push land consumes it.
 
 The oracle asserts the recovery converged before the final land: every suffix change
 keeps its PR number, bookmark, and pre-handoff approvals, the bottom suffix PR targets
 trunk, review branches point at the rebased commits, and the merged prefix sees no
-further event of any kind after the handoff begins. The convergence pass — in-command for
-`land --via merge`, the recovery run for external merges and faulted lands — proves the
-pre-merge local copies inert and retires them directly; copies something still pins
-immutable are preserved with guidance and retired by a closing `cleanup`. Either way the
-chain must end with `list --json` empty and no tracking for any original change.
+further event of any kind after the handoff begins. The recovery run proves the pre-merge local
+copies inert and retires them directly. The chain must end with `list --json` empty and no
+tracking for any original change.
 
 ## Interrupted-Submit Retry Harness
 
@@ -349,10 +342,10 @@ mutation, then a later operation fails. The expected behavior is not rollback; i
 safe rerun that discovers the partial artifacts and converges on the same final review
 state without duplicate PRs or lost metadata.
 
-Interrupted-submit scenarios create a fresh stack, install a one-shot failure at one
-mutation point, run `submit`, then rerun `submit` with nothing repaired in between —
-recovery derives entirely from the partial artifacts the first run left on GitHub and in
-tracking. The oracle asserts:
+Interrupted-submit scenarios create a fresh stack, install a one-shot failure at one mutation
+point, run `submit`, then follow the supported retry path for that fault. The fixed case covers
+adoption after an accepted remote push; opt-in generation also explores PR creation, update, and
+metadata failures. The oracle asserts:
 
 - every selected change has exactly one PR after retry
 - remote review branches point at the selected `jj` commits
@@ -402,8 +395,24 @@ For the submitted stack as a whole:
 
 Slice R1 separated identity from baseline in the harness and removed mechanism-level journal
 assertions. Slice R2 made every rewritten commit without a later `submit` a stopping boundary,
-including same-diff rebases caused by abandon, move, and reorder edits. Interruption and broader
-observable fixed-point reduction remain in the later replacement slices.
+including same-diff rebases caused by abandon, move, and reorder edits. Slice R4 reduced the
+unconfigured adapter from 92 scenarios to the 16 fixed points below; larger deterministic random
+pools remain opt-in.
+
+- submit edit, split, merge, move, retry, and drift:
+  `squash-middle-into-previous`, `split-middle-deferred-one`,
+  `merge-second-after-first`, `move-first-middle-after-second-head`,
+  `retry-after-remote-push`, `closed-pr-after-insert`, and `agent-recreated-pr`
+- land projection, scope, and external error:
+  `push-abandon-without-resubmit-stops-at-rebased-survivor`,
+  `push-bystander-stack-untouched-by-partial-land`, and
+  `merge-blocked-at-unmergeable-pr-converges-accepted-prefix`
+- land readiness and ancestry drift: `drift-changes-requested-stops-prefix` and
+  `drift-external-squash-merge-requires-selected-sync`
+- land retry: `retry-mid-finalize-converges-without-double-close` and
+  `retry-before-retirement-save-converges`
+- merge handoff: `handoff-external-squash-merge-then-sync-recovers` and
+  `handoff-interrupted-merge-land-recovers-through-sync`
 
 ## Efficiency
 
@@ -434,9 +443,8 @@ arguments after `--`.
 `--random-seed` generates one seed and uses it for both scenario generation and
 pytest-randomly ordering. The runner prints a complete reproduction invocation with the
 resolved seed, every family count, worker count, sync choice, and extra pytest arguments.
-GitHub CI uses this mode and runs one generated scenario beyond every fixed family corpus,
-so a failing CI log contains the exact command needed to replay the same scenario pool and
-test order locally.
+GitHub CI uses this mode with a randomized seed and bounded counts for every family, so a failing
+CI log contains the exact command needed to replay the same scenario pool and test order locally.
 
 The generator defaults should remain modest for quick local runner invocations. Runner
 configuration supplies:

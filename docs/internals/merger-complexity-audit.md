@@ -164,6 +164,7 @@ evidence, finalization, or equivalent module updates that command before adding 
 | R1: bound persistent state | 19,656 | 21,120 | 40,776 | 20 | 1,563 | 3,244 |
 | R2: unify mutation authority | 19,713 | 21,234 | 40,947 | 19 | 1,511 | 3,295 |
 | R3: replace convergence machinery | 19,687 | 21,246 | 40,933 | 18 | 1,550 | 3,295 |
+| R4: validate observable fixed points | 19,687 | 20,782 | 40,469 | 18 | 1,550 | 3,295 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
@@ -175,11 +176,15 @@ slice. Land shrinks by 52 SLOC, the governed surface meets its final 3,295-SLOC 
 largest module is `commands/cleanup/rebase.py` at 438 SLOC.
 
 R3 deletes 26 production SLOC and adds 12 test SLOC relative to R2. Pure exact and rewritten
-evidence,
-selected-path convergence, dependency-aware retirement, and explicit `sync --all` replace the two
-cleanup rebase/retirement modules and the implicit global land sweep. The governed surface meets
-its final 3,295-SLOC ceiling, every governed module stays below 500 SLOC, and the largest is
-`commands/sync.py` at 466 SLOC.
+evidence, selected-path convergence, dependency-aware retirement, and explicit `sync --all`
+replace the two cleanup rebase/retirement modules and the implicit global land sweep. The governed
+surface meets its final 3,295-SLOC ceiling, every governed module stays below 500 SLOC, and the
+largest is `commands/sync.py` at 466 SLOC.
+
+R4 leaves production unchanged and deletes 464 test SLOC relative to R3. Removing duplicate fixed
+examples, dead scenario vocabulary, and overlapping deterministic front doors pays for the three
+stronger child-process traces while reducing the total tree to 40,469 SLOC. All production and
+governed-surface budgets remain at their R3 values.
 
 ## Test budget
 
@@ -199,10 +204,50 @@ Replacement-specific deterministic coverage is limited to 30 collected pytest it
 parameter expansion counts separately. The default fixed property corpus is limited to 16 cases;
 broader generation remains opt-in.
 
-R1 preserves the existing fixed scenario factories while replacing their composite state
-oracles with separate identity and baseline comparisons. With no environment overrides, those
-factories currently expand to 92 cases. R4 must reduce or explicitly map them to at most 16
-before its marker is removed.
+R4 reduces the unconfigured property adapter from 92 cases to 16 fixed observable-risk
+representatives. Broader generators remain available through the opt-in runner; focused
+deterministic tests replace the removed one-off transition vocabulary. A unit guard caps the sum
+of the ten family defaults at 16, and collection with two xdist workers verifies identical node
+IDs.
+
+The hand-written replacement coverage now collects exactly 30 items: two retained R1 front doors,
+13 R2 authority and projection items, 11 R3 convergence and evidence items, and four R4 items
+(the three process-death traces plus the fixed-corpus budget guard). R4 reached that count by
+folding ten projection expansions into one classifier table, deleting four malformed-state command
+duplicates, and replacing three in-process interruption cases plus one redundant trunk-resolution
+front door with narrower or stronger coverage.
+
+The previously unnamed six neutralized harness traces are now auditable:
+
+- `push-reorder-without-resubmit-auto-resubmits-moved-prefix`: exact projection blocks until
+  `submit`; the projection table and
+  `test_land_requires_submit_after_diff_equivalent_rebase` cover the fixed point.
+- `push-abandon-auto-resubmits-rebased-survivors`:
+  `push-abandon-without-resubmit-stops-at-rebased-survivor`.
+- `retry-after-trunk-push-acknowledgement-loss-converges`: child termination after the accepted
+  trunk push, followed by `sync --all`.
+- `retry-before-direct-land-state-commit-converges`:
+  `retry-before-retirement-save-converges` and the retirement-save child termination.
+- `retry-mid-finalize-converges-without-double-close`: the retained mid-finalization property and
+  exactly-once event window.
+- `handoff-interrupted-merge-land-recovers-through-sync`: the retained interrupted-merge handoff
+  plus accepted-merge child termination.
+
+The child-process corpus runs the CLI in a disposable process, persists the fake external service
+after the accepted effect, terminates with `os._exit`, and performs recovery in a fresh process.
+It covers a successful trunk push, an accepted PR merge, and the boundary before a per-link
+retirement save. These checks establish local observational convergence without claiming real
+power-loss durability or live-GitHub semantics.
+
+The sparse-cache measurement extends the isolated `sync --all` front door with 64 complete records
+whose submitted commits are unavailable, absent GitHub PRs, one incomplete record, one head
+mismatch, one closed off-trunk PR, and one independently recoverable exact review. On the local
+test machine it completed in 5.68 seconds wall time (5.26 seconds inside pytest). The
+implementation starts one submitted-snapshot ancestry subprocess per complete record and one
+sequential GitHub lookup per nonexact record. Some nonexact records repeat the submitted-snapshot
+check while collecting rewritten-result evidence and may add another check for a reported merge
+result. Failures do not stop the exact review from retiring. This is an asymptotic bound, not a
+live-network latency claim.
 
 Tests do not assert journal events, internal read counts, helper order, or implicit global sweep
 behavior. Removing a mechanism removes its tests in the same slice.

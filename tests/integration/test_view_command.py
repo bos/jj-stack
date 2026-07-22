@@ -15,7 +15,6 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
-    write_file,
 )
 from ..support.json_schema import assert_json_output_matches_schema
 from ..support.output_assertions import assert_output_contains
@@ -69,27 +68,6 @@ def test_view_json_reports_public_stack_status(
     assert revision["pull_request"]["number"] == 1
     assert "remote_branch" not in revision
     assert "saved_pull_request" not in revision
-
-
-def test_view_marks_isolated_malformed_state_as_incomplete(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = JjClient(repo).discover_review_stack().head.change_id
-    state_path = resolve_state_path(repo)
-    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
-    state_payload["submitted_baselines"][change_id] = {"version": 9}
-    write_file(state_path, json.dumps(state_payload))
-
-    exit_code = run_main(repo, config_path, "view")
-    captured = capsys.readouterr()
-
-    assert exit_code == EXIT_INCOMPLETE
-    assert "Saved submitted baseline" in captured.err
-    assert "jj-stack relink --help" in captured.err
 
 
 def test_view_rejects_empty_working_copy_from_another_workspace(

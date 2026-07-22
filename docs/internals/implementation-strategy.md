@@ -699,9 +699,9 @@ The replacement sequence and hard budgets are recorded in
 
 The rework now provides a `jj`-derived stack, sparse lifecycle-free tracking, marker-based comment
 rediscovery, leases, one policy-free mutation observation, exact and rewritten landed evidence,
-selected convergence, and real-`jj` integration coverage. The remaining production-readiness work
-is the bounded validation slice in [merger-complexity-audit.md](merger-complexity-audit.md), not a
-new behavior or recovery subsystem.
+selected convergence, and real-`jj` integration coverage. The bounded replacement sequence is
+complete; its final validation evidence is recorded in
+[merger-complexity-audit.md](merger-complexity-audit.md).
 
 Replacement slice R1 is complete: it deleted `LandNote`, the write-only operation journal,
 composite `CachedChange` mutation state, and status/bookmark writes. Submit, explicit adoption,
@@ -718,6 +718,11 @@ selected `sync` rewrites only one path and updates only reviews that already exi
 `sync --all` is the only repository-wide finalization scan. Remote finalization and local
 retirement have independent outcomes, rewritten links survive until every dependent path is
 converged, and the old cleanup rebase and retirement subsystems were deleted.
+
+Replacement slice R4 is complete: the default property adapter contains 16 distinct fixed points,
+replacement-specific deterministic coverage contains 30 collected items, three abrupt CLI child
+terminations converge in fresh processes, and the large sparse-cache `sync --all` journey isolates
+unavailable commits and GitHub failures. Larger randomized property pools remain opt-in.
 
 Replacement slices delete obsolete recovery machinery with the feature that supersedes it. They
 must not stage a second state, authority, evidence, finalization, or retirement model for later
