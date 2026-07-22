@@ -45,10 +45,9 @@ compatibility code, migration code, or the like.
   the user docs: assume jj/git familiarity, avoid `jj-stack` internal design jargon.
 - Active internal docs use ordinary technical language too. Introduce a project-specific term
   only when it names a real type, field, or enduring rule, define it at first use, and prefer
-  describing concrete inputs and effects. Historical reports may preserve old terminology.
+  describing concrete inputs and effects.
 - `design.md` and `implementation-strategy.md` describe the current product and architecture, not
-  completed slices or abandoned mechanisms. Keep implementation history in `jj` commits or an
-  explicitly historical report.
+  completed slices or abandoned mechanisms. Keep implementation history in `jj` commits.
 
 # Behaviour changes
 

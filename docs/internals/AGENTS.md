@@ -21,8 +21,7 @@ agents working on the codebase. Most users will never open this directory.
 
 Only `design.md` defines product behavior. Other documents explain implementation, testing,
 review practice, or deferred work. Accepted plans guide their scoped work but do not change
-behavior until `design.md` is updated. Completed reports and superseded plans are historical
-evidence only.
+behavior until `design.md` is updated.
 
 ## Vocabulary
 
@@ -31,9 +30,9 @@ appropriate only when they name a real type, field, module, or enduring rule. De
 use and prefer concrete inputs, checks, and effects over a new taxonomy.
 
 Active design and strategy documents describe the current system. Do not make readers learn names
-for abandoned mechanisms or completed slices; keep that history in an explicitly historical
-report or `jj` commits. Do not use internal terminology as permission to make user-facing docs or
-help harder to understand. See `docs/AGENTS.md` for the stricter public vocabulary rules.
+for abandoned mechanisms or completed slices; keep that history in `jj` commits. Do not use
+internal terminology as permission to make user-facing docs or help harder to understand. See
+`docs/AGENTS.md` for the stricter public vocabulary rules.
 
 ## When to update these files
 

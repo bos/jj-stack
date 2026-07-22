@@ -22,8 +22,6 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
   their legal transitions, and required behavior per drift class.
 - **[property-testing.md](property-testing.md)** — fixed and expanded property scenarios,
   invariants, and the runner.
-- **[merger-complexity-audit.md](merger-complexity-audit.md)** — why the first merger
-  implementation was stopped and the hard budgets governing its replacement.
 - **[backlog.md](backlog.md)** — deferred features, open design questions,
   and non-blocking follow-up items. It is not a product specification.
 - **[help-and-docs-plan.md](help-and-docs-plan.md)** — plan for making built-in help and `docs/`
@@ -31,5 +29,4 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 
 Only [design.md](design.md) defines product behavior. The other documents explain implementation,
 testing, review practice, or deferred work. Accepted plans guide their scoped work but do not
-change behavior until the design is updated. Completed reports and superseded plans are historical
-evidence only.
+change behavior until the design is updated.

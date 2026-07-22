@@ -118,10 +118,10 @@ focused on behavior users need rather than implementation history:
   untestable locally rather than silently green. Each named gap should point at a live
   check or a stricter fake mode that would establish the real contract.
 
-Checked-in complexity and test-count budgets are enforced by `tools/check_complexity.py` and
-documented in [merger-complexity-audit.md](merger-complexity-audit.md). A proposed test beyond a
-budget must replace overlapping coverage in the same change. More tests do not compensate for a
-mechanism whose reachable state space is too large.
+Checked-in complexity and test-count budgets are defined in `complexity-budget.toml` and enforced
+by `tools/check_complexity.py`. A proposed test beyond a budget must replace overlapping coverage
+in the same change. More tests do not compensate for a mechanism whose reachable state space is
+too large.
 
 ## Choosing the right layer
 
