@@ -57,6 +57,7 @@ class _ProjectionCase:
     with_submitted_baseline: bool = True
 
 
+@pytest.mark.merger_replacement
 def test_land_projection_table_covers_exactness_and_boundary_precedence() -> None:
     prepared_revision = _prepared_status(("change-1",)).prepared.status_revisions[0]
     projection_message = "do not all identify the same exact commit"

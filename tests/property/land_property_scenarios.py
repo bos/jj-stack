@@ -33,6 +33,8 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.state.store import ReviewStateStore
 
+pytestmark = pytest.mark.fixed_property
+
 LAND_SCENARIOS = land_scenarios_from_environment()
 LAND_DRIFT_SCENARIOS = land_drift_scenarios_from_environment()
 LAND_RETRY_SCENARIOS = land_retry_scenarios_from_environment()

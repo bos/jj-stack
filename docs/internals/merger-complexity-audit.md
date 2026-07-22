@@ -157,6 +157,18 @@ The Ruff count covers production code under `src/jj_stack`, not tests. The multi
 command is the governed recovery-surface manifest. A slice that adds or renames an authority,
 evidence, finalization, or equivalent module updates that command before adding its code.
 
+CI enforces the same limits from the checked-in `complexity-budget.toml` manifest with:
+
+```console
+uv run tools/check_complexity.py
+```
+
+The gate uses SLOCCount itself rather than a similar line-count implementation. It also limits
+its own size, checks each governed module, counts Ruff `C901` findings, and collects the marked
+fixed-property and replacement-specific pytest items. The dedicated Linux CI job owns the
+SLOCCount dependency; the normal verification matrix remains cross-platform.
+On Windows, use WSL to run the gate locally or rely on the required Linux CI job.
+
 ## Replacement measurements
 
 | Slice | Production SLOC | Test SLOC | Total SLOC | C901 | Land SLOC | Governed SLOC |
@@ -165,6 +177,7 @@ evidence, finalization, or equivalent module updates that command before adding 
 | R2: unify mutation authority | 19,713 | 21,234 | 40,947 | 19 | 1,511 | 3,295 |
 | R3: replace convergence machinery | 19,687 | 21,246 | 40,933 | 18 | 1,550 | 3,295 |
 | R4: validate observable fixed points | 19,687 | 20,782 | 40,469 | 18 | 1,550 | 3,295 |
+| P1: enforce cumulative budgets | 19,667 | 20,830 | 40,497 | 17 | 1,530 | 3,275 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
@@ -185,6 +198,13 @@ R4 leaves production unchanged and deletes 464 test SLOC relative to R3. Removin
 examples, dead scenario vocabulary, and overlapping deterministic front doors pays for the three
 stronger child-process traces while reducing the total tree to 40,469 SLOC. All production and
 governed-surface budgets remain at their R3 values.
+
+P1 makes the existing limits executable in CI. Marking the two bounded pytest corpora and testing
+the gate's environment isolation add 48 test SLOC; splitting landability classification by
+pull-request lifecycle deletes 20 production SLOC and removes the governed surface's remaining
+`C901` finding instead of weakening the gate to fit it. The gate itself lives under `tools/`, so
+it does not inflate either historical measured tree; its separate 150-SLOC ceiling keeps that
+exclusion from hiding a new metrics framework while leaving room for correctness fixes.
 
 ## Test budget
 

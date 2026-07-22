@@ -39,6 +39,8 @@ import jj_stack.commands.submit.command as submit_command
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 
+pytestmark = pytest.mark.fixed_property
+
 STACK_EDIT_SCENARIOS = stack_edit_scenarios_from_environment()
 CROSS_STACK_SCENARIOS = cross_stack_scenarios_from_environment()
 STACK_MERGE_SCENARIOS = stack_merge_scenarios_from_environment()

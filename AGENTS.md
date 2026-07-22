@@ -3,6 +3,18 @@
 This project is under heavy development. Do not make any attempt to write backwards
 compatibility code, migration code, or the like.
 
+## Complexity control
+
+- A replacement is incomplete until it deletes the mechanism it supersedes in the same change.
+  Do not add a temporary parallel model with a promise to remove it in a later cleanup slice.
+- Give each jj-stack-owned durable policy fact one authority and one representation. Shared
+  observation or storage code must not create a second policy path for deciding or changing it.
+- Apply the cumulative complexity budgets after every code slice. CI runs
+  `uv run tools/check_complexity.py`; run it locally when SLOCCount is available. A budget increase
+  is a design stop that requires explicit review, not routine maintenance of the budget file.
+- If the same subsystem needs a third consecutive hardening change, stop patching it and
+  re-derive the design from the core invariants.
+
 # Workflow
 
 - This is a `jj` repo. Do not use `git` to work on the repo itself.

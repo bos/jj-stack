@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from jj_stack.errors import EXIT_USAGE
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -106,6 +108,7 @@ def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
     assert fake_repo.pull_requests[2].state == "open"
 
 
+@pytest.mark.merger_replacement
 def test_sync_repairs_one_sibling_path_without_retiring_shared_landed_state(
     tmp_path: Path,
     monkeypatch,
@@ -155,6 +158,7 @@ def test_sync_repairs_one_sibling_path_without_retiring_shared_landed_state(
     assert landed.change_id not in state.submitted_baselines
 
 
+@pytest.mark.merger_replacement
 def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     tmp_path: Path,
     monkeypatch,
@@ -182,6 +186,7 @@ def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     assert set(fake_repo.pull_requests) == {1, 2}
 
 
+@pytest.mark.merger_replacement
 def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     tmp_path: Path,
     monkeypatch,
@@ -215,6 +220,7 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
+@pytest.mark.merger_replacement
 def test_sync_rebases_trailing_local_work_without_creating_a_review(
     tmp_path: Path,
     monkeypatch,
@@ -245,6 +251,7 @@ def test_sync_rebases_trailing_local_work_without_creating_a_review(
     assert trailing.change_id not in ReviewStateStore.for_repo(repo).load().review_identities
 
 
+@pytest.mark.merger_replacement
 def test_sync_requires_every_surviving_review_before_rewriting(
     tmp_path: Path,
     monkeypatch,
@@ -267,6 +274,7 @@ def test_sync_requires_every_surviving_review_before_rewriting(
     assert set(fake_repo.pull_requests) == {1}
 
 
+@pytest.mark.merger_replacement
 def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
     tmp_path: Path,
     monkeypatch,

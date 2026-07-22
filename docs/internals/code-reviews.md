@@ -77,12 +77,21 @@ and every fix — including your own proposed fixes:
   later consecutive hardening of the same area, the correct review output is "stop
   patching; re-derive the theory," escalated as a design question — not approval of one
   more locally defensible fix.
+- **Replacement includes deletion.** A change that introduces a new state, authority, or
+  recovery mechanism without deleting the one it supersedes is unfinished. Do not accept
+  "cleanup later" as complexity credit.
+- **One jj-stack-owned durable policy fact has one authority and one representation.** Sharing
+  low-level observation or persistence is useful; preserving two policy-bearing paths is not. If
+  both old and new paths can decide or mutate the same fact, require the change to choose one.
 
 The merger work has an additional measurable stop rule in
 [merger-complexity-audit.md](merger-complexity-audit.md). Reviewers must compare production SLOC,
 test SLOC, total SLOC, Ruff `C901` findings, and recovery-module size with the pinned base. A
 budget breach is a design finding. Moving the same policy into a helper, wrapper, or neighboring
-package does not count as simplification.
+package does not count as simplification. CI runs `uv run tools/check_complexity.py`; run it
+locally when SLOCCount is available. Edits to `complexity-budget.toml`, the governed path list, or
+either pytest budget marker require the same scrutiny as an implementation change. The gate caps
+marked tests; reviewers remain responsible for marking every replacement-specific case.
 
 ## Review the user experience directly
 

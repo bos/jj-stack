@@ -200,129 +200,115 @@ def _landability_decision(
     revision = land_revision.revision
     change_status = land_revision.status
     if land_revision.prepared_revision.revision.conflict:
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"this change still has unresolved conflicts"
-            )
+        return _land_boundary(
+            revision,
+            "this change still has unresolved conflicts",
         )
     if change_status.link == "unlinked":
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"this change is unlinked from review tracking; run {ui.cmd('relink')} first"
-            )
+        return _land_boundary(
+            revision,
+            t"this change is unlinked from review tracking; run {ui.cmd('relink')} first",
         )
     if change_status.local == "divergent":
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"multiple visible revisions still share that change ID"
-            )
+        return _land_boundary(
+            revision,
+            "multiple visible revisions still share that change ID",
         )
     pull_request_lookup = revision.pull_request_lookup
     if pull_request_lookup is None:
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"GitHub pull request state is unavailable"
-            )
-        )
+        return _land_boundary(revision, "GitHub pull request state is unavailable")
     if change_status.pr_lifecycle == "open":
-        pull_request = land_revision.pull_request
-        if pull_request is None:
-            raise AssertionError("Open land boundary requires a pull request payload.")
-        projection_targets = (
-            land_revision.local_commit_id,
-            land_revision.submitted_baseline,
-            land_revision.remote_target,
-            pull_request.head.sha,
+        return _open_landability_decision(
+            bypass_readiness=bypass_readiness,
+            land_revision=land_revision,
         )
-        if any(target != land_revision.local_commit_id for target in projection_targets):
-            return _LandabilityDecision(
-                boundary_message=(
-                    t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                    t"the local change, last submitted version, review branch, and pull "
-                    t"request do not all identify the same exact commit; run "
-                    t"{ui.cmd(f'jj-stack submit {revision.change_id}')} before landing"
-                )
-            )
-        if change_status.pr_review_decision_error is not None:
-            detail = change_status.pr_review_decision_error
-            return _LandabilityDecision(
-                boundary_message=(
-                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                    t"because {detail}"
-                )
-            )
-        if change_status.pr_draft is True:
-            if bypass_readiness:
-                return _LandabilityDecision(boundary_message=None)
-            return _LandabilityDecision(
-                boundary_message=(
-                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                    t"because PR #{pull_request.number} is still a draft"
-                )
-            )
-        if change_status.pr_review_decision == "changes_requested":
-            if bypass_readiness:
-                return _LandabilityDecision(boundary_message=None)
-            return _LandabilityDecision(
-                boundary_message=(
-                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                    t"because PR #{pull_request.number} has changes requested"
-                )
-            )
-        if change_status.pr_review_decision != "approved":
-            if bypass_readiness:
-                return _LandabilityDecision(boundary_message=None)
-            return _LandabilityDecision(
-                boundary_message=(
-                    t"before {revision.subject} {ui.change_id(revision.change_id)} "
-                    t"because PR #{pull_request.number} is not approved"
-                )
-            )
+    return _closed_landability_decision(land_revision)
+
+
+def _open_landability_decision(
+    *,
+    bypass_readiness: bool,
+    land_revision: _LandPathRevision,
+) -> _LandabilityDecision:
+    revision = land_revision.revision
+    change_status = land_revision.status
+    pull_request = land_revision.pull_request
+    if pull_request is None:
+        raise AssertionError("Open land boundary requires a pull request payload.")
+    projection_targets = (
+        land_revision.local_commit_id,
+        land_revision.submitted_baseline,
+        land_revision.remote_target,
+        pull_request.head.sha,
+    )
+    if any(target != land_revision.local_commit_id for target in projection_targets):
+        return _land_boundary(
+            revision,
+            t"the local change, last submitted version, review branch, and pull request do "
+            t"not all identify the same exact commit; run "
+            t"{ui.cmd(f'jj-stack submit {revision.change_id}')} before landing",
+        )
+    if change_status.pr_review_decision_error is not None:
+        return _land_boundary(revision, change_status.pr_review_decision_error)
+    if bypass_readiness:
         return _LandabilityDecision(boundary_message=None)
+    if change_status.pr_draft is True:
+        return _land_boundary(revision, t"PR #{pull_request.number} is still a draft")
+    if change_status.pr_review_decision == "changes_requested":
+        return _land_boundary(revision, t"PR #{pull_request.number} has changes requested")
+    if change_status.pr_review_decision != "approved":
+        return _land_boundary(revision, t"PR #{pull_request.number} is not approved")
+    return _LandabilityDecision(boundary_message=None)
+
+
+def _closed_landability_decision(
+    land_revision: _LandPathRevision,
+) -> _LandabilityDecision:
+    revision = land_revision.revision
+    change_status = land_revision.status
+    pull_request_lookup = revision.pull_request_lookup
+    if pull_request_lookup is None:
+        raise AssertionError("Closed land boundary requires a pull request lookup.")
     if change_status.pr_lifecycle == "missing":
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"GitHub no longer reports a pull request for its branch; run "
-                t"{ui.cmd('view --fetch')} or {ui.cmd('relink')} first"
-            )
+        return _land_boundary(
+            revision,
+            t"GitHub no longer reports a pull request for its branch; run "
+            t"{ui.cmd('view --fetch')} or {ui.cmd('relink')} first",
         )
     if change_status.pr_lifecycle == "ambiguous":
         detail = pull_request_lookup.message or "GitHub reports an ambiguous PR link"
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"{detail} Run {ui.cmd('view --fetch')} and repair the PR link with "
-                t"{ui.cmd('relink')}."
-            )
+        return _land_boundary(
+            revision,
+            t"{detail} Run {ui.cmd('view --fetch')} and repair the PR link with "
+            t"{ui.cmd('relink')}.",
         )
     if change_status.has_pull_request_lookup_failure:
         detail = pull_request_lookup.message or "GitHub lookup failed"
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because {detail}"
-            )
-        )
+        return _land_boundary(revision, detail)
     pull_request = land_revision.pull_request
     if pull_request is None:
         raise AssertionError("Closed land boundary requires a pull request payload.")
     if pull_request.state == "merged":
-        return _LandabilityDecision(
-            boundary_message=(
-                t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"PR #{pull_request.number} is already merged; preview "
-                t"{ui.cmd('jj-stack sync --dry-run')} {ui.change_id(revision.change_id)} "
-                t"before running {ui.cmd('jj-stack sync')} {ui.change_id(revision.change_id)}"
-            )
+        return _land_boundary(
+            revision,
+            t"PR #{pull_request.number} is already merged; preview "
+            t"{ui.cmd('jj-stack sync --dry-run')} {ui.change_id(revision.change_id)} before "
+            t"running {ui.cmd('jj-stack sync')} {ui.change_id(revision.change_id)}",
         )
+    return _land_boundary(
+        revision,
+        t"PR #{pull_request.number} is closed without merge",
+    )
+
+
+def _land_boundary(
+    revision: ReviewStatusRevision,
+    reason: Message,
+) -> _LandabilityDecision:
     return _LandabilityDecision(
         boundary_message=(
-            t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-            t"PR #{pull_request.number} is closed without merge"
+            t"before {revision.subject} {ui.change_id(revision.change_id)} because ",
+            reason,
         )
     )
 

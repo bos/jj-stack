@@ -1,0 +1,37 @@
+[sloc]
+production = 20_303
+tests = 21_600
+total = 42_000
+land = 1_690
+governed = 3_295
+governed_module = 500
+checker = 150
+
+[ruff]
+c901 = 18
+governed_c901 = 0
+
+[pytest]
+fixed_property = 16
+merger_replacement = 30
+
+[paths]
+production = ["src"]
+tests = ["tests"]
+checker = ["tools/check_complexity.py"]
+land = ["src/jj_stack/commands/land"]
+governed = [
+  "src/jj_stack/commands/land",
+  "src/jj_stack/commands/sync.py",
+  "src/jj_stack/models/review_state.py",
+  "src/jj_stack/state/store.py",
+  "src/jj_stack/review/landed.py",
+  "src/jj_stack/review/landed_evidence.py",
+  "src/jj_stack/review/convergence.py",
+  "src/jj_stack/review/observation.py",
+]
+fixed_property = [
+  "tests/property/submit_property_scenarios.py",
+  "tests/property/land_property_scenarios.py",
+]
+merger_replacement = ["tests"]

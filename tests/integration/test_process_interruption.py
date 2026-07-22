@@ -21,6 +21,7 @@ _HELPER = Path(__file__).parents[1] / "support" / "process_interruption.py"
 _REPO_ROOT = Path(__file__).parents[2]
 
 
+@pytest.mark.merger_replacement
 @pytest.mark.parametrize(
     "fault",
     ("trunk_push", "accepted_merge", "retirement_save"),

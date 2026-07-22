@@ -48,6 +48,10 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-ra"
+markers = [
+  "fixed_property: default generated fixed-point scenarios",
+  "merger_replacement: deterministic coverage governed by the merger test budget",
+]
 testpaths = ["tests"]
 
 [tool.coverage.run]

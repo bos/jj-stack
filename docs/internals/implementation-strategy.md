@@ -733,3 +733,6 @@ The planned live-GitHub experiment has not been run. Direct-push PR lifecycle, r
 behavior, merge-result identity by merge method, merged-head deletion, and expected-head rejection
 therefore remain external evidence gaps. The fake may exercise local control flow around those
 cases, but it cannot establish GitHub behavior.
+
+The complexity-policy follow-up is complete. The operational rules live in `AGENTS.md` and the
+review guide; a dedicated CI gate enforces the checked-in budgets.

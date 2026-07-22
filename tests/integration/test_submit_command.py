@@ -1271,6 +1271,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
     assert fake_repo.pull_requests[pr_number].title == "feature 1 renamed"
 
 
+@pytest.mark.merger_replacement
 def test_submit_requires_relink_after_state_and_local_bookmark_loss(
     tmp_path: Path,
     monkeypatch,
@@ -1387,6 +1388,7 @@ def test_submit_stops_before_push_when_saved_link_mismatch_has_pending_rewrite(
     assert fake_repo.pull_requests[1].title == "feature 1"
 
 
+@pytest.mark.merger_replacement
 def test_submit_rejects_isolated_malformed_identity_before_github_mutation(
     tmp_path: Path,
     monkeypatch,
