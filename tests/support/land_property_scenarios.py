@@ -847,7 +847,7 @@ def _random_land_retry_scenario(
 
 
 LandHandoffOrigin = Literal["external_squash_merge", "merge_land"]
-LandHandoffRecovery = Literal["cleanup_rebase", "sync"]
+LandHandoffRecovery = Literal["sync"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -856,9 +856,8 @@ class LandHandoffScenario:
 
     The chain replays the documented recovery contract end to end: a prefix
     reaches trunk through GitHub merges — `land --via merge`, an interrupted
-    merge land, or squash merges outside the tool — then `sync` or
-    `cleanup --rebase` plus `submit` rebuilds the local suffix, and a final
-    direct-push land consumes it.
+    merge land, or squash merges outside the tool — then selected `sync`
+    rebuilds the local suffix, and a final direct-push land consumes it.
     """
 
     name: str
@@ -990,25 +989,11 @@ def _fixed_land_handoff_scenarios() -> tuple[LandHandoffScenario, ...]:
             recovery="sync",
         ),
         LandHandoffScenario(
-            name="handoff-merge-land-then-cleanup-rebase-lands-suffix",
-            initial_size=3,
-            merged_prefix=2,
-            origin="merge_land",
-            recovery="cleanup_rebase",
-        ),
-        LandHandoffScenario(
             name="handoff-external-squash-merge-then-sync-recovers",
             initial_size=3,
             merged_prefix=1,
             origin="external_squash_merge",
             recovery="sync",
-        ),
-        LandHandoffScenario(
-            name="handoff-external-squash-merge-then-cleanup-rebase-recovers",
-            initial_size=2,
-            merged_prefix=1,
-            origin="external_squash_merge",
-            recovery="cleanup_rebase",
         ),
         LandHandoffScenario(
             name="handoff-interrupted-merge-land-recovers-through-sync",
@@ -1030,14 +1015,13 @@ def _random_land_handoff_scenario(
     name: str,
 ) -> LandHandoffScenario:
     origins: tuple[LandHandoffOrigin, ...] = ("external_squash_merge", "merge_land")
-    recoveries: tuple[LandHandoffRecovery, ...] = ("cleanup_rebase", "sync")
     initial_size = rng.randint(2, 4)
     return LandHandoffScenario(
         name=name,
         initial_size=initial_size,
         merged_prefix=rng.randint(1, initial_size - 1),
         origin=rng.choice(origins),
-        recovery=rng.choice(recoveries),
+        recovery="sync",
     )
 
 

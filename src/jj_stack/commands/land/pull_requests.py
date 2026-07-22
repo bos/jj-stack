@@ -8,7 +8,12 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.review.landed import landed_pull_request_head_mismatch
+from jj_stack.models.review_state import SubmittedBaseline
+from jj_stack.review.landed import FinalizationContext, observe_landed_candidate
+from jj_stack.review.landed_evidence import (
+    LandedReviewCandidate,
+    collect_landed_evidence,
+)
 from jj_stack.review.observation import observe_review_mutation
 
 from .authority import land_authority_error
@@ -70,25 +75,17 @@ async def merge_landed_pull_request(
             return None, blocked
     if pull_request.state == "open":
         blocked = await _request_merge(
+            context=context,
             github_client=github_client,
             landed_revision=landed_revision,
             merge_method=merge_method,
             pull_request=pull_request,
+            remote_name=remote_name,
+            trunk_branch=trunk_branch,
         )
         if blocked is not None:
             return None, blocked
-        try:
-            pull_request = await github_client.get_pull_request(
-                pull_number=pull_request.number,
-            )
-        except GithubClientError as error:
-            raise CliError(t"Could not reload PR #{pull_request.number} after merging") from error
-        pull_request = pull_request.normalize_state()
-        _ensure_landed_pull_request_head(
-            github_client=github_client,
-            landed_revision=landed_revision,
-            pull_request=pull_request,
-        )
+        return pull_request, None
     if pull_request.state != "merged":
         return None, LandAction(
             kind="boundary",
@@ -103,10 +100,13 @@ async def merge_landed_pull_request(
 
 async def _request_merge(
     *,
+    context: CommandContext,
     github_client: GithubClient,
     landed_revision: LandRevision,
     merge_method: str,
     pull_request: GithubPullRequest,
+    remote_name: str,
+    trunk_branch: str,
 ) -> LandAction | None:
     try:
         await github_client.merge_pull_request(
@@ -115,6 +115,14 @@ async def _request_merge(
             merge_method=merge_method,
         )
     except GithubClientError as error:
+        if await _merge_result_reached_trunk(
+            context=context,
+            github_client=github_client,
+            landed_revision=landed_revision,
+            remote_name=remote_name,
+            trunk_branch=trunk_branch,
+        ):
+            return None
         if error.status_code == 409:
             detail = "GitHub rejected the merge because the PR head changed;"
             retry = f"jj-stack submit {landed_revision.change_id}"
@@ -131,6 +139,49 @@ async def _request_merge(
             status="blocked",
         )
     return None
+
+
+async def _merge_result_reached_trunk(
+    *,
+    context: CommandContext,
+    github_client: GithubClient,
+    landed_revision: LandRevision,
+    remote_name: str,
+    trunk_branch: str,
+) -> bool:
+    try:
+        context.jj_client.fetch_remote(remote=remote_name, branches=(trunk_branch,))
+        trunk_commit_id = context.jj_client.resolve_revision("trunk()").commit_id
+    except CliError, GithubClientError, JjCommandError:
+        return False
+    candidate = LandedReviewCandidate(
+        change_id=landed_revision.change_id,
+        review_identity=landed_revision.identity,
+        submitted_baseline=SubmittedBaseline(commit_id=landed_revision.commit_id),
+    )
+    observation, _ = await observe_landed_candidate(
+        candidate,
+        FinalizationContext(
+            command=context,
+            dry_run=False,
+            github=github_client,
+            remote_name=remote_name,
+            trunk_branch=trunk_branch,
+            trunk_commit_id=trunk_commit_id,
+        ),
+    )
+    if observation is None:
+        return False
+    if (pull_request := observation.reviews[landed_revision.change_id].pull_request) is None:
+        return False
+    exact, rewritten = collect_landed_evidence(
+        candidate=candidate,
+        context=context,
+        pull_request=pull_request,
+        repository=github_client.repository,
+        trunk_commit_id=trunk_commit_id,
+    )
+    return exact.state == "landed" or rewritten.state == "landed"
 
 
 async def _fresh_pull_request_authority(
@@ -179,24 +230,4 @@ def _freshness_boundary(revision: LandRevision, reason: str) -> LandAction:
         t"{ui.change_id(revision.change_id)}: {reason}; inspect it and rerun "
         t"{ui.cmd('land --via merge')}",
         status="blocked",
-    )
-
-
-def _ensure_landed_pull_request_head(
-    *,
-    github_client: GithubClient,
-    landed_revision: LandRevision,
-    pull_request: GithubPullRequest,
-) -> None:
-    mismatch = landed_pull_request_head_mismatch(
-        bookmark=landed_revision.identity.head_ref,
-        commit_id=landed_revision.commit_id,
-        github_client=github_client,
-        pull_request=pull_request,
-    )
-    if mismatch is None:
-        return
-    raise CliError(
-        t"Cannot finalize {ui.change_id(landed_revision.change_id)}: {mismatch}.",
-        hint=t"Run {ui.cmd('view --fetch')} and inspect the review before retrying.",
     )

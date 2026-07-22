@@ -165,7 +165,7 @@ def run_submit(
     """Run the full submit flow. The caller owns the operation lock."""
 
     return asyncio.run(
-        _run_submit_async(
+        run_submit_async(
             context=context,
             on_prepared=on_prepared,
             options=options,
@@ -215,6 +215,7 @@ def _submit_options_from_cli(
         ),
         dry_run=dry_run,
         edit=edit,
+        existing_only=False,
         labels=parse_comma_separated_flag_values(labels),
         re_request=re_request,
         restart=restart,
@@ -406,7 +407,7 @@ def _reject_restart_pull_request_collisions(
     )
 
 
-async def _run_submit_async(
+async def run_submit_async(
     *,
     context: CommandContext,
     on_prepared: Callable[[str, str], None] | None,
@@ -527,6 +528,11 @@ async def _run_submit_async(
             pending_syncs=pending_syncs,
             state=mutation_run.state,
         )
+        _ensure_existing_only_reviews(
+            existing_only=options.existing_only,
+            pending_syncs=pending_syncs,
+            state=mutation_run.state,
+        )
         sync_local_bookmarks(
             bookmark_states=bookmark_states,
             client=client,
@@ -595,3 +601,26 @@ async def _run_submit_async(
         stack=stack,
         trunk_branch=trunk_branch,
     )
+
+
+def _ensure_existing_only_reviews(
+    *,
+    existing_only: bool,
+    pending_syncs: tuple[PendingPullRequestSync, ...],
+    state: ReviewState,
+) -> None:
+    """Make PR creation unreachable for selected convergence."""
+
+    if not existing_only:
+        return
+    for pending in pending_syncs:
+        change_id = pending.prepared.revision.change_id
+        if (
+            state.review_identities.get(change_id) is None
+            or state.submitted_baselines.get(change_id) is None
+            or pending.discovered_pull_request is None
+        ):
+            raise CliError(
+                t"Cannot sync {ui.change_id(change_id)} without its existing pull request.",
+                hint=t"Repair the review link with {ui.cmd('relink')} before retrying.",
+            )

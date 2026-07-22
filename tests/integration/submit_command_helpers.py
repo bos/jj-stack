@@ -33,6 +33,7 @@ def configure_submit_environment(
             "jj_stack.commands.close_orphan",
             "jj_stack.commands.cleanup.command",
             "jj_stack.commands.land.command",
+            "jj_stack.commands.sync",
             "jj_stack.commands.list_",
             "jj_stack.review.landed",
             "jj_stack.review.status",

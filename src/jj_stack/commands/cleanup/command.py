@@ -7,13 +7,7 @@ Open orphaned PRs are preserved. Run `jj-stack list` to see them, then retire on
 with `jj-stack unstack --cleanup --pull-request <pr>`, or retire all of them with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
-Development status: `--rebase [REVSET]` still exposes the rebase path used by the current
-`sync` implementation. Rebasing after merged changes will move entirely to `sync`; `cleanup`
-will then only remove stale tracking data and review branches.
-
-Use `--dry-run` to preview cleanup actions. With transitional `--rebase`, this fetches remote
-state and can update jj's remote-bookmark observations, but does not apply the planned rebase,
-push, PR, cleanup, or tracking changes.
+Use `--dry-run` to preview cleanup actions without applying mutations.
 
 """
 
@@ -53,7 +47,6 @@ from jj_stack.state.operation_lock import (
 )
 from jj_stack.ui import plain_text
 
-from .rebase import run_cleanup_rebase_command
 from .shared import (
     CleanupAction,
     CleanupResult,
@@ -83,7 +76,6 @@ def cleanup(
     debug: bool,
     dry_run: bool,
     repository: Path | None,
-    rebase_revset: str | None,
 ) -> int:
     """CLI entrypoint for `cleanup`."""
 
@@ -94,16 +86,8 @@ def cleanup(
     )
     with acquire_operation_lock(
         context.state_store.require_writable(),
-        command="cleanup --rebase" if rebase_revset is not None else "cleanup",
+        command="cleanup",
     ):
-        if rebase_revset is not None:
-            rebase_result = run_cleanup_rebase_command(
-                context=context,
-                dry_run=dry_run,
-                rebase_revset=rebase_revset,
-            )
-            return 1 if rebase_result.blocked else 0
-
         return _run_cleanup_command(
             context=context,
             dry_run=dry_run,

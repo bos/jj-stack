@@ -30,6 +30,7 @@ class SubmitOptions:
     draft_mode: SubmitDraftMode
     dry_run: bool
     edit: bool
+    existing_only: bool
     labels: list[str] | None
     re_request: bool
     restart: bool

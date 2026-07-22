@@ -38,7 +38,6 @@ measurement land together.
 
 | Slice | Unimplemented target |
 | --- | --- |
-| R3 | Pure landed evidence, selected convergence, shared retirement, and explicit `sync --all`. |
 | R4 | Reduced cross-system, interruption, hostile-scenario, and sparse-cache validation. |
 
 Cross-system validation remains incomplete until the child-process, hostile-scenario, and sparse

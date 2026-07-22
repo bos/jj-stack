@@ -103,9 +103,8 @@ jj-stack sync <head-change-id>
 
 Selected `sync` verifies which lower PRs landed, rebases the selected remaining changes above the
 current `trunk()`, and updates only PRs that already exist for them. Use
-`jj-stack sync --dry-run <head-change-id>` first while the production rework is in progress:
-the current build can still retarget or close PRs for other tracked stacks and open PRs through
-`sync`.
+`jj-stack sync --dry-run <head-change-id>` first if you want to preview the repair. It leaves
+other stacks and unreviewed trailing changes alone.
 
 ## `list` or `view` says another stack changed since its last submit
 
@@ -275,14 +274,14 @@ instead of replaying a retained recovery record.
 | `submit`                         | `jj-stack submit <revset>`                          |
 | `unstack` / `unstack --cleanup`  | `jj-stack unstack [--cleanup] <revset>`             |
 | `sync`                           | `jj-stack sync --dry-run <revset>`                  |
-| `land`                           | `jj-stack sync --dry-run <revset>`                  |
+| `land --via merge`               | `jj-stack sync --dry-run <revset>`                  |
+| direct-push `land`               | `jj-stack sync --all --dry-run`                     |
 
-Current `sync` can retarget or close PRs for other tracked stacks and can open PRs. After the
-explicit dry-run is safe, rerun the same selected command without `--dry-run`. For an interrupted
-`land`, that selected `sync` finishes cleanup after a successful trunk push while keeping any
-review branch still needed by a PR above. If GitHub merges were requested but never confirmed, it
-checks the current GitHub result and trunk history, explains what actually merged, and continues
-from current state.
+After the explicit dry-run is safe, rerun the same command without `--dry-run`. Selected `sync`
+handles GitHub-created rewritten merge results while keeping any review branch still needed by a
+PR above. For a direct push whose exact commit reached trunk, `sync --all` finalizes and retires
+the remaining exact review state. Both modes inspect current GitHub state and trunk history rather
+than replaying the interrupted operation.
 
 ### Back out
 

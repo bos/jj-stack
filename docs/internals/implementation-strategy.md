@@ -697,16 +697,11 @@ bookmark `archive-complexity-spiral-2026-07-21` as failure evidence, not reusabl
 The replacement sequence and hard budgets are recorded in
 [merger-complexity-audit.md](merger-complexity-audit.md).
 
-The rework foundation already provides a `jj`-derived stack, sparse lifecycle-free tracking,
-marker-based comment rediscovery, leases, an observational land/sync routine, and real-`jj`
-integration coverage. It is not production-ready. The canonical gap markers in `design.md` map to
-these current implementation facts:
-
-- state is version 2 with separate nominal review identities and exact submitted baselines;
-  malformed entries are isolated and preserved, and only narrow exact-record mutations write it
-- the GitHub model and fake expose no live merge-result identity
-- finalization is coupled to link retirement
-- ordinary selected commands run a repository-wide sweep and selected sync calls plain `submit`
+The rework now provides a `jj`-derived stack, sparse lifecycle-free tracking, marker-based comment
+rediscovery, leases, one policy-free mutation observation, exact and rewritten landed evidence,
+selected convergence, and real-`jj` integration coverage. The remaining production-readiness work
+is the bounded validation slice in [merger-complexity-audit.md](merger-complexity-audit.md), not a
+new behavior or recovery subsystem.
 
 Replacement slice R1 is complete: it deleted `LandNote`, the write-only operation journal,
 composite `CachedChange` mutation state, and status/bookmark writes. Submit, explicit adoption,
@@ -716,7 +711,13 @@ transitions.
 Replacement slice R2 is complete: land consumes only exact submitted snapshots, never refreshes
 review branches, and reloads one policy-free observation immediately before each mutation. Direct
 trunk pushes carry an exact expected-target lease; GitHub merges carry the expected head and
-reauthorize readiness after retargeting. The remaining facts above belong to R3.
+reauthorize readiness after retargeting.
+
+Replacement slice R3 is complete: exact-snapshot and rewritten-result evidence remain distinct,
+selected `sync` rewrites only one path and updates only reviews that already exist, and explicit
+`sync --all` is the only repository-wide finalization scan. Remote finalization and local
+retirement have independent outcomes, rewritten links survive until every dependent path is
+converged, and the old cleanup rebase and retirement subsystems were deleted.
 
 Replacement slices delete obsolete recovery machinery with the feature that supersedes it. They
 must not stage a second state, authority, evidence, finalization, or retirement model for later

@@ -109,8 +109,6 @@ def validate_land_plan_merge_method(
     merge_method: str | None,
     plan: LandPlan,
 ) -> None:
-    """Reject merge methods that cannot preserve the planned stack."""
-
     if plan.via != "merge" or merge_method != "rebase":
         return
     if len(plan.planned_revisions) <= 1:
@@ -316,8 +314,7 @@ def _landability_decision(
         return _LandabilityDecision(
             boundary_message=(
                 t"before {revision.subject} {ui.change_id(revision.change_id)} because "
-                t"PR #{pull_request.number} is already merged; current sync can retarget or "
-                t"close PRs for other tracked stacks and can open PRs, so preview "
+                t"PR #{pull_request.number} is already merged; preview "
                 t"{ui.cmd('jj-stack sync --dry-run')} {ui.change_id(revision.change_id)} "
                 t"before running {ui.cmd('jj-stack sync')} {ui.change_id(revision.change_id)}"
             )
@@ -339,8 +336,6 @@ def _plan_review_bookmark_cleanup(
     bookmark_state: BookmarkState,
     commit_id: str,
 ) -> LandAction | None:
-    """Validate whether `land` can forget one landed local review bookmark."""
-
     if not bookmark_cleanup_allowed(
         bookmark=bookmark,
         bookmark_managed=bookmark_managed,
@@ -376,8 +371,6 @@ def plan_review_bookmark_cleanup_for_revisions(
     cleanup_user_bookmarks: bool,
     planned_revisions: tuple[LandRevision, ...],
 ) -> dict[str, LandAction]:
-    """Plan which landed local review bookmarks `land` should forget."""
-
     if not cleanup_bookmarks:
         return {}
     cleanup_actions: dict[str, LandAction] = {}

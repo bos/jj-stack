@@ -587,14 +587,17 @@ def _assert_merge_transport_result(
                 change.pull_number,
                 trace,
             )
-        assert baseline.commit_id == live_commit, (
-            change.pull_number,
-            trace,
-        )
-        assert _remote_ref(fake_repo.git_dir, change.bookmark) == live_commit, (
-            change.pull_number,
-            trace,
-        )
+            assert baseline.commit_id == live_commit, (change.pull_number, trace)
+            assert _remote_ref(fake_repo.git_dir, change.bookmark) == live_commit, (
+                change.pull_number,
+                trace,
+            )
+        else:
+            assert baseline == change.baseline, (change.pull_number, trace)
+            assert _remote_ref(fake_repo.git_dir, change.bookmark) == baseline.commit_id, (
+                change.pull_number,
+                trace,
+            )
 
     # Changes above a --pull-request cap follow the jj rewrite but are not
     # resubmitted: their reviews wait for their own next command.
@@ -1159,8 +1162,14 @@ def replay_land_retry_scenario(
     install_fault()
     exit_code = run_cli(("land",))
     captured = read_output()
-    # Every fault surfaces as a failed run. None of these paths needs replay state.
-    assert exit_code == EXIT_FAILURE, (
+    # An exact remote result makes lost acknowledgement and later retirement residue
+    # successful outcomes; earlier observation faults still fail without replay state.
+    expected_exit = (
+        0
+        if scenario.fault in {"after_push_ack_lost", "before_retirement_save"}
+        else EXIT_FAILURE
+    )
+    assert exit_code == expected_exit, (
         scenario.trace,
         captured.out,
         captured.err,
@@ -1171,9 +1180,9 @@ def replay_land_retry_scenario(
     assert _remote_ref(fake_repo.git_dir, "main") == expected_main, scenario.trace
     restore_github()
 
-    # sync is the single documented recovery: it finalizes and retires the
-    # landed prefix from observed state, whatever the interruption point was.
-    rerun_exit_code = run_cli(("sync",))
+    # Exact direct-push residue is repository-wide: explicit sync --all
+    # finalizes and retires only snapshots proven to be on fetched trunk.
+    rerun_exit_code = run_cli(("sync", "--all"))
     captured = read_output()
     assert rerun_exit_code == 0, (scenario.trace, captured.out, captured.err)
 
@@ -1193,8 +1202,7 @@ def replay_land_retry_scenario(
     )
     # The event window spans both runs, so exactly-once closure proves the
     # recovery finalized only what the interrupted run left unfinished. The
-    # unapproved suffix may legitimately see convergence events (a base
-    # retarget onto trunk) from the recovery's resubmit.
+    # unapproved suffix is outside the global recovery mutation set.
     landed_pull_numbers = {change.pull_number for change in landed}
     assert_event_contract(
         fake_repo=fake_repo,
@@ -1388,15 +1396,7 @@ def _run_handoff_recovery(
     run_cli: CliRunner,
     scenario: LandHandoffScenario,
 ) -> None:
-    if scenario.recovery == "sync":
-        exit_code = run_cli(("sync",))
-        captured = read_output()
-        assert exit_code == 0, (scenario.trace, captured.out, captured.err)
-        return
-    exit_code = run_cli(("cleanup", "--rebase"))
-    captured = read_output()
-    assert exit_code == 0, (scenario.trace, captured.out, captured.err)
-    exit_code = run_cli(("submit",))
+    exit_code = run_cli(("sync",))
     captured = read_output()
     assert exit_code == 0, (scenario.trace, captured.out, captured.err)
 

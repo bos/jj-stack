@@ -307,8 +307,8 @@ merged-ancestor check or vice versa.
 
 ## Land Retry Harness
 
-Land retry scenarios interrupt one direct-push land at a fault point, then run selected `sync`
-and require convergence rather than rollback. There is no saved transaction to resume:
+Land retry scenarios interrupt one direct-push land at a fault point, then run `sync --all` and
+require convergence rather than rollback. There is no saved transaction to resume:
 recovery is observational, so the fault family covers a trunk push whose success
 acknowledgement is lost, a failed load of the first landed PR during finalization, a failure on
 a later landed PR after an earlier one finalized, and a lost tracking-retirement save after
@@ -317,12 +317,11 @@ every PR finalized remotely.
 The oracle spans both runs with one event window: each landed PR transitions to closed
 exactly once in total, so the recovery provably finalizes only what the interrupted run
 left unfinished. The recovery must end with the standard direct-push contract and `list --json`
-free of the landed prefix; existing reviews on the selected suffix may see legitimate
-convergence events such as a base retarget onto trunk. The deterministic integration suite
-covers fail-closed variants where a review repository, canonical head identity, review branch,
-or PR head changes between runs: selected `sync` stops that path before rewriting or mutation.
-Independently tracked sibling paths are byte-for-byte bystanders; per-identity skip-and-continue
-behavior belongs only to explicit `sync --all`.
+free of the landed prefix; global recovery leaves existing reviews on the suffix unchanged. The
+deterministic integration suite covers
+fail-closed variants where a review repository, canonical head identity, review branch, or PR
+head changes between runs: `sync --all` preserves that exact identity and continues with the
+rest. Independently tracked sibling paths are byte-for-byte bystanders.
 
 ## Land Handoff Harness
 

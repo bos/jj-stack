@@ -496,29 +496,12 @@ def build_parser() -> ArgumentParser:
         command="cleanup",
         help_text=normalized_help_text(cleanup_command.HELP),
         description_text=cleanup_command.__doc__ or "",
-        handler=_forward_handler(
-            cleanup_command.cleanup,
-            rebase_revset="rebase",
-        ),
+        handler=_forward_handler(cleanup_command.cleanup),
     )
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help=(
-            "Preview cleanup actions; --rebase fetches remote state and may update jj's "
-            "remote-bookmark observations"
-        ),
-    )
-    add_help_argument(
-        cleanup_parser,
-        "--rebase",
-        nargs="?",
-        const="@-",
-        metavar="REVSET",
-        help=(
-            t"Rebase the selected stack above changes already merged on GitHub; "
-            t"defaults to {ui.revset('@-')} when passed without an explicit revset"
-        ),
+        help="Preview cleanup actions without applying mutations",
     )
 
     sync_parser = _add_revision_command(
@@ -526,17 +509,20 @@ def build_parser() -> ArgumentParser:
         command="sync",
         help_text=normalized_help_text(sync_command.HELP),
         description_text=sync_command.__doc__ or "",
-        handler=_forward_handler(sync_command.sync),
+        handler=_forward_handler(sync_command.sync, all_="all"),
         revset_help=(t"Revision to sync; defaults to {ui.revset('@-')} (the current stack head)"),
     )
     add_help_argument(
         sync_parser,
         "--dry-run",
         action="store_true",
-        help=(
-            "Fetch remote state and preview rebase and submit without applying the "
-            "planned mutations"
-        ),
+        help="Fetch remote state and preview convergence without applying mutations",
+    )
+    add_help_argument(
+        sync_parser,
+        "--all",
+        action="store_true",
+        help="Recover exact submitted snapshots on trunk across the repository",
     )
 
     _add_command_parser(

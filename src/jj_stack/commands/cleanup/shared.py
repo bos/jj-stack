@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jj_stack.console as console
-import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._close_actions import emit_action_row
 from jj_stack.errors import ErrorMessage
@@ -24,7 +23,6 @@ from jj_stack.models.review_state import (
     SubmittedBaseline,
 )
 from jj_stack.review.change_status import ReviewChangeStatus
-from jj_stack.review.status import PreparedStatus, ReviewStatusRevision
 from jj_stack.ui import Message, plain_text
 
 CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -110,45 +108,6 @@ class _StaleCleanupMutationPlan:
     review_identity: ReviewIdentity
 
 
-@dataclass(frozen=True, slots=True)
-class RebaseResult:
-    """Rendered rebase result for one selected local stack."""
-
-    actions: tuple[CleanupAction, ...]
-    blocked: bool
-    # Whether every review change on the selected path has a merged PR, so a
-    # follow-up submit would have nothing left to send.
-    fully_merged: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedRebase:
-    """Locally prepared rebase inputs before any rewrite."""
-
-    context: CommandContext
-    dry_run: bool
-    prepared_status: PreparedStatus
-
-
-@dataclass(frozen=True, slots=True)
-class _ClassifiedCleanupRebaseRevision:
-    """A cleanup-rebase path revision with its derived review status."""
-
-    revision: ReviewStatusRevision
-    status: ReviewChangeStatus
-
-
-@dataclass(frozen=True, slots=True)
-class _RebaseOperationPlan:
-    """Derived rebase planning data before preview/live rendering."""
-
-    blocked: bool
-    closed_unmerged_revisions: tuple[ReviewStatusRevision, ...]
-    merged_revisions: tuple[ReviewStatusRevision, ...]
-    pre_actions: tuple[CleanupAction, ...]
-    rebase_plans: tuple[tuple[str, str | None], ...]
-
-
 def _render_cleanup_action_header(*, dry_run: bool) -> str:
     """Render the cleanup action section header."""
 
@@ -160,33 +119,6 @@ def _render_cleanup_postamble(*, result: CleanupResult) -> tuple[str, ...]:
 
     if not result.actions:
         return ("No cleanup actions needed.",)
-    return ()
-
-
-def _render_rebase_preamble(*, prepared_rebase: PreparedRebase) -> tuple[tuple[str, str], ...]:
-    """Render the non-streaming rebase context lines for the CLI."""
-
-    prepared_status = prepared_rebase.prepared_status
-    prepared = prepared_status.prepared
-    return _render_remote_and_github_lines(
-        remote=prepared.remote,
-        remote_error=prepared.remote_error,
-        github_repository=prepared_status.github_repository,
-        github_error=prepared_status.github_repository_error,
-    )
-
-
-def _render_rebase_action_header(*, dry_run: bool) -> str:
-    """Render the rebase action section header."""
-
-    return "Planned rebase actions:" if dry_run else "Applied rebase actions:"
-
-
-def _render_rebase_postamble(*, result: RebaseResult) -> tuple[str, ...]:
-    """Render rebase lines that only depend on the completed result."""
-
-    if not result.actions:
-        return ("No merged changes on the selected stack need rebasing.",)
     return ()
 
 
@@ -237,13 +169,3 @@ def _render_remote_and_github_lines(
             remote_error=remote_error,
         )
     )
-
-
-def _revision_label_template(revision: ReviewStatusRevision) -> ui.Message:
-    return t"{revision.subject} ({ui.change_id(revision.change_id)})"
-
-
-def _rebase_destination_template(destination_change_id: str | None) -> ui.Message:
-    if destination_change_id is None:
-        return ui.revset("trunk()")
-    return ui.change_id(destination_change_id)

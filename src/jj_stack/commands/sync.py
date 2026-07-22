@@ -1,75 +1,90 @@
-"""Fetch remote state and repair the selected stack after merges.
+"""Converge one selected reviewed path, or recover exact landed reviews globally.
 
-The intended behavior is to fetch trunk, recognize merged changes from current GitHub
-and commit data, rebase the remaining selected changes, and update only PRs that already
-exist for them. It does not open a PR for trailing work or change another local stack.
-A separate `sync --all` mode will finish cleanup for reviews whose submitted commits are
-already on trunk, without rebasing or submitting any stack.
+Selected `sync` fetches current trunk, removes a proven landed prefix from one path,
+rebases only that path, and updates only pull requests that already exist. Trailing
+unreviewed work stays local and sibling paths are untouched.
 
-Development status: those boundaries are not implemented yet. The current build still
-checks every tracked review and runs ordinary `submit`, so it may retarget or close PRs
-for other tracked stacks and may open PRs. Preview an explicit selection with
-`sync --dry-run <change-id>` before live recovery until that work lands.
-
-`sync` is also the recovery command. After an interrupted `land` or `sync`, rerun it so
-the command can continue from the current jj and GitHub state.
-
-`sync` only rewrites history to remove merged changes. It does not rebase your stack
-onto newer trunk commits when nothing in the stack has merged; use `jj rebase` for
-that. It also takes no submit flags: runs that need draft handling, descriptions,
-reviewers, or restart behavior use `submit` directly.
-
-With `--dry-run`, `sync` fetches remote state and previews the current build's rebase
-plan. Fetching can update jj's remote-bookmark observations, but the command does not
-apply the planned rebase, push, PR, cleanup, or tracking changes. The submit preview
-follows only when no rebase work is planned, because a submit preview taken before the
-rebase would describe the wrong stack.
+`sync --all` is the explicit repository-wide recovery mode. It can finalize PRs and remove
+tracking when their exact submitted commits are already on trunk, but never rewrites,
+submits, creates pull requests, or acts on GitHub-created rewritten results.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands.cleanup.rebase import run_cleanup_rebase_command
-from jj_stack.commands.submit.command import print_selected_line, run_submit
+from jj_stack.commands.submit.command import print_selected_line, run_submit_async
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
-from jj_stack.github.resolution import GithubTarget, resolve_github_target
-from jj_stack.jj.client import JjCliArgs
-from jj_stack.review.landed import LandedReviewResult, run_landed_review_sweep
+from jj_stack.errors import CliError, UsageError
+from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.resolution import (
+    GithubRepoAddress,
+    GithubTarget,
+    resolve_github_target,
+    resolve_trunk_branch,
+)
+from jj_stack.jj.client import JjCliArgs, JjCommandError, UnsupportedStackError
+from jj_stack.models.stack import LocalRevision
+from jj_stack.review.convergence import (
+    SelectedConvergencePlan,
+    build_selected_convergence_plan,
+    dependent_path_commands,
+    rewritten_retirement_blocker,
+    selected_rebase_revision_ids,
+)
+from jj_stack.review.landed import (
+    FinalizationContext,
+    LandedReviewResult,
+    finalize_landed_reviews,
+    retire_landed_reviews,
+)
+from jj_stack.review.landed_evidence import (
+    CommitAncestry,
+    LandedReviewCandidate,
+    classify_commit_ancestry,
+    collect_landed_evidence,
+    complete_review_candidates,
+)
+from jj_stack.review.observation import (
+    RepositoryObservation,
+    duplicate_review_claim_change_ids,
+    observe_review_mutation,
+)
+from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
 from jj_stack.state.operation_lock import acquire_operation_lock
+from jj_stack.ui import Message
 
 HELP = "Fetch remote state and repair reviewed stacks after merges"
 
 
 def sync(
     *,
+    all_: bool,
     cli_args: JjCliArgs,
     debug: bool,
     dry_run: bool,
     repository: Path | None,
     revset: str | None,
 ) -> int:
-    """CLI entrypoint for `sync`."""
-
-    context = bootstrap_context(
-        repository=repository,
-        cli_args=cli_args,
-        debug=debug,
-    )
-    selected_revset = revset if revset is not None else "@-"
+    if all_ and revset is not None:
+        raise UsageError(t"Use either {ui.cmd('sync --all')} or a revision, not both.")
+    context = bootstrap_context(repository=repository, cli_args=cli_args, debug=debug)
     with acquire_operation_lock(
         context.state_store.require_writable(),
-        command="sync",
+        command="sync --all" if all_ else "sync",
     ):
+        if all_:
+            return asyncio.run(_run_global_recovery(context=context, dry_run=dry_run))
         return run_stack_convergence(
             context=context,
             dry_run=dry_run,
             print_selected=revset is None,
-            revset=selected_revset,
+            revset=revset or "@-",
         )
 
 
@@ -77,104 +92,404 @@ def run_stack_convergence(
     *,
     context: CommandContext,
     dry_run: bool,
+    fetch_remote_state: bool = True,
     print_selected: bool = False,
     revset: str,
 ) -> int:
-    """Converge the selected stack with what GitHub and the remote report.
+    try:
+        prepared_status = prepare_status(
+            context=context,
+            fetch_remote_state=fetch_remote_state,
+            re_resolve_after_remote_refresh=True,
+            revset=revset,
+        )
+    except UnsupportedStackError as error:
+        raise status_preparation_cli_error(error) from error
+    if print_selected and prepared_status.prepared.stack.revisions:
+        head = prepared_status.prepared.stack.head
+        print_selected_line(head.change_id, head.subject)
+    return asyncio.run(
+        _run_selected_convergence(
+            context=context,
+            dry_run=dry_run,
+            prepared_status=prepared_status,
+        )
+    )
 
-    This is the current convergence routine: `sync` is a thin wrapper around it,
-    and `land` invokes it after GitHub accepts merges. It composes the legacy
-    cleanup rebase, landed-review sweep, and ordinary submit until selected-only
-    convergence replaces it.
-    """
 
-    rebase_result = run_cleanup_rebase_command(
+async def _run_selected_convergence(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    prepared_status: PreparedStatus,
+) -> int:
+    prepared = prepared_status.prepared
+    target, selected = _selected_target(prepared_status)
+    if not selected:
+        console.output("Nothing to sync: the selected revision is already on trunk.")
+        return 0
+
+    async with build_github_client(repository=target.repository) as github:
+        repository_state = await github.get_repository()
+        trunk_branch = resolve_trunk_branch(
+            bookmark_states=prepared.bookmark_states,
+            github_repository_state=repository_state,
+            remote_name=target.remote.name,
+            trunk_commit_id=prepared.stack.trunk.commit_id,
+        )
+        observation = await observe_review_mutation(
+            change_ids=tuple(revision.change_id for revision in selected),
+            context=context,
+            github_client=github,
+            remote_name=target.remote.name,
+            trunk_branch=trunk_branch,
+        )
+        error = _selected_observation_error(
+            observation=observation,
+            prepared_status=prepared_status,
+            target=target,
+            trunk_branch=trunk_branch,
+        )
+        if error is not None:
+            raise CliError(error)
+        plan = build_selected_convergence_plan(
+            context=context,
+            observation=observation,
+            prepared_status=prepared_status,
+            repository=target.repository,
+        )
+        _render_selected_plan(dry_run=dry_run, plan=plan)
+        await _apply_selected_plan(
+            context=context,
+            dry_run=dry_run,
+            github=github,
+            plan=plan,
+            target=target,
+            trunk_branch=trunk_branch,
+            trunk_commit_id=prepared.stack.trunk.commit_id,
+        )
+        if plan.rewrite_blocker is not None:
+            raise CliError(plan.rewrite_blocker)
+    return await _update_selected_reviews(
         context=context,
         dry_run=dry_run,
-        rebase_revset=revset,
+        plan=plan,
     )
-    # Landed reviews retire even when the surviving stack is blocked: the
-    # sweep's work is independent of the selected path's rebase plan.
-    sweep_landed_reviews(context=context, dry_run=dry_run)
-    if rebase_result.blocked:
-        return 1
-    if dry_run and any(action.status == "planned" for action in rebase_result.actions):
+
+
+def _selected_target(
+    prepared_status: PreparedStatus,
+) -> tuple[GithubTarget, tuple[LocalRevision, ...]]:
+    target = prepared_status.github_target
+    if not isinstance(target, GithubTarget):
+        raise CliError(target.github_repository_error or "Could not resolve GitHub target.")
+    selected = prepared_status.prepared.stack.revisions
+    for revision in selected:
+        if prepared_status.prepared.state.issues_for(revision.change_id):
+            raise CliError(
+                t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
+                hint=t"Repair it with {ui.cmd('relink')} before syncing this path.",
+            )
+    return target, selected
+
+
+async def _apply_selected_plan(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    github: GithubClient,
+    plan: SelectedConvergencePlan,
+    target: GithubTarget,
+    trunk_branch: str,
+    trunk_commit_id: str,
+) -> None:
+    exact = tuple(landed.candidate for landed in plan.landed if landed.evidence_kind == "exact")
+    finalizer = FinalizationContext(
+        command=context,
+        dry_run=dry_run,
+        github=github,
+        remote_name=target.remote.name,
+        trunk_branch=trunk_branch,
+        trunk_commit_id=trunk_commit_id,
+    )
+    exact_results = await finalize_landed_reviews(
+        candidates=exact,
+        finalizer=finalizer,
+    )
+    exact_result_iterator = iter(exact_results)
+    results = tuple(
+        next(exact_result_iterator)
+        if landed.evidence_kind == "exact"
+        else LandedReviewResult(
+                candidate=landed.candidate,
+                outcome="already_terminal",
+            )
+        for landed in plan.landed
+    )
+    rebase_revision_ids = selected_rebase_revision_ids(context=context, plan=plan)
+    if plan.landed and rebase_revision_ids and not dry_run and plan.rewrite_blocker is None:
+        context.jj_client.rebase_revisions_only(
+            revisions=rebase_revision_ids,
+            destination=trunk_commit_id,
+        )
+
+    def retirement_blocker(candidate: LandedReviewCandidate) -> Message | None:
+        if plan.rewrite_blocker is not None:
+            return plan.rewrite_blocker
+        return rewritten_retirement_blocker(
+            candidate=candidate,
+            context=context,
+            plan=plan,
+        )
+
+    results = await retire_landed_reviews(
+        cleanup_bookmarks=True,
+        evidence={landed.candidate.change_id: landed.evidence_kind for landed in plan.landed},
+        finalization_results=results,
+        finalizer=finalizer,
+        retirement_blocker=retirement_blocker,
+    )
+    render_landed_results(dry_run=dry_run, results=results)
+
+
+async def _update_selected_reviews(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    plan: SelectedConvergencePlan,
+) -> int:
+    if plan.landed and plan.survivors and dry_run:
         console.output(
-            t"Submit preview skipped: run {ui.cmd('jj-stack sync')} {ui.revset(revset)} "
-            t"without {ui.cmd('--dry-run')} to apply the rebase first."
+            "Existing-review update preview follows after the planned rebase is applied."
         )
         return 0
-    if rebase_result.fully_merged:
-        console.output("Nothing to submit: everything on the selected stack has merged.")
+    if not plan.reviewed_survivors:
+        if plan.survivors:
+            console.output("No existing reviews to update; trailing work remains local.")
+        else:
+            console.output("Nothing to submit: everything on the selected path has landed.")
         return 0
-    result = run_submit(
+    result = await run_submit_async(
         context=context,
-        # The selected line is only rendered when sync picked the default
-        # head for the user.
-        on_prepared=print_selected_line if print_selected else None,
-        options=_sync_submit_options(dry_run=dry_run, revset=revset),
+        on_prepared=None,
+        options=_sync_submit_options(
+            dry_run=dry_run,
+            revset=plan.reviewed_survivors[-1].change_id,
+        ),
     )
     print_submit_result(result)
     return 0
 
 
-def sweep_landed_reviews(*, context: CommandContext, dry_run: bool) -> None:
-    """Finalize and retire tracked reviews whose commits already reached trunk.
+def _selected_observation_error(
+    *,
+    observation: RepositoryObservation,
+    prepared_status: PreparedStatus,
+    target: GithubTarget,
+    trunk_branch: str,
+) -> Message | None:
+    if (
+        observation.remote != target.remote
+        or observation.configured_repository != target.repository
+    ):
+        return "the configured Git remote changed during sync"
+    if (
+        observation.github_repository.full_name.casefold()
+        != target.repository.full_name.casefold()
+    ):
+        return "GitHub no longer reports the configured repository"
+    if observation.github_repository.default_branch not in (None, "", trunk_branch):
+        return "GitHub no longer reports the selected trunk branch as its default"
+    fetched_trunk = observation.fetched_trunk
+    expected_trunk = prepared_status.prepared.stack.trunk.commit_id
+    if fetched_trunk is None or fetched_trunk.commit_id != expected_trunk:
+        return "fetched trunk changed during sync preparation"
+    if observation.remote_trunk_target != expected_trunk:
+        return "the live trunk ref moved after the fetch"
+    return None
 
-    This covers transports that preserve commit IDs: an interrupted direct push
-    leaves open PRs whose exact commits are ancestors of trunk, and a
-    merge-commit merge lands the exact local commit. Neither is visible on the
-    selected stack (the commits are inside trunk), so convergence checks saved
-    tracking directly. Reviews it cannot prove safe are reported and skipped.
-    """
 
-    state = context.state_store.load()
-    if not state.review_identities or not state.submitted_baselines:
-        return
+async def _run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
     target = resolve_github_target(context.jj_client.list_git_remotes())
     if not isinstance(target, GithubTarget):
-        return
-    trunk_commit_id = context.jj_client.resolve_revision("trunk()").commit_id
-    results = run_landed_review_sweep(
-        cleanup_bookmarks=True,
+        raise CliError(target.github_repository_error or "Could not resolve GitHub target.")
+    context.jj_client.fetch_remote(remote=target.remote.name)
+    trunk = context.jj_client.resolve_revision("trunk()")
+    state = context.state_store.load()
+    had_failure = bool(state.record_issues)
+    for issue in state.record_issues:
+        incomplete = issue.validation_error.endswith(" is missing.")
+        kind = "incomplete review tracking" if incomplete else f"malformed {issue.record_type}"
+        console.warning(
+            t"Skip {kind} for {ui.change_id(issue.change_id)}; repair it explicitly with "
+            t"{ui.cmd('relink')}."
+        )
+    all_candidates = complete_review_candidates(state)
+    duplicate_change_ids = duplicate_review_claim_change_ids(state.review_identities)
+    ancestry_by_change_id = {
+        candidate.change_id: classify_commit_ancestry(
+            commit_id=candidate.submitted_baseline.commit_id,
+            context=context,
+            trunk_commit_id=trunk.commit_id,
+        )
+        for candidate in all_candidates
+    }
+    exact_candidates = tuple(
+        candidate
+        for candidate in all_candidates
+        if ancestry_by_change_id[candidate.change_id] == "on_trunk"
+    )
+    async with build_github_client(repository=target.repository) as github:
+        repository_state = await github.get_repository()
+        trunk_branch = resolve_trunk_branch(
+            bookmark_states=context.jj_client.list_bookmark_states(),
+            github_repository_state=repository_state,
+            remote_name=target.remote.name,
+            trunk_commit_id=trunk.commit_id,
+        )
+        for candidate in all_candidates:
+            ancestry = ancestry_by_change_id[candidate.change_id]
+            if ancestry == "on_trunk":
+                continue
+            had_failure = (
+                await _report_global_nonexact_candidate(
+                    ancestry=ancestry,
+                    candidate=candidate,
+                    context=context,
+                    duplicate=candidate.change_id in duplicate_change_ids,
+                    github=github,
+                    repository=target.repository,
+                    trunk_commit_id=trunk.commit_id,
+                )
+                or had_failure
+            )
+        finalizer = FinalizationContext(
+            command=context,
+            dry_run=dry_run,
+            github=github,
+            remote_name=target.remote.name,
+            trunk_branch=trunk_branch,
+            trunk_commit_id=trunk.commit_id,
+        )
+        results = await finalize_landed_reviews(
+            candidates=exact_candidates,
+            finalizer=finalizer,
+        )
+        results = await retire_landed_reviews(
+            cleanup_bookmarks=True,
+            evidence={candidate.change_id: "exact" for candidate in exact_candidates},
+            finalization_results=results,
+            finalizer=finalizer,
+        )
+    render_landed_results(dry_run=dry_run, results=results)
+    return 1 if had_failure or any(result.outcome == "skipped" for result in results) else 0
+
+
+async def _report_global_nonexact_candidate(
+    *,
+    ancestry: CommitAncestry,
+    candidate: LandedReviewCandidate,
+    context: CommandContext,
+    duplicate: bool,
+    github: GithubClient,
+    repository: GithubRepoAddress,
+    trunk_commit_id: str,
+) -> bool:
+    if duplicate:
+        _warn_global_preserved(candidate, "another tracked change claims the same review")
+        return True
+    try:
+        pull_request = await github.get_pull_request(
+            pull_number=candidate.review_identity.pr_number,
+        )
+    except GithubClientError as error:
+        _warn_global_preserved(candidate, t"could not inspect its current review: {error}")
+        return True
+    _, rewritten = collect_landed_evidence(
+        candidate=candidate,
         context=context,
-        dry_run=dry_run,
-        remote_name=target.remote.name,
-        repository=target.repository,
+        pull_request=pull_request,
+        repository=repository,
         trunk_commit_id=trunk_commit_id,
     )
-    render_sweep_results(dry_run=dry_run, results=results)
+    if rewritten.state == "landed":
+        try:
+            commands = dependent_path_commands(
+                ancestor_commit_id=candidate.submitted_baseline.commit_id,
+                context=context,
+            )
+        except JjCommandError as error:
+            _warn_global_preserved(candidate, t"could not inspect dependent paths: {error}")
+            return True
+        if commands is None:
+            _warn_global_preserved(candidate, "no visible selected path can retire the link")
+            return True
+        console.warning(
+            t"Preserve {ui.change_id(candidate.change_id)}: rewritten merge result needs "
+            t"selected recovery; {commands}."
+        )
+        return False
+    if rewritten.state in {"head_mismatch", "identity_mismatch"}:
+        _warn_global_preserved(candidate, rewritten.reason or rewritten.state)
+        return True
+    if pull_request.normalize_state().state != "open":
+        _warn_global_preserved(
+            candidate,
+            rewritten.reason
+            or t"PR #{pull_request.number} is {pull_request.normalize_state().state} "
+            t"without a result on trunk",
+        )
+        return True
+    if ancestry == "unresolved":
+        _warn_global_preserved(candidate, "the exact submitted snapshot is unavailable locally")
+        return True
+    return False
 
 
-def render_sweep_results(
+def _warn_global_preserved(candidate: LandedReviewCandidate, reason: Message) -> None:
+    console.warning(t"Preserve {ui.change_id(candidate.change_id)}: {reason}.")
+
+
+def render_landed_results(
     *,
     dry_run: bool,
     results: tuple[LandedReviewResult, ...],
 ) -> None:
     if not results:
         return
-    console.output("Planned post-land cleanup:" if dry_run else "Applied post-land cleanup:")
+    console.output("Planned landed recovery:" if dry_run else "Applied landed recovery:")
     marker = "•" if dry_run else "✓"
     for result in results:
         candidate = result.candidate
         if result.outcome == "skipped":
             console.output(
-                t"  ! skip landed {ui.change_id(candidate.change_id)}: {result.skip_reason}"
+                t"  ! preserve {ui.change_id(candidate.change_id)}: {result.skip_reason}"
             )
             continue
         if result.outcome == "finalized":
-            console.output(
-                t"  {marker} finalize PR #{candidate.review_identity.pr_number} for "
-                t"{ui.change_id(candidate.change_id)}"
-            )
+            console.output(t"  {marker} finalize PR #{candidate.review_identity.pr_number}")
         if result.forgot_bookmark:
+            console.output(t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)}")
+        if result.cleanup_warning is not None:
+            console.output(t"  ! cleanup residue: {result.cleanup_warning}")
+        if result.retired_tracking:
+            console.output(t"  {marker} retire {ui.change_id(candidate.change_id)}")
+        elif result.retirement_skip_reason is not None:
             console.output(
-                t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)} for "
-                t"{ui.change_id(candidate.change_id)}"
+                t"  ! preserve {ui.change_id(candidate.change_id)}: "
+                t"{result.retirement_skip_reason}"
             )
-        console.output(
-            t"  {marker} remove tracking for landed {ui.change_id(candidate.change_id)}"
-        )
+
+
+def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
+    if not plan.landed:
+        console.output("No landed changes on the selected path need rebasing.")
+        return
+    status = "Would remove" if dry_run else "Removing"
+    console.output(
+        t"{status} landed prefix: "
+        t"{ui.join(lambda item: ui.change_id(item.candidate.change_id), plan.landed)}"
+    )
 
 
 def _sync_submit_options(*, dry_run: bool, revset: str) -> SubmitOptions:
@@ -184,6 +499,7 @@ def _sync_submit_options(*, dry_run: bool, revset: str) -> SubmitOptions:
         draft_mode="default",
         dry_run=dry_run,
         edit=False,
+        existing_only=True,
         labels=None,
         re_request=False,
         restart=False,

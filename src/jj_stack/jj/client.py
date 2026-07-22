@@ -1001,10 +1001,18 @@ class JjClient:
         if fetch:
             self.fetch_remote(remote=remote)
 
-    def rebase_revision(self, *, source: str, destination: str) -> None:
-        """Rebase one revision and its descendants onto a new destination."""
+    def rebase_revisions_only(
+        self,
+        *,
+        revisions: Sequence[str],
+        destination: str,
+    ) -> None:
+        """Rebase only the named revisions while preserving their internal order."""
 
-        self._run_jj(("rebase", "-s", source, "-d", destination))
+        ordered_revisions = tuple(revisions)
+        if not ordered_revisions:
+            return
+        self._run_jj(("rebase", "-r", "|".join(ordered_revisions), "-d", destination))
 
     def abandon_revisions(self, revsets: Sequence[str]) -> None:
         """Abandon revisions; jj rebases descendants and drops pointing bookmarks."""

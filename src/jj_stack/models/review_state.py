@@ -44,6 +44,16 @@ class ReviewIdentity(BaseModel):
 
         return self.bookmark_ownership == "managed"
 
+    @property
+    def repository_key(self) -> tuple[str, str, str]:
+        """Return the case-insensitive nominal repository identity."""
+
+        return (
+            self.github_host.casefold(),
+            self.repository_owner.casefold(),
+            self.repository_name.casefold(),
+        )
+
 
 class SubmittedBaseline(BaseModel):
     """Exact snapshot most recently acknowledged for one review identity."""

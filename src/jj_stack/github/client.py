@@ -866,6 +866,9 @@ def _pull_request_fields_fragment() -> str:
           number
           state
           isDraft
+          mergeCommit {
+            oid
+          }
           mergedAt
           reviewDecision
           url

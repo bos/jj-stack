@@ -160,9 +160,7 @@ If you rewrote a reviewed change, rerun `submit` before landing even when the di
 branch and PR still point to it; `land` will not refresh a review to make the change landable.
 
 Immediately before mutation, `land` reloads the repository, trunk, exact PR head, and readiness;
-trunk pushes use an exact lease and GitHub merges name the expected head. The remaining merger
-recovery work is still in development: the current build can retarget or close PRs for other
-tracked stacks while finishing landed reviews. Inspect `land --dry-run` until that slice lands.
+trunk pushes use an exact lease and GitHub merges name the expected head.
 
 If you want to preview the landing plan without actually landing your changes:
 
@@ -201,11 +199,10 @@ This retargets each ready PR to trunk and merges it on GitHub, bottom to top, st
 first PR GitHub reports as not mergeable (for example, when required checks are still running).
 The merge method comes from your repo's settings when only one is allowed; otherwise pass
 `--merge-method squash` (or `rebase`/`merge`). Because GitHub does the merging, your local
-commits are not what lands on trunk. The production target finishes accepted changes in the same
-command: it rebases the remaining selected changes and updates only PRs that already existed for
-them. Unreviewed trailing work stays local. The current rework build still uses the broader
-`sync` behavior described in the development notice below. If anything interrupts it, preview
-and rerun selected `sync`; it continues from the current jj and GitHub state.
+commits are not what lands on trunk. The command rebases the remaining selected changes and
+updates only PRs that already existed for them. Unreviewed trailing work stays local. If anything
+interrupts it, preview and rerun selected `sync`; it continues from the current jj and GitHub
+state.
 
 ## 7. Converge remaining reviewed work
 
@@ -228,14 +225,11 @@ advanced without anything in your stack landing, rebase with plain `jj`:
 jj rebase -s <bottom-of-stack> -d 'trunk()'
 ```
 
-Use `sync --dry-run <head-change-id>` to preview the repair. The production target also provides
-`sync --all` as the only repository-wide recovery mode; it finalizes isolated
-PRs whose exact submitted commits are already on trunk but never rewrites or submits a stack.
-
-> **Development status:** the promise to leave other stacks and unreviewed changes alone, plus
-> `sync --all`, is not implemented yet. The current rework build can retarget or close PRs for
-> other tracked stacks and can open PRs through `sync`; always preview an explicit selection
-> before a live recovery until that implementation slice lands.
+Use `sync --dry-run <head-change-id>` to preview the repair. `sync --all` is the only
+repository-wide recovery mode; it finalizes isolated PRs whose exact submitted commits are
+already on trunk but never rewrites or submits a stack. When GitHub used a different commit ID,
+`sync --all` leaves tracking in place and prints the selected `sync` commands for each affected
+path.
 
 ## 8. Unstack abandoned stacks
 

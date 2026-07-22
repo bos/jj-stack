@@ -27,8 +27,7 @@ but can leave jj, GitHub, and saved tracking data out of sync._
 
 Target retry behavior uses a repo-scoped operation lock and derives from the jj DAG, saved review
 identity and submitted baselines, fetched trunk reachability, and live GitHub state. There is no
-durable transaction, replay phase, or retained path. The current rework still writes an operation
-log; required slice 10 removes it rather than making it part of recovery.
+durable transaction, replay phase, retained path, or operation log.
 
 Possible follow-up work:
 
@@ -319,7 +318,7 @@ Possible follow-up work:
 
 _Benefit: small each; recorded so residue-tolerance stays a decision, not an accident._
 
-- Direct-push landed review branches are left on the remote by design (the sweep only
+- Direct-push landed review branches are left on the remote by design (landed handling only
   forgets local bookmarks). A `cleanup` GC pass could delete tool-owned remote branches
   whose PRs finalized, under the same lease and ownership rules the merge-transport
   retirement already applies.

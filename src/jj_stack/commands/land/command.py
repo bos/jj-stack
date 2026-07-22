@@ -16,9 +16,6 @@ exactly. After any rewrite, including a same-diff rebase, rerun `submit` before 
 Immediately before each mutation, `land` reloads repository, trunk, PR identity, head, and
 readiness; trunk pushes use an exact lease and GitHub merges name the expected head.
 
-The current recovery sweep can still retarget or close PRs for other tracked stacks. Preview
-`land --dry-run` until the selected-convergence work described in the user guide is complete.
-
 Use `--dry-run` to inspect the landing plan. It fetches remote state, which can update jj's
 remote-bookmark observations, but does not apply the planned trunk, review-branch, PR, cleanup, or
 tracking changes.
@@ -29,14 +26,13 @@ By default `land` pushes the trunk branch directly. When branch protection requi
 arrive through pull requests, use `--via merge` instead: each ready PR is retargeted to trunk
 and merged through GitHub, bottom to top, stopping at the first PR GitHub reports as not
 mergeable. The merge method comes from `--merge-method`, or from the repository's settings when
-exactly one method is allowed. The production target drops accepted changes from the selected
-local stack and updates only surviving PRs that already exist. The current build instead runs the
-broader `sync` implementation, which can retarget or close PRs for other tracked stacks and can
-open PRs.
+exactly one method is allowed. After each accepted merge, `land` drops the landed changes from the
+selected local stack and updates only surviving PRs that already exist. Unreviewed trailing work
+stays local.
 
-If `land` is interrupted, first run `jj-stack sync --dry-run <change-id>` for that stack. Current
-`sync` can retarget or close PRs for other tracked stacks and can open PRs; run the same selected
-command without `--dry-run` only after the preview is safe.
+If `land --via merge` is interrupted, preview and rerun selected `sync` for that stack. If a
+direct trunk push succeeded but PR finalization did not, use `sync --all`; it handles only exact
+submitted commits already on trunk and never rewrites a stack.
 After a successful land, `jj-stack` forgets the bookmarks it was managing for the changes that
 landed, unless they've been moved or become conflicted. If you used your own bookmarks with
 `submit --use-bookmarks`, they will not be cleaned up by default (override with `--config
@@ -107,8 +103,6 @@ def land(
     skip_cleanup: bool,
     via: LandVia,
 ) -> int:
-    """CLI entrypoint for `land`."""
-
     if merge_method is not None and via != "merge":
         raise UsageError(t"{ui.cmd('--merge-method')} is only used with {ui.cmd('--via merge')}.")
     context = bootstrap_context(
@@ -164,6 +158,7 @@ def _run_land(
         convergence_exit = run_stack_convergence(
             context=context,
             dry_run=False,
+            fetch_remote_state=False,
             revset=result.selected_revset,
         )
         if convergence_exit != 0:
@@ -204,8 +199,6 @@ def _prepare_land(
     revset: str | None,
     via: LandVia,
 ) -> PreparedLand:
-    """Resolve local landing inputs before GitHub planning and execution."""
-
     prepared_status = prepare_status(
         context=context,
         fetch_remote_state=True,
@@ -240,8 +233,6 @@ def _prepare_land(
 
 
 def _stream_land(*, prepared_land: PreparedLand) -> LandResult:
-    """Inspect GitHub state for the prepared path and optionally execute `land`."""
-
     prepared_status = prepared_land.prepared_status
     progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
@@ -363,8 +354,6 @@ def _resolve_land_merge_method(
     merge_method: str | None,
     repository_state: GithubRepository,
 ) -> str:
-    """Resolve the GitHub merge method for `land --via merge`."""
-
     if merge_method is not None:
         return merge_method
     settings = {
@@ -406,10 +395,9 @@ def _stack_not_on_trunk_error(
             message,
             condition="merged_ancestor_on_trunk",
             hint=(
-                t"Some lower changes from this stack already landed. Current sync can "
-                t"retarget or close PRs for other tracked stacks and can open PRs. Preview "
+                t"Some lower changes from this stack already landed. Preview "
                 t"{ui.cmd('jj-stack sync --dry-run')} "
-                t"{ui.revset(status_result.selected_revset)} first; if the plan is safe, run "
+                t"{ui.revset(status_result.selected_revset)}, then run "
                 t"{ui.cmd('jj-stack sync')} {ui.revset(status_result.selected_revset)} "
                 t"before retrying land."
             ),

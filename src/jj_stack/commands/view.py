@@ -802,13 +802,6 @@ def render_status_advisory_lines(
         )
         rows.append(
             (
-                "Development warning",
-                "Current sync can retarget or close PRs for other tracked stacks and can "
-                "open PRs",
-            )
-        )
-        rows.append(
-            (
                 "Preview first",
                 (
                     ui.cmd("jj-stack sync --dry-run"),

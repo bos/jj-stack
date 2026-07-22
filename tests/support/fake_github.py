@@ -24,6 +24,7 @@ class FakeGithubPullRequest:
     head_ref: str
     head_sha: str
     is_draft: bool
+    merge_commit_sha: str | None
     merged_at: str | None
     node_id: str
     number: int
@@ -50,6 +51,7 @@ class FakeGithubPullRequest:
                 "sha": self.head_sha,
             },
             "html_url": f"{web_origin}/{repository.full_name}/pull/{self.number}",
+            "merge_commit_sha": self.merge_commit_sha,
             "merged_at": self.merged_at,
             "node_id": self.node_id,
             "number": self.number,
@@ -72,6 +74,9 @@ class FakeGithubPullRequest:
             "headRepositoryOwner": {"login": repository.owner},
             "id": self.node_id,
             "isDraft": self.is_draft,
+            "mergeCommit": (
+                None if self.merge_commit_sha is None else {"oid": self.merge_commit_sha}
+            ),
             "mergedAt": self.merged_at,
             "number": self.number,
             "state": self.state.upper(),
@@ -227,6 +232,7 @@ class FakeGithubRepository:
             head_ref=head_ref,
             head_sha=head_sha,
             is_draft=draft,
+            merge_commit_sha=None,
             merged_at=None,
             node_id=f"PR_kwDO_fake_{number}",
             number=number,
@@ -363,6 +369,7 @@ class FakeGithubRepository:
             squash_commit,
         )
         pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        pull_request.merge_commit_sha = squash_commit
         self.update_pull_request_state(
             pull_request,
             state="closed",

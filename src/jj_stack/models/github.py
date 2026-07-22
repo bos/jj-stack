@@ -43,6 +43,7 @@ class GithubPullRequest(BaseModel):
     head: GithubBranchRef
     html_url: str
     is_draft: bool = Field(default=False, alias="draft")
+    merge_commit_sha: str | None = None
     merged_at: str | None = None
     node_id: str | None = None
     number: int
@@ -71,6 +72,7 @@ class GithubPullRequest(BaseModel):
                 "sha": value.get("headRefOid"),
             },
             "html_url": value.get("url"),
+            "merge_commit_sha": _graphql_merge_commit_oid(value.get("mergeCommit")),
             "merged_at": value.get("mergedAt"),
             "number": value.get("number"),
             "state": value.get("state", ""),
@@ -87,6 +89,13 @@ class GithubPullRequest(BaseModel):
                 value.get("reviewDecision")
             )
         return payload
+
+
+def _graphql_merge_commit_oid(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    oid = value.get("oid")
+    return oid if isinstance(oid, str) else None
 
 
 class GithubPullRequestReviewUser(BaseModel):

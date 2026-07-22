@@ -42,6 +42,27 @@ class RepositoryObservation:
     reviews: Mapping[str, ReviewObservation]
 
 
+def duplicate_review_claim_change_ids(
+    identities: Mapping[str, ReviewIdentity],
+) -> frozenset[str]:
+    """Invalidate every change participating in a duplicate PR or head claim."""
+
+    claims = tuple(
+        (change_id, identity.repository_key, kind, target)
+        for change_id, identity in identities.items()
+        for kind, target in (
+            ("pr", str(identity.pr_number)),
+            ("head", f"{identity.head_owner.casefold()}:{identity.head_ref}"),
+        )
+    )
+    counts = Counter((repository, kind, target) for _, repository, kind, target in claims)
+    return frozenset(
+        change_id
+        for change_id, repository, kind, target in claims
+        if counts[(repository, kind, target)] > 1
+    )
+
+
 async def observe_review_mutation(
     *,
     change_ids: tuple[str, ...],
@@ -59,23 +80,8 @@ async def observe_review_mutation(
         github_resolution.parse_github_repo(remote) if remote is not None else None
     )
     state = context.state_store.load()
-    claims = tuple(
-        (change_id, repository, kind, target)
-        for change_id, identity in state.review_identities.items()
-        for repository in (
-            f"{identity.github_host.casefold()}/{identity.repository_owner.casefold()}/"
-            f"{identity.repository_name.casefold()}",
-        )
-        for kind, target in (
-            ("pr", str(identity.pr_number)),
-            ("head", f"{identity.head_owner.casefold()}:{identity.head_ref}"),
-        )
-    )
-    claim_counts = Counter((repository, kind, target) for _, repository, kind, target in claims)
-    duplicate_claim_change_ids = frozenset(
-        change_id
-        for change_id, repository, kind, target in claims
-        if claim_counts[(repository, kind, target)] > 1
+    duplicate_claim_change_ids = duplicate_review_claim_change_ids(
+        state.review_identities
     )
     identities = {
         change_id: state.review_identities.get(change_id) for change_id in ordered_change_ids

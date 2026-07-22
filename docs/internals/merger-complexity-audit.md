@@ -124,10 +124,10 @@ The first replacement code commit must bring production below 20,303 SLOC; every
 replacement commit stays below it. The governed recovery surface is fixed, including renamed or
 future equivalents:
 
-- `commands/land/`, `commands/sync.py`, `commands/cleanup/rebase.py`, and
-  `commands/cleanup/retirement.py`;
+- `commands/land/` and `commands/sync.py`;
 - `models/review_state.py` and `state/store.py`; and
-- landed, authority, evidence, and finalization modules under `review/`.
+- `review/landed.py`, `review/landed_evidence.py`, `review/convergence.py`, and
+  `review/observation.py`.
 
 That surface starts at 3,305 SLOC on the canonical-design foundation and may not exceed that in
 any replacement commit. It must finish at or below the pinned base's 3,295 SLOC. Every governed
@@ -143,11 +143,11 @@ sloccount src/jj_stack/commands/land
 sloccount \
   src/jj_stack/commands/land \
   src/jj_stack/commands/sync.py \
-  src/jj_stack/commands/cleanup/rebase.py \
-  src/jj_stack/commands/cleanup/retirement.py \
   src/jj_stack/models/review_state.py \
   src/jj_stack/state/store.py \
   src/jj_stack/review/landed.py \
+  src/jj_stack/review/landed_evidence.py \
+  src/jj_stack/review/convergence.py \
   src/jj_stack/review/observation.py
 .venv/bin/ruff check src/jj_stack --select C901 \
   --config 'lint.mccabe.max-complexity=10' --output-format concise
@@ -163,6 +163,7 @@ evidence, finalization, or equivalent module updates that command before adding 
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | R1: bound persistent state | 19,656 | 21,120 | 40,776 | 20 | 1,563 | 3,244 |
 | R2: unify mutation authority | 19,713 | 21,234 | 40,947 | 19 | 1,511 | 3,295 |
+| R3: replace convergence machinery | 19,687 | 21,246 | 40,933 | 18 | 1,550 | 3,295 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
@@ -172,6 +173,13 @@ exact leases, and expected-head guards replace land's diff comparison, review-br
 approval-after-refresh, local-trunk rollback machinery, and redundant land-plan fields in the same
 slice. Land shrinks by 52 SLOC, the governed surface meets its final 3,295-SLOC ceiling, and its
 largest module is `commands/cleanup/rebase.py` at 438 SLOC.
+
+R3 deletes 26 production SLOC and adds 12 test SLOC relative to R2. Pure exact and rewritten
+evidence,
+selected-path convergence, dependency-aware retirement, and explicit `sync --all` replace the two
+cleanup rebase/retirement modules and the implicit global land sweep. The governed surface meets
+its final 3,295-SLOC ceiling, every governed module stays below 500 SLOC, and the largest is
+`commands/sync.py` at 466 SLOC.
 
 ## Test budget
 
@@ -193,7 +201,7 @@ broader generation remains opt-in.
 
 R1 preserves the existing fixed scenario factories while replacing their composite state
 oracles with separate identity and baseline comparisons. With no environment overrides, those
-factories currently expand to 96 cases. R4 must reduce or explicitly map them to at most 16
+factories currently expand to 92 cases. R4 must reduce or explicitly map them to at most 16
 before its marker is removed.
 
 Tests do not assert journal events, internal read counts, helper order, or implicit global sweep

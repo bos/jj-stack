@@ -13,7 +13,7 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.submit.auto_close import (
     verify_no_unexpected_pull_request_closures,
 )
-from jj_stack.commands.submit.command import _resolve_submit_options, _run_submit_async
+from jj_stack.commands.submit.command import _resolve_submit_options, run_submit_async
 from jj_stack.commands.submit.inputs import (
     preflight_private_commits as _preflight_private_commits,
 )
@@ -71,6 +71,7 @@ def _submit_options(*, dry_run: bool = False) -> SubmitOptions:
         draft_mode="default",
         dry_run=dry_run,
         edit=False,
+        existing_only=False,
         labels=None,
         re_request=False,
         restart=False,
@@ -143,7 +144,7 @@ def test_submit_prepared_callback_runs_after_spinner_stops(monkeypatch) -> None:
     )
 
     result = asyncio.run(
-        _run_submit_async(
+        run_submit_async(
             context=context,
             on_prepared=record_selected_line,
             options=_submit_options(),

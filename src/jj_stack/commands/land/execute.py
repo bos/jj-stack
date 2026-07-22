@@ -2,7 +2,7 @@
 
 Execution is mutate-only: gates were checked during planning, and every
 recovery path is observational. The direct-push transport moves trunk with one
-leased push and then finalizes through the shared landed-review sweep; the
+leased push and then finalizes the planned landed reviews; the
 merge transport asks GitHub to merge the planned prefix bottom-up and reports
 exactly what GitHub accepted so the caller can converge the local stack. No
 durable transaction state exists: an interruption at any point is recovered by
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.commands.sync import render_sweep_results
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.push_rejections import (
@@ -23,8 +22,13 @@ from jj_stack.github.push_rejections import (
 )
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.review.landed import (
+    FinalizationContext,
     LandedReviewResult,
     finalize_landed_reviews,
+    retire_landed_reviews,
+)
+from jj_stack.review.landed_evidence import (
+    candidate_for_change,
 )
 from jj_stack.review.observation import observe_review_mutation
 
@@ -51,8 +55,6 @@ async def execute_land_plan(
     trunk_commit_id: str,
     trunk_subject: str,
 ) -> LandResult:
-    """Execute a non-dry-run land plan and return the actions that were applied."""
-
     client = execution.context.jj_client
     state_store = execution.context.state_store
 
@@ -76,15 +78,6 @@ async def execute_land_plan(
         )
 
     if plan.blocked:
-        # A blocked plan is still a convergence opportunity: leftovers from an
-        # interrupted land finalize here, so rerunning land keeps its promise.
-        await _converge_landed_leftovers(
-            execution=execution,
-            github_client=github_client,
-            remote_name=remote_name,
-            trunk_branch=trunk_branch,
-            trunk_commit_id=trunk_commit_id,
-        )
         return land_result(
             actions=plan.planned_actions(),
             applied=False,
@@ -106,13 +99,6 @@ async def execute_land_plan(
             trunk_branch=trunk_branch,
             trunk_commit_id=trunk_commit_id,
         )
-    await _converge_landed_leftovers(
-        execution=execution,
-        github_client=github_client,
-        remote_name=remote_name,
-        trunk_branch=trunk_branch,
-        trunk_commit_id=trunk_commit_id,
-    )
     return await _execute_github_merges(
         actions=actions,
         execution=execution,
@@ -121,6 +107,7 @@ async def execute_land_plan(
         merge_method=merge_method,
         plan=plan,
         remote_name=remote_name,
+        selected_revset=selected_revset,
         trunk_branch=trunk_branch,
         trunk_commit_id=trunk_commit_id,
     )
@@ -185,31 +172,38 @@ async def _execute_direct_push(
     actions.append(trunk_action)
 
     subjects = {revision.change_id: revision.subject for revision in plan.planned_revisions}
-    sweep_results = await finalize_landed_reviews(
-        cleanup_bookmarks=execution.cleanup_bookmarks,
-        context=execution.context,
-        github_client=github_client,
-        labels=subjects,
-        order=tuple(revision.change_id for revision in plan.planned_revisions),
+    state = execution.context.state_store.load()
+    candidates = tuple(
+        candidate
+        for revision in plan.planned_revisions
+        if (candidate := candidate_for_change(state, revision.change_id)) is not None
+    )
+    if len(candidates) != len(plan.planned_revisions):
+        raise AssertionError("Authorized direct landing requires complete review state.")
+    finalizer = FinalizationContext(
+        command=execution.context,
+        dry_run=False,
+        github=github_client,
         remote_name=remote_name,
         trunk_branch=trunk_branch,
         trunk_commit_id=trunk_revision.commit_id,
     )
-    # Only the reviews this land was asked to land can block its exit code;
-    # a straggler from an earlier interruption is advisory residue.
-    planned_change_ids = {revision.change_id for revision in plan.planned_revisions}
-    planned_results = tuple(
-        result for result in sweep_results if result.candidate.change_id in planned_change_ids
+    landed_results = await finalize_landed_reviews(
+        candidates=candidates,
+        finalizer=finalizer,
+        labels=subjects,
     )
-    straggler_results = tuple(
-        result for result in sweep_results if result.candidate.change_id not in planned_change_ids
+    landed_results = await retire_landed_reviews(
+        cleanup_bookmarks=execution.cleanup_bookmarks,
+        evidence={candidate.change_id: "exact" for candidate in candidates},
+        finalization_results=landed_results,
+        finalizer=finalizer,
     )
-    sweep_actions, any_skipped = render_landed_sweep_actions(
-        results=planned_results,
+    landed_actions, any_skipped = render_landed_actions(
+        results=landed_results,
         subjects=subjects,
     )
-    actions.extend(sweep_actions)
-    render_sweep_results(dry_run=False, results=straggler_results)
+    actions.extend(landed_actions)
     if any_skipped:
         return land_result(actions=tuple(actions), applied=True, blocked=True)
     completed_actions = tuple(actions)
@@ -231,6 +225,7 @@ async def _execute_github_merges(
     merge_method: str | None,
     plan: LandPlan,
     remote_name: str,
+    selected_revset: str,
     trunk_branch: str,
     trunk_commit_id: str,
 ) -> LandResult:
@@ -269,16 +264,25 @@ async def _execute_github_merges(
             )
         )
         merged_change_ids.append(landed_revision.change_id)
-        execution.context.jj_client.fetch_remote(
-            remote=remote_name,
-            branches=(trunk_branch,),
-        )
-        current_trunk_commit_id = execution.context.jj_client.resolve_revision(
-            "trunk()"
-        ).commit_id
+        try:
+            execution.context.jj_client.fetch_remote(
+                remote=remote_name,
+                branches=(trunk_branch,),
+            )
+            current_trunk_commit_id = execution.context.jj_client.resolve_revision(
+                "trunk()"
+            ).commit_id
+        except (CliError, JjCommandError) as error:
+            blocked_action = LandAction(
+                kind="boundary",
+                body=t"after accepted {ui.change_id(landed_revision.change_id)}: could not "
+                t"refresh trunk: {error}; rerun {ui.cmd(f'sync {selected_revset}')}",
+                status="blocked",
+            )
+            break
     if blocked_action is not None:
         actions.append(blocked_action)
-    blocked = len(merged_change_ids) != len(plan.planned_revisions)
+    blocked = blocked_action is not None or len(merged_change_ids) != len(plan.planned_revisions)
     completed_actions = tuple(actions)
     if not blocked and plan.boundary_action is not None:
         completed_actions = (*completed_actions, plan.boundary_action)
@@ -290,34 +294,11 @@ async def _execute_github_merges(
     )
 
 
-async def _converge_landed_leftovers(
-    *,
-    execution: LandExecutionInputs,
-    github_client: GithubClient,
-    remote_name: str,
-    trunk_branch: str,
-    trunk_commit_id: str,
-) -> None:
-    """Finalize and retire reviews an earlier interrupted land left behind."""
-
-    results = await finalize_landed_reviews(
-        cleanup_bookmarks=execution.cleanup_bookmarks,
-        context=execution.context,
-        github_client=github_client,
-        remote_name=remote_name,
-        trunk_branch=trunk_branch,
-        trunk_commit_id=trunk_commit_id,
-    )
-    render_sweep_results(dry_run=False, results=results)
-
-
-def render_landed_sweep_actions(
+def render_landed_actions(
     *,
     results: tuple[LandedReviewResult, ...],
     subjects: dict[str, str] | None = None,
 ) -> tuple[tuple[LandAction, ...], bool]:
-    """Render sweep results as land actions; True when anything was skipped."""
-
     labels = subjects or {}
     actions: list[LandAction] = []
     any_skipped = False
@@ -335,12 +316,7 @@ def render_landed_sweep_actions(
                 LandAction(
                     kind="pull request",
                     body=t"finalizing landed {label} skipped: {result.skip_reason}; "
-                    t"inspect with {ui.cmd('jj-stack view --fetch')} "
-                    t"{ui.change_id(candidate.change_id)}; current sync can retarget or close "
-                    t"PRs for other tracked stacks and can open PRs, so preview "
-                    t"{ui.cmd('jj-stack sync --dry-run')} {ui.change_id(candidate.change_id)} "
-                    t"before running {ui.cmd('jj-stack sync')} "
-                    t"{ui.change_id(candidate.change_id)}",
+                    t"rerun {ui.cmd('jj-stack sync --all')}",
                     status="blocked",
                 )
             )
@@ -361,13 +337,24 @@ def render_landed_sweep_actions(
                     status="applied",
                 )
             )
-        actions.append(
-            LandAction(
-                kind="tracking",
-                body=t"remove tracking for landed {label}",
-                status="applied",
+        if result.cleanup_warning is not None:
+            console.warning(t"Landed cleanup residue for {label}: {result.cleanup_warning}")
+        if result.retired_tracking:
+            actions.append(
+                LandAction(
+                    kind="tracking",
+                    body=t"remove tracking for landed {label}",
+                    status="applied",
+                )
             )
-        )
+        elif result.retirement_skip_reason is not None:
+            actions.append(
+                LandAction(
+                    kind="tracking",
+                    body=t"preserve tracking for landed {label}: {result.retirement_skip_reason}",
+                    status="blocked",
+                )
+            )
     return tuple(actions), any_skipped
 
 
@@ -380,6 +367,7 @@ def _push_trunk_bookmark(
     trunk_branch: str,
     trunk_revision: LandRevision,
 ) -> LandAction:
+    push_error: JjCommandError | None = None
     try:
         client.push_bookmark_with_lease(
             remote_target=remote_target,
@@ -388,16 +376,25 @@ def _push_trunk_bookmark(
             expected_remote_target=expected_remote_target,
         )
     except JjCommandError as error:
-        rejection_reason = classify_protected_branch_rejection(str(error))
+        push_error = error
+    try:
+        client.fetch_remote(remote=remote_name, branches=(trunk_branch,))
+        remote_commit = client.resolve_revision(f"{trunk_branch}@{remote_name}").commit_id
+    except (CliError, JjCommandError) as error:
+        raise CliError(
+            "The trunk push may have succeeded, but its remote result could not be refreshed.",
+            hint=t"Inspect trunk, then run {ui.cmd('sync --all')} to finish exact recovery.",
+        ) from error
+    if push_error is not None and remote_commit != trunk_revision.commit_id:
+        rejection_reason = classify_protected_branch_rejection(str(push_error))
         if rejection_reason is None:
-            raise
+            raise push_error
         raise CliError(
             t"GitHub rejected the {ui.bookmark(trunk_branch)} push as a "
             t"protected-branch violation:\n"
-            t"{rejection_reason_lines(str(error))}",
+            t"{rejection_reason_lines(str(push_error))}",
             hint=protected_branch_rejection_hint(rejection_reason),
-        ) from error
-    client.fetch_remote(remote=remote_name, branches=(trunk_branch,))
+        ) from push_error
     return LandAction(
         kind="trunk",
         body=t"push {ui.bookmark(trunk_branch)} to "

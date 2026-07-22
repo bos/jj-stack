@@ -141,6 +141,8 @@ async def _sync_pull_request(
     title = pending_sync.generated_description.title
     body = pending_sync.generated_description.body
     if discovered_pull_request is None:
+        if options.existing_only:
+            raise AssertionError("Existing-only submit reached pull request creation.")
         pull_request = None
         if not run.dry_run:
             pull_request = await _create_pull_request(
