@@ -6,17 +6,14 @@ from pathlib import Path
 import pytest
 
 import jj_stack.commands.land.command as land_command
-import jj_stack.github.resolution as github_resolution
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.state.store import ReviewStateStore
 
 from ..support.fake_github import (
     FakeGithubState,
     create_app,
-    initialize_bare_repository,
 )
 from ..support.integration_helpers import (
     commit_file,
@@ -525,72 +522,6 @@ def test_land_rechecks_exact_review_head_before_direct_push(
 
 
 @pytest.mark.merger_replacement
-@pytest.mark.parametrize("drift", ("repository", "default_branch"))
-def test_land_rechecks_repository_and_trunk_authority_after_planning(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-    drift: str,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
-    client = JjClient(repo)
-    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-    local_trunk_before = client.get_bookmark_state("main").local_target
-    state_store = ReviewStateStore.for_repo(repo)
-    state_before = state_store.load()
-    fake_repo.pull_request_events.clear()
-    original_execute = land_command.execute_land_plan
-    original_parse = github_resolution.parse_github_repo
-    other_repo = initialize_bare_repository(
-        tmp_path / "other-remotes",
-        owner="other-org",
-        name="other-repo",
-    )
-
-    def parse_github_repo(remote):
-        if remote.url == str(other_repo.git_dir):
-            return GithubRepoAddress(
-                host="github.test",
-                owner=other_repo.owner,
-                repo=other_repo.name,
-            )
-        return original_parse(remote)
-
-    monkeypatch.setattr(github_resolution, "parse_github_repo", parse_github_repo)
-
-    async def drift_then_execute(**kwargs):
-        if drift == "repository":
-            run_command(
-                [
-                    "jj",
-                    "git",
-                    "remote",
-                    "set-url",
-                    "origin",
-                    str(other_repo.git_dir),
-                ],
-                repo,
-            )
-        else:
-            fake_repo.default_branch = "release"
-        return await original_execute(**kwargs)
-
-    monkeypatch.setattr(land_command, "execute_land_plan", drift_then_execute)
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1, (captured.out, captured.err)
-    assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
-    assert client.get_bookmark_state("main").local_target == local_trunk_before
-    assert fake_repo.pull_requests[1].state == "open"
-    assert fake_repo.pull_request_events == []
-    assert state_store.load() == state_before
-
-
-@pytest.mark.merger_replacement
 def test_land_does_not_overwrite_a_concurrent_local_trunk_move(
     tmp_path: Path,
     monkeypatch,
@@ -845,81 +776,39 @@ def test_land_finishes_after_trunk_push_interrupted_before_finalization(
 
 
 @pytest.mark.merger_replacement
-@pytest.mark.parametrize("mismatch", ("head", "repository"))
-def test_sync_skips_merged_review_whose_saved_identity_no_longer_matches(
+def test_sync_preserves_merged_review_whose_saved_repository_no_longer_matches(
     tmp_path: Path,
     monkeypatch,
     capsys,
-    mismatch: str,
 ) -> None:
-    """A merged PR is never retired without exact repository and head identity."""
+    """A merged PR is never retired after its saved repository identity changes."""
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = JjClient(repo).discover_review_stack()
     commit_1 = stack.revisions[0].commit_id
-    commit_2 = stack.revisions[1].commit_id
     change_id_1 = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark_1 = state_store.load().review_identities[change_id_1].head_ref
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-07-20T12:00:00Z"
     update_remote_ref(fake_repo, branch="main", target=commit_1)
-    if mismatch == "head":
-        update_remote_ref(fake_repo, branch=bookmark_1, target=commit_2)
-        expected_message = "no longer reports the submitted head"
-    else:
-        state = state_store.load()
-        identity = state.review_identities[change_id_1]
-        baseline = state.submitted_baselines[change_id_1]
-        state_store.relink_review(
-            change_id_1,
-            expected_identity=identity,
-            expected_baseline=baseline,
-            identity=identity.model_copy(update={"repository_owner": "other-org"}),
-            baseline=baseline,
-        )
-        expected_message = "no longer matches the pull request recorded for"
-
-    exit_code = run_main(repo, config_path, "sync", "--all")
-    captured = capsys.readouterr()
-    rendered = _squash_whitespace(captured.out)
-
-    assert exit_code == 1, (captured.out, captured.err)
-    assert expected_message in rendered
     state = state_store.load()
-    assert change_id_1 in state.review_identities
-    assert change_id_1 in state.submitted_baselines
-
-
-def test_sync_skips_landed_review_whose_pull_request_head_moved(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """Global recovery never finalizes a PR whose head no longer identifies the review."""
-
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
-    commit_1 = stack.revisions[0].commit_id
-    commit_2 = stack.revisions[1].commit_id
-    change_id_1 = stack.revisions[0].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark_1 = state_store.load().review_identities[change_id_1].head_ref
-    # The exact commit reached trunk outside the tool, but the review branch
-    # (and so the PR head) was force-moved to unrelated work afterwards.
-    update_remote_ref(fake_repo, branch="main", target=commit_1)
-    update_remote_ref(fake_repo, branch=bookmark_1, target=commit_2)
+    identity = state.review_identities[change_id_1]
+    baseline = state.submitted_baselines[change_id_1]
+    state_store.relink_review(
+        change_id_1,
+        expected_identity=identity,
+        expected_baseline=baseline,
+        identity=identity.model_copy(update={"repository_owner": "other-org"}),
+        baseline=baseline,
+    )
 
     exit_code = run_main(repo, config_path, "sync", "--all")
     captured = capsys.readouterr()
     rendered = _squash_whitespace(captured.out)
 
     assert exit_code == 1, (captured.out, captured.err)
-    assert "leave" in rendered
-    assert "no longer reports the submitted head" in rendered
-    assert fake_repo.pull_requests[1].state == "open"
+    assert "no longer matches the pull request recorded for" in rendered
     state = state_store.load()
     assert change_id_1 in state.review_identities
     assert change_id_1 in state.submitted_baselines

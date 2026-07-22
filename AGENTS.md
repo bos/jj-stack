@@ -63,8 +63,9 @@ compatibility code, migration code, or the like.
 - Preserve the core invariants: the `jj` DAG is the source of truth, local cache is sparse,
   GitHub pull requests are derived from the local `jj` stack, and ambiguous linkage fails
   closed.
-- If behavior changes, update the docs in the same change and make sure tests pass.
-- Once a slice is implemented, update the implementation doc to note this.
+- If behavior changes, update `design.md` and the user docs in the same change and make sure tests
+  pass. Update `implementation-strategy.md` only for an architecture, tooling, or test-layer
+  change; use `jj` commits for slice history.
 - Non-blocking design debt, architecture follow-ups, and deferred ideas belong in
   [docs/internals/backlog.md](docs/internals/backlog.md).
 

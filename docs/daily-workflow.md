@@ -202,9 +202,11 @@ first PR GitHub reports as not mergeable (for example, when required checks are 
 The merge method comes from your repo's settings when only one is allowed; otherwise pass
 `--merge-method squash` (or `rebase`/`merge`). Because GitHub does the merging, your local
 commits are not what lands on trunk. The command rebases the remaining selected changes and
-updates only PRs that already existed for them. Unreviewed trailing work stays local. If anything
-interrupts it, run `jj-stack sync --dry-run <head-change-id>`, then
-`jj-stack sync <head-change-id>`; it continues from the current jj and GitHub state.
+updates only PRs that already existed for them. Unreviewed trailing work stays local. If it is
+interrupted after GitHub accepted a merge, run `jj-stack sync --dry-run <head-change-id>`, then
+`jj-stack sync <head-change-id>`. Rerun `jj-stack land --via merge <head-change-id>` if you still
+want to land the remaining PRs. If GitHub accepted no merge, retry your original `land --via
+merge` command directly.
 
 ## 7. Update a stack after GitHub merged lower PRs
 
@@ -227,11 +229,13 @@ advanced without anything in your stack landing, rebase with plain `jj`:
 jj rebase -s <bottom-of-stack> -d 'trunk()'
 ```
 
-Use `sync --dry-run <head-change-id>` to preview the repair. `sync --all` checks every locally
-tracked PR and cleans up those whose exact submitted commits are already on trunk. It may retarget
-and close those PRs, forget managed local bookmarks, and remove their tracking data, but it never
-rewrites or submits a stack. When GitHub used a different commit ID, `sync --all` leaves tracking
-in place and prints a `sync <head-change-id>` command for each affected stack.
+Use `sync --dry-run <head-change-id>` to preview which changes landed and any cleanup or rebase.
+When a rebase is needed, the later PR-update plan is available only after you run `sync`. `sync
+--all` checks every locally tracked PR and cleans up those whose exact submitted commits are
+already on trunk. It may retarget and close those PRs, forget managed local bookmarks, and remove
+their tracking data, but it never rewrites or submits a stack. When GitHub used a different commit
+ID, `sync --all` leaves tracking in place and prints a `sync <head-change-id>` command for each
+affected stack.
 
 ## 8. Unstack abandoned stacks
 
@@ -291,9 +295,10 @@ jj-stack submit
 jj-stack land
 ```
 
-Use `sync <head-change-id>` only when GitHub merged changes by another route or
-`land --via merge` was interrupted. If a direct-push `land` was interrupted after trunk changed,
-use `sync --all`. A successful uninterrupted `land` needs no routine follow-up command.
+Use `sync <head-change-id>` only when GitHub merged changes by another route or an interrupted
+`land --via merge` had already merged a PR. Rerun `land --via merge <head-change-id>` afterwards
+if you still want to land the remainder. If a direct-push `land` was interrupted after trunk
+changed, use `sync --all`. A successful uninterrupted `land` needs no routine follow-up command.
 
 ## When something goes wrong
 
@@ -320,9 +325,10 @@ jj-stack sync <head-change-id>
 jj-stack sync --all --dry-run
 jj-stack sync --all
 
-# land --via merge: update that stack from current GitHub and jj state
+# land --via merge after GitHub accepted a merge: reconcile, then resume landing if desired
 jj-stack sync --dry-run <head-change-id>
 jj-stack sync <head-change-id>
+jj-stack land --via merge <head-change-id>
 
 # direct-push land: find exact submitted commits that already reached trunk
 jj-stack sync --all --dry-run

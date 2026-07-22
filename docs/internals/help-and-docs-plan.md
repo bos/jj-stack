@@ -16,8 +16,9 @@ If a user-facing docs/help improvement reveals that the current design is confus
 internal, or otherwise not user-focused enough, update the design first rather than forcing the
 docs to preserve a bad explanation.
 
-Once a slice here ships, remove it from this file and note the result in
-`implementation-strategy.md` if it changed user-visible behavior.
+Once a slice here ships, remove it from this file. Update `design.md` for behavior changes and
+`implementation-strategy.md` only for architecture, tooling, or test-layer changes; keep ordinary
+slice history in `jj`.
 
 ## 1. What is already good
 

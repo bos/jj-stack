@@ -803,6 +803,7 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation(
     assert "('cand-c' & ::'base-3')" in revset
 
 
+@pytest.mark.merger_replacement
 def test_query_present_commit_ancestor_membership_distinguishes_absent_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -843,7 +844,7 @@ def test_query_present_commit_ancestor_membership_distinguishes_absent_commits(
     assert "present('on-trunk')" in revset
     assert "present('off-trunk')" in revset
     assert "present('absent')" in revset
-    assert '''present("bad'commit")''' in revset
+    assert """present("bad'commit")""" in revset
     template = invocation[invocation.index("-T") + 1]
     assert "contained_in" in template
     assert "fetched-trunk" in template

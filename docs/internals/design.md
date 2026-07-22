@@ -720,8 +720,9 @@ repository-wide recovery mode.
    otherwise report each dependent head and its exact selected `sync` command.
 
 `sync` does not rebase onto newer trunk merely because trunk advanced; explicit `jj rebase` owns
-that workflow. With `--dry-run`, it prints the same classification and planned changes without
-applying them.
+that workflow. With `--dry-run`, it prints the landed classification and any cleanup or rebase
+without applying them. When a rebase is required, `sync` cannot compute the later PR-update plan
+until the rebase has been applied.
 
 `jj stack sync --all [--dry-run]` is the only repository-wide recovery mode. It fetches once,
 checks every locally tracked PR, and continues past absent, malformed, obsolete, or individually
@@ -1037,7 +1038,7 @@ lock contention, stacked-PR feature unavailable) have no jj-stack analog.
 - `4` — GitHub authentication, network, or API failure
 - `5` — invalid command-line arguments
 - `6` — a selector matched more than one target and the command failed closed
-- `10` — `view` or `list` printed a report that is incomplete or needs attention
+- `10` — `view` or `list` printed an incomplete report
 - `130` — interrupted
 
 Failure categories ride on the error types: `CliError` subclasses declare their category
@@ -1252,6 +1253,8 @@ selected-stack update as `sync`: it verifies the accepted merge results, drops p
 ancestors from the selected stack, and updates only existing reviewed survivors. A later
 freshness stop still repairs the selected local stack for PRs already merged in the same
 invocation. `sync <selector>` is printed only if that stack update fails or is interrupted.
+`sync` reconciles only merges GitHub already accepted; it never resumes the merge loop. After
+recovery, the user reruns `land --via merge` to land any remaining ready PRs.
 
 Recovery guidance stays case-specific:
 

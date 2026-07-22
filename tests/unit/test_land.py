@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 
 from jj_stack.bootstrap import CommandContext
+from jj_stack.commands.land.authority import land_authority_error
 from jj_stack.commands.land.command import (
     _resolve_land_merge_method,
     _stack_not_on_trunk_error,
@@ -20,10 +21,12 @@ from jj_stack.commands.land.plan import (
 )
 from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError, UsageError
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjCliArgs
-from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
+from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest, GithubRepository
 from jj_stack.models.review_state import LinkState, SubmittedBaseline
+from jj_stack.review.observation import RepositoryObservation
 from jj_stack.review.status import (
     PreparedStatus,
     PullRequestLookup,
@@ -140,6 +143,64 @@ def test_land_projection_table_covers_exactness_and_boundary_precedence() -> Non
             assert "jj-stack submit change-1" in rendered, case.name
         else:
             assert projection_message not in rendered, case.name
+
+
+@pytest.mark.merger_replacement
+def test_land_repository_authority_table_covers_repository_and_default_branch_drift() -> None:
+    expected_repository = GithubRepoAddress(
+        host="github.test",
+        owner="acme",
+        repo="widgets",
+    )
+    github_repository = _repository_with_merge_settings(
+        allow_merge_commit=True,
+        allow_rebase_merge=True,
+        allow_squash_merge=True,
+    )
+    cases = (
+        (
+            "configured repository",
+            GithubRepoAddress(host="github.test", owner="other", repo="widgets"),
+            github_repository,
+            "the configured Git remote no longer names the planned GitHub repository",
+        ),
+        (
+            "GitHub repository",
+            expected_repository,
+            github_repository.model_copy(update={"full_name": "other/widgets"}),
+            "GitHub no longer reports the planned repository",
+        ),
+        (
+            "default branch",
+            expected_repository,
+            github_repository.model_copy(update={"default_branch": "release"}),
+            "GitHub no longer reports the planned trunk branch as its default",
+        ),
+    )
+
+    for name, configured_repository, observed_repository, expected_error in cases:
+        observation = RepositoryObservation(
+            configured_repository=configured_repository,
+            duplicate_claim_change_ids=frozenset(),
+            fetched_trunk=None,
+            github_repository=observed_repository,
+            remote=GitRemote(name="origin", url="https://github.test/acme/widgets.git"),
+            remote_trunk_target=None,
+            reviews={},
+        )
+
+        error = land_authority_error(
+            bypass_readiness=False,
+            expected_bases={},
+            expected_repository=expected_repository,
+            expected_trunk_branch="main",
+            expected_trunk_commit_id="trunk-commit",
+            observation=observation,
+            remote_name="origin",
+            revisions=(),
+        )
+
+        assert error == expected_error, name
 
 
 def test_stack_not_on_trunk_error_recommends_rebase_when_no_changes_have_landed() -> None:

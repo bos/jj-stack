@@ -201,7 +201,8 @@ squash merge, and your local stack still contains the old commits. It rebases th
 selected changes onto `trunk()`, updates only PRs that already exist for them, and cleans up a
 merged PR when no PR above still needs its review branch. Unreviewed trailing work stays local,
 and other local stacks are left alone. Preview it with
-`jj-stack sync --dry-run <head-change-id>`.
+`jj-stack sync --dry-run <head-change-id>`; if a rebase is needed, the later PR-update plan is
+available only after you run `sync`.
 
 When `list` or `view` says a tracked stack changed since the last submit, inspect that
 stack directly:

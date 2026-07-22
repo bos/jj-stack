@@ -30,9 +30,11 @@ the repository's settings when exactly one method is allowed. After each accepte
 drops the landed changes from the selected local stack and updates only surviving PRs that already
 exist. Unreviewed trailing work stays local.
 
-If `land --via merge` is interrupted, run `sync --dry-run <head-change-id>` and then
-`sync <head-change-id>`. If a direct trunk push succeeded but PR cleanup did not, run
-`sync --all --dry-run` and then `sync --all`.
+If `land --via merge` is interrupted after GitHub accepted a merge, run
+`sync --dry-run <head-change-id>` and then `sync <head-change-id>`. Rerun
+`land --via merge <head-change-id>` if you still want to land the remaining PRs. If GitHub
+accepted no merge, retry the original `land --via merge` command directly. If a direct trunk push
+succeeded but PR cleanup did not, run `sync --all --dry-run` and then `sync --all`.
 
 After a successful land, `jj-stack` removes tracking for each landed change unless another local
 stack still depends on it. It forgets managed bookmarks when they are safe to remove; bookmarks

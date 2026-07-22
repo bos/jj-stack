@@ -537,9 +537,3 @@ A feature slice is done only when:
 
 Any commit that changes code is made only after the relevant tests for that change are
 passing.
-
-## Current status
-
-The current implementation follows the component boundaries in this document and the behavior in
-[design.md](design.md). Complexity budgets, public documentation, and internal documentation are
-checked in and current.

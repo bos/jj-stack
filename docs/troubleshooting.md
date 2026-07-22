@@ -103,8 +103,9 @@ jj-stack sync <head-change-id>
 
 Selected `sync` verifies which lower PRs landed, rebases the selected remaining changes above the
 current `trunk()`, and updates only PRs that already exist for them. Use
-`jj-stack sync --dry-run <head-change-id>` first if you want to preview the repair. It leaves
-other stacks and unreviewed trailing changes alone.
+`jj-stack sync --dry-run <head-change-id>` first to preview which changes landed and any cleanup
+or rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
+It leaves other stacks and unreviewed trailing changes alone.
 
 ## `list` or `view` says another stack changed since its last submit
 
@@ -183,7 +184,8 @@ The reason after the `GH006` or `GH013` line decides the fix — read it before 
   ```
 
   An uninterrupted merge landing rebases and updates the remaining reviewed changes before it
-  returns. Run `jj-stack sync <change-id>` only if that follow-up was interrupted or failed.
+  returns. Run `jj-stack sync <change-id>` only if that follow-up was interrupted or failed, then
+  rerun `jj-stack land --via merge <change-id>` if you still want to land the remaining PRs.
 
 - **A ruleset requires a merge queue**: `jj-stack` cannot add PRs to GitHub's merge queue. Add the
   bottom ready PR to the queue and let GitHub merge it. Then run
@@ -287,10 +289,13 @@ command.
   `jj-stack sync <revset>`.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
   `jj-stack sync --all`.
-- `land --via merge`: preview with `jj-stack sync --dry-run <head-change-id>`, then run
-  `jj-stack sync <head-change-id>`.
-- Direct-push `land`: preview with `jj-stack sync --all --dry-run`, then run
-  `jj-stack sync --all`.
+- `land --via merge`: if GitHub accepted a merge, preview with
+  `jj-stack sync --dry-run <head-change-id>`, then run `jj-stack sync <head-change-id>`. Rerun
+  `jj-stack land --via merge <head-change-id>` if you still want to land the remaining PRs. If
+  GitHub accepted no merge, retry the original command with the same selector and options.
+- Direct-push `land`: if trunk changed, preview with `jj-stack sync --all --dry-run`, then run
+  `jj-stack sync --all`. If the push did not reach trunk, retry the original command with the
+  same selector and options.
 
 `sync <head-change-id>` handles commits rewritten by GitHub while keeping a review branch that a
 PR above still needs. `sync --all` handles a direct push whose exact submitted commit already

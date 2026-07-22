@@ -182,6 +182,7 @@ On Windows, use WSL to run the gate locally or rely on the required Linux CI job
 | P3: reconcile internal facts | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
 | P4: simplify internal language | 19,694 | 20,830 | 40,524 | 17 | 1,531 | 3,293 |
 | P5: batch recovery reads | 19,743 | 20,964 | 40,707 | 17 | 1,531 | 3,294 |
+| P6: close cross-slice audit | 19,743 | 20,928 | 40,671 | 17 | 1,531 | 3,294 |
 
 R1 deletes 672 production SLOC and 229 test SLOC relative to the canonical-design foundation.
 Every governed module is at or below 500 SLOC; the largest is `commands/land/execute.py` at 490.
@@ -228,6 +229,14 @@ batch falls back to at most eight concurrent REST reads while retaining a separa
 PR. Mutation and retirement remain sequential and freshly authorized. Reusing the same batched
 ancestry classifier for selected and repository-wide recovery pays for the change without
 increasing the governed recovery surface beyond its 3,295-SLOC ceiling.
+
+P6 corrects the documented recovery boundary: `sync` reconciles merges GitHub already accepted,
+but the user reruns `land --via merge` to land any remaining PRs. It also states that a dry run
+cannot show the post-rebase PR-update plan. Two adapter tests added in P5 now count toward the
+replacement-test budget; overlapping authority variants and a duplicate recovery front door were
+consolidated to keep that budget at 30. Active guides no longer certify their own status or direct
+contributors to record future slice history there; `jj` remains the implementation record.
+Production is unchanged, while the test tree shrinks by 36 SLOC.
 
 ## Test budget
 
@@ -282,18 +291,19 @@ It covers a successful trunk push, an accepted PR merge, and the boundary before
 retirement save. These checks establish local observational convergence without claiming real
 power-loss durability or live-GitHub semantics.
 
-The sparse-cache measurement extends the isolated `sync --all` front door with 64 complete records
-whose well-formed submitted commits are unavailable, one malformed submitted commit ID, absent
-GitHub PRs, one incomplete record, one head mismatch, one closed off-trunk PR, and one independently
-recoverable exact review. It now performs one submitted-commit ancestry scan for all 68 complete
-records. The normal PR path needs three GraphQL requests for the 66 nonexact records. The test
-forces fallback, including one malformed REST response, and the independent exact review still
-retires. On the local test machine that slower path completed in 4.14 seconds wall time (3.83
-seconds inside pytest). Focused adapter tests prove the limit of eight concurrent REST requests and
-25 PRs per GraphQL request. Reported merge-result commits, if any, share one further batched
-ancestry pass. This is a local performance and failure-isolation check, not a live-network latency
-claim.
+The sparse-cache measurement extends the isolated `sync --all` front door with 64 complete
+records whose well-formed submitted commits are unavailable, one malformed submitted commit ID,
+absent GitHub PRs, one incomplete record, one head mismatch, one closed off-trunk PR, and one
+independently recoverable exact review. It now performs one submitted-commit ancestry scan for all
+68 complete records. The normal PR path needs three GraphQL requests for the 66 nonexact records.
+The test forces fallback, including one malformed REST response, and the independent exact review
+still retires. On the local test machine that slower path completed in 4.14 seconds wall time
+(3.83 seconds inside pytest). Focused adapter tests prove the limit of eight concurrent REST
+requests and 25 PRs per GraphQL request. Reported merge-result commits, if any, share one further
+batched ancestry pass. This is a local performance and failure-isolation check, not a live-network
+latency claim.
 
-Focused adapter tests assert batching where call scaling is the contract. Integration tests assert
-recovery outcomes, not private helper calls. Tests do not assert journal events, private helper
-order, or implicit global sweep behavior. Removing a mechanism removes its tests in the same slice.
+Focused adapter tests assert batching where call scaling is the contract. Integration tests
+assert recovery outcomes, not private helper calls. Tests do not assert journal events, private
+helper order, or implicit global sweep behavior. Removing a mechanism removes its tests in the
+same slice.

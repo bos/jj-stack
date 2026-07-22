@@ -10,8 +10,8 @@ Integration tests validate real command output against that file.
 Command failures and incomplete GitHub inspection still use the normal CLI contract:
 stderr explains the problem and the process exit code says what kind of problem it was
 (see [exit-codes.md](exit-codes.md)). In particular, `view --json` and `list --json`
-print a valid payload and exit 10 when the report is incomplete or shows review state
-needing attention. The JSON payload is not an error-reporting format.
+print a valid payload and exit 10 when the report is incomplete. The JSON payload is not
+an error-reporting format.
 
 ## Change Objects
 

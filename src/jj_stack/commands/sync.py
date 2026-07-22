@@ -9,9 +9,10 @@ trunk, it may retarget and close the PR, forget its managed local bookmark, and 
 tracking data. It never rewrites or submits a stack. If GitHub created a different commit while
 merging, it prints the `sync <head-change-id>` command needed for that stack instead.
 
-Use `--dry-run` to fetch and preview these changes. Fetching can update jj's remembered remote
-bookmark locations, but the preview does not change PRs, local commits, local bookmarks, or
-tracking.
+Use `--dry-run` to fetch and preview landed changes, cleanup, and rebasing. When selected `sync`
+needs a rebase, the later PR-update plan is available only after that rebase has been applied.
+Fetching can update jj's remembered remote bookmark locations, but the preview does not change
+PRs, local commits, local bookmarks, or tracking.
 """
 
 from __future__ import annotations
@@ -227,9 +228,9 @@ async def _apply_selected_plan(
         next(exact_result_iterator)
         if landed.evidence_kind == "exact"
         else LandedReviewResult(
-                candidate=landed.candidate,
-                outcome="already_terminal",
-            )
+            candidate=landed.candidate,
+            outcome="already_terminal",
+        )
         for landed in plan.landed
     )
     rebase_revision_ids = selected_rebase_revision_ids(context=context, plan=plan)
@@ -266,7 +267,8 @@ async def _update_selected_reviews(
 ) -> int:
     if plan.landed and plan.survivors and dry_run:
         console.output(
-            "Existing-review update preview follows after the planned rebase is applied."
+            "Run sync without --dry-run to apply the rebase and then compute updates "
+            "for the remaining existing PRs."
         )
         return 0
     if not plan.reviewed_survivors:
