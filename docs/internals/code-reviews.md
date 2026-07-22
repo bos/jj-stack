@@ -78,6 +78,12 @@ and every fix — including your own proposed fixes:
   patching; re-derive the theory," escalated as a design question — not approval of one
   more locally defensible fix.
 
+The merger work has an additional measurable stop rule in
+[merger-complexity-audit.md](merger-complexity-audit.md). Reviewers must compare production SLOC,
+test SLOC, total SLOC, Ruff `C901` findings, and recovery-module size with the pinned base. A
+budget breach is a design finding. Moving the same policy into a helper, wrapper, or neighboring
+package does not count as simplification.
+
 ## Review the user experience directly
 
 Assume the user knows jj, git, and GitHub, but is not a power user of them, or of this tool.

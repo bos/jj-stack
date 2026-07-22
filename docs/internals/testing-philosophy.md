@@ -120,6 +120,11 @@ replacement gives users a simpler and safer story. These rules keep coverage hon
   untestable locally rather than silently green. Each named gap should point at a live
   check or a stricter fake mode that would establish the real contract.
 
+For the merger replacement, the suite also has a hard total-SLOC ceiling and a fixed-point budget
+defined in [merger-complexity-audit.md](merger-complexity-audit.md). A proposed test beyond that
+budget must replace overlapping coverage in the same slice. More tests are not compensation for a
+mechanism whose reachable state space is too large.
+
 ## Choosing the right layer
 
 After a case passes the worthwhile-test gate, use the narrowest layer that exercises the behavior

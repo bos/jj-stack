@@ -690,10 +690,16 @@ should stay understandable and correct as it grows.
 
 ## Merger implementation status (2026-07)
 
-The canonical-design foundation slice is complete: `design.md` is the sole product
-specification, competing target authority has been removed, and subordinate docs distinguish the
-production target from the current rework implementation. The live-GitHub evidence gap remains
-explicit rather than being filled from the fake.
+The canonical-design foundation slice is complete: `design.md` is the sole product specification,
+competing target authority has been removed, and subordinate docs distinguish the production
+target from the current rework implementation. The live-GitHub evidence gap remains explicit
+rather than being filled from the fake.
+
+The first implementation of slices 4 through 8 was stopped after it recreated the escaped tree's
+production size and exceeded its total source-plus-test SLOC. It remains available at local jj
+bookmark `archive-complexity-spiral-2026-07-21` as failure evidence, not reusable architecture.
+The replacement sequence and hard budgets are recorded in
+[merger-complexity-audit.md](merger-complexity-audit.md).
 
 The rework foundation already provides a `jj`-derived stack, sparse lifecycle-free tracking,
 marker-based comment rediscovery, leases, an observational land/sync routine, and real-`jj`
@@ -708,8 +714,10 @@ these current implementation facts:
 - ordinary selected commands run a repository-wide sweep and selected sync calls plain `submit`
 - `LandNote` and the write-only operation journal remain in code and mechanism-coupled tests
 
-Each ordered slice removes its corresponding marker and updates this inventory. Non-blocking
-follow-ups live in [backlog.md](backlog.md).
+Replacement slices delete obsolete recovery machinery with the feature that supersedes it. They
+must not stage a second state, authority, evidence, finalization, or retirement model for later
+cleanup. Each slice removes its corresponding marker, updates this inventory, and records its
+complexity measurement. Non-blocking follow-ups live in [backlog.md](backlog.md).
 
 The planned live-GitHub experiment has not been run. Direct-push PR lifecycle, retarget-and-close
 behavior, merge-result identity by merge method, merged-head deletion, and expected-head rejection

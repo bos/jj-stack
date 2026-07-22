@@ -27,23 +27,29 @@ cached permission or a second topology model.
 
 ## Implementation gaps
 
-The canonical behavior below is the production target. The pinned rework foundation predates the
-following required slices; each marker is removed only when its code, docs, and worthwhile tests
-land together.
+The canonical behavior below is the production target. The first attempt at implementation slices
+4 through 8 recreated the escaped implementation's size and recovery complexity before selected
+convergence was implemented. That attempt is archived and rejected; see
+[merger-complexity-audit.md](merger-complexity-audit.md).
+
+The replacement sequence combines deletion with the behavior that makes the deleted mechanism
+unnecessary. Each marker is removed only when its code, docs, worthwhile tests, and complexity
+measurement land together.
 
 | Slice | Unimplemented target |
 | --- | --- |
-| 4 | Separate versioned `ReviewIdentity` and `SubmittedBaseline`; status cannot rewrite either. |
-| 5 | Exact local/baseline/review-ref/PR-head projection gate; no land-time refresh. |
-| 6 | Fresh repository, identity, head, readiness, lease, and expected-head checks per mutation. |
-| 7 | Separate exact-snapshot global and selected rewritten-result landed classifications. |
-| 8 | Per-identity isolation, residue-safe finalization, and dependency-aware link retirement. |
-| 9 | Selected-only convergence, existing-review-only resubmission, and explicit `sync --all`. |
-| 10 | Removal of `LandNote`, the write-only journal, and mechanism-coupled test oracles. |
+| R1 | Bound persistent state; delete `LandNote`, the journal, and composite mutation state. |
+| R2 | One shared authority observation, reloaded per mutation; exact projection, no refresh. |
+| R3 | Pure landed evidence, selected convergence, shared retirement, and explicit `sync --all`. |
+| R4 | Reduced cross-system, interruption, hostile-scenario, and sparse-cache validation. |
 
 Cross-system validation remains incomplete until the child-process, hostile-scenario, and sparse
 cache checks run. The live-GitHub experiment was deliberately not performed, so conclusions about
 the fake's external idealizations remain conditional.
+
+The replacement implementation is also constrained by the audit's hard complexity budgets. A
+budget breach is evidence that the theory has started distributing policy again and stops the
+slice before another hardening cycle begins.
 
 ## Summary
 
