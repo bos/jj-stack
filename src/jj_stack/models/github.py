@@ -23,6 +23,27 @@ class GithubRepository(BaseModel):
     url: str
 
 
+class GithubStackPullRequest(BaseModel):
+    """Pull request identity embedded in a native stack response."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    number: int
+
+
+class GithubStack(BaseModel):
+    """Ordered pull requests in one native GitHub stack."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    number: int
+    pull_requests: tuple[GithubStackPullRequest, ...]
+
+    @property
+    def pull_request_numbers(self) -> tuple[int, ...]:
+        return tuple(pull_request.number for pull_request in self.pull_requests)
+
+
 class GithubBranchRef(BaseModel):
     """Subset of branch-ref fields embedded in pull request payloads."""
 

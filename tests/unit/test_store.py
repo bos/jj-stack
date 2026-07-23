@@ -48,6 +48,45 @@ def test_review_state_store_creates_and_loads_separate_records(tmp_path: Path) -
     assert state_path.exists()
 
 
+def test_review_state_store_keeps_stack_support_per_github_repository(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state.json"
+    store = ReviewStateStore(state_path)
+    identity = _identity()
+    original = store.create_review(
+        "change-1",
+        identity=identity,
+        baseline=SubmittedBaseline(commit_id="abc123"),
+    )
+
+    store.set_stacked_pull_requests("github.com/octocat/example", True)
+    store.set_stacked_pull_requests("github.com/octocat/legacy", False)
+
+    reloaded = ReviewStateStore(state_path)
+    assert reloaded.get_stacked_pull_requests("github.com/octocat/example") is True
+    assert reloaded.get_stacked_pull_requests("github.com/octocat/legacy") is False
+    assert reloaded.load() == original
+
+
+def test_review_state_store_rejects_ambiguous_stack_support(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "stacked_pull_requests": {"github.com/octocat/example": "true"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReviewStateError, match="valid boolean"):
+        ReviewStateStore(state_path).get_stacked_pull_requests(
+            "github.com/octocat/example"
+        )
+
+
 def test_review_state_store_returns_schema_two_defaults_when_file_is_missing(
     tmp_path: Path,
 ) -> None:

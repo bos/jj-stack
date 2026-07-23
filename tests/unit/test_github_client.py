@@ -116,6 +116,85 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
     assert attempts == 1
 
 
+def test_github_client_uses_observed_stack_api_contract() -> None:
+    requests: list[tuple[str, str]] = []
+
+    def stack_payload(*pull_numbers: int) -> dict[str, object]:
+        return {
+            "number": 3,
+            "pull_requests": [{"number": number} for number in pull_numbers],
+        }
+
+    def handler(request: httpxyz.Request) -> httpxyz.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path.endswith("/stacks"):
+            expected_filter = "7" if len(requests) == 2 else None
+            assert request.url.params.get("pull_request") == expected_filter
+            return httpxyz.Response(200, json=[stack_payload(7, 8)], request=request)
+        if request.method == "GET":
+            return httpxyz.Response(200, json=stack_payload(7, 8), request=request)
+        payload = json.loads(request.content.decode("utf-8"))
+        if request.url.path.endswith("/stacks"):
+            assert payload == {"pull_requests": [7, 8]}
+            return httpxyz.Response(201, json=stack_payload(7, 8), request=request)
+        assert payload == {"pull_requests": [9]}
+        return httpxyz.Response(200, json=stack_payload(7, 8, 9), request=request)
+
+    async def run_test() -> tuple[tuple[int, ...], ...]:
+        async with _github_client(handler) as client:
+            listed = await client.list_stacks()
+            filtered = await client.list_stacks(pull_number=7)
+            fetched = await client.get_stack(stack_number=3)
+            created = await client.create_stack(pull_numbers=(7, 8))
+            appended = await client.append_to_stack(stack_number=3, pull_numbers=(9,))
+        return tuple(
+            stack.pull_request_numbers
+            for stack in (*listed, *filtered, fetched, created, appended)
+        )
+
+    assert asyncio.run(run_test()) == (
+        (7, 8),
+        (7, 8),
+        (7, 8),
+        (7, 8),
+        (7, 8, 9),
+    )
+    assert requests == [
+        ("GET", "/repos/octo-org/stacked-review/stacks"),
+        ("GET", "/repos/octo-org/stacked-review/stacks"),
+        ("GET", "/repos/octo-org/stacked-review/stacks/3"),
+        ("POST", "/repos/octo-org/stacked-review/stacks"),
+        ("POST", "/repos/octo-org/stacked-review/stacks/3/add"),
+    ]
+
+
+def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None:
+    attempts = 0
+
+    def handler(request: httpxyz.Request) -> httpxyz.Response:
+        nonlocal attempts
+        attempts += 1
+        assert request.method == "POST"
+        assert request.url.path == "/repos/octo-org/stacked-review/stacks/3/unstack"
+        if attempts == 1:
+            return httpxyz.Response(204, request=request)
+        return httpxyz.Response(
+            200,
+            json={"number": 3, "pull_requests": [{"number": 8}]},
+            request=request,
+        )
+
+    async def run_test() -> tuple[object, tuple[int, ...]]:
+        async with _github_client(handler) as client:
+            dissolved = await client.unstack(stack_number=3)
+            remaining = await client.unstack(stack_number=3)
+        if remaining is None:
+            raise AssertionError("The second unstack should return its locked member.")
+        return dissolved, remaining.pull_request_numbers
+
+    assert asyncio.run(run_test()) == (None, (8,))
+
+
 def test_github_client_lists_pull_request_reviews() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/repos/octo-org/stacked-review/pulls/7/reviews"

@@ -23,6 +23,7 @@ from jj_stack.models.github import (
     GithubPullRequestReview,
     GithubPullRequestReviewUser,
     GithubRepository,
+    GithubStack,
 )
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,67 @@ class GithubClient:
     async def get_repository(self) -> GithubRepository:
         response = await self._request("GET", self._repo_path)
         return GithubRepository.model_validate(self._expect_success(response))
+
+    async def list_stacks(
+        self,
+        *,
+        pull_number: int | None = None,
+    ) -> tuple[GithubStack, ...]:
+        params = None if pull_number is None else {"pull_request": str(pull_number)}
+        response = await self._request("GET", f"{self._repo_path}/stacks", params=params)
+        payload = self._expect_stack_payload(response, response_name="stack list")
+        if not isinstance(payload, list):
+            raise GithubClientError("GitHub stack list response was not a JSON array.")
+        return tuple(
+            _validate_stack_payload(item, response_name="stack list") for item in payload
+        )
+
+    async def get_stack(self, *, stack_number: int) -> GithubStack:
+        response = await self._request("GET", f"{self._repo_path}/stacks/{stack_number}")
+        return _validate_stack_payload(
+            self._expect_stack_payload(response, response_name="stack lookup"),
+            response_name="stack lookup",
+        )
+
+    async def create_stack(self, *, pull_numbers: Sequence[int]) -> GithubStack:
+        response = await self._request(
+            "POST",
+            f"{self._repo_path}/stacks",
+            json={"pull_requests": list(pull_numbers)},
+        )
+        return _validate_stack_payload(
+            self._expect_stack_payload(response, response_name="stack creation"),
+            response_name="stack creation",
+        )
+
+    async def append_to_stack(
+        self,
+        *,
+        stack_number: int,
+        pull_numbers: Sequence[int],
+    ) -> GithubStack:
+        response = await self._request(
+            "POST",
+            f"{self._repo_path}/stacks/{stack_number}/add",
+            json={"pull_requests": list(pull_numbers)},
+        )
+        return _validate_stack_payload(
+            self._expect_stack_payload(response, response_name="stack append"),
+            response_name="stack append",
+        )
+
+    async def unstack(self, *, stack_number: int) -> GithubStack | None:
+        response = await self._request(
+            "POST",
+            f"{self._repo_path}/stacks/{stack_number}/unstack",
+        )
+        if response.status_code == 204:
+            self._expect_no_content(response)
+            return None
+        return _validate_stack_payload(
+            self._expect_stack_payload(response, response_name="unstack"),
+            response_name="unstack",
+        )
 
     async def list_pull_requests(
         self,
@@ -665,6 +727,19 @@ class GithubClient:
                 status_code=error.response.status_code,
             ) from error
 
+    def _expect_stack_payload(
+        self,
+        response: httpxyz.Response,
+        *,
+        response_name: str,
+    ) -> object:
+        try:
+            return self._expect_success(response)
+        except json.JSONDecodeError as error:
+            raise GithubClientError(
+                f"GitHub {response_name} response was not valid JSON."
+            ) from error
+
     def _retry_after_seconds(
         self,
         *,
@@ -1041,6 +1116,15 @@ def _issue_comments_from_graphql(
     valid_comments = tuple(comment for comment in comments.nodes or () if comment is not None)
     has_next_page = comments.page_info is not None and comments.page_info.has_next_page
     return valid_comments, has_next_page
+
+
+def _validate_stack_payload(payload: object, *, response_name: str) -> GithubStack:
+    try:
+        return GithubStack.model_validate(payload)
+    except ValidationError as error:
+        raise GithubClientError(
+            f"GitHub {response_name} response had invalid stack data."
+        ) from error
 
 
 def _validate_graphql_model[GraphqlModel: BaseModel](
