@@ -33,6 +33,7 @@ compatibility code, migration code, or the like.
 - Match the repo's existing subject style: use a lowercase scope such as `status`, `docs`, or
   `cli`, followed by a short lowercase phrase, with no trailing period.
 - Use a body for any change whose purpose is not obvious from the subject and diff.
+- Hard-wrap commit message bodies at 72 columns.
 - The body should explain the motivation for the change, the intended behavior or design outcome,
   and any important scope or design constraints.
 - Do not use the body to narrate the code or to record routine validation such as `./check.py`.
