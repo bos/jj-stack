@@ -204,10 +204,11 @@ For `land --via merge`, GitHub moves trunk by merging the accepted changes. Befo
 `land` verifies those results, rebases the selected surviving changes onto the merged trunk, and
 updates only survivors that already have reviews and passed current identity checks. Trailing
 unreviewed work remains local. Reviews above a `--pull-request` cap are out of scope and are not
-resubmitted; their local commits may still be rewritten as descendants. A blocked merge scenario
-marks the first PR after the merged changes as unmergeable. The command stops there, keeps the
-blocker open and tracked, verifies accepted merge results, removes proven landed ancestors,
-rebases survivors onto fetched trunk, and updates only existing reviewed survivors.
+resubmitted. If they depend on a GitHub-rewritten landed change, its tracking remains and the
+output names the selected `sync` recovery. A blocked merge scenario marks the first PR after the
+merged changes as unmergeable. The command stops there, keeps the blocker open and tracked,
+verifies accepted merge results, removes proven landed ancestors when safe, rebases survivors
+onto fetched trunk, and updates only existing reviewed survivors.
 
 Both landing modes assert transient events, not only final state: each landed PR closes exactly
 once, and PRs outside the command's selected scope see no state or base event. Survivors during

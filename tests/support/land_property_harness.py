@@ -165,6 +165,12 @@ def replay_land_scenario(
         remaining_above_selection = tuple(
             change for change in remaining_tracked if change not in remaining_within_selection
         )
+        preserve_landed_tracking = selection_cap < len(scenario.final_live_labels)
+        if preserve_landed_tracking and landed:
+            dependent_head = labels_to_change_ids[scenario.final_live_labels[-1]]
+            assert f"jj-stack sync {dependent_head}" in (
+                captured.out + captured.err
+            ), scenario.trace
         # Survivors inside the selection are legitimately resubmitted by the
         # in-command convergence, so only reviews outside it must stay silent.
         if landed:
@@ -176,6 +182,7 @@ def replay_land_scenario(
             fake_repo=fake_repo,
             landed=landed,
             original_main=original_main,
+            preserve_landed_tracking=preserve_landed_tracking,
             remaining_within_selection=remaining_within_selection,
             remaining_above_selection=remaining_above_selection,
             repo=repo,
@@ -543,6 +550,7 @@ def _assert_merge_transport_result(
     fake_repo: FakeGithubRepository,
     landed: tuple[_TrackedChange, ...],
     original_main: str,
+    preserve_landed_tracking: bool,
     remaining_within_selection: tuple[_TrackedChange, ...],
     remaining_above_selection: tuple[_TrackedChange, ...],
     repo: Path,
@@ -556,14 +564,18 @@ def _assert_merge_transport_result(
 
     client = JjClient(repo)
 
-    # GitHub moved trunk by merging, and land converged the selected stack
-    # before returning: merged tracking is retired and the surviving selected
-    # changes were rebased onto the merged trunk and resubmitted.
+    # A capped selection preserves landed tracking while unselected descendants
+    # still need it for explicit recovery. Otherwise convergence retires it.
     for change in landed:
         pull_request = fake_repo.pull_requests[change.pull_number]
         assert pull_request.state == "closed", (change.pull_number, trace)
         assert pull_request.merged_at is not None, (change.pull_number, trace)
-        _assert_review_retired(state, change.change_id, trace)
+        if preserve_landed_tracking:
+            _assert_review_tracked(state, change.change_id, trace)
+            assert state.review_identities[change.change_id] == change.identity, trace
+            assert state.submitted_baselines[change.change_id] == change.baseline, trace
+        else:
+            _assert_review_retired(state, change.change_id, trace)
 
     for change in remaining_within_selection:
         pull_request = fake_repo.pull_requests[change.pull_number]
