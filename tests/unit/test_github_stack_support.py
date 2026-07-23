@@ -7,9 +7,10 @@ import httpxyz
 import pytest
 
 from jj_stack.commands._github_stack_support import resolve_github_stack_support
+from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.models.github import GithubRepository
 from jj_stack.state.store import ReviewStateStore
 
 
@@ -24,18 +25,6 @@ def _github_client(handler) -> GithubClient:
             owner="local-name",
             repo="stacked-review",
         ),
-    )
-
-
-def _github_repository() -> GithubRepository:
-    return GithubRepository(
-        clone_url="https://github.test/octo-org/stacked-review.git",
-        default_branch="main",
-        full_name="Octo-Org/Stacked-Review",
-        html_url="https://github.test/octo-org/stacked-review",
-        name="stacked-review",
-        private=True,
-        url="https://api.github.test/repos/octo-org/stacked-review",
     )
 
 
@@ -58,12 +47,10 @@ def test_stack_support_caches_supported_repository_and_reuses_observation(
         async with _github_client(handler) as client:
             detected = await resolve_github_stack_support(
                 github_client=client,
-                github_repository=_github_repository(),
                 state_store=ReviewStateStore(state_path),
             )
             cached = await resolve_github_stack_support(
                 github_client=client,
-                github_repository=_github_repository(),
                 state_store=ReviewStateStore(state_path),
             )
         return detected, cached
@@ -91,12 +78,10 @@ def test_stack_support_caches_conclusive_404_as_unsupported(tmp_path: Path) -> N
         async with _github_client(handler) as client:
             detected = await resolve_github_stack_support(
                 github_client=client,
-                github_repository=_github_repository(),
                 state_store=ReviewStateStore(state_path),
             )
             cached = await resolve_github_stack_support(
                 github_client=client,
-                github_repository=_github_repository(),
                 state_store=ReviewStateStore(state_path),
             )
         return detected, cached
@@ -116,18 +101,18 @@ def test_stack_support_does_not_cache_uncertain_failure(tmp_path: Path) -> None:
 
     async def run_test() -> None:
         async with _github_client(handler) as client:
-            await resolve_github_stack_support(
-                github_client=client,
-                github_repository=_github_repository(),
-                state_store=ReviewStateStore(state_path),
-            )
+            await GithubStackSelection(
+                client,
+                (7,),
+                ReviewStateStore(state_path),
+            ).require_unstacked()
 
-    with pytest.raises(GithubClientError, match="GitHub request failed: 500"):
+    with pytest.raises(CliError, match="Could not inspect native GitHub stack membership"):
         asyncio.run(run_test())
 
     assert (
         ReviewStateStore(state_path).get_stacked_pull_requests(
-            "github.test/octo-org/stacked-review"
+            "github.test/local-name/stacked-review"
         )
         is None
     )
@@ -160,7 +145,6 @@ def test_stack_support_classifies_malformed_response_without_caching(
         async with _github_client(handler) as client:
             await resolve_github_stack_support(
                 github_client=client,
-                github_repository=_github_repository(),
                 state_store=ReviewStateStore(state_path),
             )
 
@@ -169,7 +153,7 @@ def test_stack_support_classifies_malformed_response_without_caching(
 
     assert (
         ReviewStateStore(state_path).get_stacked_pull_requests(
-            "github.test/octo-org/stacked-review"
+            "github.test/local-name/stacked-review"
         )
         is None
     )
@@ -185,7 +169,6 @@ def test_stack_support_dry_run_observes_without_caching(tmp_path: Path) -> None:
         async with _github_client(handler) as client:
             return await resolve_github_stack_support(
                 github_client=client,
-                github_repository=_github_repository(),
                 state_store=ReviewStateStore(state_path),
                 persist=False,
             )
@@ -196,7 +179,7 @@ def test_stack_support_dry_run_observes_without_caching(tmp_path: Path) -> None:
     assert support.observed_stacks == ()
     assert (
         ReviewStateStore(state_path).get_stacked_pull_requests(
-            "github.test/octo-org/stacked-review"
+            "github.test/local-name/stacked-review"
         )
         is None
     )

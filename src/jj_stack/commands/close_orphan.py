@@ -18,6 +18,7 @@ from jj_stack.commands._close_actions import (
     plan_bookmark_cleanup,
     retire_review_identity,
 )
+from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
@@ -252,6 +253,30 @@ async def run_orphan_close(
 
         if inspection is None:
             raise AssertionError("Orphan close inspection must resolve a pull request state.")
+        if not dry_run and (inspection.state == "open" or cleanup_plan.remote_delete):
+            try:
+                native_stack = await GithubStackSelection(
+                    github_client,
+                    (pull_request_number,),
+                    state_store,
+                ).dissolve_exact()
+            except CliError as error:
+                recorder.record(
+                    CloseAction(kind="GitHub stack", body=str(error), status="blocked")
+                )
+                return _render_orphan_close_actions(
+                    actions=recorder.as_tuple(),
+                    blocked=True,
+                    run=run,
+                )
+            if native_stack is not None:
+                recorder.record(
+                    CloseAction(
+                        kind="GitHub stack",
+                        body=t"dissolve GitHub stack #{native_stack.number}",
+                        status="applied",
+                    )
+                )
         if inspection.state == "open":
             recorder.record(
                 CloseAction(

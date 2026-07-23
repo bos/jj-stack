@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.models.github import GithubRepository, GithubStack
+from jj_stack.models.github import GithubStack
 from jj_stack.state.store import ReviewStateStore
 
 
@@ -18,13 +18,11 @@ class GithubStackSupport:
 async def resolve_github_stack_support(
     *,
     github_client: GithubClient,
-    github_repository: GithubRepository,
     state_store: ReviewStateStore,
     persist: bool = True,
 ) -> GithubStackSupport:
-    repository_key = (
-        f"{github_client.repository.host}/{github_repository.full_name}".casefold()
-    )
+    repository = github_client.repository
+    repository_key = f"{repository.host}/{repository.owner}/{repository.repo}".casefold()
     cached = state_store.get_stacked_pull_requests(repository_key)
     if cached is not None:
         return GithubStackSupport(supported=cached)

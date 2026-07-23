@@ -362,6 +362,7 @@ def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_on
 
     def mutation_plan(bookmark: str, expected_target: str) -> _StaleCleanupMutationPlan:
         return _StaleCleanupMutationPlan(
+            change_id=bookmark,
             local_bookmark_action=CleanupAction(
                 kind="local bookmark",
                 status="planned",

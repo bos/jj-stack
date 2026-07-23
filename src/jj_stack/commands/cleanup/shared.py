@@ -103,6 +103,7 @@ class PreparedCleanupChange:
 class _StaleCleanupMutationPlan:
     """Planned local bookmark and remote branch mutations for one stale change."""
 
+    change_id: str
     local_bookmark_action: CleanupAction | None
     remote_plan: RemoteBranchCleanupPlan | None
     review_identity: ReviewIdentity

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
@@ -11,6 +13,7 @@ from jj_stack.state.store import ReviewStateStore, resolve_state_path
 from ..support.fake_github import (
     FakeGithubState,
     create_app,
+    github_stack,
 )
 from ..support.integration_helpers import (
     commit_file,
@@ -44,7 +47,53 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
+    state_before = state_store.load()
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+    operations: list[str] = []
+    native_members = (1, 2)
+    locked = True
 
+    class NativeStackClient(GithubClient):
+        async def list_stacks(self, *, pull_number=None):
+            return (github_stack(*native_members),)
+
+        async def get_stack(self, *, stack_number):
+            return github_stack(*native_members)
+
+        async def unstack(self, *, stack_number):
+            operations.append("unstack")
+            return github_stack(1) if locked else None
+
+        async def close_pull_request(self, *, pull_number):
+            operations.append("close")
+            return await super().close_pull_request(pull_number=pull_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.unstack", "jj_stack.review.status"),
+        client_type=NativeStackClient,
+    )
+
+    blocked_exit_code = run_main(repo, config_path, "unstack", change_id)
+    blocked = capsys.readouterr()
+
+    assert blocked_exit_code == 1
+    assert "do not exactly match one native GitHub stack" in _combined_output(blocked)
+    assert operations == [] and fake_repo.pull_requests[1].state == "open"
+    assert state_store.load() == state_before
+
+    native_members = (1,)
+    locked_exit_code = run_main(repo, config_path, "unstack", change_id)
+    locked_run = capsys.readouterr()
+
+    assert locked_exit_code == 1
+    assert "GitHub stack #7 still contains #1" in _combined_output(locked_run)
+    assert operations == ["unstack"] and fake_repo.pull_requests[1].state == "open"
+    assert state_store.load() == state_before
+
+    locked = False
     exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
@@ -54,6 +103,7 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     assert fake_repo.pull_requests[1].state == "closed"
     assert refreshed_state.review_identities[change_id].is_unlinked
     assert issue_comments(fake_repo, 1) == []
+    assert operations == ["unstack", "unstack", "close"]
 
 
 def test_unstack_local_forgets_tracking_without_closing_pull_request(
@@ -222,6 +272,9 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
             "unstack should not inspect bookmark state for a fully untracked stack"
         )
 
+    async def fail_list_stacks(*args, **kwargs):
+        raise AssertionError("unstack should not inspect native stacks without a mutation")
+
     monkeypatch.setattr(
         "jj_stack.review.status.JjClient.fetch_remote",
         tracking_fetch_remote,
@@ -230,6 +283,7 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
         "jj_stack.commands.unstack.JjClient.list_bookmark_states",
         fail_list_bookmark_states,
     )
+    monkeypatch.setattr(GithubClient, "list_stacks", fail_list_stacks)
 
     dry_run_exit_code = run_main(repo, config_path, "unstack", "--dry-run")
     dry_run_captured = capsys.readouterr()
@@ -413,6 +467,11 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
 
     run_command(["jj", "abandon", bottom_change_id], repo)
 
+    async def dissolve_exact(_selection, **_kwargs):
+        return github_stack(bottom_pr_number)
+
+    monkeypatch.setattr(GithubStackSelection, "dissolve_exact", dissolve_exact)
+
     exit_code = run_main(
         repo,
         config_path,
@@ -427,26 +486,13 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
 
     assert exit_code == 0
     assert "Applied close actions:" in output
+    assert "dissolve GitHub stack #7" in output
     assert f"close PR #{bottom_pr_number}" in output
     assert "prune orphan record" in output
     assert fake_repo.pull_requests[bottom_pr_number].state == "closed"
     assert issue_comments(fake_repo, bottom_pr_number) == []
     assert bottom_change_id not in refreshed_state.review_identities
     assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
-
-    rerun_exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        str(bottom_pr_number),
-    )
-    rerun_captured = capsys.readouterr()
-
-    assert rerun_exit_code == 0
-    assert f"Nothing to close for PR #{bottom_pr_number}." in rerun_captured.out
-    assert "not linked" not in _combined_output(rerun_captured)
 
 
 def test_unstack_cleanup_orphans_dry_run_then_retires_every_orphan(
@@ -530,7 +576,13 @@ def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     change_ids = tuple(revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     run_command(["jj", "abandon", *change_ids], repo)
-    fake_repo.pull_requests[1].head_ref = "review/reclaimed"
+
+    async def dissolve_exact(selection, **_kwargs):
+        if tuple(selection.pull_numbers) == (1,):
+            raise CliError("native stack includes an unselected pull request")
+        return None
+
+    monkeypatch.setattr(GithubStackSelection, "dissolve_exact", dissolve_exact)
 
     exit_code = run_main(
         repo,
@@ -543,7 +595,7 @@ def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "cannot close orphaned PR #1" in _combined_output(captured)
+    assert "native stack includes an unselected pull request" in _combined_output(captured)
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
     refreshed_state = state_store.load()

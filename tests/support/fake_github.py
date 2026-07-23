@@ -13,6 +13,19 @@ from typing import Annotated
 
 from fastapi import Body, FastAPI, HTTPException, Response
 
+from jj_stack.models.github import GithubStack
+
+
+def github_stack(*pull_numbers: int, number: int = 7) -> GithubStack:
+    """Build a typed native stack response for focused client overrides."""
+
+    return GithubStack.model_validate(
+        {
+            "number": number,
+            "pull_requests": [{"number": pull_number} for pull_number in pull_numbers],
+        }
+    )
+
 
 @dataclass(slots=True)
 class FakeGithubPullRequest:

@@ -116,7 +116,7 @@ storage condition, not a third capability value.
 
 ### Scope and representation
 
-Store the value directly in jj-stack's machine-written local state, keyed by canonical GitHub
+Store the value directly in jj-stack's machine-written local state, keyed by the resolved GitHub
 repository:
 
 ```json
@@ -128,8 +128,8 @@ repository:
 ```
 
 The enclosing state path identifies the local jj repository. The map key identifies the GitHub
-host plus the API-reported canonical owner and repository, so the complete cache key is the
-local/GitHub repository pair.
+host, owner, and repository resolved from its configured remote, so the complete cache key is the
+local/GitHub repository pair without another API request.
 
 Do not put the detected value in human-authored jj config. Do not create a second capability
 store or a generalized capability record around the one boolean.
@@ -140,16 +140,15 @@ Only a command whose behavior depends on native stack support consults the cache
 
 - every non-empty `submit`, because a single-PR submit may otherwise delete navigation comments
   left by a previously larger stack
-- `land` and remote `unstack` when they have selected PRs to mutate
+- `land` and apply-mode remote `unstack` when they have selected saved PR identities
 - cleanup only when it is about to delete a branch belonging to a known PR
 
 When the repository pair has no cache entry:
 
-1. successfully load the ordinary GitHub repository
-2. call `GET /repos/{owner}/{repo}/stacks`
-3. on `200`, cache `true` and reuse the returned stack list for this command
-4. on a conclusive `404`, cache `false`
-5. on any other response or transport failure, fail and write no capability value
+1. call `GET /repos/{owner}/{repo}/stacks`
+2. on `200`, cache `true` and reuse the returned stack list for this command
+3. on a conclusive `404`, cache `false`
+4. on any other response or transport failure, fail and write no capability value
 
 A cached `false` uses navigation comments without a stack API request. A cached `true` does not
 need another capability probe, but a native mutation may still need current membership for

@@ -22,6 +22,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._action_recorder import ActionRecorder
+from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.github.client import build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
 from jj_stack.github.resolution import (
@@ -174,7 +175,7 @@ async def _run_cleanup_async(
         stale_reasons=stale_reasons,
     ):
         prepared_cleanup = _load_cleanup_remote_context(prepared_cleanup=prepared_cleanup)
-    prepared_changes = _run_local_cleanup_pass(
+    prepared_changes = await _run_local_cleanup_pass(
         prepared_cleanup=prepared_cleanup,
         record_action=recorder.record,
         stale_reasons=stale_reasons,
@@ -193,7 +194,7 @@ async def _run_cleanup_async(
     return CleanupResult(actions=recorder.as_tuple())
 
 
-def _run_local_cleanup_pass(
+async def _run_local_cleanup_pass(
     *,
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
@@ -275,13 +276,20 @@ def _run_local_cleanup_pass(
         orphan_local_bookmark_plans.append(orphan_plan)
 
     if not prepared_cleanup.dry_run:
-        _apply_stale_cleanup_mutation_plans(
+        allowed_mutation_plans, blocked_change_ids = await _guard_native_cleanup_plans(
             mutation_plans=tuple(mutation_plans),
+            prepared_cleanup=prepared_cleanup,
+            record_action=record_action,
+        )
+        _apply_stale_cleanup_mutation_plans(
+            mutation_plans=allowed_mutation_plans,
             orphan_local_bookmark_plans=tuple(orphan_local_bookmark_plans),
             prepared_cleanup=prepared_cleanup,
             record_action=record_action,
         )
         for retirement in retirements:
+            if retirement.change_id in blocked_change_ids:
+                continue
             prepared_cleanup.context.state_store.retire_review(
                 retirement.change_id,
                 expected_identity=retirement.review_identity,
@@ -296,6 +304,72 @@ def _run_local_cleanup_pass(
                 )
             )
     return tuple(prepared_changes)
+
+
+async def _guard_native_cleanup_plans(
+    *,
+    mutation_plans: tuple[_StaleCleanupMutationPlan, ...],
+    prepared_cleanup: PreparedCleanup,
+    record_action: Callable[[CleanupAction], None],
+) -> tuple[tuple[_StaleCleanupMutationPlan, ...], set[str]]:
+    """Exclude branch cleanup whose pull request remains in a native stack."""
+
+    target = prepared_cleanup.github_target
+    candidates = tuple(
+        plan
+        for plan in mutation_plans
+        if plan.remote_plan is not None and plan.remote_plan.action.status == "planned"
+    )
+    if not candidates:
+        return mutation_plans, set()
+    if not isinstance(target, GithubTarget):
+        blocked_change_ids = {plan.change_id for plan in candidates}
+        for plan in candidates:
+            record_action(
+                CleanupAction(
+                    kind="remote branch",
+                    status="blocked",
+                    body=t"preserve PR #{plan.review_identity.pr_number}'s branch because the "
+                    t"GitHub repository cannot be resolved; fix the remote and retry cleanup",
+                )
+            )
+        return (
+            tuple(plan for plan in mutation_plans if plan.change_id not in blocked_change_ids),
+            blocked_change_ids,
+        )
+    pull_numbers = tuple(plan.review_identity.pr_number for plan in candidates)
+    async with build_github_client(repository=target.repository) as github_client:
+        stacks = await GithubStackSelection(
+            github_client,
+            pull_numbers,
+            prepared_cleanup.context.state_store,
+        ).overlapping()
+    stack_by_pull = {
+        pull_number: stack.number
+        for stack in stacks
+        for pull_number in stack.pull_request_numbers
+        if pull_number in pull_numbers
+    }
+    allowed: list[_StaleCleanupMutationPlan] = []
+    for plan in mutation_plans:
+        pull_number = plan.review_identity.pr_number
+        if pull_number not in stack_by_pull:
+            allowed.append(plan)
+            continue
+        record_action(
+            CleanupAction(
+                kind="remote branch",
+                status="blocked",
+                body=t"preserve PR #{pull_number}'s branch because it remains in GitHub stack "
+                t"#{stack_by_pull[pull_number]}; run "
+                t"{ui.cmd(f'gh stack unstack {stack_by_pull[pull_number]}')} and retry cleanup",
+            )
+        )
+    return tuple(allowed), {
+        plan.change_id
+        for plan in mutation_plans
+        if plan.review_identity.pr_number in stack_by_pull
+    }
 
 
 def _process_stale_cleanup_change(
@@ -371,6 +445,7 @@ def _process_stale_cleanup_change(
         return None
 
     return _StaleCleanupMutationPlan(
+        change_id=prepared_change.change_id,
         local_bookmark_action=local_bookmark_plan,
         remote_plan=remote_plan,
         review_identity=review_identity,

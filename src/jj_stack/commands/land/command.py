@@ -56,6 +56,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.commands.sync import run_stack_convergence
 from jj_stack.errors import CliError, DriftError, UsageError
 from jj_stack.formatting import short_change_id
@@ -293,9 +294,16 @@ async def _stream_land_async(
             )
 
         async def finish_plan(plan: LandPlan) -> LandResult:
-            validate_land_plan_merge_method(
-                merge_method=resolved_merge_method,
-                plan=plan,
+            validate_land_plan_merge_method(merge_method=resolved_merge_method, plan=plan)
+            execution = LandExecutionInputs(
+                bypass_readiness=prepared_land.bypass_readiness,
+                cleanup_bookmarks=prepared_land.cleanup_bookmarks,
+                context=prepared_land.context,
+                native_stacks=GithubStackSelection(
+                    github_client,
+                    tuple(revision.identity.pr_number for revision in plan.planned_revisions),
+                    prepared_land.context.state_store,
+                ),
             )
             if prepared_land.dry_run:
                 bookmark_cleanup_actions = plan_review_bookmark_cleanup_for_revisions(
@@ -318,11 +326,7 @@ async def _stream_land_async(
                     via=plan.via,
                 )
             return await execute_land_plan(
-                execution=LandExecutionInputs(
-                    bypass_readiness=prepared_land.bypass_readiness,
-                    cleanup_bookmarks=prepared_land.cleanup_bookmarks,
-                    context=prepared_land.context,
-                ),
+                execution=execution,
                 github_client=github_client,
                 merge_method=resolved_merge_method,
                 plan=plan,
@@ -333,11 +337,9 @@ async def _stream_land_async(
                 trunk_subject=prepared.stack.trunk.subject,
             )
 
-        selected_stack_is_off_trunk = (
-            bool(prepared.stack.revisions)
-            and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
-        )
-        if selected_stack_is_off_trunk:
+        if prepared.stack.revisions and (
+            prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
+        ):
             raise _stack_not_on_trunk_error(
                 prepared_status=prepared_status,
                 status_result=status_result,

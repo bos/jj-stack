@@ -35,6 +35,7 @@ from jj_stack.commands._close_actions import (
     plan_bookmark_cleanup,
     retire_review_identity,
 )
+from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.commands.close_orphan import (
     run_orphan_close,
     run_untracked_cleanup_pull_request,
@@ -739,13 +740,58 @@ async def _stream_close_async(
             prepared_close=prepared_close,
             record_action=recorder.record,
         )
+        if not prepared_close.dry_run:
+            selection = GithubStackSelection(
+                github_client,
+                tuple(
+                    identity.pr_number
+                    for prepared_revision in prepared.status_revisions
+                    if (
+                        identity := run.review_identities.get(
+                            prepared_revision.revision.change_id
+                        )
+                    )
+                    is not None
+                ),
+                prepared_close.context.state_store,
+            )
+            native_stacks = await selection.overlapping()
+            if native_stacks:
+                blocker = next(
+                    (
+                        action
+                        for revision in status_result.revisions
+                        if (
+                            action := _close_revision_preflight_error(
+                                change_status=classify_review_status_revision(revision),
+                                revision=revision,
+                                run=run,
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if blocker is not None:
+                    recorder.record(blocker)
+                    blocked = True
+                else:
+                    native_stack = await selection.dissolve_exact(observed=native_stacks)
+                    if native_stack is not None:
+                        recorder.record(
+                            CloseAction(
+                                kind="GitHub stack",
+                                body=t"dissolve GitHub stack #{native_stack.number}",
+                                status="applied",
+                            )
+                        )
         progress_total = len(status_result.revisions) if on_action is None else 0
         with console.progress(
             description="Processing close actions",
             total=progress_total,
         ) as progress:
             # Process each revision in order, stopping on the first fail-closed block.
-            for revision in status_result.revisions:
+            for revision in () if blocked else status_result.revisions:
                 should_stop = await _process_close_revision(
                     change_status=classify_review_status_revision(revision),
                     revision=revision,
@@ -816,6 +862,13 @@ async def _process_close_revision(
     Returns True when the revision fails closed and processing must stop.
     """
 
+    if preflight_error := _close_revision_preflight_error(
+        change_status=change_status,
+        revision=revision,
+        run=run,
+    ):
+        run.record_action(preflight_error)
+        return True
     review_identity = (
         revision.review_identity if run.dry_run else run.review_identities.get(revision.change_id)
     )
@@ -825,53 +878,12 @@ async def _process_close_revision(
         else run.current_state.submitted_baselines.get(revision.change_id)
     )
     if review_identity is None or submitted_baseline is None:
-        if review_identity is None and submitted_baseline is None:
-            return False
-        run.record_action(
-            CloseAction(
-                kind="tracking",
-                body=t"cannot close {ui.change_id(revision.change_id)} because its saved pull "
-                t"request details or last submitted commit are unavailable; run "
-                t"{ui.cmd('relink')} before retrying",
-                status="blocked",
-            )
-        )
-        return True
-
-    lookup = revision.pull_request_lookup
-    if lookup is None and not change_status.has_pull_request_lookup_failure:
         return False
-    if change_status.pr_lifecycle == "ambiguous" or change_status.has_pull_request_lookup_failure:
-        body = (
-            lookup.message
-            if lookup is not None and lookup.message is not None
-            else "cannot safely determine the pull request for this path"
-        )
-        run.record_action(
-            CloseAction(
-                kind="close",
-                body=body,
-                status="blocked",
-            )
-        )
-        return True
+    lookup = revision.pull_request_lookup
 
     revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
 
     if change_status.pr_lifecycle == "missing":
-        if not review_identity.is_unlinked:
-            run.record_action(
-                CloseAction(
-                    kind="close",
-                    body=(
-                        t"cannot close {revision_label} because GitHub no longer reports a "
-                        t"pull request for its branch; run {ui.cmd('view --fetch')} or "
-                        t"{ui.cmd('relink')} before retrying"
-                    ),
-                    status="blocked",
-                )
-            )
-            return True
         if not run.prepared_close.cleanup or not change_status.saved_review_identity:
             return False
     else:
@@ -927,6 +939,52 @@ async def _process_close_revision(
         run=run,
     )
     return False
+
+
+def _close_revision_preflight_error(
+    *,
+    change_status: ReviewChangeStatus,
+    revision: ReviewStatusRevision,
+    run: _CloseMutationRun,
+) -> CloseAction | None:
+    """Return a blocker known before any close mutation for one revision."""
+
+    review_identity = (
+        revision.review_identity if run.dry_run else run.review_identities.get(revision.change_id)
+    )
+    submitted_baseline = (
+        revision.submitted_baseline
+        if run.dry_run
+        else run.current_state.submitted_baselines.get(revision.change_id)
+    )
+    if review_identity is None or submitted_baseline is None:
+        if review_identity is None and submitted_baseline is None:
+            return None
+        return CloseAction(
+            kind="tracking",
+            body=t"cannot close {ui.change_id(revision.change_id)} because its saved pull "
+            t"request details or last submitted commit are unavailable; run "
+            t"{ui.cmd('relink')} before retrying",
+            status="blocked",
+        )
+    lookup = revision.pull_request_lookup
+    if change_status.pr_lifecycle == "ambiguous" or change_status.has_pull_request_lookup_failure:
+        body = (
+            lookup.message
+            if lookup is not None and lookup.message is not None
+            else "cannot safely determine the pull request for this path"
+        )
+        return CloseAction(kind="close", body=body, status="blocked")
+    if change_status.pr_lifecycle == "missing" and not review_identity.is_unlinked:
+        revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
+        return CloseAction(
+            kind="close",
+            body=t"cannot close {revision_label} because GitHub no longer reports a pull "
+            t"request for its branch; run {ui.cmd('view --fetch')} or "
+            t"{ui.cmd('relink')} before retrying",
+            status="blocked",
+        )
+    return None
 
 
 def _record_retired_review_identity(

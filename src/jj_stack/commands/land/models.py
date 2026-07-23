@@ -7,6 +7,7 @@ from typing import Literal
 
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
+from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.status import PreparedStatus
 from jj_stack.ui import Message
@@ -60,6 +61,7 @@ class LandExecutionInputs:
     bypass_readiness: bool
     cleanup_bookmarks: bool
     context: CommandContext
+    native_stacks: GithubStackSelection
 
 
 @dataclass(frozen=True, slots=True)

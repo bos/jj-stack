@@ -160,6 +160,7 @@ async def _execute_direct_push(
     if observation.remote is None or observation.remote_trunk_target is None:
         raise AssertionError("Authorized direct push requires a live remote trunk target.")
 
+    await execution.native_stacks.require_unstacked()
     trunk_revision = plan.planned_revisions[-1]
     trunk_action = _push_trunk_bookmark(
         client=client,
@@ -231,6 +232,7 @@ async def _execute_github_merges(
 ) -> LandResult:
     if merge_method is None:
         raise AssertionError("The merge transport requires a resolved merge method.")
+    await execution.native_stacks.require_unstacked()
     merged_change_ids: list[str] = []
     blocked_action: LandAction | None = None
     current_trunk_commit_id = trunk_commit_id
