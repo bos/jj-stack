@@ -28,6 +28,9 @@ STATE_FILENAME = "state.json"
 
 type ReviewStateIssueReporter = Callable[[tuple[ReviewStateRecordIssue, ...]], None]
 
+_IDENTITY: ReviewStateRecordType = "review_identity"
+_BASELINE: ReviewStateRecordType = "submitted_baseline"
+
 
 class ReviewStateError(CliError):
     """Raised when the tracking data is unreadable or invalid."""
@@ -125,19 +128,21 @@ class ReviewStateStore:
             for issue in expected_issues
             if issue.change_id == change_id
         }
-        self._compare_identity(
+        self._compare_record(
             envelope,
             change_id,
             expected_identity,
             "relink review",
-            invalid_fingerprint=issue_fingerprints.get("review_identity"),
+            _IDENTITY,
+            issue_fingerprints.get(_IDENTITY),
         )
-        self._compare_baseline(
+        self._compare_record(
             envelope,
             change_id,
             expected_baseline,
             "relink review",
-            invalid_fingerprint=issue_fingerprints.get("submitted_baseline"),
+            _BASELINE,
+            issue_fingerprints.get(_BASELINE),
         )
         envelope.review_identities[change_id] = identity.model_dump(mode="json")
         envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
@@ -153,7 +158,7 @@ class ReviewStateStore:
         """Atomically change only the explicit link state of one identity."""
 
         envelope = self._load_envelope()
-        self._compare_identity(envelope, change_id, expected_identity, "set link state")
+        self._compare_record(envelope, change_id, expected_identity, "set link state", _IDENTITY)
         identity = expected_identity.model_copy(update={"link_state": link_state})
         envelope.review_identities[change_id] = identity.model_dump(mode="json")
         return self._persist(envelope)
@@ -169,8 +174,12 @@ class ReviewStateStore:
         """Atomically advance a baseline while the nominal identity stays exact."""
 
         envelope = self._load_envelope()
-        self._compare_identity(envelope, change_id, expected_identity, "advance baseline")
-        self._compare_baseline(envelope, change_id, expected_baseline, "advance baseline")
+        self._compare_record(
+            envelope, change_id, expected_identity, "advance baseline", _IDENTITY
+        )
+        self._compare_record(
+            envelope, change_id, expected_baseline, "advance baseline", _BASELINE
+        )
         envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
         return self._persist(envelope)
 
@@ -184,8 +193,8 @@ class ReviewStateStore:
         """Atomically remove one exact identity and baseline pair."""
 
         envelope = self._load_envelope()
-        self._compare_identity(envelope, change_id, expected_identity, "retire review")
-        self._compare_baseline(envelope, change_id, expected_baseline, "retire review")
+        self._compare_record(envelope, change_id, expected_identity, "retire review", _IDENTITY)
+        self._compare_record(envelope, change_id, expected_baseline, "retire review", _BASELINE)
         del envelope.review_identities[change_id]
         del envelope.submitted_baselines[change_id]
         return self._persist(envelope)
@@ -275,15 +284,22 @@ class ReviewStateStore:
             ),
         )
 
-    def _compare_identity(
+    def _compare_record(
         self,
         envelope: _StoredReviewState,
         change_id: str,
-        expected: ReviewIdentity | None,
+        expected: ReviewIdentity | SubmittedBaseline | None,
         operation: str,
+        record_type: ReviewStateRecordType,
         invalid_fingerprint: str | None = None,
     ) -> None:
-        if change_id not in envelope.review_identities:
+        if record_type == _IDENTITY:
+            records = envelope.review_identities
+            validator = _validate_identity
+        else:
+            records = envelope.submitted_baselines
+            validator = _validate_baseline
+        if change_id not in records:
             if expected is not None:
                 self._raise_conflict(change_id, operation)
             if invalid_fingerprint is not None and invalid_fingerprint != _record_fingerprint(
@@ -292,36 +308,9 @@ class ReviewStateStore:
             ):
                 self._raise_conflict(change_id, operation)
             return
-        record = envelope.review_identities.get(change_id)
+        record = records.get(change_id)
         try:
-            current = _validate_identity(record)
-        except ValidationError, ValueError:
-            if expected is None and invalid_fingerprint == _record_fingerprint(record):
-                return
-            self._raise_conflict(change_id, operation)
-        if expected is None or current != expected:
-            self._raise_conflict(change_id, operation)
-
-    def _compare_baseline(
-        self,
-        envelope: _StoredReviewState,
-        change_id: str,
-        expected: SubmittedBaseline | None,
-        operation: str,
-        invalid_fingerprint: str | None = None,
-    ) -> None:
-        if change_id not in envelope.submitted_baselines:
-            if expected is not None:
-                self._raise_conflict(change_id, operation)
-            if invalid_fingerprint is not None and invalid_fingerprint != _record_fingerprint(
-                None,
-                present=False,
-            ):
-                self._raise_conflict(change_id, operation)
-            return
-        record = envelope.submitted_baselines.get(change_id)
-        try:
-            current = _validate_baseline(record)
+            current = validator(record)
         except ValidationError, ValueError:
             if expected is None and invalid_fingerprint == _record_fingerprint(record):
                 return
