@@ -54,8 +54,6 @@ async def merge_landed_pull_request(
             pull_request = await github_client.update_pull_request(
                 pull_number=pull_request.number,
                 base=trunk_branch,
-                body=pull_request.body or "",
-                title=pull_request.title,
             )
         except GithubClientError as error:
             raise CliError(

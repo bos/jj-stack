@@ -296,7 +296,14 @@ def _install_submit_retry_fault(
                 )
             return pull_request
 
-        async def update_pull_request(self, *, pull_number, base, body, title):
+        async def update_pull_request(
+            self,
+            *,
+            pull_number,
+            base=None,
+            body=None,
+            title=None,
+        ):
             nonlocal failed
             pull_request = await super().update_pull_request(
                 pull_number=pull_number,
@@ -307,7 +314,7 @@ def _install_submit_retry_fault(
             if (
                 not failed
                 and scenario.failure_point == "update_pull_request"
-                and title == target_title
+                and pull_request.title == target_title
             ):
                 failed = True
                 raise GithubClientError("Simulated pull request update failure", status_code=500)

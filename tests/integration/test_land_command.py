@@ -1047,7 +1047,14 @@ def test_land_via_merge_rechecks_readiness_after_retarget(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class DismissAfterRetargetClient(GithubClient):
-        async def update_pull_request(self, *, pull_number, base, body, title):
+        async def update_pull_request(
+            self,
+            *,
+            pull_number,
+            base=None,
+            body=None,
+            title=None,
+        ):
             pull_request = await super().update_pull_request(
                 pull_number=pull_number,
                 base=base,

@@ -154,24 +154,27 @@ async def _sync_pull_request(
                 title=title,
             )
         action: PullRequestAction = "created"
-    elif (
-        discovered_pull_request.base.ref == pending_sync.base_branch
-        and (discovered_pull_request.body or "") == body
-        and discovered_pull_request.title == title
-    ):
-        pull_request = discovered_pull_request
-        action = "unchanged"
     else:
+        base_update = (
+            pending_sync.base_branch
+            if discovered_pull_request.base.ref != pending_sync.base_branch
+            else None
+        )
+        body_update = body if (discovered_pull_request.body or "") != body else None
+        title_update = title if discovered_pull_request.title != title else None
         pull_request = discovered_pull_request
-        if not run.dry_run:
-            pull_request = await _update_pull_request(
-                base_branch=pending_sync.base_branch,
-                body=body,
-                github_client=github_client,
-                pull_request=discovered_pull_request,
-                title=title,
-            )
-        action = "updated"
+        if base_update is None and body_update is None and title_update is None:
+            action = "unchanged"
+        else:
+            if not run.dry_run:
+                pull_request = await _update_pull_request(
+                    base_branch=base_update,
+                    body=body_update,
+                    github_client=github_client,
+                    pull_request=discovered_pull_request,
+                    title=title_update,
+                )
+            action = "updated"
 
     if pull_request is not None and pull_request.state == "open":
         if options.draft_mode == "open" and pull_request.is_draft:
@@ -491,11 +494,11 @@ async def _convert_pull_request_to_draft(
 
 async def _update_pull_request(
     *,
-    base_branch: str,
-    body: str,
+    base_branch: str | None,
+    body: str | None,
     github_client: GithubClient,
     pull_request: GithubPullRequest,
-    title: str,
+    title: str | None,
 ) -> GithubPullRequest:
     try:
         return await github_client.update_pull_request(

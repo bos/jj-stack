@@ -1146,6 +1146,31 @@ def test_submit_updates_existing_pull_request_after_change_rewrite(
     initial_bookmark = initial_identity.head_ref
     initial_pr_number = initial_identity.pr_number
 
+    class RejectBaseOnContentUpdateClient(GithubClient):
+        async def update_pull_request(
+            self,
+            *,
+            pull_number,
+            base=None,
+            body=None,
+            title=None,
+        ):
+            if base is not None:
+                raise GithubClientError("Native stack member rejects base updates")
+            return await super().update_pull_request(
+                pull_number=pull_number,
+                base=base,
+                body=body,
+                title=title,
+            )
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=create_app(FakeGithubState.single_repository(fake_repo)),
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.submit.command",),
+        client_type=RejectBaseOnContentUpdateClient,
+    )
     run_command(
         ["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed\n\nupdated body"],
         repo,

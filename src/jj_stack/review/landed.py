@@ -105,8 +105,6 @@ async def _finalize_open_review(
             await finalizer.github.update_pull_request(
                 pull_number=pull_request.number,
                 base=finalizer.trunk_branch,
-                body=pull_request.body or "",
-                title=pull_request.title,
             )
             reloaded, reason = await _observe_exact_candidate(candidate, finalizer)
             if reason is not None or reloaded is None:

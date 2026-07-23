@@ -116,6 +116,48 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
     assert attempts == 1
 
 
+@pytest.mark.parametrize(
+    ("base", "body", "title", "expected_payload"),
+    (
+        (None, "new body", "new title", {"body": "new body", "title": "new title"}),
+        ("main", None, None, {"base": "main"}),
+        ("main", "", "new title", {"base": "main", "body": "", "title": "new title"}),
+    ),
+)
+def test_github_client_sends_only_supplied_pull_request_updates(
+    base: str | None,
+    body: str | None,
+    title: str | None,
+    expected_payload: dict[str, str],
+) -> None:
+    def handler(request: httpxyz.Request) -> httpxyz.Response:
+        assert json.loads(request.content.decode("utf-8")) == expected_payload
+        return httpxyz.Response(
+            200,
+            json={
+                "base": {"ref": base or "old-base"},
+                "body": body or "",
+                "head": {"ref": "review/feature"},
+                "html_url": "https://github.test/octo-org/stacked-review/pull/7",
+                "number": 7,
+                "state": "open",
+                "title": title or "old title",
+            },
+            request=request,
+        )
+
+    async def run_test() -> None:
+        async with _github_client(handler) as client:
+            await client.update_pull_request(
+                pull_number=7,
+                base=base,
+                body=body,
+                title=title,
+            )
+
+    asyncio.run(run_test())
+
+
 def test_github_client_uses_observed_stack_api_contract() -> None:
     requests: list[tuple[str, str]] = []
 

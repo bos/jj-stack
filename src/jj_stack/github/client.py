@@ -542,14 +542,15 @@ class GithubClient:
         self,
         *,
         pull_number: int,
-        base: str,
-        body: str,
-        title: str,
+        base: str | None = None,
+        body: str | None = None,
+        title: str | None = None,
     ) -> GithubPullRequest:
+        fields = {"base": base, "body": body, "title": title}
         response = await self._request(
             "PATCH",
             f"{self._repo_path}/pulls/{pull_number}",
-            json={"base": base, "body": body, "title": title},
+            json={name: value for name, value in fields.items() if value is not None},
         )
         return GithubPullRequest.model_validate(self._expect_success(response))
 
