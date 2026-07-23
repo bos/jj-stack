@@ -101,7 +101,7 @@ async def observe_review_mutation(
     remote_targets: dict[str, str] = {}
     if remote is not None:
         remote_targets = context.jj_client.list_remote_branches(
-            remote=remote.url,
+            remote=remote.push_url,
             patterns=tuple(f"refs/heads/{ref}" for ref in (trunk_branch, *head_refs)),
         )
     reviews: dict[str, ReviewObservation] = {}

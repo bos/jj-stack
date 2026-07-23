@@ -145,8 +145,8 @@ def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, GithubRepoAddr
             CheckResult(
                 "GitHub remote",
                 "fail",
-                t"remote {ui.bookmark(remote.name)} does not look like "
-                t"a GitHub URL: {remote.url}; use a GitHub HTTPS or SSH remote URL",
+                t"remote {ui.bookmark(remote.name)} does not have fetch and push URLs "
+                t"for the same GitHub repository; use GitHub HTTPS or SSH URLs",
             ),
             None,
         )

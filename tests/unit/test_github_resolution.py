@@ -13,13 +13,13 @@ from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkSt
 from jj_stack.models.github import GithubRepository
 
 
+def _remote(name: str) -> GitRemote:
+    url = "git@example.com:org/repo.git"
+    return GitRemote(name=name, fetch_url=url, push_url=url)
+
+
 def test_select_submit_remote_uses_origin_when_multiple_remotes_exist() -> None:
-    remote = select_submit_remote(
-        (
-            GitRemote(name="origin", url="git@example.com:org/repo.git"),
-            GitRemote(name="backup", url="git@example.com:org/repo.git"),
-        ),
-    )
+    remote = select_submit_remote((_remote("origin"), _remote("backup")))
 
     assert remote.name == "origin"
 
@@ -28,10 +28,7 @@ def test_select_submit_remote_uses_origin_when_multiple_remotes_exist() -> None:
     "remotes",
     [
         pytest.param(
-            (
-                GitRemote(name="backup", url="git@example.com:org/repo.git"),
-                GitRemote(name="upstream", url="git@example.com:org/repo.git"),
-            ),
+            (_remote("backup"), _remote("upstream")),
             id="no-origin-among-many",
         ),
         pytest.param((), id="no-remotes"),
@@ -47,16 +44,17 @@ def test_select_submit_remote_rejects_remote_sets_without_a_determinable_remote(
         select_submit_remote(remotes)
 
 
-def test_parse_github_repo_parses_https_remote_url() -> None:
+def test_parse_github_repo_accepts_matching_fetch_and_push_urls() -> None:
     repository = parse_github_repo(
         GitRemote(
             name="origin",
-            url="https://github.test/octo-org/stacked-review.git",
+            fetch_url="https://github.com/octo-org/stacked-review.git",
+            push_url="ssh://git@ssh.github.com:443/octo-org/stacked-review.git",
         ),
     )
 
     assert repository is not None
-    assert repository.host == "github.test"
+    assert repository.host == "github.com"
     assert repository.owner == "octo-org"
     assert repository.repo == "stacked-review"
 
@@ -65,7 +63,8 @@ def test_parse_github_repo_parses_scp_style_remote_without_user() -> None:
     repository = parse_github_repo(
         GitRemote(
             name="origin",
-            url="github.com:octo-org/stacked-review.git",
+            fetch_url="github.com:octo-org/stacked-review.git",
+            push_url="github.com:octo-org/stacked-review.git",
         ),
     )
 
@@ -76,7 +75,23 @@ def test_parse_github_repo_parses_scp_style_remote_without_user() -> None:
 
 
 def test_parse_github_repo_returns_none_for_unparseable_remote() -> None:
-    assert parse_github_repo(GitRemote(name="origin", url="/tmp/remote.git")) is None
+    remote = GitRemote(
+        name="origin",
+        fetch_url="/tmp/remote.git",
+        push_url="/tmp/remote.git",
+    )
+
+    assert parse_github_repo(remote) is None
+
+
+def test_parse_github_repo_rejects_fetch_and_push_repository_mismatch() -> None:
+    remote = GitRemote(
+        name="origin",
+        fetch_url="https://github.test/octo-org/stacked-review.git",
+        push_url="git@github.test:octo-org/fork.git",
+    )
+
+    assert parse_github_repo(remote) is None
 
 
 def test_resolve_trunk_branch_uses_repository_default_branch() -> None:

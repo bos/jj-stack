@@ -75,14 +75,26 @@ def select_submit_remote(remotes: tuple[GitRemote, ...]) -> GitRemote:
 
 
 def parse_github_repo(remote: GitRemote) -> GithubRepoAddress | None:
-    """Parse a GitHub repository target from a Git remote URL."""
+    """Parse one GitHub repository target from a Git remote's URLs."""
 
-    parsed = urlparse(remote.url)
+    fetch_repository = _parse_github_url(remote.fetch_url)
+    push_repository = _parse_github_url(remote.push_url)
+    if fetch_repository != push_repository:
+        return None
+    return fetch_repository
+
+
+def _parse_github_url(remote_url: str) -> GithubRepoAddress | None:
+    """Parse a GitHub repository target from one Git remote URL."""
+
+    parsed = urlparse(remote_url)
     if parsed.scheme in {"http", "https", "ssh"} and parsed.hostname:
         host = parsed.hostname
+        if parsed.scheme == "ssh" and host == "ssh.github.com" and parsed.netloc.endswith(":443"):
+            host = "github.com"
         raw_path = parsed.path
-    elif _looks_like_scp_remote(remote.url):
-        host, _, raw_path = remote.url.partition(":")
+    elif _looks_like_scp_remote(remote_url):
+        host, _, raw_path = remote_url.partition(":")
         host = host.rsplit("@", maxsplit=1)[-1]
     else:
         return None
@@ -127,7 +139,8 @@ def resolve_github_target(
             remote=remote,
             github_repository_error=(
                 t"Could not determine the GitHub repository for remote "
-                t"{ui.bookmark(remote.name)}. Use a GitHub remote URL."
+                t"{ui.bookmark(remote.name)}. Its fetch and push URLs must identify "
+                t"the same GitHub repository."
             ),
         )
     return GithubTarget(remote=remote, repository=github_repository)
@@ -141,7 +154,7 @@ def require_github_repo(remote: GitRemote) -> GithubRepoAddress:
         return github_repository
     raise CliError(
         t"Could not determine the GitHub repository for remote {ui.bookmark(remote.name)}.",
-        hint="Use a GitHub remote URL.",
+        hint="Ensure its fetch and push URLs identify the same GitHub repository.",
     )
 
 

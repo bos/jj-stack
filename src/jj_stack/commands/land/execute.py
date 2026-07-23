@@ -165,7 +165,7 @@ async def _execute_direct_push(
         client=client,
         expected_remote_target=observation.remote_trunk_target,
         remote_name=remote_name,
-        remote_target=observation.remote.url,
+        remote_target=observation.remote.push_url,
         trunk_branch=trunk_branch,
         trunk_revision=trunk_revision,
     )

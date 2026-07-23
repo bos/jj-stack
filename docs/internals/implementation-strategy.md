@@ -313,7 +313,8 @@ Resolution order:
   otherwise fail
 - trunk branch: the selected remote's default branch if it can be found, then one remote
   bookmark on the selected remote that points at `trunk()`, otherwise fail
-- GitHub host/owner/repo: derive from the selected remote URL, otherwise fail
+- GitHub host/owner/repo: derive from the selected remote's fetch and push URLs,
+  which must identify the same repository, otherwise fail
 
 Ambiguity is a hard stop, not something the tool guesses past.
 

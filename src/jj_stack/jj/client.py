@@ -795,8 +795,13 @@ class JjClient:
             stripped = line.strip()
             if not stripped:
                 continue
-            name, url = stripped.split(maxsplit=1)
-            remotes.append(GitRemote(name=name, url=url))
+            name, rendered_urls = stripped.split(maxsplit=1)
+            fetch_url, separator, push_url = rendered_urls.rpartition(" (push: ")
+            if separator and push_url.endswith(")"):
+                push_url = push_url.removesuffix(")")
+            else:
+                fetch_url = push_url = rendered_urls
+            remotes.append(GitRemote(name=name, fetch_url=fetch_url, push_url=push_url))
         return tuple(remotes)
 
     def get_bookmark_state(self, bookmark: str) -> BookmarkState:
@@ -1074,11 +1079,11 @@ class JjClient:
         )
 
     def _git_remote_target(self, remote: str) -> str:
-        """Return a Git CLI target for a jj remote name or explicit remote target."""
+        """Return the push target for a jj remote name or explicit target."""
 
         for configured_remote in self.list_git_remotes():
             if configured_remote.name == remote:
-                return configured_remote.url
+                return configured_remote.push_url
         return remote
 
     def _run_command(

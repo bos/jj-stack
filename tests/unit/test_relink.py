@@ -13,7 +13,11 @@ from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.stack import LocalRevision
 
 _GITHUB_REPO = GithubRepoAddress(host="github.test", owner="octo-org", repo="stacked-review")
-_REMOTE = GitRemote(name="origin", url="https://github.test/octo-org/stacked-review.git")
+_REMOTE = GitRemote(
+    name="origin",
+    fetch_url="https://github.test/octo-org/stacked-review.git",
+    push_url="https://github.test/octo-org/stacked-review.git",
+)
 
 
 def _pull_request(*, head_label: str, state: str) -> GithubPullRequest:

@@ -41,6 +41,9 @@ from jj_stack.review.change_status import classify_review_change_without_pull_re
 from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
+_REMOTE_URL = "git@github.com:octo-org/stacked-review.git"
+_REMOTE = GitRemote(name="origin", fetch_url=_REMOTE_URL, push_url=_REMOTE_URL)
+
 
 def _fake_context(
     *,
@@ -91,7 +94,7 @@ def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_delet
         context=_fake_context(),
         bookmark_states={},
         github_target=GithubTarget(
-            remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+            remote=_REMOTE,
             repository=GithubRepoAddress(
                 host="github.com",
                 owner="octo-org",
@@ -313,7 +316,7 @@ def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned()
         ),
         prefix="bosullivan",
         local_bookmark_forget_planned=True,
-        remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+        remote=_REMOTE,
         remote_state=remote_state,
         review_identity=review_identity,
         review_status=classify_review_change_without_pull_request(
@@ -346,7 +349,7 @@ def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_on
         context=_fake_context(jj_client=cast(JjClient, RecordingJjClient())),
         bookmark_states={},
         github_target=GithubTarget(
-            remote=GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git"),
+            remote=_REMOTE,
             repository=GithubRepoAddress(
                 host="github.com",
                 owner="octo-org",

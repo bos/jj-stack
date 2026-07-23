@@ -863,7 +863,7 @@ def test_query_present_commit_ancestor_membership_distinguishes_absent_commits(
     assert len(seen_commands) == 2, "a failed batch must not fan out into per-commit queries"
 
 
-def test_list_remote_branches_resolves_jj_remote_name_to_url(
+def test_list_remote_branches_resolves_jj_remote_name_to_push_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
@@ -876,14 +876,17 @@ def test_list_remote_branches_resolves_jj_remote_name_to_url(
             return subprocess.CompletedProcess(
                 command,
                 0,
-                stdout="origin https://github.test/octo-org/repo.git\n",
+                stdout=(
+                    "origin https://github.test/octo-org/repo.git "
+                    "(push: git@github.test:octo-org/repo.git)\n"
+                ),
                 stderr="",
             )
         if invocation == (
             "git",
             "ls-remote",
             "--refs",
-            "https://github.test/octo-org/repo.git",
+            "git@github.test:octo-org/repo.git",
             "refs/heads/review/feat",
         ):
             return subprocess.CompletedProcess(
@@ -906,7 +909,7 @@ def test_list_remote_branches_resolves_jj_remote_name_to_url(
             "git",
             "ls-remote",
             "--refs",
-            "https://github.test/octo-org/repo.git",
+            "git@github.test:octo-org/repo.git",
             "refs/heads/review/feat",
         ),
     ]
@@ -925,7 +928,10 @@ def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
             return subprocess.CompletedProcess(
                 command,
                 0,
-                stdout="origin https://github.test/octo-org/repo.git\n",
+                stdout=(
+                    "origin https://github.test/octo-org/repo.git "
+                    "(push: git@github.test:octo-org/repo.git)\n"
+                ),
                 stderr="",
             )
         if invocation in {
@@ -933,7 +939,7 @@ def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
                 "git",
                 "push",
                 "--force-with-lease=refs/heads/review/feat:old",
-                "https://github.test/octo-org/repo.git",
+                "git@github.test:octo-org/repo.git",
                 "new:refs/heads/review/feat",
             ),
             ("jj", "git", "fetch", "--remote", "origin"),
@@ -956,7 +962,7 @@ def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
             "git",
             "push",
             "--force-with-lease=refs/heads/review/feat:old",
-            "https://github.test/octo-org/repo.git",
+            "git@github.test:octo-org/repo.git",
             "new:refs/heads/review/feat",
         ),
         ("jj", "git", "fetch", "--remote", "origin"),

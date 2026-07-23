@@ -335,10 +335,11 @@ Given a chosen head revision:
    conflicted snapshot.
 4. Resolve each change's bookmark using the reuse-first order from "Pull request
    branch" above.
-5. Resolve the configured GitHub host and repository from current configuration. For every
-   tracked change, require the live PR to match its saved `ReviewIdentity` before any mutation. A
-   remote swap, repository retarget, renamed head, moved branch, missing PR, or replacement PR
-   fails closed with `relink` or `submit --restart`; observation never rewrites identity.
+5. Resolve the GitHub host and repository from the selected remote. Its fetch and push URLs may
+   differ, but must identify the same repository. For every tracked change, require the live PR
+   to match its saved `ReviewIdentity` before any mutation. A remote swap, repository retarget,
+   renamed head, moved branch, missing PR, or replacement PR fails closed with `relink` or
+   `submit --restart`; observation never rewrites identity.
 6. Verify the selected remote's actual review ref and the live PR head. The remote head is safe
    only when it still equals the submitted baseline or already equals the current local commit
    after an interrupted submit pushed it. Treat that push as complete only when the live PR

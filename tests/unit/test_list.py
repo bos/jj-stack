@@ -232,7 +232,11 @@ def test_repo_inspection_limits_bookmark_listing_to_tracked_bookmarks() -> None:
         Any,
         SimpleNamespace(
             list_git_remotes=lambda: (
-                GitRemote(name="origin", url="https://github.com/octo-org/repo.git"),
+                GitRemote(
+                    name="origin",
+                    fetch_url="https://github.com/octo-org/repo.git",
+                    push_url="https://github.com/octo-org/repo.git",
+                ),
             ),
             list_bookmark_states=lambda bookmarks=None: bookmark_calls.append(bookmarks) or {},
         ),

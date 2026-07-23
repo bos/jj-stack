@@ -74,7 +74,10 @@ def test_commands_report_non_github_remote_without_traceback(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert_output_contains(captured.out + captured.err, "Use a GitHub remote URL.")
+    assert_output_contains(
+        captured.out + captured.err,
+        "Ensure its fetch and push URLs identify the same GitHub repository.",
+    )
     _assert_no_traceback(captured)
 
 

@@ -63,6 +63,9 @@ from jj_stack.state.store import ReviewStateStore
 from tests.support.review_state import make_review_identity
 from tests.support.revision_helpers import make_revision
 
+_REMOTE_URL = "https://github.test/octo-org/repo.git"
+_REMOTE = GitRemote(name="origin", fetch_url=_REMOTE_URL, push_url=_REMOTE_URL)
+
 
 def _submit_options(*, dry_run: bool = False) -> SubmitOptions:
     return SubmitOptions(
@@ -102,10 +105,7 @@ def test_submit_prepared_callback_runs_after_spinner_stops(monkeypatch) -> None:
         client=client,
         generated_pull_request_descriptions={},
         generated_stack_description=None,
-        remote=GitRemote(
-            name="origin",
-            url="https://github.test/octo-org/repo.git",
-        ),
+        remote=_REMOTE,
         restarted_change_ids=frozenset(),
         restarted_reviews=(),
         stack=stack,
@@ -299,7 +299,7 @@ def test_prepare_submit_revisions_preflights_remote_drift_before_local_bookmark_
                 ),
             },
             client=cast(JjClient, client),
-            remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
+            remote=_REMOTE,
             stack=_local_stack(first_revision, second_revision),
             state=ReviewState(
                 review_identities={
@@ -357,7 +357,7 @@ def test_prepare_submit_revisions_rejects_non_atomic_push_before_bookmark_moves(
                 ),
             },
             client=cast(JjClient, client),
-            remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
+            remote=_REMOTE,
             stack=_local_stack(first_revision, second_revision),
             state=ReviewState(),
         )
@@ -368,7 +368,7 @@ def test_prepare_submit_revisions_rejects_non_atomic_push_before_bookmark_moves(
 def test_preflight_atomic_remote_push_plan_allows_one_untracked_remote_update() -> None:
     _preflight_atomic_remote_push_plan(
         prepared_revisions=(_prepared_revision("review/feature-1", "commit-1", "git_update"),),
-        remote=GitRemote(name="origin", url="https://github.test/octo-org/repo.git"),
+        remote=_REMOTE,
     )
 
 

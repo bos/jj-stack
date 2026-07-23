@@ -11,7 +11,8 @@ class GitRemote(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
-    url: str
+    fetch_url: str
+    push_url: str
 
 
 class RemoteBookmarkState(BaseModel):

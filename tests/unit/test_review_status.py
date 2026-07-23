@@ -28,7 +28,7 @@ from tests.support.revision_helpers import make_revision
 def test_stream_status_streams_local_fallback_revisions_after_github_abort(
     monkeypatch,
 ) -> None:
-    remote = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
+    remote = _STATUS_REMOTE
     prepared_status = PreparedStatus(
         github_target=GithubTarget(
             remote=remote,
@@ -123,7 +123,7 @@ def test_stream_status_streams_local_fallback_revisions_after_github_abort(
 
 
 def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -> None:
-    remote = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
+    remote = _STATUS_REMOTE
     local_only_revisions = (
         ReviewStatusRevision(
             bookmark="review/feature-1-aaaaaaaa",
@@ -405,7 +405,11 @@ def test_prepare_stack_for_status_leaves_generated_bookmarks_observational() -> 
     assert prepared.status_revisions[0].review_identity is None
 
 
-_STATUS_REMOTE = GitRemote(name="origin", url="git@github.com:octo-org/stacked-review.git")
+_STATUS_REMOTE = GitRemote(
+    name="origin",
+    fetch_url="git@github.com:octo-org/stacked-review.git",
+    push_url="git@github.com:octo-org/stacked-review.git",
+)
 
 
 def _identity(

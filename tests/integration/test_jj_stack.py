@@ -36,6 +36,28 @@ def test_discover_review_stack_ignores_off_path_reviewable_child(tmp_path: Path)
     assert [revision.subject for revision in stack.revisions] == ["feature 1", "feature 2"]
 
 
+def test_list_git_remotes_preserves_distinct_fetch_and_push_urls(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    run_command(
+        [
+            "jj",
+            "git",
+            "remote",
+            "add",
+            "origin",
+            "https://github.test/octo-org/stacked-review.git",
+            "--push-url",
+            "git@github.test:octo-org/stacked-review.git",
+        ],
+        repo,
+    )
+
+    (remote,) = JjClient(repo).list_git_remotes()
+    assert remote.name == "origin"
+    assert remote.fetch_url == "https://github.test/octo-org/stacked-review.git"
+    assert remote.push_url == "git@github.test:octo-org/stacked-review.git"
+
+
 def _current_parent_commit_id(repo: Path) -> str:
     completed = run_command(
         [

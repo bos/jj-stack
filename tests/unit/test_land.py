@@ -184,7 +184,11 @@ def test_land_repository_authority_table_covers_repository_and_default_branch_dr
             duplicate_claim_change_ids=frozenset(),
             fetched_trunk=None,
             github_repository=observed_repository,
-            remote=GitRemote(name="origin", url="https://github.test/acme/widgets.git"),
+            remote=GitRemote(
+                name="origin",
+                fetch_url="https://github.test/acme/widgets.git",
+                push_url="https://github.test/acme/widgets.git",
+            ),
             remote_trunk_target=None,
             reviews={},
         )
