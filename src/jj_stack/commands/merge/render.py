@@ -47,5 +47,5 @@ def print_merge_result(result: MergeResult) -> None:
     if result.applied and result.merged_change_ids:
         console.output(
             t"GitHub accepted one or more merges. Run "
-            t"{ui.cmd(f'sync {result.selected_revset}')} to update the local stack."
+            t"{ui.cmd(f'jj-stack sync {result.selected_revset}')} to update the local stack."
         )

@@ -59,8 +59,8 @@ def test_sync_dry_run_previews_rebase_and_skips_submit_preview(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "Would remove landed changes from the bottom" in captured.out
-    assert "Run sync without --dry-run" in captured.out
+    assert "Would remove merged changes from the bottom" in captured.out
+    assert f"jj-stack sync {top_change_id}" in captured.out
     assert "remaining existing PRs" in captured.out
     assert JjClient(repo).resolve_revision(top_change_id).commit_id == top_commit_id
     assert fake_repo.pull_requests[2].base_ref == original_base_ref
@@ -79,7 +79,7 @@ def test_sync_reports_nothing_to_submit_when_whole_stack_merged(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert "Nothing to submit: everything in this stack has landed." in captured.out
+    assert "Nothing to submit: everything in this stack has merged." in captured.out
     assert JjClient(repo).resolve_revision("@").only_parent_commit_id() == read_remote_ref(
         fake_repo.git_dir, "main"
     )

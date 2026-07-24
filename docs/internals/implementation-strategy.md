@@ -85,7 +85,7 @@ The bundled agent skill in `skills/jj-stack/` is installed separately from the e
 - discovers and caches the working invocation for a repository
 - uses `list --json` and `view --json` to recognize locally managed reviews
 - routes structural PR and review-branch changes through `jj-stack`, except for the explicit
-  `gh stack unstack` repair that dissolves one native resource before disjoint submissions
+  `gh stack unstack` repair that dissolves one native GitHub stack before separate submissions
 
 Built-in help and the user guide own the command and alias inventory.
 
@@ -205,8 +205,8 @@ This is where most correctness lives.
 
 Thin `httpxyz` wrapper plus typed `pydantic` models. Knows how to fetch PR state, batch PR
 lookup by PR number or known head branch, create PRs, update PRs, assign reviewers and labels,
-manage stack-summary comments, list/create/append/unstack native resources, submit and poll
-asynchronous native merges, and handle endpoint-specific pagination or retry.
+manage navigation and overview comments, list/create/append/unstack native resources, submit and
+poll asynchronous native merges, and handle endpoint-specific pagination or retry.
 
 When endpoint semantics allow it, the client and command layers prefer batched or
 bounded-parallel GitHub work over one-request-per-item serial loops. Ordering
@@ -265,14 +265,16 @@ Merge and recovery share current-state observation rather than a durable operati
 machine:
 
 - `commands/merge/` checks and asks GitHub to merge one selected review path
-- `commands/sync.py` repairs a selected stack or performs explicit repository-wide recovery
+- `commands/sync.py` repairs a selected stack
+- `commands/sync_global.py` performs explicit repository-wide recovery
 - `review/landed_evidence.py` distinguishes an exact submitted commit from a rewritten GitHub
   merge result
-- `review/landed.py` changes landed PRs and removes saved tracking
+- `review/landed.py` finalizes merged PRs and removes saved tracking
 - `review/convergence.py` checks whether another visible stack still needs that tracking
 - `review/native_sync.py` validates historical native members and survivor transitions
 - `commands/_github_stack_support.py` owns the one cached capability decision
-- `commands/_native_stack_safety.py` shares resource-closure checks without owning command policy
+- `commands/_native_stack_safety.py` verifies that every active member of an overlapping native
+  GitHub stack belongs to the selected local chain, without owning command policy
 
 State saves are atomic but not fsync durable. The saved identity prevents action on a different PR
 or branch, while the baseline records the exact reviewed commit. If a reconstructible cleanup
@@ -501,13 +503,13 @@ We distinguish between:
 
 When possible, diagnostics point to the exact recovery action:
 
-- `jj stack view --fetch`
-- `jj stack submit --restart`
-- `jj stack restart`
-- `jj stack relink`
-- `jj stack unstack`
+- `jj-stack view --fetch`
+- `jj-stack submit --restart`
+- `jj-stack restart`
+- `jj-stack relink`
+- `jj-stack unstack`
 - `jj rebase`
-- `jj stack cleanup`
+- `jj-stack cleanup`
 - `jj workspace update-stale`
 
 Unreadable JSON and invalid top-level shape, version, or envelope fail the load. Individual

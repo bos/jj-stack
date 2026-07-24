@@ -1,4 +1,20 @@
-"""Reconcile selected stacks or clean up exact landed reviews repository-wide."""
+"""Update a local stack after GitHub merges changes from its bottom.
+
+`sync` fetches trunk, verifies which submitted changes GitHub merged, removes their old local
+copies when safe, rebases the remaining selected changes onto trunk, and refreshes only pull
+requests that already exist for them. It does not submit trailing unreviewed work or touch sibling
+stacks.
+
+Preview with `jj-stack sync --dry-run <head-change-id>`. If trunk advanced but none of this
+stack's changes merged, rebase only the intended path with `jj` instead.
+
+`sync --all` is repository-wide cleanup for reviews whose exact last-submitted commits are
+already on trunk. It does not rebase stacks or handle merge results that GitHub rewrote.
+
+Common examples: `jj-stack sync --dry-run <head-change-id>` previews a selected update;
+`jj-stack sync <head-change-id>` applies it; and `jj-stack sync --all --dry-run` previews
+repository-wide cleanup.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +57,7 @@ from jj_stack.review.status import PreparedStatus, prepare_status, status_prepar
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
-HELP = "Update a stack after GitHub merges or clean up landed PRs"
+HELP = "Update a stack after GitHub merges or clean up merged PRs"
 
 
 def sync(
@@ -54,7 +70,7 @@ def sync(
     revset: str | None,
 ) -> int:
     if all_ and revset is not None:
-        raise UsageError(t"Use either {ui.cmd('sync --all')} or a revision, not both.")
+        raise UsageError(t"Use either {ui.cmd('jj-stack sync --all')} or a revision, not both.")
     context = bootstrap_context(repository=repository, cli_args=cli_args, debug=debug)
     with acquire_operation_lock(
         context.state_store.require_writable(),
@@ -280,15 +296,15 @@ async def _update_selected_reviews(
 ) -> int:
     if plan.landed and plan.survivors and dry_run:
         console.output(
-            "Run sync without --dry-run to apply the rebase and then compute updates "
-            "for the remaining existing PRs."
+            t"Run {ui.cmd(f'jj-stack sync {plan.survivors[-1].change_id}')} to apply the rebase "
+            t"and then compute updates for the remaining existing PRs."
         )
         return 0
     if not plan.reviewed_survivors:
         if plan.survivors:
             console.output("No existing reviews to update; trailing work remains local.")
         else:
-            console.output("Nothing to submit: everything in this stack has landed.")
+            console.output("Nothing to submit: everything in this stack has merged.")
         return 0
     result = await run_submit_async(
         context=context,
@@ -332,11 +348,11 @@ def _selected_observation_error(
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
     if not plan.landed:
-        console.output("No landed changes in this stack need rebasing.")
+        console.output("No merged changes in this stack need rebasing.")
         return
     status = "Would remove" if dry_run else "Removing"
     console.output(
-        t"{status} landed changes from the bottom of the stack: "
+        t"{status} merged changes from the bottom of the stack: "
         t"{ui.join(lambda item: ui.change_id(item.candidate.change_id), plan.landed)}"
     )
 

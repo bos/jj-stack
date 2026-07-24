@@ -5,6 +5,10 @@ By default it summarizes the submitted and unsubmitted changes in each selected 
 
 `--fetch` runs a fetch first so the report uses current remote branch locations. Use one or more
 revsets and `--pull-request` selectors to inspect several stacks in one run.
+
+Common examples: `jj-stack view` inspects the stack ending at `@-`;
+`jj-stack view --pull-request 123` finds the local stack for one linked PR; and
+`jj-stack view --fetch <head-change-id>` refreshes remote branch locations before reporting.
 """
 
 from __future__ import annotations

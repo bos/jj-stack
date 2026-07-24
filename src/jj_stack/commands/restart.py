@@ -1,7 +1,12 @@
-"""Start a fresh review for the selected local stack.
+"""Prepare a local stack to be submitted as fresh pull requests.
 
 Use this when the local changes should be reviewed again as new pull requests
 instead of continuing, reopening, or relinking the old PRs.
+
+`restart` changes only local tracking and review bookmarks. It leaves the old pull requests and
+branches open, creates no new pull requests itself, and prints the `jj-stack submit` command that
+finishes the new review. Most users can do both steps with
+`jj-stack submit --restart <head-change-id>`.
 """
 
 from __future__ import annotations

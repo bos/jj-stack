@@ -34,7 +34,7 @@ from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubRepository
 from jj_stack.ui import Message
 
-HELP = "Check GitHub auth, remote resolution, and local state"
+HELP = "Check repository setup and GitHub connectivity"
 
 type CheckDetail = Message
 

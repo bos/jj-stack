@@ -6,7 +6,13 @@ repository rules allow the merge.
 
 Repositories with GitHub stack support merge the selected changes together. Other repositories
 merge pull requests bottom-up and stop at the first rejection. This command does not update local
-history or remove review state; run the printed `sync` command after GitHub merges anything.
+history or remove review state; run the printed `jj-stack sync` command after GitHub merges
+anything.
+
+Common examples: `jj-stack merge --dry-run` previews the merge without changing GitHub;
+`jj-stack merge` asks GitHub to merge the ready bottom changes; and
+`jj-stack merge --pull-request 123 --merge-method squash` stops at one linked PR and chooses the
+merge method explicitly.
 """
 
 from __future__ import annotations
@@ -123,8 +129,9 @@ def _resolve_merge_target(
         )
         if len(matching) != 1:
             raise CliError(
-                t"PR #{pull_request_number} does not identify one maximal local review path.",
-                hint=t"Repair the local stack topology before retrying {ui.cmd('merge')}.",
+                t"PR #{pull_request_number} belongs to more than one local review path.",
+                hint=t"Run {ui.cmd('jj-stack merge <head-change-id>')} with the head of the "
+                t"stack you want to merge.",
             )
         return matching[0].head.change_id, resolved_revset
     return (

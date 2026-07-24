@@ -198,8 +198,8 @@ def status_preparation_cli_error(error: UnsupportedStackError) -> CliError:
             hint=(
                 t"Inspect the divergent revisions with {ui.cmd('jj log -r')} "
                 t"{ui.revset(f'change_id({error.change_id})')} and reconcile them "
-                t"before retrying. This can happen after {ui.cmd('view --fetch')} "
-                t"or another fetch imports remote bookmark updates for landed PRs."
+                t"before retrying. This can happen after {ui.cmd('jj-stack view --fetch')} "
+                t"or another fetch imports remote bookmark updates for merged PRs."
             ),
         )
     return CliError(t"Local history does not form a linear stack. {error}")

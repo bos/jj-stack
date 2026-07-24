@@ -79,7 +79,8 @@ async def execute_merge_plan(
             blocked_action = MergeAction(
                 kind="boundary",
                 body=t"after accepted {ui.change_id(revision.change_id)}: could not "
-                t"refresh trunk: {error}; run {ui.cmd(f'sync {execution.selected_revset}')}",
+                t"refresh trunk: {error}; run "
+                t"{ui.cmd(f'jj-stack sync {execution.selected_revset}')}",
                 status="blocked",
             )
             break

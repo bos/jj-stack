@@ -1,18 +1,23 @@
-"""Close or locally forget the selected stack.
+"""End review for a stack without changing its local jj changes.
 
-Passing `--cleanup` also removes `jj-stack`'s own review branches, forgets any local bookmarks
-that still point at those branches, and clears saved tracking data for the selected stack.
+With no mode flag, `unstack` closes the tracked open pull requests but keeps their review branches
+and local bookmarks. Passing `--cleanup` also removes review branches, bookmarks, and comments
+that `jj-stack` can verify are safe to delete. `jj-stack` remembers that the reviews were closed
+so a later `submit` cannot silently reuse them.
 
 If you asked `jj-stack` to use your own bookmarks with `submit --use-bookmarks`, those are
-preserved unless `cleanup_user_bookmarks = true`. Use `--pull-request` to close by PR number or
-URL.
+preserved unless `jj-stack.cleanup_user_bookmarks = true`. Use `--pull-request` to close by PR
+number or URL.
 
-Use `unstack --cleanup --pull-request <pr>` to close and clean up an orphaned PR shown by `list`.
-Use `unstack --cleanup --pull-request orphans` to clean up every orphan shown by `list`.
-Use `unstack --local` to forget local review tracking without closing PRs or deleting
-bookmarks.
+Use `jj-stack unstack --cleanup --pull-request <pr>` to close and clean up an orphaned PR shown
+by `list`. Use `jj-stack unstack --cleanup --pull-request orphans` to clean up every orphan
+shown by `list`. Use `jj-stack unstack --local` to forget local review tracking without closing
+PRs or deleting bookmarks.
 
-To preview the unstack plan without changing anything, use `--dry-run`.
+Common examples: `jj-stack unstack --dry-run` previews which PRs would close;
+`jj-stack unstack --local` forgets only local review tracking; and
+`jj-stack unstack --cleanup --pull-request orphans` closes and cleans up every orphan shown by
+`list`.
 """
 
 from __future__ import annotations

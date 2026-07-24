@@ -98,13 +98,13 @@ def build_selected_convergence_plan(
             continue
         if seen_survivor:
             raise CliError(
-                t"Landed {ui.change_id(revision.change_id)} appears above an unlanded change "
-                t"in this stack.",
-                hint="Run sync separately for each affected stack.",
+                t"Merged {ui.change_id(revision.change_id)} appears above a change that has not "
+                t"merged in this stack.",
+                hint="Run jj-stack sync separately for each affected stack.",
             )
         if revision.commit_id != candidate.submitted_baseline.commit_id:
             rewrite_blocker = (
-                t"Cannot remove landed {ui.change_id(revision.change_id)} because it has "
+                t"Cannot remove merged {ui.change_id(revision.change_id)} because it has "
                 t"unpublished local edits since submit"
             )
         landed.append(
@@ -252,7 +252,7 @@ def _validate_rebase_scope(
         heads = ui.join(lambda revision: ui.change_id(revision.change_id), outside)
         raise CliError(
             t"Other local changes depend on this stack: {heads}.",
-            hint="Select each affected stack and run sync explicitly.",
+            hint="Select each affected stack and run jj-stack sync explicitly.",
         )
 
 
@@ -325,7 +325,7 @@ def _native_rewrite_blocker(
             if not revision.immutable
         ):
             return (
-                t"Cannot remove landed {ui.change_id(candidate.change_id)} because it has "
+                t"Cannot remove merged {ui.change_id(candidate.change_id)} because it has "
                 t"unpublished local edits since submit"
             )
     return None

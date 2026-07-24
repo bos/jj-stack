@@ -1,7 +1,7 @@
-"""List stacks known to local jj-stack tracking.
+"""List review stacks connected in this local repository.
 
 Shows one row per locally known stack, including the head change ID, stack size, review state,
-and description of the head commit. It does not discover stacks that exist only on GitHub.
+and description of the head change. It does not discover stacks that exist only on GitHub.
 
 It also shows orphaned PRs: open PRs that `jj-stack` still knows about, but whose local change
 is no longer part of any current stack. Close and clean up every orphan shown with
@@ -56,7 +56,7 @@ from jj_stack.review.status import (
     refresh_remote_state_for_status,
 )
 
-HELP = "List stacks known to local tracking"
+HELP = "List review stacks connected in this repository"
 
 
 @dataclass(frozen=True, slots=True)

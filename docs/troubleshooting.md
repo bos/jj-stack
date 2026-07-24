@@ -101,11 +101,32 @@ What to do:
 jj-stack sync <head-change-id>
 ```
 
-Selected `sync` verifies which lower PRs landed, rebases the selected remaining changes above the
-current `trunk()`, and updates only PRs that already exist for them. Use
-`jj-stack sync --dry-run <head-change-id>` first to preview which changes landed and any cleanup
-or rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
+Selected `sync` verifies which lower PRs GitHub merged, rebases the selected remaining changes
+above the current `trunk()`, and updates only PRs that already exist for them. Use
+`jj-stack sync --dry-run <head-change-id>` first to preview merged changes and any cleanup or
+rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
 It leaves other stacks and unreviewed trailing changes alone.
+
+## Trunk advanced, but none of your stack merged
+
+`sync` is for reconciling GitHub merge results. If `trunk()` merely moved forward, rebase the
+selected local path with `jj`:
+
+```bash
+jj rebase -r '<bottom-change-id>::<head-change-id>' -o 'trunk()'
+```
+
+Use the bounded bottom-to-head revset so sibling paths are not rewritten. Then run
+`jj-stack submit <head-change-id>` to refresh the existing PRs.
+
+## `sync` rebased the stack but reported conflicts
+
+The local rebase happened, but `jj-stack` did not update conflicting changes on GitHub. Inspect
+the conflicts with `jj status`, resolve them using your normal `jj` workflow, and then run:
+
+```bash
+jj-stack submit <head-change-id>
+```
 
 ## `list` or `view` says another stack changed since its last submit
 
@@ -196,8 +217,32 @@ jj-stack checkout --pull-request <number-or-url> --fetch
 ```
 
 Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage them locally
-yet." This command is *not* for rewriting history or changing what is in the stack, only for
-telling `jj-stack` which local changes go with which PRs.
+yet." It creates or refreshes local tracking, but does not move the working copy or rewrite
+history. After fetching a remote-only stack, use the tip commit printed by `checkout`:
+
+```bash
+jj new <tip-commit-id>
+```
+
+Use `jj-stack checkout --pick` only for stacks this local repository already tracks; to discover
+a GitHub-only stack, select one of its PRs explicitly as shown above.
+
+## `submit` says one GitHub stack spans several local paths
+
+GitHub still groups PRs that your local `jj` history now places on separate paths. `jj-stack`
+stops because updating only part of that GitHub group would be unsafe.
+
+Run the exact command from the diagnostic, which has this form:
+
+```bash
+gh stack unstack <number>
+```
+
+Then submit each local path separately. If `gh stack` is unavailable, install GitHub's extension:
+
+```bash
+gh extension install github/gh-stack
+```
 
 ## Old review branches or local review bookmarks remain after merging or closing
 
@@ -229,18 +274,20 @@ Cause:
 What to do:
 
 ```bash
+jj-stack unstack --dry-run
 jj-stack unstack
 ```
 
 If you already know the pull request number, you can use:
 
 ```bash
+jj-stack unstack --pull-request 7 --dry-run
 jj-stack unstack --pull-request 7
 ```
 
-This closes the stack's pull requests. Add `--cleanup` if you also want to delete the review
-branches and clean up local tracking data for that stack. As usual, `--dry-run` will preview
-what the command will do without actually taking action.
+This closes the stack's pull requests. Add `--cleanup` if you also want to delete review branches,
+bookmarks, and comments that `jj-stack` can verify are safe to remove. `jj-stack` remembers the
+review was closed so a later `submit` cannot silently reuse it.
 
 ## A command was interrupted before it finished
 
@@ -258,21 +305,22 @@ jj-stack view
 If you know which stack was being changed, inspect it directly:
 
 ```bash
-jj-stack view <change-id>
+jj-stack view <head-change-id>
 ```
 
 ### Finish what was started
 
-Use an explicit change ID or revset so you do not accidentally operate on another stack.
+Use the stack's head change ID so you do not accidentally operate on another stack or only on a
+prefix of the affected stack.
 `jj-stack` inspects current jj, tracking, and GitHub state instead of replaying the failed
 command.
 
-- `submit`: preview with `jj-stack submit --dry-run <revset>`, then run
-  `jj-stack submit <revset>`.
+- `submit`: preview with `jj-stack submit --dry-run <head-change-id>`, then run
+  `jj-stack submit <head-change-id>`.
 - `unstack` or `unstack --cleanup`: add `--dry-run` to the same explicit command, inspect it,
   then rerun without `--dry-run`.
-- `sync`: preview with `jj-stack sync --dry-run <revset>`, then run
-  `jj-stack sync <revset>`.
+- `sync`: preview with `jj-stack sync --dry-run <head-change-id>`, then run
+  `jj-stack sync <head-change-id>`.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
   `jj-stack sync --all`.
 - `merge`: rerun the same explicit selector and merge method. A matching request still in progress
@@ -280,14 +328,15 @@ command.
   lower PRs first, preview with `jj-stack sync --dry-run <head-change-id>`, then run
   `jj-stack sync <head-change-id>` before retrying the remainder.
 
-`sync <head-change-id>` handles commits rewritten by GitHub while keeping a review branch that a
-PR above still needs. `sync --all` checks independently tracked exact commits already on trunk.
-Both inspect current GitHub state and trunk history.
+`jj-stack sync <head-change-id>` handles commits rewritten by GitHub while keeping a review
+branch that a PR above still needs. `sync --all` checks independently tracked exact commits
+already on trunk. Both inspect current GitHub state and trunk history.
 
 ### Back out
 
 ```bash
-jj-stack unstack --cleanup <change-id>
+jj-stack unstack --cleanup --dry-run <head-change-id>
+jj-stack unstack --cleanup <head-change-id>
 ```
 
 If a failed `submit` created PRs or review branches that you no longer want, run

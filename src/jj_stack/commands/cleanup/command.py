@@ -1,13 +1,14 @@
-"""Find and remove stale tracking data and review branches left behind by earlier review work.
+"""Find and remove unused review artifacts left behind by earlier review work.
 
-By default, this runs a repo-wide cleanup of tracking data and review branches that no longer
-match an active review.
+By default, this checks the whole repository for saved PR links, review branches, bookmarks, and
+comments that no active review still needs.
 
 Open orphaned PRs are left alone. Run `jj-stack list` to see them, then close and clean up one
 with `jj-stack unstack --cleanup --pull-request <pr>`, or clean up all of them with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
-Use `--dry-run` to preview cleanup without deleting branches, bookmarks, or tracking data.
+Use `--dry-run` to preview cleanup without deleting branches, bookmarks, comments, or saved PR
+links.
 
 """
 
@@ -68,7 +69,7 @@ from .stack_comments import (
 )
 from .stale import _plan_orphan_local_bookmark_cleanups, _stale_change_reasons
 
-HELP = "Remove stale tracking data and review branches"
+HELP = "Remove review artifacts that are no longer in use"
 
 
 def cleanup(

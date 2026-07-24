@@ -66,7 +66,11 @@ _TOP_LEVEL_HELP_DESCRIPTION = """
 `jj-stack` lets you review a series of `jj` changes on GitHub as stacked pull requests.
 
 Use it to submit and refresh changes for review, inspect pull request status, merge reviewed
-changes, list locally known stacks, and clean up after a review.
+changes, and clean up after a review. Keep creating and editing changes with `jj`; `jj-stack`
+handles the GitHub review workflow around them.
+
+Running `jj-stack` with no command shows the current stack. A typical workflow is
+`jj-stack submit`, `jj-stack view`, `jj-stack merge`, then the printed `jj-stack sync` command.
 """
 _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
 _REORDERABLE_GLOBAL_OPTIONS_WITH_VALUES = frozenset({"--repository", "--color"})
@@ -286,8 +290,8 @@ def build_parser() -> ArgumentParser:
         action="append",
         help=(
             "Prefer existing bookmark names or globs for selected changes. "
-            "Reused bookmarks stay during cleanup unless cleanup_user_bookmarks "
-            "is true"
+            "Reused bookmarks stay during cleanup unless "
+            "jj-stack.cleanup_user_bookmarks is true"
         ),
     )
     add_help_argument(
@@ -303,7 +307,10 @@ def build_parser() -> ArgumentParser:
         submit_parser,
         "--restart",
         action="store_true",
-        help="Forget previous PR tracking for selected changes and create fresh PRs",
+        help=(
+            "Create fresh PRs for selected changes without closing the old PRs; replace local "
+            "tracking only after the new submit succeeds"
+        ),
     )
     view_parser = _add_revision_command(
         subcommands,
@@ -345,7 +352,7 @@ def build_parser() -> ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Expand submitted and unsubmitted summary sections; keep native jj log lines",
+        help="Show every change using jj's usual log formatting",
     )
     list_parser = _add_command_parser(
         subcommands,
@@ -447,7 +454,7 @@ def build_parser() -> ArgumentParser:
     unstack_parser.add_argument(
         "--cleanup",
         action="store_true",
-        help="Delete jj-stack-managed branches, bookmarks, and tracking data",
+        help="Also delete verified jj-stack-managed review branches, bookmarks, and comments",
     )
     unstack_parser.add_argument(
         "--local",
@@ -481,7 +488,7 @@ def build_parser() -> ArgumentParser:
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview cleanup without deleting branches, bookmarks, or tracking data",
+        help="Preview cleanup without deleting branches, bookmarks, comments, or saved PR links",
     )
 
     sync_parser = _add_revision_command(
@@ -507,7 +514,10 @@ def build_parser() -> ArgumentParser:
         sync_parser,
         "--all",
         action="store_true",
-        help="Clean up all locally tracked PRs whose exact submitted commits are on trunk",
+        help=(
+            "Clean up every locally tracked PR whose exact last-submitted commit is already on "
+            "trunk; do not rebase stacks"
+        ),
     )
 
     _add_command_parser(
@@ -953,7 +963,7 @@ def _add_checkout_parser(
     add_help_argument(
         selector,
         "--revset",
-        help="Explicit revset whose exact stack should be checked out",
+        help="Local stack to connect, identified by revset",
     )
     add_help_argument(
         selector,

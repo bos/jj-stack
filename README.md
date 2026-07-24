@@ -4,8 +4,8 @@
 requests.
 
 It is built for a rewrite-heavy review workflow made up of many small changes. Split a feature
-into a few local parts, keep editing your changes in `jj`, and let `jj-stack` keep the matching
-GitHub PR stack up to date.
+into a series of nicely contained parts, keep editing your changes in `jj`, and let `jj-stack`
+keep the matching GitHub PR stack up to date.
 
 ## Quick start
 
@@ -41,43 +41,6 @@ To invoke it as `jj stack ...` — mirroring GitHub's `gh stack ...` — add a j
 stack = ["util", "exec", "--", "jj-stack"]
 ```
 
-### AI agent integration
-
-If you use coding agents, install the bundled `jj-stack` skill so they know how
-to work with a `jj`-native stack:
-
-```bash
-gh skill install bos/jj-stack jj-stack
-```
-
-The skill is not installed by `uv tool install jj-stack`. It is shipped in this
-repository under `skills/jj-stack/SKILL.md`, following the Agent Skills
-`skills/*/SKILL.md` convention. `gh skill install` finds that file in the
-repository and copies it into the selected agent's skill directory.
-
-For a specific agent or install scope, pass the relevant `gh skill install`
-flags. For example, to install it for Codex at user scope:
-
-```bash
-gh skill install bos/jj-stack jj-stack --agent codex --scope user
-```
-
-When developing the skill locally, install from this checkout:
-
-```bash
-gh skill install . jj-stack --from-local --agent codex --scope user --force
-```
-
-The skill tells agents to use `jj` for local stack edits, `jj-stack view --json`
-and `jj-stack list --json` for machine-readable status, and `jj-stack submit`
-to refresh GitHub. If `jj-stack` is available through a `jj` alias such as
-`jj stack` or `jj stk`, the skill teaches agents to discover and reuse that
-invocation instead of assuming `jj-stack` is on `PATH`. It also teaches agents
-to check, before direct `gh` PR mutations, whether `jj-stack` is already
-managing review state in the repo, to remember that answer for the session, and
-to distinguish safe PR collaboration metadata from structural or lifecycle
-changes that need a jj-stack risk explanation and your permission.
-
 ### Before your first submit
 
 The happy path is a local `jj` stack that is ready to become a set of GitHub PRs:
@@ -88,13 +51,13 @@ The happy path is a local `jj` stack that is ready to become a set of GitHub PRs
 - the changes you want to submit are visible and mutable in `jj`
 - GitHub authentication works from this shell
 
-If you are unsure what `jj-stack` will do, inspect first:
+It's easy to learn what `jj-stack` will do. Inspect first:
 
 ```bash
 jj-stack
 ```
 
-This is a synonym for `jj-stack view`.
+(This is a synonym for `jj-stack view`.)
 
 ### Two-minute first run
 
@@ -124,13 +87,14 @@ If you have already written a PR body in a Markdown file, pass it when submittin
 jj-stack submit --describe <change-id>=pr-body.md
 ```
 
-For a multi-change stack, `--describe stack=stack-summary.md` adds stack overview text
-to the head PR.
+For a multi-change stack, you can use `--describe stack=stack-overview.md` adds to add an
+overview description of the entire stack to the head PR. This is very helpful to orient a
+reviewer.
 
 On first submit, `jj-stack` creates one review bookmark per change. By default these bookmarks
-look like `review/...`. They are normal `jj` bookmarks, and they are also the GitHub PR
-branches. `jj-stack` manages them for you, so most of the time you do not need to move or
-rename them yourself.
+are named with a prefix of `review/...`. They are normal `jj` bookmarks, and they are also the
+GitHub PR branches. `jj-stack` manages them for you, so most of the time you do not need to move
+or rename them yourself.
 
 Inspect your stack again:
 
@@ -206,12 +170,14 @@ stack directly:
 jj-stack view <head-change-id>
 ```
 
-The status output will show whether the next step is `submit` or `sync <head-change-id>`.
+The status output will show whether the next step is `jj-stack submit` or
+`jj-stack sync <head-change-id>`.
 
 If `list` shows an `orphan` row, a PR is still open but the local change it reviewed is
 no longer part of any current stack. When you are ready to close and clean up that PR:
 
 ```bash
+jj-stack unstack --cleanup --pull-request <pr> --dry-run
 jj-stack unstack --cleanup --pull-request <pr>
 ```
 
@@ -237,7 +203,7 @@ jj-stack --help
 jj-stack submit --help
 ```
 
-A few repair and housekeeping commands are hidden by default:
+To include advanced repair commands and hidden global options:
 
 ```bash
 jj-stack help --all
@@ -249,8 +215,8 @@ setting.
 
 ## Configuration
 
-For most use, `jj-stack` needs no configuration. It derives `git`, `jj`, and GitHub
-information directly from `git`, `jj`, and `gh` whenever possible.
+For most use, `jj-stack` needs no configuration. It reads repository and change information
+through `jj`, and reads review state from GitHub.
 
 Repo-level config can be helpful for defaults such as reviewers and labels:
 
@@ -304,7 +270,7 @@ matters even more when review feedback needs to be applied to one part of a stac
 obscuring the rest of the work.
 
 - Agents work best when tasks are decomposed. A stacked review lets an agent revise only
-  the commits that are wrong, and their descendants as needed, then resubmit.
+  the changes that are wrong, and their descendants as needed, then resubmit.
 
 - Smaller PRs are far easier for both humans and agents to re-read after feedback.
   Context windows are bigger in 2026, but agent attention is still limited, and human
@@ -315,6 +281,33 @@ obscuring the rest of the work.
 
 - Mutable local history is more valuable with agents. Agent-produced first drafts often need
   reshaping, and `jj` is the best tool to rework changes and history before refreshing GitHub.
+
+### AI agent integration
+
+If you use coding agents, install the bundled `jj-stack` skill so they know how to work with a
+`jj`-native stack:
+
+```bash
+gh skill install bos/jj-stack jj-stack
+```
+
+The skill is separate from the `uv` installation. It teaches agents to use `jj` for local stack
+edits, read machine-readable status from `jj-stack`, and refresh GitHub through `submit`.
+
+To install it for a specific agent or scope, pass the corresponding `gh skill install` flags.
+For example, to install it for Codex at user scope:
+
+```bash
+gh skill install bos/jj-stack jj-stack --agent codex --scope user
+```
+
+When developing the skill locally, install from this checkout:
+
+```bash
+gh skill install . jj-stack --from-local --agent codex --scope user --force
+```
+
+The source skill lives at `skills/jj-stack/SKILL.md`.
 
 ## Performance
 
@@ -337,8 +330,7 @@ agent-written. Nevertheless, I've provided heavy oversight.
 
 - quality of the user experience is paramount
 - user-facing docs are managed separately from generated implementation work
-- the test suite covers most workflows, with around 520 tests and greater than 80% coverage as
-  of June 2026
+- the test suite covers the main workflows and failure modes
 - performance has been a major focus, with close attention to concurrent and batched
   operations to hide costs such as roundtrips to the GitHub API
 

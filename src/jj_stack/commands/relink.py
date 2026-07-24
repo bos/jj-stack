@@ -1,7 +1,8 @@
 """Reconnect an existing GitHub pull request to the selected local change.
 
-Use this to repair a missing or wrong local link between a change and its pull
-request.
+Use this to repair a missing or wrong local link between a change and its pull request. The pull
+request must already be open in the configured repository. `jj-stack relink` does not create,
+reopen, or otherwise change it.
 """
 
 from __future__ import annotations

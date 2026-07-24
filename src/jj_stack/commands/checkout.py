@@ -1,15 +1,20 @@
-"""Connect jj-stack to an existing stack of pull requests.
+"""Set up local tracking for an existing stack of pull requests.
 
 By default, `checkout` tries to match the local stack ending at `@-` (the completed change below
 the working copy) to its existing pull requests.
 
-Use `--pull-request` to select a specific stack by PR number or URL, or
-`--revset` to point at a different local stack. Use `--pick` to choose from a
-numbered list of the stacks jj-stack already tracks. Use `--fetch` when the
-review branches are not available locally yet; this fetches them first and
-then sets up tracking.
+Use `--pull-request` to select a specific stack by PR number or URL, or `--revset` to point at a
+different local stack. Use `--pick` to choose from a numbered list of stacks already tracked in
+this local repository. Use `--fetch` when review branches are not available locally yet; this
+fetches them first and then sets up tracking.
 
-`checkout` does not rewrite commits, rebase changes, or modify GitHub.
+`checkout` may create or refresh exact local review bookmarks, but it does not move the working
+copy, rewrite or rebase changes, or modify GitHub. After fetching a remote-only stack, use normal
+`jj` commands to begin working from the printed tip commit.
+
+Common examples: `jj-stack checkout --pull-request 123 --fetch` attaches a stack that exists on
+GitHub; `jj-stack checkout --revset <head-change-id>` attaches a different local stack; and
+`jj-stack checkout --pick` chooses among stacks already tracked here.
 """
 
 from __future__ import annotations

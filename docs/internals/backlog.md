@@ -113,8 +113,6 @@ Remaining work:
 - generated or semi-generated command reference pages that stay in sync with argparse
 - example transcripts captured from the fake GitHub environment
 - LLM-friendly exports (`llms.txt` / `llms-full.txt`) once the primary structure is stable
-- decide whether `--describe-with` should receive richer structured context or remain limited to
-  `--pr <revset>` / `--stack <revset>` and JSON output
 
 Docs should teach the workflow first and enumerate commands second. The primary
 risk is writing reference prose before the task-oriented guides are complete.

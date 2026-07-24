@@ -116,7 +116,6 @@ children elsewhere in the DAG are separate stacks, not an automatic error.
 - merge commits inside the chain
 - divergent changes
 - multiple reviewable parents
-- a path that branches into a tree instead of staying a simple chain
 
 If an ancestor on the chain has other reviewable children, those are separate PR chains
 and out of scope for the current command unless the command explicitly asks about more
@@ -415,9 +414,9 @@ Given a chosen head revision:
    - `replace` for reorder, removal, insertion below the top, or any base mutation of a native
      member. Re-read and unstack the exact selected active suffix before changing branches or
      bases; a retained historical merged prefix is valid.
-   Any overlapping resource must be closed over the selected maximal local review path. A
-   closed-unmerged or unselected active member, overlap with multiple resources, or changed
-   membership fails before mutation.
+   Every active PR in an overlapping native GitHub stack must belong to the selected local parent
+   chain. A closed-unmerged or unselected active member, overlap with multiple native stacks, or
+   changed membership fails before mutation.
 9. Treat proven landed ancestors as no longer reviewable. Bottom-up for each remaining change:
    - point the local bookmark at the current visible commit for the change
    - treat topology changes as meaningful even when the diff is unchanged: if the parent
@@ -519,20 +518,20 @@ a new PR just because a saved link, bookmark, or GitHub state is missing or dama
 
 The recovery surface is explicit and narrow:
 
-- `jj stack view --fetch [<revset>]` refreshes remembered remote-branch observations
+- `jj-stack view --fetch [<revset>]` refreshes remembered remote-branch observations
   before inspecting GitHub PR state, then reports the stack and any saved or discovered
   PR state without mutating GitHub or local bookmarks
-- `jj stack relink <pr> <revset>` is a repair command. It explicitly reattaches an
+- `jj-stack relink <pr> <revset>` is a repair command. It explicitly reattaches an
   existing PR (and its same-repo head branch) to a specific `jj` change. It pins the
   branch locally, saves the PR identity, and records the fetched remote branch target
   as the submitted baseline. Replacing any stale saved baseline is what lets a later
   `submit` update the relinked review rather than rejecting that branch or opening a
   replacement.
-- `jj stack restart <revset>` is a repair command for abandoning stale or unusable
+- `jj-stack restart <revset>` is a repair command for abandoning stale or unusable
   PR tracking on a selected stack. It keeps the `jj` changes, clears their previous PR
   identity, assigns fresh managed review bookmark names, and leaves the next `submit`
   to create replacement PRs explicitly.
-- `jj stack submit --restart <revset>` is the user-facing one-step version of that
+- `jj-stack submit --restart <revset>` is the user-facing one-step version of that
   repair. It computes the same fresh tracking state in memory, creates replacement
   PRs, and only persists the new PR identity as part of the successful submit path.
 
@@ -543,7 +542,7 @@ never selected by an omitted argument.
 
 ### `view`
 
-`jj stack view [<revset> ...] [--pull-request <pr> ...]` shows the local stack(s) and
+`jj-stack view [<revset> ...] [--pull-request <pr> ...]` shows the local stack(s) and
 any locally known review identity for them.
 
 It is local-first. If a change has never been locally attached to review, `view`
@@ -551,7 +550,7 @@ reports it as not submitted and does not query GitHub for speculative PR matches
 only on predicted bookmark names or fetched remote observations. It does not create
 local tracking for a never-tracked change, including bookmark-only saved entries.
 
-`jj stack view --fetch [<revset> ...] [--pull-request <pr> ...]` is the same command,
+`jj-stack view --fetch [<revset> ...] [--pull-request <pr> ...]` is the same command,
 but it refreshes remote bookmark observations first so the report reflects the latest
 remote state before checking already-known GitHub PR state.
 
@@ -614,7 +613,7 @@ When GitHub data is available, `view`:
   `submit --restart` to create fresh PRs
 - when only saved PR identity is available, labels it as tracking data rather than implying a
   live lifecycle result
-- does not inspect managed stack-summary comments. Those comments are derived review
+- does not inspect managed navigation or overview comments. Those comments are derived review
   artifacts, and the commands that create or delete them own their validation.
 - never writes `ReviewIdentity` or `SubmittedBaseline`; live observations may enrich this report
   but cannot change saved identity or authorize later mutation
@@ -624,7 +623,7 @@ When `view` reports `cleanup needed`, it explains why in plain language:
 - a merged PR still appears on the local stack
 - descendant `submit` operations will keep following that old ancestry until the user
   repairs it
-- the next command is the exact selected `jj stack sync <change-id>`; add `--dry-run` first to
+- the next command is the exact selected `jj-stack sync <change-id>`; add `--dry-run` first to
   inspect the planned stack update before mutating local history
 
 User guidance names the command and its effect rather than exposing internal classifications of
@@ -632,7 +631,7 @@ fetched copies and selected revisions.
 
 ### `list`
 
-`jj stack list [--fetch]` gives one repo-scoped summary row per locally known stack. It
+`jj-stack list [--fetch]` gives one repo-scoped summary row per locally known stack. It
 is local-first too: discover stacks from saved tracking plus any visible local
 descendants above those tracked changes; do not create tracking for remote-only state;
 do not speculate about GitHub-only stacks that have never been attached locally.
@@ -669,7 +668,7 @@ These commands are not sources of truth and do not reattach identity. They inspe
 
 ### `checkout`
 
-`jj stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]` resolves one
+`jj-stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]` resolves one
 exact stack and sets up tracking for it. It does not mutate GitHub.
 
 `checkout` is the explicit recovery and bootstrap path for review state that already
@@ -713,7 +712,7 @@ Failure guidance stays specific:
 
 - if the PR head branch is missing locally, point the user at `checkout --fetch`
 - if the PR head branch is missing on the remote, cross-repo, or ambiguous, stop and
-  explain that the stack cannot be checked out safely
+  explain that the stack cannot be connected safely
 - if multiple PRs match the same head branch, point at `view --fetch` and `relink`
 - if any checked-out revision would need a freshly generated bookmark instead of an exact
   discovered name, stop rather than inventing a local match
@@ -733,7 +732,7 @@ repository-wide recovery mode.
 
 ### `sync`
 
-`jj stack sync [--dry-run] [<revset>]` observes and updates one selected stack:
+`jj-stack sync [--dry-run] [<revset>]` observes and updates one selected stack:
 
 1. Fetch the configured remote and resolve current trunk.
 2. Re-resolve the selected stack from the current DAG; never replay an earlier selection.
@@ -752,7 +751,7 @@ that workflow. With `--dry-run`, it prints the landed classification and any cle
 without applying them. When a rebase is required, `sync` cannot compute the later PR-update plan
 until the rebase has been applied.
 
-`jj stack sync --all [--dry-run]` is the only repository-wide recovery mode. It fetches once,
+`jj-stack sync --all [--dry-run]` is the only repository-wide recovery mode. It fetches once,
 checks every locally tracked PR, and continues past absent, malformed, obsolete, or individually
 failing records. It may change only reviews whose exact submitted commit is on fetched trunk,
 whose live PR matches the saved `ReviewIdentity`, and whose live head SHA equals the submitted
@@ -780,7 +779,7 @@ The selector and `--all` are mutually exclusive.
 
 ### `unstack`
 
-`jj stack unstack [--cleanup] [--dry-run]
+`jj-stack unstack [--cleanup] [--dry-run]
 [--pull-request <pr|orphans> | <revset>]` ends review for one stack or an explicit set of
 orphaned pull requests.
 
@@ -832,7 +831,7 @@ artifacts the tool can verify belong to the stack:
 - delete remote PR branches on the configured remote, only when verified to belong to
   the stack
 - forget local bookmarks, only when verified to belong to the stack
-- delete stack-summary comments belonging to the stack
+- delete managed navigation and overview comments belonging to the stack
 - prune identity and baseline only when no visible path still depends on them
 - preserve external bookmarks (e.g. ones reused via `use_bookmarks`) unless the user
   opts in to cleaning them up too
@@ -855,7 +854,7 @@ branch-name heuristics.
 
 ### `unlink`
 
-`jj stack unlink <revset>` is the repair-oriented inverse of `relink`: it intentionally
+`jj-stack unlink <revset>` is the repair-oriented inverse of `relink`: it intentionally
 detaches one change from active PR tracking without touching GitHub.
 
 `unlink` is an advanced repair command, not the normal way to end a review. Its unit of
@@ -884,7 +883,7 @@ By default `unlink` is local-only:
 
 - it does not close PRs
 - it does not delete PR branches
-- it does not delete stack-summary comments
+- it does not delete managed navigation or overview comments
 - it does not refresh remote bookmark observations: a fetch imports whatever the
   remote now holds into the local view mid-repair, and saved tracking plus
   remembered observations already decide link state
@@ -905,12 +904,12 @@ resolves anywhere in visible history.
 
 ### `restart`
 
-`jj stack restart <revset>` prepares the selected stack to be submitted as fresh PRs.
+`jj-stack restart <revset>` prepares the selected stack to be submitted as fresh PRs.
 It is for cases where the local changes should continue, but the old PR tracking should
 not: closed PRs that should not be reopened, deleted PRs, or broken branch/PR links
 left by a tool bug or manual GitHub repair.
 
-Most users should reach this behavior through `jj stack submit --restart <revset>`.
+Most users should reach this behavior through `jj-stack submit --restart <revset>`.
 The standalone `restart` command remains the local-only form when the operator wants to inspect or
 stage the tracking reset separately.
 
@@ -965,10 +964,11 @@ for their own explicit command.
 - **Move changes between stacks**: submitting the user's selected resulting stack
   updates that chain's PRs from the current DAG. Moved changes keep their existing
   PRs and recalculate their bases from the new parent chain.
-- **Split one stack into two or more**: the resulting maximal reviewed paths must be disjoint.
-  When one old native resource spans more than one desired path, the user explicitly dissolves it
-  with `gh stack unstack <number>`, then submits each resulting stack separately. Otherwise,
-  submitting one result updates only that chain and every other result waits for its own command.
+- **Split one stack into two or more**: the resulting reviewed paths may keep common ancestors.
+  When one old native GitHub stack spans more than one desired path, the user explicitly
+  dissolves it with `gh stack unstack <number>`, then submits each resulting stack separately.
+  Otherwise, submitting one result updates only that chain and every other result waits for its
+  own command.
 - **Merge two or more stacks into one**: submitting the merged stack updates every
   change on the chain bottom-up, reusing existing PRs by `change_id` and
   recalculating bases. The merged chain ends up with one overview comment on its new
@@ -1007,47 +1007,23 @@ graph.
 
 ## CLI shape
 
-The command surface is summarized below; built-in `--help` is the syntax authority for flags:
-
-- `jj stack submit [--dry-run] [--draft[=new|all] | --open]
-  [--label <label[,label...]>]
-  [--reviewers <login[,login...]>] [--team-reviewers <slug[,slug...]>]
-  [--use-bookmarks <bookmark[,bookmark...]>]
-  [--describe <change>=<file> | --describe stack=<file> | --describe-with <helper>]
-  [--edit] [--re-request] [--restart] [<revset>]`
-- `jj stack view [--fetch] [--json] [--verbose]
-  [{--pull-request <pr>} | {<revset>}] ...`
-- `jj stack list [--fetch] [--json]`
-- `jj stack restart [--dry-run] <revset>`
-- `jj stack relink <pr> <revset>`
-- `jj stack unlink <revset>`
-- `jj stack unstack [--local | --cleanup] [--dry-run]
-  [--pull-request <pr|orphans> | <revset>]`
-- `jj stack cleanup [--dry-run]`
-- `jj stack sync [--dry-run] [<revset> | --all]`
-- `jj stack checkout [--fetch] [--pick | --pull-request <pr> | --revset <revset>]`
-- `jj stack merge [--dry-run] [--merge-method <merge|squash|rebase>]
-  [--pull-request <pr> | <revset>]`
-- `jj stack doctor`
-- `jj stack completion <bash|zsh|fish>`
-- `jj stack help [--all] [<command>]`
+Built-in `--help` and the user guide own command names, aliases, and exact parser syntax. This
+specification records only the enduring selection rules and effects of those commands.
 
 `completion` is auxiliary CLI glue. It prints shell completion scripts. It is not a
 review-state command and does not inspect the repo, the tracking-state file, or
 GitHub.
 
-`sub` aliases `submit`; `status`, `st`, and `v` alias `view`; `ls` aliases `list`; and `delete`
-aliases `unstack`. Run with no subcommand, the executable behaves the same as `jj stack view` on
-the current stack.
+Run with no subcommand, the executable behaves the same as `view` on the current stack.
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `view`, `merge`, `unstack`) plus support commands
 (`cleanup`, `checkout`, `sync`, `doctor`). Repair commands (`restart`, `relink`, `unlink`) and
 shell-integration glue (`completion`) stay hidden by default and only appear in
-`jj stack help --all`. The `help` command itself is hidden parser glue: `jj stack help`
+`jj-stack help --all`. The `help` command itself is hidden parser glue: `jj-stack help`
 is the same as
-`jj stack --help`, and `jj stack help <command>` is the same as
-`jj stack <command> --help`. The default top-level help also keeps advanced global
+`jj-stack --help`, and `jj-stack help <command>` is the same as
+`jj-stack <command> --help`. The default top-level help also keeps advanced global
 options (`--repository`, `--config`, `--config-file`, `--debug`, `--time-output`) out
 of view until `--all`.
 
@@ -1165,10 +1141,11 @@ one before merging.
   command does not rewrite local history or review branches.
 
 - **Native stack create and append**. GitHub assigns each admitted PR to one resource. Defense:
-  immediately before either mutation, list repository stacks and re-run resource-closed planning.
-  Require the same action and affected resource, then create the complete desired membership or
-  append only the ordered new top members. GitHub's mutation is the admission authority; there is
-  no queue or auto-merge preflight and no fallback to comments after rejection.
+  immediately before either mutation, list repository stacks and verify again that every active
+  member of an overlapping native stack belongs to the selected local chain. Require the same
+  action and affected resource, then create the complete desired membership or append only the
+  ordered new top members. GitHub's mutation is the admission authority; there is no queue or
+  auto-merge preflight and no fallback to comments after rejection.
 
 - **Native stack unstack**. Removes active PRs from a native resource and can leave its historical
   merged prefix. Defense: immediately before mutation, fetch the exact resource and require its
@@ -1207,7 +1184,7 @@ must clear before introducing a new GitHub call.
 
 ### Cleanup semantics
 
-`jj stack cleanup` is conservative garbage collection, never a correctness prerequisite or a
+`jj-stack cleanup` is conservative garbage collection, never a correctness prerequisite or a
 local-history repair command. Selected `sync` owns rebasing after landed ancestors.
 
 Cleanup may remove only provably tool-owned derived artifacts:
@@ -1237,9 +1214,9 @@ restart, or later `cleanup` command that can finish the work.
 
 ### Merge lifecycle
 
-`jj stack merge` is the only command that asks GitHub to merge reviewed changes. It never pushes
+`jj-stack merge` is the only command that asks GitHub to merge reviewed changes. It never pushes
 trunk. Cached native-stack capability plus current membership chooses the GitHub API; there is no
-user-selectable transport and no `land` compatibility alias.
+user-selectable transport.
 
 The command is mutate-by-default with `--dry-run` available:
 

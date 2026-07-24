@@ -82,7 +82,7 @@ If you already have a PR body in a Markdown file, attach it while submitting:
 jj-stack submit --describe <change-id>=pr-body.md
 ```
 
-For a multi-change stack, `--describe stack=stack-summary.md` adds stack overview text
+For a multi-change stack, `--describe stack=stack-overview.md` adds stack overview text
 to the head PR's stack comment.
 
 If a change does not already have its review branch and PR set up, `jj-stack submit` creates
@@ -103,6 +103,11 @@ jj-stack submit
 If you split one previously submitted GitHub stack into separate local paths, `submit` may tell
 you that the old GitHub stack spans both results. Run the exact `gh stack unstack <number>`
 command in that diagnostic to dissolve the old grouping, then submit each resulting local stack.
+If `gh stack` is unavailable, install GitHub's extension first:
+
+```bash
+gh extension install github/gh-stack
+```
 
 If you want to ask prior reviewers to take another look after you've addressed feedback, run:
 
@@ -117,12 +122,22 @@ This will notify reviewers who approved or asked for changes to a PR.
 Use `view` when you need to answer:
 
 - which changes already have PRs
-- which PRs are draft, approved, blocked, or need cleanup
+- which PRs are draft, approved, have changes requested, or need cleanup
 
-If review state already exists on another machine or only on GitHub, run `jj-stack checkout`
-first to start working on that stack locally. When several stacks are already tracked and
-you don't remember a head change ID, `jj-stack checkout --pick` presents a numbered list to
-choose from.
+If review state already exists on another machine or only on GitHub, connect it to local changes
+with:
+
+```bash
+jj-stack checkout --pull-request <pr> --fetch
+```
+
+Despite its name, `checkout` does not move the working copy. It sets up local tracking and prints
+the fetched tip commit. To continue above a remote-only stack, use
+`jj new <tip-commit-id>` afterward; to edit an existing change directly, use
+`jj edit <change-id>`.
+
+When several stacks are already tracked in this repository and you do not remember a head change
+ID, `jj-stack checkout --pick` presents a numbered list. It does not discover GitHub-only stacks.
 
 If you want to inspect the stack for one linked PR directly:
 
@@ -203,59 +218,65 @@ through different commit IDs and your local stack still contains the old commits
 jj-stack sync <head-change-id>
 ```
 
-`sync` fetches trunk, verifies which lower PRs actually landed, rebases the remaining selected
+`sync` fetches trunk, verifies which lower PRs GitHub merged, rebases the remaining selected
 changes, and updates only PRs that already exist for them. It does not open a PR for trailing WIP
 or touch other local stacks. If it cannot safely remove an old local copy, it leaves the change
 alone and prints the next command to run.
 
-GitHub rebase merges preserve jj change IDs, while squash merges do not. `sync` handles both:
-it follows a matching fetched change ID when present, and otherwise retires the old local change
-from the exact GitHub merge result without relabeling the commit that landed.
+GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
+`sync` handles either result without pretending the new GitHub commit is the old local change.
 
 `sync` does not otherwise rewrite history. If your stack simply drifted because `trunk()`
-advanced without anything in your stack merging, rebase with plain `jj`:
+advanced without anything in your stack merging, rebase only the intended bottom-to-head path
+with plain `jj`:
 
 ```bash
-jj rebase -s <bottom-of-stack> -d 'trunk()'
+jj rebase -r '<bottom-change-id>::<head-change-id>' -o 'trunk()'
 ```
 
-Use `sync --dry-run <head-change-id>` to preview which changes landed and any cleanup or rebase.
-When a rebase is needed, the later PR-update plan is available only after you run `sync`. `sync
---all` checks every locally tracked PR and cleans up those whose exact submitted commits are
+The bounded revset matters when the bottom change also has sibling descendants.
+
+Use `jj-stack sync --dry-run <head-change-id>` to preview merged changes and any cleanup or
+rebase. When a rebase is needed, the later PR-update plan is available only after you run `sync`.
+`sync --all` checks every locally tracked PR and cleans up those whose exact submitted commits are
 already on trunk. It may retarget and close those PRs, forget managed local bookmarks, and remove
-their tracking data, but it never rewrites or submits a stack. When GitHub used a different commit
-ID, `sync --all` leaves tracking in place and prints a `sync <head-change-id>` command for each
-affected stack.
+their tracking data, but it never rewrites or submits a stack. When GitHub created a different
+commit, `sync --all` leaves tracking in place and prints a
+`jj-stack sync <head-change-id>` command for each affected stack.
 
 ## 8. Unstack abandoned stacks
 
-If a stack should no longer be reviewed:
+If a stack should no longer be reviewed, preview which PRs will close and then apply:
 
 ```bash
+jj-stack unstack --dry-run
 jj-stack unstack
 ```
 
 If it's handier to identify your stack by PR number, you can specify that instead:
 
 ```bash
+jj-stack unstack --pull-request 7 --dry-run
 jj-stack unstack --pull-request 7
 ```
 
-Use `--cleanup` when you also want to remove the stack's old review branches and `jj-stack`'s
-tracking data after the PRs are closed. If `jj-stack` created local review bookmarks for those
-branches, this will forget those too.
+Use `--cleanup` when you also want to remove review branches, bookmarks, and comments that
+`jj-stack` can verify are safe to delete after the PRs close. It remembers that the review was
+closed so a future `submit` cannot silently reuse it.
 
-Use `--local` when you only want this checkout to stop tracking the stack. It leaves the PRs,
-review branches, and local bookmarks alone:
+Use `--local` when you only want this local repository to stop tracking the stack. It leaves the
+PRs, review branches, and local bookmarks alone:
 
 ```bash
 jj-stack unstack --local
 ```
 
 If `jj-stack list` shows an `orphan` row, the PR is still open but its local change is no
-longer part of any current stack. When you are ready, close it and clean up its tracking:
+longer part of any current stack. When you are ready, preview closing it and cleaning up its
+review artifacts:
 
 ```bash
+jj-stack unstack --cleanup --pull-request 7 --dry-run
 jj-stack unstack --cleanup --pull-request 7
 ```
 
@@ -266,15 +287,16 @@ jj-stack unstack --cleanup --pull-request orphans --dry-run
 jj-stack unstack --cleanup --pull-request orphans
 ```
 
-The preview performs the same native GitHub stack membership checks as the real cleanup. A
-partial native stack selection is reported as blocked before either command changes anything.
+If GitHub groups the selected PR with other active PRs that must close together, both the preview
+and real command stop before changing anything unless the full group belongs to the selected
+local path.
 
 If `jj-stack list` says another tracked stack changed since its last submit, either run
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
 `jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another
 stack when that stack is built on top of a change in the stack you are inspecting. Status calls
 out which tracked changes no longer match their last submitted commits and whether
-`sync <head-change-id>` is needed first.
+`jj-stack sync <head-change-id>` is needed first.
 
 ## Short version
 
@@ -298,18 +320,18 @@ If a command is interrupted mid-way (crash, Ctrl-C, network failure), inspect th
 first:
 
 ```bash
-jj-stack view <change-id>
+jj-stack view <head-change-id>
 ```
 
 Then choose the recovery command based on what was interrupted:
 
 ```bash
 # submit or plain unstack: rerun it with the same explicit selector
-jj-stack submit <change-id>
-jj-stack unstack <change-id>
+jj-stack submit <head-change-id>
+jj-stack unstack <head-change-id>
 
 # if the interrupted command was unstack --cleanup, keep that explicit option
-jj-stack unstack --cleanup <change-id>
+jj-stack unstack --cleanup <head-change-id>
 
 # sync: retry the same mode explicitly
 jj-stack sync --dry-run <head-change-id>

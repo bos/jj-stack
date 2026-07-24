@@ -1,7 +1,8 @@
-"""Stop tracking one local change with jj-stack while leaving the rest of the
-stack alone.
+"""Detach one local change from its saved pull request.
 
-Later jj-stack commands will ignore that change unless you link it again.
+The pull request, review branch, and local bookmark are left unchanged. `jj-stack view` still
+shows the change as unlinked; `jj-stack submit` and `jj-stack merge` refuse to use the old link
+until you run `jj-stack relink`.
 """
 
 from __future__ import annotations

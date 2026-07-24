@@ -263,7 +263,7 @@ def _historical_review(
     elif rewritten.state == "landed":
         evidence_kind = "rewritten"
     else:
-        reason = rewritten.reason or exact.reason or "no landed result is on fetched trunk"
+        reason = rewritten.reason or exact.reason or "no merge result is on fetched trunk"
         raise CliError(t"Cannot retire native member PR #{member.number}: {reason}.")
     return NativeHistoricalReview(
         candidate=candidate,

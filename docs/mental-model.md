@@ -61,8 +61,12 @@ branches are a transport layer; the main authoring model is still local `jj` his
 
 When GitHub provides its stacked-PR feature, `jj-stack` registers the ordered PRs there. Otherwise
 it shows the same navigation through managed PR comments. Native membership remains derived
-GitHub state: the local DAG still decides which changes belong together. One active reviewed
-change cannot belong to two local review paths.
+GitHub state: the local DAG still decides which changes belong together.
+
+Commands follow the selected change's parent chain. A reviewed change can be a common ancestor of
+several local paths; operating on one path leaves its siblings alone. The only extra constraint
+comes from an existing GitHub stack: if GitHub groups active PRs into one unit for an operation,
+`jj-stack` stops rather than changing only an unsafe subset of that group.
 
 ## Practical rule
 

@@ -180,7 +180,7 @@ async def observe_landed_candidate(
         return None, "GitHub no longer reports the expected trunk branch as its default"
     fetched_trunk = observation.fetched_trunk
     if fetched_trunk is None or fetched_trunk.commit_id != finalizer.trunk_commit_id:
-        return None, t"fetched {ui.revset('trunk()')} changed while checking the landed PR"
+        return None, t"fetched {ui.revset('trunk()')} changed while checking the merged PR"
     if observation.remote_trunk_target != finalizer.trunk_commit_id:
         return None, "the live trunk ref moved after the last fetch"
     review = observation.reviews[candidate.change_id]
@@ -189,7 +189,7 @@ async def observe_landed_candidate(
         or review.baseline != candidate.submitted_baseline
         or candidate.change_id in observation.duplicate_claim_change_ids
     ):
-        return None, "saved PR tracking changed while checking the landed PR"
+        return None, "saved PR tracking changed while checking the merged PR"
     return observation, None
 
 
@@ -327,7 +327,7 @@ def render_landed_results(
     if not results:
         return
     console.output(
-        "Planned cleanup for landed PRs:" if dry_run else "Applied cleanup for landed PRs:"
+        "Planned cleanup for merged PRs:" if dry_run else "Applied cleanup for merged PRs:"
     )
     marker = "•" if dry_run else "✓"
     for result in results:
@@ -338,7 +338,7 @@ def render_landed_results(
             )
             continue
         if result.outcome == "finalized":
-            console.output(t"  {marker} finish landed PR #{candidate.review_identity.pr_number}")
+            console.output(t"  {marker} finish merged PR #{candidate.review_identity.pr_number}")
         if result.forgot_bookmark:
             console.output(t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)}")
         if result.cleanup_warning is not None:

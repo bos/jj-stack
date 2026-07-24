@@ -1,9 +1,8 @@
 """Create or update GitHub pull requests for the selected stack of changes.
 
-This pushes or updates the GitHub branches for that stack, then opens or
-refreshes one pull request per change from bottom to top. Selected local
-changes must be free of unresolved conflicts before submit will mutate
-bookmarks, remotes, or GitHub state.
+This pushes or updates the review branches for that stack, then opens or refreshes one pull
+request per change from bottom to top. Selected local changes must be free of unresolved
+conflicts before `submit` changes local bookmarks, pushes review branches, or updates GitHub.
 
 Pull request titles come from each change's subject line and bodies from the rest of the
 description. When a description has no body, the repository's pull request template
@@ -19,7 +18,7 @@ Use `--describe-with HELPER` to author pull request titles and bodies, and an ov
 description of a stack. The helper can be interactive, in which case you enter these yourself,
 or automated, such as invoking an LLM to generate these descriptions.
 
- `jj-stack` invokes the helper as `helper --pr <change_id>` for each pull request and `helper
+`jj-stack` invokes the helper as `helper --pr <change_id>` for each pull request and `helper
 --stack <revset>` for the selected stack. The helper must output JSON with string `title` and
 `body` fields.
 
@@ -32,6 +31,9 @@ The `--label`, `--reviewers`, `--team-reviewers`, and `--use-bookmarks` flags
 accept comma-separated values and may be repeated. When passed, they override
 the corresponding configured defaults for this run.
 
+Common examples: `jj-stack submit --dry-run` previews the current stack;
+`jj-stack submit` creates or refreshes its pull requests; and
+`jj-stack submit <head-change-id>` selects another stack explicitly.
 """
 
 from __future__ import annotations
