@@ -45,7 +45,7 @@ VIEW_REPORT_EXIT_CODES = frozenset({0, 2, 10})
 
 @dataclass(frozen=True, slots=True)
 class SubmittedBaseline:
-    bookmark: str
+    branch: str
     change_id: str
     pr_base_ref: str
     pr_number: int
@@ -155,7 +155,7 @@ def replay_external_drift_scenario(
     if scenario.expected_outcome == "fail_closed":
         before_refs = _remote_refs(fake_repo.git_dir)
         before_github = _github_snapshot(fake_repo)
-        before_bookmarks = _bookmark_snapshot(repo)
+        before_imported_reviews = JjClient(repo).list_imported_review_bookmarks()
         before_state = ReviewStateStore.for_repo(repo).load()
         fake_repo.pull_request_events.clear()
 
@@ -168,7 +168,9 @@ def replay_external_drift_scenario(
         assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
         assert _github_snapshot(fake_repo) == before_github, scenario.trace
         assert fake_repo.pull_request_events == [], scenario.trace
-        assert _bookmark_snapshot(repo) == before_bookmarks, scenario.trace
+        assert JjClient(repo).list_imported_review_bookmarks() == before_imported_reviews, (
+            scenario.trace
+        )
         assert ReviewStateStore.for_repo(repo).load() == before_state, scenario.trace
     else:
         stack = _discover_stack_for_labels(
@@ -487,16 +489,16 @@ def _capture_submitted_baseline(
     for label, change_id in labels_to_change_ids.items():
         review_identity = state.review_identities[change_id]
         submitted_baseline = state.submitted_baselines[change_id]
-        bookmark = review_identity.head_ref
+        branch = review_identity.head_ref
         pr_number = review_identity.pr_number
         pull_request = fake_repo.pull_requests[pr_number]
         baseline[label] = SubmittedBaseline(
-            bookmark=bookmark,
+            branch=branch,
             change_id=change_id,
             pr_base_ref=pull_request.base_ref,
             pr_number=pr_number,
             review_identity=review_identity,
-            remote_target=_remote_head(remote_heads, bookmark),
+            remote_target=_remote_head(remote_heads, branch),
             submitted_baseline=submitted_baseline,
         )
     return baseline
@@ -716,22 +718,22 @@ def _assert_new_submit_invariants(
 ) -> None:
     state = ReviewStateStore.for_repo(repo).load()
     remote_heads = _remote_refs(fake_repo.git_dir)
-    bookmarks_by_label: dict[str, str] = {}
+    branches_by_label: dict[str, str] = {}
 
     for index, label in enumerate(scenario.final_live_labels):
         revision = stack.revisions[index]
         review_identity = state.review_identities[revision.change_id]
-        bookmark = review_identity.head_ref
+        branch = review_identity.head_ref
         pr_number = review_identity.pr_number
-        bookmarks_by_label[label] = bookmark
+        branches_by_label[label] = branch
 
         pull_request = fake_repo.pull_requests[pr_number]
         expected_base_ref = (
-            bookmarks_by_label[scenario.final_live_labels[index - 1]] if index > 0 else "main"
+            branches_by_label[scenario.final_live_labels[index - 1]] if index > 0 else "main"
         )
-        assert _remote_head(remote_heads, bookmark) == revision.commit_id
+        assert _remote_head(remote_heads, branch) == revision.commit_id
         assert pull_request.base_ref == expected_base_ref
-        assert pull_request.head_ref == bookmark
+        assert pull_request.head_ref == branch
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         assert pull_request.title == subject_for_label(label)
@@ -755,17 +757,17 @@ def _assert_successful_submit_invariants(
     revisions_by_label = dict(zip(invariants.final_live_labels, stack.revisions, strict=True))
     expected_base_by_pr_number: dict[int, str] = {}
     live_pr_numbers: set[int] = set()
-    bookmarks_by_label: dict[str, str] = {}
+    branches_by_label: dict[str, str] = {}
 
     for index, label in enumerate(invariants.final_live_labels):
         revision = revisions_by_label[label]
         review_identity = state.review_identities[revision.change_id]
-        bookmark = review_identity.head_ref
+        branch = review_identity.head_ref
         pr_number = review_identity.pr_number
-        bookmarks_by_label[label] = bookmark
+        branches_by_label[label] = branch
         live_pr_numbers.add(pr_number)
         if label in baseline:
-            assert bookmark == baseline[label].bookmark, invariants.trace
+            assert branch == baseline[label].branch, invariants.trace
             assert pr_number == baseline[label].pr_number, invariants.trace
             _assert_approval_review_preserved(fake_repo, pr_number, label)
         else:
@@ -773,12 +775,12 @@ def _assert_successful_submit_invariants(
 
         pull_request = fake_repo.pull_requests[pr_number]
         expected_base_ref = (
-            bookmarks_by_label[invariants.final_live_labels[index - 1]] if index > 0 else "main"
+            branches_by_label[invariants.final_live_labels[index - 1]] if index > 0 else "main"
         )
         expected_base_by_pr_number[pr_number] = expected_base_ref
-        assert _remote_head(remote_heads, bookmark) == revision.commit_id
+        assert _remote_head(remote_heads, branch) == revision.commit_id
         assert pull_request.base_ref == expected_base_ref
-        assert pull_request.head_ref == bookmark
+        assert pull_request.head_ref == branch
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         assert pull_request.title == subject_for_label(label)
@@ -792,9 +794,9 @@ def _assert_successful_submit_invariants(
         assert submitted.pr_number not in live_pr_numbers
         assert review_identity == submitted.review_identity
         assert submitted_baseline == submitted.submitted_baseline
-        assert _remote_head(remote_heads, submitted.bookmark) == submitted.remote_target
+        assert _remote_head(remote_heads, submitted.branch) == submitted.remote_target
         assert pull_request.base_ref == submitted.pr_base_ref
-        assert pull_request.head_ref == submitted.bookmark
+        assert pull_request.head_ref == submitted.branch
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
@@ -865,9 +867,9 @@ def _assert_deferred_labels_untouched(
         pull_request = fake_repo.pull_requests[submitted.pr_number]
         assert review_identity == submitted.review_identity
         assert submitted_baseline == submitted.submitted_baseline
-        assert _remote_head(remote_heads, submitted.bookmark) == submitted.remote_target
+        assert _remote_head(remote_heads, submitted.branch) == submitted.remote_target
         assert pull_request.base_ref == submitted.pr_base_ref
-        assert pull_request.head_ref == submitted.bookmark
+        assert pull_request.head_ref == submitted.branch
         assert pull_request.merged_at is None
         assert pull_request.state == "open"
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
@@ -962,7 +964,7 @@ def _apply_drift_operation(
             for candidate_label, candidate in reversed(baseline.items())
             if candidate_label != label
         )
-        update_remote_ref(fake_repo, branch=submitted.bookmark, target=drift_target)
+        update_remote_ref(fake_repo, branch=submitted.branch, target=drift_target)
         return None
     if drift.kind == "remote_branch_deleted":
         # GitHub closes a pull request when its head branch is deleted, so the
@@ -974,7 +976,7 @@ def _apply_drift_operation(
                 str(fake_repo.git_dir),
                 "update-ref",
                 "-d",
-                f"refs/heads/{submitted.bookmark}",
+                f"refs/heads/{submitted.branch}",
             ],
             fake_repo.git_dir.parent,
         )
@@ -987,7 +989,7 @@ def _apply_drift_operation(
     if drift.kind == "foreign_branch_fetched":
         # A copy of the submitted commit arrives on the remote under a foreign
         # branch name (an agent or teammate pushed it), and the user fetches.
-        # The untracked remote bookmark makes the commit immutable; if the
+        # The untracked remote branch makes the commit immutable; if the
         # change was rewritten since submit, the resurrected predecessor makes
         # it divergent instead. Either way the stack stops being reviewable.
         update_remote_ref(
@@ -1039,7 +1041,7 @@ def _recreate_change_outside_jj_stack(
             str(fake_repo.git_dir),
             "update-ref",
             "-d",
-            f"refs/heads/{replaced.bookmark}",
+            f"refs/heads/{replaced.branch}",
         ],
         fake_repo.git_dir.parent,
     )
@@ -1163,14 +1165,8 @@ def _github_snapshot(
     )
 
 
-def _bookmark_snapshot(repo: Path) -> dict[str, object]:
-    """The complete local and remembered-remote bookmark view."""
-
-    return dict(JjClient(repo).list_bookmark_states())
-
-
-def _remote_head(remote_heads: dict[str, str], bookmark: str) -> str:
-    return remote_heads[f"refs/heads/{bookmark}"]
+def _remote_head(remote_heads: dict[str, str], branch: str) -> str:
+    return remote_heads[f"refs/heads/{branch}"]
 
 
 def _remote_refs(remote: Path) -> dict[str, str]:

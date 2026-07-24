@@ -44,9 +44,10 @@ Commands operate on the selected parent chain. If a reviewed ancestor also has a
 child, that child is a separate path; you do not need to rebase it away before working with the
 selected stack.
 
-When you run `jj log` directly, you may also notice review bookmarks. Their names are generated
-automatically as `review/<subject-slug>-<short-change-id>`. These bookmarks get turned into Git
-branches that `jj-stack` uses for GitHub PRs.
+Review branch names stay readable and stable as
+`review/<subject-slug>-<short-change-id>`, but those branches live only on the Git remote.
+`jj-stack` saves each exact name with its PR identity instead of leaving persistent review
+bookmarks in your local `jj` view, so they do not clutter `jj log` or bookmark output.
 
 ## 3. Submit the stack
 
@@ -84,9 +85,9 @@ jj-stack submit --describe <change-id>=pr-body.md
 For a multi-change stack, `--describe stack=stack-overview.md` adds stack overview text
 to the head PR's stack comment.
 
-If a change does not already have its review branch and PR set up, `jj-stack submit` creates
-the matching review bookmark for it. After that, it reuses that name as the stable GitHub PR head
-branch while you revise your local change.
+If a change does not already have its review branch and PR set up, `jj-stack submit` creates the
+remote branch and PR. After that, it reuses the saved human-readable branch name as the stable
+GitHub PR head while you revise your local change.
 
 ## 4. Revise locally as reviews come in
 
@@ -130,8 +131,9 @@ with:
 jj-stack checkout --pull-request <pr> --fetch
 ```
 
-Despite its name, `checkout` does not move the working copy. It sets up local tracking and prints
-the fetched tip commit. To continue above a remote-only stack, use
+Despite its name, `checkout` does not move the working copy. It fetches only the exact reviewed
+commits needed to identify the stack, saves local tracking, and prints the tip commit. It does not
+leave review bookmarks behind. To continue above a remote-only stack, use
 `jj new <tip-commit-id>` afterward; to edit an existing change directly, use
 `jj edit <change-id>`.
 
@@ -224,6 +226,8 @@ alone and prints the next command to run.
 
 GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
 `sync` handles either result without pretending the new GitHub commit is the old local change.
+If a native merge also rewrote the PRs that remain open, `sync` adopts those exact reviewed
+commits and rebases only your trailing local work above them.
 
 `sync` does not otherwise rewrite history. If your stack simply drifted because `trunk()`
 advanced without anything in your stack merging, rebase only the intended bottom-to-head path
@@ -238,9 +242,9 @@ The bounded revset matters when the bottom change also has sibling descendants.
 Use `jj-stack sync --dry-run <head-change-id>` to preview merged changes and any cleanup or
 rebase. When a rebase is needed, the later PR-update plan is available only after you run `sync`.
 `sync --all` checks every locally tracked PR and cleans up those whose exact submitted commits are
-already on trunk. It may retarget and close those PRs, forget managed local bookmarks, and remove
-their tracking data, but it never rewrites or submits a stack. When GitHub created a different
-commit, `sync --all` leaves tracking in place and prints a
+already on trunk. It may retarget and close those PRs and remove their tracking data, but it never
+rewrites or submits a stack. When GitHub created a different commit, `sync --all` leaves tracking
+in place and prints a
 `jj-stack sync <head-change-id>` command for each affected stack.
 
 ## 8. Unstack abandoned stacks
@@ -263,8 +267,8 @@ Plain `unstack` closes the PRs but retains their exact tracking and submitted co
 information prevents a later `submit` from silently reusing a closed review and lets
 `cleanup` or `submit --restart` verify what it is acting on.
 
-Use `--cleanup` when you also want to remove review branches, bookmarks, comments, and tracking
-that `jj-stack` can verify are safe to delete after the PRs close.
+Use `--cleanup` when you also want to remove review branches, comments, and tracking that
+`jj-stack` can verify are safe to delete after the PRs close.
 
 Cleanup keeps a review branch and its tracking whenever any open PR in the same GitHub repository
 still uses that branch as its base, even if that PR is not tracked by `jj-stack` or its local
@@ -274,8 +278,7 @@ for upper selected PRs it would close first, while the real command checks GitHu
 each deletion.
 
 Use `--local` when you only want this local repository to stop tracking the stack. It removes the
-exact local PR and submitted-commit records while leaving the PRs, review branches, and local
-bookmarks alone:
+exact local PR and submitted-commit records while leaving the PRs and review branches alone:
 
 ```bash
 jj-stack unstack --local

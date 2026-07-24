@@ -50,9 +50,9 @@ jj config set --repo 'revset-aliases."trunk()"' main
 
 Possible causes:
 
-- the local bookmark tracking the remote branch is out of date
+- the remote review branch moved or disappeared
 - a PR link or review branch changed on another machine or workspace
-- you want to refresh both live GitHub state and local remote-bookmark observations
+- you want to refresh both live GitHub state and exact remote-branch observations
 
 What to do:
 
@@ -60,10 +60,9 @@ What to do:
 jj-stack view --fetch
 ```
 
-`view` already checks live GitHub state when GitHub is reachable. `view
---fetch` also refreshes remembered remote bookmark state before reporting, so
-it is the safer read-only refresh when a PR link, branch state, or merged-base
-relationship may have changed elsewhere.
+`view` already checks live GitHub state when GitHub is reachable. `view --fetch` also refreshes
+ordinary fetched repository state and directly observes each saved review branch. Ordinary fetch
+excludes `review/*`, so this read-only refresh does not import persistent review bookmarks.
 
 If a change shows `submitted, no PR found for branch`, `jj-stack` has tracking
 for a previous submit, but GitHub did not report a PR for the current review
@@ -110,7 +109,9 @@ Selected `sync` verifies which lower PRs GitHub merged, rebases the selected rem
 above the current `trunk()`, and updates only PRs that already exist for them. Use
 `jj-stack sync --dry-run <head-change-id>` first to preview merged changes and any cleanup or
 rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
-It leaves other stacks and unreviewed trailing changes alone.
+When a native merge rewrote the PRs that remain open, `sync` adopts those exact reviewed commits
+and rebases only trailing local work above them. It leaves other stacks and unreviewed trailing
+changes alone.
 
 ## Trunk advanced, but none of your stack merged
 
@@ -222,8 +223,9 @@ jj-stack checkout --pull-request <number-or-url> --fetch
 ```
 
 Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage them locally
-yet." It creates or refreshes local tracking, but does not move the working copy or rewrite
-history. After fetching a remote-only stack, use the tip commit printed by `checkout`:
+yet." It fetches only the exact reviewed commits and creates or refreshes local tracking. It does
+not leave review bookmarks, move the working copy, or rewrite history. After fetching a
+remote-only stack, use the tip commit printed by `checkout`:
 
 ```bash
 jj new <tip-commit-id>
@@ -249,7 +251,7 @@ Then submit each local path separately. If `gh stack` is unavailable, install Gi
 gh extension install github/gh-stack
 ```
 
-## Old review branches or local review bookmarks remain after merging or closing
+## Old review branches remain after merging or closing
 
 Possible causes:
 
@@ -267,8 +269,20 @@ jj-stack cleanup
 ```
 
 Run selected `sync` first when merged ancestors still appear in the local stack. Use
-`cleanup --dry-run` to preview any remaining branch, bookmark, comment, or tracking removal, then
+`cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then
 run plain `cleanup` to apply the listed actions.
+
+## A command reports an imported managed review bookmark
+
+Normal `jj-stack` fetches exclude `review/*`. This diagnostic means an older configuration or a
+manual fetch imported a managed review branch into the local bookmark view, where it could make a
+review change immutable or ambiguous.
+
+Move any local work to a bookmark outside `review/`, then forget the imported managed bookmark
+with the exact `jj bookmark forget --include-remotes <review/...>` command from the diagnostic
+and rerun `jj-stack`. If the diagnostic instead names an effective
+`remotes.<remote>.fetch-bookmarks` override, unset that exact setting first so `jj-stack` can keep
+the managed namespace isolated.
 
 ## You want to stop reviewing a stack on GitHub
 
@@ -292,7 +306,7 @@ jj-stack unstack --pull-request 7
 
 This closes the stack's pull requests but keeps their exact tracking and submitted commits. That
 lets later cleanup verify the old artifacts and prevents `submit` from silently reusing a closed
-review. Add `--cleanup` if you also want to delete review branches, bookmarks, comments, and
+review. Add `--cleanup` if you also want to delete review branches, comments, and
 tracking that `jj-stack` can verify are safe to remove.
 
 Plain `jj-stack cleanup` observes the exact saved PR before acting. It removes artifacts and
@@ -304,8 +318,13 @@ Cleanup also keeps the review branch and tracking if any open PR in the same rep
 branch as its base. This includes PRs that `jj-stack` does not track and PRs whose local changes
 are gone. The blocker names one such PR: close it or retarget it to another base, then rerun the
 same cleanup command. Selected `unstack --cleanup` works from the stack head down, but the real
-command still checks GitHub again immediately before deleting branch or bookmark artifacts and
-before removing tracking.
+command still checks GitHub again immediately before deleting a branch and before removing
+tracking.
+
+Immediately before deletion, cleanup rechecks the exact saved PR, confirms no other tracked
+change claims the same head branch, verifies that no same-repository open PR depends on it as a
+base, and requires the review not to be an active member of a native GitHub stack. It then
+observes the exact remote ref again and deletes it only under its expected-target lease.
 
 ## A command was interrupted before it finished
 

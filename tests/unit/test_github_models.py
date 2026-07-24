@@ -46,9 +46,7 @@ def test_native_stack_retains_member_state_and_rejects_nonprefix_history() -> No
         "state": "open",
     }
 
-    stack = GithubStack.model_validate(
-        {"number": 7, "pull_requests": [historical, active]}
-    )
+    stack = GithubStack.model_validate({"number": 7, "pull_requests": [historical, active]})
 
     assert stack.historical_pull_request_numbers == (1,)
     assert stack.active_pull_request_numbers == (2,)
@@ -57,6 +55,4 @@ def test_native_stack_retains_member_state_and_rejects_nonprefix_history() -> No
         "sha": "head-two",
     }
     with pytest.raises(ValueError, match="bottom prefix"):
-        GithubStack.model_validate(
-            {"number": 7, "pull_requests": [active, historical]}
-        )
+        GithubStack.model_validate({"number": 7, "pull_requests": [active, historical]})

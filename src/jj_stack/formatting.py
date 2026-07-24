@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 from typing import IO, Literal, Protocol
 
@@ -65,7 +64,6 @@ def render_revision_lines(
     *,
     client: NativeRevisionRenderClient,
     revision: NativeRevision,
-    bookmark: str | None = None,
     stdout: IO[str] | None = None,
     suffix: str | None = None,
     prerendered_lines: tuple[str, ...] | None = None,
@@ -81,12 +79,7 @@ def render_revision_lines(
         raw_lines = client.render_revision_log_lines(revision, color_when=color_when)
     else:
         raw_lines = prerendered_lines
-    lines = list(
-        strip_revision_bookmark_from_rendered_lines(
-            raw_lines,
-            bookmark=bookmark or "",
-        )
-    )
+    lines = list(raw_lines)
     if not lines:
         raise AssertionError("Expected `jj log` to render at least one line for a revision.")
     if suffix is not None:
@@ -110,21 +103,3 @@ def render_revision_blocks(
         stdout_is_tty=stream.isatty(),
     )
     return client.render_revision_log_blocks(revisions, color_when=color_when)
-
-
-def strip_revision_bookmark_from_rendered_lines(
-    lines: tuple[str, ...],
-    *,
-    bookmark: str,
-) -> tuple[str, ...]:
-    """Drop the managed review bookmark token from rendered `jj log` output."""
-
-    if not bookmark:
-        return lines
-    pattern = re.compile(
-        r" ?(?:\x1b\[[0-9;]*m)*"
-        + re.escape(bookmark)
-        + r"(?:@[^ \x1b]+)?"
-        + r"(?:\x1b\[[0-9;]*m)*"
-    )
-    return tuple(pattern.sub("", line, count=1) for line in lines)

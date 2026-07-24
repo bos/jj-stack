@@ -313,15 +313,15 @@ def test_submit_native_preflight_failures_recover_without_persisted_phase(
     assert "Could not inspect native GitHub stack membership" in capsys.readouterr().err
     failure = "unstack"
     head_change_id = JjClient(repo).discover_review_stack().head.change_id
-    local_before = JjClient(repo).list_bookmark_states()
+    local_before = JjClient(repo).list_imported_review_bookmarks()
     assert run_main(repo, config_path, "submit", "--dry-run", "--restart", head_change_id) == 0
     assert fake_repo.native_stacks == {1: (1, 2)}
-    assert JjClient(repo).list_bookmark_states() == local_before
+    assert JjClient(repo).list_imported_review_bookmarks() == local_before
     assert run_main(repo, config_path, "submit", "--restart", head_change_id) == EXIT_GITHUB
 
     assert ReviewStateStore.for_repo(repo).load() == state_before
     assert remote_refs(fake_repo.git_dir) == remote_before
-    assert JjClient(repo).list_bookmark_states() == local_before
+    assert JjClient(repo).list_imported_review_bookmarks() == local_before
     assert fake_repo.native_stacks == {}
 
     bottom_change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
@@ -520,6 +520,7 @@ def test_submit_uses_readable_review_branch_names(
 
     assert run_main(repo, config_path, "submit") == 0
     state = ReviewStateStore.for_repo(repo).load()
+    assert JjClient(repo).list_imported_review_bookmarks() == ()
 
     for revision, subject in zip(stack.revisions, ("feature-1", "feature-2"), strict=True):
         branch = state.review_identities[revision.change_id].head_ref
@@ -902,6 +903,7 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
+    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
 
     initial_remote_refs = remote_refs(fake_repo.git_dir)
 
@@ -1185,7 +1187,7 @@ def test_submit_reports_stack_comment_update_failures_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_submit_reports_up_to_date_when_remote_bookmark_and_pr_already_match(
+def test_submit_reports_up_to_date_when_remote_branch_and_pr_already_match(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1208,7 +1210,7 @@ def test_submit_reports_up_to_date_when_remote_bookmark_and_pr_already_match(
     assert {number: pr.title for number, pr in fake_repo.pull_requests.items()} == first_prs
 
 
-def test_submit_updates_existing_untracked_remote_bookmark(
+def test_submit_updates_existing_remote_review_branch(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1222,7 +1224,6 @@ def test_submit_updates_existing_untracked_remote_bookmark(
     bookmark = identity.head_ref
     pr_number = identity.pr_number
 
-    run_command(["jj", "bookmark", "forget", bookmark], repo)
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 renamed"],
         repo,
@@ -1231,19 +1232,16 @@ def test_submit_updates_existing_untracked_remote_bookmark(
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
     rewritten_stack = JjClient(repo).discover_review_stack(change_id)
-    bookmark_state = JjClient(repo).get_bookmark_state(bookmark)
-    remote_state = bookmark_state.remote_target("origin")
 
     assert exit_code == 0
     assert "pushed" in captured.out
     assert read_remote_ref(fake_repo.git_dir, bookmark) == rewritten_stack.revisions[-1].commit_id
-    assert remote_state is not None
-    assert remote_state.is_tracked is True
+    assert JjClient(repo).list_imported_review_bookmarks() == ()
     assert fake_repo.pull_requests[pr_number].title == "feature 1 renamed"
     assert fake_repo.pull_requests[pr_number].body == "feature 1 renamed"
 
 
-def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
+def test_submit_rerun_recovers_after_lost_remote_update_response(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1257,48 +1255,36 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
     bookmark = identity.head_ref
     pr_number = identity.pr_number
 
-    run_command(["jj", "bookmark", "forget", bookmark], repo)
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 renamed"],
         repo,
     )
 
-    original_update_untracked_remote_bookmark = JjClient.update_untracked_remote_bookmark
+    original_mutate = JjClient.mutate_remote_review_refs
 
-    def update_untracked_remote_bookmark_then_fail(
+    def mutate_then_fail(
         self,
         *,
         remote: str,
-        bookmark: str,
-        desired_target: str,
-        expected_remote_target: str,
+        updates,
     ) -> None:
-        original_update_untracked_remote_bookmark(
-            self,
-            remote=remote,
-            bookmark=bookmark,
-            desired_target=desired_target,
-            expected_remote_target=expected_remote_target,
-        )
-        raise RuntimeError("Simulated failure after untracked remote update")
+        original_mutate(self, remote=remote, updates=updates)
+        raise RuntimeError("Simulated failure after remote update")
 
     monkeypatch.setattr(
-        "jj_stack.commands.submit.command.JjClient.update_untracked_remote_bookmark",
-        update_untracked_remote_bookmark_then_fail,
+        "jj_stack.commands.submit.command.JjClient.mutate_remote_review_refs",
+        mutate_then_fail,
     )
 
-    with pytest.raises(RuntimeError, match="Simulated failure after untracked remote update"):
+    with pytest.raises(RuntimeError, match="Simulated failure after remote update"):
         run_main(repo, config_path, "submit", change_id)
     capsys.readouterr()
 
-    bookmark_state = JjClient(repo).get_bookmark_state(bookmark)
-    remote_state = bookmark_state.remote_target("origin")
-    assert remote_state is not None
-    assert remote_state.is_tracked is True
+    assert JjClient(repo).list_imported_review_bookmarks() == ()
 
     monkeypatch.setattr(
-        "jj_stack.commands.submit.command.JjClient.update_untracked_remote_bookmark",
-        original_update_untracked_remote_bookmark,
+        "jj_stack.commands.submit.command.JjClient.mutate_remote_review_refs",
+        original_mutate,
     )
 
     exit_code = run_main(repo, config_path, "submit", change_id)
@@ -1312,7 +1298,7 @@ def test_submit_rerun_recovers_after_failure_following_untracked_remote_update(
 
 
 @pytest.mark.landing_recovery
-def test_submit_requires_relink_after_state_and_local_bookmark_loss(
+def test_submit_requires_relink_after_state_loss(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1329,7 +1315,6 @@ def test_submit_requires_relink_after_state_and_local_bookmark_loss(
 
     state_path = resolve_state_path(repo)
     state_path.unlink()
-    run_command(["jj", "bookmark", "forget", bookmark], repo)
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 renamed"],
         repo,

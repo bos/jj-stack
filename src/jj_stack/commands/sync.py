@@ -1,29 +1,15 @@
-"""Update a local stack after GitHub merges changes from its bottom.
-
-`sync` fetches trunk, verifies which submitted changes GitHub merged, removes their old local
-copies when safe, rebases the remaining selected changes onto trunk, and refreshes only pull
-requests that already exist for them. It does not submit trailing unreviewed work or touch sibling
-stacks.
-
-Preview with `jj-stack sync --dry-run <head-change-id>`. If trunk advanced but none of this
-stack's changes merged, rebase only the intended path with `jj` instead.
-
-`sync --all` is repository-wide cleanup for reviews whose exact last-submitted commits are
-already on trunk. It does not rebase stacks or handle merge results that GitHub rewrote.
-
-Common examples: `jj-stack sync --dry-run <head-change-id>` previews a selected update;
-`jj-stack sync <head-change-id>` applies it; and `jj-stack sync --all --dry-run` previews
-repository-wide cleanup.
-"""
+"""Reconcile a selected stack after merges, or retire exact landed reviews with `sync --all`."""
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from pathlib import Path
 
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands.submit.command import print_selected_line, run_submit_async
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
@@ -38,7 +24,6 @@ from jj_stack.review.convergence import (
     SelectedConvergencePlan,
     build_selected_convergence_plan,
     rewritten_retirement_blocker,
-    selected_rebase_revision_ids,
 )
 from jj_stack.review.landed import (
     FinalizationContext,
@@ -97,7 +82,9 @@ def run_stack_convergence(
     try:
         prepared_status = prepare_status(
             context=context,
+            dry_run=dry_run,
             fetch_remote_state=fetch_remote_state,
+            on_fetch_isolation_change=report_fetch_isolation,
             re_resolve_after_remote_refresh=True,
             revset=revset,
         )
@@ -128,10 +115,10 @@ async def _run_selected_convergence(
         return 0
     async with build_github_client(repository=target.repository) as github:
         repository_state = await github.get_repository()
-        trunk_branch = resolve_trunk_branch(
-            bookmark_states=prepared.bookmark_states,
+        trunk_branch, _trunk_targets = resolve_trunk_branch(
+            client=prepared.client,
             github_repository_state=repository_state,
-            remote_name=target.remote.name,
+            remote=target.remote,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
         observation = await observe_reviews(
@@ -167,7 +154,7 @@ async def _run_selected_convergence(
             repository=target.repository,
         )
         _render_selected_plan(dry_run=dry_run, plan=plan)
-        await _apply_selected_plan(
+        return await _apply_selected_plan(
             context=context,
             dry_run=dry_run,
             github=github,
@@ -176,13 +163,6 @@ async def _run_selected_convergence(
             trunk_branch=trunk_branch,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
-        if plan.rewrite_blocker is not None:
-            raise CliError(plan.rewrite_blocker)
-    return await _update_selected_reviews(
-        context=context,
-        dry_run=dry_run,
-        plan=plan,
-    )
 
 
 def _selected_target(
@@ -210,7 +190,7 @@ async def _apply_selected_plan(
     target: GithubTarget,
     trunk_branch: str,
     trunk_commit_id: str,
-) -> None:
+) -> int:
     exact = tuple(
         landed.candidate
         for landed in plan.landed
@@ -238,45 +218,111 @@ async def _apply_selected_plan(
         )
         for landed in plan.landed
     )
-    rebase_revision_ids = selected_rebase_revision_ids(context=context, plan=plan)
+    rebase_revision_ids = (
+        tuple(revision.commit_id for revision in plan.survivors) if plan.landed else ()
+    )
 
     def retirement_blocker(candidate: LandedReviewCandidate) -> Message | None:
-        if plan.rewrite_blocker is not None:
-            return plan.rewrite_blocker
         return rewritten_retirement_blocker(
             candidate=candidate,
             context=context,
             plan=plan,
         )
 
-    if not dry_run and plan.rewrite_blocker is None:
-        if rebase_revision_ids:
-            context.jj_client.rebase_revisions_only(
-                revisions=rebase_revision_ids,
-                destination=trunk_commit_id,
+    if not dry_run:
+        native = plan.native_survivors
+        if native:
+            top = native[-1]
+            rebase_revision_ids = rebase_revision_ids[len(native) :]
+            replaced = tuple(
+                revision.commit_id
+                for revision, survivor in zip(plan.survivors[: len(native)], native, strict=False)
+                if revision.commit_id != survivor.remote_head_commit_id
             )
-        abandoned = tuple(
-            landed.revision.commit_id
-            for landed in plan.landed
-            if landed.revision is not None
-            and not landed.revision.immutable
-            and landed.revision.commit_id == landed.candidate.submitted_baseline.commit_id
-            and retirement_blocker(landed.candidate) is None
-        )
-        if abandoned:
-            context.jj_client.abandon_revisions(abandoned)
-        for survivor in plan.native_survivors:
-            candidate = survivor.candidate
-            if candidate.submitted_baseline.commit_id != survivor.remote_head_commit_id:
-                context.state_store.advance_baseline(
-                    candidate.change_id,
-                    expected_identity=candidate.review_identity,
-                    expected_baseline=candidate.submitted_baseline,
-                    baseline=SubmittedBaseline(commit_id=survivor.remote_head_commit_id),
+            destination = top.remote_head_commit_id
+            attachment = context.jj_client.import_remote_review_ref(
+                remote=target.remote.name,
+                branch=top.candidate.review_identity.head_ref,
+                expected_target=destination,
+                expected_change_id=top.candidate.change_id,
+                expected_chain=tuple(
+                    (
+                        survivor.candidate.review_identity.head_ref,
+                        survivor.remote_head_commit_id,
+                        survivor.candidate.change_id,
+                    )
+                    for survivor in native
+                ),
+                expected_parent_commit_id=trunk_commit_id,
+            )
+        else:
+            replaced = ()
+            destination = trunk_commit_id
+            attachment = nullcontext()
+        if plan.landed and not rebase_revision_ids:
+            rebase_head = (
+                plan.survivors[-1]
+                if plan.survivors
+                else next(
+                    (
+                        item.revision
+                        for item in reversed(plan.landed)
+                        if item.revision is not None
+                    ),
+                    None,
                 )
-
+            )
+            if rebase_head is not None:
+                rebase_revision_ids = tuple(
+                    revision.commit_id
+                    for revision in context.jj_client.query_descendant_revisions(
+                        (rebase_head.commit_id,)
+                    )
+                    if revision.is_working_copy
+                    and revision.empty
+                    and revision.parents == (rebase_head.commit_id,)
+                )
+        with attachment:
+            if rebase_revision_ids:
+                context.jj_client.rebase_revisions_only(
+                    revisions=rebase_revision_ids,
+                    destination=destination,
+                )
+            if replaced:
+                context.jj_client.abandon_revisions(replaced)
+            abandoned = tuple(
+                landed.revision.commit_id
+                for landed in plan.landed
+                if landed.revision is not None
+                and not landed.revision.immutable
+                and landed.revision.commit_id == landed.candidate.submitted_baseline.commit_id
+                and retirement_blocker(landed.candidate) is None
+            )
+            if abandoned:
+                context.jj_client.abandon_revisions(abandoned)
+            if native:
+                context.state_store.relink_reviews(
+                    expected={
+                        survivor.candidate.change_id: (
+                            survivor.candidate.review_identity,
+                            survivor.candidate.submitted_baseline,
+                        )
+                        for survivor in native
+                    },
+                    replacements={
+                        survivor.candidate.change_id: (
+                            survivor.candidate.review_identity,
+                            SubmittedBaseline(commit_id=survivor.remote_head_commit_id),
+                        )
+                        for survivor in native
+                    },
+                )
+    update_result = await _update_selected_reviews(
+        context=context,
+        dry_run=dry_run,
+        plan=plan,
+    )
     results = await retire_landed_reviews(
-        cleanup_bookmarks=True,
         evidence={landed.candidate.change_id: landed.evidence_kind for landed in plan.landed},
         finalization_results=results,
         finalizer=finalizer,
@@ -286,6 +332,7 @@ async def _apply_selected_plan(
         ),
     )
     render_landed_results(dry_run=dry_run, results=results)
+    return update_result
 
 
 async def _update_selected_reviews(

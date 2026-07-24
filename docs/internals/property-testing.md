@@ -143,9 +143,8 @@ Fail-closed kinds (for example an externally closed, merged, or replaced PR, a c
 saved PR number, a drifted or deleted remote review branch, or a foreign branch fetch that makes
 a stack change immutable or divergent) must produce a contractual exit code and one of the
 kind's expected diagnoses while leaving every boundary untouched: no remote ref changes, no
-local or remembered-remote bookmark changes, no PR, review, or comment mutations, and unchanged
-loaded tracking records.
-That includes keeping a newly inserted change free of bookmark and tracking state when an
+local DAG changes, no PR, review, or comment mutations, and unchanged loaded tracking records.
+That includes keeping a newly inserted change free of remote review branches and tracking when an
 older submitted change makes preflight fail. The structured diagnosis comes from the CLI's
 fail-closed error: a `DriftError` condition or `unsupported_stack:<reason>` captured from the
 error handed to the top-level printer. A stop that fired for the wrong reason cannot pass on exit
@@ -226,7 +225,7 @@ For every live change after the final submit:
 
 For every abandoned submitted change:
 
-- local review state still records the old bookmark and PR number
+- local review state still records the old remote branch and PR number
 - the old remote review branch still points at the originally submitted commit
 - the orphaned PR base is unchanged from the initial submit
 - the PR is open and unmerged

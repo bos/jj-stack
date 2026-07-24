@@ -1,9 +1,4 @@
-"""Reconnect an existing GitHub pull request to the selected local change.
-
-Use this to repair a missing or wrong local link between a change and its pull request. The pull
-request must already be open in the configured repository. `jj-stack relink` does not create,
-reopen, or otherwise change it.
-"""
+"""Reconnect one exact GitHub pull request to a selected local change."""
 
 from __future__ import annotations
 
@@ -14,21 +9,16 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
-from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
-from jj_stack.github.resolution import (
-    GithubRepoAddress,
-    require_github_repo,
-    select_submit_remote,
-)
-from jj_stack.jj.client import JjCliArgs, JjClient
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.github.resolution import require_github_repo, select_submit_remote
+from jj_stack.jj.client import JjCliArgs
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import review_branch_glob, review_branch_matches_change
-from jj_stack.review.change_status import classify_review_change
+from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.review.selection import resolve_selected_revset
 from jj_stack.state.operation_lock import acquire_operation_lock
 
@@ -39,7 +29,7 @@ HELP = "Reconnect an existing pull request to a local change"
 class RelinkResult:
     """Explicit review relink result for one local revision."""
 
-    bookmark: str
+    branch: str
     change_id: str
     pull_request_number: int
     subject: str
@@ -55,11 +45,7 @@ def relink(
 ) -> int:
     """CLI entrypoint for `relink`."""
 
-    context = bootstrap_context(
-        repository=repository,
-        cli_args=cli_args,
-        debug=debug,
-    )
+    context = bootstrap_context(repository=repository, cli_args=cli_args, debug=debug)
     with acquire_operation_lock(context.state_store.require_writable(), command="relink"):
         result = asyncio.run(
             _run_relink_async(
@@ -70,7 +56,7 @@ def relink(
         )
     console.output(
         t"Relinked PR #{result.pull_request_number} for {result.subject} "
-        t"({ui.change_id(result.change_id)}) -> {ui.bookmark(result.bookmark)}"
+        t"({ui.change_id(result.change_id)}) -> {ui.bookmark(result.branch)}"
     )
     return 0
 
@@ -82,181 +68,175 @@ async def _run_relink_async(
     revset: str | None,
 ) -> RelinkResult:
     client = context.jj_client
-    state_store = context.state_store
-    state_store.require_writable()
-    revset = resolve_selected_revset(
+    selected = resolve_selected_revset(
         command_label="relink",
         require_explicit=True,
         revset=revset,
     )
-
-    with console.spinner(description="Inspecting jj stack"):
-        stack = client.discover_review_stack(revset)
-        if not stack.revisions:
-            raise CliError("The selected stack has no changes to review.")
-        revision = stack.head
-        remotes = client.list_git_remotes()
-        remote = select_submit_remote(remotes)
-
-    with console.spinner(description="Fetching jj remote"):
-        client.fetch_remote(remote=remote.name)
-    github_repository = require_github_repo(remote)
-    pull_request_number = _parse_relink_pull_request_number(
-        github_repository=github_repository,
-        pull_request_reference=pull_request_reference,
+    stack = client.discover_review_stack(selected)
+    if not stack.revisions:
+        raise CliError("The selected stack has no changes to review.")
+    revision = stack.head
+    remote = select_submit_remote(client.list_git_remotes())
+    repository = require_github_repo(remote)
+    client.ensure_review_fetch_isolation(
+        remote=remote.name,
+        on_change=report_fetch_isolation,
     )
-
-    with console.spinner(description="Loading pull request"):
-        async with build_github_client(repository=github_repository) as github_client:
-            try:
-                pull_request = await github_client.get_pull_request(
-                    pull_number=pull_request_number,
-                )
-            except GithubClientError as error:
-                raise CliError(f"Could not load pull request #{pull_request_number}") from error
-
-    bookmark, remote_commit_id = _validated_relink_bookmark(
-        client=client,
-        github_repository=github_repository,
-        pull_request=pull_request,
-        remote=remote,
-        revision=revision,
+    pull_number = parse_repository_pull_request_reference(
+        reference=pull_request_reference,
+        github_repository=repository,
+        invalid_reference_message=(
+            f"{pull_request_reference} is not a pull request number or URL for "
+            f"{repository.full_name}."
+        ),
+        wrong_host_message=(
+            f"{pull_request_reference} is not a pull request number or URL for "
+            f"{repository.full_name}."
+        ),
+        wrong_repository_message=(
+            f"{pull_request_reference} does not belong to {repository.full_name}."
+        ),
     )
-
-    state = state_store.load()
+    async with build_github_client(repository=repository) as github_client:
+        pull_request, head_sha = await _load_exact_relink_pull_request(
+            change_id=revision.change_id,
+            github_client=github_client,
+            pull_number=pull_number,
+            repository_owner=repository.owner,
+        )
+    branch = pull_request.head.ref
+    remote_target = client.list_remote_branches(
+        remote=remote.name,
+        patterns=(f"refs/heads/{branch}",),
+    ).get(branch)
+    if remote_target is None:
+        raise CliError(
+            t"Remote branch {ui.bookmark(branch)} for pull request #{pull_number} does not exist."
+        )
+    if remote_target != head_sha:
+        raise CliError(
+            t"Pull request #{pull_number} and remote branch {ui.bookmark(branch)} "
+            t"no longer identify the same commit."
+        )
+    if (
+        client.read_remote_git_change_id(
+            remote=remote.name,
+            commit_id=head_sha,
+        )
+        != revision.change_id
+    ):
+        raise CliError(
+            t"Remote branch {ui.bookmark(branch)} does not contain change "
+            t"{ui.change_id(revision.change_id)}."
+        )
+    identity = ReviewIdentity(
+        github_host=repository.host,
+        repository_owner=repository.owner,
+        repository_name=repository.repo,
+        pr_number=pull_number,
+        head_owner=repository.owner,
+        head_ref=branch,
+    )
     _ensure_relinkable_cached_link(
-        bookmark=bookmark,
         change_id=revision.change_id,
-        pull_request_number=pull_request.number,
+        identity=identity,
+        state=context.state_store.load(),
+    )
+    async with build_github_client(repository=repository) as github_client:
+        fresh_pull_request, fresh_head_sha = await _load_exact_relink_pull_request(
+            change_id=revision.change_id,
+            github_client=github_client,
+            pull_number=pull_number,
+            repository_owner=repository.owner,
+        )
+    if (fresh_pull_request.head.ref, fresh_head_sha) != (branch, head_sha):
+        raise CliError(t"Pull request #{pull_number} changed while relink was preparing; retry.")
+    fresh_remote_target = client.list_remote_branches(
+        remote=remote.name,
+        patterns=(f"refs/heads/{branch}",),
+    ).get(branch)
+    if fresh_remote_target != head_sha:
+        raise CliError(
+            t"Remote branch {ui.bookmark(branch)} changed while relink was preparing; retry."
+        )
+    state = context.state_store.load()
+    _ensure_relinkable_cached_link(
+        change_id=revision.change_id,
+        identity=identity,
         state=state,
     )
-    identity = ReviewIdentity(
-        github_host=github_repository.host,
-        repository_owner=github_repository.owner,
-        repository_name=github_repository.repo,
-        pr_number=pull_request.number,
-        head_owner=github_repository.owner,
-        head_ref=bookmark,
-    )
-    state_store.relink_review(
+    context.state_store.relink_review(
         revision.change_id,
         expected_identity=state.review_identities.get(revision.change_id),
         expected_baseline=state.submitted_baselines.get(revision.change_id),
         expected_issues=state.issues_for(revision.change_id),
         identity=identity,
-        baseline=SubmittedBaseline(commit_id=remote_commit_id),
+        baseline=SubmittedBaseline(commit_id=head_sha),
     )
-    client.set_bookmark(bookmark, revision.change_id)
     return RelinkResult(
-        bookmark=bookmark,
+        branch=branch,
         change_id=revision.change_id,
-        pull_request_number=pull_request.number,
-        subject=revision.description,
+        pull_request_number=pull_number,
+        subject=revision.subject,
     )
 
 
-def _parse_relink_pull_request_number(
+async def _load_exact_relink_pull_request(
     *,
-    github_repository: GithubRepoAddress,
-    pull_request_reference: str,
-) -> int:
-    return parse_repository_pull_request_reference(
-        reference=pull_request_reference,
-        github_repository=github_repository,
-        invalid_reference_message=(
-            f"{pull_request_reference} is not a pull request number or URL for "
-            f"{github_repository.full_name}."
-        ),
-        wrong_host_message=(
-            f"{pull_request_reference} is not a pull request number or URL for "
-            f"{github_repository.full_name}."
-        ),
-        wrong_repository_message=(
-            f"{pull_request_reference} does not belong to {github_repository.full_name}."
-        ),
-    )
-
-
-def _validated_relink_bookmark(
-    *,
-    client: JjClient,
-    github_repository: GithubRepoAddress,
-    pull_request: GithubPullRequest,
-    remote: GitRemote,
-    revision: LocalRevision,
-) -> tuple[str, str]:
+    change_id: str,
+    github_client: GithubClient,
+    pull_number: int,
+    repository_owner: str,
+) -> tuple[GithubPullRequest, str]:
+    try:
+        pull_request = await github_client.get_pull_request(pull_number=pull_number)
+        head_matches = (
+            await github_client.get_pull_requests_by_head_refs(
+                head_refs=(pull_request.head.ref,),
+            )
+        ).get(pull_request.head.ref, ())
+    except GithubClientError as error:
+        raise CliError(f"Could not load pull request #{pull_number}") from error
     if pull_request.state != "open":
         raise CliError(
-            f"Pull request #{pull_request.number} is not open; cannot relink "
-            f"{pull_request.state} PRs."
+            f"Pull request #{pull_number} is not open; cannot relink {pull_request.state} PRs."
         )
-
-    bookmark = pull_request.head.ref
-    if not review_branch_matches_change(bookmark, revision.change_id):
+    branch = pull_request.head.ref
+    if pull_request.head.label != f"{repository_owner}:{branch}":
         raise CliError(
-            t"Pull request #{pull_request.number} head {ui.bookmark(bookmark)} does not match "
-            t"change {ui.change_id(revision.change_id)} in jj-stack's reserved "
-            t"{ui.bookmark(review_branch_glob())} namespace."
+            t"Pull request #{pull_number} head "
+            t"{ui.bookmark(pull_request.head.label or branch)} does not belong to the "
+            t"configured repository."
         )
-    expected_head_label = f"{github_repository.owner}:{bookmark}"
-    if pull_request.head.label != expected_head_label:
+    if len(head_matches) != 1 or head_matches[0].number != pull_number:
         raise CliError(
-            t"Pull request #{pull_request.number} head {ui.bookmark(bookmark)} does not "
-            t"belong to {github_repository.full_name}. Relink only supports "
-            t"same-repository pull request branches."
+            t"Head branch {ui.bookmark(branch)} does not uniquely identify PR #{pull_number}."
         )
-
-    bookmark_state = client.get_bookmark_state(bookmark)
-    if len(bookmark_state.local_targets) > 1:
+    if not review_branch_matches_change(branch, change_id):
         raise CliError(
-            t"Local bookmark {ui.bookmark(bookmark)} is conflicted.",
-            hint="Resolve it before relinking.",
+            t"Pull request #{pull_number} head {ui.bookmark(branch)} does not match "
+            t"change {ui.change_id(change_id)} under {ui.bookmark(review_branch_glob())}."
         )
-    if bookmark_state.local_target not in (None, revision.commit_id):
+    head_sha = pull_request.head.sha
+    if head_sha is None:
         raise CliError(
-            t"Local bookmark {ui.bookmark(bookmark)} already points to a different revision.",
-            hint="Move or forget it explicitly before relinking.",
+            t"GitHub did not report a head commit for PR #{pull_number}.",
+            hint="Refresh the pull request on GitHub, then retry.",
         )
-    remote_state = bookmark_state.remote_target(remote.name)
-    review_status = classify_review_change(
-        review_identity=None,
-        commit_id=revision.commit_id,
-        local="present",
-        pull_request_lookup=None,
-        remote_state=remote_state,
-    )
-    if review_status.remote_branch == "absent":
-        raise CliError(
-            t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote.name}')} does not exist.",
-            hint=("Fetch and retry once the PR head branch is visible on the selected remote."),
-        )
-    if review_status.remote_branch == "conflicted":
-        raise CliError(
-            t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote.name}')} is conflicted.",
-            hint="Resolve it before relinking.",
-        )
-    if remote_state is None or remote_state.target is None:
-        raise AssertionError("validated relink bookmark has no unambiguous remote target")
-    return bookmark, remote_state.target
+    return pull_request, head_sha
 
 
 def _ensure_relinkable_cached_link(
     *,
-    bookmark: str,
     change_id: str,
-    pull_request_number: int,
+    identity: ReviewIdentity,
     state: ReviewState,
 ) -> None:
-    for other_change_id, identity in state.review_identities.items():
-        if other_change_id == change_id:
-            continue
-        if identity.head_ref == bookmark:
-            raise CliError(
-                t"Bookmark {ui.bookmark(bookmark)} is already linked to "
-                t"{ui.change_id(other_change_id)} in local state."
-            )
-        if identity.pr_number == pull_request_number:
-            raise CliError(
-                t"PR #{pull_request_number} is already linked to "
-                t"{ui.change_id(other_change_id)} in local state."
-            )
+    identities = dict(state.review_identities)
+    identities[change_id] = identity
+    if change_id in duplicate_review_claim_change_ids(identities):
+        raise CliError(
+            t"PR #{identity.pr_number} or branch {ui.bookmark(identity.head_ref)} is already "
+            t"linked to another local change."
+        )

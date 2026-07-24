@@ -6,19 +6,17 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from jj_stack.jj.client import JjClient
-from jj_stack.models.bookmarks import BookmarkState, GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.bookmarks import BookmarkSource, ResolvedBookmark
+from jj_stack.review.branches import ResolvedReviewBranch
 from jj_stack.review.restart import RestartedReview
 from jj_stack.state.store import ReviewStateStore
 
-LocalBookmarkAction = Literal["created", "moved", "unchanged"]
 PullRequestAction = Literal["created", "unchanged", "updated"]
 SubmitDraftMode = Literal["default", "draft", "draft_all", "open"]
-RemoteBookmarkAction = Literal["pushed", "up to date"]
-PushOperation = Literal["batch", "git_update", "up_to_date"]
+RemoteBranchAction = Literal["pushed", "up to date"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,14 +48,11 @@ class ResolvedSubmitOptions:
 
 @dataclass(frozen=True, slots=True)
 class PreparedSubmitRevision:
-    """Local submit state gathered before remote and GitHub mutation."""
+    """Review branch state gathered before remote and GitHub mutation."""
 
-    bookmark: str
-    bookmark_source: BookmarkSource
+    branch: str
     expected_remote_target: str | None
-    local_action: LocalBookmarkAction
-    push_operation: PushOperation
-    remote_action: RemoteBookmarkAction
+    remote_action: RemoteBranchAction
     revision: LocalRevision
 
 
@@ -81,7 +76,7 @@ class SubmittedRevision:
 
 @dataclass(frozen=True, slots=True)
 class SubmitResult:
-    """Remote bookmark and pull request state for the selected stack."""
+    """Remote branch and pull request state for the selected stack."""
 
     client: JjClient
     dry_run: bool
@@ -120,8 +115,7 @@ class PendingPullRequestSync:
 class PreparedSubmitInputs:
     """Local submit inputs prepared before GitHub mutations begin."""
 
-    bookmark_states: dict[str, BookmarkState]
-    bookmark_resolutions: tuple[ResolvedBookmark, ...]
+    branch_resolutions: tuple[ResolvedReviewBranch, ...]
     client: JjClient
     generated_pull_request_descriptions: dict[str, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
@@ -172,10 +166,11 @@ class SubmitMutationRun:
             raise RuntimeError(f"Incomplete review state for {change_id}.")
         if identity != expected_identity:
             raise RuntimeError(f"Review identity changed during submit for {change_id}.")
-        self.state = self.state_store.advance_baseline(
+        self.state = self.state_store.relink_review(
             change_id,
             expected_identity=expected_identity,
             expected_baseline=expected_baseline,
+            identity=identity,
             baseline=baseline,
         )
 
@@ -204,20 +199,3 @@ class PrivateCommitFinder(Protocol):
         revisions: tuple[LocalRevision, ...],
     ) -> tuple[LocalRevision, ...]:
         """Return the revisions blocked by the repo's private-commit policy."""
-
-
-class RemoteBookmarkSyncer(Protocol):
-    """Subset of the jj client interface needed for remote bookmark updates."""
-
-    def push_bookmarks(self, *, remote: str, bookmarks: tuple[str, ...]) -> None:
-        """Push a batch of bookmarks to the selected remote."""
-
-    def update_untracked_remote_bookmark(
-        self,
-        *,
-        remote: str,
-        bookmark: str,
-        desired_target: str,
-        expected_remote_target: str,
-    ) -> None:
-        """Update an existing untracked remote bookmark without importing it first."""

@@ -20,6 +20,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._json_status import (
     review_change_json,
     saved_pull_request_json,
@@ -33,14 +34,12 @@ from jj_stack.github.resolution import (
     resolve_github_target,
 )
 from jj_stack.jj.client import JjCliArgs, JjClient
-from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.review_state import ReviewState
-from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.models.stack import LocalStack
 from jj_stack.review.change_status import (
     OrphanedRecord,
     ReviewChangeStatus,
     classify_review_status_revision,
-    classify_saved_review_identity,
     enumerate_orphaned_records,
 )
 from jj_stack.review.discovery import discover_tracked_stacks
@@ -51,7 +50,7 @@ from jj_stack.review.status import (
     ReviewStatusRevision,
     build_status_revisions_for_prepared_stack,
     lookup_pull_request_lookups,
-    pinned_bookmarks_for_revisions,
+    observe_remote_targets_for_status,
     prepare_stack_for_status,
     refresh_remote_state_for_status,
 )
@@ -76,7 +75,7 @@ class StackRow:
 class OrphanRow:
     """One orphaned PR — its local change has left every current stack."""
 
-    bookmark: str | None
+    branch: str
     change_id: str
     pull_request: dict[str, object] | None
     review: str
@@ -88,12 +87,6 @@ class OrphanRow:
 class _PreparedDiscoveredStack:
     current: bool
     prepared: PreparedStack
-
-
-@dataclass(frozen=True, slots=True)
-class _RepoInspectionContext:
-    bookmark_states: dict[str, BookmarkState]
-    github_target: GithubTarget | UnresolvedGithubTarget
 
 
 def list_(
@@ -125,7 +118,10 @@ def _run_list(
     fetch: bool,
 ) -> int:
     if fetch:
-        refresh_remote_state_for_status(jj_client=context.jj_client)
+        refresh_remote_state_for_status(
+            jj_client=context.jj_client,
+            on_fetch_isolation_change=report_fetch_isolation,
+        )
 
     state = context.state_store.load()
     state_incomplete = bool(state.record_issues)
@@ -170,31 +166,32 @@ def _run_list(
         )
         _emit_orphan_hint(orphan_rows)
         return EXIT_INCOMPLETE if state_incomplete else 0
-    with console.spinner(description="Loading bookmark state"):
-        repo_inspection = _prepare_repo_inspection_context(
+    github_target = resolve_github_target(context.jj_client.list_git_remotes())
+    with console.spinner(description="Inspecting review branches"):
+        observed_remote_targets = observe_remote_targets_for_status(
             context=context,
-            discovered=ordered,
+            remote=github_target.remote,
+            stacks=ordered,
             state=state,
         )
-    github_target = repo_inspection.github_target
-    prepared_discovered = tuple(
-        _PreparedDiscoveredStack(
-            current=_stack_contains_commit_id(
-                stack,
-                commit_id=discovered.current_commit_id,
-            ),
-            prepared=prepare_stack_for_status(
-                bookmark_states=repo_inspection.bookmark_states,
-                context=context,
-                remote=github_target.remote,
-                remote_error=github_target.remote_error,
-                stack=stack,
-                state=state,
-            ),
+        prepared_discovered = tuple(
+            _PreparedDiscoveredStack(
+                current=_stack_contains_commit_id(
+                    stack,
+                    commit_id=discovered.current_commit_id,
+                ),
+                prepared=prepare_stack_for_status(
+                    context=context,
+                    observed_remote_targets=observed_remote_targets,
+                    remote=github_target.remote,
+                    remote_error=github_target.remote_error,
+                    stack=stack,
+                    state=state,
+                ),
+            )
+            for stack in ordered
         )
-        for stack in ordered
-    )
-    _ensure_unique_repo_bookmarks(prepared_discovered)
+    _ensure_unique_repo_branches(prepared_discovered)
     pull_request_lookups, github_error = _load_pull_request_lookups(
         github_target=github_target,
         prepared_discovered=prepared_discovered,
@@ -243,7 +240,7 @@ def _run_list(
 def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:
     pr_number = orphan.review_identity.pr_number
     return OrphanRow(
-        bookmark=orphan.review_identity.head_ref,
+        branch=orphan.review_identity.head_ref,
         change_id=orphan.change_id,
         pull_request=saved_pull_request_json(orphan.review_identity),
         review=f"PR #{pr_number}",
@@ -290,8 +287,7 @@ def _json_orphan_row(row: OrphanRow) -> dict[str, object]:
         "subject": row.subject,
         "type": "orphan",
     }
-    if row.bookmark is not None:
-        payload["bookmark"] = row.bookmark
+    payload["branch"] = row.branch
     if row.pull_request is not None:
         payload["pull_request"] = row.pull_request
     return payload
@@ -322,30 +318,6 @@ def _emit_stale_stacks_advisory(
         state=state,
         single_subject="Tracked stack",
         plural_subject="Tracked stacks",
-    )
-
-
-def _prepare_repo_inspection_context(
-    *,
-    context: CommandContext,
-    discovered: tuple[LocalStack, ...],
-    state: ReviewState,
-) -> _RepoInspectionContext:
-    jj_client = context.jj_client
-    github_target = resolve_github_target(jj_client.list_git_remotes())
-
-    all_revisions = tuple(revision for stack in discovered for revision in stack.revisions)
-    bookmark_states: dict[str, BookmarkState] = {}
-    if github_target.remote is not None:
-        pinned_bookmarks = _tracked_pinned_bookmarks_for_repo_inspection(
-            revisions=all_revisions,
-            state=state,
-        )
-        bookmark_states = jj_client.list_bookmark_states(pinned_bookmarks)
-
-    return _RepoInspectionContext(
-        bookmark_states=bookmark_states,
-        github_target=github_target,
     )
 
 
@@ -577,22 +549,22 @@ def _load_pull_request_lookups(
     if not isinstance(github_target, GithubTarget):
         return {}, None
 
-    prepared_revisions_by_bookmark = _tracked_prepared_revisions_by_bookmark(
+    prepared_revisions_by_branch = _tracked_prepared_revisions_by_branch(
         prepared_discovered=prepared_discovered
     )
-    if not prepared_revisions_by_bookmark:
+    if not prepared_revisions_by_branch:
         return {}, None
 
     try:
         with console.progress(
             description="Inspecting GitHub",
-            total=len(prepared_revisions_by_bookmark),
+            total=len(prepared_revisions_by_branch),
         ) as progress:
             return (
                 lookup_pull_request_lookups(
                     github_repository=github_target.repository,
                     on_progress=progress.advance,
-                    prepared_revisions=tuple(prepared_revisions_by_bookmark.values()),
+                    prepared_revisions=tuple(prepared_revisions_by_branch.values()),
                 ),
                 None,
             )
@@ -600,21 +572,18 @@ def _load_pull_request_lookups(
         return {}, error_message(error)
 
 
-def _tracked_prepared_revisions_by_bookmark(
+def _tracked_prepared_revisions_by_branch(
     *,
     prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
 ) -> dict[str, PreparedRevision]:
-    prepared_revisions_by_bookmark: dict[str, PreparedRevision] = {}
+    prepared_revisions_by_branch: dict[str, PreparedRevision] = {}
     for item in prepared_discovered:
         for prepared_revision in item.prepared.status_revisions:
-            review_identity = prepared_revision.review_identity
-            if not classify_saved_review_identity(
-                review_identity,
-                local="present",
-            ).saved_review_identity:
+            branch = prepared_revision.branch
+            if prepared_revision.review_identity is None or branch is None:
                 continue
-            prepared_revisions_by_bookmark[prepared_revision.bookmark] = prepared_revision
-    return prepared_revisions_by_bookmark
+            prepared_revisions_by_branch[branch] = prepared_revision
+    return prepared_revisions_by_branch
 
 
 def _format_pull_request_summary(numbers: tuple[int, ...]) -> str:
@@ -625,36 +594,21 @@ def _format_pull_request_summary(numbers: tuple[int, ...]) -> str:
     return f"{len(numbers)} PRs"
 
 
-def _tracked_pinned_bookmarks_for_repo_inspection(
-    *,
-    revisions: tuple[LocalRevision, ...],
-    state: ReviewState,
-) -> tuple[str, ...] | None:
-    tracked_revisions = tuple(
-        revision
-        for revision in revisions
-        if state.review_identities.get(revision.change_id) is not None
-    )
-    return pinned_bookmarks_for_revisions(
-        revisions=tracked_revisions,
-        state=state,
-    )
-
-
-def _ensure_unique_repo_bookmarks(
+def _ensure_unique_repo_branches(
     prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
 ) -> None:
-    bookmarks_to_changes: dict[str, list[str]] = {}
+    branches_to_changes: dict[str, list[str]] = {}
     for item in prepared_discovered:
         for prepared_revision in item.prepared.status_revisions:
-            bookmarks_to_changes.setdefault(
-                prepared_revision.bookmark,
-                [],
-            ).append(prepared_revision.revision.change_id)
+            branch = prepared_revision.branch
+            if branch is not None:
+                branches_to_changes.setdefault(branch, []).append(
+                    prepared_revision.revision.change_id
+                )
 
     duplicates = {
-        bookmark: sorted(set(change_ids))
-        for bookmark, change_ids in bookmarks_to_changes.items()
+        branch: sorted(set(change_ids))
+        for branch, change_ids in branches_to_changes.items()
         if len(set(change_ids)) > 1
     }
     if not duplicates:
@@ -666,8 +620,8 @@ def _ensure_unique_repo_bookmarks(
     )
     raise CliError(
         t"Could not safely inspect stacks: multiple changes resolve to the same "
-        t"bookmark: {collisions}.",
-        hint="Repair the saved bookmark linkage before retrying.",
+        t"review branch: {collisions}.",
+        hint="Repair the saved review linkage before retrying.",
     )
 
 

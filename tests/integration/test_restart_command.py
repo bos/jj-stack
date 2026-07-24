@@ -104,9 +104,7 @@ def test_submit_restart_dry_run_rejects_live_replacement_branch_drift(
     state = state_store.load()
     identity = state.review_identities[revision.change_id]
     short_id = short_change_id(revision.change_id)
-    fresh_bookmark = (
-        identity.head_ref.removesuffix(f"-{short_id}") + f"-fresh-pr1-{short_id}"
-    )
+    fresh_bookmark = identity.head_ref.removesuffix(f"-{short_id}") + f"-fresh-pr1-{short_id}"
     wrong_commit = run_command(
         [
             "git",
@@ -146,11 +144,7 @@ def test_submit_restart_dry_run_rejects_live_replacement_branch_drift(
             candidate = found[fresh_bookmark][0]
             found[fresh_bookmark] = (
                 candidate.model_copy(
-                    update={
-                        "head": candidate.head.model_copy(
-                            update={"sha": revision.commit_id}
-                        )
-                    }
+                    update={"head": candidate.head.model_copy(update={"sha": revision.commit_id})}
                 ),
             )
             return found
@@ -174,7 +168,7 @@ def test_submit_restart_dry_run_rejects_live_replacement_branch_drift(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "replacement branch" in captured.err
+    assert "already exists and points to another change" in captured.err
     assert state_store.load() == state
     assert set(fake_repo.pull_requests) == {1, 2}
 
@@ -276,9 +270,10 @@ def test_submit_restart_reuses_replacements_after_comment_failure(
     fail_comments = False
     assert run_main(repo, config_path, "submit", "--restart", stack.head.change_id) == 0
     capsys.readouterr()
-    assert {
-        identity.pr_number for identity in state_store.load().review_identities.values()
-    } == {3, 4}
+    assert {identity.pr_number for identity in state_store.load().review_identities.values()} == {
+        3,
+        4,
+    }
     assert set(fake_repo.pull_requests) == {1, 2, 3, 4}
 
 

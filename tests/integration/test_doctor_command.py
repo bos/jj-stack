@@ -7,10 +7,12 @@ import httpxyz
 import jj_stack.commands.doctor as doctor_mod
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.jj.client import JjClient
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
     init_fake_github_repo,
+    run_command,
     write_fake_github_config,
 )
 from .submit_command_helpers import run_main
@@ -56,13 +58,48 @@ def test_doctor_exits_zero_for_healthy_repo(
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
+    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
 
     exit_code = run_main(repo, config_path, "doctor")
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "GitHub auth" in captured.out
+    assert "review temp" in captured.out
     assert "Traceback" not in captured.out + captured.err
+
+
+def test_doctor_reports_imported_review_bookmark_recovery_command(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
+    branch = "review/feature-abcdefgh"
+    run_command(["jj", "bookmark", "create", branch, "-r", "@"], repo)
+
+    exit_code = run_main(repo, config_path, "doctor")
+    output = " ".join(capsys.readouterr().out.split())
+
+    assert exit_code == 1
+    assert f"jj bookmark forget --include-remotes {branch}" in output
+
+
+def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
+
+    exit_code = run_main(repo, config_path, "doctor")
+    output = " ".join(capsys.readouterr().out.split())
+
+    assert exit_code == 1
+    assert "jj-stack view --fetch" in output
+    assert "without --dry-run" not in output
 
 
 def test_doctor_shows_skipped_checks_when_remote_fails(

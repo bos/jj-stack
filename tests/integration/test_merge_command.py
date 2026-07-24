@@ -206,8 +206,7 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
     assert fake_repo.pull_requests[2].merge_commit_sha == merge_commit
     assert merge_commit == read_remote_ref(fake_repo.git_dir, "main")
     assert all(
-        fake_repo.is_ancestor(revision.commit_id, merge_commit)
-        for revision in stack.revisions
+        fake_repo.is_ancestor(revision.commit_id, merge_commit) for revision in stack.revisions
     )
 
     sync_exit_code = run_main(repo, config_path, "sync", stack.head.change_id)

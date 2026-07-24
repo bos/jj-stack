@@ -20,7 +20,7 @@ Stack changes use this shape:
 ```json
 {
   "change_id": "zvlyxwvksmry...",
-  "bookmark": "review/add-json-output-zvlyxwvk",
+  "branch": "review/add-json-output-zvlyxwvk",
   "subject": "add json output",
   "status": "open",
   "pull_request": {
@@ -32,6 +32,10 @@ Stack changes use this shape:
 
 `current: true` is present when that change is the current working-copy change. It is
 omitted otherwise.
+
+`branch` is present only when tracking data attaches the change to an exact review branch.
+An unsubmitted change has no `branch` field; `jj-stack` does not generate a speculative name
+for status output.
 
 `pull_request` is present when `jj-stack` knows the matching PR identity. It contains PR
 identity, not a duplicate status summary; use the change's `status` field for review
@@ -65,7 +69,7 @@ Known change statuses are:
       "changes": [
         {
           "change_id": "zvlyxwvksmry...",
-          "bookmark": "review/add-json-output-zvlyxwvk",
+          "branch": "review/add-json-output-zvlyxwvk",
           "subject": "add json output",
           "status": "open",
           "pull_request": {
@@ -99,7 +103,7 @@ the `changes` array.
       "changes": [
         {
           "change_id": "zvlyxwvksmry...",
-          "bookmark": "review/add-json-output-zvlyxwvk",
+          "branch": "review/add-json-output-zvlyxwvk",
           "subject": "add json output",
           "status": "open",
           "pull_request": {
@@ -112,7 +116,7 @@ the `changes` array.
     {
       "type": "orphan",
       "change_id": "kkkkkkkkkkkk...",
-      "bookmark": "review/old-change-kkkkkkkk",
+      "branch": "review/old-change-kkkkkkkk",
       "subject": "local change missing",
       "status": "orphan",
       "pull_request": {

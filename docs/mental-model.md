@@ -22,13 +22,12 @@ agent to review:
 - refreshing those PRs after local rewrites
 - inspecting review state and asking GitHub to merge reviewed changes
 
-To create a review branch, `jj-stack` creates a bookmark named
-`review/<subject-slug>-<short-change-id>`. The readable subject hints at the change's purpose;
-the suffix ties the name to its stable change ID. These bookmarks are managed automatically, so
-you don't need to manage them yourself.
-`jj-stack` creates them for review and can remove them later during
-`jj-stack unstack --cleanup` or `jj-stack cleanup`. Merging itself does not rewrite local
-history or remove review state; selected `sync` reconciles GitHub's result first.
+Each review branch is named `review/<subject-slug>-<short-change-id>`. The readable subject hints
+at the change's purpose; the suffix ties the name to its stable change ID. The branches stay on
+the Git remote, so they do not clutter local `jj` bookmark output. `jj-stack` creates them for
+review and can remove them later during `jj-stack unstack --cleanup` or `jj-stack cleanup`.
+Merging itself does not rewrite local history or remove review state; selected `sync` reconciles
+GitHub's result first.
 
 ## Source of truth
 
@@ -58,7 +57,7 @@ on `trunk()`, but it may also fork from a recent ancestor of `trunk()`. Each suc
 based on the preceding PR in the stack.
 
 This allows you to escape from the trap of thinking about "one long-lived local branch per pull
-request."  `jj-stack` creates `git` review branches only because GitHub requires them. Those
+request." `jj-stack` creates remote Git review branches only because GitHub requires them. Those
 branches are a transport layer; the main authoring model is still local `jj` history.
 
 When GitHub provides its stacked-PR feature, `jj-stack` registers the ordered PRs there. Otherwise

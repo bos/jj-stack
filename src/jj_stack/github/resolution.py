@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, ErrorMessage, error_message
-from jj_stack.models.bookmarks import BookmarkState, GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
+from jj_stack.review.branches import is_review_branch
+
+if TYPE_CHECKING:
+    from jj_stack.jj.client import JjClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,48 +170,46 @@ def require_github_repo(remote: GitRemote) -> GithubRepoAddress:
 
 def resolve_trunk_branch(
     *,
-    bookmark_states: Mapping[str, BookmarkState],
+    client: JjClient,
     github_repository_state: GithubRepository,
-    remote_name: str,
+    remote: GitRemote,
     trunk_commit_id: str,
-) -> str:
+) -> tuple[str, dict[str, str]]:
     """Resolve the GitHub base branch used for bottom-of-stack pull requests."""
 
     if github_repository_state.default_branch:
-        return github_repository_state.default_branch
+        branch = github_repository_state.default_branch
+        return (
+            branch,
+            client.list_remote_branches(
+                remote=remote.name,
+                patterns=(f"refs/heads/{branch}",),
+            ),
+        )
 
-    remote_bookmarks = remote_bookmarks_pointing_at_commit(
-        bookmark_states=bookmark_states,
-        remote_name=remote_name,
-        commit_id=trunk_commit_id,
+    remote_targets = {
+        branch: target
+        for branch, target in client.list_remote_branches(
+            remote=remote.name,
+            patterns=("refs/heads/*",),
+        ).items()
+        if not is_review_branch(branch)
+    }
+    matches = tuple(
+        branch for branch, target in remote_targets.items() if target == trunk_commit_id
     )
-    if len(remote_bookmarks) == 1:
-        return remote_bookmarks[0]
-    if len(remote_bookmarks) > 1:
+    if len(matches) == 1:
+        return matches[0], remote_targets
+    if len(matches) > 1:
         raise CliError(
-            t"Could not determine the trunk branch because multiple remote bookmarks on "
-            t"{ui.bookmark(remote_name)} point at {ui.revset('trunk()')}: "
-            t"{ui.join(ui.bookmark, remote_bookmarks)}."
+            t"Could not determine the trunk branch because multiple remote branches on "
+            t"{ui.bookmark(remote.name)} point at {ui.revset('trunk()')}: "
+            t"{ui.join(ui.bookmark, matches)}."
         )
     raise CliError(
-        t"Could not determine the trunk branch for remote {ui.bookmark(remote_name)}.",
+        t"Could not determine the trunk branch for remote {ui.bookmark(remote.name)}.",
         hint=(
             t"Ensure the GitHub repository exposes a default branch or create one "
-            t"remote bookmark that points at {ui.revset('trunk()')}."
+            t"remote branch that points at {ui.revset('trunk()')}."
         ),
     )
-
-
-def remote_bookmarks_pointing_at_commit(
-    *,
-    bookmark_states: Mapping[str, BookmarkState],
-    remote_name: str,
-    commit_id: str,
-) -> tuple[str, ...]:
-    matches = [
-        name
-        for name, bookmark_state in bookmark_states.items()
-        if (remote_state := bookmark_state.remote_target(remote_name)) is not None
-        and remote_state.target == commit_id
-    ]
-    return tuple(sorted(matches))

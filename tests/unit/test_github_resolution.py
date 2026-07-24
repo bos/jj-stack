@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from jj_stack.errors import CliError
 from jj_stack.github.resolution import (
     parse_github_repo,
-    remote_bookmarks_pointing_at_commit,
     resolve_trunk_branch,
     select_submit_remote,
 )
-from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
+from jj_stack.jj.client import JjClient
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
 
 
@@ -94,74 +96,73 @@ def test_parse_github_repo_rejects_fetch_and_push_repository_mismatch() -> None:
     assert parse_github_repo(remote) is None
 
 
-def test_resolve_trunk_branch_uses_repository_default_branch() -> None:
-    branch = resolve_trunk_branch(
-        bookmark_states={},
+def test_resolve_trunk_branch_uses_repository_default_branch_and_observes_exact_ref() -> None:
+    client = _RemoteBranchClient({"main": "trunk123", "stable": "trunk123"})
+
+    branch, targets = resolve_trunk_branch(
+        client=cast(JjClient, client),
         github_repository_state=_github_repository(default_branch="main"),
-        remote_name="origin",
+        remote=_remote("origin"),
         trunk_commit_id="trunk123",
     )
 
     assert branch == "main"
+    assert targets == {"main": "trunk123"}
+    assert client.patterns == [("refs/heads/main",)]
 
 
-def test_resolve_trunk_branch_falls_back_to_unique_remote_bookmark() -> None:
-    branch = resolve_trunk_branch(
-        bookmark_states={
-            "main": BookmarkState(
-                name="main",
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("trunk123",)),),
-            )
-        },
+def test_resolve_trunk_branch_falls_back_to_unique_non_review_remote_branch() -> None:
+    client = _RemoteBranchClient(
+        {
+            "main": "trunk123",
+            "review/feature-abcdefgh": "trunk123",
+        }
+    )
+
+    branch, targets = resolve_trunk_branch(
+        client=cast(JjClient, client),
         github_repository_state=_github_repository(default_branch=""),
-        remote_name="origin",
+        remote=_remote("origin"),
         trunk_commit_id="trunk123",
     )
 
     assert branch == "main"
+    assert targets == {"main": "trunk123"}
 
 
-def test_resolve_trunk_branch_rejects_ambiguous_remote_bookmarks() -> None:
+def test_resolve_trunk_branch_rejects_ambiguous_remote_branches() -> None:
     with pytest.raises(
         CliError,
-        match="multiple remote bookmarks",
+        match="multiple remote branches",
     ):
         resolve_trunk_branch(
-            bookmark_states={
-                "main": BookmarkState(
-                    name="main",
-                    remote_targets=(RemoteBookmarkState(remote="origin", targets=("trunk123",)),),
-                ),
-                "stable": BookmarkState(
-                    name="stable",
-                    remote_targets=(RemoteBookmarkState(remote="origin", targets=("trunk123",)),),
-                ),
-            },
+            client=cast(
+                JjClient,
+                _RemoteBranchClient({"main": "trunk123", "stable": "trunk123"}),
+            ),
             github_repository_state=_github_repository(default_branch=""),
-            remote_name="origin",
+            remote=_remote("origin"),
             trunk_commit_id="trunk123",
         )
 
 
-def test_remote_bookmarks_pointing_at_commit_returns_sorted_matches() -> None:
-    assert remote_bookmarks_pointing_at_commit(
-        bookmark_states={
-            "stable": BookmarkState(
-                name="stable",
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("trunk123",)),),
-            ),
-            "main": BookmarkState(
-                name="main",
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("trunk123",)),),
-            ),
-            "topic": BookmarkState(
-                name="topic",
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("other456",)),),
-            ),
-        },
-        remote_name="origin",
-        commit_id="trunk123",
-    ) == ("main", "stable")
+class _RemoteBranchClient:
+    def __init__(self, targets: dict[str, str]) -> None:
+        self.targets = targets
+        self.patterns: list[tuple[str, ...]] = []
+
+    def list_remote_branches(
+        self,
+        *,
+        remote: str,
+        patterns: tuple[str, ...],
+    ) -> dict[str, str]:
+        assert remote == "origin"
+        self.patterns.append(patterns)
+        if patterns == ("refs/heads/*",):
+            return dict(self.targets)
+        requested = {pattern.removeprefix("refs/heads/") for pattern in patterns}
+        return {branch: target for branch, target in self.targets.items() if branch in requested}
 
 
 def _github_repository(default_branch: str) -> GithubRepository:

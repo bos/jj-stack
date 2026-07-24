@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import jj_stack.commands.unstack as unstack_module
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
-from jj_stack.jj.client import JjClient
+from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import (
@@ -208,7 +209,7 @@ def test_unstack_local_forgets_tracking_without_closing_pull_request(
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().review_identities[change_id].head_ref
+    branch = state_store.load().review_identities[change_id].head_ref
 
     exit_code = run_main(repo, config_path, "unstack", "--local", change_id)
     captured = capsys.readouterr()
@@ -218,7 +219,8 @@ def test_unstack_local_forgets_tracking_without_closing_pull_request(
     assert "forget local review tracking for feature 1" in captured.out
     assert fake_repo.pull_requests[1].state == "open"
     assert change_id not in state_store.load().review_identities
-    assert JjClient(repo).get_bookmark_state(bookmark).local_target is not None
+    assert read_remote_ref(fake_repo.git_dir, branch)
+    assert JjClient(repo).list_imported_review_bookmarks() == ()
 
 
 def test_unstack_local_dry_run_leaves_tracking_and_pull_request_unchanged(
@@ -242,7 +244,7 @@ def test_unstack_local_dry_run_leaves_tracking_and_pull_request_unchanged(
     assert state_store.load() == initial_state
 
 
-def test_unstack_plain_skips_remote_fetch_but_cleanup_refreshes(
+def test_unstack_observes_review_branches_without_importing_them(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -253,9 +255,20 @@ def test_unstack_plain_skips_remote_fetch_but_cleanup_refreshes(
     original_fetch_remote = JjClient.fetch_remote
     fetch_calls: list[str] = []
 
-    def tracking_fetch_remote(self, *, remote: str, branches=None) -> None:
+    def tracking_fetch_remote(
+        self,
+        *,
+        remote: str,
+        dry_run: bool = False,
+        on_isolation_change=None,
+    ) -> None:
         fetch_calls.append(remote)
-        return original_fetch_remote(self, remote=remote, branches=branches)
+        return original_fetch_remote(
+            self,
+            remote=remote,
+            dry_run=dry_run,
+            on_isolation_change=on_isolation_change,
+        )
 
     monkeypatch.setattr(
         "jj_stack.review.status.JjClient.fetch_remote",
@@ -272,7 +285,7 @@ def test_unstack_plain_skips_remote_fetch_but_cleanup_refreshes(
 
     assert run_main(repo, config_path, "unstack", "--cleanup") == 0
     capsys.readouterr()
-    assert fetch_calls and fetch_calls[0] == "origin"
+    assert fetch_calls == []
 
 
 def test_unstack_apply_can_select_a_stack_by_pull_request_number(
@@ -346,6 +359,18 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
+    git_root = Path(run_command(["jj", "git", "root"], repo).stdout.strip())
+    fetch_config_before = run_command(
+        [
+            "git",
+            "--git-dir",
+            str(git_root),
+            "config",
+            "--get-all",
+            "remote.origin.fetch",
+        ],
+        repo,
+    ).stdout
 
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
@@ -353,13 +378,19 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
     original_fetch_remote = JjClient.fetch_remote
     fetch_calls: list[str] = []
 
-    def tracking_fetch_remote(self, *, remote: str, branches=None) -> None:
+    def tracking_fetch_remote(
+        self,
+        *,
+        remote: str,
+        dry_run: bool = False,
+        on_isolation_change=None,
+    ) -> None:
         fetch_calls.append(remote)
-        return original_fetch_remote(self, remote=remote, branches=branches)
-
-    def fail_list_bookmark_states(*args, **kwargs):
-        raise AssertionError(
-            "unstack should not inspect bookmark state for a fully untracked stack"
+        return original_fetch_remote(
+            self,
+            remote=remote,
+            dry_run=dry_run,
+            on_isolation_change=on_isolation_change,
         )
 
     async def fail_list_stacks(*args, **kwargs):
@@ -368,10 +399,6 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
     monkeypatch.setattr(
         "jj_stack.review.status.JjClient.fetch_remote",
         tracking_fetch_remote,
-    )
-    monkeypatch.setattr(
-        "jj_stack.commands.unstack.JjClient.list_bookmark_states",
-        fail_list_bookmark_states,
     )
     monkeypatch.setattr(GithubClient, "list_stacks", fail_list_stacks)
 
@@ -388,8 +415,23 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
     assert "Nothing to close on the selected stack." in dry_run_captured.out
     assert "Nothing to close on the selected stack." in close_captured.out
     assert "Nothing to close on the selected stack." in cleanup_captured.out
+    assert "Reserved review/" not in cleanup_captured.out
     assert state_store.load() == initial_state
     assert fetch_calls == []
+    assert (
+        run_command(
+            [
+                "git",
+                "--git-dir",
+                str(git_root),
+                "config",
+                "--get-all",
+                "remote.origin.fetch",
+            ],
+            repo,
+        ).stdout
+        == fetch_config_before
+    )
 
 
 def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actions(
@@ -494,47 +536,35 @@ def test_unstack_apply_cleanup_deletes_review_bookmarks_comments_and_tracking(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    bookmarks = tuple(
+    branches = tuple(
         state.review_identities[revision.change_id].head_ref for revision in stack.revisions
     )
     external = fake_repo.create_pull_request(
-        base_ref=bookmarks[0],
+        base_ref=branches[0],
         body="",
         head_ref="manual/external-dependent",
         title="external dependent",
     )
     action_order: list[str] = []
-    original_delete_remote_bookmarks = JjClient.delete_remote_bookmarks
-    original_forget_bookmarks = JjClient.forget_bookmarks
+    original_mutate_review_refs = JjClient.mutate_remote_review_refs
 
-    def tracking_delete_remote_bookmarks(
+    def tracking_mutate_review_refs(
         self,
         *,
         remote: str,
-        deletions,
-        fetch=True,
+        updates,
     ) -> None:
-        action_order.append(f"remote:{tuple(deletions)[0][0]}")
-        return original_delete_remote_bookmarks(
+        action_order.extend(f"remote:{update.branch}" for update in updates)
+        return original_mutate_review_refs(
             self,
             remote=remote,
-            deletions=deletions,
-            fetch=fetch,
+            updates=updates,
         )
 
-    def tracking_forget_bookmarks(self, bookmarks) -> None:
-        action_order.append(f"local:{tuple(bookmarks)[0]}")
-        return original_forget_bookmarks(self, bookmarks)
-
     monkeypatch.setattr(
         JjClient,
-        "delete_remote_bookmarks",
-        tracking_delete_remote_bookmarks,
-    )
-    monkeypatch.setattr(
-        JjClient,
-        "forget_bookmarks",
-        tracking_forget_bookmarks,
+        "mutate_remote_review_refs",
+        tracking_mutate_review_refs,
     )
 
     dry_run_exit_code = run_main(
@@ -567,16 +597,49 @@ def test_unstack_apply_cleanup_deletes_review_bookmarks_comments_and_tracking(
     assert refreshed_state.review_identities == {}
     assert refreshed_state.submitted_baselines == {}
     assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
-    assert all(bookmark not in remote_refs(fake_repo.git_dir) for bookmark in bookmarks)
-    assert all(
-        JjClient(repo).get_bookmark_state(bookmark).local_target is None for bookmark in bookmarks
-    )
+    assert all(branch not in remote_refs(fake_repo.git_dir) for branch in branches)
+    assert JjClient(repo).list_imported_review_bookmarks() == ()
     assert action_order == [
-        f"remote:{bookmarks[1]}",
-        f"local:{bookmarks[1]}",
-        f"remote:{bookmarks[0]}",
-        f"local:{bookmarks[0]}",
+        f"remote:{branches[1]}",
+        f"remote:{branches[0]}",
     ]
+
+
+def test_unstack_cleanup_rechecks_dependents_after_comment_discovery(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    state = state_store.load()
+    change_id, identity = next(iter(state.review_identities.items()))
+    find_comments = unstack_module._find_managed_comments
+
+    async def dependent_appears_during_comment_lookup(**kwargs):
+        lookups = await find_comments(**kwargs)
+        fake_repo.create_pull_request(
+            base_ref=identity.head_ref,
+            body="",
+            head_ref="manual/late-dependent",
+            title="late dependent",
+        )
+        return lookups
+
+    monkeypatch.setattr(
+        unstack_module,
+        "_find_managed_comments",
+        dependent_appears_during_comment_lookup,
+    )
+    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "open PR #2 still" in captured.out
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert state_store.load() == state
+    assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
 
 
 def test_unstack_cleanup_pull_request_retires_orphaned_pr(
@@ -925,10 +988,16 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
     orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
 
     run_command(["jj", "abandon", orphaned_change_id], repo)
-    run_command(["jj", "bookmark", "set", orphaned_bookmark, "-r", "main"], repo)
     run_command(
-        ["jj", "git", "push", "--remote", "origin", "--bookmark", orphaned_bookmark],
-        repo,
+        [
+            "git",
+            "--git-dir",
+            str(fake_repo.git_dir),
+            "update-ref",
+            f"refs/heads/{orphaned_bookmark}",
+            read_remote_ref(fake_repo.git_dir, "main"),
+        ],
+        fake_repo.git_dir.parent,
     )
 
     exit_code = run_main(
@@ -944,7 +1013,7 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
 
     assert exit_code == 1
     assert "Close blocked:" in captured.out
-    assert "already points to a different revision" in combined
+    assert "head no longer matches the saved submitted commit" in combined
     assert f"close PR #{orphaned_pr_number}" not in captured.out
     assert orphaned_change_id in state_store.load().review_identities
 
@@ -992,7 +1061,7 @@ def test_unstack_cleanup_pull_request_blocks_when_remote_branch_drifted_external
 
     assert exit_code == 1
     assert "Close blocked:" in captured.out
-    assert "already points to a different revision" in combined
+    assert "head no longer matches the saved submitted commit" in combined
     assert f"close PR #{bottom_pr_number}" not in captured.out
     assert fake_repo.pull_requests[bottom_pr_number].state == "open"
     assert issue_comments(fake_repo, bottom_pr_number)
@@ -1091,8 +1160,17 @@ def test_unstack_cleanup_pull_request_keeps_tracking_when_cleanup_blocks(
 
     fake_repo.pull_requests[1].state = "closed"
     run_command(["jj", "abandon", change_id], repo)
-    run_command(["jj", "bookmark", "set", bookmark, "-r", "main"], repo)
-    run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", bookmark], repo)
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(fake_repo.git_dir),
+            "update-ref",
+            f"refs/heads/{bookmark}",
+            read_remote_ref(fake_repo.git_dir, "main"),
+        ],
+        fake_repo.git_dir.parent,
+    )
 
     exit_code = run_main(repo, config_path, "unstack", "--cleanup", "--pull-request", "1")
     captured = capsys.readouterr()
@@ -1101,7 +1179,7 @@ def test_unstack_cleanup_pull_request_keeps_tracking_when_cleanup_blocks(
 
     assert exit_code == 1
     assert "Close blocked:" in captured.out
-    assert "already points to a different revision" in combined_output
+    assert "head no longer matches the saved submitted commit" in combined_output
     assert refreshed_state == initial_state
 
 
@@ -1162,9 +1240,15 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
 
     run_command(["jj", "abandon", orphaned_change_id], repo)
     last_target = state.submitted_baselines[orphaned_change_id].commit_id
-    JjClient(repo).delete_remote_bookmarks(
+    JjClient(repo).mutate_remote_review_refs(
         remote="origin",
-        deletions=((orphaned_bookmark, last_target),),
+        updates=(
+            ReviewRefUpdate(
+                branch=orphaned_bookmark,
+                expected_target=last_target,
+                desired_target=None,
+            ),
+        ),
     )
 
     exit_code = run_main(
@@ -1180,7 +1264,6 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
 
     assert exit_code == 0
     assert "Applied close actions:" in output
-    assert "already absent" in output
     assert "prune orphan record" in output
     assert fake_repo.pull_requests[orphaned_pr_number].state == "closed"
     assert orphaned_change_id not in state_store.load().review_identities
@@ -1247,33 +1330,6 @@ def test_unstack_apply_checkpoints_prior_progress_before_later_block(
     assert fake_repo.pull_requests[2].state == "closed"
     assert "previous close was interrupted" not in second_run.out
     assert f"close PR #{head_pr_number}" not in second_run.out
-
-
-def test_unstack_apply_cleanup_keeps_tracking_after_partial_comment_cleanup(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    bookmark = ReviewStateStore.for_repo(repo).load().review_identities[change_id].head_ref
-    initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
-    run_command(["jj", "bookmark", "move", "--allow-backwards", bookmark, "--to", "main"], repo)
-
-    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
-    captured = capsys.readouterr()
-    local_target = JjClient(repo).get_bookmark_state(bookmark).local_target
-
-    assert exit_code == 1
-    assert "Close blocked:" in captured.out
-    assert issue_comments(fake_repo, 1) == []
-    assert change_id in ReviewStateStore.for_repo(repo).load().review_identities
-    assert local_target == read_remote_ref(fake_repo.git_dir, "main")
-    assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
-    assert fake_repo.pull_requests[1].state == "closed"
 
 
 def test_unstack_apply_requires_checkout_after_sparse_state_loss(

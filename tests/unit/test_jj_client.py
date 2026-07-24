@@ -7,10 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from jj_stack.errors import EXIT_AMBIGUOUS, EXIT_USAGE, CliError, resolve_exit_code
+from jj_stack.errors import (
+    EXIT_AMBIGUOUS,
+    EXIT_USAGE,
+    CliError,
+    DriftError,
+    resolve_exit_code,
+)
 from jj_stack.jj.client import (
     JjClient,
     JjCommandError,
+    ReviewFetchIsolationRequired,
+    ReviewRefUpdate,
     StaleWorkspaceError,
     UnsupportedStackError,
 )
@@ -883,9 +891,7 @@ def test_list_remote_branches_resolves_jj_remote_name_to_fetch_url(
                 stderr="",
             )
         if invocation == ("jj", "--ignore-working-copy", "git", "root"):
-            return subprocess.CompletedProcess(
-                command, 0, stdout="/repo/.git\n", stderr=""
-            )
+            return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
         if invocation == (
             "git",
             "--git-dir",
@@ -943,9 +949,11 @@ def test_list_remote_branches_rejects_an_unconfigured_remote(
     assert seen_commands == [("jj", "--ignore-working-copy", "git", "remote", "list")]
 
 
-def test_direct_remote_mutations_use_push_url_and_cache_backing_root(
+def test_remote_failure_redacts_http_userinfo_without_changing_subprocess_argv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    remote_url = "https://alice:top-secret@github.test/octo-org/repo.git"
+    scp_url = "git@github.test:octo-org/repo.git"
     seen_commands: list[tuple[str, ...]] = []
 
     def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
@@ -956,103 +964,476 @@ def test_direct_remote_mutations_use_push_url_and_cache_backing_root(
             return subprocess.CompletedProcess(
                 command,
                 0,
+                stdout=f"origin {remote_url} (push: {scp_url})\n",
+                stderr="",
+            )
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="/repo/.git\n",
+                stderr="",
+            )
+        if invocation == (
+            "git",
+            "--git-dir",
+            "/repo/.git",
+            "ls-remote",
+            "--refs",
+            remote_url,
+            "refs/heads/review/feat",
+        ):
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr=f"could not access {remote_url}; push URL remains {scp_url}",
+            )
+        raise AssertionError(f"unexpected command: {invocation!r}")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+
+    with pytest.raises(JjCommandError) as raised:
+        JjClient(Path("/repo")).list_remote_branches(
+            remote="origin",
+            patterns=("refs/heads/review/feat",),
+        )
+
+    rendered = str(raised.value)
+    assert "alice" not in rendered
+    assert "top-secret" not in rendered
+    assert "https://github.test/octo-org/repo.git" in rendered
+    assert scp_url in rendered
+    assert remote_url in seen_commands[-1]
+
+
+def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_commands: list[tuple[str, ...]] = []
+    changes = []
+
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        invocation = tuple(command)
+        seen_commands.append(invocation)
+        if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation[:5] == (
+            "jj",
+            "--ignore-working-copy",
+            "bookmark",
+            "list",
+            "--all-remotes",
+        ):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
+        if invocation == (
+            "git",
+            "--git-dir",
+            "/repo/.git",
+            "config",
+            "--get-all",
+            "remote.origin.fetch",
+        ):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="+refs/heads/*:refs/remotes/origin/*\n",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {invocation!r}")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+    with pytest.raises(ReviewFetchIsolationRequired):
+        JjClient(Path("/repo")).ensure_review_fetch_isolation(
+            remote="origin",
+            dry_run=True,
+            on_change=changes.append,
+        )
+
+    assert len(changes) == 1
+    assert changes[0].status == "required"
+    assert all("config --add" not in " ".join(command) for command in seen_commands)
+
+
+def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    review_refspec = "^refs/heads/review/*"
+    positive_refspec = "+refs/heads/*:refs/remotes/origin/*"
+    seen_commands: list[tuple[str, ...]] = []
+    events: list[str] = []
+    normalized = False
+
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        nonlocal normalized
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        invocation = tuple(command)
+        seen_commands.append(invocation)
+        if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation[:5] == (
+            "jj",
+            "--ignore-working-copy",
+            "bookmark",
+            "list",
+            "--all-remotes",
+        ):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="/repo/.git\n",
+                stderr="",
+            )
+        if invocation == (
+            "git",
+            "--git-dir",
+            "/repo/.git",
+            "config",
+            "--get-all",
+            "remote.origin.fetch",
+        ):
+            events.append("post-read" if normalized else "initial-read")
+            refspecs = (
+                (positive_refspec, review_refspec)
+                if normalized
+                else (positive_refspec, review_refspec, review_refspec)
+            )
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="\n".join(refspecs) + "\n",
+                stderr="",
+            )
+        if invocation == (
+            "git",
+            "--git-dir",
+            "/repo/.git",
+            "config",
+            "--fixed-value",
+            "--replace-all",
+            "remote.origin.fetch",
+            review_refspec,
+            review_refspec,
+        ):
+            events.append("replace")
+            normalized = True
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {invocation!r}")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+    changes = []
+
+    def record_change(change) -> None:
+        events.append("callback")
+        changes.append(change)
+
+    result = JjClient(Path("/repo")).ensure_review_fetch_isolation(
+        remote="origin",
+        on_change=record_change,
+    )
+
+    replace_commands = [
+        command
+        for command in seen_commands
+        if command[3:7] == ("config", "--fixed-value", "--replace-all", "remote.origin.fetch")
+    ]
+    assert replace_commands == [
+        (
+            "git",
+            "--git-dir",
+            "/repo/.git",
+            "config",
+            "--fixed-value",
+            "--replace-all",
+            "remote.origin.fetch",
+            review_refspec,
+            review_refspec,
+        )
+    ]
+    assert events == ["initial-read", "replace", "post-read", "callback"]
+    assert result.status == "applied"
+    assert changes == [result]
+
+
+def test_review_fetch_isolation_reports_the_effective_override_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        invocation = tuple(command)
+        assert invocation[:4] == ("jj", "--ignore-working-copy", "config", "list")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='"repo"\t"/repo/.jj/repo/config.toml"\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", runner)
+
+    with pytest.raises(CliError) as raised:
+        JjClient(Path("/repo")).ensure_review_fetch_isolation(remote="origin")
+
+    assert "/repo/.jj/repo/config.toml" in str(raised.value)
+    assert "jj config unset --repo" in str(raised.value)
+
+
+def test_imported_review_bookmark_scan_ignores_unknown_namespace_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = (
+        json.dumps({"name": "review/not-managed", "target": ["one"]})
+        + "\n"
+        + json.dumps({"name": "review/feature-abcdefgh", "target": ["two"]})
+        + "\n"
+    )
+
+    def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout=payload, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+
+    assert JjClient(Path("/repo")).list_imported_review_bookmarks() == (
+        "review/feature-abcdefgh",
+    )
+
+
+def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_commands: list[tuple[str, ...]] = []
+    observed_target = "old"
+    old_branch = "review/old-aaaaaaaa"
+    new_branch = "review/new-bbbbbbbb"
+    old_ref = f"refs/heads/{old_branch}"
+    new_ref = f"refs/heads/{new_branch}"
+
+    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        assert Path(kwargs["cwd"]) == Path("/repo")
+        invocation = tuple(command)
+        seen_commands.append(invocation)
+        if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation[:5] == (
+            "jj",
+            "--ignore-working-copy",
+            "bookmark",
+            "list",
+            "--all-remotes",
+        ):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
+        if invocation[-3:] == ("config", "--get-all", "remote.origin.fetch"):
+            return subprocess.CompletedProcess(
+                command, 0, stdout="^refs/heads/review/*\n", stderr=""
+            )
+        if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
                 stdout=(
                     "origin https://github.test/octo-org/repo.git "
                     "(push: git@github.test:octo-org/repo.git)\n"
                 ),
                 stderr="",
             )
-        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+        if invocation[3:6] == (
+            "ls-remote",
+            "--refs",
+            "https://github.test/octo-org/repo.git",
+        ) and invocation[6:] in ((old_ref, new_ref), (old_ref,)):
             return subprocess.CompletedProcess(
-                command, 0, stdout="/repo/.git\n", stderr=""
+                command,
+                0,
+                stdout=f"{observed_target}\t{old_ref}\n",
+                stderr="",
             )
-        if invocation in {
-            (
-                "git",
-                "--git-dir",
-                "/repo/.git",
-                "push",
-                "--force-with-lease=refs/heads/review/feat:old",
-                "git@github.test:octo-org/repo.git",
-                "new:refs/heads/review/feat",
-            ),
-            (
-                "git",
-                "--git-dir",
-                "/repo/.git",
-                "push",
-                "--force-with-lease=refs/heads/review/feat:new",
-                "git@github.test:octo-org/repo.git",
-                ":refs/heads/review/feat",
-            ),
-            ("jj", "git", "fetch", "--remote", "origin"),
-            ("jj", "bookmark", "track", "review/feat", "--remote", "origin"),
-        }:
+        if invocation[3:] == (
+            "push",
+            "--atomic",
+            f"--force-with-lease={old_ref}:old",
+            f"--force-with-lease={new_ref}:",
+            "git@github.test:octo-org/repo.git",
+            f"updated:{old_ref}",
+            f"created:{new_ref}",
+        ):
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
     client = JjClient(Path("/repo"))
-    client.update_untracked_remote_bookmark(
+    client.mutate_remote_review_refs(
         remote="origin",
-        bookmark="review/feat",
-        desired_target="new",
-        expected_remote_target="old",
-    )
-    client.delete_remote_bookmarks(
-        remote="origin",
-        deletions=(("review/feat", "new"),),
-        fetch=False,
-    )
-
-    assert seen_commands == [
-        ("jj", "--ignore-working-copy", "git", "remote", "list"),
-        ("jj", "--ignore-working-copy", "git", "root"),
-        (
-            "git",
-            "--git-dir",
-            "/repo/.git",
-            "push",
-            "--force-with-lease=refs/heads/review/feat:old",
-            "git@github.test:octo-org/repo.git",
-            "new:refs/heads/review/feat",
+        updates=(
+            ReviewRefUpdate(
+                branch=old_branch,
+                expected_target="old",
+                desired_target="updated",
+            ),
+            ReviewRefUpdate(
+                branch=new_branch,
+                expected_target=None,
+                desired_target="created",
+            ),
         ),
-        ("jj", "git", "fetch", "--remote", "origin"),
-        ("jj", "bookmark", "track", "review/feat", "--remote", "origin"),
-        ("jj", "--ignore-working-copy", "git", "remote", "list"),
-        (
-            "git",
-            "--git-dir",
-            "/repo/.git",
-            "push",
-            "--force-with-lease=refs/heads/review/feat:new",
-            "git@github.test:octo-org/repo.git",
-            ":refs/heads/review/feat",
-        ),
-    ]
+    )
+
+    pushes = [command for command in seen_commands if command[3:4] == ("push",)]
+    assert len(pushes) == 1
+
+    observed_target = "stale"
+    with pytest.raises(DriftError, match="changed before the atomic push"):
+        client.mutate_remote_review_refs(
+            remote="origin",
+            updates=(
+                ReviewRefUpdate(
+                    branch=old_branch,
+                    expected_target="old",
+                    desired_target="updated-again",
+                ),
+            ),
+        )
+    assert len([command for command in seen_commands if command[3:4] == ("push",)]) == 1
 
 
-def test_push_bookmarks_issues_one_atomic_jj_invocation_for_a_batch(
+def test_remote_change_id_inspection_fetches_an_object_without_creating_a_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
+    commit_id = "a" * 40
+    cat_file_calls = 0
 
-    def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        assert Path(kwargs["cwd"]) == Path("/repo")
-        seen_commands.append(tuple(command))
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+    def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        nonlocal cat_file_calls
+        invocation = tuple(command)
+        seen_commands.append(invocation)
+        if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation[:5] == (
+            "jj",
+            "--ignore-working-copy",
+            "bookmark",
+            "list",
+            "--all-remotes",
+        ):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
+        if invocation[-3:] == ("config", "--get-all", "remote.origin.fetch"):
+            return subprocess.CompletedProcess(
+                command, 0, stdout="^refs/heads/review/*\n", stderr=""
+            )
+        if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="origin https://github.test/octo-org/repo.git\n",
+                stderr="",
+            )
+        if invocation[3:] == ("cat-file", "commit", commit_id):
+            cat_file_calls += 1
+            if cat_file_calls == 1:
+                return subprocess.CompletedProcess(
+                    command, 128, stdout="", stderr="object not found"
+                )
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=(
+                    f"tree {'b' * 40}\n"
+                    "author Test <test@example.com> 1 +0000\n"
+                    "committer Test <test@example.com> 1 +0000\n"
+                    "change-id full-change-id\n\nsubject\n"
+                ),
+                stderr="",
+            )
+        if invocation[3:] == (
+            "fetch",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "https://github.test/octo-org/repo.git",
+            commit_id,
+        ):
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
-    JjClient(Path("/repo")).push_bookmarks(
-        remote="origin", bookmarks=("review/feat-1", "review/feat-2", "review/feat-3")
+
+    change_id = JjClient(Path("/repo")).read_remote_git_change_id(
+        remote="origin",
+        commit_id=commit_id,
     )
 
-    assert len(seen_commands) == 1, "all bookmarks must land in a single jj invocation"
-    invocation = seen_commands[0]
-    assert invocation[:3] == ("jj", "git", "push")
-    assert "--remote" in invocation and "origin" in invocation
-    assert invocation.count("--bookmark") == 3
-    assert {"review/feat-1", "review/feat-2", "review/feat-3"}.issubset(set(invocation))
+    assert change_id == "full-change-id"
+    assert not any(
+        "update-ref" in command or "git import" in command for command in seen_commands
+    )
+
+
+def test_temp_ref_cleanup_removes_raw_ref_when_forgetting_bookmark_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commit_id = "a" * 40
+    raw_ref_present = True
+    seen_commands: list[tuple[str, ...]] = []
+
+    def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        nonlocal raw_ref_present
+        invocation = tuple(command)
+        seen_commands.append(invocation)
+        if invocation[:5] == (
+            "jj",
+            "--ignore-working-copy",
+            "bookmark",
+            "list",
+            "-T",
+        ):
+            payload = json.dumps({"name": "jj-stack-tmp/checkout", "target": [commit_id]})
+            return subprocess.CompletedProcess(command, 0, stdout=f"{payload}\n", stderr="")
+        if invocation == (
+            "jj",
+            "--ignore-working-copy",
+            "bookmark",
+            "forget",
+            "jj-stack-tmp/checkout",
+        ):
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="forget failed")
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
+        if invocation[3:] == (
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/jj-stack-tmp/checkout",
+        ):
+            return subprocess.CompletedProcess(
+                command,
+                0 if raw_ref_present else 1,
+                stdout=f"{commit_id}\n" if raw_ref_present else "",
+                stderr="",
+            )
+        if invocation[3:] == (
+            "update-ref",
+            "-d",
+            "refs/heads/jj-stack-tmp/checkout",
+            commit_id,
+        ):
+            raw_ref_present = False
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {invocation!r}")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+
+    with pytest.raises(JjCommandError, match="forget failed"):
+        JjClient(Path("/repo"))._clear_review_temp_ref()
+
+    assert not raw_ref_present
+    assert any(command[3:4] == ("update-ref",) for command in seen_commands)
 
 
 def _template() -> str:

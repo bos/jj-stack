@@ -47,14 +47,14 @@ def test_view_json_reports_public_stack_status(
 
     revision = stack["changes"][0]
     assert {
-        "bookmark",
+        "branch",
         "change_id",
         "pull_request",
         "status",
         "subject",
     } <= set(revision)
     assert set(revision) <= {
-        "bookmark",
+        "branch",
         "change_id",
         "current",
         "pull_request",
@@ -62,7 +62,7 @@ def test_view_json_reports_public_stack_status(
         "subject",
     }
     assert revision["change_id"] == change_id
-    assert revision["bookmark"].startswith("review/feature-1-")
+    assert revision["branch"].startswith("review/feature-1-")
     assert revision["status"] == "open"
     assert revision["subject"] == "feature 1"
     assert revision["pull_request"]["number"] == 1
@@ -526,6 +526,17 @@ def test_view_reports_unsubmitted_after_state_loss(
     assert "PR #1" not in captured.out
     assert refreshed_state.review_identities == {}
     assert refreshed_state.submitted_baselines == {}
+
+    exit_code = run_main(repo, config_path, "view", "--json", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert_json_output_matches_schema(payload, "view")
+    revision = payload["stacks"][0]["changes"][0]
+    assert revision["change_id"] == change_id
+    assert revision["status"] == "unsubmitted"
+    assert "branch" not in revision
 
 
 def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(

@@ -22,14 +22,10 @@ def _stack(
                     "ref": f"review/pull-{pull_number}",
                     "sha": f"head-{pull_number}",
                 },
-                "merged_at": (
-                    "2026-07-23T12:00:00Z" if pull_number in historical else None
-                ),
+                "merged_at": ("2026-07-23T12:00:00Z" if pull_number in historical else None),
                 "number": pull_number,
                 "state": (
-                    "closed"
-                    if pull_number in historical or pull_number in closed
-                    else "open"
+                    "closed" if pull_number in historical or pull_number in closed else "open"
                 ),
             }
             for pull_number in pull_numbers

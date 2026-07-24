@@ -6,21 +6,9 @@ from dataclasses import dataclass
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
-from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import restarted_review_branch
-
-
-@dataclass(frozen=True, slots=True)
-class RestartedChange:
-    """One local change selected for a fresh pull request."""
-
-    change_id: str
-    new_bookmark: str
-    old_bookmark: str
-    old_pr_number: int
-    subject: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,9 +16,9 @@ class RestartedReview:
     """One exact saved pair to replace after fresh review creation."""
 
     baseline: SubmittedBaseline
-    change: RestartedChange
-    commit_id: str
+    change_id: str
     identity: ReviewIdentity
+    new_branch: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,21 +28,15 @@ class RestartStateResult:
     restarted: tuple[RestartedReview, ...]
     state: ReviewState
 
-    @property
-    def changed(self) -> tuple[RestartedChange, ...]:
-        return tuple(item.change for item in self.restarted)
-
 
 def restart_state_for_stack(
     *,
-    bookmark_states: dict[str, BookmarkState],
-    remote_name: str,
     stack: LocalStack,
     state: ReviewState,
 ) -> RestartStateResult:
     """Plan deterministic fresh branches without changing durable tracking."""
 
-    reserved_bookmarks = {
+    reserved_branches = {
         identity.head_ref: change_id for change_id, identity in state.review_identities.items()
     }
     identities = dict(state.review_identities)
@@ -74,28 +56,20 @@ def restart_state_for_stack(
                 t"PR tracking.",
                 hint="Submit it normally first, or select only changes with existing reviews.",
             )
-        new_bookmark = _restart_bookmark(
-            bookmark_states=bookmark_states,
+        new_branch = _restart_branch(
             identity=identity,
-            remote_name=remote_name,
-            reserved_bookmarks=reserved_bookmarks,
+            reserved_branches=reserved_branches,
             revision=revision,
         )
-        reserved_bookmarks[new_bookmark] = revision.change_id
+        reserved_branches[new_branch] = revision.change_id
         identities.pop(revision.change_id)
         baselines.pop(revision.change_id)
         restarted.append(
             RestartedReview(
                 baseline=baseline,
-                change=RestartedChange(
-                    change_id=revision.change_id,
-                    new_bookmark=new_bookmark,
-                    old_bookmark=identity.head_ref,
-                    old_pr_number=identity.pr_number,
-                    subject=revision.subject,
-                ),
-                commit_id=revision.commit_id,
+                change_id=revision.change_id,
                 identity=identity,
+                new_branch=new_branch,
             )
         )
 
@@ -109,12 +83,10 @@ def restart_state_for_stack(
     )
 
 
-def _restart_bookmark(
+def _restart_branch(
     *,
-    bookmark_states: dict[str, BookmarkState],
     identity: ReviewIdentity,
-    remote_name: str,
-    reserved_bookmarks: dict[str, str],
+    reserved_branches: dict[str, str],
     revision: LocalRevision,
 ) -> str:
     try:
@@ -130,26 +102,10 @@ def _restart_bookmark(
             hint=t"Repair the saved review with {ui.cmd('relink')} before restarting it.",
         ) from error
 
-    claimant = reserved_bookmarks.get(candidate)
+    claimant = reserved_branches.get(candidate)
     if claimant is not None and claimant != revision.change_id:
         raise CliError(
             t"Cannot restart {ui.change_id(revision.change_id)} with "
             t"{ui.bookmark(candidate)} because another saved review claims that branch."
-        )
-
-    bookmark_state = bookmark_states.get(candidate)
-    if bookmark_state is None:
-        return candidate
-    if bookmark_state.local_targets not in {(), (revision.commit_id,)}:
-        raise CliError(
-            t"Cannot restart {ui.change_id(revision.change_id)} with "
-            t"{ui.bookmark(candidate)} because the local bookmark points elsewhere."
-        )
-    remote_state = bookmark_state.remote_target(remote_name)
-    if remote_state is not None and remote_state.targets not in {(), (revision.commit_id,)}:
-        raise CliError(
-            t"Cannot restart {ui.change_id(revision.change_id)} with "
-            t"{ui.bookmark(f'{candidate}@{remote_name}')} because the remote branch "
-            t"points elsewhere."
         )
     return candidate

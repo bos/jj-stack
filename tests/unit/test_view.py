@@ -8,7 +8,6 @@ import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
 import jj_stack.ui as ui_module
 from jj_stack.config import RepoConfig
-from jj_stack.models.bookmarks import RemoteBookmarkState
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.review.status import (
@@ -42,40 +41,39 @@ def _lookup(
 
 def _status_revision(
     *,
-    bookmark: str = "",
+    branch: str | None = None,
     change_id: str,
     commit_id: str = "commit-1",
     local_divergent: bool = False,
     managed_comments_lookup: ManagedCommentsLookup | None = None,
     pull_request_lookup: PullRequestLookup | None = None,
     review_identity: ReviewIdentity | None = None,
-    remote_state: RemoteBookmarkState | None = None,
+    remote_target: str | None = None,
     submitted_baseline: SubmittedBaseline | None = None,
     subject: str = "feature",
 ) -> ReviewStatusRevision:
     return ReviewStatusRevision(
-        bookmark=bookmark,
-        bookmark_source="generated",
+        branch=branch,
         change_id=change_id,
         commit_id=commit_id,
         local_divergent=local_divergent,
         managed_comments_lookup=managed_comments_lookup,
         pull_request_lookup=pull_request_lookup,
         review_identity=review_identity,
-        remote_state=remote_state,
+        remote_target=remote_target,
         submitted_baseline=submitted_baseline,
         subject=subject,
     )
 
 
-def _identity(*, bookmark: str, pr_number: int) -> ReviewIdentity:
+def _identity(*, branch: str, pr_number: int) -> ReviewIdentity:
     return ReviewIdentity(
         github_host="github.test",
         repository_owner="octo-org",
         repository_name="repo",
         pr_number=pr_number,
         head_owner="octo-org",
-        head_ref=bookmark,
+        head_ref=branch,
     )
 
 
@@ -185,7 +183,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_restart() -> None:
 def test_view_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
     revision = _status_revision(
         review_identity=_identity(
-            bookmark="review/feature-8-abcdefgh",
+            branch="review/feature-8-abcdefgh",
             pr_number=42,
         ),
         change_id="abcdefgh1234",
@@ -220,9 +218,9 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_restart() -> None:
 
 def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
     revision = _status_revision(
-        bookmark="review/feature-8-abcdefgh",
+        branch="review/feature-8-abcdefgh",
         review_identity=_identity(
-            bookmark="review/feature-8-abcdefgh",
+            branch="review/feature-8-abcdefgh",
             pr_number=8,
         ),
         change_id="abcdefgh1234",
@@ -258,9 +256,9 @@ def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
 
 def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() -> None:
     revision = _status_revision(
-        bookmark="review/feature-7-abcdefgh",
+        branch="review/feature-7-abcdefgh",
         review_identity=_identity(
-            bookmark="review/feature-7-abcdefgh",
+            branch="review/feature-7-abcdefgh",
             pr_number=7,
         ),
         change_id="abcdefgh1234",
@@ -301,9 +299,9 @@ def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() ->
 
 def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
     revision = _status_revision(
-        bookmark="review/feature-1-abcdefgh",
+        branch="review/feature-1-abcdefgh",
         review_identity=_identity(
-            bookmark="review/feature-1-abcdefgh",
+            branch="review/feature-1-abcdefgh",
             pr_number=1,
         ),
         change_id="abcdefgh1234",
@@ -337,7 +335,6 @@ def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
 def test_view_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
     revisions = tuple(
         _status_revision(
-            bookmark=f"review/feature-{index}",
             change_id=f"{index}" * 12,
             commit_id=f"commit-{index}",
             subject=f"feature {index}",
@@ -374,41 +371,5 @@ def test_view_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
         "body for feature 2",
         "feature 1 [11111111]",
         "body for feature 1",
-        "",
-    )
-
-
-def test_view_verbose_keeps_managed_review_bookmark_in_native_log_output() -> None:
-    revision = _status_revision(
-        bookmark="review/feature-8-abcdefgh",
-        change_id="abcdefgh1234",
-        commit_id="1234567890abcdef",
-        subject="feature 8",
-    )
-
-    lines = view_module.render_status_summary_lines(
-        client=SimpleNamespace(
-            resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
-            render_revision_log_lines=lambda current_revision, *, color_when: (
-                (
-                    "○  abcdefgh bos 2026-01-01 keep/one "
-                    f"{current_revision.bookmark} keep/two 12345678"
-                ),
-                f"│  {current_revision.subject}",
-            ),
-        ),
-        github_available=True,
-        leading_separator=False,
-        result=SimpleNamespace(revisions=(revision,)),
-        verbose=True,
-    )
-
-    assert lines == (
-        "Unsubmitted stack:",
-        "○  abcdefgh bos 2026-01-01 keep/one review/feature-8-abcdefgh keep/two 12345678",
-        "│  feature 8",
-        "",
-        "Submitted stack:",
-        "  (none)",
         "",
     )

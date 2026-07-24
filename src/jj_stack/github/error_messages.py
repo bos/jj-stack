@@ -9,7 +9,7 @@ from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
 )
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.ui import Message, code
 
 

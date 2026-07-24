@@ -156,10 +156,11 @@ as targeted CLI diagnostics, not Python tracebacks.
 
 ### `jj` adapter
 
-Wraps subprocess access to `jj` and exposes typed operations: resolve a revset, inspect
-the working-copy/default submit target, enumerate the linear review chain, read
-bookmarks plus tracked and untracked remote bookmark state, and surface stale-workspace
-errors distinctly so commands can suggest `jj workspace update-stale`.
+Wraps subprocess access to `jj` and exposes typed operations: resolve a revset, inspect the
+working-copy/default submit target, enumerate the linear review chain, read the local DAG and
+ordinary bookmark state, and surface stale-workspace errors distinctly so commands can suggest
+`jj workspace update-stale`. It detects imported managed review bookmarks only to preserve the
+fail-closed boundary around the remote-only review namespace.
 
 The adapter prefers machine-readable template output over parsing human text.
 Revision templates capture both `current_working_copy` and the names returned by
@@ -178,10 +179,18 @@ configured fetch URL; leased mutation uses the configured push URL. No raw Git c
 a configured remote name, and the same boundary works for colocated and non-colocated
 repositories.
 
-Normal `submit` pushes every changed review bookmark in one `jj git push` invocation. The
-auto-close predictor relies on GitHub seeing one atomic ref update rather than a series of
-intermediate branch states. The one-bookmark untracked-remote fallback uses direct
-`git push --force-with-lease`; it is never mixed with another bookmark update.
+Ordinary fetch installs a negative Git refspec for `refs/heads/review/*` and rejects an effective
+jj `fetch-bookmarks` override that would bypass it. Review observation uses direct `git ls-remote`
+against the fetch URL, without importing refs or bookmarks. Explicit `checkout` attachment fetches
+one exact remote ref into a fixed temporary Git ref, imports it into jj, verifies the full change
+ID, and removes the temporary ref and bookmark in a `finally` path. `relink` instead fetches and
+reads the exact remote commit object without creating a ref, then compares its full change ID to
+the selected local revision.
+
+Every submit or deletion expresses its complete remote-ref mutation as one direct atomic Git push
+to the push URL. Each update carries an exact `force-with-lease` expectation, including expected
+absence for a new branch. There is no sequential fallback and no follow-up fetch. The auto-close
+predictor therefore evaluates the same one-step ref transition GitHub will observe.
 
 ### Planning rule
 
@@ -191,7 +200,7 @@ Planning is a layering rule rather than a separate package. Shared classificatio
 and remote state, it decides:
 
 - which changes are reviewable
-- which bookmark each change should use
+- which stable remote branch each change should use
 - which PR each change should map to
 - which remote mutations are required
 - which operations are hard errors
@@ -203,7 +212,7 @@ semantics.
 Derived per-change review state lives in `review/change_status.py`. `ReviewChangeStatus` is a pure
 classifier over local revision state, saved tracking, remote refs, and already-loaded PR data. It
 does not load state, choose a stack, or authorize mutation. Commands apply their own policy to the
-result and keep exact identity, baseline, PR, and bookmark values for concrete mutations.
+result and keep exact identity, baseline, PR, and branch values for concrete mutations.
 
 This is where most correctness lives.
 
@@ -282,6 +291,16 @@ machine:
 - `commands/_native_stack_safety.py` verifies that every active member of an overlapping native
   GitHub stack belongs to the selected local chain, without owning command policy
 
+Selected native sync uses the same fixed temporary attachment as checkout for one additional
+purpose: after a native merge rewrites the active suffix, it validates every active raw Git commit
+and parent, reobserves the whole branch set, then imports the exact top into jj. It rebases only
+trailing local descendants, abandons the replaced local active copies, and advances every adopted
+baseline together through the state store's existing pair compare-and-swap authority. It
+reobserves the branch set again before leaving the attachment. If that check fails, the checkpoint
+lets a retry adopt the newer exact chain while historical tracking remains until survivor submit
+succeeds. No review bookmark survives; the exact imported commits become the local unbookmarked
+survivor chain.
+
 State saves are atomic but not fsync durable. The saved identity prevents action on a different PR
 or branch, while the baseline records the exact reviewed commit. If a reconstructible cleanup
 write is lost, the next command rereads current state and reports or completes the remaining work.
@@ -308,18 +327,19 @@ a selected live stack. `review/observation.py` is the single policy-free batch s
 identity and baseline pairs, exact PR numbers, unique head claims, and open base-ref dependents.
 It can overlay staged restart identities for a final joint observation without changing the
 durable state or creating a second exact-PR resolution path.
+
 Ordinary close, selected cleanup, orphan cleanup, sync, and merge request only the facts their
 mutation boundary needs; `_close_actions.py` applies the shared exact-link and dependent-PR
 authorization instead of observing those facts again through a command-specific path.
 
 Repository-wide cleanup is one lifecycle-driven pass over complete identity/baseline pairs.
 It observes the exact saved PR, prepares branch and comment cleanup for a closed or merged match,
-and rereads the PR, its open base-ref dependents, local bookmark, remote ref, native membership,
-and tracking records at their mutation boundaries. Selected cleanup processes the observed stack
-head-to-base. A dry run may omit only dependents that an earlier selected action would close;
-actual cleanup never omits a live dependent. Local jj descendants remain selected-sync evidence,
-not cleanup authority. Shared code supplies observation and artifact mutation without a second
-eligibility policy.
+and rereads the PR, its unique head claim, open base-ref dependents, remote ref, native
+membership, and tracking records at their mutation boundaries. Selected cleanup processes the
+observed stack head-to-base. A dry run may omit only dependents that an earlier selected action
+would close; actual cleanup never omits a live dependent. Local jj descendants remain
+selected-sync evidence, not cleanup authority. Shared code supplies observation and artifact
+mutation without a second eligibility policy.
 
 `submit --restart` keeps the old complete pairs authoritative throughout remote and GitHub work.
 Successful replacement results remain in memory until the canonical observer freshly verifies
@@ -335,7 +355,7 @@ template records, and GitHub responses. Use typed dataclasses for in-process pla
 mutable fake-server state. Important model families include:
 
 - local stack models
-- bookmark and remote-branch models
+- remote review-branch models
 - GitHub PR and comment models
 - mutation plan and result values
 - config and tracking-state file models

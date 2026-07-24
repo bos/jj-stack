@@ -809,9 +809,7 @@ def _fixed_external_drift_scenarios() -> tuple[ExternalDriftScenario, ...]:
 def _closed_pr_after_insert_scenario() -> ExternalDriftScenario:
     return _drift_scenario(
         drifts=(DriftOperation(kind="closed_pr", label="c2"),),
-        edit_operations=(
-            StackEditOperation(kind="insert_after", label="c1", new_label="i1"),
-        ),
+        edit_operations=(StackEditOperation(kind="insert_after", label="c1", new_label="i1"),),
         hazard_class="github-external-close-with-unsubmitted-change",
         name="closed-pr-after-insert",
     )

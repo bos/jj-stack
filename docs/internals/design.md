@@ -39,7 +39,7 @@ The model is small:
 
 - one reviewable unit is one visible mutable `jj` change, identified by its full `change_id`
 - one stack is a linear chain of those changes from a chosen head back to `trunk()`
-- each change gets one bookmark, used as that change's PR head branch
+- each tracked change gets one stable remote branch, used as that change's PR head
 - the local stack is rediscovered from the `jj` DAG on every run, not from a saved parent map
 
 The only per-change state `jj-stack` saves locally is the PR and branch attached to each change
@@ -70,15 +70,12 @@ the requested native stack or ordinary PR mutation, and `jj-stack` reports the r
 
 A few `jj` properties drive this design:
 
-- There is no "current bookmark". Bookmarks do not move when you create a new commit, but
-  they do follow rewrites of the commit they are attached to.
-- A bookmark is the remote-branch boundary: a local bookmark is what gets pushed as a Git
-  branch.
 - GitHub review is still branch-based. Even in a `jj` workflow, GitHub wants a head branch
   and a base branch per PR.
-- `jj git push --change` can generate stable bookmark names from `change_id`.
-- `jj` already tracks remote bookmark positions and does the safety checks needed for
-  force-push-heavy workflows.
+- Review branches need not remain in the local `jj` view. The backing Git store can observe and
+  mutate exact remote refs while local topology remains entirely in the DAG.
+- Ordinary jj bookmarks still behave normally. `jj-stack` reserves `review/*` for its remote-only
+  transport branches and rejects locally imported names in that namespace.
 - `change_id` is the durable logical identity of a change across rewrites. The commit ID
   is not.
 - Both `jj-lib` and the CLI are moving integration surfaces; this tool keeps its
@@ -90,9 +87,8 @@ A few `jj` properties drive this design:
 
 ### Review change
 
-A review change is one visible mutable `jj` change, identified by full `change_id`. That
-is the durable identity — not the commit ID, not the bookmark name, not the current diff
-base.
+A review change is one visible mutable `jj` change, identified by full `change_id`. That is the
+durable identity — not the commit ID, not the remote branch name, not the current diff base.
 
 "Visible mutable" follows `jj`'s own revsets:
 
@@ -126,9 +122,10 @@ is no longer a simple parent-child chain.
 
 ### Pull request branch
 
-Each review change gets exactly one bookmark, used as the GitHub PR head branch. The
-bookmark name is readable to humans and stable for tooling. `jj-stack` reserves the fixed
-`review/` namespace; branches outside the complete managed grammar cannot be adopted.
+Each tracked review change gets exactly one remote Git branch, used as the GitHub PR head. The
+branch name is readable to humans and stable for tooling. `jj-stack` reserves the fixed `review/`
+namespace; branches outside the complete managed grammar cannot be adopted. Managed review
+branches do not persist as local jj bookmarks.
 
 The initial name is built from:
 
@@ -152,23 +149,30 @@ readable, and effectively unique once combined with the slug. If two resolved na
 `submit` stops; a never-submitted change can use a different subject to produce a different
 initial slug.
 
-The slug is only an input to the *initial* default name. Once a bookmark is created it is
-not automatically renamed when the commit subject changes — title churn must not cause
-branch churn during review.
+The slug is only an input to the *initial* default name. Once a review is created, its branch is
+not automatically renamed when the commit subject changes — title churn must not cause branch
+churn during review.
 
-In other words: generate once, then pin. For a tracked change,
-`ReviewIdentity.head_ref` is the only branch-name authority; ordinary commands never rename or
-replace it from discovery. For an untracked change, resolution first reuses one existing managed
-bookmark whose suffix matches the change and whose local or selected-remote target still exists;
-otherwise it generates the default. Zero or multiple candidates cannot establish identity.
+In other words: generate once, then pin. For a tracked change, `ReviewIdentity.head_ref` is the
+only branch-name authority; ordinary commands never rename or replace it from discovery. For an
+untracked change, initial submit generates the default name. After an interrupted first submit,
+recovery may reuse exactly one matching remote branch only when its suffix, full change-ID commit
+header, expected target, and absence of an existing PR jointly prove it came from that attempt.
+Zero or multiple candidates cannot establish identity.
 
-If two changes resolve to the same bookmark, `submit` stops before mutating anything.
+If two changes resolve to the same branch, `submit` stops before mutating anything.
+
+Ordinary fetches exclude `refs/heads/review/*` through the selected remote's Git refspec. An
+effective jj `remotes.<remote>.fetch-bookmarks` override would bypass that isolation, so commands
+stop and name the setting to unset. A complete managed review bookmark already imported locally
+also stops commands with explicit guidance to move any work aside and forget it. These are
+environment diagnostics, not a second source of branch identity.
 
 ### Review base
 
 The GitHub base branch for a review change is:
 
-- the parent review change's bookmark, if the parent is also being reviewed
+- the parent review change's remote branch, if the parent is also being reviewed
 - otherwise the trunk branch
 
 This is where GitHub still imposes a branch model on top of `jj`. `trunk()` defines the
@@ -207,10 +211,10 @@ These need no tool-owned state:
 - parent-child relationships
 - diff base inside the stack
 - current head commit for a change
-- whether a bookmark needs to move after a rewrite
-- whether a bookmark is ahead of its tracked remote
+- whether a remote review branch needs to move after a rewrite
 
-All of that already lives in the commit DAG, the change-ID model, and the bookmark view.
+All of that already lives in the commit DAG, the change-ID model, tracking identity, and direct
+remote observation.
 
 ### Stored in the tracking-state file
 
@@ -252,7 +256,7 @@ read that returns `404` fails without changing the cached value.
 
 A change can be in one of two tracking states:
 
-- **untracked**: no record yet. Predicted bookmark names and remote observations alone do
+- **untracked**: no record yet. Predicted branch names and remote observations alone do
   not count as tracking.
 - **tracked**: a `ReviewIdentity` record exists; the tool inspects the exact saved PR and
   branch. A complete submitted review also has a `SubmittedBaseline`.
@@ -331,8 +335,7 @@ Given a chosen head revision:
 3. Reject ambiguous shapes rather than papering over them with metadata. Also stop if any
    change in the stack still has unresolved conflicts: `submit` must not push a
    conflicted snapshot.
-4. Resolve each change's bookmark using the reuse-first order from "Pull request
-   branch" above.
+4. Resolve each change's stable remote branch using the rules from "Pull request branch" above.
 5. Resolve the GitHub host and repository from the selected remote. Its fetch and push URLs may
    differ, but must identify the same repository. For every tracked change, require the live PR
    to match its saved `ReviewIdentity` before any mutation. A remote swap, repository retarget,
@@ -342,13 +345,12 @@ Given a chosen head revision:
    only when it still equals the submitted baseline or already equals the current local commit
    after an interrupted submit pushed it. Treat that push as complete only when the live PR
    matches `ReviewIdentity` and its head SHA equals the current local commit. Any other target
-   stops before local bookmark, remote branch, or GitHub mutation.
-7. Look up GitHub PR state for those bookmarks.
+   stops before remote branch, GitHub, or tracking mutation.
+7. Look up GitHub PR state for those branches.
    - if the saved PR link disagrees with what GitHub reports, stop and require an
      explicit recovery flow rather than silently creating a replacement PR. This
-     check covers every change in the selected stack and completes before any local
-     bookmark move, remote branch push, or GitHub mutation, so a mid-stack link
-     failure cannot leave sibling changes half-submitted.
+     check covers every change in the selected stack and completes before any remote branch or
+     GitHub mutation, so a mid-stack link failure cannot leave sibling changes half-submitted.
    - by default, the PR title comes from the commit subject and the PR body from the
      remaining commit description; if there is no body, fall back to the repository's
      pull request template, and finally to the subject so the opening comment is not
@@ -413,42 +415,34 @@ Given a chosen head revision:
    Every active PR in an overlapping native GitHub stack must belong to the selected local parent
    chain. A closed-unmerged or unselected active member, overlap with multiple native stacks, or
    changed membership fails before mutation.
-9. Treat proven landed ancestors as no longer reviewable. Bottom-up for each remaining change:
-   - point the local bookmark at the current visible commit for the change
-   - treat topology changes as meaningful even when the diff is unchanged: if the parent
-     review change, bookmark target, or PR base changed, this is not a no-op
-   - if the chosen remote bookmark already points at the desired commit, treat it as up
-     to date even when the local repo has not yet tracked that remote
-   - if the local bookmark or remote bookmark is conflicted, stop and ask the user to
-     resolve the bookmark state first
-   - if the remote bookmark exists but points elsewhere, only proceed when the match is
-     already proven by local state, the saved record, or GitHub discovery; otherwise
-     stop rather than silently taking over the branch
-   - when updating exactly one existing untracked remote bookmark, do not import its old
-     target into the local bookmark before the remote update completes
-   - if a submit would update multiple remote bookmarks and any update needs the
-     untracked-remote fallback, stop before moving local bookmarks or mutating GitHub;
-     the user must fetch and track those branches first so the stack can be pushed as one
-     atomic update
+9. Treat proven landed ancestors as no longer reviewable. Build the complete desired remote-ref
+   set for the remaining changes, directly observe every current ref at the fetch URL, then
+   reobserve the whole set immediately before mutation. A tracked branch may move only from its
+   submitted baseline, its already-completed interrupted-submit target, or another exact target
+   proven by the recovery rules. A new branch requires expected absence. Any mismatch stops the
+   entire update rather than taking over the branch.
+   - treat topology changes as meaningful even when the diff is unchanged: if the parent review
+     change, remote target, or PR base changed, this is not a no-op
    - before pushing rewritten review branches, protect existing open PRs from GitHub's
      reachability-based close/merge behavior: for every open PR whose head ref is in
      the planned push set, simulate the post-push commit IDs of head and base; if the
      post-push head is reachable from the post-push base, first retarget that PR to
      the resolved trunk branch so the push lands without GitHub seeing a head fully
      contained in its base. The simulator resolves a base ref through the push set
-     first, then through the local view of the push remote's tracked target. When
-     neither is available — for example, a PR whose base lives on a remote that has
-     not been imported into the push remote's tracking — the predictor skips that PR
-     rather than guess; the post-submit closure check below is the catch-all for
-     anything the predictor cannot model.
-   - otherwise push the bookmark under an exact expected-target lease
+     first, then through a direct observation of the push remote. When neither is
+     available, the predictor skips that PR rather than guess; the post-submit closure
+     check below is the catch-all for anything the predictor cannot model
+   - send the complete changed-ref set in one direct `git push --atomic` to the push URL, with an
+     exact `force-with-lease` expectation for every ref. There is no sequential fallback,
+     persistent local review bookmark, or post-push fetch
+   - process PR creation and updates bottom-up after that atomic branch transition
    - compute the GitHub base branch:
      - the nearest still-open ancestor PR in the chain, if any
      - otherwise the resolved trunk branch
    - if an ancestor PR has merged but the local parentage still reflects the old review stack,
      stop and point at selected `sync`; `submit` does not guess how rewritten merge results map
      back to the local DAG
-   - create or update the PR for `head bookmark → base bookmark`
+   - create or update the PR for `head branch → base branch`
    - creating a review writes its `ReviewIdentity` and `SubmittedBaseline` together
    - updating a review advances only its baseline after the live PR matches the saved identity,
      its head SHA equals the current local commit being recorded, and the push succeeded or an
@@ -510,19 +504,19 @@ When review identity is unclear, `jj-stack` is conservative.
 
 If `submit` cannot prove that a change still corresponds to the same review branch and
 PR, it stops with a targeted diagnostic rather than guessing. It does not silently open
-a new PR just because a saved link, bookmark, or GitHub state is missing or damaged.
+a new PR just because a saved link, branch, or GitHub state is missing or damaged.
 
 The recovery surface is explicit and narrow:
 
-- `jj-stack view --fetch [<revset>]` refreshes remembered remote-branch observations
-  before inspecting GitHub PR state, then reports the stack and any saved or discovered
-  PR state without mutating GitHub or local bookmarks
+- `jj-stack view --fetch [<revset>]` refreshes ordinary fetched repository state and directly
+  observes saved review branches before inspecting GitHub PR state. It reports the stack and
+  saved PR state without mutating GitHub or importing managed review branches
 - `jj-stack relink <pr> <revset>` is a repair command. It explicitly reattaches an
-  existing PR (and its same-repo head branch) to a specific `jj` change. It pins the
-  branch locally, saves the PR identity, and records the fetched remote branch target
-  as the submitted baseline. Replacing any stale saved baseline is what lets a later
-  `submit` update the relinked review rather than rejecting that branch or opening a
-  replacement.
+  existing PR (and its same-repo head branch) to a specific `jj` change. It directly observes the
+  exact branch, reads the remote commit object's full change ID without creating a ref, and saves
+  the PR identity and exact remote target as the submitted baseline. Replacing any stale saved
+  baseline is what lets a later `submit` update the relinked review rather than rejecting that
+  branch or opening a replacement.
 - `jj-stack submit --restart <revset>` replaces stale or unusable reviews while keeping the
   selected `jj` changes. It derives each replacement branch deterministically from the saved
   head ref, old PR number, and change ID. It retains every old identity and baseline until the
@@ -539,12 +533,12 @@ any locally known review identity for them.
 
 It is local-first. If a change has never been locally attached to review, `view`
 reports it as not submitted and does not query GitHub for speculative PR matches based
-only on predicted bookmark names or fetched remote observations. It does not create
-local tracking for a never-tracked change, including bookmark-only saved entries.
+only on predicted branch names or remote observations. It does not create local tracking for a
+never-tracked change.
 
 `jj-stack view --fetch [<revset> ...] [--pull-request <pr> ...]` is the same command,
-but it refreshes remote bookmark observations first so the report reflects the latest
-remote state before checking already-known GitHub PR state.
+but it refreshes ordinary fetched state and directly observes saved remote review refs before
+checking already-known GitHub PR state. Ordinary fetch continues to exclude `review/*`.
 
 When more than one selector is given, `view` inspects them in command-line order,
 suppresses exact duplicate stack reports, continues past selector-local resolution
@@ -554,10 +548,10 @@ propagates with its category code (for example, unsupported stack shape exits `2
 instead of degrading to the incomplete-report code, so the exit code for a drifted state
 does not depend on whether the selection was explicit.
 
-Fetched GitHub state often produces extra visible revisions for merged changes, so
-`view` does not insist that every visible revision still forms one supported review
-stack. It walks the parent chain, tolerates immutable or divergent side copies created
-by fetching merged PR branches, and reports the stack revision for each logical change.
+Fetched repository state can expose extra visible revisions for merged changes, so `view` does
+not insist that every visible revision still forms one supported review stack. It walks the
+parent chain, tolerates immutable or divergent side copies exposed through fetched history, and
+reports the stack revision for each logical change.
 If a merged PR still appears on the stack, `view` continues and surfaces that row as
 "cleanup needed" rather than calling the stack broken. If the local history no longer
 has any supported linear walk after refresh, `view` stops with a targeted diagnostic
@@ -569,8 +563,8 @@ concise — one effective summary per change rather than dumping saved and remot
 diagnostics inline.
 
 With `--json`, `view` prints a structured version of that same per-change summary. The
-payload includes the selected stacks, their changes, review bookmark names, PR identity,
-and concise review status. It does not expose cache state, raw remote bookmark targets,
+payload includes the selected stacks, their changes, saved review branch names, PR identity,
+and concise review status. It does not expose cache state, raw remote branch targets,
 or saved tracking records; command failures and incomplete inspection still use stderr
 and the process exit status. The machine-readable schema for the public output lives in
 [`docs/json-output.schema.json`](../json-output.schema.json).
@@ -683,12 +677,13 @@ lock is taken so an idle picker never blocks other commands.
 
 - without `--fetch`, use only commits and PR-backed state already available locally
 - resolve from an explicit PR or an explicit local stack
-- with `--fetch`, refresh remote bookmark observations and (for an explicit PR) fetch
-  only the branches needed for the stack, so a remote-only reviewed stack can still be
-  attached locally
+- for an explicit PR, require the configured repository, complete managed branch grammar, exact
+  PR base chain, and unique PR head claims to identify one stack
+- with `--fetch`, refresh ordinary repository state, directly observe the selected top review
+  ref, and import only that exact ref through a fixed temporary Git ref
+- verify the imported DAG against the exact PR chain and every PR's directly observed remote
+  target, then remove the temporary jj bookmark and Git ref before continuing
 - refresh the tracking entry only for that exact stack
-- create or refresh local bookmarks only when the target is exact, same-repo, and
-  unambiguous
 - when `--fetch` pulls in a remote-selected stack, print the fetched tip rather than
   changing the workspace
 
@@ -699,21 +694,20 @@ lock is taken so an idle picker never blocks other commands.
 - check out the fetched stack into the current workspace
 - open, close, or mutate PRs
 - delete local history
+- leave managed review bookmarks or temporary import refs behind
 
 Failure guidance stays specific:
 
-- if the PR head branch is missing locally, point the user at `checkout --fetch`
+- if the PR head revision is unavailable locally, point the user at `checkout --fetch`
 - if the PR head branch is missing on the remote, cross-repo, or ambiguous, stop and
   explain that the stack cannot be connected safely
 - if multiple PRs match the same head branch, point at `view --fetch` and `relink`
-- if any checked-out revision would need a freshly generated bookmark instead of an exact
-  discovered name, stop rather than inventing a local match
+- if any checked-out revision lacks an exact discovered remote branch, stop rather than inventing
+  a local match
 - if the fetched stack shape is unsupported locally, point at selected `sync` only when the issue
   is proven landed ancestry rather than remote identity
 - if `checkout` defaulted to the current stack and that stack has no matching PR, say so
   rather than silently doing nothing
-- if a local bookmark already points elsewhere, stop and explain the conflict rather
-  than silently taking it over
 - if a stale saved entry disagrees with a freshly fetched link, the fetched link wins
   only when it is exact and unambiguous; otherwise stop and surface the conflicting
   identities rather than partially overwriting
@@ -732,11 +726,16 @@ repository-wide recovery mode.
    rewritten merge result on trunk" rules below.
 4. Stop before rewriting if removing an ancestor would discard unpublished local work, if the
    remaining changes are nonlinear, or if an unreviewed change sits between reviewed changes.
-5. Rebase only the selected remaining changes onto fetched trunk. Trailing unreviewed work
-   remains local and sibling stacks are untouched.
+5. Rebase only the selected remaining changes onto fetched trunk. When a native merge rewrote
+   the active suffix, transiently import its freshly verified exact top, validate the full active
+   change-ID and first-parent chain from trunk, adopt that chain, and rebase only trailing local
+   descendants onto it. Atomically advance the adopted suffix's baselines before the final branch
+   recheck so a later retry can distinguish those GitHub-reported snapshots from unpublished
+   edits. Trailing unreviewed work remains local and sibling stacks are untouched.
 6. Update only existing selected reviews. Never create a PR or publish a never-submitted change.
-7. Remove tracking for a landed change only after no other visible stack still needs it;
-   otherwise report each dependent head and its exact selected `sync` command.
+7. Remove tracking for a landed change only after survivor updates succeed and no other visible
+   stack still needs it; otherwise report each dependent head and its exact selected `sync`
+   command.
 
 `sync` does not rebase onto newer trunk merely because trunk advanced; explicit `jj rebase` owns
 that workflow. With `--dry-run`, it prints the landed classification and any cleanup or rebase
@@ -809,29 +808,28 @@ Without `--cleanup`, `unstack`:
 - closes the open PRs the tool is already tracking for the stack
 - skips already-merged or already-closed PRs rather than treating them as new close
   targets
-- leaves local bookmarks and remote PR branches in place
+- leaves remote PR branches in place
 - retains each exact `ReviewIdentity` and `SubmittedBaseline`, so later cleanup or
   `submit --restart` can still prove what it is replacing
 
 With `--local`, `unstack` removes only the saved local tracking records for the selected
 stack: the identity and baseline pair is removed together. It does not close PRs, delete remote
-branches, delete local bookmarks, or inspect GitHub. The local `jj` changes remain in place. This
-mode is for checkouts that should stop treating the stack as locally tracked while leaving the
-GitHub review stack alone. It cannot be combined with `--cleanup`.
+branches, or inspect GitHub. The local `jj` changes remain in place. This mode is for checkouts
+that should stop treating the stack as locally tracked while leaving the GitHub review stack
+alone. It cannot be combined with `--cleanup`.
 
 With `--cleanup`, `unstack` also performs conservative post-close cleanup for review
 artifacts the tool can verify belong to the stack:
 
 - delete remote PR branches on the configured remote, only when verified to belong to
   the stack
-- forget local bookmarks, only when verified to belong to the stack
 - delete managed navigation and overview comments belonging to the stack
 - remove the identity and baseline pair only when no same-repository open PR still names the
   saved review branch as its base
 
-If the tool cannot verify the exact saved identity, submitted baseline, live PR, local bookmark,
-and remote branch needed for a deletion, `--cleanup` refuses it rather than falling back to
-namespace or branch-name heuristics.
+If the tool cannot verify the exact saved identity, submitted baseline, live PR, unique branch
+claim, dependent-stack state, native membership, and remote target needed for a deletion,
+`--cleanup` refuses it rather than falling back to namespace or branch-name heuristics.
 
 For branch deletion and tracking retirement, the dependent-PR rule is exact: every open PR in the
 same GitHub repository whose `base.ref` equals the candidate `ReviewIdentity.head_ref` blocks the
@@ -839,7 +837,10 @@ cleanup. The PR need not have jj-stack tracking or a local change; an untracked 
 still a dependent. Selected stack cleanup works from the head toward the base so an upper selected
 PR is closed before its parent is reconsidered. A dry run may treat only earlier selected PRs in
 that order as closed. The real command never makes that assumption and observes GitHub again at
-each mutation boundary.
+each mutation boundary. Immediately before deletion it also requires the exact PR to remain
+closed or merged, exactly one tracked change to claim the head branch, and no active native-stack
+membership. It then rereads the remote ref and deletes only its exact submitted target under a
+lease.
 
 `unstack` is idempotent:
 
@@ -872,11 +873,11 @@ reobserves all replacement PRs and branches. Each one must still name the config
 unique owner/head ref, exact selected commit, planned base, and exact remote branch target. One
 compare-and-swap then replaces every selected identity/baseline pair in a single state-file write.
 
-An existing replacement branch is usable only when its local and remote targets are absent or
-equal the exact selected commit. A unique open PR already using the deterministic replacement
-branch is recovered after an interrupted restart only when its repository, owner, head ref, head
-commit, base, and live remote target still equal the current plan. This is a narrow retry rule,
-not general PR discovery or implicit relinking. Any mismatch or ambiguous/terminal PR blocks the
+An existing replacement branch is usable only when its remote target is absent or equals the
+exact selected commit. A unique open PR already using the deterministic replacement branch is
+recovered after an interrupted restart only when its repository, owner, head ref, head commit,
+base, and live remote target still equal the current plan. This is a narrow retry rule, not
+general PR discovery or implicit relinking. Any mismatch or ambiguous/terminal PR blocks the
 restart and directs the user to inspect it and use `relink` only when it is the intended review.
 
 Any failure before or during the final state write leaves every old pair in place. Rerunning the
@@ -889,8 +890,8 @@ mutates branches, PRs, comments, native membership, or tracking.
 
 This design behaves well under normal `jj` rewrite-heavy workflows:
 
-- **Rebase**: the commit ID changes, the `change_id` stays stable, and the bookmark
-  follows the rewrite. Re-running `submit` updates the existing PR.
+- **Rebase**: the commit ID changes and the `change_id` stays stable. Re-running `submit` moves
+  the saved remote review branch to the rewritten commit and updates the existing PR.
 - **Squash or amend**: same as rebase. If the workflow then abandons a now-empty
   change (the usual way to collapse two reviewed changes into one), Abandon rules
   apply to that change.
@@ -962,8 +963,8 @@ identity still matters is at the GitHub boundary, because GitHub wants:
 - one head branch per PR
 - one base branch per PR
 
-So the tool needs bookmark-backed PR branches, but it does not need a saved parent
-graph.
+So the tool needs remote PR branches, but it does not need persistent local review bookmarks or a
+saved parent graph.
 
 ## CLI shape
 
@@ -1047,30 +1048,28 @@ prevents it. Any new mutation must be added to this list, and any without a
 documented defense must either prove the destructive default does not apply or add
 one before merging.
 
-- **Push of a review-branch ref** (`jj git push --bookmark`). When the push lands,
-  GitHub re-evaluates each open PR and auto-closes (as merged) any whose head ref
-  is now contained in its base ref. A reordered stack can make a stale stacked base
-  contain a review-branch head it did not contain before. Defense: before pushing
-  rewritten review branches, `submit` simulates the post-push commit IDs of every
-  open PR's head and base refs and asks `jj` whether the post-push head is reachable
-  from the post-push base; any such PR is pre-retargeted to the resolved trunk
-  branch, and the normal post-push PR sync restores the final stacked base. As a
-  defense-in-depth backstop for cases the predictor cannot model, `submit` refetches
-  PR states at the end of the run and raises a loud error naming any PR that
-  transitioned from open to closed or to missing during this submit.
+- **Push of review-branch refs** (one direct atomic Git push). When the push lands, GitHub
+  re-evaluates each open PR and auto-closes (as merged) any whose head ref is now contained in its
+  base ref. A reordered stack can make a stale stacked base contain a review-branch head it did
+  not contain before. Defense: `submit` first directly observes every ref, plans the complete
+  transition, and simulates the post-push commit IDs of every open PR's head and base refs. It
+  pre-retargets any at-risk PR to trunk, reobserves every ref immediately before mutation, then
+  sends one `git push --atomic` to the push URL with an exact per-ref lease. The normal post-push
+  PR sync restores the final stacked bases. As a defense-in-depth backstop for cases the predictor
+  cannot model, `submit` refetches PR states at the end and names any PR that transitioned from
+  open to closed or missing.
 
-- **Deletion of a remote review branch** (`jj git push --delete`, via
-  `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the
-  deleted branch. Defense: branch deletion is invoked only by `cleanup`, `unstack`
-  (including the `unstack --cleanup --pull-request <n>` orphan sub-mode), under an exact ref
-  lease. The saved PR must still exist, match `ReviewIdentity`, and be closed or merged. No
-  same-repository open PR may have `base.ref == ReviewIdentity.head_ref`; this includes PRs with
-  no jj-stack tracking or local change. Such a dependent keeps the branch and the identity and
-  baseline pair.
+- **Deletion of a remote review branch** (the same direct leased mutation transport). GitHub
+  closes any PR whose head ref points at the deleted branch. Defense: branch deletion is invoked
+  only by `cleanup` or `unstack --cleanup` under an exact ref lease. Immediately before deletion,
+  the saved PR must still exist, match `ReviewIdentity`, and be closed or merged; the head branch
+  must have one tracked claim; no same-repository open PR may use it as a base; and no active
+  native-stack member may still require it. The exact remote target is then reread and must equal
+  the submitted baseline. A failed check keeps the branch and identity/baseline pair.
 
 - **`update_pull_request(base=…)`**. Setting a PR base to a branch that already
   contains the PR's head triggers GitHub's merged auto-close. Defense: in `submit`,
-  base is set bottom-up to the parent change's bookmark — an ancestor of the head,
+  base is set bottom-up to the parent change's remote branch — an ancestor of the head,
   not a descendant — and the head ref has already been pushed to its updated content.
   A native member is unstacked under an exact fresh membership check before any base
   change. In ordinary `merge`, a candidate is retargeted to trunk immediately before
@@ -1083,7 +1082,7 @@ one before merging.
 
 - **`create_pull_request`**. Creating a PR with a base that already contains the
   head would trigger an immediate merged auto-close. Defense: bottom-up creation
-  order means the parent's bookmark always reflects an ancestor of the new PR's
+  order means the parent's remote branch always reflects an ancestor of the new PR's
   head before the child PR is created.
 
 - **`close_pull_request`**. Destructive by design. Defense: `unstack`, including the
@@ -1150,7 +1149,6 @@ local-history repair command. Selected `sync` owns rebasing after landed ancesto
 Cleanup may remove only derived artifacts named by one complete identity and baseline pair:
 
 - managed comments rediscovered by an unambiguous content marker
-- local managed bookmarks whose exact current target is verified safe to remove
 - remote managed review refs under an exact expected-target lease
 - obsolete identity/baseline records only after no same-repository open PR uses the saved head
   ref as its base
@@ -1168,17 +1166,14 @@ equals the saved `head_ref`. This check includes untracked and orphaned PRs. Loc
 do not replace it: descendant visibility is authority for selected `sync`, not for deleting a
 GitHub branch or retiring review tracking.
 
-Immediately before deleting branch or bookmark artifacts, cleanup reloads the exact saved PR, its
-unique head claim, and its open base dependents. Comment deletion additionally verifies its
-managed body marker. It then rereads the local bookmark and exact remote ref immediately before
-applying the planned cleanup. A changed target or plan blocks the mutation. The remote deletion
-carries an exact submitted-commit lease. Cleanup observes the PR and base dependents again
-immediately before retiring the identity/baseline pair, and retires it only after all authorized
-artifact cleanup succeeds.
-
-In a native repository, cleanup reads current membership before deleting a branch for a known PR.
-An active member keeps its branch. A historical merged member does not block otherwise authorized
-landed-branch cleanup merely because GitHub retains it in the resource.
+Immediately before deleting a branch, cleanup reloads the exact saved PR, its unique head claim,
+and its open base dependents. In a native repository it also reads current membership: an active
+member keeps its branch, while a historical merged member does not block otherwise authorized
+cleanup merely because GitHub retains it in the resource. Comment deletion separately verifies
+its managed body marker. Cleanup then rereads the exact remote ref and deletes it only when it
+still equals the submitted commit, using that target as the lease. It repeats exact PR, claim,
+dependent, native-membership, and remote-absence checks before retiring the identity/baseline
+pair, and retires it only after all authorized artifact cleanup succeeds.
 
 Malformed, obsolete, absent, ambiguous, or individually failing records are reported and skipped
 without blocking independent cleanup work. Failed cleanup leaves safe leftovers and never changes
@@ -1282,7 +1277,19 @@ selected `sync` needed after trunk is restored. Tracking is removed only after n
 dependent stack still needs the saved link; otherwise preserve it and name every dependent
 selected sync.
 
-Broader branch, bookmark, comment, and stale-record removal remains the job of `cleanup`.
+When a native merge rewrites the active suffix, selected `sync` adopts GitHub's exact surviving
+commits instead of independently replaying the same diffs. It fetches the exact top into the fixed
+temporary Git ref, validates every raw Git change ID and first parent down to fetched trunk, then
+reobserves every active review branch immediately before importing the top into jj. It rebases
+only trailing local descendants onto that exact top, abandons the replaced local active copies,
+and atomically advances every adopted survivor baseline. It then reobserves the complete branch
+set before removing the temporary ref and bookmark. A branch move at that last check preserves
+the historical tracking and the adopted baseline, so retry can adopt the newer exact remote chain
+without mistaking the earlier GitHub-reported snapshot for unpublished local work. Historical
+tracking is retired only after the survivor update succeeds. The imported commits remain ordinary
+unbookmarked local history.
+
+Broader branch, comment, and stale-record removal remains the job of `cleanup`.
 
 ## Tracking-state file format
 
@@ -1364,7 +1371,7 @@ The central insight is simple:
 
 In a branch-first review tool, stack metadata often becomes part of the core model. In
 `jj`, the stack model is already the commit DAG. The tool's job is just to map that DAG
-to GitHub's branch-based PR API with stable bookmarks.
+to GitHub's branch-based PR API with stable remote branches.
 
 ## References
 

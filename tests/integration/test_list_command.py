@@ -51,7 +51,7 @@ def test_list_json_reports_public_stack_rows(
 
     change = row["changes"][0]
     assert change["change_id"] == change_id
-    assert change["bookmark"].startswith("review/feature-1-")
+    assert change["branch"].startswith("review/feature-1-")
     assert change["pull_request"]["number"] == 1
     assert change["status"] == "open"
     assert "head_change_id" not in row
@@ -72,6 +72,7 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     orphaned_change_id = stack.revisions[0].change_id
     state = ReviewStateStore.for_repo(repo).load()
     orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
+    orphaned_branch = state.review_identities[orphaned_change_id].head_ref
 
     run_command(["jj", "abandon", orphaned_change_id], repo)
 
@@ -95,6 +96,7 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     assert len(orphan_rows) == 1
     orphan = orphan_rows[0]
     assert orphan["change_id"] == orphaned_change_id
+    assert orphan["branch"] == orphaned_branch
     assert orphan["subject"] == "local change missing"
     assert orphan["status"] == "orphan"
     assert orphan["pull_request"]["number"] == orphaned_pr_number
@@ -189,6 +191,17 @@ def test_list_extends_tracked_stack_through_unsubmitted_local_descendant(
     assert "PR" in captured.out
     assert "1" in captured.out
 
+    exit_code = run_main(repo, config_path, "list", "--json")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert_json_output_matches_schema(payload, "list")
+    changes = payload["rows"][0]["changes"]
+    unsubmitted = next(change for change in changes if change["change_id"] == head_change_id)
+    assert unsubmitted["status"] == "unsubmitted"
+    assert "branch" not in unsubmitted
+
 
 def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
     tmp_path,
@@ -276,7 +289,7 @@ def test_list_reports_partial_approval_for_ready_prefix_only(
     assert "1 approved, open" in captured.out
 
 
-def test_list_batches_github_lookup_across_repo_stacks(
+def test_list_batches_remote_and_github_lookup_across_repo_stacks(
     tmp_path,
     monkeypatch,
     capsys,
@@ -315,6 +328,14 @@ def test_list_batches_github_lookup_across_repo_stacks(
         modules=("jj_stack.commands.list_", "jj_stack.review.status"),
         client_type=CountingGithubClient,
     )
+    original_list_remote_branches = JjClient.list_remote_branches
+    remote_branch_calls: list[tuple[str, ...]] = []
+
+    def list_remote_branches_once(self, *, remote, patterns=()):
+        remote_branch_calls.append(tuple(patterns))
+        return original_list_remote_branches(self, remote=remote, patterns=patterns)
+
+    monkeypatch.setattr(JjClient, "list_remote_branches", list_remote_branches_once)
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -326,6 +347,9 @@ def test_list_batches_github_lookup_across_repo_stacks(
     assert len(CountingGithubClient.pull_request_lookup_calls) == 1
     assert len(CountingGithubClient.pull_request_lookup_calls[0]) == 2
     assert CountingGithubClient.review_decision_calls == []
+    assert len(remote_branch_calls) == 1
+    assert len(remote_branch_calls[0]) == 2
+    assert all(pattern.startswith("refs/heads/review/") for pattern in remote_branch_calls[0])
 
 
 def test_list_reports_no_stacks_when_state_is_empty(

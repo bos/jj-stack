@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal
 
 import jj_stack.console as console
 import jj_stack.ui as ui
+from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -17,16 +18,10 @@ from jj_stack.github.stack_comments import (
     delete_stack_comment,
     stack_comment_label,
 )
-from jj_stack.jj.client import JjClient
-from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
+from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
-from jj_stack.review.bookmarks import (
-    bookmark_cleanup_allowed,
-    classify_local_bookmark_forget,
-    local_bookmark_forget_blocked_body,
-)
-from jj_stack.review.change_status import classify_review_change
+from jj_stack.review.branches import review_branch_matches_change
 from jj_stack.review.observation import (
     RepositoryObservation,
     observe_reviews,
@@ -37,25 +32,6 @@ from jj_stack.ui import Message, plain_text
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
 CloseActionStatus = Literal["applied", "blocked", "planned"]
 type CloseActionBody = Message
-
-
-@dataclass(frozen=True, slots=True)
-class BookmarkCleanupPlan:
-    """Resolved bookmark cleanup actions for one cached change."""
-
-    local_forget: bool
-    remote_delete: bool
-    blocked: bool = False
-
-
-class BookmarkCleanupRun(Protocol):
-    """Execution state needed to apply bookmark cleanup mutations."""
-
-    @property
-    def dry_run(self) -> bool: ...
-
-    @property
-    def jj_client(self) -> JjClient: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +110,11 @@ def authorize_tracked_review(
             reason = (
                 t"cannot inspect saved PR #{pull_request_number} because its live PR and head "
                 t"no longer uniquely match {ui.bookmark(review_identity.head_ref)}"
+            )
+        elif pull_request.head.sha != submitted_baseline.commit_id:
+            reason = (
+                t"cannot mutate saved PR #{pull_request_number} because its head no longer "
+                t"matches the saved submitted commit"
             )
         elif pull_request.state not in allowed_states:
             reason = (
@@ -459,110 +440,84 @@ def _action_presentation(
     return ("  ?", None, None)
 
 
-def plan_bookmark_cleanup(
+def plan_review_cleanup(
     *,
-    bookmark: str,
-    bookmark_state: BookmarkState,
-    review_identity: ReviewIdentity,
+    allowed_states: frozenset[str],
     change_id: str,
-    local_commit_id: str | None,
-    remote_commit_id: str | None,
-    record_action: Callable[[CloseAction], None],
-    remote_name: str | None,
-) -> BookmarkCleanupPlan:
-    """Validate managed branch identity and decide which cleanup mutations are safe."""
+    observation: RepositoryObservation,
+    preview_closed_dependents: frozenset[int] = frozenset(),
+    retry_command: str = "cleanup",
+    review_identity: ReviewIdentity,
+    submitted_baseline: SubmittedBaseline,
+) -> tuple[GithubPullRequest | None, ReviewRefUpdate | None, CloseAction | None]:
+    """Authorize exact cleanup facts and derive at most one leased ref deletion."""
 
-    if not bookmark_cleanup_allowed(
-        bookmark=bookmark,
+    pull_request, blocker = authorize_tracked_review(
+        allowed_states=allowed_states,
         change_id=change_id,
+        observation=observation,
+        preview_closed_dependents=preview_closed_dependents,
+        require_no_open_dependents=True,
+        retry_command=retry_command,
+        review_identity=review_identity,
+        submitted_baseline=submitted_baseline,
+    )
+    if blocker is not None or pull_request is None:
+        return pull_request, None, blocker
+    configured_repository = observation.configured_repository
+    if (
+        observation.remote is None
+        or configured_repository is None
+        or configured_repository.repository_key != review_identity.repository_key
     ):
-        record_action(
+        return (
+            pull_request,
+            None,
+            CloseAction(
+                kind="remote branch",
+                body=t"cannot resolve the configured remote for saved PR "
+                t"#{review_identity.pr_number}",
+                status="blocked",
+            ),
+        )
+    branch = review_identity.head_ref
+    if not review_branch_matches_change(branch, change_id):
+        return (
+            pull_request,
+            None,
             CloseAction(
                 kind="tracking",
-                body=t"cannot clean up {ui.bookmark(bookmark)} because it does not match "
+                body=t"cannot clean up {ui.bookmark(branch)} because it does not match "
                 t"change {ui.change_id(change_id)}",
                 status="blocked",
-            )
+            ),
         )
-        return BookmarkCleanupPlan(
-            blocked=True,
-            local_forget=False,
-            remote_delete=False,
+    remote_target = observation.reviews[change_id].remote_review_target
+    if remote_target is not None and remote_target != submitted_baseline.commit_id:
+        return (
+            pull_request,
+            None,
+            CloseAction(
+                kind="remote branch",
+                body=t"cannot delete {ui.bookmark(branch)} because it "
+                t"already points to a different revision",
+                status="blocked",
+            ),
         )
-
-    local_forget = False
-    remote_delete = False
-    local_conflict = False
-    remote_conflict = False
-    branch_label = f"{bookmark}@{remote_name}" if remote_name is not None else bookmark
-
-    match classify_local_bookmark_forget(
-        bookmark_state=bookmark_state,
-        expected_commit_id=local_commit_id,
-    ):
-        case "conflicted" | "diverged" as local_safety:
-            record_action(
-                CloseAction(
-                    kind="local bookmark",
-                    body=local_bookmark_forget_blocked_body(bookmark, local_safety),
-                    status="blocked",
-                )
-            )
-            local_conflict = True
-        case "safe":
-            local_forget = True
-        case _:
-            pass
-
-    remote_state = bookmark_state.remote_target(remote_name) if remote_name is not None else None
-    if remote_commit_id is not None:
-        review_status = classify_review_change(
-            commit_id=remote_commit_id,
-            local="orphaned",
-            pull_request_lookup=None,
-            remote_state=remote_state,
-            review_identity=review_identity,
+    update = (
+        None
+        if remote_target is None
+        else ReviewRefUpdate(
+            branch=branch,
+            expected_target=submitted_baseline.commit_id,
+            desired_target=None,
         )
-        if review_status.remote_branch == "conflicted":
-            record_action(
-                CloseAction(
-                    kind="remote branch",
-                    body=t"cannot delete {ui.bookmark(branch_label)} because the remote "
-                    t"bookmark is conflicted",
-                    status="blocked",
-                )
-            )
-            remote_conflict = True
-        elif (
-            review_status.remote_branch != "absent"
-            and review_status.remote_branch_matches_commit is not True
-        ):
-            record_action(
-                CloseAction(
-                    kind="remote branch",
-                    body=t"cannot delete {ui.bookmark(branch_label)} because it already "
-                    t"points to a different revision",
-                    status="blocked",
-                )
-            )
-            remote_conflict = True
-        elif review_status.remote_branch_matches_commit is True:
-            remote_delete = True
-
-    if local_conflict:
-        remote_delete = False
-    if remote_conflict:
-        local_forget = False
-    return BookmarkCleanupPlan(
-        blocked=local_conflict or remote_conflict,
-        local_forget=local_forget,
-        remote_delete=remote_delete,
     )
+    return pull_request, update, None
 
 
 async def native_stack_cleanup_blocker(
     *,
-    delete_remote_branch: bool,
     github_client: GithubClient,
     persist: bool,
     pull_number: int,
@@ -570,12 +525,10 @@ async def native_stack_cleanup_blocker(
 ) -> CloseAction | None:
     """Fail closed when current native membership still needs a review branch."""
 
-    if not delete_remote_branch:
-        return None
     try:
-        await GithubStackSelection(
-            github_client, (pull_number,), state_store
-        ).require_unstacked(persist=persist)
+        await GithubStackSelection(github_client, (pull_number,), state_store).require_unstacked(
+            persist=persist
+        )
     except CliError as error:
         return CloseAction(kind="remote branch", body=str(error), status="blocked")
     return None
@@ -584,119 +537,101 @@ async def native_stack_cleanup_blocker(
 async def authorize_current_review_cleanup(
     *,
     change_id: str,
-    delete_remote_branch: bool,
+    context: CommandContext,
+    expected_update: ReviewRefUpdate | None,
     github_client: GithubClient,
+    remote_name: str,
     retry_command: str = "cleanup",
     review_identity: ReviewIdentity,
-    state_store: ReviewStateStore,
     submitted_baseline: SubmittedBaseline,
 ) -> CloseAction | None:
     """Authorize one review cleanup against every fresh remote authority."""
 
-    _pull_request, blocker = await authorize_current_tracked_pull_request(
+    current_update, blocker = await prepare_current_review_cleanup(
         allowed_states=frozenset({"closed", "merged"}),
         change_id=change_id,
+        context=context,
         github_client=github_client,
-        require_no_open_dependents=True,
+        remote_name=remote_name,
         retry_command=retry_command,
         review_identity=review_identity,
-        state_store=state_store,
         submitted_baseline=submitted_baseline,
     )
     if blocker is not None:
         return blocker
-    return await native_stack_cleanup_blocker(
-        delete_remote_branch=delete_remote_branch,
+    if current_update != expected_update:
+        return CloseAction(
+            kind="remote branch",
+            body=t"remote branch {ui.bookmark(review_identity.head_ref)} changed during "
+            t"cleanup; reload and retry",
+            status="blocked",
+        )
+    return None
+
+
+async def prepare_current_review_cleanup(
+    *,
+    allowed_states: frozenset[str],
+    change_id: str,
+    context: CommandContext,
+    github_client: GithubClient,
+    remote_name: str,
+    retry_command: str = "cleanup",
+    review_identity: ReviewIdentity,
+    submitted_baseline: SubmittedBaseline,
+) -> tuple[ReviewRefUpdate | None, CloseAction | None]:
+    """Freshly authorize one cleanup and derive its exact leased ref deletion."""
+
+    try:
+        observation = await observe_reviews(
+            change_ids=(change_id,),
+            context=context,
+            github_client=github_client,
+            include_open_dependents=True,
+            remote_name=remote_name,
+        )
+    except GithubClientError:
+        return None, github_observation_blocker()
+    _pull_request, update, blocker = plan_review_cleanup(
+        allowed_states=allowed_states,
+        change_id=change_id,
+        observation=observation,
+        retry_command=retry_command,
+        review_identity=review_identity,
+        submitted_baseline=submitted_baseline,
+    )
+    if blocker is not None:
+        return None, blocker
+    blocker = await native_stack_cleanup_blocker(
         github_client=github_client,
         persist=False,
         pull_number=review_identity.pr_number,
-        state_store=state_store,
+        state_store=context.state_store,
     )
+    return update, blocker
 
 
-def apply_bookmark_cleanup(
+def apply_remote_branch_cleanup(
     *,
-    bookmark: str,
-    change_id: str,
-    cleanup_plan: BookmarkCleanupPlan,
-    local_commit_id: str | None,
-    remote_commit_id: str | None,
+    dry_run: bool,
+    jj_client: JjClient,
     record_action: Callable[[CloseAction], None],
-    remote_name: str | None,
-    review_identity: ReviewIdentity,
-    run: BookmarkCleanupRun,
+    remote_name: str,
+    update: ReviewRefUpdate | None,
 ) -> bool:
-    """Re-read, then execute validated bookmark cleanup mutations."""
+    """Execute one pre-authorized remote branch deletion with an exact lease."""
 
-    dry_run = run.dry_run
-    if not dry_run:
-        latest_state = run.jj_client.get_bookmark_state(bookmark)
-        if remote_name is not None:
-            remote_branches = run.jj_client.list_remote_branches(
+    if update is not None:
+        if not dry_run:
+            jj_client.mutate_remote_review_refs(
                 remote=remote_name,
-                patterns=(f"refs/heads/{bookmark}",),
+                updates=(update,),
             )
-            remote_target = remote_branches.get(bookmark)
-            other_remotes = tuple(
-                state for state in latest_state.remote_targets if state.remote != remote_name
-            )
-            latest_state = latest_state.model_copy(
-                update={
-                    "remote_targets": (
-                        *other_remotes,
-                        RemoteBookmarkState(
-                            remote=remote_name,
-                            targets=(() if remote_target is None else (remote_target,)),
-                        ),
-                    )
-                }
-            )
-        latest_plan = plan_bookmark_cleanup(
-            bookmark=bookmark,
-            bookmark_state=latest_state,
-            change_id=change_id,
-            local_commit_id=local_commit_id,
-            record_action=record_action,
-            remote_commit_id=remote_commit_id,
-            remote_name=remote_name,
-            review_identity=review_identity,
-        )
-        if latest_plan.blocked:
-            return False
-        if latest_plan != cleanup_plan:
-            record_action(
-                CloseAction(
-                    kind="tracking",
-                    body=t"bookmark state for {ui.bookmark(bookmark)} changed during cleanup; "
-                    t"reload and retry",
-                    status="blocked",
-                )
-            )
-            return False
-    if cleanup_plan.remote_delete:
-        branch_label = f"{bookmark}@{remote_name}" if remote_name is not None else bookmark
         record_action(
             CloseAction(
                 kind="remote branch",
-                body=t"delete {ui.bookmark(branch_label)}",
+                body=t"delete {ui.bookmark(f'{update.branch}@{remote_name}')}",
                 status="planned" if dry_run else "applied",
             )
         )
-        if not dry_run:
-            if remote_name is None or remote_commit_id is None:
-                raise AssertionError("Planned remote branch deletion requires a target.")
-            run.jj_client.delete_remote_bookmarks(
-                remote=remote_name,
-                deletions=((bookmark, remote_commit_id),),
-            )
-    if cleanup_plan.local_forget:
-        record_action(
-            CloseAction(
-                kind="local bookmark",
-                body=t"forget {ui.bookmark(bookmark)}",
-                status="planned" if dry_run else "applied",
-            )
-        )
-        if not dry_run:
-            run.jj_client.forget_bookmarks((bookmark,))
     return True

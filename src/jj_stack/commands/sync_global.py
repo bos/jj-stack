@@ -4,6 +4,7 @@ import jj_stack.console as console
 import jj_stack.github.resolution as github_resolution
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.jj.client import JjCommandError
@@ -32,7 +33,11 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
     target = github_resolution.resolve_github_target(context.jj_client.list_git_remotes())
     if not isinstance(target, github_resolution.GithubTarget):
         raise CliError(target.github_repository_error or "Could not resolve GitHub target.")
-    context.jj_client.fetch_remote(remote=target.remote.name)
+    context.jj_client.fetch_remote(
+        remote=target.remote.name,
+        dry_run=dry_run,
+        on_isolation_change=report_fetch_isolation,
+    )
     trunk = context.jj_client.resolve_revision("trunk()")
     state = context.state_store.load()
     had_failure = bool(state.record_issues)
@@ -61,10 +66,10 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
     )
     async with build_github_client(repository=target.repository) as github:
         repository_state = await github.get_repository()
-        trunk_branch = github_resolution.resolve_trunk_branch(
-            bookmark_states=context.jj_client.list_bookmark_states(),
+        trunk_branch, _trunk_targets = github_resolution.resolve_trunk_branch(
+            client=context.jj_client,
             github_repository_state=repository_state,
-            remote_name=target.remote.name,
+            remote=target.remote,
             trunk_commit_id=trunk.commit_id,
         )
         pull_requests = await github.get_pull_requests_by_numbers_independently(
@@ -141,7 +146,6 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             for candidate in authorized_exact
         )
         results = await retire_landed_reviews(
-            cleanup_bookmarks=True,
             evidence={candidate.change_id: "exact" for candidate in authorized_exact},
             finalization_results=results,
             finalizer=finalizer,

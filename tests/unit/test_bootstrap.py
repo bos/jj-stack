@@ -40,11 +40,11 @@ def test_check_jj_version_rejects_older_version() -> None:
     old_version = subprocess.CompletedProcess(
         args=["jj", "--version"],
         returncode=0,
-        stdout="jj 0.38.0\n",
+        stdout="jj 0.42.0\n",
         stderr="",
     )
     with patch("subprocess.run", return_value=old_version):
-        with pytest.raises(CliError, match="0.38.0 is too old"):
+        with pytest.raises(CliError, match="0.42.0 is too old"):
             check_jj_version()
 
 

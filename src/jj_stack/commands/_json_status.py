@@ -18,11 +18,12 @@ def review_change_json(
     """Return the public JSON shape for one review change."""
 
     payload: dict[str, object] = {
-        "bookmark": revision.bookmark,
         "change_id": revision.change_id,
         "status": _review_change_status(classify_review_status_revision(revision)),
         "subject": revision.subject,
     }
+    if revision.branch is not None:
+        payload["branch"] = revision.branch
     if current:
         payload["current"] = True
     pull_request = review_pull_request_json(revision)

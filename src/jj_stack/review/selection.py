@@ -74,11 +74,9 @@ def resolve_orphaned_pull_request(
     incorrect claim or relink it before `unstack --cleanup --pull-request` can
     act, because there is no single orphan target to retire.
 
-    The membership check matches what `list` renders as an `orphan` row: a
-    visible-but-unsupported revision, for example one on a bookmark outside the
-    review prefix or otherwise filtered out of stack discovery, should still be
-    cleaned up via this path rather than routed back through the live-link
-    selector.
+    The membership check matches what `list` renders as an `orphan` row: a visible revision
+    outside the supported review stacks should still be cleaned up through this path rather than
+    routed back through the live-link selector.
     """
 
     pull_request_number = _parse_repo_pull_request_number(

@@ -314,17 +314,17 @@ def _install_submit_retry_fault(
 
 def _install_remote_push_fault(monkeypatch: pytest.MonkeyPatch) -> None:
     failed = False
-    original_push_bookmarks = submit_command.JjClient.push_bookmarks
+    original_mutate_review_refs = submit_command.JjClient.mutate_remote_review_refs
 
-    def push_bookmarks_then_fail(self, *, remote, bookmarks) -> None:
+    def mutate_review_refs_then_fail(self, *, remote, updates) -> None:
         nonlocal failed
-        original_push_bookmarks(self, remote=remote, bookmarks=bookmarks)
+        original_mutate_review_refs(self, remote=remote, updates=updates)
         if not failed:
             failed = True
             raise CliError("Simulated failure after remote branch push")
 
     monkeypatch.setattr(
         submit_command.JjClient,
-        "push_bookmarks",
-        push_bookmarks_then_fail,
+        "mutate_remote_review_refs",
+        mutate_review_refs_then_fail,
     )

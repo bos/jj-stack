@@ -9,20 +9,19 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.commands._close_actions import (
-    BookmarkCleanupPlan as _OrphanBookmarkCleanupPlan,
     CloseAction,
     ManagedCommentLookup,
-    apply_bookmark_cleanup,
     apply_managed_comment_cleanup,
+    apply_remote_branch_cleanup,
     authorize_current_review_cleanup,
     authorize_current_tracked_pull_request,
-    authorize_tracked_review,
     close_current_tracked_pull_request,
     emit_close_actions,
     find_managed_comments,
     github_observation_blocker,
-    plan_bookmark_cleanup,
+    plan_review_cleanup,
 )
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
@@ -32,17 +31,12 @@ from jj_stack.github.resolution import (
     resolve_github_target,
 )
 from jj_stack.github.stack_comments import stack_comment_label
-from jj_stack.jj.client import JjClient
-from jj_stack.models.bookmarks import BookmarkState
+from jj_stack.jj.client import ReviewRefUpdate
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import (
     ReviewIdentity,
     ReviewState,
     SubmittedBaseline,
-)
-from jj_stack.review.bookmarks import bookmark_cleanup_allowed
-from jj_stack.review.change_status import (
-    classify_review_change,
 )
 from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import plain_text
@@ -55,18 +49,14 @@ class _OrphanCloseRun:
     context: CommandContext
     dry_run: bool
 
-    @property
-    def jj_client(self) -> JjClient:
-        return self.context.jj_client
-
 
 @dataclass(frozen=True, slots=True)
 class _PreparedOrphanClose:
     """Preflighted inputs for one orphan mutation phase."""
 
-    bookmark: str
+    branch: str
+    branch_update: ReviewRefUpdate | None
     change_id: str
-    cleanup_plan: _OrphanBookmarkCleanupPlan
     comment_lookups: tuple[ManagedCommentLookup, ...]
     initial_pull_request: GithubPullRequest
     remote_name: str
@@ -167,7 +157,7 @@ async def run_orphan_close(
             t"its orphaned branch.",
             hint=t"Run {ui.cmd('relink')} to repair the saved review before retrying.",
         )
-    bookmark = review_identity.head_ref
+    branch = review_identity.head_ref
 
     github_target = resolve_github_target(jj_client.list_git_remotes())
     if isinstance(github_target, UnresolvedGithubTarget):
@@ -177,13 +167,11 @@ async def run_orphan_close(
     remote = github_target.remote
     github_repository = github_target.repository
 
-    cleanup_bookmark = bookmark_cleanup_allowed(
-        bookmark=bookmark,
-        change_id=change_id,
+    jj_client.ensure_review_fetch_isolation(
+        remote=remote.name,
+        dry_run=dry_run,
+        on_change=report_fetch_isolation,
     )
-    if cleanup_bookmark:
-        jj_client.fetch_remote(remote=remote.name, branches=(bookmark,))
-    bookmark_state = jj_client.get_bookmark_state(bookmark)
     recorder = ActionRecorder[CloseAction](blocks=lambda action: action.status == "blocked")
     run = _OrphanCloseRun(
         context=context,
@@ -191,8 +179,7 @@ async def run_orphan_close(
     )
     async with build_github_client(repository=github_repository) as github_client:
         prepared = await _preflight_orphan_close(
-            bookmark=bookmark,
-            bookmark_state=bookmark_state,
+            branch=branch,
             change_id=change_id,
             github_client=github_client,
             pull_request_number=pull_request_number,
@@ -219,8 +206,7 @@ async def run_orphan_close(
 
 async def _preflight_orphan_close(
     *,
-    bookmark: str,
-    bookmark_state: BookmarkState,
+    branch: str,
     change_id: str,
     github_client: GithubClient,
     pull_request_number: int,
@@ -235,18 +221,18 @@ async def _preflight_orphan_close(
     try:
         observation = await observe_reviews(
             change_ids=(change_id,),
+            context=run.context,
             github_client=github_client,
             include_open_dependents=True,
-            state_store=run.context.state_store,
+            remote_name=remote_name,
         )
     except GithubClientError:
         recorder.record(github_observation_blocker())
         return None
-    pull_request, blocked_action = authorize_tracked_review(
+    pull_request, branch_update, blocked_action = plan_review_cleanup(
         allowed_states=frozenset({"open", "closed", "merged"}),
         change_id=change_id,
         observation=observation,
-        require_no_open_dependents=True,
         retry_command=f"unstack --cleanup --pull-request {pull_request_number}",
         review_identity=review_identity,
         submitted_baseline=submitted_baseline,
@@ -257,18 +243,6 @@ async def _preflight_orphan_close(
     if pull_request is None:
         raise AssertionError("Orphan close inspection must resolve a pull request state.")
 
-    cleanup_plan = _preflight_orphan_bookmark_cleanup(
-        bookmark=bookmark,
-        bookmark_state=bookmark_state,
-        change_id=change_id,
-        recorder=recorder,
-        remote_name=remote_name,
-        review_identity=review_identity,
-        run=run,
-        saved_commit_id=submitted_baseline.commit_id,
-    )
-    if recorder.blocked:
-        return None
     comment_lookups = await _preflight_orphaned_comment_cleanup(
         github_client=github_client,
         pull_request_number=pull_request_number,
@@ -277,9 +251,9 @@ async def _preflight_orphan_close(
     if recorder.blocked:
         return None
     return _PreparedOrphanClose(
-        bookmark=bookmark,
+        branch=branch,
+        branch_update=branch_update,
         change_id=change_id,
-        cleanup_plan=cleanup_plan,
         comment_lookups=comment_lookups,
         initial_pull_request=pull_request,
         remote_name=remote_name,
@@ -366,8 +340,6 @@ async def _dissolve_orphan_native_stack(
         return None
     if pull_request is None:
         raise AssertionError("Exact orphan mutation lookup must return a pull request.")
-    if pull_request.state != "open" and not prepared.cleanup_plan.remote_delete:
-        return pull_request
 
     selection = GithubStackSelection(
         github_client,
@@ -406,61 +378,59 @@ async def _cleanup_orphan_artifacts(
     if not run.dry_run:
         blocked_action = await authorize_current_review_cleanup(
             change_id=prepared.change_id,
-            delete_remote_branch=prepared.cleanup_plan.remote_delete,
+            context=run.context,
+            expected_update=prepared.branch_update,
             github_client=github_client,
+            remote_name=prepared.remote_name,
             retry_command=(
                 f"unstack --cleanup --pull-request {prepared.review_identity.pr_number}"
             ),
             review_identity=prepared.review_identity,
-            state_store=run.context.state_store,
             submitted_baseline=prepared.submitted_baseline,
         )
         if blocked_action is not None:
             recorder.record(blocked_action)
             return
-    cleanup_current = apply_bookmark_cleanup(
-        bookmark=prepared.bookmark,
-        change_id=prepared.change_id,
-        cleanup_plan=prepared.cleanup_plan,
-        local_commit_id=prepared.submitted_baseline.commit_id,
+    cleanup_current = apply_remote_branch_cleanup(
+        dry_run=run.dry_run,
+        jj_client=run.context.jj_client,
         record_action=recorder.record,
         remote_name=prepared.remote_name,
-        remote_commit_id=prepared.submitted_baseline.commit_id,
-        review_identity=prepared.review_identity,
-        run=run,
+        update=prepared.branch_update,
     )
     if not cleanup_current:
         return
 
     if not run.dry_run:
-        _pull_request, blocked_action = await authorize_current_tracked_pull_request(
-            allowed_states=frozenset({"closed", "merged"}),
+        blocked_action = await authorize_current_review_cleanup(
             change_id=prepared.change_id,
+            context=run.context,
+            expected_update=None,
             github_client=github_client,
-            require_no_open_dependents=True,
+            remote_name=prepared.remote_name,
             retry_command=(
                 f"unstack --cleanup --pull-request {prepared.review_identity.pr_number}"
             ),
             review_identity=prepared.review_identity,
-            state_store=run.context.state_store,
             submitted_baseline=prepared.submitted_baseline,
         )
         if blocked_action is not None:
             recorder.record(blocked_action)
             return
-    recorder.record(
-        CloseAction(
-            kind="tracking data",
-            body=t"prune orphan record for {ui.change_id(prepared.change_id)}",
-            status="planned" if run.dry_run else "applied",
-        )
+    action = CloseAction(
+        kind="tracking data",
+        body=t"prune orphan record for {ui.change_id(prepared.change_id)}",
+        status="planned" if run.dry_run else "applied",
     )
-    if not run.dry_run:
+    if run.dry_run:
+        recorder.record(action)
+    else:
         run.context.state_store.retire_review(
             prepared.change_id,
             expected_identity=prepared.review_identity,
             expected_baseline=prepared.submitted_baseline,
         )
+        recorder.record(action)
 
 
 def _render_orphan_close_actions(
@@ -475,70 +445,6 @@ def _render_orphan_close_actions(
         blocked=blocked,
     )
     return 1 if blocked else 0
-
-
-def _preflight_orphan_bookmark_cleanup(
-    *,
-    bookmark: str,
-    bookmark_state: BookmarkState,
-    change_id: str,
-    recorder: ActionRecorder[CloseAction],
-    remote_name: str,
-    review_identity: ReviewIdentity,
-    run: _OrphanCloseRun,
-    saved_commit_id: str,
-) -> _OrphanBookmarkCleanupPlan:
-    dry_run = run.dry_run
-    remote_state = bookmark_state.remote_target(remote_name)
-    review_status = classify_review_change(
-        commit_id=saved_commit_id,
-        local="orphaned",
-        pull_request_lookup=None,
-        remote_state=remote_state,
-        review_identity=review_identity,
-    )
-    if review_status.remote_branch == "absent":
-        branch_label = f"{bookmark}@{remote_name}"
-        recorder.record(
-            CloseAction(
-                kind="remote branch",
-                body=t"{ui.bookmark(branch_label)} already absent",
-                status="planned" if dry_run else "applied",
-            )
-        )
-    return _plan_orphan_bookmark_cleanup(
-        bookmark=bookmark,
-        bookmark_state=bookmark_state,
-        change_id=change_id,
-        commit_id=saved_commit_id,
-        recorder=recorder,
-        remote_name=remote_name,
-        review_identity=review_identity,
-        run=run,
-    )
-
-
-def _plan_orphan_bookmark_cleanup(
-    *,
-    bookmark: str,
-    bookmark_state: BookmarkState,
-    change_id: str,
-    commit_id: str,
-    recorder: ActionRecorder[CloseAction],
-    remote_name: str,
-    review_identity: ReviewIdentity,
-    run: _OrphanCloseRun,
-) -> _OrphanBookmarkCleanupPlan:
-    return plan_bookmark_cleanup(
-        bookmark=bookmark,
-        bookmark_state=bookmark_state,
-        change_id=change_id,
-        local_commit_id=commit_id,
-        record_action=recorder.record,
-        remote_name=remote_name,
-        remote_commit_id=commit_id,
-        review_identity=review_identity,
-    )
 
 
 async def _preflight_orphaned_comment_cleanup(

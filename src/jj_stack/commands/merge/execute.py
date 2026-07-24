@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import jj_stack.console as console
 import jj_stack.ui as ui
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
 from jj_stack.jj.client import JjCommandError
@@ -70,7 +71,7 @@ async def execute_merge_plan(
         try:
             execution.context.jj_client.fetch_remote(
                 remote=execution.remote_name,
-                branches=(execution.trunk_branch,),
+                on_isolation_change=report_fetch_isolation,
             )
             current_trunk_commit_id = execution.context.jj_client.resolve_revision(
                 "trunk()"

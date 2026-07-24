@@ -12,13 +12,13 @@ have defined behavior but no dedicated current scenario.
 
 ## The four sources of state
 
-1. **Local `jj` view** — the commit DAG, change visibility/mutability, local bookmarks,
-   and remembered remote-bookmark observations. Moved by the user's `jj` commands
-   (rebase, squash, abandon, new, describe), by `jj git fetch`, and by `jj-stack` itself
-   (bookmark moves, pushes, selected `sync`).
+1. **Local `jj` view** — the commit DAG, change visibility/mutability, ordinary local bookmarks,
+   and fetched non-review remote observations. Moved by the user's `jj` commands (rebase, squash,
+   abandon, new, describe), by ordinary fetch, and by selected `sync`. Managed review branches
+   are deliberately absent from this durable local view.
 2. **Remote Git refs** — the branch namespace of the GitHub repository. Moved by
-   `jj-stack` pushes, by anyone else's pushes (a teammate merging to `main`, an agent
-   pushing a branch with plain git), and by branch deletion from the GitHub UI or `gh`.
+   `jj-stack` atomic leased pushes, by anyone else's pushes (a teammate merging to `main`, an
+   agent pushing a branch with plain git), and by branch deletion from the GitHub UI or `gh`.
 3. **GitHub review state** — PRs with head/base refs, open/closed/merged state, draft
    flags, reviews, labels, comments, plus native stack resources with ordered membership
    and historical merge results. Moved by `jj-stack` mutations, by humans and agents
@@ -44,6 +44,9 @@ themselves. Every mutation rechecks the relevant sources.
 
 For each submitted change, health is one chain of agreements:
 
+- the selected remote's ordinary Git fetch configuration excludes `refs/heads/review/*`, with no
+  effective jj `fetch-bookmarks` override
+- no complete managed review branch is imported as a persistent local bookmark
 - current configuration resolves to the saved host and repository
 - the identity's canonical head ref is unambiguous and its owner matches the live PR
 - the remote ref points at the submitted baseline, or at the exact current commit after an
@@ -86,10 +89,10 @@ the generated scenario code records only the source expected to produce the prim
 Two local-`jj` mechanics deserve emphasis because they are how *remote* actions corrupt
 the *local* stack:
 
-- **Fetch-induced immutability.** `jj`'s default `immutable_heads()` includes untracked
-  remote bookmarks. Fetching after anyone pushes a foreign branch that points at a stack
-  commit makes that commit — and its ancestors — immutable, so the stack is no longer
-  reviewable.
+- **Fetch-induced immutability.** `jj`'s default `immutable_heads()` includes untracked remote
+  bookmarks. Managed `review/*` branches are excluded from ordinary fetch, but another foreign
+  branch that points at a stack commit can still make that commit — and its ancestors —
+  immutable, so the stack is no longer reviewable.
 - **Fetch-induced divergence.** If the foreign branch points at a commit that a local
   rewrite already replaced, the fetch resurrects the hidden predecessor and the change
   becomes divergent; even resolving the change ID to a single revision fails.
@@ -104,12 +107,12 @@ saved tracking that still points at the closed PR.
 - **Repairable drift.** Drift that cannot corrupt review identity is repaired or ignored by the
   next `submit`: bases are recomputed from the DAG, trunk advances are irrelevant to review-branch
   pushes, and draft state is preserved. The full post-submit contract must hold afterward.
-- **Fail closed.** Any drift that makes review identity unprovable
-  stops `submit` before *any* mutation — no local bookmark moves, no pushes, no PR
-  creates/updates — with a contractual exit code and a targeted diagnostic naming the
-  repair path. Verification is ordered: stack shape and conflicts (local), then remote
-  ref safety, then PR discovery and saved-link consistency, all before the mutation
-  phase begins. The diagnostic carries a structured condition (`DriftError.condition` for
+- **Fail closed.** Any drift that makes review identity unprovable stops `submit` before *any*
+  mutation — no local DAG changes, pushes, PR creates/updates, or tracking writes — with a
+  contractual exit code and a targeted diagnostic naming the repair path. Verification is
+  ordered: stack shape and conflicts (local), then remote ref safety, then PR discovery and
+  saved-link consistency, all before the mutation phase begins. The diagnostic carries a
+  structured condition (`DriftError.condition` for
   remote-ref, PR, and tracking-store checks; `UnsupportedStackError.reason` and
   `ConflictedStackError` for local shape), so the harness asserts *which* check fired,
   not just the exit code — a stop for the wrong reason names the wrong repair path and
@@ -121,16 +124,19 @@ saved tracking that still points at the closed PR.
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.
 
-Recovery stays explicit and narrow: `relink` reattaches a PR to a change;
-`submit --restart` creates new review identity; and
+Recovery stays explicit and narrow: `checkout` imports only the selected top remote ref through a
+fixed temporary ref and removes the import artifacts; `relink` reads the exact remote commit
+object without creating a ref; `submit --restart` creates new review identity; and
 `unstack --cleanup --pull-request` closes and cleans up each orphan it can verify.
 Plain `unstack` retains the exact identity and baseline after closing so later cleanup or
 `submit --restart` still has authority; `unstack --local` explicitly removes that pair without
 touching GitHub.
-Selected `sync` rebases one selected stack after proving that ancestors landed. After fresh
-identity and head checks, `sync --all` may retarget and close landed PRs whose exact submitted
-commits are on trunk and remove tracking when no visible stack still needs it. Drift never
-triggers silent relinking or replacement PRs.
+Selected `sync` rebases one selected stack after proving that ancestors landed. For a rewritten
+native suffix, it transiently imports the freshly verified exact top branch, validates the whole
+active chain, adopts those commits, and removes the attachment. After fresh identity and head
+checks, `sync --all` may retarget and close landed PRs whose exact submitted commits are on trunk
+and remove tracking when no visible stack still needs it. Drift never triggers silent relinking
+or replacement PRs.
 
 ## Why an executable model rather than TLA+/Lean
 

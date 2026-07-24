@@ -1,8 +1,8 @@
 """Derived per-change review lifecycle classification.
 
-This module centralizes the observational state that commands derive from the
-local `jj` stack, saved tracking data, bookmark observations, and GitHub PR
-lookups. It deliberately does not mutate tracking state or decide command policy.
+This module centralizes the observational state that commands derive from the local `jj` stack,
+saved tracking data, remote-ref observations, and GitHub PR lookups. It deliberately does not
+mutate tracking state or decide command policy.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jj_stack.models.bookmarks import RemoteBookmarkState
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalStack
 
@@ -23,8 +22,6 @@ RemoteBranchReviewState = Literal[
     "absent",
     "current",
     "drifted",
-    "conflicted",
-    "untracked",
 ]
 PullRequestLifecycle = Literal[
     "none",
@@ -88,7 +85,7 @@ def classify_review_status_revision(
         commit_id=revision.commit_id,
         local=local,
         pull_request_lookup=revision.pull_request_lookup,
-        remote_state=revision.remote_state,
+        remote_target=revision.remote_target,
         review_identity=revision.review_identity,
     )
 
@@ -98,7 +95,7 @@ def classify_review_change(
     commit_id: str | None,
     local: LocalReviewState,
     pull_request_lookup: PullRequestLookup | None,
-    remote_state: RemoteBookmarkState | None,
+    remote_target: str | None,
     review_identity: ReviewIdentity | None = None,
 ) -> ReviewChangeStatus:
     """Derive review status axes from already-loaded observations."""
@@ -108,12 +105,10 @@ def classify_review_change(
         local=local,
         remote_branch=_remote_branch_state(
             commit_id=commit_id,
-            remote_state=remote_state,
+            remote_target=remote_target,
         ),
         remote_branch_matches_commit=(
-            None
-            if commit_id is None or remote_state is None or len(remote_state.targets) != 1
-            else remote_state.target == commit_id
+            None if commit_id is None or remote_target is None else remote_target == commit_id
         ),
         pr_lifecycle=lifecycle,
         pr_draft=_pull_request_draft(
@@ -136,7 +131,7 @@ def classify_review_change_without_pull_request(
     *,
     commit_id: str | None,
     local: LocalReviewState = "present",
-    remote_state: RemoteBookmarkState | None,
+    remote_target: str | None,
     review_identity: ReviewIdentity | None = None,
 ) -> ReviewChangeStatus:
     """Classify review state when pull request data was not loaded."""
@@ -145,7 +140,7 @@ def classify_review_change_without_pull_request(
         commit_id=commit_id,
         local=local,
         pull_request_lookup=None,
-        remote_state=remote_state,
+        remote_target=remote_target,
         review_identity=review_identity,
     )
 
@@ -161,7 +156,7 @@ def classify_saved_review_identity(
         commit_id=None,
         local=local,
         pull_request_lookup=None,
-        remote_state=None,
+        remote_target=None,
         review_identity=review_identity,
     )
 
@@ -206,15 +201,11 @@ def submitted_state_disagreement(
 def _remote_branch_state(
     *,
     commit_id: str | None,
-    remote_state: RemoteBookmarkState | None,
+    remote_target: str | None,
 ) -> RemoteBranchReviewState:
-    if remote_state is None or not remote_state.targets:
+    if remote_target is None:
         return "absent"
-    if len(remote_state.targets) > 1:
-        return "conflicted"
-    if not remote_state.is_tracked:
-        return "untracked"
-    if commit_id is not None and remote_state.target == commit_id:
+    if commit_id is not None and remote_target == commit_id:
         return "current"
     return "drifted"
 

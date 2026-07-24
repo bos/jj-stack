@@ -13,7 +13,7 @@ keep the matching GitHub PR stack up to date.
 
 - Python 3.14 or newer
 - `uv`
-- `jj` 0.39.0 or newer
+- `jj` 0.43.0 or newer
 - GitHub authentication via `gh auth login`, `GH_TOKEN`, or `GITHUB_TOKEN`
 
 ### Install
@@ -90,10 +90,11 @@ jj-stack submit --describe <change-id>=pr-body.md
 For a multi-change stack, you can use `--describe stack=stack-overview.md` to add an overview
 description of the entire stack to the head PR. This is very helpful to orient a reviewer.
 
-On first submit, `jj-stack` creates one review bookmark per change. Its readable name has the
-fixed form `review/<subject-slug>-<short-change-id>`, for example
-`review/add-the-api-qpvuntsm`. The bookmark is also the GitHub PR branch. `jj-stack` keeps that
-name stable for the life of the review, even if you rewrite the change or edit its subject.
+On first submit, `jj-stack` creates one GitHub review branch per change. Its readable name has
+the fixed form `review/<subject-slug>-<short-change-id>`, for example
+`review/add-the-api-qpvuntsm`. `jj-stack` keeps that name stable for the life of the review, even
+if you rewrite the change or edit its subject. The branches stay on the Git remote rather than
+appearing as persistent bookmarks in your local `jj` view.
 
 Inspect your stack again:
 

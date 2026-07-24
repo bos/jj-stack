@@ -2,7 +2,7 @@
 
 This pushes or updates the review branches for that stack, then opens or refreshes one pull
 request per change from bottom to top. Selected local changes must be free of unresolved
-conflicts before `submit` changes local bookmarks, pushes review branches, or updates GitHub.
+conflicts before `submit` pushes review branches or updates GitHub.
 
 Pull request titles come from each change's subject line and bodies from the rest of the
 description. When a description has no body, the repository's pull request template
@@ -44,22 +44,30 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._github_stack_support import resolve_github_stack_support
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
+from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.resolution import (
     GithubRepoAddress,
-    remote_bookmarks_pointing_at_commit,
     require_github_repo,
     resolve_trunk_branch,
 )
-from jj_stack.jj.client import JjCliArgs, JjClient
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.jj.client import JjCliArgs, JjClient, ReviewRefUpdate
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalStack
+from jj_stack.review.branches import (
+    ResolvedReviewBranch,
+    ensure_unique_review_branches,
+    is_review_branch,
+    review_branch_glob,
+    review_branch_matches_change,
+)
 from jj_stack.review.observation import observe_reviews
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
@@ -83,16 +91,12 @@ from .models import (
 )
 from .native import NativeStackPlan, apply_native_stack_plan, plan_native_stack
 from .pull_requests import (
-    discover_pull_requests_by_bookmark,
+    discover_pull_requests_by_branch,
     ensure_pull_request_syncs_are_safe,
     sync_pull_requests,
 )
 from .render import print_submit_result, render_selected_line
-from .revisions import (
-    prepare_submit_revisions,
-    sync_local_bookmarks,
-    sync_remote_bookmarks,
-)
+from .revisions import prepare_submit_revisions
 from .stack_comments import (
     navigation_comment_bodies,
     stack_overview_comment_bodies,
@@ -299,8 +303,8 @@ def _pending_pull_request_syncs(
     )
     return tuple(
         PendingPullRequestSync(
-            base_branch=prepared_revisions[index - 1].bookmark if index > 0 else trunk_branch,
-            discovered_pull_request=discovered_pull_requests[prepared_revision.bookmark],
+            base_branch=prepared_revisions[index - 1].branch if index > 0 else trunk_branch,
+            discovered_pull_request=discovered_pull_requests[prepared_revision.branch],
             generated_description=generated_descriptions[prepared_revision.revision.change_id],
             parent_change_id=(
                 prepared_revisions[index - 1].revision.change_id if index > 0 else None
@@ -310,6 +314,78 @@ def _pending_pull_request_syncs(
         )
         for index, prepared_revision in enumerate(prepared_revisions)
     )
+
+
+def _recover_interrupted_first_submissions(
+    *,
+    client: JjClient,
+    remote: GitRemote,
+    resolutions: tuple[ResolvedReviewBranch, ...],
+    restarted_change_ids: frozenset[str],
+    state_identities: Mapping[str, ReviewIdentity],
+) -> tuple[ResolvedReviewBranch, ...]:
+    """Reuse only one suffix candidate whose Git header proves the full change ID."""
+
+    candidates_by_change: dict[str, dict[str, str]] = {}
+    unresolved = tuple(
+        resolution
+        for resolution in resolutions
+        if resolution.change_id not in state_identities
+        and resolution.change_id not in restarted_change_ids
+    )
+    if not unresolved:
+        return resolutions
+    patterns = tuple(
+        f"refs/heads/{review_branch_glob()}-{short_change_id(resolution.change_id)}"
+        for resolution in unresolved
+    )
+    remote_candidates = client.list_remote_branches(remote=remote.name, patterns=patterns)
+    for resolution in unresolved:
+        candidates_by_change[resolution.change_id] = {
+            branch: target
+            for branch, target in remote_candidates.items()
+            if review_branch_matches_change(branch, resolution.change_id)
+        }
+
+    replacements: dict[str, tuple[str, str]] = {}
+    for resolution in unresolved:
+        candidates = candidates_by_change[resolution.change_id]
+        if not candidates:
+            continue
+        if len(candidates) != 1:
+            raise CliError(
+                t"Could not recover the interrupted submission for "
+                t"{ui.change_id(resolution.change_id)} because multiple remote branches "
+                t"have its short change-ID suffix: "
+                t"{ui.join(ui.bookmark, sorted(candidates))}.",
+                hint="Inspect those branches and remove the unintended candidates, then retry.",
+            )
+        branch, target = next(iter(candidates.items()))
+        if (
+            client.read_remote_git_change_id(remote=remote.name, commit_id=target)
+            != resolution.change_id
+        ):
+            raise CliError(
+                t"Could not prove that remote branch {ui.bookmark(branch)} belongs to "
+                t"{ui.change_id(resolution.change_id)}.",
+                hint="Inspect or remove that branch, then retry the submission.",
+            )
+        replacements[resolution.change_id] = branch, target
+
+    recovered = tuple(
+        (
+            ResolvedReviewBranch(
+                branch=replacements[resolution.change_id][0],
+                change_id=resolution.change_id,
+                recovered_target=replacements[resolution.change_id][1],
+            )
+            if resolution.change_id in replacements
+            else resolution
+        )
+        for resolution in resolutions
+    )
+    ensure_unique_review_branches(recovered)
+    return recovered
 
 
 def _validate_restart_recovery_candidates(
@@ -327,18 +403,18 @@ def _validate_restart_recovery_candidates(
         pull_request = pending.discovered_pull_request
         if change_id not in restarted_change_ids:
             continue
-        remote_target = remote_targets.get(prepared.bookmark)
+        remote_target = remote_targets.get(prepared.branch)
         if remote_target not in {None, prepared.revision.commit_id}:
             raise CliError(
                 t"Cannot restart {ui.change_id(change_id)} because replacement branch "
-                t"{ui.bookmark(prepared.bookmark)} points to another commit.",
+                t"{ui.bookmark(prepared.branch)} points to another commit.",
                 hint="Inspect or remove the conflicting branch, then retry the restart.",
             )
         if pull_request is None:
             continue
         exact_head = (
-            pull_request.head.ref == prepared.bookmark
-            and pull_request.head.label == f"{head_owner}:{prepared.bookmark}"
+            pull_request.head.ref == prepared.branch
+            and pull_request.head.label == f"{head_owner}:{prepared.branch}"
             and pull_request.head.sha == prepared.revision.commit_id
         )
         if (
@@ -415,8 +491,7 @@ async def _commit_restart_tracking(
             and review.local_revision == pending.prepared.revision
             and pull_request is not None
             and identity.matches_pull_request(pull_request)
-            and tuple(item.number for item in review.head_pull_requests)
-            == (identity.pr_number,)
+            and tuple(item.number for item in review.head_pull_requests) == (identity.pr_number,)
             and pull_request.state == "open"
             and pull_request.head.sha == pending.prepared.revision.commit_id
             and pull_request.base.ref == pending.base_branch
@@ -460,19 +535,23 @@ async def run_submit_async(
     client = prepared_inputs.client
     remote = prepared_inputs.remote
     stack = prepared_inputs.stack
-    bookmark_states = prepared_inputs.bookmark_states
-    bookmark_resolutions = prepared_inputs.bookmark_resolutions
     state = prepared_inputs.state
 
     if not stack.revisions:
         trunk_branch = stack.trunk.subject
-        remote_bookmarks = remote_bookmarks_pointing_at_commit(
-            bookmark_states=client.list_bookmark_states(),
-            remote_name=remote.name,
-            commit_id=stack.trunk.commit_id,
+        remote_targets = {
+            branch: target
+            for branch, target in client.list_remote_branches(
+                remote=remote.name,
+                patterns=("refs/heads/*",),
+            ).items()
+            if not is_review_branch(branch)
+        }
+        matches = tuple(
+            branch for branch, target in remote_targets.items() if target == stack.trunk.commit_id
         )
-        if len(remote_bookmarks) == 1:
-            trunk_branch = remote_bookmarks[0]
+        if len(matches) == 1:
+            trunk_branch = matches[0]
         return _build_submit_result(
             client=client,
             dry_run=dry_run,
@@ -482,11 +561,26 @@ async def run_submit_async(
             trunk_branch=trunk_branch,
         )
 
+    client.ensure_review_fetch_isolation(
+        remote=remote.name,
+        dry_run=dry_run,
+        on_change=report_fetch_isolation,
+    )
     github_repository = require_github_repo(remote)
-    prepared_revisions = prepare_submit_revisions(
-        bookmark_resolutions=bookmark_resolutions,
-        bookmark_states=bookmark_states,
+    branch_resolutions = _recover_interrupted_first_submissions(
         client=client,
+        remote=remote,
+        resolutions=prepared_inputs.branch_resolutions,
+        restarted_change_ids=prepared_inputs.restarted_change_ids,
+        state_identities=state.review_identities,
+    )
+    remote_targets = client.list_remote_branches(
+        remote=remote.name,
+        patterns=tuple(f"refs/heads/{resolution.branch}" for resolution in branch_resolutions),
+    )
+    prepared_revisions = prepare_submit_revisions(
+        branch_resolutions=branch_resolutions,
+        remote_targets=remote_targets,
         remote=remote,
         stack=stack,
         state=state,
@@ -496,8 +590,7 @@ async def run_submit_async(
     mutation_run = SubmitMutationRun(
         dry_run=dry_run,
         restarted_reviews={
-            restarted.change.change_id: restarted
-            for restarted in prepared_inputs.restarted_reviews
+            restarted.change_id: restarted for restarted in prepared_inputs.restarted_reviews
         },
         state=state,
         state_store=state_store,
@@ -512,11 +605,9 @@ async def run_submit_async(
                     stack_support,
                 ) = await asyncio.gather(
                     github_client.get_repository(),
-                    discover_pull_requests_by_bookmark(
+                    discover_pull_requests_by_branch(
                         github_client=github_client,
-                        bookmarks=tuple(
-                            resolution.bookmark for resolution in bookmark_resolutions
-                        ),
+                        branches=tuple(resolution.branch for resolution in branch_resolutions),
                     ),
                     resolve_github_stack_support(
                         github_client=github_client,
@@ -528,10 +619,10 @@ async def run_submit_async(
                 raise CliError(
                     f"Could not inspect GitHub repository {github_repository.full_name}"
                 ) from error
-            trunk_branch = resolve_trunk_branch(
-                bookmark_states=bookmark_states,
+            trunk_branch, trunk_targets = resolve_trunk_branch(
+                client=client,
                 github_repository_state=github_repository_state,
-                remote_name=remote.name,
+                remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,
             )
 
@@ -541,19 +632,19 @@ async def run_submit_async(
             prepared_revisions=prepared_revisions,
             trunk_branch=trunk_branch,
         )
-        restart_bookmarks = tuple(
-            pending.prepared.bookmark
+        restart_branches = tuple(
+            pending.prepared.branch
             for pending in pending_syncs
             if pending.prepared.revision.change_id in prepared_inputs.restarted_change_ids
-        )
-        restart_remote_targets = client.list_remote_branches(
-            remote=remote.name,
-            patterns=tuple(f"refs/heads/{bookmark}" for bookmark in restart_bookmarks),
         )
         _validate_restart_recovery_candidates(
             head_owner=github_repository.owner,
             pending_syncs=pending_syncs,
-            remote_targets=restart_remote_targets,
+            remote_targets={
+                branch: remote_targets[branch]
+                for branch in restart_branches
+                if branch in remote_targets
+            },
             restarted_change_ids=prepared_inputs.restarted_change_ids,
         )
         ensure_pull_request_syncs_are_safe(
@@ -565,13 +656,32 @@ async def run_submit_async(
         pushes_review_branches = any(
             revision.remote_action == "pushed" for revision in prepared_revisions
         )
+        planned_branches = {revision.branch for revision in prepared_revisions}
+        observed_base_refs = tuple(
+            dict.fromkeys(
+                pull_request.base.ref
+                for pending in pending_syncs
+                if (pull_request := pending.discovered_pull_request) is not None
+                and pull_request.state == "open"
+                and pull_request.base.ref not in planned_branches
+                and pull_request.base.ref not in trunk_targets
+                and pull_request.base.ref not in remote_targets
+            )
+        )
+        observed_base_targets = client.list_remote_branches(
+            remote=remote.name,
+            patterns=tuple(f"refs/heads/{branch}" for branch in observed_base_refs),
+        )
         retarget_syncs = (
             auto_close.predict_pull_requests_auto_closed_by_push(
-                bookmark_states=bookmark_states,
                 jj_client=client,
                 pending_syncs=pending_syncs,
                 prepared_revisions=prepared_revisions,
-                remote_name=remote.name,
+                remote_targets={
+                    **trunk_targets,
+                    **remote_targets,
+                    **observed_base_targets,
+                },
             )
             if pushes_review_branches and (stack_support.supported or not dry_run)
             else ()
@@ -616,33 +726,25 @@ async def run_submit_async(
                     state_store,
                 ).dissolve_exact(observed=(native_stack,))
                 native_plan = NativeStackPlan("create" if len(pending_syncs) > 1 else "none")
-        sync_local_bookmarks(
-            bookmark_states=bookmark_states,
-            client=client,
-            prepared_revisions=prepared_revisions,
-            run=mutation_run,
-            state=mutation_run.state,
-        )
-        if not dry_run and pushes_review_branches:
-            await retarget_review_bases_before_branch_push(
-                github_client=github_client,
-                pending_syncs=retarget_syncs,
-                trunk_branch=trunk_branch,
-            )
-            with console.spinner(description="Pushing review branches"):
-                sync_remote_bookmarks(
-                    client=client,
-                    prepared_revisions=prepared_revisions,
-                    remote=remote,
-                    run=mutation_run,
+        if not dry_run:
+            if pushes_review_branches:
+                await retarget_review_bases_before_branch_push(
+                    github_client=github_client,
+                    pending_syncs=retarget_syncs,
+                    trunk_branch=trunk_branch,
                 )
-        else:
-            sync_remote_bookmarks(
-                client=client,
-                prepared_revisions=prepared_revisions,
-                remote=remote,
-                run=mutation_run,
-            )
+            with console.spinner(description="Pushing review branches"):
+                client.mutate_remote_review_refs(
+                    remote=remote.name,
+                    updates=tuple(
+                        ReviewRefUpdate(
+                            branch=prepared.branch,
+                            expected_target=prepared.expected_remote_target,
+                            desired_target=prepared.revision.commit_id,
+                        )
+                        for prepared in prepared_revisions
+                    ),
+                )
         with console.progress(
             description="Syncing pull requests",
             total=len(prepared_revisions),

@@ -7,12 +7,7 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.resolution import select_submit_remote
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.bookmarks import (
-    BookmarkResolver,
-    ResolvedBookmark,
-    discover_bookmarks_for_revisions,
-    ensure_unique_bookmarks,
-)
+from jj_stack.review.branches import resolve_review_branches
 from jj_stack.review.restart import RestartedReview, restart_state_for_stack
 
 from .descriptions import resolve_generated_descriptions
@@ -43,50 +38,27 @@ def prepare_submit_inputs(
                 t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
                 hint=t"Repair it with {ui.cmd('relink')} before submitting the review.",
             )
-    bookmark_states = client.list_bookmark_states()
     restarted_change_ids: frozenset[str] = frozenset()
     restarted_reviews: tuple[RestartedReview, ...] = ()
-    forced_bookmarks: dict[str, str] = {}
+    forced_branches: dict[str, str] = {}
     if options.restart:
         restart_result = restart_state_for_stack(
-            bookmark_states=bookmark_states,
-            remote_name=remote.name,
             stack=stack,
             state=state,
         )
         state = restart_result.state
         restarted_reviews = restart_result.restarted
         restarted_change_ids = frozenset(
-            restarted.change_id for restarted in restart_result.changed
+            restarted.change_id for restarted in restart_result.restarted
         )
-        forced_bookmarks = {
-            restarted.change_id: restarted.new_bookmark for restarted in restart_result.changed
+        forced_branches = {
+            restarted.change_id: restarted.new_branch for restarted in restart_result.restarted
         }
-    discovered_bookmarks = discover_bookmarks_for_revisions(
-        bookmark_states=bookmark_states,
-        remote_name=remote.name,
-        revisions=tuple(
-            revision
-            for revision in stack.revisions
-            if revision.change_id not in restarted_change_ids
-        ),
+    branch_resolutions = resolve_review_branches(
+        revisions=stack.revisions,
+        review_identities=state.review_identities,
+        overrides=forced_branches,
     )
-    bookmark_resolutions = BookmarkResolver(
-        state.review_identities,
-        discovered_bookmarks=discovered_bookmarks,
-    ).resolve_revisions(stack.revisions)
-    if forced_bookmarks:
-        bookmark_resolutions = tuple(
-            ResolvedBookmark(
-                bookmark=forced_bookmarks[resolution.change_id],
-                change_id=resolution.change_id,
-                source="generated",
-            )
-            if resolution.change_id in forced_bookmarks
-            else resolution
-            for resolution in bookmark_resolutions
-        )
-    ensure_unique_bookmarks(bookmark_resolutions)
     preflight_conflicted_revisions(stack.revisions)
     preflight_private_commits(client, stack.revisions)
     (
@@ -101,8 +73,7 @@ def prepare_submit_inputs(
         revisions=stack.revisions,
     )
     return PreparedSubmitInputs(
-        bookmark_states=bookmark_states,
-        bookmark_resolutions=bookmark_resolutions,
+        branch_resolutions=branch_resolutions,
         client=client,
         generated_pull_request_descriptions=generated_pull_request_descriptions,
         generated_stack_description=generated_stack_description,

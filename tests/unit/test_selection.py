@@ -5,7 +5,7 @@ import pytest
 
 from jj_stack.errors import EXIT_AMBIGUOUS, CliError
 from jj_stack.jj.client import JjClient
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.selection import (

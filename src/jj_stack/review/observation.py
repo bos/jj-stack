@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import jj_stack.github.resolution as github_resolution
 from jj_stack.bootstrap import CommandContext
 from jj_stack.github.client import GithubClient
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest, GithubRepository
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
@@ -83,8 +83,7 @@ async def observe_reviews(
     claim_identities = dict(state.review_identities)
     claim_identities.update(identity_overrides or {})
     identities = {
-        change_id: claim_identities.get(change_id)
-        for change_id in dict.fromkeys(change_ids)
+        change_id: claim_identities.get(change_id) for change_id in dict.fromkeys(change_ids)
     }
     repository = github_client.repository
     known_identities = tuple(identity for identity in identities.values() if identity is not None)
@@ -101,10 +100,13 @@ async def observe_reviews(
         github_client.get_repository() if context is not None else asyncio.sleep(0, result=None),
     )
     remote_targets: dict[str, str] = {}
-    if context is not None and remote is not None and trunk_branch is not None:
+    remote_refs = tuple(
+        dict.fromkeys((*((trunk_branch,) if trunk_branch is not None else ()), *head_refs))
+    )
+    if context is not None and remote is not None and remote_refs:
         remote_targets = context.jj_client.list_remote_branches(
             remote=remote.name,
-            patterns=tuple(f"refs/heads/{ref}" for ref in (trunk_branch, *head_refs)),
+            patterns=tuple(f"refs/heads/{ref}" for ref in remote_refs),
         )
     local_revisions = (
         context.jj_client.query_revisions_by_change_ids(tuple(identities))

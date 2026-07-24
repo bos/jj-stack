@@ -6,8 +6,9 @@ import json
 import re
 import shlex
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
@@ -17,11 +18,12 @@ from jj_stack.errors import (
     EXIT_NO_STACK,
     AmbiguousSelectionError,
     CliError,
+    DriftError,
     ErrorHint,
     ErrorMessage,
     UsageError,
 )
-from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
+from jj_stack.models.git import GitRemote
 from jj_stack.models.stack import LocalRevision, LocalStack
 
 _COMMIT_TEMPLATE = (
@@ -35,10 +37,79 @@ _COMMIT_TEMPLATE = (
 )
 _SCAN_TEMPLATE_PREFIX = _COMMIT_TEMPLATE.removesuffix(r'"\n"') + r'"\t" ++ '
 _BOOKMARK_TEMPLATE = r'json(self) ++ "\n"'
+_REVIEW_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
+_REVIEW_TEMP_REF = f"refs/heads/{_REVIEW_TEMP_BOOKMARK}"
+_CONFIG_ORIGIN_TEMPLATE = r'json(source) ++ "\t" ++ json(path) ++ "\n"'
+
+
+def _review_fetch_refspec() -> str:
+    """Derive the fetch exclusion lazily from the review-branch policy authority."""
+
+    from jj_stack.review.branches import review_branch_glob
+
+    return f"^refs/heads/{review_branch_glob()}"
+
+
+def _review_namespace() -> str:
+    """Return the reserved namespace lazily to avoid a formatting/client import cycle."""
+
+    from jj_stack.review.branches import REVIEW_BRANCH_PREFIX
+
+    return f"{REVIEW_BRANCH_PREFIX}/"
 
 
 class JjCommandError(CliError):
     """Raised when a `jj` invocation fails."""
+
+
+ReviewFetchIsolationStatus = Literal["ready", "applied", "required"]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewFetchIsolation:
+    """Result of checking the remote-only review fetch boundary."""
+
+    status: ReviewFetchIsolationStatus
+    remote: str
+    existing_count: int = 0
+    refspec: str = field(default_factory=_review_fetch_refspec)
+
+
+class ReviewFetchIsolationRequired(CliError):
+    """Raised when a dry run needs a local fetch-isolation configuration change."""
+
+    def __init__(self, isolation: ReviewFetchIsolation) -> None:
+        self.isolation = isolation
+        change = "adding" if isolation.existing_count == 0 else "normalizing"
+        super().__init__(
+            t"Dry run would reserve {ui.bookmark(_review_namespace())} for jj-stack by "
+            t"{change} {ui.code(isolation.refspec)} in remote "
+            t"{ui.bookmark(isolation.remote)}'s Git fetch refspecs.",
+            hint="Run the command without --dry-run once to apply this local configuration.",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewRefUpdate:
+    """One exact leased review-ref update in a complete remote mutation set."""
+
+    branch: str
+    expected_target: str | None
+    desired_target: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewTempArtifacts:
+    """Observed fixed review-import artifacts without applying recovery."""
+
+    bookmark_targets: tuple[str, ...]
+    ref_target: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ConfigOrigin:
+    source: str
+    path: str
 
 
 UnsupportedStackReason = Literal[
@@ -116,12 +187,6 @@ class JjCliArgs:
 
 
 _NO_CLI_ARGS = JjCliArgs()
-
-
-@dataclass(slots=True)
-class _RawBookmarkState:
-    local_targets: tuple[str, ...] = ()
-    remote_targets: list[RemoteBookmarkState] = field(default_factory=list)
 
 
 class JjClient:
@@ -805,122 +870,297 @@ class JjClient:
             remotes.append(GitRemote(name=name, fetch_url=fetch_url, push_url=push_url))
         return tuple(remotes)
 
-    def get_bookmark_state(self, bookmark: str) -> BookmarkState:
-        """Return local and remote state for the named bookmark."""
-
-        return self.list_bookmark_states((bookmark,)).get(bookmark, BookmarkState(name=bookmark))
-
-    def list_bookmark_states(
+    def ensure_review_fetch_isolation(
         self,
-        bookmarks: Sequence[str] | None = None,
-    ) -> dict[str, BookmarkState]:
-        """Return local and remote state for the requested bookmark names."""
+        *,
+        remote: str,
+        dry_run: bool = False,
+        on_change: Callable[[ReviewFetchIsolation], None] | None = None,
+    ) -> ReviewFetchIsolation:
+        """Ensure ordinary fetches cannot import jj-stack review branches."""
 
-        command = ["bookmark", "list", "--all-remotes", "-T", _BOOKMARK_TEMPLATE]
-        if bookmarks:
-            command.extend(bookmarks)
+        override_key = f"remotes.{json.dumps(remote)}.fetch-bookmarks"
+        override_origin = self._effective_config_origin(override_key)
+        if override_origin is not None:
+            origin = override_origin.source
+            if override_origin.path:
+                origin = f"{origin} config at {override_origin.path}"
+            if override_origin.source in {"user", "repo", "workspace"}:
+                unset = ui.cmd(
+                    f"jj config unset --{override_origin.source} {shlex.quote(override_key)}"
+                )
+                hint = t"Remove the override with {unset}, then retry."
+            else:
+                hint = (
+                    t"Remove that {override_origin.source} override from the jj invocation "
+                    t"or environment, then retry."
+                )
+            raise CliError(
+                t"Effective jj setting {ui.code(override_key)} from {origin} overrides "
+                t"Git fetch refspecs, so jj-stack cannot keep "
+                t"{ui.bookmark(_review_namespace())} remote-only.",
+                hint=hint,
+            )
 
-        stdout = self._run_jj(command, ignore_working_copy=True)
-        grouped: dict[str, _RawBookmarkState] = {}
+        imported = self.list_imported_review_bookmarks()
+        if imported:
+            forget = ui.cmd(
+                "jj bookmark forget --include-remotes "
+                + " ".join(shlex.quote(name) for name in imported)
+            )
+            raise CliError(
+                t"Managed review bookmarks are already imported locally: "
+                t"{ui.join(ui.bookmark, imported)}.",
+                hint=(
+                    t"Move any work you need to keep to names outside "
+                    t"{ui.bookmark(_review_namespace())}, run {forget}, then use checkout or "
+                    t"relink to restore tracking."
+                ),
+            )
+
+        config_key = f"remote.{remote}.fetch"
+        configured = self._git_fetch_refspecs(remote)
+        review_fetch_refspec = _review_fetch_refspec()
+        count = configured.count(review_fetch_refspec)
+        if count == 1:
+            return ReviewFetchIsolation(
+                status="ready",
+                remote=remote,
+                existing_count=count,
+            )
+
+        status: ReviewFetchIsolationStatus = "required" if dry_run else "applied"
+        result = ReviewFetchIsolation(
+            status=status,
+            remote=remote,
+            existing_count=count,
+        )
+        if dry_run:
+            if on_change is not None:
+                on_change(result)
+            raise ReviewFetchIsolationRequired(result)
+
+        default_fetch_refspec = f"+refs/heads/*:refs/remotes/{remote}/*"
+        if not configured:
+            self._run_git(
+                (
+                    "config",
+                    "--fixed-value",
+                    "--replace-all",
+                    config_key,
+                    default_fetch_refspec,
+                    default_fetch_refspec,
+                )
+            )
+        self._run_git(
+            (
+                "config",
+                "--fixed-value",
+                "--replace-all",
+                config_key,
+                review_fetch_refspec,
+                review_fetch_refspec,
+            )
+        )
+        updated = self._git_fetch_refspecs(remote)
+        retained_default = bool(configured) or updated.count(default_fetch_refspec) == 1
+        if updated.count(review_fetch_refspec) != 1 or not retained_default:
+            raise JjCommandError(
+                t"Git fetch configuration for remote {ui.bookmark(remote)} did not retain "
+                t"the required positive and negative refspecs."
+            )
+        if on_change is not None:
+            on_change(result)
+        return result
+
+    def list_imported_review_bookmarks(self) -> tuple[str, ...]:
+        """Return managed-namespace bookmarks already imported into jj."""
+
+        from jj_stack.review.branches import is_managed_review_branch, review_branch_glob
+
+        stdout = self._run_jj(
+            (
+                "bookmark",
+                "list",
+                "--all-remotes",
+                "-T",
+                _BOOKMARK_TEMPLATE,
+                review_branch_glob(),
+            ),
+            ignore_working_copy=True,
+        )
+        names: set[str] = set()
         for line in stdout.splitlines():
             stripped = line.strip()
             if not stripped:
                 continue
-            raw_bookmark = json.loads(stripped)
-            if not isinstance(raw_bookmark, dict):
+            raw = json.loads(stripped)
+            if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
                 raise JjCommandError(
-                    t"Unexpected {ui.cmd('jj bookmark list')} payload: expected a JSON object."
+                    t"Unexpected {ui.cmd('jj bookmark list')} payload while checking "
+                    t"the reserved review namespace."
                 )
-            name = raw_bookmark["name"]
-            if not isinstance(name, str):
-                raise JjCommandError(
-                    t"Unexpected {ui.cmd('jj bookmark list')} payload: missing bookmark name."
-                )
-            bookmark_state = grouped.setdefault(name, _RawBookmarkState())
-            targets = tuple(_require_sequence(raw_bookmark.get("target", ())))
-            remote_name = raw_bookmark.get("remote")
-            if remote_name is None:
-                bookmark_state.local_targets = targets
-                continue
-            if not isinstance(remote_name, str):
-                raise JjCommandError(
-                    t"Unexpected {ui.cmd('jj bookmark list')} payload: invalid remote bookmark "
-                    t"entry."
-                )
-            tracking_target = raw_bookmark.get("tracking_target", ())
-            bookmark_state.remote_targets.append(
-                RemoteBookmarkState(
-                    remote=remote_name,
-                    targets=targets,
-                    tracking_targets=tuple(_require_sequence(tracking_target)),
-                )
-            )
+            name = raw["name"]
+            if is_managed_review_branch(name):
+                names.add(name)
+        return tuple(sorted(names))
 
-        states = {
-            name: BookmarkState(
-                name=name,
-                local_targets=raw_state.local_targets,
-                remote_targets=tuple(raw_state.remote_targets),
-            )
-            for name, raw_state in grouped.items()
-        }
-        if bookmarks:
-            for bookmark in bookmarks:
-                states.setdefault(bookmark, BookmarkState(name=bookmark))
-        return states
+    def review_temp_ref_target(self) -> str | None:
+        """Return the exact temporary review-import ref target, if it exists."""
 
-    def set_bookmark(
-        self,
-        bookmark: str,
-        revision: str,
-        *,
-        allow_backwards: bool = False,
-    ) -> None:
-        """Create or move a local bookmark to the supplied revision."""
+        target = self._run_git(
+            ("rev-parse", "--verify", "--quiet", _REVIEW_TEMP_REF),
+            allowed_returncodes=frozenset({0, 1}),
+        ).strip()
+        return target or None
 
-        command = ["bookmark", "set"]
-        if allow_backwards:
-            command.append("--allow-backwards")
-        command.extend((bookmark, "-r", revision))
-        self._run_jj(command)
+    def review_temp_artifacts(self) -> ReviewTempArtifacts:
+        """Observe the fixed temporary import ref and its transient jj bookmark."""
 
-    def forget_bookmarks(self, bookmarks: Sequence[str]) -> None:
-        """Forget one or more local bookmarks without scheduling remote deletions."""
+        return ReviewTempArtifacts(
+            bookmark_targets=self._local_bookmark_targets(_REVIEW_TEMP_BOOKMARK),
+            ref_target=self.review_temp_ref_target(),
+        )
 
-        ordered_bookmarks = tuple(bookmarks)
-        if not ordered_bookmarks:
-            return
-        self._run_jj(("bookmark", "forget", *ordered_bookmarks))
-
-    def push_bookmarks(
+    @contextmanager
+    def import_remote_review_ref(
         self,
         *,
         remote: str,
-        bookmarks: Sequence[str],
-    ) -> None:
-        """Push one or more bookmarks to the selected remote."""
+        branch: str,
+        expected_target: str,
+        expected_change_id: str | None = None,
+        expected_chain: Sequence[tuple[str, str, str]] = (),
+        expected_parent_commit_id: str | None = None,
+        on_isolation_change: Callable[[ReviewFetchIsolation], None] | None = None,
+    ) -> Iterator[LocalRevision]:
+        """Import one exact remote review ref, then remove all temporary artifacts.
 
-        ordered_bookmarks = tuple(bookmarks)
-        if not ordered_bookmarks:
-            return
-        command = ["git", "push", "--remote", remote]
-        for bookmark in ordered_bookmarks:
-            command.extend(["--bookmark", bookmark])
-        self._run_jj(command)
+        An expected chain guards every member's raw Git change ID and first-parent ancestry.
+        Remote targets are rechecked immediately before jj import and after a successful yield.
+        """
+
+        ref = _review_ref(branch)
+        chain = tuple(expected_chain)
+        if chain and (
+            expected_parent_commit_id is None
+            or chain[-1] != (branch, expected_target, expected_change_id)
+            or len({item[0] for item in chain}) != len(chain)
+        ):
+            raise ValueError("invalid expected remote review chain")
+        expected_targets = (
+            {chain_branch: target for chain_branch, target, _change_id in chain}
+            if chain
+            else {branch: expected_target}
+        )
+        self.ensure_review_fetch_isolation(
+            remote=remote,
+            on_change=on_isolation_change,
+        )
+        self._clear_review_temp_ref()
+        try:
+            configured_remote = self._git_remote(remote)
+            self._run_git(
+                (
+                    "fetch",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    configured_remote.fetch_url,
+                    f"+{ref}:{_REVIEW_TEMP_REF}",
+                )
+            )
+            if self.review_temp_ref_target() != expected_target:
+                raise DriftError(
+                    t"Remote branch {ui.bookmark(branch)} changed while it was being imported.",
+                    condition="remote_branch_moved",
+                )
+            if chain:
+                expected_parent = expected_parent_commit_id
+                for _chain_branch, target, change_id in chain:
+                    actual_change_id, parents = self._read_git_commit_metadata(target)
+                    if actual_change_id != change_id or parents != (expected_parent,):
+                        raise CliError("Imported review heads no longer form the expected stack.")
+                    expected_parent = target
+            self._require_remote_branch_targets_at_url(
+                fetch_url=configured_remote.fetch_url,
+                expected_targets=expected_targets,
+            )
+            self._run_jj(("git", "import"), ignore_working_copy=True)
+            revision = self.resolve_revision(_quote_revset_symbol(_REVIEW_TEMP_BOOKMARK))
+            if revision.commit_id != expected_target:
+                raise JjCommandError(
+                    t"{ui.cmd('jj git import')} did not import the exact temporary review ref."
+                )
+            if expected_change_id is not None and revision.change_id != expected_change_id:
+                raise CliError(
+                    t"Remote branch {ui.bookmark(branch)} resolves to change "
+                    t"{ui.change_id(revision.change_id)}, not the expected change "
+                    t"{ui.change_id(expected_change_id)}."
+                )
+            yield revision
+            self._require_remote_branch_targets_at_url(
+                fetch_url=configured_remote.fetch_url,
+                expected_targets=expected_targets,
+            )
+        finally:
+            self._clear_review_temp_ref()
+
+    def read_remote_git_change_id(self, *, remote: str, commit_id: str) -> str | None:
+        """Fetch and inspect one exact remote Git object without creating a ref."""
+
+        if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", commit_id) is None:
+            raise ValueError("remote commit ID must be a full SHA-1 or SHA-256 object ID")
+        self.ensure_review_fetch_isolation(remote=remote)
+        configured_remote = self._git_remote(remote)
+        try:
+            change_id, _parents = self._read_git_commit_metadata(commit_id)
+        except JjCommandError:
+            self._run_git(
+                (
+                    "fetch",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    configured_remote.fetch_url,
+                    commit_id,
+                )
+            )
+            change_id, _parents = self._read_git_commit_metadata(commit_id)
+        return change_id
+
+    def _read_git_commit_metadata(
+        self,
+        commit_id: str,
+    ) -> tuple[str | None, tuple[str, ...]]:
+        """Read one backing-Git commit's full change ID and ordered parents."""
+
+        raw_commit = self._run_git(("cat-file", "commit", commit_id))
+        headers, _, _message = raw_commit.partition("\n\n")
+        entries = tuple(line.partition(" ") for line in headers.splitlines())
+        change_ids = [
+            value
+            for key, separator, value in entries
+            if separator and key == "change-id" and value
+        ]
+        parents = tuple(
+            value for key, separator, value in entries if separator and key == "parent" and value
+        )
+        return (change_ids[0] if len(change_ids) == 1 else None), parents
 
     def fetch_remote(
         self,
         *,
         remote: str,
-        branches: Sequence[str] | None = None,
+        dry_run: bool = False,
+        on_isolation_change: Callable[[ReviewFetchIsolation], None] | None = None,
     ) -> None:
-        """Refresh remembered remote bookmark state for the selected remote."""
+        """Fetch ordinary repository state while excluding managed review branches."""
 
-        command = ["git", "fetch", "--remote", remote]
-        if branches:
-            for branch in branches:
-                command.extend(["--branch", branch])
-        self._run_jj(command)
+        self.ensure_review_fetch_isolation(
+            remote=remote,
+            dry_run=dry_run,
+            on_change=on_isolation_change,
+        )
+        self._run_jj(("git", "fetch", "--remote", remote))
 
     def list_remote_branches(
         self,
@@ -928,13 +1168,24 @@ class JjClient:
         remote: str,
         patterns: Sequence[str],
     ) -> dict[str, str]:
-        """List matching remote branch heads without importing unrelated bookmark state."""
+        """List matching remote branch heads without importing them into jj."""
 
         if not patterns:
             return {}
-        stdout = self._run_git(
-            ("ls-remote", "--refs", self._git_remote_target(remote, push=False), *patterns)
+        return self._list_remote_branches_at_url(
+            fetch_url=self._git_remote(remote).fetch_url,
+            patterns=patterns,
         )
+
+    def _list_remote_branches_at_url(
+        self,
+        *,
+        fetch_url: str,
+        patterns: Sequence[str],
+    ) -> dict[str, str]:
+        """List matching remote heads from one already-resolved fetch URL."""
+
+        stdout = self._run_git(("ls-remote", "--refs", fetch_url, *patterns))
         branches: dict[str, str] = {}
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -948,53 +1199,80 @@ class JjClient:
             branches[ref.removeprefix("refs/heads/")] = commit_id
         return branches
 
-    def track_bookmark(self, *, remote: str, bookmark: str) -> None:
-        """Track an existing remote bookmark locally."""
-
-        self._run_jj(("bookmark", "track", bookmark, "--remote", remote))
-
-    def update_untracked_remote_bookmark(
+    def _require_remote_branch_targets_at_url(
         self,
         *,
-        remote: str,
-        bookmark: str,
-        desired_target: str,
-        expected_remote_target: str,
+        fetch_url: str,
+        expected_targets: dict[str, str],
     ) -> None:
-        """Update an existing untracked remote bookmark without importing it first."""
-
-        self._run_git(
-            (
-                "push",
-                f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}",
-                self._git_remote_target(remote, push=True),
-                f"{desired_target}:refs/heads/{bookmark}",
-            )
+        observed = self._list_remote_branches_at_url(
+            fetch_url=fetch_url,
+            patterns=tuple(_review_ref(branch) for branch in expected_targets),
         )
-        self.fetch_remote(remote=remote)
-        self.track_bookmark(remote=remote, bookmark=bookmark)
+        for branch, expected_target in expected_targets.items():
+            actual_target = observed.get(branch)
+            if actual_target != expected_target:
+                raise DriftError(
+                    t"Remote branch {ui.bookmark(branch)} no longer points to the expected "
+                    t"commit.",
+                    condition=(
+                        "remote_branch_moved"
+                        if actual_target is not None
+                        else "remote_branch_missing"
+                    ),
+                )
 
-    def delete_remote_bookmarks(
+    def mutate_remote_review_refs(
         self,
         *,
         remote: str,
-        deletions: Sequence[tuple[str, str]],
-        fetch: bool = True,
+        updates: Sequence[ReviewRefUpdate],
     ) -> None:
-        """Delete one or more remote bookmarks by name."""
+        """Freshly verify and atomically apply a complete review-ref update set."""
 
-        ordered_deletions = tuple(deletions)
-        if not ordered_deletions:
+        ordered_updates = tuple(updates)
+        if not ordered_updates:
             return
-        command = ["push"]
-        for bookmark, expected_remote_target in ordered_deletions:
-            command.append(f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}")
-        command.append(self._git_remote_target(remote, push=True))
-        for bookmark, _expected_remote_target in ordered_deletions:
-            command.append(f":refs/heads/{bookmark}")
+        branches = tuple(update.branch for update in ordered_updates)
+        if len(set(branches)) != len(branches):
+            raise ValueError("remote review-ref update set contains duplicate branches")
+        refs = tuple(_review_ref(branch) for branch in branches)
+        if any(
+            update.expected_target is None and update.desired_target is None
+            for update in ordered_updates
+        ):
+            raise ValueError("cannot delete a review ref that is expected to be absent")
+
+        self.ensure_review_fetch_isolation(remote=remote)
+        configured_remote = self._git_remote(remote)
+        actual_targets = self._list_remote_branches_at_url(
+            fetch_url=configured_remote.fetch_url,
+            patterns=refs,
+        )
+        for update in ordered_updates:
+            actual_target = actual_targets.get(update.branch)
+            if actual_target == update.expected_target:
+                continue
+            condition = (
+                "remote_branch_missing" if actual_target is None else "remote_branch_moved"
+            )
+            raise DriftError(
+                t"Remote branch {ui.bookmark(update.branch)} changed before the atomic push.",
+                condition=condition,
+            )
+
+        if all(update.desired_target == update.expected_target for update in ordered_updates):
+            return
+
+        command = ["push", "--atomic"]
+        for ref, update in zip(refs, ordered_updates, strict=True):
+            expected = update.expected_target or ""
+            command.append(f"--force-with-lease={ref}:{expected}")
+        command.append(configured_remote.push_url)
+        for ref, update in zip(refs, ordered_updates, strict=True):
+            desired = update.desired_target or ""
+            command.append(f"{desired}:{ref}")
         self._run_git(command)
-        if fetch:
-            self.fetch_remote(remote=remote)
 
     def rebase_revisions_only(
         self,
@@ -1002,11 +1280,19 @@ class JjClient:
         revisions: Sequence[str],
         destination: str,
     ) -> None:
-        """Rebase only the named revisions while preserving their internal order."""
+        """Rebase named revisions and any empty working-copy children together."""
 
-        ordered_revisions = tuple(revisions)
+        ordered_revisions = list(dict.fromkeys(revisions))
         if not ordered_revisions:
             return
+        selected_head = ordered_revisions[-1]
+        ordered_revisions.extend(
+            revision.commit_id
+            for revision in self.query_descendant_revisions((selected_head,))
+            if revision.is_working_copy
+            and revision.empty
+            and revision.parents == (selected_head,)
+        )
         self._run_jj(("rebase", "-r", "|".join(ordered_revisions), "-d", destination))
 
     def abandon_revisions(self, revsets: Sequence[str]) -> None:
@@ -1053,11 +1339,17 @@ class JjClient:
             detect_stale_workspace=True,
         )
 
-    def _run_git(self, args: Sequence[str]) -> str:
+    def _run_git(
+        self,
+        args: Sequence[str],
+        *,
+        allowed_returncodes: frozenset[int] = frozenset({0}),
+    ) -> str:
         return self._run_command(
             ["git", "--git-dir", str(self._backing_git_root()), *args],
             missing_tool_message=t"{ui.cmd('git')} is not installed or is not on PATH.",
             detect_stale_workspace=False,
+            allowed_returncodes=allowed_returncodes,
         )
 
     def _backing_git_root(self) -> Path:
@@ -1070,13 +1362,109 @@ class JjClient:
             self._git_root = Path(rendered)
         return self._git_root
 
-    def _git_remote_target(self, remote: str, *, push: bool) -> str:
-        """Return the fetch or push target for a jj remote name."""
+    def _git_remote(self, remote: str) -> GitRemote:
+        """Resolve one jj remote name to its fetch and push URLs."""
 
         for configured_remote in self.list_git_remotes():
             if configured_remote.name == remote:
-                return configured_remote.push_url if push else configured_remote.fetch_url
+                return configured_remote
         raise JjCommandError(t"Git remote {ui.bookmark(remote)} is not configured.")
+
+    def _git_fetch_refspecs(self, remote: str) -> tuple[str, ...]:
+        """Read the backing Git fetch refspecs for one remote."""
+
+        return tuple(
+            line
+            for line in self._run_git(
+                ("config", "--get-all", f"remote.{remote}.fetch"),
+                allowed_returncodes=frozenset({0, 1}),
+            ).splitlines()
+            if line
+        )
+
+    def _effective_config_origin(self, key: str) -> _ConfigOrigin | None:
+        """Return the effective origin for one jj config key, if it is set."""
+
+        stdout = self._run_jj(
+            ("config", "list", key, "-T", _CONFIG_ORIGIN_TEMPLATE),
+            ignore_working_copy=True,
+        )
+        lines = tuple(line for line in stdout.splitlines() if line.strip())
+        if not lines:
+            return None
+        if len(lines) != 1:
+            raise JjCommandError(
+                t"{ui.cmd('jj config list')} returned multiple effective values for "
+                t"{ui.code(key)}."
+            )
+        source_json, separator, path_json = lines[0].partition("\t")
+        if not separator:
+            raise JjCommandError(
+                t"{ui.cmd('jj config list')} returned an unexpected config-origin payload."
+            )
+        try:
+            source = json.loads(source_json)
+            path = json.loads(path_json)
+        except json.JSONDecodeError as error:
+            raise JjCommandError(
+                t"{ui.cmd('jj config list')} returned invalid config-origin JSON."
+            ) from error
+        if not isinstance(source, str) or not isinstance(path, str):
+            raise JjCommandError(
+                t"{ui.cmd('jj config list')} returned invalid config-origin fields."
+            )
+        return _ConfigOrigin(source=source, path=path)
+
+    def _local_bookmark_targets(self, bookmark: str) -> tuple[str, ...]:
+        """Return targets of one exact local bookmark, excluding remote entries."""
+
+        stdout = self._run_jj(
+            ("bookmark", "list", "-T", _BOOKMARK_TEMPLATE, bookmark),
+            ignore_working_copy=True,
+        )
+        targets: list[str] = []
+        for line in stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            raw = json.loads(stripped)
+            if (
+                not isinstance(raw, dict)
+                or raw.get("name") != bookmark
+                or ("remote" in raw and raw["remote"] is not None)
+            ):
+                raise JjCommandError(
+                    t"Unexpected {ui.cmd('jj bookmark list')} payload while checking "
+                    t"{ui.bookmark(bookmark)}."
+                )
+            targets.extend(_require_sequence(raw.get("target", ())))
+        return tuple(dict.fromkeys(targets))
+
+    def _clear_review_temp_ref(self) -> None:
+        """Remove the fixed transient jj bookmark and backing Git import ref."""
+
+        try:
+            if self._local_bookmark_targets(_REVIEW_TEMP_BOOKMARK):
+                self._run_jj(
+                    ("bookmark", "forget", _REVIEW_TEMP_BOOKMARK),
+                    ignore_working_copy=True,
+                )
+                self._run_jj(("git", "export"), ignore_working_copy=True)
+        finally:
+            raw_target = self.review_temp_ref_target()
+            try:
+                if raw_target is not None:
+                    self._run_git(("update-ref", "-d", _REVIEW_TEMP_REF, raw_target))
+            finally:
+                if self.review_temp_ref_target() is not None:
+                    raise JjCommandError(
+                        t"Could not remove temporary Git ref {ui.code(_REVIEW_TEMP_REF)}."
+                    )
+
+        if self._local_bookmark_targets(_REVIEW_TEMP_BOOKMARK):
+            raise JjCommandError(
+                t"Could not forget temporary bookmark {ui.bookmark(_REVIEW_TEMP_BOOKMARK)}."
+            )
 
     def _run_command(
         self,
@@ -1084,6 +1472,7 @@ class JjClient:
         *,
         missing_tool_message: ErrorMessage,
         detect_stale_workspace: bool,
+        allowed_returncodes: frozenset[int] = frozenset({0}),
     ) -> str:
         try:
             completed = subprocess.run(
@@ -1096,14 +1485,16 @@ class JjClient:
         except FileNotFoundError as error:
             raise JjCommandError(missing_tool_message) from error
 
-        if completed.returncode != 0:
+        if completed.returncode not in allowed_returncodes:
             message = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
             if detect_stale_workspace and "The working copy is stale" in message:
                 raise StaleWorkspaceError(
                     "The current workspace is stale.",
                     hint=t"Run {ui.cmd('jj workspace update-stale')} and retry.",
                 )
-            raise JjCommandError(t"{ui.cmd(shlex.join(command))} failed: {message}")
+            displayed_command = _redact_http_url_userinfo(shlex.join(command))
+            displayed_message = _redact_http_url_userinfo(message)
+            raise JjCommandError(t"{ui.cmd(displayed_command)} failed: {displayed_message}")
         return completed.stdout
 
     def _validate_reviewable_revision(
@@ -1159,15 +1550,41 @@ _EXPECTED_FIELD_COUNT = 11
 _DIVERGENT_CHANGE_ID_ERROR_PATTERN = re.compile(
     r"Change ID `(?P<change_id>[0-9a-z]+)` is divergent"
 )
+_HTTP_URL_AUTHORITY_PATTERN = re.compile(
+    r"(?P<scheme>https?://)(?P<authority>[^/\s'\"<>]+)",
+    re.IGNORECASE,
+)
 
 
 def _is_missing_revision_error(message: str) -> bool:
     return "Revision `" in message and "doesn't exist" in message
 
 
+def _review_ref(branch: str) -> str:
+    """Return the full Git ref for one managed jj-stack review branch."""
+
+    from jj_stack.review.branches import is_managed_review_branch
+
+    if not is_managed_review_branch(branch):
+        raise ValueError(f"not a managed jj-stack review branch: {branch!r}")
+    return f"refs/heads/{branch}"
+
+
 def _unwrap_command_error_message(message: str) -> str:
     _prefix, separator, suffix = message.partition(" failed: ")
     return suffix if separator else message
+
+
+def _redact_http_url_userinfo(text: str) -> str:
+    """Remove HTTP URL credentials from command and subprocess-error displays."""
+
+    def redact(match: re.Match[str]) -> str:
+        authority = match.group("authority")
+        if "@" not in authority:
+            return match.group(0)
+        return f"{match.group('scheme')}{authority.rsplit('@', maxsplit=1)[1]}"
+
+    return _HTTP_URL_AUTHORITY_PATTERN.sub(redact, text)
 
 
 def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | None:

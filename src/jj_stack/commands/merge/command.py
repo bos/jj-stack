@@ -23,6 +23,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError, DriftError
 from jj_stack.formatting import short_change_id
@@ -155,7 +156,9 @@ def _prepare_merge(
 ) -> PreparedMerge:
     prepared_status = prepare_status(
         context=context,
+        dry_run=dry_run,
         fetch_remote_state=True,
+        on_fetch_isolation_change=report_fetch_isolation,
         re_resolve_after_remote_refresh=True,
         revset=revset,
     )
@@ -206,11 +209,11 @@ async def _stream_merge_async(
             raise CliError(
                 t"Could not load GitHub repository {github_repository.full_name}"
             ) from error
-        with console.spinner(description="Loading bookmark state"):
-            trunk_branch = resolve_trunk_branch(
-                bookmark_states=prepared.client.list_bookmark_states(),
+        with console.spinner(description="Loading remote branches"):
+            trunk_branch, _trunk_targets = resolve_trunk_branch(
+                client=prepared.client,
                 github_repository_state=github_repository_state,
-                remote_name=remote.name,
+                remote=remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )
         resolved_merge_method = _resolve_merge_method(

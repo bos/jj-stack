@@ -9,7 +9,7 @@ from jj_stack.commands.merge.models import MergePlan, MergeRevision
 from jj_stack.commands.merge.plan import validate_merge_plan_method
 from jj_stack.errors import EXIT_USAGE, CliError
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
 from jj_stack.review.observation import RepositoryObservation
 from tests.support.review_state import make_review_identity

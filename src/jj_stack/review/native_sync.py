@@ -210,12 +210,15 @@ def build_selected_native_sync(
             continue
         if selected_by_change_id[candidate.change_id].immutable:
             raise CliError(t"Native member PR #{member.number} is not terminally merged.")
+        local_revision = selected_by_change_id[candidate.change_id]
+        _require_unedited_native_survivor(candidate, local_revision, member)
         observed = observation.reviews[candidate.change_id]
-        if (
-            pull_request.normalize_state().state != "open"
-            or pull_request.head.sha != member.head.sha
-            or observed.remote_review_target != member.head.sha
-        ):
+        review_matches = (
+            pull_request.normalize_state().state == "open",
+            pull_request.head.sha == member.head.sha,
+            observed.remote_review_target == member.head.sha,
+        )
+        if review_matches != (True, True, True):
             raise CliError(
                 t"Active native member PR #{member.number} does not match its reviewed branch."
             )
@@ -226,6 +229,19 @@ def build_selected_native_sync(
             )
         )
     return tuple(historical), tuple(survivors)
+
+
+def _require_unedited_native_survivor(
+    candidate: LandedReviewCandidate,
+    local_revision: LocalRevision,
+    member: GithubStackPullRequest,
+) -> None:
+    if local_revision.commit_id in (candidate.submitted_baseline.commit_id, member.head.sha):
+        return
+    raise CliError(
+        t"Cannot sync {ui.change_id(candidate.change_id)} because it has unpublished local edits "
+        t"since submit."
+    )
 
 
 def _require_history(stack: GithubStack, tracked: set[int]) -> None:

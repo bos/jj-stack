@@ -1,7 +1,7 @@
 """Show how the selected jj stack(s) currently appear locally and on GitHub.
 
 By default it summarizes the submitted and unsubmitted changes in each selected stack;
-`--verbose` expands those summaries and includes any bookmark names.
+`--verbose` expands those summaries.
 
 `--fetch` runs a fetch first so the report uses current remote branch locations. Use one or more
 revsets and `--pull-request` selectors to inspect several stacks in one run.
@@ -22,6 +22,7 @@ from typing import Literal
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._json_status import review_change_json
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.config import RepoConfig
@@ -133,7 +134,10 @@ def _run_status(
     verbose: bool,
 ) -> int:
     if fetch:
-        refresh_remote_state_for_status(jj_client=context.jj_client)
+        refresh_remote_state_for_status(
+            jj_client=context.jj_client,
+            on_fetch_isolation_change=report_fetch_isolation,
+        )
 
     if not selectors:
         prepared_status = _prepare_status_with_spinner(
@@ -1011,7 +1015,6 @@ def _render_summary_revision_lines(
     return render_revision_lines(
         client=client,
         revision=revision,
-        bookmark=None if verbose else revision.bookmark,
         suffix=summary,
         prerendered_lines=(
             prerendered_blocks.get(revision.commit_id) if prerendered_blocks else None

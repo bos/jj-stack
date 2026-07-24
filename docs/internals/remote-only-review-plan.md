@@ -115,53 +115,6 @@ The completed series must satisfy all of these:
 - **Validated series:** every code commit passes focused checks, `./check.py`,
   `uv run tools/check_complexity.py`, and independent review.
 
-## 3. Replace persistent bookmarks with remote-only transport
-
-Create one coherent replacement commit:
-
-- retain deterministic `review/<subject-slug>-<short-change-id>` branches for first submit and
-  the existing readable `fresh-pr<number>` form for retry-stable `submit --restart` branches;
-- raise the minimum jj version to 0.43.0;
-- before changing fetch configuration, report that `review/` is reserved; inspect only exact refs
-  selected by the command, never scan the namespace to classify ownership;
-- observe and ensure the single negative Git fetch refspec before every command-owned ordinary
-  fetch, explicit attachment, or remote review-ref mutation, including deletion; reject an
-  effective jj fetch-pattern override and honor dry-run as described above;
-- observe managed refs directly on the remote and push all selected revisions atomically by
-  resolved URL with exact per-ref leases;
-- recover an interrupted first submit only by querying `review/*-<short-change-id>`, requiring one
-  candidate whose target resolves to the exact full local change ID, and proving GitHub has no PR
-  for it; inspect the Git commit's `change-id` header without importing that snapshot into jj, use
-  its observed target as the lease, and fail closed on multiple or unproved candidates;
-- require explicit checkout or relink when a PR exists without saved identity;
-- authorize checkout and relink only from the exact PR owner, head ref, and head SHA; import the
-  exact selected ref through `refs/heads/jj-stack-tmp/checkout`, compare it with the observed
-  remote object ID, verify it after `jj git import`, and forget/export it in `try/finally`; cover
-  an interrupted-checkout retry;
-- rewrite submit, resubmission, checkout, relink, cleanup, sync, unstack, and recovery around
-  saved identity and direct remote observation;
-- remove local bookmark mutation, tracking, repair, cleanup, conflict handling, speculative
-  discovery, link handling, and the superseded bookmark models and tests, except for the exact
-  interrupted-first-submit observation above;
-- follow `docs/internals/property-testing.md` for all property-harness changes;
-- require checkout and relink PR heads to match the reserved managed naming grammar;
-- derive cleanup eligibility from that namespace plus exact saved PR, head, and baseline checks,
-  and never delete an unclaimed ref;
-- preserve pre-push head/base reachability simulation, protective trunk retargets, and the final
-  unexpected-closure check that prevent GitHub from auto-closing a PR;
-- re-read all selected remote refs in one fresh batch immediately before the atomic leased push;
-  a stale lease or unsupported atomic push fails without a sequential fallback;
-- delete remote review refs through the same transport with exact leases and no follow-up fetch;
-- rename public JSON and output fields from `bookmark` to optional `branch`;
-- update the canonical design, affected user docs, CLI help, architecture notes, and focused tests
-  in the same commit.
-
-Acceptance: successful workflows leave no jj-stack bookmark or temporary ref; ordinary fetch
-isolation, exact-lease atomicity, interrupted first submit, and interrupted checkout are covered
-in both repository layouts where relevant. GitHub auto-close defenses retain focused coverage.
-Focused tests and `./check.py` pass, no complexity budget grows, production code is at least 500
-lines below baseline, and review records cumulative line-count deltas.
-
 ## 4. Consolidate the surviving test suite
 
 Review the surviving tests against the testing philosophy after the mechanism is gone:

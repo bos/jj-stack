@@ -17,7 +17,7 @@ import httpxyz
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.jj.client import JjClient
+from jj_stack.jj.client import JjClient, ReviewRefUpdate
 
 from .fake_github import (
     FakeGithubRepository,
@@ -311,15 +311,23 @@ def _build_manual_pr_template(template_root: Path) -> None:
 
     Unlike the submitted-stack template this never runs jj-stack `main()`, so it
     has no state-home to rehome: only the jj repo, the remote, and the pickled
-    `fake_repo` carry state. The manual bookmark is left in place; tests that
-    need it forgotten do so as a cheap per-test step.
+    `fake_repo` carry state. The review branch exists only on the remote.
     """
     repo, fake_repo = _copy_fake_github_repo_from_template(template_root, _get_cached_template())
     commit_file(repo, "feature 1", "feature-1.txt")
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    revision = JjClient(repo).discover_review_stack().head
+    change_id = revision.change_id
     manual_bookmark = f"review/manual-feature-{short_change_id(change_id)}"
-    run_command(["jj", "bookmark", "create", manual_bookmark, "-r", "@-"], repo)
-    run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", manual_bookmark], repo)
+    JjClient(repo).mutate_remote_review_refs(
+        remote="origin",
+        updates=(
+            ReviewRefUpdate(
+                branch=manual_bookmark,
+                expected_target=None,
+                desired_target=revision.commit_id,
+            ),
+        ),
+    )
     fake_repo.create_pull_request(
         base_ref="main",
         body="manual body",

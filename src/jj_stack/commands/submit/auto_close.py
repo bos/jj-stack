@@ -7,7 +7,6 @@ from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
-from jj_stack.models.bookmarks import BookmarkState
 from jj_stack.models.github import GithubPullRequest
 
 from .models import PendingPullRequestSync, PreparedSubmitRevision
@@ -34,21 +33,21 @@ async def retarget_review_bases_before_branch_push(
 
 def predict_pull_requests_auto_closed_by_push(
     *,
-    bookmark_states: dict[str, BookmarkState],
     jj_client: JjClient,
     pending_syncs: tuple[PendingPullRequestSync, ...],
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
-    remote_name: str,
+    remote_targets: dict[str, str],
 ) -> tuple[PendingPullRequestSync, ...]:
     """Pending PRs that GitHub will auto-close (as merged) after the planned push.
 
     GitHub auto-closes an open PR when its head ref becomes contained in its base
-    ref. The push moves head and (transitively, via stacked bookmarks) base, so
-    the prediction is run against the post-push commit IDs each ref will hold.
+    ref. The push moves head and, transitively through the planned stacked branch
+    updates, base, so the prediction uses the post-push commit IDs each ref will
+    hold.
     """
 
     push_targets = {
-        prepared_revision.bookmark: prepared_revision.revision.commit_id
+        prepared_revision.branch: prepared_revision.revision.commit_id
         for prepared_revision in prepared_revisions
     }
     candidates: list[tuple[str, str, PendingPullRequestSync]] = []
@@ -62,8 +61,7 @@ def predict_pull_requests_auto_closed_by_push(
         base_after_push = _resolve_post_push_commit(
             ref=pull_request.base.ref,
             push_targets=push_targets,
-            bookmark_states=bookmark_states,
-            remote_name=remote_name,
+            remote_targets=remote_targets,
         )
         if base_after_push is None:
             continue
@@ -79,22 +77,15 @@ def predict_pull_requests_auto_closed_by_push(
 
 def _resolve_post_push_commit(
     *,
-    bookmark_states: dict[str, BookmarkState],
     push_targets: dict[str, str],
     ref: str,
-    remote_name: str,
+    remote_targets: dict[str, str],
 ) -> str | None:
     """Resolve the commit ID a ref will point at after the planned push lands."""
 
     if ref in push_targets:
         return push_targets[ref]
-    bookmark_state = bookmark_states.get(ref)
-    if bookmark_state is None:
-        return None
-    remote_state = bookmark_state.remote_target(remote_name)
-    if remote_state is None or remote_state.target is None:
-        return None
-    return remote_state.target
+    return remote_targets.get(ref)
 
 
 async def _retarget_review_base_before_branch_push(

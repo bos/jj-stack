@@ -11,9 +11,9 @@ without building from source. Prints the directory containing the installed
 `jj` binary on stdout.
 
 Examples:
-  tools/install-jj-release.sh v0.42.0
-  PATH="$(tools/install-jj-release.sh v0.28.2):$PATH" ./check.py
-  tools/install-jj-release.sh 0.42.0 .tmp/jj/v0.42.0
+  tools/install-jj-release.sh v0.43.0
+  PATH="$(tools/install-jj-release.sh v0.43.0):$PATH" ./check.py
+  tools/install-jj-release.sh 0.43.0 .tmp/jj/v0.43.0
 EOF
 }
 

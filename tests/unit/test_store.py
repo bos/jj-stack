@@ -125,10 +125,11 @@ def test_batch_relink_conflict_changes_no_review_pair(tmp_path: Path) -> None:
     raced_baseline = SubmittedBaseline(commit_id="raced")
     store.create_review(CHANGE_ID, identity=first_identity, baseline=old_baseline)
     store.create_review(OTHER_CHANGE_ID, identity=second_identity, baseline=old_baseline)
-    store.advance_baseline(
+    store.relink_review(
         OTHER_CHANGE_ID,
         expected_identity=second_identity,
         expected_baseline=old_baseline,
+        identity=second_identity,
         baseline=raced_baseline,
     )
 
@@ -238,10 +239,11 @@ def test_unrelated_write_preserves_invalid_record_as_opaque_json(tmp_path: Path)
     store = ReviewStateStore(state_path)
     loaded = store.load()
 
-    store.advance_baseline(
+    store.relink_review(
         CHANGE_ID,
         expected_identity=loaded.review_identities[CHANGE_ID],
         expected_baseline=loaded.submitted_baselines[CHANGE_ID],
+        identity=loaded.review_identities[CHANGE_ID],
         baseline=SubmittedBaseline(commit_id="def456"),
     )
 

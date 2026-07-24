@@ -39,6 +39,7 @@ def test_cleanup_retires_closed_review_after_local_change_is_abandoned(
     assert exit_code == 0
     assert "remove tracking for" in captured.out
     assert change_id not in ReviewStateStore.for_repo(repo).load().review_identities
+    assert not any(ref.startswith("refs/heads/review/") for ref in remote_refs(fake_repo.git_dir))
 
 
 def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
@@ -56,7 +57,6 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
 
     fake_repo.pull_requests[1].state = "closed"
     run_command(["jj", "abandon", change_id], repo)
-    run_command(["jj", "bookmark", "delete", bookmark], repo)
     fake_repo.native_stacks = {7: (1,)}
     state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
     state_before = state_store.load()
@@ -271,52 +271,6 @@ def test_cleanup_preserves_open_orphan_record_and_remote_branch(
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
 
-def test_cleanup_uses_rewritten_local_target_and_saved_remote_baseline(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    bookmark = initial_state.review_identities[change_id].head_ref
-    submitted_commit_id = initial_state.submitted_baselines[change_id].commit_id
-    fake_repo.pull_requests[1].state = "closed"
-
-    run_command(["jj", "bookmark", "set", bookmark, "-r", change_id], repo)
-    run_command(["jj", "describe", "-r", change_id, "-m", "rewritten feature"], repo)
-    rewritten_commit_id = JjClient(repo).discover_review_stack().head.commit_id
-
-    assert rewritten_commit_id != submitted_commit_id
-    assert JjClient(repo).get_bookmark_state(bookmark).local_target == rewritten_commit_id
-
-    preview_exit_code = run_main(repo, config_path, "cleanup", "--dry-run")
-    preview = capsys.readouterr()
-    normalized_preview = " ".join(preview.out.split())
-
-    assert preview_exit_code == 0
-    assert f"local bookmark: forget {bookmark}" in normalized_preview
-    assert f"remote branch: delete {bookmark}@origin" in normalized_preview
-    assert "  ✗ remote branch:" not in preview.out
-    assert bookmark in run_command(["jj", "bookmark", "list", bookmark], repo).stdout
-    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
-
-    apply_exit_code = run_main(repo, config_path, "cleanup")
-    applied = capsys.readouterr()
-    normalized_applied = " ".join(applied.out.split())
-
-    assert apply_exit_code == 0
-    assert f"local bookmark: forget {bookmark}" in normalized_applied
-    assert f"remote branch: delete {bookmark}@origin" in normalized_applied
-    assert change_id not in state_store.load().review_identities
-    assert bookmark not in run_command(["jj", "bookmark", "list", bookmark], repo).stdout
-    assert f"refs/heads/{bookmark}" not in remote_refs(fake_repo.git_dir)
-
-
 def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
     tmp_path: Path,
     monkeypatch,
@@ -333,18 +287,10 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
 
     fake_repo.pull_requests[1].state = "closed"
     run_command(["jj", "abandon", change_id], repo)
-    run_command(["jj", "bookmark", "delete", bookmark], repo)
 
-    original_delete_remote_bookmarks = JjClient.delete_remote_bookmarks
+    original_mutate = JjClient.mutate_remote_review_refs
 
-    def delete_remote_bookmarks_with_race(
-        self,
-        *,
-        remote: str,
-        deletions,
-        fetch: bool = True,
-    ) -> None:
-        bookmark, _expected_remote_target = tuple(deletions)[0]
+    def mutate_with_race(self, *, remote: str, updates) -> None:
         run_command(
             [
                 "git",
@@ -356,16 +302,11 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
             ],
             fake_repo.git_dir.parent,
         )
-        original_delete_remote_bookmarks(
-            self,
-            remote=remote,
-            deletions=deletions,
-            fetch=fetch,
-        )
+        original_mutate(self, remote=remote, updates=updates)
 
     monkeypatch.setattr(
-        "jj_stack.jj.client.JjClient.delete_remote_bookmarks",
-        delete_remote_bookmarks_with_race,
+        "jj_stack.jj.client.JjClient.mutate_remote_review_refs",
+        mutate_with_race,
     )
 
     exit_code = run_main(repo, config_path, "cleanup")
@@ -376,7 +317,7 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
     assert read_remote_ref(fake_repo.git_dir, bookmark) == read_remote_ref(
         fake_repo.git_dir, "main"
     )
-    assert "force-with-lease" in captured.err
+    assert "changed before the atomic push" in captured.err
 
 
 def test_cleanup_removes_managed_stack_comment_for_closed_pull_request(

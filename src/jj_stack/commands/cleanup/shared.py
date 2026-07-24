@@ -13,7 +13,7 @@ from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
 )
-from jj_stack.models.bookmarks import BookmarkState, GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.models.review_state import (
     ReviewIdentity,
     ReviewState,
@@ -52,7 +52,6 @@ class PreparedCleanup:
     """Locally prepared cleanup inputs before any GitHub inspection."""
 
     context: CommandContext
-    bookmark_states: dict[str, BookmarkState]
     # None until plain cleanup proves it needs remote or GitHub state.
     github_target: GithubTarget | UnresolvedGithubTarget | None
     dry_run: bool
@@ -69,9 +68,7 @@ class PreparedCleanup:
 class PreparedCleanupChange:
     """Locally prepared cleanup state for one complete tracked review."""
 
-    bookmark_state: BookmarkState
     change_id: str
-    current_commit_id: str | None
     review_identity: ReviewIdentity
     stale_reason: str | None
     submitted_baseline: SubmittedBaseline

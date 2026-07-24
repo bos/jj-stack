@@ -7,11 +7,7 @@ import jj_stack.ui as ui
 from jj_stack.commands.list_ import (
     OrphanRow,
     _emit_orphan_hint,
-    _prepare_repo_inspection_context,
 )
-from jj_stack.config import RepoConfig
-from jj_stack.github.resolution import GithubTarget
-from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.discovery import (
@@ -22,7 +18,7 @@ from jj_stack.review.discovery import (
 
 def test_orphan_hint_is_emitted_once_for_all_rows(monkeypatch) -> None:
     row = OrphanRow(
-        bookmark="review/orphan-aaaaaaaa",
+        branch="review/orphan-aaaaaaaa",
         change_id="a" * 32,
         pull_request={"number": 1},
         review="orphan",
@@ -212,45 +208,3 @@ def test_connected_stacks_warn_for_tracked_change_built_on_selected_stack() -> N
 
     assert tuple(stack.head.change_id for stack in discovered) == (connected.change_id,)
     assert queried_descendants == [(connected.commit_id,)]
-
-
-def test_repo_inspection_limits_bookmark_listing_to_tracked_bookmarks() -> None:
-    trunk = _revision("m" * 32, "main", parent="root", subject="main")
-    tracked = _revision("a" * 32, "commit-a", parent="main", subject="feature 1")
-    untracked = _revision("b" * 32, "commit-b", parent="commit-a", subject="feature 2")
-    stack = LocalStack(
-        base_parent=trunk,
-        head=untracked,
-        revisions=(tracked, untracked),
-        selected_revset=untracked.change_id,
-        trunk=trunk,
-    )
-    state = ReviewState(
-        review_identities={
-            tracked.change_id: _identity(bookmark="review/feature-1-abcdef01"),
-        }
-    )
-    bookmark_calls: list[tuple[str, ...] | None] = []
-    jj_client = cast(
-        Any,
-        SimpleNamespace(
-            list_git_remotes=lambda: (
-                GitRemote(
-                    name="origin",
-                    fetch_url="https://github.com/octo-org/repo.git",
-                    push_url="https://github.com/octo-org/repo.git",
-                ),
-            ),
-            list_bookmark_states=lambda bookmarks=None: bookmark_calls.append(bookmarks) or {},
-        ),
-    )
-    context = cast(Any, SimpleNamespace(config=RepoConfig(), jj_client=jj_client))
-
-    inspection = _prepare_repo_inspection_context(
-        context=context,
-        discovered=(stack,),
-        state=state,
-    )
-
-    assert isinstance(inspection.github_target, GithubTarget)
-    assert bookmark_calls == [("review/feature-1-abcdef01",)]

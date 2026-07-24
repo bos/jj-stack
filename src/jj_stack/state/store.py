@@ -177,26 +177,6 @@ class ReviewStateStore:
             envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
         return self._persist(envelope)
 
-    def advance_baseline(
-        self,
-        change_id: str,
-        *,
-        expected_identity: ReviewIdentity,
-        expected_baseline: SubmittedBaseline,
-        baseline: SubmittedBaseline,
-    ) -> ReviewState:
-        """Atomically advance a baseline while the nominal identity stays exact."""
-
-        envelope = self._load_envelope()
-        self._compare_record(
-            envelope, change_id, expected_identity, "advance baseline", _IDENTITY
-        )
-        self._compare_record(
-            envelope, change_id, expected_baseline, "advance baseline", _BASELINE
-        )
-        envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
-        return self._persist(envelope)
-
     def retire_review(
         self,
         change_id: str,

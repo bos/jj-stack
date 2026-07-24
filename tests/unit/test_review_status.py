@@ -5,187 +5,55 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from jj_stack.bootstrap import CommandContext
-from jj_stack.config import RepoConfig
 from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.jj.client import JjClient
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review import status as status_module
 from jj_stack.review.status import (
-    PreparedStack,
     PreparedStatus,
-    ReviewStatusRevision,
     prepare_stack_for_status,
+    prepare_status,
     stream_status_async,
 )
 from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
 
-def test_stream_status_streams_local_fallback_revisions_after_github_abort(
+def test_untracked_status_omits_branch_and_skips_remote_and_github_discovery(
     monkeypatch,
 ) -> None:
-    remote = _STATUS_REMOTE
+    revision = make_revision(
+        commit_id="commit-1",
+        description="feature 1",
+        change_id="aaaaaaaa1234",
+    )
+    client = _PrepareStatusClient(_stack_for_status(revision))
+    prepared = prepare_stack_for_status(
+        context=_context(client=client, state=ReviewState()),
+        remote=_STATUS_REMOTE,
+        remote_error=None,
+        stack=_stack_for_status(revision),
+        state=ReviewState(),
+    )
     prepared_status = PreparedStatus(
-        github_target=GithubTarget(
-            remote=remote,
-            repository=GithubRepoAddress(
-                host="github.com",
-                owner="octo-org",
-                repo="stacked-review",
-            ),
-        ),
-        prepared=cast(
-            PreparedStack,
-            SimpleNamespace(
-                remote=remote,
-                remote_error=None,
-                stack=SimpleNamespace(revisions=()),
-                state=ReviewState(),
-                status_revisions=(
-                    SimpleNamespace(
-                        change_id="aaaaaaaaaaaa",
-                        review_identity=_identity(pr_number=1),
-                    ),
-                ),
-            ),
-        ),
+        github_target=_github_target(),
+        prepared=prepared,
         selected_revset="@",
         base_parent_subject="base",
     )
-    local_only_revisions = (
-        ReviewStatusRevision(
-            bookmark="review/feature-1-aaaaaaaa",
-            bookmark_source="generated",
-            change_id="aaaaaaaaaaaa",
-            commit_id="commit-1",
-            local_divergent=False,
-            pull_request_lookup=None,
-            remote_state=None,
-            review_identity=None,
-            submitted_baseline=None,
-            managed_comments_lookup=None,
-            subject="feature 1",
-        ),
-        ReviewStatusRevision(
-            bookmark="review/feature-2-bbbbbbbb",
-            bookmark_source="generated",
-            change_id="bbbbbbbbbbbb",
-            commit_id="commit-2",
-            local_divergent=False,
-            pull_request_lookup=None,
-            remote_state=None,
-            review_identity=None,
-            submitted_baseline=None,
-            managed_comments_lookup=None,
-            subject="feature 2",
-        ),
-    )
-    streamed_revisions: list[tuple[str, bool]] = []
 
-    async def fake_iter_status_revisions_with_github(**kwargs):
+    async def fail_github_inspection(**_kwargs):
         if False:
             yield None
-        raise CliError("jj bookmark list failed")
+        raise AssertionError("untracked revisions must not trigger GitHub inspection")
 
     monkeypatch.setattr(
         "jj_stack.review.status._iter_status_revisions_with_github",
-        fake_iter_status_revisions_with_github,
-    )
-    monkeypatch.setattr(
-        "jj_stack.review.status.build_status_revisions_for_prepared_stack",
-        lambda prepared: local_only_revisions,
-    )
-
-    result = asyncio.run(
-        stream_status_async(
-            on_revision=lambda revision, github_available: streamed_revisions.append(
-                (revision.change_id, github_available)
-            ),
-            prepared_status=prepared_status,
-        )
-    )
-
-    assert streamed_revisions == [
-        ("bbbbbbbbbbbb", False),
-        ("aaaaaaaaaaaa", False),
-    ]
-    assert result.github_error == "jj bookmark list failed"
-    assert result.github_repository == prepared_status.github_repository
-    assert result.incomplete is True
-    assert result.revisions == (
-        local_only_revisions[1],
-        local_only_revisions[0],
-    )
-
-
-def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -> None:
-    remote = _STATUS_REMOTE
-    local_only_revisions = (
-        ReviewStatusRevision(
-            bookmark="review/feature-1-aaaaaaaa",
-            bookmark_source="generated",
-            change_id="aaaaaaaaaaaa",
-            commit_id="commit-1",
-            local_divergent=False,
-            pull_request_lookup=None,
-            remote_state=None,
-            review_identity=None,
-            submitted_baseline=None,
-            managed_comments_lookup=None,
-            subject="feature 1",
-        ),
-    )
-    prepared_status = PreparedStatus(
-        github_target=GithubTarget(
-            remote=remote,
-            repository=GithubRepoAddress(
-                host="github.com",
-                owner="octo-org",
-                repo="stacked-review",
-            ),
-        ),
-        prepared=cast(
-            PreparedStack,
-            SimpleNamespace(
-                remote=remote,
-                remote_error=None,
-                stack=SimpleNamespace(revisions=()),
-                state=ReviewState(),
-                status_revisions=(
-                    SimpleNamespace(
-                        bookmark="review/feature-1-aaaaaaaa",
-                        bookmark_source="generated",
-                        revision=SimpleNamespace(
-                            change_id="aaaaaaaaaaaa",
-                            commit_id="commit-1",
-                            subject="feature 1",
-                        ),
-                        review_identity=None,
-                        submitted_baseline=None,
-                    ),
-                ),
-            ),
-        ),
-        selected_revset="@",
-        base_parent_subject="base",
-    )
-    monkeypatch.setattr(
-        "jj_stack.review.status.build_status_revisions_for_prepared_stack",
-        lambda prepared: local_only_revisions,
-    )
-
-    async def fail_iter_status_revisions_with_github(**kwargs):
-        if False:
-            yield None
-        raise AssertionError("unexpected GitHub inspection for untracked stack")
-
-    monkeypatch.setattr(
-        "jj_stack.review.status._iter_status_revisions_with_github",
-        fail_iter_status_revisions_with_github,
+        fail_github_inspection,
     )
 
     result = asyncio.run(
@@ -195,13 +63,135 @@ def test_stream_status_skips_github_discovery_for_untracked_stack(monkeypatch) -
         )
     )
 
-    assert result.github_error is None
-    assert result.github_repository == prepared_status.github_repository
-    assert result.incomplete is False
-    assert result.revisions == local_only_revisions
+    assert client.list_calls == []
+    assert result.revisions[0].branch is None
+    assert result.revisions[0].remote_target is None
 
 
-def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_misses() -> None:
+def test_prepare_status_observes_only_exact_saved_review_branches() -> None:
+    first = make_revision(
+        commit_id="commit-1",
+        description="feature 1",
+        change_id="aaaaaaaa1234",
+    )
+    second = make_revision(
+        commit_id="commit-2",
+        description="feature 2",
+        change_id="bbbbbbbb5678",
+    )
+    state = ReviewState(
+        review_identities={
+            first.change_id: _identity(head_ref="review/feature-1-aaaaaaaa"),
+        }
+    )
+    client = _PrepareStatusClient(
+        _stack_for_status(first, second),
+        remote_targets={"review/feature-1-aaaaaaaa": first.commit_id},
+    )
+
+    prepared = prepare_status(
+        context=_context(client=client, state=state),
+        revset=None,
+    )
+
+    assert client.list_calls == [("refs/heads/review/feature-1-aaaaaaaa",)]
+    assert prepared.prepared.status_revisions[0].branch == "review/feature-1-aaaaaaaa"
+    assert prepared.prepared.status_revisions[1].branch is None
+    assert prepared.prepared.remote_targets == {"review/feature-1-aaaaaaaa": first.commit_id}
+
+
+def test_prepare_status_reloads_saved_branch_after_fetch() -> None:
+    revision = make_revision(
+        commit_id="commit-1",
+        description="feature 1",
+        change_id="aaaaaaaa1234",
+    )
+    stale_state = ReviewState(
+        review_identities={revision.change_id: _identity(head_ref="review/stale", pr_number=1)}
+    )
+    refreshed_state = ReviewState(
+        review_identities={
+            revision.change_id: _identity(head_ref="review/refreshed", pr_number=2)
+        }
+    )
+    client = _PrepareStatusClient(
+        _stack_for_status(revision),
+        remote_targets={"review/refreshed": revision.commit_id},
+    )
+    state_store = _StateStoreStub(stale_state, refreshed_state)
+
+    prepared = prepare_status(
+        context=_context(client=client, state_store=state_store),
+        fetch_remote_state=True,
+        revset=None,
+    )
+
+    assert state_store.loads == 2
+    assert client.fetches == ["origin"]
+    assert client.list_calls == [("refs/heads/review/refreshed",)]
+    assert prepared.prepared.status_revisions[0].branch == "review/refreshed"
+
+
+def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) -> None:
+    revision = make_revision(
+        commit_id="commit-1",
+        description="feature 1",
+        change_id="aaaaaaaa1234",
+    )
+    state = ReviewState(
+        review_identities={
+            revision.change_id: _identity(
+                head_ref="review/feature-1-aaaaaaaa",
+                pr_number=1,
+            )
+        }
+    )
+    client = _PrepareStatusClient(
+        _stack_for_status(revision),
+        remote_targets={"review/feature-1-aaaaaaaa": revision.commit_id},
+    )
+    prepared = prepare_stack_for_status(
+        context=_context(client=client, state=state),
+        remote=_STATUS_REMOTE,
+        remote_error=None,
+        stack=_stack_for_status(revision),
+        state=state,
+    )
+    prepared_status = PreparedStatus(
+        github_target=_github_target(),
+        prepared=prepared,
+        selected_revset="@",
+        base_parent_subject="base",
+    )
+    streamed: list[tuple[str, bool]] = []
+
+    async def abort_github_inspection(**_kwargs):
+        if False:
+            yield None
+        raise CliError("GitHub lookup failed")
+
+    monkeypatch.setattr(
+        "jj_stack.review.status._iter_status_revisions_with_github",
+        abort_github_inspection,
+    )
+
+    result = asyncio.run(
+        stream_status_async(
+            on_revision=lambda item, github_available: streamed.append(
+                (item.change_id, github_available)
+            ),
+            prepared_status=prepared_status,
+        )
+    )
+
+    assert streamed == [(revision.change_id, False)]
+    assert result.github_error == "GitHub lookup failed"
+    assert result.incomplete is True
+    assert result.revisions[0].branch == "review/feature-1-aaaaaaaa"
+    assert result.revisions[0].remote_target == revision.commit_id
+
+
+def test_pull_request_lookup_falls_back_to_exact_remembered_pr_number() -> None:
     class FakeGithubClient:
         repository = GithubRepoAddress(
             host="github.test",
@@ -233,7 +223,7 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
             }
 
     prepared_revision = SimpleNamespace(
-        bookmark="review/old-branch",
+        branch="review/old-branch",
         review_identity=_identity(
             head_ref="review/old-branch",
             pr_number=7,
@@ -253,87 +243,6 @@ def test_pull_request_lookup_falls_back_to_remembered_pr_number_when_branch_miss
     assert lookup.pull_request is not None
     assert lookup.pull_request.number == 7
     assert lookup.pull_request.state == "merged"
-
-
-def test_prepare_status_narrows_bookmark_listing_when_all_revisions_are_pinned() -> None:
-    first = make_revision(
-        commit_id="commit-1",
-        description="feature 1",
-        change_id="aaaaaaaa1234",
-    )
-    second = make_revision(
-        commit_id="commit-2",
-        description="feature 2",
-        change_id="bbbbbbbb5678",
-    )
-    stack = _stack_for_status(first, second)
-
-    pinned_state = ReviewState(
-        review_identities={
-            "aaaaaaaa1234": _identity(head_ref="review/feature-1-aaaaaaaa"),
-            "bbbbbbbb5678": _identity(head_ref="review/feature-2-bbbbbbbb"),
-        }
-    )
-    client = _PrepareStatusClient(stack)
-    state_store = _StateStoreStub(pinned_state)
-    _prepare_status_for_test(
-        config=RepoConfig(),
-        fetch_remote_state=False,
-        jj_client=client,
-        state_store=state_store,
-    )
-    assert client.list_calls == [
-        ("review/feature-1-aaaaaaaa", "review/feature-2-bbbbbbbb"),
-    ]
-
-    client = _PrepareStatusClient(stack)
-    state_store = _StateStoreStub(
-        ReviewState(
-            review_identities={"aaaaaaaa1234": _identity(head_ref="review/feature-1-aaaaaaaa")}
-        )
-    )
-    _prepare_status_for_test(
-        config=RepoConfig(),
-        fetch_remote_state=False,
-        jj_client=client,
-        state_store=state_store,
-    )
-    assert client.list_calls == [None]
-
-
-def test_prepare_status_reloads_saved_state_after_fetch() -> None:
-    revision = make_revision(
-        commit_id="commit-1",
-        description="feature 1",
-        change_id="aaaaaaaa1234",
-    )
-    stack = _stack_for_status(revision)
-    stale_state = ReviewState(
-        review_identities={revision.change_id: _identity(head_ref="review/stale", pr_number=1)}
-    )
-    refreshed_state = ReviewState(
-        review_identities={
-            revision.change_id: _identity(head_ref="review/refreshed", pr_number=2)
-        }
-    )
-
-    client = _PrepareStatusClient(stack)
-    state_store = _StateStoreStub(stale_state, refreshed_state)
-
-    prepared_status = _prepare_status_for_test(
-        config=RepoConfig(),
-        fetch_remote_state=True,
-        jj_client=client,
-        state_store=state_store,
-    )
-
-    assert state_store.loads == 2
-    assert client.fetches == ["origin"]
-    assert client.list_calls == [("review/refreshed",)]
-    prepared_revision = prepared_status.prepared.status_revisions[0]
-    assert (
-        prepared_revision.review_identity == refreshed_state.review_identities[revision.change_id]
-    )
 
 
 def test_pull_request_lookup_ignores_draft_review_decision() -> None:
@@ -356,60 +265,22 @@ def test_pull_request_lookup_ignores_draft_review_decision() -> None:
     assert lookup.review_decision is None
 
 
-def test_prepare_stack_for_status_leaves_generated_bookmarks_observational() -> None:
-    revision = LocalRevision(
-        change_id="aaaaaaaa1234",
-        commit_id="commit-1",
-        current_working_copy=False,
-        description="feature 1",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("trunk-commit",),
-    )
-    trunk = LocalRevision(
-        change_id="trunkchangeid",
-        commit_id="trunk-commit",
-        current_working_copy=False,
-        description="base",
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=True,
-        parents=("root",),
-    )
-    stack = LocalStack(
-        base_parent=trunk,
-        head=revision,
-        revisions=(revision,),
-        selected_revset="@",
-        trunk=trunk,
-    )
-
-    prepared = prepare_stack_for_status(
-        context=cast(
-            CommandContext,
-            SimpleNamespace(
-                config=RepoConfig(),
-                jj_client=cast(JjClient, SimpleNamespace(list_bookmark_states=lambda _: {})),
-            ),
-        ),
-        remote=None,
-        remote_error=None,
-        stack=stack,
-        state=ReviewState(),
-    )
-
-    assert prepared.status_revisions[0].bookmark_source == "generated"
-    assert prepared.status_revisions[0].review_identity is None
-
-
 _STATUS_REMOTE = GitRemote(
     name="origin",
     fetch_url="git@github.com:octo-org/stacked-review.git",
     push_url="git@github.com:octo-org/stacked-review.git",
 )
+
+
+def _github_target() -> GithubTarget:
+    return GithubTarget(
+        remote=_STATUS_REMOTE,
+        repository=GithubRepoAddress(
+            host="github.com",
+            owner="octo-org",
+            repo="stacked-review",
+        ),
+    )
 
 
 def _identity(
@@ -443,58 +314,70 @@ def _stack_for_status(*revisions: LocalRevision) -> LocalStack:
 
 
 class _PrepareStatusClient:
-    def __init__(self, stack: LocalStack) -> None:
+    def __init__(
+        self,
+        stack: LocalStack,
+        *,
+        remote_targets: dict[str, str] | None = None,
+    ) -> None:
         self.fetches: list[str] = []
-        self.list_calls: list[tuple[str, ...] | None] = []
-        self._stack = stack
+        self.list_calls: list[tuple[str, ...]] = []
+        self.remote_targets = remote_targets or {}
+        self.stack = stack
 
-    def discover_review_stack(self, revset, *, allow_divergent=False, allow_immutable=False):
-        return self._stack
+    def discover_review_stack(
+        self,
+        _revset,
+        *,
+        allow_divergent: bool = False,
+        allow_immutable: bool = False,
+    ) -> LocalStack:
+        return self.stack
 
-    def list_git_remotes(self):
+    def list_git_remotes(self) -> tuple[GitRemote, ...]:
         return (_STATUS_REMOTE,)
 
-    def fetch_remote(self, *, remote: str) -> None:
+    def fetch_remote(self, *, remote: str, **_kwargs) -> None:
         self.fetches.append(remote)
 
-    def list_bookmark_states(self, bookmarks=None):
-        self.list_calls.append(None if bookmarks is None else tuple(bookmarks))
-        return {}
+    def list_remote_branches(
+        self,
+        *,
+        remote: str,
+        patterns: tuple[str, ...],
+    ) -> dict[str, str]:
+        assert remote == "origin"
+        self.list_calls.append(patterns)
+        requested = {pattern.removeprefix("refs/heads/") for pattern in patterns}
+        return {
+            branch: target
+            for branch, target in self.remote_targets.items()
+            if branch in requested
+        }
 
 
 class _StateStoreStub:
     def __init__(self, *states: ReviewState) -> None:
         self.loads = 0
-        self._states = states
+        self.states = states
 
     def load(self) -> ReviewState:
-        state = self._states[min(self.loads, len(self._states) - 1)]
+        state = self.states[min(self.loads, len(self.states) - 1)]
         self.loads += 1
         return state
 
-    def save(self, state: ReviewState) -> None:
-        raise AssertionError("status preparation should not save state")
 
-
-def _prepare_status_for_test(
+def _context(
     *,
-    config: RepoConfig,
-    fetch_remote_state: bool,
-    jj_client,
-    state_store,
-) -> PreparedStatus:
-    from jj_stack.jj.client import JjClient
-    from jj_stack.review.status import prepare_status
-
-    return prepare_status(
-        context=cast(
-            CommandContext,
-            SimpleNamespace(
-                config=config,
-                jj_client=cast(JjClient, jj_client),
-                state_store=cast(ReviewStateStore, state_store),
-            ),
+    client: _PrepareStatusClient,
+    state: ReviewState | None = None,
+    state_store: _StateStoreStub | None = None,
+) -> CommandContext:
+    store = state_store or _StateStoreStub(state or ReviewState())
+    return cast(
+        CommandContext,
+        SimpleNamespace(
+            jj_client=cast(JjClient, client),
+            state_store=cast(ReviewStateStore, store),
         ),
-        fetch_remote_state=fetch_remote_state,
-        revset=None,
     )

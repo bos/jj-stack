@@ -1,461 +1,99 @@
-"""Resolve bookmark mutations and the push strategy for each stack revision."""
+"""Classify direct remote review-branch updates for submit."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, DriftError
-from jj_stack.jj.client import JjClient
-from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.bookmarks import (
-    BookmarkSource,
-    ResolvedBookmark,
-)
-from jj_stack.review.change_status import (
-    ReviewChangeStatus,
-    classify_review_change_without_pull_request,
-)
+from jj_stack.models.git import GitRemote
+from jj_stack.models.review_state import ReviewState
+from jj_stack.models.stack import LocalStack
+from jj_stack.review.branches import ResolvedReviewBranch
 
-from .models import (
-    LocalBookmarkAction,
-    PreparedSubmitRevision,
-    PushOperation,
-    RemoteBookmarkAction,
-    RemoteBookmarkSyncer,
-    SubmitMutationRun,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class _ClassifiedRevision:
-    """One stack revision with its resolved bookmark and review classification."""
-
-    bookmark: str
-    bookmark_source: BookmarkSource
-    bookmark_state: BookmarkState
-    review_identity: ReviewIdentity | None
-    remote_state: RemoteBookmarkState | None
-    review_status: ReviewChangeStatus
-    revision: LocalRevision
-    submitted_baseline: SubmittedBaseline | None
-
-
-def _classify_revision(
-    *,
-    bookmark_states: dict[str, BookmarkState],
-    remote: GitRemote,
-    resolution: ResolvedBookmark,
-    revision: LocalRevision,
-    state: ReviewState,
-) -> _ClassifiedRevision:
-    bookmark_state = bookmark_states.get(
-        resolution.bookmark,
-        BookmarkState(name=resolution.bookmark),
-    )
-    review_identity = state.review_identities.get(revision.change_id)
-    submitted_baseline = state.submitted_baselines.get(revision.change_id)
-    remote_state = bookmark_state.remote_target(remote.name)
-    return _ClassifiedRevision(
-        bookmark=resolution.bookmark,
-        bookmark_source=resolution.source,
-        bookmark_state=bookmark_state,
-        review_identity=review_identity,
-        remote_state=remote_state,
-        review_status=classify_review_change_without_pull_request(
-            review_identity=review_identity,
-            commit_id=revision.commit_id,
-            remote_state=remote_state,
-        ),
-        revision=revision,
-        submitted_baseline=submitted_baseline,
-    )
+from .models import PreparedSubmitRevision
 
 
 def prepare_submit_revisions(
     *,
-    bookmark_resolutions: tuple[ResolvedBookmark, ...],
-    bookmark_states: dict[str, BookmarkState],
-    client: JjClient,
+    branch_resolutions: tuple[ResolvedReviewBranch, ...],
+    remote_targets: dict[str, str],
     remote: GitRemote,
     stack: LocalStack,
     state: ReviewState,
 ) -> tuple[PreparedSubmitRevision, ...]:
-    """Resolve bookmark mutations and push strategy for each stack revision."""
+    """Validate saved leases and describe the one atomic remote update."""
 
-    classified = tuple(
-        _classify_revision(
-            bookmark_states=bookmark_states,
-            remote=remote,
-            resolution=resolution,
-            revision=revision,
-            state=state,
-        )
-        for resolution, revision in zip(
-            bookmark_resolutions,
-            stack.revisions,
-            strict=True,
-        )
-    )
-    actual_remote_targets = _load_actual_remote_targets_for_saved_bookmarks(
-        classified=classified,
-        client=client,
-        remote=remote,
-    )
-    for entry in classified:
-        _ensure_actual_remote_target_is_safe(
-            actual_remote_targets=actual_remote_targets,
-            entry=entry,
-            remote=remote.name,
-        )
+    prepared: list[PreparedSubmitRevision] = []
+    for resolution, revision in zip(branch_resolutions, stack.revisions, strict=True):
+        identity = state.review_identities.get(revision.change_id)
+        baseline = state.submitted_baselines.get(revision.change_id)
+        remote_target = remote_targets.get(resolution.branch)
 
-    prepared_revisions: list[PreparedSubmitRevision] = []
-    for entry in classified:
-        local_action = _resolve_local_action(
-            entry.bookmark,
-            entry.bookmark_state.local_targets,
-            entry.revision.commit_id,
-        )
-        _ensure_remote_can_be_updated(entry, remote=remote.name)
+        if identity is not None:
+            if baseline is None:
+                raise CliError(
+                    t"Saved PR tracking for {ui.change_id(revision.change_id)} has no last "
+                    t"submitted commit.",
+                    hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
+                )
+            if identity.head_ref != resolution.branch:
+                raise DriftError(
+                    t"Saved PR tracking for {ui.change_id(revision.change_id)} names branch "
+                    t"{ui.bookmark(identity.head_ref)}, not "
+                    t"{ui.bookmark(resolution.branch)}.",
+                    condition="saved_pull_request_mismatch",
+                    hint=t"Run {ui.cmd('relink')} before submitting again.",
+                )
+            if remote_target is None:
+                raise DriftError(
+                    t"Remote review branch "
+                    t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} no longer exists.",
+                    condition="remote_branch_missing",
+                    hint=(
+                        t"Restore the branch, or use {ui.cmd('submit --restart')} to create "
+                        t"a replacement review."
+                    ),
+                )
+            if remote_target not in {baseline.commit_id, revision.commit_id}:
+                raise DriftError(
+                    t"Remote review branch "
+                    t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} points to an "
+                    t"unexpected commit.",
+                    condition="remote_branch_moved",
+                    hint=(
+                        t"Inspect it with {ui.cmd('view --fetch')} and repair the review "
+                        t"before submitting again."
+                    ),
+                )
+        elif baseline is not None:
+            raise CliError(
+                t"Saved PR tracking for {ui.change_id(revision.change_id)} has a last "
+                t"submitted commit but no pull request identity.",
+                hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
+            )
+        elif resolution.recovered_target is not None:
+            if remote_target != resolution.recovered_target:
+                raise DriftError(
+                    t"Recovered remote branch "
+                    t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} changed during "
+                    t"submission.",
+                    condition="remote_branch_moved",
+                    hint="Inspect the branch and retry.",
+                )
+        elif remote_target not in {None, revision.commit_id}:
+            raise DriftError(
+                t"Remote review branch "
+                t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} already exists and "
+                t"points to another change.",
+                condition="remote_branch_moved",
+                hint="Move or delete the conflicting branch, then retry.",
+            )
 
-        push_operation, remote_action, expected_remote_target = _remote_push_plan(
-            remote_state=entry.remote_state,
-            review_status=entry.review_status,
-        )
-
-        prepared_revisions.append(
+        prepared.append(
             PreparedSubmitRevision(
-                bookmark=entry.bookmark,
-                bookmark_source=entry.bookmark_source,
-                expected_remote_target=expected_remote_target,
-                local_action=local_action,
-                push_operation=push_operation,
-                remote_action=remote_action,
-                revision=entry.revision,
+                branch=resolution.branch,
+                expected_remote_target=remote_target,
+                remote_action=("up to date" if remote_target == revision.commit_id else "pushed"),
+                revision=revision,
             )
         )
-
-    prepared = tuple(prepared_revisions)
-    _preflight_atomic_remote_push_plan(prepared_revisions=prepared, remote=remote)
-    return prepared
-
-
-def sync_local_bookmarks(
-    *,
-    bookmark_states: dict[str, BookmarkState],
-    client: JjClient,
-    prepared_revisions: tuple[PreparedSubmitRevision, ...],
-    run: SubmitMutationRun,
-    state: ReviewState,
-) -> None:
-    """Apply prepared local bookmark moves."""
-
-    bookmark_updates = tuple(
-        prepared_revision
-        for prepared_revision in prepared_revisions
-        if prepared_revision.local_action != "unchanged"
-    )
-    if not bookmark_updates:
-        return
-    if run.dry_run:
-        return
-
-    local_target_change_ids = _resolve_local_target_change_ids_for_bookmark_updates(
-        bookmark_states=bookmark_states,
-        client=client,
-        bookmark_updates=bookmark_updates,
-        state=state,
-    )
-    for prepared_revision in bookmark_updates:
-        bookmark_state = bookmark_states.get(
-            prepared_revision.bookmark,
-            BookmarkState(name=prepared_revision.bookmark),
-        )
-        allow_backwards = _bookmark_move_is_same_change(
-            bookmark=prepared_revision.bookmark,
-            bookmark_state=bookmark_state,
-            review_identity=state.review_identities.get(prepared_revision.revision.change_id),
-            change_id=prepared_revision.revision.change_id,
-            local_target_change_ids=local_target_change_ids,
-        )
-        client.set_bookmark(
-            prepared_revision.bookmark,
-            prepared_revision.revision.commit_id,
-            allow_backwards=allow_backwards,
-        )
-
-
-def _resolve_local_target_change_ids_for_bookmark_updates(
-    *,
-    bookmark_states: dict[str, BookmarkState],
-    client: JjClient,
-    bookmark_updates: tuple[PreparedSubmitRevision, ...],
-    state: ReviewState,
-) -> dict[str, str]:
-    local_targets: list[str] = []
-    for prepared_revision in bookmark_updates:
-        review_identity = state.review_identities.get(prepared_revision.revision.change_id)
-        if _identity_names_bookmark(
-            bookmark=prepared_revision.bookmark,
-            review_identity=review_identity,
-        ):
-            continue
-        bookmark_state = bookmark_states.get(
-            prepared_revision.bookmark,
-            BookmarkState(name=prepared_revision.bookmark),
-        )
-        local_target = bookmark_state.local_target
-        if local_target is not None:
-            local_targets.append(local_target)
-
-    if not local_targets:
-        return {}
-    revset = " | ".join(f"present('{target}')" for target in dict.fromkeys(local_targets))
-    return {revision.commit_id: revision.change_id for revision in client.query_revisions(revset)}
-
-
-def _remote_push_plan(
-    *,
-    remote_state: RemoteBookmarkState | None,
-    review_status: ReviewChangeStatus,
-) -> tuple[PushOperation, RemoteBookmarkAction, str | None]:
-    if review_status.remote_branch_matches_commit is True:
-        return "up_to_date", "up to date", None
-    if review_status.remote_branch == "untracked":
-        if remote_state is None or len(remote_state.targets) != 1:
-            raise AssertionError("Checked remote target must be unambiguous.")
-        target = remote_state.target
-        if target is None:
-            raise AssertionError("Checked remote target must exist.")
-        return "git_update", "pushed", target
-    return "batch", "pushed", None
-
-
-def _preflight_atomic_remote_push_plan(
-    *,
-    prepared_revisions: tuple[PreparedSubmitRevision, ...],
-    remote: GitRemote,
-) -> None:
-    """Reject push plans that cannot be applied as one atomic remote update."""
-
-    remote_mutations = tuple(
-        revision
-        for revision in prepared_revisions
-        if revision.push_operation in {"batch", "git_update"}
-    )
-    if len(remote_mutations) <= 1:
-        return
-
-    fallback_revisions = tuple(
-        revision for revision in remote_mutations if revision.push_operation == "git_update"
-    )
-    if not fallback_revisions:
-        return
-
-    branches = ui.join(
-        lambda revision: ui.bookmark(f"{revision.bookmark}@{remote.name}"),
-        fallback_revisions,
-    )
-    raise CliError(
-        t"Submit would need to update multiple review branches, but "
-        t"{branches} are not tracked locally.",
-        hint=(
-            t"Fetch and track those review branches with "
-            t"{ui.cmd('jj git fetch')} and {ui.cmd('jj bookmark track')}, "
-            t"then retry so submit can push the stack as one atomic update."
-        ),
-    )
-
-
-def _load_actual_remote_targets_for_saved_bookmarks(
-    *,
-    classified: tuple[_ClassifiedRevision, ...],
-    client: JjClient,
-    remote: GitRemote,
-) -> dict[str, str]:
-    bookmarks = tuple(
-        sorted(
-            {entry.bookmark for entry in classified if _saved_remote_target(entry) is not None}
-        )
-    )
-    if not bookmarks:
-        return {}
-    return client.list_remote_branches(
-        remote=remote.name,
-        patterns=tuple(f"refs/heads/{bookmark}" for bookmark in bookmarks),
-    )
-
-
-def _saved_remote_target(entry: _ClassifiedRevision) -> str | None:
-    """The submitted commit the saved record expects the remote branch to hold."""
-
-    review_identity = entry.review_identity
-    submitted_baseline = entry.submitted_baseline
-    if (
-        review_identity is None
-        or submitted_baseline is None
-        or review_identity.head_ref != entry.bookmark
-    ):
-        return None
-    return submitted_baseline.commit_id
-
-
-def _ensure_actual_remote_target_is_safe(
-    *,
-    actual_remote_targets: dict[str, str],
-    entry: _ClassifiedRevision,
-    remote: str,
-) -> None:
-    saved_target = _saved_remote_target(entry)
-    if saved_target is None:
-        return
-    bookmark = entry.bookmark
-    actual_target = actual_remote_targets.get(bookmark)
-    if actual_target in {saved_target, entry.revision.commit_id}:
-        return
-    if actual_target is None:
-        raise DriftError(
-            t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} no longer exists.",
-            condition="remote_branch_missing",
-            hint=(
-                t"Fetch and inspect the PR link before submitting again. If this branch "
-                t"should stay attached to this change, repair the link with relink."
-            ),
-        )
-    raise DriftError(
-        t"Remote bookmark {ui.bookmark(f'{bookmark}@{remote}')} points to an unexpected commit.",
-        condition="remote_branch_moved",
-        hint=(
-            t"Fetch and inspect the PR link before submitting again. If this branch "
-            t"should stay attached to this change, repair the link with relink."
-        ),
-    )
-
-
-def _bookmark_move_is_same_change(
-    *,
-    bookmark: str,
-    bookmark_state: BookmarkState,
-    review_identity: ReviewIdentity | None,
-    change_id: str,
-    local_target_change_ids: dict[str, str],
-) -> bool:
-    """Whether `submit` is moving the saved bookmark within the same change.
-
-    Same-change rewrites such as `jj split` can leave the bookmark pointing at a sibling
-    of the desired commit (the other half of the split, or any post-rewrite commit that
-    is not a descendant of the previous target). `jj bookmark set` refuses such
-    "backwards or sideways" moves by default. The move is legitimate when the tool's
-    tracking state already records this bookmark for the change, or when the bookmark's
-    current local target itself resolves to the same logical change as the desired commit.
-    In either case `allow_backwards` is correct. For any other case the default guard stays
-    in effect so an unrelated bookmark cannot be silently retargeted.
-
-    A hidden `local_target` (e.g., abandoned by the user manually) is absent from the
-    preloaded visible revision map. That keeps the default guard in effect, which is
-    the safer behavior: forcing the move would require recovering a hidden commit's
-    identity that we cannot prove.
-    """
-
-    if _identity_names_bookmark(
-        bookmark=bookmark,
-        review_identity=review_identity,
-    ):
-        return True
-    local_target = bookmark_state.local_target
-    if local_target is None:
-        return False
-    return local_target_change_ids.get(local_target) == change_id
-
-
-def _identity_names_bookmark(
-    *,
-    bookmark: str,
-    review_identity: ReviewIdentity | None,
-) -> bool:
-    return review_identity is not None and review_identity.head_ref == bookmark
-
-
-def _resolve_local_action(
-    bookmark: str,
-    local_targets: tuple[str, ...],
-    desired_target: str,
-) -> LocalBookmarkAction:
-    if len(local_targets) > 1:
-        raise CliError(
-            t"Bookmark {ui.bookmark(bookmark)} has {len(local_targets)} conflicting "
-            t"local targets.",
-            hint=t"Resolve the bookmark conflict with {ui.cmd('jj bookmark')} before submitting.",
-        )
-    local_target = local_targets[0] if local_targets else None
-    if local_target == desired_target:
-        return "unchanged"
-    if local_target is None:
-        return "created"
-    return "moved"
-
-
-def _ensure_remote_can_be_updated(entry: _ClassifiedRevision, *, remote: str) -> None:
-    review_status = entry.review_status
-    if review_status.remote_branch == "absent":
-        return
-    if review_status.remote_branch == "conflicted":
-        raise CliError(
-            t"Remote bookmark {ui.bookmark(f'{entry.bookmark}@{remote}')} is conflicted. "
-            t"Resolve it with {ui.cmd('jj git fetch')} and retry."
-        )
-    if review_status.remote_branch_matches_commit is True:
-        return
-    if _bookmark_link_is_proven(entry):
-        return
-    raise CliError(
-        t"Remote bookmark {ui.bookmark(f'{entry.bookmark}@{remote}')} already exists and "
-        t"points elsewhere. Submit will not take over an existing remote branch "
-        t"unless its link is already proven by local state, tracking data, or "
-        t"explicit relinking."
-    )
-
-
-def _bookmark_link_is_proven(entry: _ClassifiedRevision) -> bool:
-    if entry.bookmark_state.local_target is not None:
-        return True
-    if entry.bookmark_source == "discovered":
-        return True
-    if entry.bookmark_source != "saved":
-        return False
-    return entry.review_identity is not None and entry.review_identity.head_ref == entry.bookmark
-
-
-def sync_remote_bookmarks(
-    *,
-    client: RemoteBookmarkSyncer,
-    prepared_revisions: tuple[PreparedSubmitRevision, ...],
-    remote: GitRemote,
-    run: SubmitMutationRun,
-) -> None:
-    batch_push_bookmarks = tuple(
-        prepared_revision.bookmark
-        for prepared_revision in prepared_revisions
-        if prepared_revision.push_operation == "batch"
-    )
-    if batch_push_bookmarks:
-        if not run.dry_run:
-            client.push_bookmarks(
-                remote=remote.name,
-                bookmarks=batch_push_bookmarks,
-            )
-
-    for prepared_revision in prepared_revisions:
-        if prepared_revision.push_operation != "git_update":
-            continue
-        if not run.dry_run:
-            if prepared_revision.expected_remote_target is None:
-                raise AssertionError("Git remote update requires an expected target.")
-            client.update_untracked_remote_bookmark(
-                remote=remote.name,
-                bookmark=prepared_revision.bookmark,
-                desired_target=prepared_revision.revision.commit_id,
-                expected_remote_target=prepared_revision.expected_remote_target,
-            )
+    return tuple(prepared)

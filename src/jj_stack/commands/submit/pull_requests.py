@@ -10,10 +10,6 @@ from jj_stack.errors import CliError, DriftError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.review.change_status import (
-    ReviewChangeStatus,
-    classify_saved_review_identity,
-)
 
 from .models import (
     PendingPullRequestSync,
@@ -25,27 +21,27 @@ from .models import (
 )
 
 
-async def discover_pull_requests_by_bookmark(
+async def discover_pull_requests_by_branch(
     *,
     github_client: GithubClient,
-    bookmarks: tuple[str, ...],
+    branches: tuple[str, ...],
 ) -> dict[str, GithubPullRequest | None]:
-    if not bookmarks:
+    if not branches:
         return {}
 
     try:
         discovered_pull_requests = await github_client.get_pull_requests_by_head_refs(
-            head_refs=bookmarks,
+            head_refs=branches,
         )
     except GithubClientError as error:
         raise CliError("Could not batch pull request discovery for branches") from error
 
     return {
-        bookmark: _select_discovered_pull_request(
-            head_label=f"{github_client.repository.owner}:{bookmark}",
-            pull_requests=discovered_pull_requests.get(bookmark, ()),
+        branch: _select_discovered_pull_request(
+            head_label=f"{github_client.repository.owner}:{branch}",
+            pull_requests=discovered_pull_requests.get(branch, ()),
         )
-        for bookmark in bookmarks
+        for branch in branches
     }
 
 
@@ -59,9 +55,9 @@ def ensure_pull_request_syncs_are_safe(
     """Verify every planned PR sync before any mutation.
 
     A damaged or divergent link anywhere in the plan must stop `submit` before
-    local bookmarks move, review branches push, or sibling PRs sync. Validating
-    per change inside the concurrent sync phase would let a mid-stack link
-    failure surface only after those mutations have already happened.
+    review branches push or sibling PRs sync. Validating per change inside the
+    concurrent sync phase would let a mid-stack link failure surface only after
+    those mutations have already happened.
     """
 
     for pending_sync in pending_syncs:
@@ -71,14 +67,11 @@ def ensure_pull_request_syncs_are_safe(
         submitted_baseline = state.submitted_baselines.get(change_id)
         if change_id not in restarted_change_ids:
             _ensure_pull_request_link_is_consistent(
-                bookmark=prepared_revision.bookmark,
+                branch=prepared_revision.branch,
                 change_id=change_id,
                 discovered_pull_request=pending_sync.discovered_pull_request,
+                expected_remote_target=prepared_revision.expected_remote_target,
                 review_identity=review_identity,
-                saved_status=classify_saved_review_identity(
-                    review_identity,
-                    local="present",
-                ),
                 submitted_baseline=submitted_baseline,
             )
         pull_request = pending_sync.discovered_pull_request
@@ -142,7 +135,7 @@ async def _sync_pull_request(
     run: SubmitMutationRun,
 ) -> tuple[SubmittedRevision, ReviewIdentity | None, SubmittedBaseline | None]:
     prepared_revision = pending_sync.prepared
-    bookmark = prepared_revision.bookmark
+    branch = prepared_revision.branch
     change_id = prepared_revision.revision.change_id
     discovered_pull_request = pending_sync.discovered_pull_request
     review_identity = run.state.review_identities.get(change_id)
@@ -159,7 +152,7 @@ async def _sync_pull_request(
                 body=body,
                 draft=(options.draft_mode in ("draft", "draft_all")),
                 github_client=github_client,
-                head_branch=bookmark,
+                head_branch=branch,
                 title=title,
             )
         action: PullRequestAction = "created"
@@ -240,7 +233,7 @@ async def _sync_pull_request(
     next_baseline: SubmittedBaseline | None = None
     if pull_request is not None:
         next_identity = _submitted_identity(
-            bookmark=bookmark,
+            branch=branch,
             github_client=github_client,
             pull_request=pull_request,
             review_identity=review_identity,
@@ -347,11 +340,11 @@ def _select_discovered_pull_request(
 
 def _ensure_pull_request_link_is_consistent(
     *,
-    bookmark: str,
+    branch: str,
     change_id: str,
     discovered_pull_request: GithubPullRequest | None,
+    expected_remote_target: str | None,
     review_identity: ReviewIdentity | None,
-    saved_status: ReviewChangeStatus,
     submitted_baseline: SubmittedBaseline | None,
 ) -> None:
     if review_identity is None:
@@ -364,7 +357,7 @@ def _ensure_pull_request_link_is_consistent(
         if discovered_pull_request is not None:
             raise DriftError(
                 t"GitHub already reports PR #{discovered_pull_request.number} for "
-                t"untracked bookmark {ui.bookmark(bookmark)}.",
+                t"untracked branch {ui.bookmark(branch)}.",
                 condition="saved_pull_request_missing",
                 hint=t"Adopt that PR explicitly with {ui.cmd('relink')} before submitting.",
             )
@@ -374,16 +367,16 @@ def _ensure_pull_request_link_is_consistent(
             t"Saved PR tracking for {ui.change_id(change_id)} has no last submitted commit.",
             hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
         )
-    if review_identity.head_ref != bookmark:
+    if review_identity.head_ref != branch:
         raise DriftError(
-            t"Saved PR tracking for {ui.change_id(change_id)} names bookmark "
-            t"{ui.bookmark(review_identity.head_ref)}, not {ui.bookmark(bookmark)}.",
+            t"Saved PR tracking for {ui.change_id(change_id)} names branch "
+            t"{ui.bookmark(review_identity.head_ref)}, not {ui.bookmark(branch)}.",
             condition="saved_pull_request_mismatch",
             hint=t"Run {ui.cmd('relink')} before submitting again.",
         )
     if discovered_pull_request is None:
         raise DriftError(
-            t"Saved pull request link exists for bookmark {ui.bookmark(bookmark)}, "
+            t"Saved pull request link exists for branch {ui.bookmark(branch)}, "
             t"but GitHub no longer reports a PR for that head branch.",
             condition="saved_pull_request_missing",
             hint=(
@@ -394,13 +387,30 @@ def _ensure_pull_request_link_is_consistent(
     if review_identity.pr_number != discovered_pull_request.number:
         raise DriftError(
             t"Saved pull request #{review_identity.pr_number} does not match the PR "
-            t"GitHub reports for bookmark {ui.bookmark(bookmark)} "
+            t"GitHub reports for branch {ui.bookmark(branch)} "
             t"(#{discovered_pull_request.number}).",
             condition="saved_pull_request_mismatch",
             hint=(
                 t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
+        )
+    if not review_identity.matches_pull_request(discovered_pull_request):
+        raise DriftError(
+            t"Saved pull request #{review_identity.pr_number} no longer has the exact "
+            t"saved head owner and branch.",
+            condition="saved_pull_request_mismatch",
+            hint=t"Inspect it, then repair the intended review with {ui.cmd('relink')}.",
+        )
+    if (
+        expected_remote_target is None
+        or discovered_pull_request.head.sha != expected_remote_target
+    ):
+        raise DriftError(
+            t"Pull request #{review_identity.pr_number} and its remote branch no longer "
+            t"identify the same commit.",
+            condition="remote_branch_moved",
+            hint=t"Inspect it with {ui.cmd('view --fetch')} before submitting again.",
         )
 
 
@@ -516,7 +526,7 @@ async def _update_pull_request(
 
 def _submitted_identity(
     *,
-    bookmark: str,
+    branch: str,
     github_client: GithubClient,
     pull_request: GithubPullRequest,
     review_identity: ReviewIdentity | None,
@@ -528,6 +538,6 @@ def _submitted_identity(
             repository_name=github_client.repository.repo,
             pr_number=pull_request.number,
             head_owner=github_client.repository.owner,
-            head_ref=bookmark,
+            head_ref=branch,
         )
     return review_identity

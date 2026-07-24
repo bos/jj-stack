@@ -11,7 +11,6 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.review.bookmarks import bookmark_cleanup_allowed, classify_local_bookmark_forget
 from jj_stack.ui import Message
 
 from .landed_evidence import (
@@ -30,8 +29,6 @@ LandedReviewOutcome = Literal["finalized", "already_terminal", "skipped"]
 class LandedReviewResult:
     candidate: LandedReviewCandidate
     outcome: LandedReviewOutcome
-    cleanup_warning: Message | None = None
-    forgot_bookmark: bool = False
     retired_tracking: bool = False
     skip_reason: Message | None = None
     retirement_skip_reason: Message | None = None
@@ -195,7 +192,6 @@ async def observe_landed_candidate(
 
 async def retire_landed_reviews(
     *,
-    cleanup_bookmarks: bool,
     evidence: dict[str, LandedEvidenceKind],
     finalization_results: tuple[LandedReviewResult, ...],
     finalizer: FinalizationContext,
@@ -225,34 +221,11 @@ async def retire_landed_reviews(
         if reason is not None:
             results[index] = replace(result, retirement_skip_reason=reason)
             continue
-        forgot = False
-        cleanup_warning: Message | None = None
-        bookmark = candidate.review_identity.head_ref
-        if cleanup_bookmarks and bookmark_cleanup_allowed(
-            bookmark=bookmark,
-            change_id=candidate.change_id,
-        ):
-            bookmark_state = context.jj_client.get_bookmark_state(bookmark)
-            forgot = (
-                classify_local_bookmark_forget(
-                    bookmark_state=bookmark_state,
-                    expected_commit_id=candidate.submitted_baseline.commit_id,
-                )
-                == "safe"
-            )
-            if forgot and not finalizer.dry_run:
-                try:
-                    context.jj_client.forget_bookmarks((bookmark,))
-                except JjCommandError as error:
-                    forgot = False
-                    cleanup_warning = t"bookmark cleanup failed: {error}"
         if not finalizer.dry_run:
             reason = await current_retirement_error(candidate)
             if reason is not None:
                 results[index] = replace(
                     result,
-                    cleanup_warning=cleanup_warning,
-                    forgot_bookmark=forgot,
                     retirement_skip_reason=reason,
                 )
                 continue
@@ -265,15 +238,11 @@ async def retire_landed_reviews(
             except (OSError, RuntimeError, ValueError) as error:
                 results[index] = replace(
                     result,
-                    cleanup_warning=cleanup_warning,
-                    forgot_bookmark=forgot,
                     retirement_skip_reason=str(error),
                 )
                 continue
         results[index] = replace(
             result,
-            cleanup_warning=cleanup_warning,
-            forgot_bookmark=forgot,
             retired_tracking=True,
         )
     return tuple(results)
@@ -337,10 +306,6 @@ def render_landed_results(
             continue
         if result.outcome == "finalized":
             console.output(t"  {marker} finish merged PR #{candidate.review_identity.pr_number}")
-        if result.forgot_bookmark:
-            console.output(t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)}")
-        if result.cleanup_warning is not None:
-            console.output(t"  ! cleanup still needed: {result.cleanup_warning}")
         if result.retired_tracking:
             console.output(t"  {marker} remove tracking for {ui.change_id(candidate.change_id)}")
         elif result.retirement_skip_reason is not None:

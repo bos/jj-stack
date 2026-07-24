@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import pytest
 
-from jj_stack.jj.client import JjClient
+from jj_stack.errors import CliError
+from jj_stack.jj.client import JjClient, ReviewRefUpdate
+from jj_stack.ui import plain_text
 
 from ..support.integration_helpers import (
     commit_file,
@@ -60,6 +63,31 @@ def test_list_git_remotes_preserves_distinct_fetch_and_push_urls(tmp_path: Path)
     assert remote.push_url == "git@github.test:octo-org/stacked-review.git"
 
 
+def test_imported_review_bookmark_diagnostic_emits_a_working_recovery_command(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path)
+    remote = tmp_path / "remote.git"
+    run_command(["git", "init", "--bare", str(remote)], tmp_path)
+    commit_file(repo, "feature", "feature.txt")
+    change_id = _change_id(repo, "@-")
+    branch = f"review/feature-{change_id[:8]}"
+    run_command(["jj", "git", "remote", "add", "origin", str(remote)], repo)
+    run_command(["jj", "bookmark", "create", branch, "-r", "@-"], repo)
+    run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", branch], repo)
+    run_command(["jj", "bookmark", "forget", branch], repo)
+    client = JjClient(repo)
+
+    with pytest.raises(CliError) as raised:
+        client.ensure_review_fetch_isolation(remote="origin")
+
+    assert raised.value.hint is not None
+    hint = plain_text(raised.value.hint)
+    command = hint.split("run ", maxsplit=1)[1].split(", then", maxsplit=1)[0]
+    run_command(shlex.split(command), repo)
+    assert client.list_imported_review_bookmarks() == ()
+
+
 @pytest.mark.parametrize("layout_flag", ("--colocate", "--no-colocate"))
 def test_direct_git_review_ref_operations_use_the_backing_store(
     tmp_path: Path,
@@ -73,10 +101,13 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     commit_file(repo, "feature", "feature.txt")
     old_commit = _commit_id(repo, "@--")
     new_commit = _commit_id(repo, "@-")
+    new_change_id = _change_id(repo, "@-")
     run_command(["jj", "git", "remote", "add", "origin", str(remote)], repo)
     run_command(["jj", "bookmark", "create", "seed", "-r", "@--"], repo)
     run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "seed"], repo)
-    branch = "review/foundation"
+    old_change_id = _change_id(repo, "@--")
+    branch = f"review/foundation-{old_change_id[:8]}"
+    created_branch = f"review/created-{new_change_id[:8]}"
     run_command(
         [
             "git",
@@ -90,31 +121,108 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     )
     client = JjClient(repo)
 
+    client.fetch_remote(remote="origin")
+    assert client.list_imported_review_bookmarks() == ()
     assert client.list_remote_branches(
         remote="origin",
         patterns=(f"refs/heads/{branch}",),
     ) == {branch: old_commit}
-    client.update_untracked_remote_bookmark(
-        remote="origin",
-        bookmark=branch,
-        desired_target=new_commit,
-        expected_remote_target=old_commit,
-    )
-    assert client.list_remote_branches(
-        remote="origin",
-        patterns=(f"refs/heads/{branch}",),
-    ) == {branch: new_commit}
 
-    client.delete_remote_bookmarks(
+    publisher = tmp_path / "publisher"
+    run_command(["jj", "git", "init", "--no-colocate", str(publisher)], tmp_path)
+    commit_file(publisher, "remote only", "remote-only.txt")
+    remote_only_commit = _commit_id(publisher, "@-")
+    remote_only_change = _change_id(publisher, "@-")
+    recovery_branch = f"review/recovery-{remote_only_change[:8]}"
+    run_command(["jj", "git", "remote", "add", "origin", str(remote)], publisher)
+    run_command(
+        ["jj", "bookmark", "create", recovery_branch, "-r", "@-"],
+        publisher,
+    )
+    run_command(
+        ["jj", "git", "push", "--remote", "origin", "--bookmark", recovery_branch],
+        publisher,
+    )
+
+    assert (
+        client.read_remote_git_change_id(
+            remote="origin",
+            commit_id=remote_only_commit,
+        )
+        == remote_only_change
+    )
+    assert client.list_imported_review_bookmarks() == ()
+
+    git_root = Path(run_command(["jj", "git", "root"], repo).stdout.strip())
+    temp_ref = "refs/heads/jj-stack-tmp/checkout"
+    run_command(
+        ["git", "--git-dir", str(git_root), "update-ref", temp_ref, old_commit],
+        repo,
+    )
+    run_command(["jj", "git", "import"], repo)
+    assert client.review_temp_ref_target() == old_commit
+
+    with client.import_remote_review_ref(
         remote="origin",
-        deletions=((branch, new_commit),),
-        fetch=False,
+        branch=branch,
+        expected_target=old_commit,
+        expected_change_id=old_change_id,
+    ) as imported:
+        assert imported.commit_id == old_commit
+        assert imported.change_id == old_change_id
+        assert client.review_temp_ref_target() == old_commit
+    assert client.review_temp_ref_target() is None
+    assert (
+        run_command(
+            ["jj", "bookmark", "list", "jj-stack-tmp/checkout", "-T", "name"],
+            repo,
+        ).stdout
+        == ""
+    )
+
+    client.mutate_remote_review_refs(
+        remote="origin",
+        updates=(
+            ReviewRefUpdate(
+                branch=branch,
+                desired_target=new_commit,
+                expected_target=old_commit,
+            ),
+            ReviewRefUpdate(
+                branch=created_branch,
+                desired_target=new_commit,
+                expected_target=None,
+            ),
+        ),
     )
     assert client.list_remote_branches(
         remote="origin",
-        patterns=(f"refs/heads/{branch}",),
-    ) == {}
-    git_root = Path(run_command(["jj", "git", "root"], repo).stdout.strip())
+        patterns=(f"refs/heads/{branch}", f"refs/heads/{created_branch}"),
+    ) == {branch: new_commit, created_branch: new_commit}
+
+    client.mutate_remote_review_refs(
+        remote="origin",
+        updates=(
+            ReviewRefUpdate(
+                branch=branch,
+                desired_target=None,
+                expected_target=new_commit,
+            ),
+            ReviewRefUpdate(
+                branch=created_branch,
+                desired_target=None,
+                expected_target=new_commit,
+            ),
+        ),
+    )
+    assert (
+        client.list_remote_branches(
+            remote="origin",
+            patterns=(f"refs/heads/{branch}", f"refs/heads/{created_branch}"),
+        )
+        == {}
+    )
+    assert client.list_imported_review_bookmarks() == ()
     assert (git_root == repo / ".git") is (layout_flag == "--colocate")
 
 
@@ -137,5 +245,12 @@ def _current_parent_commit_id(repo: Path) -> str:
 def _commit_id(repo: Path, revset: str) -> str:
     return run_command(
         ["jj", "log", "--no-graph", "-r", revset, "-T", "commit_id"],
+        repo,
+    ).stdout.strip()
+
+
+def _change_id(repo: Path, revset: str) -> str:
+    return run_command(
+        ["jj", "log", "--no-graph", "-r", revset, "-T", "change_id"],
         repo,
     ).stdout.strip()

@@ -1,10 +1,10 @@
 """Check jj-stack's configuration and connectivity.
 
-Runs a series of read-only checks and prints a status line for each. Nothing
-is changed. Exit status is 0 if all checks pass or warn; 1 if any check fails.
+Runs read-only checks for review-fetch isolation, temporary import state, remote
+selection, GitHub connectivity, authentication, and trunk discovery. Nothing is
+changed. Exit status is 0 if all checks pass or warn; 1 if any check fails.
 
-It checks remote resolution, GitHub repository discovery, GitHub token
-availability, GitHub API access, and trunk discovery.
+Failures include a recovery command when jj-stack can determine one.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ from jj_stack.github.resolution import (
     parse_github_repo,
     select_submit_remote,
 )
-from jj_stack.jj.client import JjCliArgs
-from jj_stack.models.bookmarks import GitRemote
+from jj_stack.jj.client import JjCliArgs, ReviewFetchIsolationRequired
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
 from jj_stack.ui import Message
 
@@ -75,8 +75,20 @@ async def _run_checks(
     results.append(remote_result)
 
     if selected_remote is None:
-        results.extend(_skipped("GitHub remote", "GitHub auth", "connectivity", "trunk branch"))
+        results.extend(
+            _skipped(
+                "review fetch",
+                "review temp",
+                "GitHub remote",
+                "GitHub auth",
+                "connectivity",
+                "trunk branch",
+            )
+        )
         return results
+
+    results.append(_check_review_fetch_isolation(context=context, remote=selected_remote))
+    results.append(_check_review_temp(context=context))
 
     # Check 2: GitHub remote parsing
     github_result, parsed_repo = _check_github_remote(selected_remote)
@@ -151,6 +163,46 @@ def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, GithubRepoAddr
             None,
         )
     return CheckResult("GitHub remote", "ok", f"{parsed.host}/{parsed.full_name}"), parsed
+
+
+def _check_review_fetch_isolation(
+    *,
+    context: CommandContext,
+    remote: GitRemote,
+) -> CheckResult:
+    try:
+        isolation = context.jj_client.ensure_review_fetch_isolation(
+            remote=remote.name,
+            dry_run=True,
+        )
+    except ReviewFetchIsolationRequired as error:
+        return CheckResult(
+            "review fetch",
+            "fail",
+            (
+                error_message(error),
+                t" Apply it by running {ui.cmd('jj-stack view --fetch')} once.",
+            ),
+        )
+    except CliError as error:
+        return CheckResult("review fetch", "fail", str(error))
+    return CheckResult(
+        "review fetch",
+        "ok",
+        t"exactly one {ui.code(isolation.refspec)} exclusion",
+    )
+
+
+def _check_review_temp(*, context: CommandContext) -> CheckResult:
+    artifacts = context.jj_client.review_temp_artifacts()
+    if artifacts.ref_target is None and not artifacts.bookmark_targets:
+        return CheckResult("review temp", "ok", "absent")
+    return CheckResult(
+        "review temp",
+        "warn",
+        t"temporary review-import state remains; retry the interrupted "
+        t"{ui.cmd('jj-stack checkout --fetch')} or {ui.cmd('jj-stack sync')} command to clear it",
+    )
 
 
 def _check_github_auth(hostname: str) -> tuple[CheckResult, str | None]:

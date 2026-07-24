@@ -411,12 +411,12 @@ def build_parser() -> ArgumentParser:
     unstack_parser.add_argument(
         "--cleanup",
         action="store_true",
-        help="Also delete verified jj-stack-managed review branches, bookmarks, and comments",
+        help="Also delete verified jj-stack-managed review branches, comments, and tracking",
     )
     unstack_parser.add_argument(
         "--local",
         action="store_true",
-        help="Forget local review tracking without closing PRs or deleting bookmarks",
+        help="Forget local review tracking without closing PRs or deleting review branches",
     )
     add_help_argument(
         unstack_parser,
@@ -445,7 +445,7 @@ def build_parser() -> ArgumentParser:
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview cleanup without deleting branches, bookmarks, comments, or saved PR links",
+        help="Preview cleanup without deleting review branches, comments, or saved PR links",
     )
 
     sync_parser = _add_revision_command(
@@ -464,7 +464,7 @@ def build_parser() -> ArgumentParser:
         "--dry-run",
         action="store_true",
         help=(
-            "Fetch and preview without changing PRs, local commits, local bookmarks, or tracking"
+            "Fetch and preview without changing PRs, local commits, review branches, or tracking"
         ),
     )
     add_help_argument(
@@ -933,9 +933,9 @@ def _add_checkout_parser(
         "--fetch",
         action="store_true",
         help=(
-            t"Refresh the selected stack's remote bookmark state and, for "
-            t"{ui.cmd('--pull-request')}, fetch only the branches needed to import "
-            t"that stack"
+            t"Refresh the selected stack's remote branch state and, for "
+            t"{ui.cmd('--pull-request')}, import only the exact branches needed "
+            t"for that stack"
         ),
     )
     return parser

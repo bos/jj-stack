@@ -16,8 +16,8 @@ from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.review_state import ReviewStateRecordIssue
 from jj_stack.state.store import ReviewStateStore
 
-_MINIMUM_JJ_VERSION = (0, 39, 0)
-_MINIMUM_JJ_VERSION_STRING = "0.39.0"
+_MINIMUM_JJ_VERSION = (0, 43, 0)
+_MINIMUM_JJ_VERSION_STRING = "0.43.0"
 _jj_version_verified = False
 
 APP_START = time.perf_counter()
@@ -208,7 +208,7 @@ def check_jj_version() -> None:
 def _parse_jj_version(version_output: str) -> tuple[int, ...] | None:
     """Parse version tuple from `jj --version` output.
 
-    Expected formats: ``"jj 0.39.0"`` or ``"jj 0.39.0-<build-hash>"``.
+    Expected formats: ``"jj 0.43.0"`` or ``"jj 0.43.0-<build-hash>"``.
     Returns ``None`` if the output does not match the expected format.
     """
 
