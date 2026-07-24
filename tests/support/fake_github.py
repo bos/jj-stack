@@ -459,6 +459,52 @@ class FakeGithubRepository:
         )
         return rebase_commit
 
+    def apply_native_merge_commit(
+        self,
+        pull_requests: tuple[FakeGithubPullRequest, ...],
+    ) -> str:
+        """Merge one native PR prefix through a shared merge commit."""
+
+        if not pull_requests:
+            raise AssertionError("A native merge commit requires at least one pull request.")
+        default_branch = self.default_branch or "main"
+        heads = self.branch_heads()
+        base_commit = heads[default_branch]
+        head_commit = heads[pull_requests[-1].head_ref]
+        git_env = {
+            "GIT_AUTHOR_EMAIL": "fake-github@example.com",
+            "GIT_AUTHOR_NAME": "Fake GitHub",
+            "GIT_COMMITTER_EMAIL": "fake-github@example.com",
+            "GIT_COMMITTER_NAME": "Fake GitHub",
+        }
+        tree = self._run_backing_git("rev-parse", f"{head_commit}^{{tree}}")
+        merge_commit = self._run_backing_git(
+            "commit-tree",
+            tree,
+            "-p",
+            base_commit,
+            "-p",
+            head_commit,
+            "-m",
+            f"Merge native stack through PR #{pull_requests[-1].number}",
+            env=git_env,
+        )
+        self._run_backing_git(
+            "update-ref",
+            f"refs/heads/{default_branch}",
+            merge_commit,
+        )
+        merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        for pull_request in pull_requests:
+            pull_request.merged_at = merged_at
+            pull_request.merge_commit_sha = merge_commit
+            self.update_pull_request_state(
+                pull_request,
+                state="closed",
+                reason="merged",
+            )
+        return merge_commit
+
     def rewrite_pull_request_onto_base(
         self,
         pull_request: FakeGithubPullRequest,
@@ -1400,10 +1446,14 @@ def _complete_async_merge(
                 base_ref=repository.default_branch or "main",
                 reason="native_merge",
             )
-        if operation.merge_method == "rebase":
-            repository.apply_rebase_merge(pull_request)
-        else:
-            repository.apply_squash_merge(pull_request)
+    if operation.merge_method == "merge":
+        repository.apply_native_merge_commit(candidates)
+    else:
+        for pull_request in candidates:
+            if operation.merge_method == "rebase":
+                repository.apply_rebase_merge(pull_request)
+            else:
+                repository.apply_squash_merge(pull_request)
     survivors = stack.active_pull_request_numbers[len(candidate_numbers) :]
     previous_base = repository.default_branch or "main"
     for pull_number in survivors:

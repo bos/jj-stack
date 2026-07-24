@@ -175,6 +175,50 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
 
 
 @pytest.mark.landing_recovery
+def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.allow_merge_commit = True
+    fake_repo.native_stacks = {7: (1, 2)}
+    state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests(
+        "github.test/octo-org/stacked-review",
+        True,
+    )
+    stack = JjClient(repo).discover_review_stack()
+
+    merge_exit_code = run_main(
+        repo,
+        config_path,
+        "merge",
+        "--merge-method",
+        "merge",
+    )
+    merged = capsys.readouterr()
+    merge_commit = fake_repo.pull_requests[1].merge_commit_sha
+
+    assert merge_exit_code == 0, (merged.out, merged.err)
+    assert merge_commit is not None
+    assert fake_repo.pull_requests[2].merge_commit_sha == merge_commit
+    assert merge_commit == read_remote_ref(fake_repo.git_dir, "main")
+    assert all(
+        fake_repo.is_ancestor(revision.commit_id, merge_commit)
+        for revision in stack.revisions
+    )
+
+    sync_exit_code = run_main(repo, config_path, "sync", stack.head.change_id)
+    synced = capsys.readouterr()
+
+    assert sync_exit_code == 0, (synced.out, synced.err)
+    assert state_store.load().review_identities == {}
+    assert JjClient(repo).resolve_revision("@").only_parent_commit_id() == merge_commit
+
+
+@pytest.mark.landing_recovery
 def test_native_merge_terminal_failure_is_atomic(
     tmp_path: Path,
     monkeypatch,
