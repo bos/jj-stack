@@ -8,12 +8,23 @@ remaining questions together so a long implementation does not depend on convers
 
 ## Progress
 
-Commits 1 through 12 are complete. Commit 13, historical native resource members, is next.
-Update this section in the same change that completes each remaining implementation commit.
+Commits 1 through 12 are complete and their step descriptions have been pruned. Commit 13,
+command-surface and policy simplification, is next.
 
-For this work only, this file supersedes conflicting native-stack or stack-comment statements in
-`design.md`, `implementation-strategy.md`, and `backlog.md`. Existing behavior outside this scope
-continues to follow `design.md`.
+The implementation list contains only unfinished slices. In the same change that completes a
+slice:
+
+1. move any lasting behavior into the normative sections above
+2. remove that slice's implementation subsection
+3. remove or consolidate tests and evidence that exist only to guide the completed slice
+4. update this section to name the next unfinished slice
+
+Do not let this file become a changelog. Completed implementation belongs in `jj` history.
+
+For this work only, this file supersedes conflicting native-stack, stack-comment, and merge
+lifecycle statements in `design.md`, `implementation-strategy.md`, and `backlog.md`. Replacing
+`land` with `merge` and removing direct trunk pushes apply in both repository modes. Existing
+behavior outside this scope continues to follow `design.md`.
 
 This file is intentionally temporary. The final implementation slice must:
 
@@ -42,6 +53,10 @@ The implementation must preserve the existing product invariants:
 - ambiguous remote identity or membership fails closed
 - interrupted operations recover by observing current state, not by replaying durable intent
 
+Merging is always a GitHub operation. A selected native resource uses GitHub's atomic stack merge.
+A repository without native support, or a one-PR review with no native resource, uses GitHub's
+ordinary PR merge API. jj-stack never advances trunk by pushing to it.
+
 ## Explicit non-goals
 
 - no repository migration workflow between navigation comments and native stacks
@@ -50,11 +65,16 @@ The implementation must preserve the existing product invariants:
 - no user-selectable native-versus-comment mode
 - no tri-state capability model
 - no fallback to comments after a native operation fails
+- no fallback from a failed native merge to the ordinary PR merge API
 - no periodic capability probe, timestamp, or time-to-live
 - no generalized stack-projection backend or plugin interface
 - no native-stack changes to `view`, `list`, `checkout`, `unstack`, or cleanup without a concrete
   behavior that requires them
 - no speculative tree-equivalence or server-rebase recovery
+- no direct-push merge transport or `--via` transport choice
+- no compatibility alias from the old `land` command
+- no one-PR-at-a-time native merge loop
+- no post-merge relink protocol for GitHub-rewritten native survivors
 
 ## External evidence
 
@@ -63,36 +83,11 @@ The implementation must preserve the existing product invariants:
 Repository:
 `https://github.com/voxel-ai/jj-stack-native-stacks-test`
 
-Identity and ownership:
-
-- GitHub account: `bos-voxel`
-- organization: `voxel-ai`
-- repository visibility: private
-
 Observed on 2026-07-23 and 2026-07-24:
 
-- `GET /repos/voxel-ai/jj-stack-native-stacks-test/stacks` returned `200`
-- an empty list from that endpoint represented support with no existing stacks
-- `gh stack link 1 2` recognized an existing `#1 -> #2` native stack as up to date
-- the pull-request filter returned the containing stack for `#1` and an empty list for an
-  unrelated PR number
-- `POST /stacks/{number}/unstack` returned `204` for an unlocked two-PR stack
-- unstacking left both PRs open and preserved their base branches
-- recreating the same ordered PR membership preserved both PR identities
-- recreation allocated a new stack number, proving that stack numbers are not stable identity
-- a PR `PATCH` containing its unchanged `base` was rejected with `422` because the PR belonged
-  to a stack
 - attempting to merge the bottom PR through the ordinary PR merge API was rejected because a
   native member must be merged through the stack merge API
-- stack creation and append each rejected an otherwise valid PR with auto-merge enabled, leaving
-  the existing stack unchanged
-- stack creation and append each rejected an otherwise valid PR in the merge queue, leaving the
-  existing stack unchanged
-- enabling auto-merge on an existing native member was rejected because the stack merge API owns
-  landing
-- enqueueing an existing native member was rejected for the same reason, even when the stack's
-  base branch had an active merge queue
-- native landing submits `PUT /repos/{owner}/{repo}/pulls/{target}/merge-async` with one optional
+- native merge submits `PUT /repos/{owner}/{repo}/pulls/{target}/merge-async` with one optional
   `merge_method` field and polls
   `GET /repos/{owner}/{repo}/pulls/{target}/merge-async/{uuid}`
 - the target PR selects the contiguous unmerged bottom prefix through that PR; targeting the
@@ -130,23 +125,15 @@ Observed on 2026-07-23 and 2026-07-24:
   changed
 - ordinary `gh pr merge` could not enqueue the native member either: GitHub required sequential
   landing through the stack merge API
-- directly fast-forwarding trunk to the bottom submitted commit made GitHub mark that PR merged
-  with the exact pushed commit as its merge result; the native resource remained, while survivor
-  heads and chained bases were unchanged
-- directly fast-forwarding trunk across the next two active PR commits did not mark either PR
-  merged, even though both exact commits were now on trunk
-- in a fresh resource, directly pushing the first bottom PR marked it merged after a short delay;
-  pushing the next exact active-bottom commit after that historical prefix existed left the PR
-  open because its base remained the historical review branch
+- direct trunk pushes were non-compositional: GitHub sometimes marked the first bottom PR merged,
+  but later exact pushes left active PRs open while their chained bases remained unchanged
 - unstacking that partially landed resource removed both active members and returned the
   historical merged prefix as the remaining closed resource
 - attempting to unstack a fully historical resource returned `422` because merged members cannot
   be removed
 
-The admission experiments used a third PR plus temporary branch protection and merge-queue
-rulesets. The landing experiments used additional disposable resources and a separate temporary
-merge-queue ruleset. Every ruleset and protection was removed afterward, and repository
-auto-merge was disabled again.
+The merge experiments used disposable resources and a temporary merge-queue ruleset. Every
+ruleset and protection was removed afterward.
 
 The repository remains disposable. Its original `#1 -> #2` resource and the later lower-boundary
 resource `#27 -> #28` are fully merged. Intentionally failed resources include `#17 -> #18` and
@@ -154,35 +141,24 @@ resource `#27 -> #28` are fully merged. Intentionally failed resources include `
 
 ### Local gh-stack implementation
 
-The default-branch source at `~/dev/gh-stack` establishes the closest upstream precedent for
-membership. Open upstream PR `github/gh-stack#307`, reviewed at
-`a14ba2a49502b358e2247f8d36afba18e834241c`, proposes the corresponding landing client:
+Open upstream PR `github/gh-stack#307`, fetched in `~/dev/gh-stack` and reviewed at
+`a14ba2a49502b358e2247f8d36afba18e834241c`, proposes the corresponding `merge` command:
 
-- `link` is explicitly intended for external local managers such as jj and Sapling
-- the stack-list endpoint returns `404` when native stacks are unavailable
-- errors other than `404` are ordinary API failures
-- stack creation accepts an ordered list of at least two PR numbers
-- stack update appends only to the top
-- exact membership is a no-op
-- removal or reorder is not expressible through the append endpoint
-- a PR may belong to only one native stack
-- `link` refuses PRs spread across multiple resources or an update that would drop members
-- `submit` restructures at most the one complete native resource represented by its local stack
-- unstacking operates on the native stack resource and may leave queued or auto-merge PRs
-  stacked
-- `push` and `submit` also avoid pushing an anomalous queued member, but the live API currently
-  rejects queueing or enabling auto-merge on an existing native member
-- the proposed landing client uses the same async submit and poll routes observed live
+- the proposed merge command uses the same async submit and poll routes observed live
 - its submit request contains only `merge_method`; it omits the live-confirmed `sha` guard and is
   therefore not a mutation-safety precedent for jj-stack
-- it selects the target PR from a contiguous open, non-draft bottom prefix and otherwise leaves
-  checks, reviews, conflicts, and repository rules to the mutation
+- it skips a historical merged prefix, then offers the contiguous open, non-draft bottom prefix
+- an explicit PR chooses any bottom-anchored prefix through that PR; non-interactive operation
+  chooses the highest candidate and therefore the complete candidate prefix
+- it otherwise leaves checks, reviews, conflicts, and repository rules to the mutation
 - it performs a separate GraphQL merge-queue preflight, but the live endpoint already returns a
   terminal rule failure, so this is not a required jj-stack roundtrip
 - its REST wrapper discards the useful `409` response body; jj-stack decodes it for diagnostics
   but does not adopt the UUID because the body does not identify the target PR
-- the PR is unmerged precedent, not authority; its atomicity and partial-landing claims were
-  independently confirmed in the disposable repository
+- after success it reports the merged PRs and final SHA; it does not repair local branches or
+  turn survivor rewrites into a separate user workflow
+- the PR is unmerged precedent, not authority; its atomicity, prefix-selection, and partial-merge
+  claims were independently confirmed in the disposable repository
 
 The gh-stack `submit` command's treatment of every stack-list error as "unavailable" is not a
 precedent for jj-stack. The `link` command's `404`-only handling is the relevant behavior.
@@ -226,7 +202,7 @@ Only a command whose behavior depends on native stack support consults the cache
 
 - every non-empty `submit`, because a single-PR submit may otherwise delete navigation comments
   left by a previously larger stack
-- `land` and apply-mode remote `unstack` when they have selected saved PR identities
+- `merge` and apply-mode remote `unstack` when they have selected saved PR identities
 - cleanup only when it is about to delete a branch belonging to a known PR
 - selected `sync` when saved reviews have terminal landed evidence or unexplained reviewed-branch
   drift that may be a native historical-prefix recovery
@@ -250,9 +226,8 @@ plan when the value is absent but never writes the result.
 
 Sync resolves that one repository capability and reuses one stack list for every candidate before
 mutating any of them. Selected sync uses the historical prefix and active suffix to recover an
-interrupted native landing even when the landed bottom has left local ancestry; the native land
-path passes its already-read membership directly into the same recovery. An uncertain detection
-or membership read fails the command; it never treats unknown membership as legacy.
+interrupted native merge even when the merged prefix has left local ancestry. An uncertain
+detection or membership read fails the command; it never treats unknown membership as legacy.
 
 If a required membership read returns `404` for a cached `true`, fail without changing the cached
 value. Do not change implementations in the middle of a command.
@@ -323,47 +298,33 @@ The rest of GitHub's restrictions do not become local topology:
   local path
 - topology rewrites remain valid after their resulting maximal reviewed paths are disjoint
 
-GitHub also gives a native member one landing authority: it cannot independently have auto-merge
-enabled or enter the merge queue. Apply that restriction in every repository:
+Queue and auto-merge state do not become jj-stack-wide mutation restrictions. In a repository
+without native resources, preserve jj's rewrite flexibility and let the requested GitHub mutation
+succeed or return its ordinary rejection. For native create, append, and merge, the native API is
+the admission and repository-policy authority. Surface its rejection without adding a preflight
+gate or making the PR read-only in unrelated commands.
 
-- adopting or tracking the PR remains allowed because it does not compete for landing authority
-- while either state is live, commands may inspect or repair identity but must not push its
-  branch, update or close its PR, rewrite its reviewed history, move trunk through it, or race its
-  landing
-- observe these fields in the existing batched PR reads; do not add a capability request or a
-  second preflight roundtrip
-- report the live owner of the mutation and require the user to disable auto-merge or remove the
-  PR from the queue before retrying
+Draft PRs are valid reviews and native members, but neither merge path selects a draft target.
+Apply that lifecycle boundary in every repository:
 
-This restriction is about exclusive mutation authority, not topology. An unlinked local change
-may still share history with such a PR, and a terminal merged PR is handled by ordinary
-observational recovery.
+- `merge` stops its candidate prefix before the first draft
+- there is no local readiness override; GitHub decides whether open, non-draft candidates satisfy
+  reviews, checks, conflicts, and repository rules
 
-Draft PRs are valid reviews and native members, but GitHub's native landing API categorically
-rejects landing a draft. Apply that lifecycle boundary in every repository:
-
-- `land` never includes a draft PR in its ready bottom prefix
-- `--bypass-readiness` may bypass approval and changes-requested policy, but not draft state
-
-This is the complete repository-independent restriction-convergence rule:
+The repository-independent rules are limited:
 
 - GitHub's one-resource-per-PR rule changes jj-stack's review model in every repository
-- GitHub's one-landing-authority rule makes queued and auto-merge-enabled reviews read-only until
-  that delegation is removed, except for local identity inspection and repair
-- GitHub's draft lifecycle makes draft reviews unlandable even when local readiness policy is
-  bypassed
-- restrictions on mutating a native resource govern the corresponding jj-stack operation
+- GitHub's draft lifecycle keeps drafts outside the merge candidate prefix
+- restrictions on mutating a native resource govern only the corresponding native operation
 - limits of the native resource representation do not invalidate local review topology
 
 In particular, jj-stack must never PATCH the base of a native member or merge one through the
-ordinary PR merge API. It must use the native replacement and landing sequences. Native creation
+ordinary PR merge API. It must use the native replacement and merge sequences. Native creation
 requiring at least two PRs means a one-PR review has no native resource; it does not make that
 review invalid. The append-only endpoint means replacement must dissolve and recreate a complete
 resource; it does not make a local reorder invalid.
 
-The single merge method per landing request already matches jj-stack's
-one-method-per-command behavior, and the active bottom is the first member of its existing ready
-bottom prefix.
+The single merge method per request already matches jj-stack's one-method-per-command behavior.
 
 Supporting native stacks of 100 or more reviews is explicitly out of scope. Submit sends the
 complete desired membership in one create request, or all new top members in one append request.
@@ -440,21 +401,17 @@ GitHub's create and append mutations are the authority for admitting new members
 each PR being added to be open, whether draft or ready for review, not queued for merge, and to
 have auto-merge disabled. Surface mutation rejection and do not fall back to comments.
 
-The repository-independent landing-authority gate uses queue and auto-merge fields already in the
-batched PR observation. It is not a native admission preflight: the create or append mutation
-still authorizes admission atomically, and jj-stack adds no read for that purpose. PRs already in
-the exact target resource are not being admitted again. An anomalous locked member is handled by
-the server's membership and unstack responses rather than becoming local topology.
-Independently, jj-stack's active-review discovery still requires a selected saved PR to be open;
-changing that lifecycle is outside native admission.
+Do not add a queue or auto-merge preflight. The create or append mutation authorizes admission
+atomically. PRs already in the exact target resource are not being admitted again. Independently,
+jj-stack's active-review discovery still requires a selected saved PR to be open; changing that
+lifecycle is outside native admission.
 
-After `replace` dissolves a resource, every desired PR is admitted again during recreation. A
-queued or auto-merge member may instead prevent complete dissolution, which is handled by the
-fresh post-unstack membership check below.
+After `replace` dissolves a resource, every desired PR is admitted again during recreation. An
+incomplete dissolution is handled by the fresh post-unstack membership check below.
 
 ### Historical merged prefix
 
-Native landing retains merged members in the original resource. They form a historical bottom
+Native merge retains merged members in the original resource. They form a historical bottom
 prefix; the remaining open members are its active suffix.
 
 Enrich the stack response model with the already-returned PR state, `merged_at`, and head ref/SHA.
@@ -475,8 +432,8 @@ A closed but unmerged member is not historical. It remains an unresolved resourc
 blocks replacement until the user repairs or explicitly unstacks it. Do not treat arbitrary
 unselected members as ignorable merely because they are not open.
 
-This is one membership model used by submission and landing recovery. Do not normalize successful
-landing by dissolving and recreating survivor resources: GitHub deliberately retains the
+This is one membership model used by submission and merge recovery. Do not normalize successful
+merge by dissolving and recreating survivor resources: GitHub deliberately retains the
 historical prefix, and exact or append submission can operate on its active suffix.
 
 ### Fresh authorization
@@ -559,12 +516,49 @@ multi-stack plan.
 `sync --all` remains repository-wide, but native landed recovery must use the terminal-only
 finalization rule below.
 
-## Landing
+## Merge
 
-Native landing is a separate external contract, not an extension of the existing ordinary PR
-merge loop.
+`jj stack merge` is the only command that asks GitHub to merge reviewed changes. Cached capability
+plus current native membership chooses the GitHub API; it is not a user-selectable transport:
 
-### Async merge contract
+- an active native resource uses one atomic async stack-merge request
+- a repository without native support uses the ordinary PR merge API bottom-up
+- a one-PR review in a native-capable repository has no native resource and uses one ordinary PR
+  merge
+
+There is no direct trunk push, `--via`, `--bypass-readiness`, or compatibility `land` alias.
+`merge` changes GitHub state and reports the result. It does not rewrite local history, refresh
+survivor review branches, or run cleanup. Selected `sync` is the separate observational command
+for reconciling local state afterward.
+
+### Common selection
+
+Resolve one complete selected local review path and all of its saved PR identities. With no
+selector, use the stack headed by `@-`. A PR selector may choose a target within that path, but it
+does not hide active native members above the target: those members are still resolved because
+GitHub may rewrite them.
+
+After any historical merged prefix, candidates are the contiguous open, non-draft PRs from the
+bottom. The first draft or closed-unmerged PR blocks it and everything above it. With no explicit
+target, choose the highest candidate. An explicit target chooses the bottom-anchored prefix
+through that PR. This follows `github/gh-stack#307`.
+
+Do not pre-classify candidates by approval, changes requested, checks, conflicts, mergeability,
+branch rules, or merge-queue policy. GitHub evaluates those when it processes the merge. A
+rejection is the result of the requested operation, not a reason to add another readiness model
+or preflight API.
+
+Before requesting a merge, require every affected PR to match its `ReviewIdentity` and require its
+live head to match its `SubmittedBaseline`. Re-read those facts immediately before mutation.
+For a native request, this includes survivors above a partial target because GitHub rewrites
+them. For the legacy loop, repeat the dependent read before each ordinary merge.
+
+Resolve one merge method for the command. Use
+`--merge-method <merge|squash|rebase>` when supplied; otherwise use the sole repository-enabled
+method or GitHub's repository default. `--dry-run` performs the same selection and validation and
+prints the API shape without mutating GitHub.
+
+### Native async contract
 
 Submit:
 
@@ -579,22 +573,18 @@ PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async
 }
 ```
 
-The target selects every unmerged member from the bottom through that PR. `sha` is the
-caller-controlled freshness guard. The response's `expected_head_sha` is the accepted value; a
-request field by that name is ignored.
+The target selects every unmerged member from the bottom through that PR. `sha` is the only
+caller-controlled freshness guard the endpoint offers. It protects the target head, not every
+lower member. The response's `expected_head_sha` is the accepted value; a request field by that
+name is ignored.
 
-An accepted request returns `202` and:
+The absence of per-member compare-and-swap is part of GitHub's native transaction contract.
+Observe every candidate head immediately before the request, but do not decompose a prefix into
+one request per PR to manufacture a stronger contract. GitHub owns the atomic group mutation
+after that observation.
 
-```json
-{
-  "status": "pending",
-  "details": {
-    "uuid": "...",
-    "merge_method": "...",
-    "expected_head_sha": "..."
-  }
-}
-```
+An accepted request returns `202`, `status: pending`, and details containing its UUID, resolved
+merge method, and accepted `expected_head_sha`.
 
 Poll:
 
@@ -611,82 +601,51 @@ Decode the response body on `409` and require its returned `expected_head_sha` a
 `merge_method` to match for a useful "already pending" diagnostic. Do not adopt or poll its UUID:
 the body does not identify the target PR, so it cannot prove that the operation belongs to this
 request. A later rerun of the same target and exact SHA recovers through the endpoint's terminal
-`200` response and fresh repository observation. Do not copy the proposed gh-stack client's loss
-of the diagnostic body.
+`200` response and fresh repository observation.
+
+Every active resource member must resolve in order to a review on the same selected maximal local
+path. Historical merged members may precede that active suffix. The target may be any candidate,
+including one below active survivors; resolving the complete resource is what makes those
+collateral survivor rewrites selected and visible rather than grounds for rejecting a partial
+prefix.
 
 The conflict and merge-queue experiments both failed atomically. Treat only terminal `merged` as
-acceptance, then re-read trunk, PR state, heads, bases, and native membership before local
-convergence. Do not derive success from the HTTP acceptance or from a poll transport failure.
+success. On terminal failure, report that nothing merged. On terminal success, report the merged
+PRs and final trunk SHA and exit `0`, even when GitHub rewrote survivors. Do not turn successful
+native behavior into an exit-`1` repair protocol.
 
-### Native landing selection
+GitHub retains merged members as a historical resource prefix. For a partial merge it may retarget
+and rewrite every active survivor. That resource transition is authoritative GitHub state.
+Selected `sync` accepts the historical prefix and the ordered active-suffix heads as the result of
+the native operation; it does not demand tree equivalence, explicit `relink`, or a per-survivor
+repair command.
 
-Reuse the existing local exact-snapshot and ready-bottom-prefix planning, but execute only its
-first active bottom PR per invocation. This is the only request shape whose complete reviewed
-snapshot is protected by the endpoint's one `sha` guard. For native merge:
+### Merge without a native resource
 
-- the active bottom PR is the one async target
-- exactly that one PR is planned for landing even when more of the ready bottom prefix is ready
-- every active resource member, including unlanded survivors, must resolve in order to a selected
-  review on the same maximal local path
-- historical merged members may precede that selected active suffix
-- selecting only a lower member while omitting an active survivor fails before mutation, because
-  GitHub rebases every survivor and would otherwise mutate an unselected review
+Repositories without native stack support use GitHub's ordinary PR merge API. So does a one-PR
+review in a native-capable repository, because GitHub creates no native resource for it. A
+multi-PR review in a native-capable repository that unexpectedly has no resource is inconsistent
+submission state and points at `submit`; it does not silently select the legacy path.
 
-Resolve native support and membership before rendering dry-run output, so dry-run shows one
-native bottom-PR landing rather than the legacy per-PR merge loop. Re-read the resource and all
-selected active PR heads immediately before the request, then supply the bottom PR's exact
-submitted SHA.
+The ordinary path is the existing GitHub-mediated merge behavior, not a fallback to pushing trunk:
 
-The resource-closure read protects collateral survivor mutation. The request's `sha` protects the
-complete selected snapshot because the target is the active bottom PR. The endpoint has no
-compare-and-swap guard for lower member heads, which is why jj-stack does not target a multi-PR
-prefix. GitHub remains the authority for checks, reviews, conflicts, branch rules, and
-merge-queue rejection; do not add a separate mergeability or queue-policy roundtrip.
+1. process the selected candidate prefix bottom-up
+2. immediately before each PR, re-read and verify its identity, exact submitted head, state, and
+   current base
+3. retarget the PR to trunk when its base is the lower review branch
+4. call the ordinary merge API with the expected head SHA and selected merge method
+5. stop at the first rejection; PRs GitHub already merged below it remain merged
 
-`--bypass-readiness` may skip approval and changes-requested policy but never the draft boundary.
-It does not bypass GitHub rules.
+This path is sequential and therefore is not atomic across the prefix. Do not add compensation,
+rollback, durable progress, or a direct-push escape hatch. Report the PRs already merged and point
+at selected `sync` before the user retries.
 
-### Native `land --via merge`
+Retain the existing refusal to rebase-merge more than one ordinary PR in one command, because the
+first GitHub rewrite invalidates the later reviewed commit identities. Native stack merge does
+not have that restriction because GitHub owns the complete group transaction.
 
-Use the native stack merge API. Never fall back to the ordinary bottom-up PR merge loop for native
-members.
-
-One native request uses the resolved merge method for the active bottom PR. Re-running `land`
-observes the new historical prefix and lands the next exact active bottom.
-
-On terminal success, use each merged PR's `merge_commit_sha` as existing rewritten-result
-evidence:
-
-- merge-commit mode reports one shared group merge commit
-- each PR reports the commit GitHub records as its landed result
-- the terminal response SHA is the final top commit, not each member's result
-
-GitHub retains merged members as a historical resource prefix. After a partial async landing it
-also retargets and rebases every survivor, changing survivor head SHAs even when their trees are
-unchanged. The terminal response does not identify those survivor outputs, and an immediate read
-cannot distinguish GitHub's rewrite from an external push in the same interval. Do not mint
-authority from temporal proximity.
-
-Do not add tree-equivalence evidence or adopt GitHub's rewritten survivor commits as local truth.
-After terminal success, retire the landed bottom and rebase selected local survivors onto observed
-trunk, but do not update their remote branches or saved baselines. Preserve each observed survivor
-head and print its exact existing `relink` repair command, followed by the selected `submit`
-command to restore the local jj snapshots after explicit authorization. The same rule handles an
-interrupted operation. Exit `1` after a successful bottom landing when survivor repair remains, so
-scripts cannot mistake partial convergence for completion. With no survivor, native landing
-converges normally and exits `0`.
-
-### Native direct-push landing
-
-Native direct-push landing is unsupported. Pushing the first active bottom commit eventually made
-GitHub mark that PR merged, but the resource retained chained bases. A later exact push of the new
-active bottom left its PR open, as did one push across two active members. Supporting only the
-first push would strand the remaining resource in a state that the same transport cannot advance.
-
-`land --via push` therefore fails before mutation when any selected PR is an active native member.
-Legacy repositories retain the existing direct-push transport. Native landed recovery must still
-require terminal merged PR state instead of using the legacy open-PR retarget-and-close finalizer,
-because an external actor can directly push trunk even though jj-stack does not.
+An external actor may still push commits directly to trunk. That is recovery evidence for `sync`,
+not a supported `merge` transport and not a reason to keep direct-push command code.
 
 ## Other commands
 
@@ -703,6 +662,9 @@ existing mutation damage a native resource.
 - selected `sync` and `sync --all` may finalize a native member only after GitHub reports that PR
   merged; an exact commit merely appearing on trunk must not trigger the legacy retarget-and-close
   path
+- when selected `sync` observes a historical merged prefix, the same resource's ordered active
+  suffix authorizes the survivor head and base changes produced by the native merge; this is
+  resource transition authority, not tree-equivalence evidence
 
 Change one of these only when an implemented native behavior demonstrates a concrete correctness
 or recovery requirement. Record that decision here first.
@@ -713,67 +675,42 @@ Read and apply `testing-philosophy.md` before changing tests.
 
 ### Fake GitHub
 
-Add only the observed stack endpoints:
-
-- list stacks, including the pull-request filter if used
-- get one stack
-- create
-- append
-- unstack, including remaining locked members
-- async merge submit and poll
-
-The fake must reject PR updates containing `base` while the PR is stacked, even when the value is
-unchanged. It must reject the ordinary PR merge endpoint for a native member.
-
-Model only the landing facts used by jj-stack: exact target SHA, bottom-PR result identity,
-historical merged prefix, survivor rewrite for async merge, atomic failure, diagnostic `409`, and
-terminal retry recovery. Do not implement a general GitHub stack emulator.
+The existing fake covers completed membership work. For the remaining slices, add only historical
+member state and the async merge submit and poll endpoints. Model candidate-prefix selection,
+target SHA, survivor rewrite, atomic failure, diagnostic `409`, and terminal retry recovery. Do
+not implement a general GitHub stack emulator.
 
 ### Focused coverage
 
-Add the narrowest tests protecting these distinct risks:
+Only the unfinished slices need new or changed coverage:
 
-- capability detection caches `true` on `200`
-- capability detection caches `false` on conclusive `404`
-- an uncertain detection error writes no cache value
-- a later invocation uses cached `false` without a stack API request
-- a first successful native list is reused for submission planning
-- native creation produces no navigation comments
-- native submit may load an unfiltered issue-comment response for overview synchronization, but
-  never classifies, rejects, updates, or deletes navigation comments
-- native title/body refresh omits `base`
-- exact membership is a no-op
-- a prefix appends only the new top PRs
-- reorder unstacking happens before any PR base mutation and preserves PR identity
-- interruption after unstack recovers through ordinary resubmission
-- active or prospective review ownership shared by maximal local paths fails before mutation
-- ownership validation includes non-empty working-copy heads and ignores unrelated components
-- submit, checkout, relink, and remote unstack enforce ownership at their mutation boundaries
-- read-only inspection and local unstack remain available to diagnose or repair invalid topology
-- multi-resource overlap and an unselected resource member both fail before mutation
-- resource-closure errors name every affected resource and its exact `gh stack unstack <number>`
-  command
-- explicit stack overview prose still works in both repository types
+- remove tests that enforce repository-wide queue or auto-merge restrictions; do not replace them
+  with a cross-command permissiveness matrix
 - merged native members form one historical prefix while submit plans against the active suffix
-- native async merge uses one guarded target request, does not adopt a `409` UUID, and recovers a
+- remote unstack and cleanup distinguish historical members from the active suffix
+- native async merge targets the highest contiguous open, non-draft candidate by default and can
+  target an explicit lower candidate
+- one native request merges the complete selected prefix; it is never decomposed into per-PR
+  requests
+- native async merge uses the target-head guard, does not adopt a `409` UUID, and recovers a
   completed retry through terminal observation
 - terminal failure changes no repository, PR, branch, or membership state
 - merge-commit, squash, and rebase results feed existing landed evidence
-- partial async landing never overwrites a rewritten survivor and reports its explicit relink
-  repair before resubmission, then exits `1`
-- selected sync recognizes the historical prefix after an interrupted native landing and reports
-  the same survivor repair
-- native direct push fails before mutation for every active native member
+- terminal success reports the merged prefix and exits `0` without rewriting local history or
+  requiring survivor relink
+- selected sync recognizes a historical prefix and accepts the resource's ordered survivor heads
+  as GitHub-owned transition state
+- legacy `merge` uses the ordinary PR merge API bottom-up and stops after the first rejection
+- a one-PR review in a native-capable repository uses the ordinary PR merge API
+- a missing resource for a multi-PR native review fails closed instead of selecting the legacy API
+- the command surface has `merge`, no `land` alias, no `--via`, and no direct-push path
 - an external direct push cannot make sync retarget or close an open native member
-- draft landing remains blocked under `--bypass-readiness`
-- queued and auto-merge-enabled reviews fail before external or reviewed-history mutation in
-  either repository mode, while local identity adoption remains available
+- a draft or closed PR blocks the candidate prefix, while approvals, checks, conflicts, and
+  repository rules are left to GitHub
 
-Use a planner unit table for the action classification, one integration test per meaningful
-cross-system risk, and one interruption/retry case. Do not duplicate the full submit property
-corpus in both modes.
-
-Add native landing coverage only after the corresponding live contract is recorded above.
+Use one integration test per meaningful cross-system risk and one interruption/retry case. Search
+for and replace overlapping landing/recovery coverage rather than increasing its bounded case
+count.
 
 ## Implementation commits
 
@@ -781,125 +718,22 @@ Each commit is one bounded change with its tests and any temporary-plan update n
 the resulting behavior. A guarded unsupported operation is acceptable between commits; an
 operation that mutates partially and then discovers native incompatibility is not.
 
-### Commit 1: simplify state comparisons
+### Commit 13: simplify policy and replace the command surface
 
-- consolidate the duplicated identity and baseline compare-and-write implementation
-- preserve every existing conflict and malformed-record behavior
-- create enough governed-code budget for the cache without increasing a limit
+- remove the repository-wide queue and auto-merge mutation gate, its observations, and its tests
+- rename `land` to `merge` without a compatibility alias
+- remove direct-push merging, `--via`, `--bypass-readiness`, and `--skip-cleanup`
+- keep repositories without native support and unstacked one-PR reviews on the existing ordinary
+  GitHub PR merge path
+- make active native resources fail closed until the async contract is implemented
+- leave GitHub responsible for approval, checks, conflicts, queue policy, and other repository
+  rules
 
-Exit condition: existing persistence tests pass with one comparison mechanism replacing the two
-duplicated mechanisms.
+Exit condition: ordinary reviews retain jj rewrite flexibility, the obsolete push transport and
+global restriction policy are deleted, non-native merge remains usable, and the governed
+landing/recovery footprint is smaller than before the slice.
 
-### Commit 2: API and capability cache
-
-- add the minimal typed stack membership models and observed client operations
-- add the direct repository-pair boolean map and atomic store update
-- add command-layer capability resolution
-- keep the resolver unexposed until a command can use the result coherently
-- add focused client and persistence coverage
-
-Exit condition: capability resolution returns one boolean or raises, reuses its first live stack
-list, and a fresh store instance can use cached `false` without a stack capability request.
-
-### Commit 3: PR mutation separation
-
-- make PR PATCH payloads field-sensitive
-- separate base-change planning from content-change planning
-- update existing callers and mutation-safety tests
-
-Exit condition: title/body updates can succeed on an already native-stacked PR without sending
-`base`, while legacy base corrections retain current behavior.
-
-### Commit 4: native action planning
-
-- add the pure `none`, `create`, `append`, and `replace` classification
-- include protective pre-push retargets and surviving one-member resource remnants
-- cover the decision table at the planner layer
-
-Exit condition: every selected-stack membership shape has one action or one fail-closed error,
-without network or persistence logic in the planner.
-
-### Commit 5: native mutation safety gates
-
-- make both landing modes fail closed on native membership pending their live contract
-- prevent cleanup from deleting branches that still belong to a native resource
-- make remote `unstack` either dissolve an exactly selected native resource first or fail closed
-- add only the focused mutation-order tests for these existing commands
-
-Exit condition: externally created native stacks cannot be damaged by an existing jj-stack
-mutation, even before jj-stack starts creating native resources itself.
-
-### Commit 6: unique reviewed-path ownership
-
-- add one discovery-layer authority for active and prospective review ownership
-- validate canonical maximal local paths, excluding unlinked identities
-- apply it before review creation/adoption and selected review mutations in both repository modes
-- remove the native-only shared-prefix helper and successful shared-sibling behavior it supersedes
-
-Exit condition: an active or prospectively reviewed change belongs to at most one maximal local
-review path, while read-only and repair commands remain usable.
-
-### Commit 7: split comment responsibilities
-
-- separate navigation synchronization from stack-overview synchronization
-- preserve current legacy behavior at every call site
-- add no projection interface or backend abstraction
-
-Exit condition: later native submission can omit navigation work without changing overview or
-legacy behavior.
-
-### Commit 8: native create, no-op, and append submission
-
-- use cached capability resolution in `submit`
-- use native resources for create, exact no-op, and top-only append
-- reject multi-resource overlap or an overlapping resource with an unselected member
-- preserve old navigation comments without managing them on native repositories
-- fail closed on `replace` until its ordered execution is implemented
-- add focused fake-server and integration coverage
-
-Exit condition: ordinary additive stack submission uses the correct repository implementation,
-and structural edits stop before every local or remote mutation.
-
-### Commit 9: resource-closed selected-stack replacement
-
-- implement `replace` for one complete resource owned by the selected reviews
-- unstack it before protected branch pushes or any PR base mutation
-- dissolve a surviving one-member resource without creating a replacement resource
-- add one interruption-and-retry integration case
-
-Exit condition: ordinary supported single-stack edits preserve PR identity and recover
-observationally after interruption.
-
-### Commit 10: native landing evidence
-
-- complete the approved live experiments
-- record the resulting contract in this plan
-- make no production mutation claim that the evidence does not support
-
-Exit condition: endpoint, freshness, partial-result, and survivor behavior are concrete enough to
-implement without speculative recovery.
-
-### Commit 11: converge common GitHub lifecycle restrictions
-
-- observe queue and auto-merge ownership in existing batched PR reads
-- prevent external or reviewed-history mutation while another GitHub landing mechanism owns it
-- continue to allow local identity adoption and repair
-- make draft state a hard land boundary even with `--bypass-readiness`
-- retain read-only inspection and observational recovery
-
-Exit condition: native and legacy repositories enforce the same exclusive landing authority and
-draft lifecycle without another roundtrip or persisted state.
-
-### Commit 12: native submission mutation
-
-- create or append the complete desired membership in one request
-- re-read and authorize observed membership immediately before mutation
-- recover interruption by replanning from live membership without additional state
-
-Exit condition: one authorized request applies the complete desired membership, and interruption
-recovery needs no persisted operation state.
-
-### Commit 13: historical native resource members
+### Commit 14: historical native resource members
 
 - retain state, merged time, and head details from native stack responses
 - validate one historical merged prefix and plan submit against its active suffix
@@ -907,39 +741,45 @@ recovery needs no persisted operation state.
 - compare stable resource identity and membership rather than rich response-model equality
 - update remote unstack and cleanup guards to distinguish active from historical members
 
-Exit condition: partial landing can leave GitHub's historical resource intact while ordinary
+Exit condition: partial merge can leave GitHub's historical resource intact while ordinary
 submit, restructure, unstack, and cleanup operate on active reviews without collateral mutation.
 
-### Commit 14: native-safe landed recovery
+### Commit 15: native merge synchronization
 
-- resolve native membership for terminal or survivor-drift selected recovery and for global
+- resolve native membership for merged-prefix or survivor-drift selected recovery and for global
   candidates before mutation
 - make selected and global sync require terminal merged state for a native member
 - retain exact-on-trunk recovery for legacy reviews
-- retire a terminal native bottom and rebase local survivors without publishing them
-- report explicit survivor relink and resubmission commands
+- treat an observed historical prefix plus its ordered active suffix as GitHub authority for the
+  native resource transition
+- retire the merged prefix and rebase selected local survivors onto fetched trunk
+- let ordinary selected-review synchronization refresh survivors without explicit relink,
+  tree-equivalence evidence, or per-survivor repair state
 
-Exit condition: native landed recovery cannot retarget, close, or overwrite an open member, and
-local survivors remain recoverable through exact explicit commands.
+Exit condition: selected sync converges an observed native merge without a special repair
+protocol, while global sync still requires terminal merged state before changing a native member.
 
-### Commit 15: native merge landing
+### Commit 16: native async merge
 
 - add the guarded async submit and poll client operations
-- implement native merge landing
-- render one exact bottom-PR action instead of legacy per-PR mutations
+- select the contiguous open, non-draft bottom prefix without local approval or mergeability
+  policy
+- route active native resources to one async request for the selected prefix
+- fail closed on a missing resource for a multi-PR review in a native-capable repository
 - recover a lost submit response through a later terminal retry, never by adopting a `409` UUID
-- feed terminal landed evidence into native-safe recovery without inferring survivor authorship
-- add only the merge-landing tests justified by observed behavior
+- report terminal native success without local repair and direct the user to selected `sync`
+- add only the merge tests justified by the two concrete GitHub contracts
 
-Exit condition: `land --via merge` uses the native stack API for one exact active bottom PR and
-preserves exact survivor authorization for explicit recovery.
+Exit condition: `merge` always asks GitHub to merge, native resources use one atomic prefix
+request, reviews without a native resource retain the ordinary GitHub PR merge path, and no
+trunk-push transport remains.
 
-### Commit 16: permanent documentation and plan deletion
+### Commit 17: permanent documentation and plan deletion
 
 - reconcile the finished behavior into `design.md`
 - retain the explicit exclusion of support for native stacks of 100 or more reviews
 - update `implementation-strategy.md` for the actual final component and test boundaries
-- update user docs, help, exit-code documentation, and the bundled skill where required
+- update user docs, help, exit-code documentation, and the bundled skill for the `merge` command
 - remove or replace superseded backlog entries
 - delete this file
 
@@ -976,8 +816,10 @@ The work is complete only when:
 - historical merged resource prefixes do not block active-suffix submission or landed cleanup
 - disjoint cross-stack rewrites require explicit dissolution only when an old native resource
   spans more than one desired path, then converge through ordinary selected submission
-- landing behavior is evidence-backed and cannot accidentally use the ordinary PR merge API
-- queued and auto-merge-enabled reviews are never raced, and drafts cannot land under a bypass
+- `merge` is always GitHub-mediated and has no direct-push or transport-selection code
+- native merge is one atomic bottom-prefix request; legacy merge uses ordinary PR merges
+- queue and auto-merge state creates no repository-wide jj restriction; GitHub decides the
+  requested mutation, and drafts are never merge candidates
 - no GitHub stack topology or operation phase is persisted
 - the canonical docs and user guidance describe the finished behavior
 - this file has been deleted
