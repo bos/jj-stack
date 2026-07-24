@@ -161,13 +161,8 @@ class GithubClient:
         response = await self._request("GET", self._repo_path)
         return GithubRepository.model_validate(self._expect_success(response))
 
-    async def list_stacks(
-        self,
-        *,
-        pull_number: int | None = None,
-    ) -> tuple[GithubStack, ...]:
-        params = None if pull_number is None else {"pull_request": str(pull_number)}
-        response = await self._request("GET", f"{self._repo_path}/stacks", params=params)
+    async def list_stacks(self) -> tuple[GithubStack, ...]:
+        response = await self._request("GET", f"{self._repo_path}/stacks")
         payload = self._expect_stack_payload(response, response_name="stack list")
         if not isinstance(payload, list):
             raise GithubClientError("GitHub stack list response was not a JSON array.")
@@ -293,9 +288,7 @@ class GithubClient:
         numbers = tuple(sorted(set(pull_numbers)))
         results: dict[int, GithubPullRequest | GithubClientError | None] = {}
         try:
-            results.update(
-                await self.get_pull_requests_by_numbers(pull_numbers=numbers)
-            )
+            results.update(await self.get_pull_requests_by_numbers(pull_numbers=numbers))
             return results
         except GithubClientError:
             pass

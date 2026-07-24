@@ -52,14 +52,10 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     operations: list[str] = []
     native_members = (1, 2)
     locked = True
+    fake_repo.native_stacks = {7: native_members}
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
 
     class NativeStackClient(GithubClient):
-        async def list_stacks(self, *, pull_number=None):
-            return (github_stack(*native_members),)
-
-        async def get_stack(self, *, stack_number):
-            return github_stack(*native_members)
-
         async def unstack(self, *, stack_number):
             operations.append("unstack")
             return github_stack(1) if locked else None
@@ -85,6 +81,7 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     assert state_store.load() == state_before
 
     native_members = (1,)
+    fake_repo.native_stacks = {7: native_members}
     locked_exit_code = run_main(repo, config_path, "unstack", change_id)
     locked_run = capsys.readouterr()
 

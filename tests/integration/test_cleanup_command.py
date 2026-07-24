@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jj_stack.github.client import GithubClient
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
 
-from ..support.fake_github import FakeGithubState, create_app, github_stack
 from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo,
@@ -17,7 +15,6 @@ from ..support.integration_helpers import (
 from .submit_command_helpers import (
     configure_submit_environment,
     issue_comments,
-    patch_github_client_builders,
     read_remote_ref,
     remote_refs,
     run_main,
@@ -126,22 +123,8 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     _mark_unlinked(state_store, change_id=change_id)
     run_command(["jj", "abandon", change_id], repo)
     run_command(["jj", "bookmark", "delete", bookmark], repo)
-    native = True
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class NativeStackClient(GithubClient):
-        async def list_stacks(self, *, pull_number=None):
-            if not native:
-                return ()
-            return (github_stack(1),)
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.cleanup.command",),
-        client_type=NativeStackClient,
-    )
+    fake_repo.native_stacks = {7: (1,)}
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
 
     preview_exit_code = run_main(repo, config_path, "cleanup", "--dry-run")
     preview = capsys.readouterr()
@@ -164,7 +147,7 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     assert change_id in state_store.load().review_identities
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
-    native = False
+    fake_repo.native_stacks = {}
     apply_exit_code = run_main(repo, config_path, "cleanup")
     applied = capsys.readouterr()
     normalized_applied = " ".join(applied.out.split())

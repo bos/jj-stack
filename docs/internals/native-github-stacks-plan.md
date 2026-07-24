@@ -79,6 +79,18 @@ Observed on 2026-07-23:
   to a stack
 - attempting to merge the bottom PR through the ordinary PR merge API was rejected because a
   native member must be merged through the stack merge API
+- stack creation and append each rejected an otherwise valid PR with auto-merge enabled, leaving
+  the existing stack unchanged
+- stack creation and append each rejected an otherwise valid PR in the merge queue, leaving the
+  existing stack unchanged
+- enabling auto-merge on an existing native member was rejected because the stack merge API owns
+  landing
+- enqueueing an existing native member was rejected for the same reason, even when the stack's
+  base branch had an active merge queue
+
+The admission experiments used a third PR plus temporary branch protection and merge-queue
+rulesets. The PR, rulesets, and protection were removed afterward, and repository auto-merge was
+disabled again.
 
 The disposable repository was left with an open native stack containing PRs `#1 -> #2`, both in
 draft state.
@@ -99,6 +111,8 @@ The local source at `~/dev/gh-stack` establishes the closest upstream precedent:
 - `submit` restructures at most the one complete native resource represented by its local stack
 - unstacking operates on the native stack resource and may leave queued or auto-merge PRs
   stacked
+- `push` and `submit` also avoid pushing an anomalous queued member, but the live API currently
+  rejects queueing or enabling auto-merge on an existing native member
 
 The gh-stack `submit` command's treatment of every stack-list error as "unavailable" is not a
 precedent for jj-stack. The `link` command's `404`-only handling is the relevant behavior.
@@ -153,8 +167,10 @@ When the repository pair has no cache entry:
 4. on any other response or transport failure, fail and write no capability value
 
 A cached `false` uses navigation comments without a stack API request. A cached `true` does not
-need another capability probe, but a native mutation may still need current membership for
-authorization.
+need another capability probe. A submit containing existing or retiring PR numbers reads current
+membership for planning. An all-new submit cannot overlap an existing resource, so it waits for
+the fresh membership read that authorizes creation instead of listing twice. Native mutations
+still read current membership immediately before changing it.
 
 There is no automatic or explicit capability redetection. `submit --dry-run` may probe for an
 accurate plan when the value is absent but never writes the result.
@@ -228,6 +244,18 @@ The rest of GitHub's restrictions do not become local topology:
   reasons to reject an otherwise valid local path
 - topology rewrites remain valid after their resulting maximal reviewed paths are disjoint
 
+This is the complete restriction-convergence rule:
+
+- GitHub's one-resource-per-PR rule changes jj-stack's review model in every repository
+- restrictions on mutating a native resource govern the corresponding jj-stack operation
+- limits of the native resource representation do not invalidate local review topology
+
+In particular, jj-stack must never PATCH the base of a native member or merge one through the
+ordinary PR merge API. It must use the native replacement and landing sequences. Native creation
+requiring at least two PRs means a one-PR review has no native resource; it does not make that
+review invalid. The append-only endpoint means replacement must dissolve and recreate a complete
+resource; it does not make a local reorder invalid.
+
 ## Native submission planning
 
 Plan the native operation after existing PR discovery and identity validation, but before local
@@ -239,6 +267,10 @@ after PR creation.
 
 The planner returns an executable action. Invalid or ambiguous state raises an error rather than
 becoming a plan state.
+
+When `submit --restart` retires saved PR identities, their old PR numbers participate in overlap
+and resource-closure checks but never in desired membership. Restarting every member of a native
+resource therefore plans replacement rather than mistaking the new PRs for an unrelated create.
 
 ### Actions
 
@@ -288,16 +320,22 @@ submitting a new local topology or clean them up through the existing orphan wor
 
 ### Live member admission
 
-Immediately before `create` or `append`, freshly validate only the unstacked PRs that the
-operation will add. Each must be open, whether draft or ready for review, not queued for merge,
-and have auto-merge disabled.
+GitHub's create and append mutations are the authority for admitting new members. They require
+each PR being added to be open, whether draft or ready for review, not queued for merge, and to
+have auto-merge disabled. Surface mutation rejection and do not fall back to comments.
 
-PRs already in the exact target resource are not being admitted again. Their current draft,
-queue, auto-merge, or open/closed state does not by itself turn `none` into an error or prevent
-`append`; apply admission checks only to the appended delta. After `replace` dissolves a resource,
-every desired PR is unstacked and must pass admission before recreation. A queued or auto-merge
-member may instead prevent complete dissolution, which is handled by the fresh post-unstack
-membership check below.
+Do not duplicate this policy with a speculative PR-state preflight. Such a read would not
+authorize the later mutation, which must still enforce the same facts atomically, and would add
+another policy path and roundtrip. PRs already in the exact target resource are not being
+admitted again. The live API rejects newly queueing or enabling auto-merge on a native member, so
+jj-stack does not add speculative queue or auto-merge observation to ordinary native submission.
+An anomalous locked member is handled by the server's membership and unstack responses rather
+than becoming local topology. Independently, jj-stack's active-review discovery still requires a
+selected saved PR to be open; changing that lifecycle is outside native admission.
+
+After `replace` dissolves a resource, every desired PR is admitted again during recreation. A
+queued or auto-merge member may instead prevent complete dissolution, which is handled by the
+fresh post-unstack membership check below.
 
 ### Fresh authorization
 
@@ -306,14 +344,11 @@ Immediately before unstacking:
 - fetch the exact stack resource again
 - require its membership to match the plan
 
-Immediately before appending:
+Immediately before appending or creating:
 
-- fetch the target stack again
-- require its current membership to remain the expected ordered prefix
-
-Immediately before creating:
-
-- recheck that the desired PRs do not now overlap another native stack
+- list native stacks once
+- re-run resource-closed planning against that fresh complete membership
+- require the action and affected resource to remain exactly the planned action and resource
 
 These are mutation-authorization reads, not capability probes.
 

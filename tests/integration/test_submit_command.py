@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from jj_stack.errors import EXIT_CONFLICTS, EXIT_GITHUB, EXIT_USAGE
-from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import (
     STACK_NAVIGATION_COMMENT_MARKER,
@@ -90,46 +89,88 @@ def _assert_stack_pull_requests_match_dag(
         assert pull_request.base_ref == expected_base
 
 
-def test_submit_projects_review_bookmarks_to_selected_remote(
+def test_submit_native_stack_recovers_lost_create_response_and_appends_delta(
     tmp_path: Path,
     monkeypatch,
-    capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
+    fake_repo.native_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
+    list_calls = [0]
+    appended: list[tuple[int, ...]] = []
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class LoseFirstCreateResponseClient(GithubClient):
+        async def list_stacks(self):
+            list_calls[0] += 1
+            return await super().list_stacks()
+
+        async def create_stack(self, *, pull_numbers):
+            await super().create_stack(pull_numbers=pull_numbers)
+            raise GithubClientError("Simulated lost response", status_code=500)
+
+        async def append_to_stack(self, *, stack_number, pull_numbers):
+            appended.append(tuple(pull_numbers))
+            if len(appended) == 1:
+                fake_repo.pull_requests[pull_numbers[0]].is_queued = True
+            return await super().append_to_stack(
+                stack_number=stack_number,
+                pull_numbers=pull_numbers,
+            )
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.submit.command",),
+        client_type=LoseFirstCreateResponseClient,
+    )
+    state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
 
     exit_code = run_main(repo, config_path, "submit")
-    captured = capsys.readouterr()
-    stack = JjClient(repo).discover_review_stack()
-    state = ReviewStateStore.for_repo(repo).load()
-    first_bookmark = state.review_identities[stack.revisions[0].change_id].head_ref
-    top_pr_url = fake_repo.pull_requests[2].to_payload(
-        repository=fake_repo,
-        web_origin="https://github.test",
-    )["html_url"]
+    assert exit_code == EXIT_GITHUB
+    assert list_calls == [1]
+    assert fake_repo.native_stacks == {1: (1, 2)}
+    assert len(state_store.load().review_identities) == 2
 
-    assert exit_code == 0
-    assert (
-        f"Selected: {stack.head.subject} ({short_change_id(stack.head.change_id)})"
-        in captured.out
+    for body in ("old navigation one", "old navigation two"):
+        fake_repo.create_issue_comment(
+            body=f"{STACK_NAVIGATION_COMMENT_MARKER}\n{body}",
+            issue_number=2,
+        )
+    old_navigation = tuple(
+        (comment.id, comment.body) for comment in _navigation_comments(fake_repo, 2)
     )
-    assert "Submitted changes:" in captured.out
-    assert ": main" not in captured.out
-    assert top_pr_url is not None
-    assert f"Top of stack: {top_pr_url}" in captured.out
-    assert captured.out.index("feature 2") < captured.out.index("feature 1")
-    assert captured.out.index("feature 1") < captured.out.index(stack.trunk.subject)
-    assert len(fake_repo.pull_requests) == 2
-    for index, revision in enumerate(stack.revisions, start=1):
-        identity = state.review_identities[revision.change_id]
-        bookmark = identity.head_ref
-        assert identity.pr_number == index
-        assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
+    top_change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    run_command(
+        ["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed\n\nupdated body"],
+        repo,
+    )
+    stack_description = tmp_path / "stack.md"
+    write_file(stack_description, "Native stack overview\n")
 
-    assert fake_repo.pull_requests[1].base_ref == "main"
-    assert fake_repo.pull_requests[2].base_ref == first_bookmark
+    assert run_main(repo, config_path, "submit", "--describe", f"stack={stack_description}") == 0
+    assert list_calls == [2]
+    assert fake_repo.pull_requests[2].title == "feature 2 renamed"
+    assert fake_repo.pull_requests[2].body == "updated body"
+    assert (
+        tuple((comment.id, comment.body) for comment in _navigation_comments(fake_repo, 2))
+        == old_navigation
+    )
+    assert "Native stack overview" in _overview_comments(fake_repo, 2)[0].body
+
+    commit_file(repo, "feature 3", "feature-3.txt")
+    assert run_main(repo, config_path, "submit") == EXIT_GITHUB
+    assert fake_repo.native_stacks == {1: (1, 2)}
+    fake_repo.pull_requests[3].is_queued = False
+    assert run_main(repo, config_path, "submit") == 0
+
+    assert list_calls == [6]
+    assert (fake_repo.native_stacks, appended) == ({1: (1, 2, 3)}, [(3,), (3,)])
+    assert _navigation_comments(fake_repo, 3) == []
 
 
 def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
@@ -182,56 +223,53 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
     assert pull_requests_by_title["feature 1"].base_ref == bookmarks_by_subject["feature 4"]
 
 
-def test_submit_preserves_existing_prs_when_change_is_inserted_in_stack(
+def test_submit_native_membership_failure_and_restart_stop_before_mutation(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
+    fake_repo.native_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
-    commit_file(repo, "feature 3", "feature-3.txt")
-
-    initial_stack = JjClient(repo).discover_review_stack()
-    change_ids_by_subject = {
-        revision.subject: revision.change_id for revision in initial_stack.revisions
-    }
-
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
+    app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    run_command(["jj", "new", change_ids_by_subject["feature 1"]], repo)
-    commit_file(repo, "feature inserted", "feature-inserted.txt")
-    inserted_change_id = JjClient(repo).discover_review_stack().head.change_id
-    run_command(
-        [
-            "jj",
-            "rebase",
-            "-s",
-            change_ids_by_subject["feature 2"],
-            "-d",
-            inserted_change_id,
-        ],
-        repo,
-    )
-    inserted_stack = JjClient(repo).discover_review_stack(change_ids_by_subject["feature 3"])
+    class FailedMembershipClient(GithubClient):
+        async def list_stacks(self):
+            raise GithubClientError("Simulated membership failure", status_code=500)
 
-    assert [revision.subject for revision in inserted_stack.revisions] == [
-        "feature 1",
-        "feature inserted",
-        "feature 2",
-        "feature 3",
-    ]
-    assert run_main(repo, config_path, "submit", inserted_stack.head.change_id) == 0
-    capsys.readouterr()
-
-    _assert_stack_pull_requests_match_dag(
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
         fake_repo=fake_repo,
-        repo=repo,
-        stack=inserted_stack,
+        modules=("jj_stack.commands.submit.command",),
+        client_type=FailedMembershipClient,
     )
-    assert len(fake_repo.pull_requests) == 4
+    state_before = ReviewStateStore.for_repo(repo).load()
+    remote_before = remote_refs(fake_repo.git_dir)
+
+    assert run_main(repo, config_path, "submit") == EXIT_GITHUB
+    assert "Could not inspect native GitHub stack membership" in capsys.readouterr().err
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert remote_refs(fake_repo.git_dir) == remote_before
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.submit.command",),
+    )
+    head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    assert run_main(repo, config_path, "submit", "--restart", head_change_id) == 1
+    captured = capsys.readouterr()
+
+    assert "require replacing native GitHub stack #1" in captured.err
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert remote_refs(fake_repo.git_dir) == remote_before
+    assert fake_repo.native_stacks == {1: (1, 2)}
 
 
 def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
@@ -857,6 +895,7 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
+    fake_repo.native_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -873,6 +912,12 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     assert ": new PR" in captured.out
     assert fake_repo.pull_requests == {}
     assert remote_refs(fake_repo.git_dir) == initial_remote_refs
+    assert (
+        ReviewStateStore.for_repo(repo).get_stacked_pull_requests(
+            "github.test/octo-org/stacked-review"
+        )
+        is None
+    )
 
 
 def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
@@ -1007,6 +1052,7 @@ def test_submit_moves_overview_comment_when_stack_head_advances(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
+    fake_repo.native_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -1181,73 +1227,6 @@ def test_submit_rejects_unlinked_change_until_relink(
     assert exit_code == 1
     assert "unlinked from review tracking" in captured.err
     assert "relink" in captured.err
-
-
-def test_submit_updates_existing_pull_request_after_change_rewrite(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    write_file(repo / "feature-2.txt", "feature 2\n")
-    write_file(repo / "details.txt", "more detail\n")
-    run_command(["jj", "commit", "-m", "feature 2\n\nbody line"], repo)
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    first_stack = JjClient(repo).discover_review_stack()
-    top_change_id = first_stack.revisions[-1].change_id
-    initial_identity = ReviewStateStore.for_repo(repo).load().review_identities[top_change_id]
-    initial_bookmark = initial_identity.head_ref
-    initial_pr_number = initial_identity.pr_number
-
-    class RejectBaseOnContentUpdateClient(GithubClient):
-        async def update_pull_request(
-            self,
-            *,
-            pull_number,
-            base=None,
-            body=None,
-            title=None,
-        ):
-            if base is not None:
-                raise GithubClientError("Native stack member rejects base updates")
-            return await super().update_pull_request(
-                pull_number=pull_number,
-                base=base,
-                body=body,
-                title=title,
-            )
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=create_app(FakeGithubState.single_repository(fake_repo)),
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
-        client_type=RejectBaseOnContentUpdateClient,
-    )
-    run_command(
-        ["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed\n\nupdated body"],
-        repo,
-    )
-
-    exit_code = run_main(repo, config_path, "submit", top_change_id)
-    captured = capsys.readouterr()
-    rewritten_stack = JjClient(repo).discover_review_stack(top_change_id)
-    rewritten_state = ReviewStateStore.for_repo(repo).load()
-    rewritten_bookmark = rewritten_state.review_identities[top_change_id].head_ref
-
-    assert exit_code == 0
-    assert rewritten_bookmark == initial_bookmark
-    assert "updated" in captured.out
-    assert (
-        read_remote_ref(fake_repo.git_dir, initial_bookmark)
-        == rewritten_stack.revisions[-1].commit_id
-    )
-    assert fake_repo.pull_requests[initial_pr_number].title == "feature 2 renamed"
-    assert fake_repo.pull_requests[initial_pr_number].body == "updated body"
 
 
 def test_submit_updates_existing_untracked_remote_bookmark(
@@ -1659,6 +1638,7 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
+    fake_repo.native_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -1713,7 +1693,7 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
     assert change_id_1 in state.submitted_baselines
     assert change_id_2 not in state.review_identities
     assert change_id_2 not in state.submitted_baselines
-    assert len(fake_repo.pull_requests) == 1
+    assert len(fake_repo.pull_requests) == 1 and fake_repo.native_stacks == {}
     assert fake_repo.pull_requests[1].title == "feature 1"
     pushed_review_refs = {
         ref: target

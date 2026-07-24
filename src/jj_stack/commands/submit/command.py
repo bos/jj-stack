@@ -43,6 +43,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands._github_stack_support import resolve_github_stack_support
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
@@ -52,21 +53,18 @@ from jj_stack.github.resolution import (
     resolve_trunk_branch,
 )
 from jj_stack.jj.client import JjCliArgs, JjClient
-from jj_stack.models.bookmarks import BookmarkState, GitRemote
+from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalStack
-from jj_stack.review.change_status import classify_saved_review_identity
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
 )
 from jj_stack.state.operation_lock import acquire_operation_lock
 
-from .auto_close import (
-    retarget_review_bases_before_branch_push,
-    verify_no_unexpected_pull_request_closures,
-)
+from . import auto_close
+from .auto_close import retarget_review_bases_before_branch_push
 from .inputs import prepare_submit_inputs
 from .models import (
     GeneratedDescription,
@@ -79,6 +77,7 @@ from .models import (
     SubmitResult,
     SubmittedRevision,
 )
+from .native import apply_native_stack_plan, plan_native_stack
 from .pull_requests import (
     discover_pull_requests_by_bookmark,
     ensure_pull_request_links_are_consistent,
@@ -289,63 +288,6 @@ def _build_submit_result(
     )
 
 
-def _build_local_only_dry_run_result(
-    *,
-    client: JjClient,
-    bookmark_states: dict[str, BookmarkState],
-    prepared_revisions: tuple[PreparedSubmitRevision, ...],
-    remote: GitRemote,
-    remote_name: str,
-    stack: LocalStack,
-    state: ReviewState,
-) -> SubmitResult | None:
-    """Return a local-only dry-run result when no GitHub inspection is needed."""
-
-    remote_bookmarks = remote_bookmarks_pointing_at_commit(
-        bookmark_states=bookmark_states,
-        remote_name=remote_name,
-        commit_id=stack.trunk.commit_id,
-    )
-    if len(remote_bookmarks) != 1:
-        return None
-
-    revisions: list[SubmittedRevision] = []
-    for prepared_revision in prepared_revisions:
-        review_identity = state.review_identities.get(prepared_revision.revision.change_id)
-        if classify_saved_review_identity(
-            review_identity,
-            local="present",
-        ).saved_review_identity:
-            return None
-        if prepared_revision.bookmark_source in {"discovered", "saved"}:
-            return None
-        bookmark_state = bookmark_states.get(
-            prepared_revision.bookmark,
-            BookmarkState(name=prepared_revision.bookmark),
-        )
-        if bookmark_state.remote_target(remote_name) is not None:
-            return None
-        revisions.append(
-            SubmittedRevision(
-                prepared=prepared_revision,
-                pull_request_action="created",
-                pull_request_is_draft=None,
-                pull_request_number=None,
-                pull_request_title=None,
-                pull_request_url=None,
-            )
-        )
-
-    return _build_submit_result(
-        client=client,
-        dry_run=True,
-        remote=remote,
-        revisions=tuple(revisions),
-        stack=stack,
-        trunk_branch=remote_bookmarks[0],
-    )
-
-
 def _pending_pull_request_syncs(
     *,
     discovered_pull_requests: dict[str, GithubPullRequest | None],
@@ -479,25 +421,15 @@ async def run_submit_async(
         state=state,
         state_store=state_store,
     )
-    if dry_run:
-        if not prepared_inputs.restarted_change_ids:
-            local_only_dry_run = _build_local_only_dry_run_result(
-                client=client,
-                bookmark_states=bookmark_states,
-                prepared_revisions=prepared_revisions,
-                remote=remote,
-                remote_name=remote.name,
-                stack=stack,
-                state=state,
-            )
-            if local_only_dry_run is not None:
-                return local_only_dry_run
-
     submitted_revisions: tuple[SubmittedRevision, ...] = ()
     async with build_github_client(repository=github_repository) as github_client:
         with console.spinner(description="Inspecting GitHub"):
             try:
-                github_repository_state, discovered_pull_requests = await asyncio.gather(
+                (
+                    github_repository_state,
+                    discovered_pull_requests,
+                    stack_support,
+                ) = await asyncio.gather(
                     github_client.get_repository(),
                     discover_pull_requests_by_bookmark(
                         github_client=github_client,
@@ -505,10 +437,15 @@ async def run_submit_async(
                             resolution.bookmark for resolution in bookmark_resolutions
                         ),
                     ),
+                    resolve_github_stack_support(
+                        github_client=github_client,
+                        state_store=state_store,
+                        persist=not dry_run,
+                    ),
                 )
             except GithubClientError as error:
                 raise CliError(
-                    f"Could not load GitHub repository {github_repository.full_name}"
+                    f"Could not inspect GitHub repository {github_repository.full_name}"
                 ) from error
             trunk_branch = resolve_trunk_branch(
                 bookmark_states=bookmark_states,
@@ -537,6 +474,63 @@ async def run_submit_async(
             pending_syncs=pending_syncs,
             state=mutation_run.state,
         )
+        pushes_review_branches = any(
+            revision.remote_action == "pushed" for revision in prepared_revisions
+        )
+        retarget_syncs = (
+            auto_close.predict_pull_requests_auto_closed_by_push(
+                bookmark_states=bookmark_states,
+                jj_client=client,
+                pending_syncs=pending_syncs,
+                prepared_revisions=prepared_revisions,
+                remote_name=remote.name,
+            )
+            if pushes_review_branches and (stack_support.supported or not dry_run)
+            else ()
+        )
+        native_plan = None
+        if stack_support.supported:
+            repository_key = (
+                github_repository.host.casefold(),
+                github_repository.owner.casefold(),
+                github_repository.repo.casefold(),
+            )
+            retiring_pull_numbers = tuple(
+                restarted.identity.pr_number
+                for restarted in prepared_inputs.restarted_reviews
+                if restarted.identity.repository_key == repository_key
+            )
+            desired_pull_numbers = tuple(
+                pending.discovered_pull_request.number
+                if pending.discovered_pull_request is not None
+                else None
+                for pending in pending_syncs
+            )
+            observed_stacks = stack_support.observed_stacks
+            if observed_stacks is None and (retiring_pull_numbers or any(desired_pull_numbers)):
+                try:
+                    observed_stacks = await github_client.list_stacks()
+                except GithubClientError as error:
+                    raise CliError("Could not inspect native GitHub stack membership") from error
+            native_plan = plan_native_stack(
+                desired_pull_numbers=desired_pull_numbers,
+                observed_stacks=observed_stacks or (),
+                pull_numbers_requiring_base_update={
+                    pull_request.number
+                    for pending in pending_syncs
+                    if (pull_request := pending.discovered_pull_request) is not None
+                    and (
+                        pull_request.base.ref != pending.base_branch or pending in retarget_syncs
+                    )
+                },
+                retiring_pull_numbers=retiring_pull_numbers,
+            )
+            if native_plan.action == "replace":
+                assert (stack := native_plan.affected_stack) is not None
+                raise CliError(
+                    t"Selected changes require replacing native GitHub stack #{stack.number}.",
+                    hint=t"Run {ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
+                )
         sync_local_bookmarks(
             bookmark_states=bookmark_states,
             client=client,
@@ -544,16 +538,10 @@ async def run_submit_async(
             run=mutation_run,
             state=mutation_run.state,
         )
-        if not dry_run and any(
-            revision.remote_action == "pushed" for revision in prepared_revisions
-        ):
+        if not dry_run and pushes_review_branches:
             await retarget_review_bases_before_branch_push(
-                bookmark_states=bookmark_states,
                 github_client=github_client,
-                jj_client=client,
-                pending_syncs=pending_syncs,
-                prepared_revisions=prepared_revisions,
-                remote_name=remote.name,
+                pending_syncs=retarget_syncs,
                 trunk_branch=trunk_branch,
             )
             with console.spinner(description="Pushing review branches"):
@@ -584,19 +572,36 @@ async def run_submit_async(
             )
 
         if not dry_run:
+            if native_plan is not None:
+                pull_numbers = tuple(
+                    pull_number
+                    for revision in submitted_revisions
+                    if (pull_number := revision.pull_request_number) is not None
+                )
+                if len(pull_numbers) != len(submitted_revisions):
+                    raise AssertionError("Native submit requires concrete pull request numbers.")
+                await apply_native_stack_plan(
+                    github_client=github_client,
+                    plan=native_plan,
+                    pull_numbers=pull_numbers,
+                )
             await sync_stack_comments(
                 concurrency=_GITHUB_INSPECTION_CONCURRENCY,
                 github_client=github_client,
-                navigation_bodies=navigation_comment_bodies(
-                    revisions=submitted_revisions,
-                    trunk_branch=trunk_branch,
+                navigation_bodies=(
+                    {}
+                    if native_plan is not None
+                    else navigation_comment_bodies(
+                        revisions=submitted_revisions,
+                        trunk_branch=trunk_branch,
+                    )
                 ),
                 overview_bodies=stack_overview_comment_bodies(
                     generated_stack_description=prepared_inputs.generated_stack_description,
                     revisions=submitted_revisions,
                 ),
             )
-            await verify_no_unexpected_pull_request_closures(
+            await auto_close.verify_no_unexpected_pull_request_closures(
                 discovered_pull_requests=discovered_pull_requests,
                 github_client=github_client,
             )

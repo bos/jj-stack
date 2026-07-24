@@ -42,6 +42,8 @@ class FakeGithubPullRequest:
     node_id: str
     number: int
     title: str
+    auto_merge_enabled: bool = False
+    is_queued: bool = False
     labels: list[str] = field(default_factory=list)
     requested_reviewers: list[str] = field(default_factory=list)
     requested_team_reviewers: list[str] = field(default_factory=list)
@@ -190,9 +192,11 @@ class FakeGithubRepository:
     allow_squash_merge: bool = True
     auto_merge_reachable_heads: bool = True
     next_issue_comment_id: int = 1
+    next_native_stack_number: int = 1
     next_pull_request_number: int = 1
     next_pull_request_review_id: int = 1
     issue_comments: dict[int, list[FakeGithubIssueComment]] = field(default_factory=dict)
+    native_stacks: dict[int, tuple[int, ...]] | None = None
     pull_request_events: list[FakeGithubPullRequestEvent] = field(default_factory=list)
     pull_requests: dict[int, FakeGithubPullRequest] = field(default_factory=dict)
     pull_request_reviews: dict[int, list[FakeGithubPullRequestReview]] = field(
@@ -258,6 +262,14 @@ class FakeGithubRepository:
         for pull_request in self.pull_requests.values():
             if pull_request.node_id == node_id:
                 return pull_request
+        return None
+
+    def stack_number_for_pull(self, pull_number: int) -> int | None:
+        if self.native_stacks is None:
+            return None
+        for stack_number, pull_numbers in self.native_stacks.items():
+            if pull_number in pull_numbers:
+                return stack_number
         return None
 
     def refresh_pull_request_state(
@@ -535,6 +547,7 @@ def create_app(fake_state: FakeGithubState) -> FastAPI:
 
     app = FastAPI(docs_url=None, redoc_url=None, title="fake-github")
     _register_repository_routes(app, fake_state)
+    _register_native_stack_routes(app, fake_state)
     _register_graphql_routes(app, fake_state)
     _register_pull_request_routes(app, fake_state)
     _register_issue_comment_routes(app, fake_state)
@@ -553,6 +566,82 @@ def _register_repository_routes(app: FastAPI, fake_state: FakeGithubState) -> No
             api_origin=fake_state.api_origin,
             web_origin=fake_state.web_origin,
         )
+
+
+def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
+    """Register the observed native-stack routes."""
+
+    @app.get("/repos/{owner}/{repo}/stacks")
+    async def list_stacks(owner: str, repo: str) -> list[dict[str, object]]:
+        repository = _get_repository(fake_state, owner, repo)
+        return [
+            _stack_payload(number, members)
+            for number, members in sorted(_native_stacks(repository).items())
+        ]
+
+    @app.get("/repos/{owner}/{repo}/stacks/{stack_number}")
+    async def get_stack(
+        owner: str,
+        repo: str,
+        stack_number: int,
+    ) -> dict[str, object]:
+        repository = _get_repository(fake_state, owner, repo)
+        members = _native_stacks(repository).get(stack_number)
+        if members is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return _stack_payload(stack_number, members)
+
+    @app.post("/repos/{owner}/{repo}/stacks", status_code=201)
+    async def create_stack(
+        owner: str,
+        repo: str,
+        payload: Annotated[dict[str, object], Body(...)],
+    ) -> dict[str, object]:
+        repository = _get_repository(fake_state, owner, repo)
+        members = _require_int_list(payload, "pull_requests")
+        if len(members) < 2:
+            raise HTTPException(status_code=422, detail="A stack requires two pull requests.")
+        _validate_stack_members(repository, members)
+        stacks = _native_stacks(repository)
+        number = repository.next_native_stack_number
+        while number in stacks:
+            number += 1
+        repository.next_native_stack_number = number + 1
+        stacks[number] = members
+        return _stack_payload(number, members)
+
+    @app.post("/repos/{owner}/{repo}/stacks/{stack_number}/add")
+    async def append_to_stack(
+        owner: str,
+        repo: str,
+        stack_number: int,
+        payload: Annotated[dict[str, object], Body(...)],
+    ) -> dict[str, object]:
+        repository = _get_repository(fake_state, owner, repo)
+        stacks = _native_stacks(repository)
+        existing = stacks.get(stack_number)
+        added = _require_int_list(payload, "pull_requests")
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+        if not added:
+            raise HTTPException(status_code=422, detail="No pull requests to append.")
+        members = (*existing, *added)
+        _validate_stack_members(repository, members, allowed_stack=stack_number)
+        stacks[stack_number] = members
+        return _stack_payload(stack_number, members)
+
+    @app.post(
+        "/repos/{owner}/{repo}/stacks/{stack_number}/unstack",
+        response_model=None,
+        status_code=204,
+    )
+    async def unstack(owner: str, repo: str, stack_number: int) -> Response:
+        repository = _get_repository(fake_state, owner, repo)
+        stacks = _native_stacks(repository)
+        if stack_number not in stacks:
+            raise HTTPException(status_code=404, detail="Not Found")
+        del stacks[stack_number]
+        return Response(status_code=204)
 
 
 def _register_graphql_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
@@ -692,18 +781,27 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         pull_request = repository.pull_requests.get(pull_number)
         if pull_request is None:
             raise HTTPException(status_code=404, detail="Not Found")
+        if "base" in payload and repository.stack_number_for_pull(pull_number) is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="A stacked pull request's base cannot be updated directly.",
+            )
         repository.refresh_pull_request_state(pull_request)
-        if "title" in payload:
-            pull_request.title = _require_string(payload, "title")
-        if "body" in payload:
-            pull_request.body = _optional_string(payload, "body") or ""
-        if "base" in payload:
+        title = _require_string(payload, "title") if "title" in payload else None
+        body = (_optional_string(payload, "body") or "") if "body" in payload else None
+        base_ref = _require_string(payload, "base") if "base" in payload else None
+        if base_ref is not None:
+            _require_branch(repository, base_ref)
+        if title is not None:
+            pull_request.title = title
+        if body is not None:
+            pull_request.body = body
+        if base_ref is not None:
             repository.update_pull_request_base(
                 pull_request,
-                base_ref=_require_string(payload, "base"),
+                base_ref=base_ref,
                 reason="api_update",
             )
-            _require_branch(repository, pull_request.base_ref)
         repository.refresh_pull_request_state(pull_request)
         return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
 
@@ -718,6 +816,11 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         pull_request = repository.pull_requests.get(pull_number)
         if pull_request is None:
             raise HTTPException(status_code=404, detail="Not Found")
+        if repository.stack_number_for_pull(pull_number) is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="A stacked pull request must be merged through its stack.",
+            )
         merge_method = payload.get("merge_method", "merge")
         allowed_methods = {
             "merge": repository.allow_merge_commit,
@@ -974,6 +1077,58 @@ def _optional_bool(payload: dict[str, object], key: str) -> bool | None:
     if isinstance(value, bool):
         return value
     raise HTTPException(status_code=422, detail=f"Expected {key!r} to be a boolean.")
+
+
+def _require_int_list(payload: dict[str, object], key: str) -> tuple[int, ...]:
+    value = payload.get(key)
+    if not isinstance(value, list) or any(
+        not isinstance(item, int) or isinstance(item, bool) for item in value
+    ):
+        raise HTTPException(status_code=422, detail=f"Expected {key!r} to be an integer array.")
+    return tuple(value)
+
+
+def _native_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...]]:
+    if repository.native_stacks is None:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return repository.native_stacks
+
+
+def _stack_payload(number: int, members: tuple[int, ...]) -> dict[str, object]:
+    return {
+        "number": number,
+        "pull_requests": [{"number": member} for member in members],
+    }
+
+
+def _validate_stack_members(
+    repository: FakeGithubRepository,
+    members: tuple[int, ...],
+    *,
+    allowed_stack: int | None = None,
+) -> None:
+    pull_requests = [repository.pull_requests.get(number) for number in members]
+    if len(set(members)) != len(members):
+        raise HTTPException(status_code=422, detail="Duplicate pull request.")
+    if any(pull_request is None for pull_request in pull_requests):
+        raise HTTPException(status_code=422, detail="Pull request does not exist.")
+    repository.refresh_pull_requests([pull for pull in pull_requests if pull is not None])
+    if any(
+        pull is not None and (pull.state != "open" or pull.auto_merge_enabled or pull.is_queued)
+        for pull in pull_requests
+    ):
+        raise HTTPException(status_code=422, detail="Pull request is not admissible.")
+    resolved = [pull for pull in pull_requests if pull is not None]
+    if any(
+        current.base_ref != previous.head_ref
+        for previous, current in zip(resolved, resolved[1:], strict=False)
+    ):
+        raise HTTPException(status_code=422, detail="Pull request bases do not form a chain.")
+    for number, existing in _native_stacks(repository).items():
+        if number != allowed_stack and not set(existing).isdisjoint(members):
+            raise HTTPException(
+                status_code=422, detail="Pull request already belongs to a stack."
+            )
 
 
 def _require_branch(repository: FakeGithubRepository, branch: str) -> None:

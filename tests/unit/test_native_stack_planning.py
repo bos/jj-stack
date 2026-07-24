@@ -20,25 +20,28 @@ def _stack(number: int, *pull_numbers: int) -> GithubStack:
         "desired",
         "observed",
         "base_updates",
+        "retiring",
         "expected_action",
         "expected_stack_number",
     ),
     (
-        ((1,), (), frozenset(), "none", None),
-        ((1, None), (_stack(5, 9, 10),), frozenset(), "create", None),
-        ((1, 2), (_stack(7, 1, 2),), frozenset(), "none", None),
-        ((1, 2, None, 3), (_stack(7, 1, 2),), frozenset(), "append", 7),
-        ((1, 2, 3), (_stack(7, 1, 2),), frozenset({3}), "append", 7),
-        ((1, 2), (_stack(7, 1, 2),), frozenset({1}), "replace", 7),
-        ((2, 1), (_stack(7, 1, 2),), frozenset(), "replace", 7),
-        ((None, 1, 2), (_stack(7, 1, 2),), frozenset(), "replace", 7),
-        ((1,), (_stack(7, 1),), frozenset(), "replace", 7),
+        ((1,), (), frozenset(), (), "none", None),
+        ((1, None), (_stack(5, 9, 10),), frozenset(), (), "create", None),
+        ((1, 2), (_stack(7, 1, 2),), frozenset(), (), "none", None),
+        ((1, 2, None, 3), (_stack(7, 1, 2),), frozenset(), (), "append", 7),
+        ((1, 2, 3), (_stack(7, 1, 2),), frozenset({3}), (), "append", 7),
+        ((1, 2), (_stack(7, 1, 2),), frozenset({1}), (), "replace", 7),
+        ((2, 1), (_stack(7, 1, 2),), frozenset(), (), "replace", 7),
+        ((None, 1, 2), (_stack(7, 1, 2),), frozenset(), (), "replace", 7),
+        ((1,), (_stack(7, 1),), frozenset(), (), "replace", 7),
+        ((None, None), (_stack(7, 1, 2),), frozenset(), (1, 2), "replace", 7),
     ),
 )
 def test_native_stack_plan_classifies_selected_membership(
     desired: tuple[int | None, ...],
     observed: tuple[GithubStack, ...],
     base_updates: frozenset[int],
+    retiring: tuple[int, ...],
     expected_action: str,
     expected_stack_number: int | None,
 ) -> None:
@@ -46,6 +49,7 @@ def test_native_stack_plan_classifies_selected_membership(
         desired_pull_numbers=desired,
         observed_stacks=observed,
         pull_numbers_requiring_base_update=base_updates,
+        retiring_pull_numbers=retiring,
     )
 
     assert plan.action == expected_action

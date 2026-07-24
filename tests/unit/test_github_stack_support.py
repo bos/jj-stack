@@ -28,7 +28,7 @@ def _github_client(handler) -> GithubClient:
     )
 
 
-def test_stack_support_caches_supported_repository_and_reuses_observation(
+def test_stack_support_caches_supported_repository_without_reprobing(
     tmp_path: Path,
 ) -> None:
     requests = 0
@@ -151,32 +151,6 @@ def test_stack_support_classifies_malformed_response_without_caching(
     with pytest.raises(GithubClientError, match=error_pattern):
         asyncio.run(run_test())
 
-    assert (
-        ReviewStateStore(state_path).get_stacked_pull_requests(
-            "github.test/local-name/stacked-review"
-        )
-        is None
-    )
-
-
-def test_stack_support_dry_run_observes_without_caching(tmp_path: Path) -> None:
-    def handler(request: httpxyz.Request) -> httpxyz.Response:
-        return httpxyz.Response(200, json=[], request=request)
-
-    state_path = tmp_path / "state.json"
-
-    async def run_test():
-        async with _github_client(handler) as client:
-            return await resolve_github_stack_support(
-                github_client=client,
-                state_store=ReviewStateStore(state_path),
-                persist=False,
-            )
-
-    support = asyncio.run(run_test())
-
-    assert support.supported is True
-    assert support.observed_stacks == ()
     assert (
         ReviewStateStore(state_path).get_stacked_pull_requests(
             "github.test/local-name/stacked-review"

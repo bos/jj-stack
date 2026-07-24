@@ -15,26 +15,15 @@ from .models import PendingPullRequestSync, PreparedSubmitRevision
 
 async def retarget_review_bases_before_branch_push(
     *,
-    bookmark_states: dict[str, BookmarkState],
     github_client: GithubClient,
-    jj_client: JjClient,
     pending_syncs: tuple[PendingPullRequestSync, ...],
-    prepared_revisions: tuple[PreparedSubmitRevision, ...],
-    remote_name: str,
     trunk_branch: str,
 ) -> None:
     """Move PR bases that would auto-close after the push to trunk first."""
 
-    retarget_syncs = predict_pull_requests_auto_closed_by_push(
-        bookmark_states=bookmark_states,
-        jj_client=jj_client,
-        pending_syncs=pending_syncs,
-        prepared_revisions=prepared_revisions,
-        remote_name=remote_name,
-    )
     await run_bounded_tasks(
         concurrency=DEFAULT_BOUNDED_CONCURRENCY,
-        items=retarget_syncs,
+        items=pending_syncs,
         run_item=lambda pending_sync: _retarget_review_base_before_branch_push(
             github_client=github_client,
             pending_sync=pending_sync,

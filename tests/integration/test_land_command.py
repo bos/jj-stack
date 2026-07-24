@@ -486,6 +486,7 @@ def test_land_rechecks_exact_review_head_before_direct_push(
     change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
     bookmark = state_before.review_identities[change_id].head_ref
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     injected = False
@@ -493,7 +494,7 @@ def test_land_rechecks_exact_review_head_before_direct_push(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class LateHeadMoveClient(GithubClient):
-        async def list_stacks(self, *, pull_number=None):
+        async def list_stacks(self):
             nonlocal stack_checks
             stack_checks += 1
             return (github_stack(1, 2),) if stack_checks == 1 else ()
@@ -521,9 +522,7 @@ def test_land_rechecks_exact_review_head_before_direct_push(
     blocked = capsys.readouterr()
 
     assert blocked_exit_code == 1
-    assert "GitHub stack #7 blocks this jj-stack operation" in _squash_whitespace(
-        blocked.err
-    )
+    assert "GitHub stack #7 blocks this jj-stack operation" in _squash_whitespace(blocked.err)
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert fake_repo.pull_requests[1].state == "open"
     assert state_store.load() == state_before
@@ -1117,6 +1116,7 @@ def test_land_via_merge_expected_head_guard_rejects_race(
     revision = JjClient(repo).discover_review_stack().revisions[0]
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
     bookmark = state_before.review_identities[revision.change_id].head_ref
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     app = create_app(FakeGithubState.single_repository(fake_repo))
@@ -1124,7 +1124,7 @@ def test_land_via_merge_expected_head_guard_rejects_race(
     stack_checks = 0
 
     class HeadRaceClient(GithubClient):
-        async def list_stacks(self, *, pull_number=None):
+        async def list_stacks(self):
             nonlocal stack_checks
             stack_checks += 1
             return (github_stack(1),) if stack_checks == 1 else ()
@@ -1155,9 +1155,7 @@ def test_land_via_merge_expected_head_guard_rejects_race(
     blocked = capsys.readouterr()
 
     assert blocked_exit_code == 1
-    assert "GitHub stack #7 blocks this jj-stack operation" in _squash_whitespace(
-        blocked.err
-    )
+    assert "GitHub stack #7 blocks this jj-stack operation" in _squash_whitespace(blocked.err)
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert fake_repo.pull_requests[1].state == "open"
     assert state_store.load() == state_before
