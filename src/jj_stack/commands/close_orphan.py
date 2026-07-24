@@ -243,13 +243,18 @@ async def run_orphan_close(
 
         if pull_request is None:
             raise AssertionError("Orphan close inspection must resolve a pull request state.")
-        if not dry_run and (pull_request.state == "open" or cleanup_plan.remote_delete):
+        if pull_request.state == "open" or cleanup_plan.remote_delete:
             try:
-                native_stack = await GithubStackSelection(
+                selection = GithubStackSelection(
                     github_client,
                     (pull_request_number,),
                     state_store,
-                ).dissolve_exact()
+                )
+                native_stack = (
+                    await selection.authorize_exact_active_suffix(persist=False)
+                    if dry_run
+                    else await selection.dissolve_exact()
+                )
             except CliError as error:
                 recorder.record(
                     CloseAction(kind="GitHub stack", body=str(error), status="blocked")
@@ -264,7 +269,7 @@ async def run_orphan_close(
                     CloseAction(
                         kind="GitHub stack",
                         body=t"dissolve GitHub stack #{native_stack.number}",
-                        status="applied",
+                        status="planned" if dry_run else "applied",
                     )
                 )
         if pull_request.state == "open":

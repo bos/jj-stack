@@ -84,7 +84,36 @@ class GithubStackSelection:
     ) -> GithubStack | None:
         """Dissolve one exact selected resource before mutating its pull requests."""
 
-        stacks = observed if observed is not None else await self.overlapping()
+        current = await self.authorize_exact_active_suffix(observed=observed)
+        if current is None:
+            return None
+        try:
+            remaining = await self.github_client.unstack(stack_number=current.number)
+        except GithubClientError as error:
+            raise CliError(t"Could not dissolve GitHub stack #{current.number}.") from error
+        if remaining is not None and (
+            remaining.number != current.number
+            or remaining.pull_request_numbers != current.historical_pull_request_numbers
+        ):
+            members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
+            raise CliError(
+                t"GitHub stack #{current.number} still contains {members}.",
+                hint=t"Resolve its locked pull requests, run "
+                t"{ui.cmd(f'gh stack unstack {current.number}')}, then retry jj-stack.",
+            )
+        return current
+
+    async def authorize_exact_active_suffix(
+        self,
+        *,
+        observed: tuple[GithubStack, ...] | None = None,
+        persist: bool = True,
+    ) -> GithubStack | None:
+        """Return the freshly authorized resource for this exact active suffix."""
+
+        stacks = (
+            observed if observed is not None else await self.overlapping(persist=persist)
+        )
         if not stacks:
             return None
         selected = tuple(self.pull_numbers)
@@ -131,17 +160,6 @@ class GithubStackSelection:
                     t"was preparing.",
                     hint="Inspect the current stack and retry.",
                 )
-            remaining = await self.github_client.unstack(stack_number=stack.number)
         except GithubClientError as error:
-            raise CliError(t"Could not dissolve GitHub stack #{stack.number}.") from error
-        if remaining is not None and (
-            remaining.number != stack.number
-            or remaining.pull_request_numbers != current.historical_pull_request_numbers
-        ):
-            members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
-            raise CliError(
-                t"GitHub stack #{stack.number} still contains {members}.",
-                hint=t"Resolve its locked pull requests, run "
-                t"{ui.cmd(f'gh stack unstack {stack.number}')}, then retry jj-stack.",
-            )
-        return stack
+            raise CliError(t"Could not inspect GitHub stack #{stack.number}.") from error
+        return current

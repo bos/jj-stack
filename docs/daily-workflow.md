@@ -266,6 +266,9 @@ jj-stack unstack --cleanup --pull-request orphans --dry-run
 jj-stack unstack --cleanup --pull-request orphans
 ```
 
+The preview performs the same native GitHub stack membership checks as the real cleanup. A
+partial native stack selection is reported as blocked before either command changes anything.
+
 If `jj-stack list` says another tracked stack changed since its last submit, either run
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
 `jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another

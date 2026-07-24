@@ -72,6 +72,14 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
         client_type=NativeStackClient,
     )
 
+    dry_run_exit_code = run_main(repo, config_path, "unstack", "--dry-run", change_id)
+    dry_run = capsys.readouterr()
+
+    assert dry_run_exit_code == 1
+    assert "do not exactly match one native GitHub stack" in _combined_output(dry_run)
+    assert operations == [] and fake_repo.pull_requests[1].state == "open"
+    assert state_store.load() == state_before
+
     blocked_exit_code = run_main(repo, config_path, "unstack", change_id)
     blocked = capsys.readouterr()
 
@@ -334,6 +342,8 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    fake_repo.native_stacks = {7: (1,)}
     initial_state = state_store.load()
 
     exit_code = run_main(repo, config_path, "unstack", "--dry-run", change_id)
@@ -342,6 +352,8 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
 
     assert exit_code == 0
     assert "Planned close actions:" in captured.out
+    assert "dissolve GitHub stack #7" in captured.out
+    assert fake_repo.native_stacks == {7: (1,)}
     assert fake_repo.pull_requests[1].state == "open"
     assert refreshed_state == initial_state
     assert issue_comments(fake_repo, 1) == []
@@ -987,7 +999,7 @@ def test_unstack_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
     assert refreshed_state.review_identities[change_id].is_unlinked
 
 
-def test_unstack_cleanup_pull_request_dry_run_previews_orphan_close(
+def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -998,6 +1010,8 @@ def test_unstack_cleanup_pull_request_dry_run_previews_orphan_close(
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    fake_repo.native_stacks = {7: (1, 2)}
     state = state_store.load()
     bottom_bookmark = state.review_identities[bottom_change_id].head_ref
     bottom_pr_number = state.review_identities[bottom_change_id].pr_number
@@ -1016,14 +1030,12 @@ def test_unstack_cleanup_pull_request_dry_run_previews_orphan_close(
     captured = capsys.readouterr()
     output = captured.out
 
-    assert exit_code == 0
-    assert "Planned close actions:" in output
-    assert f"close PR #{bottom_pr_number}" in output
-    assert f"delete {bottom_bookmark}@origin" in output
-    assert "prune orphan record" in output
+    assert exit_code == 1
+    assert "Close blocked:" in output
+    assert "do not exactly match one native GitHub stack" in _combined_output(captured)
     assert fake_repo.pull_requests[bottom_pr_number].state == "open"
     assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
-    assert bottom_change_id in state_store.load().review_identities
+    assert state_store.load() == state
 
 
 def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_already_gone(

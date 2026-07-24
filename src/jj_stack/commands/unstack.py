@@ -740,43 +740,48 @@ async def _stream_close_async(
             record_action=recorder.record,
         )
         blocked = False
-        if not prepared_close.dry_run:
-            selection = GithubStackSelection(
-                github_client,
-                tuple(
-                    run.review_identities[prepared_revision.revision.change_id].pr_number
-                    for prepared_revision in prepared.status_revisions
-                    if prepared_revision.revision.change_id in run.review_identities
-                ),
-                prepared_close.context.state_store,
+        selection = GithubStackSelection(
+            github_client,
+            tuple(
+                run.review_identities[prepared_revision.revision.change_id].pr_number
+                for prepared_revision in prepared.status_revisions
+                if prepared_revision.revision.change_id in run.review_identities
+            ),
+            prepared_close.context.state_store,
+        )
+        native_stacks = await selection.overlapping(persist=not prepared_close.dry_run)
+        if native_stacks:
+            native_preflight = (
+                _close_revision_preflight_error(
+                    change_status=classify_review_status_revision(revision),
+                    revision=revision,
+                    run=run,
+                )
+                for revision in status_result.revisions
             )
-            native_stacks = await selection.overlapping()
-            if native_stacks:
-                native_preflight = (
-                    _close_revision_preflight_error(
-                        change_status=classify_review_status_revision(revision),
-                        revision=revision,
-                        run=run,
+            blocker = next(
+                (action for action in native_preflight if action is not None),
+                None,
+            )
+            if blocker is not None:
+                recorder.record(blocker)
+                blocked = True
+            else:
+                if prepared_close.dry_run:
+                    native_stack = await selection.authorize_exact_active_suffix(
+                        observed=native_stacks,
+                        persist=False,
                     )
-                    for revision in status_result.revisions
-                )
-                blocker = next(
-                    (action for action in native_preflight if action is not None),
-                    None,
-                )
-                if blocker is not None:
-                    recorder.record(blocker)
-                    blocked = True
                 else:
                     native_stack = await selection.dissolve_exact(observed=native_stacks)
-                    if native_stack is not None:
-                        recorder.record(
-                            CloseAction(
-                                kind="GitHub stack",
-                                body=t"dissolve GitHub stack #{native_stack.number}",
-                                status="applied",
-                            )
+                if native_stack is not None:
+                    recorder.record(
+                        CloseAction(
+                            kind="GitHub stack",
+                            body=t"dissolve GitHub stack #{native_stack.number}",
+                            status="planned" if prepared_close.dry_run else "applied",
                         )
+                    )
         progress_total = len(status_result.revisions) if on_action is None else 0
         with console.progress(
             description="Processing close actions",
