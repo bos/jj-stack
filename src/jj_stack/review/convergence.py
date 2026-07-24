@@ -1,5 +1,3 @@
-"""Pure selected-path convergence planning and dependency checks."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,13 +6,17 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.models.github import GithubPullRequest
+from jj_stack.models.github import GithubPullRequest, GithubStack
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.landed_evidence import (
     LandedEvidenceKind,
     LandedReviewCandidate,
     candidate_for_change,
     collect_landed_evidence,
+)
+from jj_stack.review.native_sync import (
+    NativeSurvivorReview,
+    build_selected_native_sync,
 )
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.review.status import PreparedStatus
@@ -23,18 +25,16 @@ from jj_stack.ui import Message
 
 @dataclass(frozen=True, slots=True)
 class SelectedLanded:
-    """One landed revision in the selected bottom prefix."""
-
     candidate: LandedReviewCandidate
     evidence_kind: LandedEvidenceKind
-    revision: LocalRevision
+    native: bool
+    revision: LocalRevision | None
 
 
 @dataclass(frozen=True, slots=True)
 class SelectedConvergencePlan:
-    """Validated selected-path mutations and reviewed resubmit boundary."""
-
     landed: tuple[SelectedLanded, ...]
+    native_survivors: tuple[NativeSurvivorReview, ...]
     reviewed_survivors: tuple[LocalRevision, ...]
     rewrite_blocker: Message | None
     survivors: tuple[LocalRevision, ...]
@@ -43,21 +43,47 @@ class SelectedConvergencePlan:
 def build_selected_convergence_plan(
     *,
     context: CommandContext,
+    native_stacks: tuple[GithubStack, ...],
     observation: RepositoryObservation,
     prepared_status: PreparedStatus,
     repository: GithubRepoAddress,
 ) -> SelectedConvergencePlan:
     selected = prepared_status.prepared.stack.revisions
     state = prepared_status.prepared.state
-    landed: list[SelectedLanded] = []
+    native_history, native_active = build_selected_native_sync(
+        context=context,
+        native_stacks=native_stacks,
+        observation=observation,
+        repository=repository,
+        selected=selected,
+        state=state,
+        trunk_commit_id=prepared_status.prepared.stack.trunk.commit_id,
+    )
+    native_historical = {item.candidate.change_id: item for item in native_history}
+    native_survivors = {item.candidate.change_id: item for item in native_active}
+    landed: list[SelectedLanded] = [
+        SelectedLanded(
+            candidate=item.candidate,
+            evidence_kind=item.evidence_kind,
+            native=True,
+            revision=item.revision,
+        )
+        for item in native_historical.values()
+    ]
     survivors: list[LocalRevision] = []
-    rewrite_blocker: Message | None = None
+    rewrite_blocker = _native_rewrite_blocker(
+        context=context,
+        landed=tuple(landed),
+    )
     seen_survivor = False
-    for revision in selected:
+    for revision in filter(
+        lambda item: item.change_id not in native_historical,
+        selected,
+    ):
         candidate = candidate_for_change(state, revision.change_id)
         evidence_kind = (
             None
-            if candidate is None
+            if candidate is None or revision.change_id in native_survivors
             else _selected_landed_kind(
                 candidate=candidate,
                 context=context,
@@ -85,6 +111,7 @@ def build_selected_convergence_plan(
             SelectedLanded(
                 candidate=candidate,
                 evidence_kind=evidence_kind,
+                native=False,
                 revision=revision,
             )
         )
@@ -104,15 +131,17 @@ def build_selected_convergence_plan(
             )
         if revision.change_id in observation.duplicate_claim_change_ids:
             raise CliError(t"Multiple saved changes claim the review for {revision.change_id}.")
-        pull_request = observation.reviews[revision.change_id].pull_request
-        _validate_surviving_review(
-            candidate=candidate,
-            pull_request=pull_request,
-            repository=repository,
-        )
+        if revision.change_id not in native_survivors:
+            pull_request = observation.reviews[revision.change_id].pull_request
+            _validate_surviving_review(
+                candidate=candidate,
+                pull_request=pull_request,
+                repository=repository,
+            )
         reviewed.append(revision)
     plan = SelectedConvergencePlan(
         landed=tuple(landed),
+        native_survivors=tuple(native_survivors.values()),
         reviewed_survivors=tuple(reviewed),
         rewrite_blocker=rewrite_blocker,
         survivors=tuple(survivors),
@@ -196,21 +225,27 @@ def _validate_rebase_scope(
             )
     if not plan.landed or not plan.survivors:
         return
-    selected_commit_ids = {
-        revision.commit_id
-        for revision in (*plan.survivors, *(item.revision for item in plan.landed))
-    }
+    selected_commit_ids = {revision.commit_id for revision in plan.survivors}
+    selected_commit_ids.update(
+        item.revision.commit_id for item in plan.landed if item.revision is not None
+    )
+    source_commit_ids = tuple(
+        item.revision.commit_id
+        if item.revision is not None
+        else item.candidate.submitted_baseline.commit_id
+        for item in plan.landed
+    )
+    selected_head = plan.survivors[-1]
     outside = tuple(
         revision
-        for revision in context.jj_client.query_descendant_revisions(
-            tuple(revision.commit_id for revision in plan.survivors)
-        )
+        for revision in context.jj_client.query_descendant_revisions(source_commit_ids)
         if revision.commit_id not in selected_commit_ids
         and not revision.immutable
         and not (
             revision.is_working_copy
             and revision.empty
-            and revision.parents == (plan.survivors[-1].commit_id,)
+            and selected_head is not None
+            and revision.parents == (selected_head.commit_id,)
         )
     )
     if outside:
@@ -229,7 +264,16 @@ def selected_rebase_revision_ids(
     revision_ids = [revision.commit_id for revision in plan.survivors]
     if not plan.landed:
         return ()
-    head = plan.survivors[-1] if plan.survivors else plan.landed[-1].revision
+    head = (
+        plan.survivors[-1]
+        if plan.survivors
+        else next(
+            (item.revision for item in reversed(plan.landed) if item.revision is not None),
+            None,
+        )
+    )
+    if head is None:
+        return ()
     for revision in context.jj_client.query_descendant_revisions((head.commit_id,)):
         if revision.is_working_copy and revision.empty and revision.parents == (head.commit_id,):
             revision_ids.append(revision.commit_id)
@@ -245,13 +289,46 @@ def rewritten_retirement_blocker(
     landed = next(item for item in plan.landed if item.candidate == candidate)
     if landed.evidence_kind == "exact":
         return None
-    landed_commit_ids = {landed.revision.commit_id for landed in plan.landed}
+    ancestor_commit_id = (
+        landed.revision.commit_id
+        if landed.revision is not None
+        else landed.candidate.submitted_baseline.commit_id
+    )
+    excluded_commit_ids = {
+        item.revision.commit_id
+        if item.revision is not None
+        else item.candidate.submitted_baseline.commit_id
+        for item in plan.landed
+    }
+    excluded_commit_ids.update(revision.commit_id for revision in plan.survivors)
     recovery = dependent_path_commands(
-        ancestor_commit_id=landed.revision.commit_id,
+        ancestor_commit_id=ancestor_commit_id,
         context=context,
-        excluded_commit_ids=landed_commit_ids,
+        excluded_commit_ids=excluded_commit_ids,
     )
     return None if recovery is None else t"another local stack still depends on it; {recovery}"
+
+
+def _native_rewrite_blocker(
+    *,
+    context: CommandContext,
+    landed: tuple[SelectedLanded, ...],
+) -> Message | None:
+    revisions = context.jj_client.query_revisions_by_change_ids(
+        tuple(item.candidate.change_id for item in landed)
+    )
+    for item in landed:
+        candidate = item.candidate
+        if any(
+            revision.commit_id != candidate.submitted_baseline.commit_id
+            for revision in revisions.get(candidate.change_id, ())
+            if not revision.immutable
+        ):
+            return (
+                t"Cannot remove landed {ui.change_id(candidate.change_id)} because it has "
+                t"unpublished local edits since submit"
+            )
+    return None
 
 
 def dependent_path_commands(
@@ -282,6 +359,8 @@ def dependent_path_commands(
         for revision in dependents
         if revision.commit_id in dependent_commit_ids - parent_commit_ids
     )
-    return t"run {ui.join(
-        lambda revision: ui.cmd(f'jj-stack sync {revision.change_id}'), heads or dependents
-    )}"
+    return t"run {
+        ui.join(
+            lambda revision: ui.cmd(f'jj-stack sync {revision.change_id}'), heads or dependents
+        )
+    }"

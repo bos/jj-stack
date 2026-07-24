@@ -47,11 +47,13 @@ land = ["src/jj_stack/commands/merge"]
 governed = [
   "src/jj_stack/commands/merge",
   "src/jj_stack/commands/sync.py",
+  "src/jj_stack/commands/sync_global.py",
   "src/jj_stack/models/review_state.py",
   "src/jj_stack/state/store.py",
   "src/jj_stack/review/landed.py",
   "src/jj_stack/review/landed_evidence.py",
   "src/jj_stack/review/convergence.py",
+  "src/jj_stack/review/native_sync.py",
   "src/jj_stack/review/observation.py",
 ]
 fixed_property = [

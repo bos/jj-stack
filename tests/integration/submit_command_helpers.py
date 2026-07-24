@@ -34,6 +34,7 @@ def configure_submit_environment(
             "jj_stack.commands.cleanup.command",
             "jj_stack.commands.merge.command",
             "jj_stack.commands.sync",
+            "jj_stack.commands.sync_global",
             "jj_stack.commands.list_",
             "jj_stack.review.landed",
             "jj_stack.review.status",

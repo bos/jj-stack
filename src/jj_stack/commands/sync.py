@@ -1,19 +1,4 @@
-"""Update one local stack after GitHub merges, or clean up landed PRs across the repo.
-
-`sync <head-change-id>` fetches trunk, verifies which lower PRs landed, rebases the remaining
-selected changes so they no longer depend on the old commits, and updates only PRs that already
-exist. Unreviewed trailing work stays local, and other local stacks are not changed.
-
-`sync --all` checks every locally tracked PR. When a PR's exact submitted commit is already on
-trunk, it may retarget and close the PR, forget its managed local bookmark, and remove its
-tracking data. It never rewrites or submits a stack. If GitHub created a different commit while
-merging, it prints the `sync <head-change-id>` command needed for that stack instead.
-
-Use `--dry-run` to fetch and preview landed changes, cleanup, and rebasing. When selected `sync`
-needs a rebase, the later PR-update plan is available only after that rebase has been applied.
-Fetching can update jj's remembered remote bookmark locations, but the preview does not change
-PRs, local commits, local bookmarks, or tracking.
-"""
+"""Reconcile selected stacks or clean up exact landed reviews repository-wide."""
 
 from __future__ import annotations
 
@@ -26,21 +11,16 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands.submit.command import print_selected_line, run_submit_async
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
+from jj_stack.commands.sync_global import run_global_recovery
 from jj_stack.errors import CliError, UsageError
-from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
-from jj_stack.github.resolution import (
-    GithubRepoAddress,
-    GithubTarget,
-    resolve_github_target,
-    resolve_trunk_branch,
-)
-from jj_stack.jj.client import JjCliArgs, JjCommandError, UnsupportedStackError
-from jj_stack.models.github import GithubPullRequest
+from jj_stack.github.client import GithubClient, build_github_client
+from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
+from jj_stack.jj.client import JjCliArgs, UnsupportedStackError
+from jj_stack.models.review_state import SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.convergence import (
     SelectedConvergencePlan,
     build_selected_convergence_plan,
-    dependent_path_commands,
     rewritten_retirement_blocker,
     selected_rebase_revision_ids,
 )
@@ -48,18 +28,13 @@ from jj_stack.review.landed import (
     FinalizationContext,
     LandedReviewResult,
     finalize_landed_reviews,
+    render_landed_results,
     retire_landed_reviews,
 )
-from jj_stack.review.landed_evidence import (
-    CommitAncestry,
-    LandedReviewCandidate,
-    classify_commit_ancestries,
-    classify_rewritten_result,
-    complete_review_candidates,
-)
+from jj_stack.review.landed_evidence import LandedReviewCandidate
+from jj_stack.review.native_sync import resolve_selected_native_observation
 from jj_stack.review.observation import (
     RepositoryObservation,
-    duplicate_review_claim_change_ids,
     observe_review_mutation,
 )
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
@@ -86,7 +61,7 @@ def sync(
         command="sync --all" if all_ else "sync",
     ):
         if all_:
-            return asyncio.run(_run_global_recovery(context=context, dry_run=dry_run))
+            return asyncio.run(run_global_recovery(context=context, dry_run=dry_run))
         return run_stack_convergence(
             context=context,
             dry_run=dry_run,
@@ -151,6 +126,16 @@ async def _run_selected_convergence(
             remote_name=target.remote.name,
             trunk_branch=trunk_branch,
         )
+        observation, native_stacks = await resolve_selected_native_observation(
+            context=context,
+            dry_run=dry_run,
+            github=github,
+            initial=observation,
+            remote_name=target.remote.name,
+            repository=target.repository,
+            selected=selected,
+            trunk_branch=trunk_branch,
+        )
         error = _selected_observation_error(
             observation=observation,
             prepared_status=prepared_status,
@@ -161,6 +146,7 @@ async def _run_selected_convergence(
             raise CliError(error)
         plan = build_selected_convergence_plan(
             context=context,
+            native_stacks=native_stacks,
             observation=observation,
             prepared_status=prepared_status,
             repository=target.repository,
@@ -210,7 +196,11 @@ async def _apply_selected_plan(
     trunk_branch: str,
     trunk_commit_id: str,
 ) -> None:
-    exact = tuple(landed.candidate for landed in plan.landed if landed.evidence_kind == "exact")
+    exact = tuple(
+        landed.candidate
+        for landed in plan.landed
+        if landed.evidence_kind == "exact" and not landed.native
+    )
     finalizer = FinalizationContext(
         command=context,
         dry_run=dry_run,
@@ -226,7 +216,7 @@ async def _apply_selected_plan(
     exact_result_iterator = iter(exact_results)
     results = tuple(
         next(exact_result_iterator)
-        if landed.evidence_kind == "exact"
+        if landed.evidence_kind == "exact" and not landed.native
         else LandedReviewResult(
             candidate=landed.candidate,
             outcome="already_terminal",
@@ -234,11 +224,6 @@ async def _apply_selected_plan(
         for landed in plan.landed
     )
     rebase_revision_ids = selected_rebase_revision_ids(context=context, plan=plan)
-    if plan.landed and rebase_revision_ids and not dry_run and plan.rewrite_blocker is None:
-        context.jj_client.rebase_revisions_only(
-            revisions=rebase_revision_ids,
-            destination=trunk_commit_id,
-        )
 
     def retirement_blocker(candidate: LandedReviewCandidate) -> Message | None:
         if plan.rewrite_blocker is not None:
@@ -249,12 +234,41 @@ async def _apply_selected_plan(
             plan=plan,
         )
 
+    if not dry_run and plan.rewrite_blocker is None:
+        if rebase_revision_ids:
+            context.jj_client.rebase_revisions_only(
+                revisions=rebase_revision_ids,
+                destination=trunk_commit_id,
+            )
+        abandoned = tuple(
+            landed.revision.commit_id
+            for landed in plan.landed
+            if landed.revision is not None
+            and not landed.revision.immutable
+            and landed.revision.commit_id == landed.candidate.submitted_baseline.commit_id
+            and retirement_blocker(landed.candidate) is None
+        )
+        if abandoned:
+            context.jj_client.abandon_revisions(abandoned)
+        for survivor in plan.native_survivors:
+            candidate = survivor.candidate
+            if candidate.submitted_baseline.commit_id != survivor.remote_head_commit_id:
+                context.state_store.advance_baseline(
+                    candidate.change_id,
+                    expected_identity=candidate.review_identity,
+                    expected_baseline=candidate.submitted_baseline,
+                    baseline=SubmittedBaseline(commit_id=survivor.remote_head_commit_id),
+                )
+
     results = await retire_landed_reviews(
         cleanup_bookmarks=True,
         evidence={landed.candidate.change_id: landed.evidence_kind for landed in plan.landed},
         finalization_results=results,
         finalizer=finalizer,
         retirement_blocker=retirement_blocker,
+        terminal_required=frozenset(
+            landed.candidate.change_id for landed in plan.landed if landed.native
+        ),
     )
     render_landed_results(dry_run=dry_run, results=results)
 
@@ -315,199 +329,6 @@ def _selected_observation_error(
     if observation.remote_trunk_target != expected_trunk:
         return "the live trunk ref moved after the fetch"
     return None
-
-
-async def _run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
-    target = resolve_github_target(context.jj_client.list_git_remotes())
-    if not isinstance(target, GithubTarget):
-        raise CliError(target.github_repository_error or "Could not resolve GitHub target.")
-    context.jj_client.fetch_remote(remote=target.remote.name)
-    trunk = context.jj_client.resolve_revision("trunk()")
-    state = context.state_store.load()
-    had_failure = bool(state.record_issues)
-    for issue in state.record_issues:
-        condition = "incomplete" if issue.validation_error.endswith(" is missing.") else "invalid"
-        component = (
-            "pull request details are"
-            if issue.record_type == "review_identity"
-            else "last submitted commit is"
-        )
-        console.warning(
-            t"Skip {ui.change_id(issue.change_id)}: its saved {component} {condition}; "
-            t"repair the tracking with {ui.cmd('relink')}."
-        )
-    all_candidates = complete_review_candidates(state)
-    duplicate_change_ids = duplicate_review_claim_change_ids(state.review_identities)
-    ancestry_by_commit_id = classify_commit_ancestries(
-        commit_ids=tuple(candidate.submitted_baseline.commit_id for candidate in all_candidates),
-        context=context,
-        trunk_commit_id=trunk.commit_id,
-    )
-    exact_candidates = tuple(
-        candidate
-        for candidate in all_candidates
-        if ancestry_by_commit_id[candidate.submitted_baseline.commit_id] == "on_trunk"
-    )
-    async with build_github_client(repository=target.repository) as github:
-        repository_state = await github.get_repository()
-        trunk_branch = resolve_trunk_branch(
-            bookmark_states=context.jj_client.list_bookmark_states(),
-            github_repository_state=repository_state,
-            remote_name=target.remote.name,
-            trunk_commit_id=trunk.commit_id,
-        )
-        pull_requests = await github.get_pull_requests_by_numbers_independently(
-            pull_numbers=tuple(
-                candidate.review_identity.pr_number
-                for candidate in all_candidates
-                if ancestry_by_commit_id[candidate.submitted_baseline.commit_id] != "on_trunk"
-            )
-        )
-        merge_ancestry = classify_commit_ancestries(
-            commit_ids=tuple(
-                pull_request.merge_commit_sha
-                for pull_request in pull_requests.values()
-                if isinstance(pull_request, GithubPullRequest)
-                and pull_request.merge_commit_sha is not None
-            ),
-            context=context,
-            trunk_commit_id=trunk.commit_id,
-        )
-        for candidate in all_candidates:
-            ancestry = ancestry_by_commit_id[candidate.submitted_baseline.commit_id]
-            if ancestry == "on_trunk":
-                continue
-            pull_request = pull_requests.get(candidate.review_identity.pr_number)
-            had_failure = (
-                _report_global_nonexact_candidate(
-                    ancestry=ancestry,
-                    candidate=candidate,
-                    context=context,
-                    duplicate=candidate.change_id in duplicate_change_ids,
-                    merge_ancestry=merge_ancestry,
-                    pull_request=pull_request,
-                    repository=target.repository,
-                )
-                or had_failure
-            )
-        finalizer = FinalizationContext(
-            command=context,
-            dry_run=dry_run,
-            github=github,
-            remote_name=target.remote.name,
-            trunk_branch=trunk_branch,
-            trunk_commit_id=trunk.commit_id,
-        )
-        results = await finalize_landed_reviews(
-            candidates=exact_candidates,
-            finalizer=finalizer,
-        )
-        results = await retire_landed_reviews(
-            cleanup_bookmarks=True,
-            evidence={candidate.change_id: "exact" for candidate in exact_candidates},
-            finalization_results=results,
-            finalizer=finalizer,
-        )
-    render_landed_results(dry_run=dry_run, results=results)
-    return 1 if had_failure or any(result.outcome == "skipped" for result in results) else 0
-
-
-def _report_global_nonexact_candidate(
-    *,
-    ancestry: CommitAncestry,
-    candidate: LandedReviewCandidate,
-    context: CommandContext,
-    duplicate: bool,
-    merge_ancestry: dict[str, CommitAncestry],
-    pull_request: GithubPullRequest | GithubClientError | None,
-    repository: GithubRepoAddress,
-) -> bool:
-    if duplicate:
-        _warn_global_preserved(candidate, "another tracked change claims the same review")
-        return True
-    if not isinstance(pull_request, GithubPullRequest):
-        reason = (
-            t"could not inspect its current review: {pull_request}"
-            if isinstance(pull_request, GithubClientError)
-            else t"GitHub no longer reports PR #{candidate.review_identity.pr_number}"
-        )
-        _warn_global_preserved(candidate, reason)
-        return True
-    rewritten = classify_rewritten_result(
-        candidate=candidate,
-        merge_result_ancestry=merge_ancestry.get(pull_request.merge_commit_sha or ""),
-        pull_request=pull_request,
-        repository=repository,
-    )
-    if rewritten.state == "landed":
-        try:
-            commands = dependent_path_commands(
-                ancestor_commit_id=candidate.submitted_baseline.commit_id,
-                context=context,
-            )
-        except JjCommandError as error:
-            _warn_global_preserved(candidate, t"could not inspect other local stacks: {error}")
-            return True
-        if commands is None:
-            _warn_global_preserved(candidate, "no local stack is available to finish cleanup")
-            return True
-        console.warning(
-            t"Leave {ui.change_id(candidate.change_id)} tracked: GitHub merged it as a "
-            t"different commit; {commands}."
-        )
-        return False
-    if rewritten.state in {"head_mismatch", "identity_mismatch"}:
-        _warn_global_preserved(candidate, rewritten.reason or rewritten.state)
-        return True
-    if pull_request.normalize_state().state != "open":
-        _warn_global_preserved(
-            candidate,
-            rewritten.reason
-            or t"PR #{pull_request.number} is {pull_request.normalize_state().state} "
-            t"without a result on trunk",
-        )
-        return True
-    if ancestry == "unresolved":
-        _warn_global_preserved(candidate, "the submitted commit is unavailable locally")
-        return True
-    return False
-
-
-def _warn_global_preserved(candidate: LandedReviewCandidate, reason: Message) -> None:
-    console.warning(t"Leave {ui.change_id(candidate.change_id)} tracked: {reason}.")
-
-
-def render_landed_results(
-    *,
-    dry_run: bool,
-    results: tuple[LandedReviewResult, ...],
-) -> None:
-    if not results:
-        return
-    console.output(
-        "Planned cleanup for landed PRs:" if dry_run else "Applied cleanup for landed PRs:"
-    )
-    marker = "•" if dry_run else "✓"
-    for result in results:
-        candidate = result.candidate
-        if result.outcome == "skipped":
-            console.output(
-                t"  ! leave {ui.change_id(candidate.change_id)} unchanged: {result.skip_reason}"
-            )
-            continue
-        if result.outcome == "finalized":
-            console.output(t"  {marker} finish landed PR #{candidate.review_identity.pr_number}")
-        if result.forgot_bookmark:
-            console.output(t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)}")
-        if result.cleanup_warning is not None:
-            console.output(t"  ! cleanup still needed: {result.cleanup_warning}")
-        if result.retired_tracking:
-            console.output(t"  {marker} remove tracking for {ui.change_id(candidate.change_id)}")
-        elif result.retirement_skip_reason is not None:
-            console.output(
-                t"  ! leave {ui.change_id(candidate.change_id)} tracked: "
-                t"{result.retirement_skip_reason}"
-            )
 
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:

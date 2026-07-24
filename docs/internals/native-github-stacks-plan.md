@@ -8,8 +8,8 @@ remaining questions together so a long implementation does not depend on convers
 
 ## Progress
 
-Commits 1 through 14 are complete and their step descriptions have been pruned. Commit 15,
-native merge synchronization, is next.
+Commits 1 through 15 are complete and their step descriptions have been pruned. Commit 16,
+native async merge, is next.
 
 The implementation list contains only unfinished slices. In the same change that completes a
 slice:
@@ -618,7 +618,12 @@ GitHub retains merged members as a historical resource prefix. For a partial mer
 and rewrite every active survivor. That resource transition is authoritative GitHub state.
 Selected `sync` accepts the historical prefix and the ordered active-suffix heads as the result of
 the native operation; it does not demand tree equivalence, explicit `relink`, or a per-survivor
-repair command.
+repair command. That authority exists only while at least one historical member remains a complete
+tracked candidate validated by the same sync plan; retained resource history alone does not
+authorize later active-head drift. Global sync preserves that tracked historical candidate while
+the resource still has a tracked active suffix, leaving selected sync able to converge the
+transition. Review identity, including one with an incomplete baseline record, determines whether
+that active suffix is still tracked.
 
 Live testing confirmed that GitHub preserves jj's `change-id` header for both native and ordinary
 rebase merges, but not for squash merges. `sync` uses the fetched result: a matching change ID is
@@ -696,16 +701,11 @@ Only the unfinished slices need new or changed coverage:
 - native async merge uses the target-head guard, does not adopt a `409` UUID, and recovers a
   completed retry through terminal observation
 - terminal failure changes no repository, PR, branch, or membership state
-- rebase results preserve the submitted change ID, while squash results replace it; selected
-  `sync` converges either without relabeling the landed commit or storing an alias
 - terminal success reports the merged prefix and exits `0` without rewriting local history or
   requiring survivor relink
-- selected sync recognizes a historical prefix and accepts the resource's ordered survivor heads
-  as GitHub-owned transition state
 - legacy `merge` uses the ordinary PR merge API bottom-up and stops after the first rejection
 - a one-PR review in a native-capable repository uses the ordinary PR merge API
 - a missing resource for a multi-PR native review fails closed instead of selecting the legacy API
-- an external direct push cannot make sync retarget or close an open native member
 - a draft or closed PR blocks the candidate prefix, while approvals, checks, conflicts, and
   repository rules are left to GitHub
 
@@ -718,21 +718,6 @@ count.
 Each commit is one bounded change with its tests and any temporary-plan update needed to describe
 the resulting behavior. A guarded unsupported operation is acceptable between commits; an
 operation that mutates partially and then discovers native incompatibility is not.
-
-### Commit 15: native merge synchronization
-
-- resolve native membership for merged-prefix or survivor-drift selected recovery and for global
-  candidates before mutation
-- make selected and global sync require terminal merged state for a native member
-- retain exact-on-trunk recovery for legacy reviews
-- treat an observed historical prefix plus its ordered active suffix as GitHub authority for the
-  native resource transition
-- retire the merged prefix and rebase selected local survivors onto fetched trunk
-- let ordinary selected-review synchronization refresh survivors without explicit relink,
-  tree-equivalence evidence, or per-survivor repair state
-
-Exit condition: selected sync converges an observed native merge without a special repair
-protocol, while global sync still requires terminal merged state before changing a native member.
 
 ### Commit 16: native async merge
 

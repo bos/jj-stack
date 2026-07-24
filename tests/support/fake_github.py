@@ -428,12 +428,115 @@ class FakeGithubRepository:
         )
         return squash_commit
 
-    def _run_backing_git(self, *args: str, env: dict[str, str] | None = None) -> str:
+    def apply_rebase_merge(self, pull_request: FakeGithubPullRequest) -> str:
+        """Replay one reviewed commit onto its base while preserving its message."""
+
+        heads = self.branch_heads()
+        rebase_commit = self._replay_commit(
+            commit_id=heads[pull_request.head_ref],
+            parent_commit_id=heads[pull_request.base_ref],
+        )
+        self._run_backing_git(
+            "update-ref",
+            f"refs/heads/{pull_request.base_ref}",
+            rebase_commit,
+        )
+        pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        pull_request.merge_commit_sha = rebase_commit
+        self.update_pull_request_state(
+            pull_request,
+            state="closed",
+            reason="merged",
+        )
+        return rebase_commit
+
+    def rewrite_pull_request_onto_base(
+        self,
+        pull_request: FakeGithubPullRequest,
+        *,
+        base_ref: str,
+    ) -> str:
+        """Model GitHub retargeting and replaying an active native survivor."""
+
+        heads = self.branch_heads()
+        rewritten = self._replay_commit(
+            commit_id=heads[pull_request.head_ref],
+            parent_commit_id=heads[base_ref],
+        )
+        self._run_backing_git(
+            "update-ref",
+            f"refs/heads/{pull_request.head_ref}",
+            rewritten,
+        )
+        self.update_pull_request_base(
+            pull_request,
+            base_ref=base_ref,
+            reason="native_merge",
+        )
+        pull_request.head_sha = rewritten
+        return rewritten
+
+    def force_push_pull_request_head(self, pull_request: FakeGithubPullRequest) -> str:
+        """Rewrite one PR head externally while preserving its jj change ID."""
+
+        head = self.ref_target(pull_request.head_ref)
+        if head is None:
+            raise AssertionError(f"Missing fake GitHub branch {pull_request.head_ref}")
+        parent = self._run_backing_git("rev-parse", f"{head}^")
+        rewritten = self._replay_commit(
+            commit_id=head,
+            extra_header="x-fake-force-push true",
+            message_suffix="\nexternal rewrite",
+            parent_commit_id=parent,
+        )
+        self._run_backing_git(
+            "update-ref",
+            f"refs/heads/{pull_request.head_ref}",
+            rewritten,
+        )
+        pull_request.head_sha = rewritten
+        return rewritten
+
+    def _replay_commit(
+        self,
+        *,
+        commit_id: str,
+        extra_header: str | None = None,
+        message_suffix: str = "",
+        parent_commit_id: str,
+    ) -> str:
+        tree = self._run_backing_git("rev-parse", f"{commit_id}^{{tree}}")
+        raw_commit = self._run_backing_git("cat-file", "commit", commit_id)
+        headers, separator, message = raw_commit.partition("\n\n")
+        rewritten_headers = [
+            f"tree {tree}" if line.startswith("tree ") else line
+            for line in headers.splitlines()
+            if not line.startswith("parent ")
+        ]
+        rewritten_headers.insert(1, f"parent {parent_commit_id}")
+        if extra_header is not None:
+            rewritten_headers.append(extra_header)
+        return self._run_backing_git(
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--stdin",
+            stdin=f"{'\n'.join(rewritten_headers)}{separator}{message}{message_suffix}\n",
+        )
+
+    def _run_backing_git(
+        self,
+        *args: str,
+        env: dict[str, str] | None = None,
+        stdin: str | None = None,
+    ) -> str:
         completed = subprocess.run(
             ["git", "--git-dir", str(self.git_dir), *args],
             capture_output=True,
             check=False,
             env=None if env is None else {**os.environ, **env},
+            input=stdin,
             text=True,
         )
         if completed.returncode != 0:

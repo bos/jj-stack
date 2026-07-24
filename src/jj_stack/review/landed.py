@@ -1,5 +1,3 @@
-"""Pure landed evidence plus independent review finalization and retirement."""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -30,8 +28,6 @@ LandedReviewOutcome = Literal["finalized", "already_terminal", "skipped"]
 
 @dataclass(frozen=True, slots=True)
 class LandedReviewResult:
-    """Independent remote-finalization and local-retirement outcomes."""
-
     candidate: LandedReviewCandidate
     outcome: LandedReviewOutcome
     cleanup_warning: Message | None = None
@@ -204,6 +200,7 @@ async def retire_landed_reviews(
     finalization_results: tuple[LandedReviewResult, ...],
     finalizer: FinalizationContext,
     retirement_blocker: Callable[[LandedReviewCandidate], Message | None] | None = None,
+    terminal_required: frozenset[str] = frozenset(),
 ) -> tuple[LandedReviewResult, ...]:
     """Retire links independently after remote finalization has reached a terminal state."""
 
@@ -217,6 +214,7 @@ async def retire_landed_reviews(
             candidate=candidate,
             evidence_kind=evidence[candidate.change_id],
             finalizer=finalizer,
+            terminal_required=candidate.change_id in terminal_required,
         )
 
     results = list(finalization_results)
@@ -288,6 +286,7 @@ async def _retirement_authority_error(
     candidate: LandedReviewCandidate,
     evidence_kind: LandedEvidenceKind,
     finalizer: FinalizationContext,
+    terminal_required: bool,
 ) -> Message | None:
     local_revisions = finalizer.command.jj_client.query_revisions_by_change_ids(
         (candidate.change_id,)
@@ -304,6 +303,8 @@ async def _retirement_authority_error(
     pull_request = observation.reviews[candidate.change_id].pull_request
     if pull_request is None:
         return t"GitHub no longer reports PR #{candidate.review_identity.pr_number}"
+    if terminal_required and pull_request.normalize_state().state != "merged":
+        return t"native member PR #{pull_request.number} is not terminally merged"
     exact, rewritten = collect_landed_evidence(
         candidate=candidate,
         context=finalizer.command,
@@ -314,3 +315,38 @@ async def _retirement_authority_error(
     if evidence_kind == "exact":
         return None if exact.state == "landed" else exact.reason or exact.state
     return None if rewritten.state == "landed" else rewritten.reason or rewritten.state
+
+
+def render_landed_results(
+    *,
+    dry_run: bool,
+    results: tuple[LandedReviewResult, ...],
+) -> None:
+    """Render independent finalization and retirement outcomes."""
+
+    if not results:
+        return
+    console.output(
+        "Planned cleanup for landed PRs:" if dry_run else "Applied cleanup for landed PRs:"
+    )
+    marker = "•" if dry_run else "✓"
+    for result in results:
+        candidate = result.candidate
+        if result.outcome == "skipped":
+            console.output(
+                t"  ! leave {ui.change_id(candidate.change_id)} unchanged: {result.skip_reason}"
+            )
+            continue
+        if result.outcome == "finalized":
+            console.output(t"  {marker} finish landed PR #{candidate.review_identity.pr_number}")
+        if result.forgot_bookmark:
+            console.output(t"  {marker} forget {ui.bookmark(candidate.review_identity.head_ref)}")
+        if result.cleanup_warning is not None:
+            console.output(t"  ! cleanup still needed: {result.cleanup_warning}")
+        if result.retired_tracking:
+            console.output(t"  {marker} remove tracking for {ui.change_id(candidate.change_id)}")
+        elif result.retirement_skip_reason is not None:
+            console.output(
+                t"  ! leave {ui.change_id(candidate.change_id)} tracked: "
+                t"{result.retirement_skip_reason}"
+            )
