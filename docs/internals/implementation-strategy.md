@@ -357,8 +357,8 @@ config files, keychain entries, or other internal storage.
 - `uv run` for local command execution
 - `uv tool run` only where it clearly improves ergonomics
 - `./check.py` as the default local verification entrypoint
-- `complexity-budget.toml` plus `uv run tools/check_complexity.py` as the separately enforced
-  cumulative size and test-count gate
+- `scc` for code-line counts, enforced with the other cumulative size and test-count limits by
+  `complexity-budget.toml` and `uv run tools/check_complexity.py`
 - `pyrefly` for static type checking
 - `ruff` for linting and formatting
 - `pytest` for the test runner

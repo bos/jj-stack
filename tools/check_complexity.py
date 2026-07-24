@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """Check the repository's complexity budgets."""
 
+import json
 import os
-import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUDGET = ROOT / "complexity-budget.toml"
-SLOC_TOTAL = re.compile(r"Total Physical Source Lines of Code \(SLOC\)\s*=\s*([\d,]+)")
 
 
 def _run(
@@ -35,13 +33,20 @@ def _run(
     return result.stdout
 
 
-def _sloc(paths: Sequence[str], data_dir: str) -> int:
-    output = _run(("sloccount", "--datadir", data_dir, *paths), accepted=(0, 1))
-    if "SLOC total is zero" in output:
-        return 0
-    if (match := SLOC_TOTAL.search(output)) is None:
-        raise SystemExit(f"Error: sloccount returned no total for {', '.join(paths)}:\n{output}")
-    return int(match.group(1).replace(",", ""))
+def _code_lines(paths: Sequence[str]) -> int:
+    output = _run(("scc", "--format", "json", "--no-cocomo", "--no-complexity", *paths))
+    try:
+        languages = json.loads(output)
+        if not isinstance(languages, list) or any(
+            not isinstance(language, dict) or not isinstance(language.get("Code"), int)
+            for language in languages
+        ):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError):
+        raise SystemExit(
+            f"Error: scc returned invalid JSON for {', '.join(paths)}:\n{output}"
+        ) from None
+    return sum(language["Code"] for language in languages)
 
 
 def _c901(paths: Sequence[str]) -> int:
@@ -86,7 +91,7 @@ def _report(
     labels: Mapping[str, str],
     limits: Mapping[str, int],
     measured: Mapping[str, int],
-    module_sloc: Mapping[Path, int],
+    module_lines: Mapping[Path, int],
     units: Mapping[str, str],
 ) -> int:
     failures: list[str] = []
@@ -105,7 +110,7 @@ def _report(
             print(line)
             if failure is not None:
                 failures.append(failure)
-    ordered_modules = sorted(module_sloc.items(), key=lambda item: (-item[1], str(item[0])))
+    ordered_modules = sorted(module_lines.items(), key=lambda item: (-item[1], str(item[0])))
     module_results = tuple(
         _budget_result(label=str(path), limit=limits["governed_module"], unit="line", value=value)
         for path, value in ordered_modules
@@ -125,44 +130,42 @@ def _report(
         sys.stdout.flush()
         print("\nResult: failed\n- " + "\n- ".join(failures), file=sys.stderr)
         return 1
-    print(f"\nResult: all {len(measured) + len(module_sloc)} limits passed.")
+    print(f"\nResult: all {len(measured) + len(module_lines)} limits passed.")
     return 0
 
 
 def main() -> int:
-    if shutil.which("sloccount") is None:
+    if shutil.which("scc") is None:
         raise SystemExit(
-            "Error: sloccount is required. Install it, then rerun "
-            "uv run tools/check_complexity.py."
+            "Error: scc is required. Install it, then rerun uv run tools/check_complexity.py."
         )
     budget = tomllib.loads(BUDGET.read_text(encoding="utf-8"))
     labels, paths, units = budget["labels"], budget["paths"], budget["units"]
     missing = [path for group in paths.values() for path in group if not (ROOT / path).exists()]
     if missing:
         raise SystemExit(f"Error: missing complexity-budget paths: {', '.join(missing)}")
-    limits = budget["sloc"] | budget["ruff"] | budget["pytest"]
-    with tempfile.TemporaryDirectory(prefix="jj-stack-sloc-") as data_dir:
-        measured = {
-            "production": _sloc(paths["production"], data_dir),
-            "tests": _sloc(paths["tests"], data_dir),
-            "checker": _sloc(paths["checker"], data_dir),
-            "land": _sloc(paths["land"], data_dir),
-            "governed": _sloc(paths["governed"], data_dir),
-        }
-        measured["total"] = measured["production"] + measured["tests"]
-        modules = sorted(
-            path
-            for relative in paths["governed"]
-            for path in (
-                (ROOT / relative).rglob("*.py")
-                if (ROOT / relative).is_dir()
-                else (ROOT / relative,)
-            )
+    limits = budget["code"] | budget["ruff"] | budget["pytest"]
+    measured = {
+        "production": _code_lines(paths["production"]),
+        "tests": _code_lines(paths["tests"]),
+        "checker": _code_lines(paths["checker"]),
+        "land": _code_lines(paths["land"]),
+        "governed": _code_lines(paths["governed"]),
+    }
+    measured["total"] = measured["production"] + measured["tests"]
+    modules = sorted(
+        path
+        for relative in paths["governed"]
+        for path in (
+            (ROOT / relative).rglob("*.py")
+            if (ROOT / relative).is_dir()
+            else (ROOT / relative,)
         )
-        module_sloc = {
-            path.relative_to(ROOT): _sloc((str(path.relative_to(ROOT)),), data_dir)
-            for path in set(modules)
-        }
+    )
+    module_lines = {
+        path.relative_to(ROOT): _code_lines((str(path.relative_to(ROOT)),))
+        for path in set(modules)
+    }
     measured |= {
         "c901": _c901(("src/jj_stack",)),
         "governed_c901": _c901(paths["governed"]),
@@ -170,7 +173,7 @@ def main() -> int:
         "landing_recovery": _collected("landing_recovery", paths["landing_recovery"]),
     }
 
-    return _report(labels, limits, measured, module_sloc, units)
+    return _report(labels, limits, measured, module_lines, units)
 
 
 if __name__ == "__main__":

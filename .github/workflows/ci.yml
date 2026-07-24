@@ -22,8 +22,20 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install SLOCCount
-        run: sudo apt-get update && sudo apt-get install --yes sloccount
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.25"
+          cache: false
+
+      - name: Install scc
+        env:
+          SCC_VERSION: v3.7.0
+        run: |
+          install_dir="$RUNNER_TEMP/scc-bin"
+          mkdir -p "$install_dir"
+          GOBIN="$install_dir" go install "github.com/boyter/scc/v3@$SCC_VERSION"
+          echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Install project environment
         run: uv sync --locked

@@ -12,7 +12,7 @@ compatibility code, migration code, or the like.
 - Separate observation from authority: batch independent read-only facts, but keep dependent
   mutations in order and re-read their authorization facts immediately before changing state.
 - Apply the cumulative complexity budgets after every code slice. CI runs
-  `uv run tools/check_complexity.py`; run it locally when SLOCCount is available. A budget
+  `uv run tools/check_complexity.py`; run it locally when `scc` is available. A budget
   increase is a design stop that requires explicit review, not routine maintenance of the budget
   file.
 - If the same subsystem needs a third consecutive hardening change, stop patching it and

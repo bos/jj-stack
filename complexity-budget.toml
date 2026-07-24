@@ -1,11 +1,11 @@
-[sloc]
-production = 20_303
-tests = 21_600
-total = 42_000
-land = 1_690
-governed = 3_295
-governed_module = 500
-checker = 150
+[code]
+production = 21_062
+tests = 22_020
+total = 43_179
+land = 1_697
+governed = 3_307
+governed_module = 502
+checker = 179
 
 [ruff]
 c901 = 18
