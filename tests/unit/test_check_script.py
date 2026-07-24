@@ -93,7 +93,7 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
         "tests": "Tests",
         "total": "Production and tests combined",
         "checker": "Complexity checker",
-        "land": "Landing command",
+        "land": "Merge command",
         "governed": "Landing and recovery code",
         "c901": "Production",
         "governed_c901": "Landing and recovery code",
@@ -123,7 +123,7 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
     assert "Code size" in captured.out
     assert "Production: 8 lines (limit 10 lines; 2 lines available)" in captured.out
     assert "Complexity checker: 10 lines (limit 10 lines; at limit)" in captured.out
-    assert "Landing command: 12 lines (limit 10 lines; OVER LIMIT by 2 lines)" in captured.out
+    assert "Merge command: 12 lines (limit 10 lines; OVER LIMIT by 2 lines)" in captured.out
     assert "Functions with a complexity score above 10" in captured.out
     assert (
         "Landing and recovery code: 0 functions (limit 0 functions; requirement met)"
@@ -140,7 +140,7 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
     assert "Result: failed" in captured.err
     assert "highest.py: OVER LIMIT by 2 lines" in captured.err
     assert "over.py: OVER LIMIT by 1 line" in captured.err
-    assert captured.err.index("Landing command") < captured.err.index("Landing and recovery code")
+    assert captured.err.index("Merge command") < captured.err.index("Landing and recovery code")
     assert captured.err.index("highest.py") < captured.err.index("over.py")
 
     passing_measured = {name: min(value, limits[name]) for name, value in measured.items()}

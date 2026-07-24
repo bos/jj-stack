@@ -14,7 +14,6 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.review.bookmarks import bookmark_cleanup_allowed, classify_local_bookmark_forget
-from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.ui import Message
 
 from .landed_evidence import (
@@ -157,8 +156,6 @@ async def _observe_exact_candidate(
         or review.head_pull_requests[0].number != pull_request.number
     ):
         return None, "the review branch no longer identifies exactly the saved pull request"
-    if error := delegated_landing_mutation_error((pull_request,)):
-        return None, error
     return pull_request, None
 
 

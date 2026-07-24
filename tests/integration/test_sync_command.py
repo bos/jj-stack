@@ -19,7 +19,6 @@ from ..support.integration_helpers import (
 )
 from ..support.submit_property_harness import update_remote_ref
 from .submit_command_helpers import (
-    approve_pull_requests,
     configure_submit_environment,
     read_remote_ref,
     run_main,
@@ -75,79 +74,34 @@ def test_sync_reports_nothing_to_submit_when_whole_stack_merged(
     assert set(fake_repo.pull_requests) == {1}
 
 
-def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
+def test_sync_converges_the_local_stack_after_merge(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    """land --via merge converges the protected-trunk flow before returning;
-    a follow-up sync finds nothing left to repair."""
-
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1)
+    fake_repo.pull_requests[2].is_draft = True
     stack = JjClient(repo).discover_review_stack()
     top_change_id = stack.revisions[1].change_id
+    top_commit_id = stack.revisions[1].commit_id
 
-    land_exit_code = run_main(repo, config_path, "land", "--via", "merge")
+    merge_exit_code = run_main(repo, config_path, "merge")
     capsys.readouterr()
-    assert land_exit_code == 0
+    assert merge_exit_code == 0
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "open"
-    # The in-command convergence already rebased the survivor onto the
-    # squash-merged trunk tip and retargeted its PR.
-    merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
-    rewritten_top = JjClient(repo).resolve_revision(top_change_id)
-    assert rewritten_top.only_parent_commit_id() == merged_trunk_commit
-    assert fake_repo.pull_requests[2].base_ref == "main"
+    assert JjClient(repo).resolve_revision(top_change_id).commit_id == top_commit_id
 
     sync_exit_code = run_main(repo, config_path, "sync", top_change_id)
     captured = capsys.readouterr()
 
-    assert sync_exit_code == 0
-    assert "No landed changes in this stack need rebasing." in captured.out
-    # Convergence is idempotent: the survivor did not move again.
-    assert JjClient(repo).resolve_revision(top_change_id).commit_id == rewritten_top.commit_id
+    assert sync_exit_code == 0, (captured.out, captured.err)
+    merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
+    rewritten_top = JjClient(repo).resolve_revision(top_change_id)
+    assert rewritten_top.only_parent_commit_id() == merged_trunk_commit
+    assert fake_repo.pull_requests[2].base_ref == "main"
     assert fake_repo.pull_requests[2].state == "open"
-
-
-@pytest.mark.landing_recovery
-def test_sync_does_not_rebase_a_survivor_owned_by_the_merge_queue(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    landed, survivor = JjClient(repo).discover_review_stack().revisions
-    state_store = ReviewStateStore.for_repo(repo)
-    state_before = state_store.load()
-    bookmark = state_before.review_identities[survivor.change_id].head_ref
-    remote_before = read_remote_ref(fake_repo.git_dir, bookmark)
-    base_before = fake_repo.pull_requests[2].base_ref
-    jj = JjClient(repo)
-    run_command(["jj", "edit", landed.change_id], repo)
-    write_file(repo / "feature-1.txt", "unpublished local edit\n")
-    run_command(["jj", "status"], repo)
-    survivor_before = jj.resolve_revision(survivor.change_id).commit_id
-    fake_repo.auto_merge_reachable_heads = False
-    update_remote_ref(fake_repo, branch="main", target=landed.commit_id)
-    fake_repo.pull_requests[2].is_queued = True
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "remove it from the merge queue" in captured.err
-    assert jj.resolve_revision(survivor.change_id).commit_id == survivor_before
-    assert read_remote_ref(fake_repo.git_dir, bookmark) == remote_before
-    assert (fake_repo.pull_requests[1].state, fake_repo.pull_requests[2].base_ref) == (
-        "open",
-        base_before,
-    )
-    assert state_store.load() == state_before
-    assert fake_repo.pull_request_events == []
 
 
 @pytest.mark.landing_recovery

@@ -907,25 +907,6 @@ class JjClient:
             command.extend(["--bookmark", bookmark])
         self._run_jj(command)
 
-    def push_bookmark_with_lease(
-        self,
-        *,
-        remote_target: str,
-        bookmark: str,
-        desired_target: str,
-        expected_remote_target: str,
-    ) -> None:
-        """Move one remote bookmark only from its exact expected target."""
-
-        self._run_git(
-            (
-                "push",
-                f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}",
-                remote_target,
-                f"{desired_target}:refs/heads/{bookmark}",
-            )
-        )
-
     def fetch_remote(
         self,
         *,

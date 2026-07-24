@@ -14,7 +14,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROPERTY_TEST_FILES = (
     REPO_ROOT / "tests" / "property" / "submit_property_scenarios.py",
-    REPO_ROOT / "tests" / "property" / "land_property_scenarios.py",
 )
 DEFAULT_PROPERTY_SEED = 8675309
 _REPRODUCTION_SCENARIO_OPTIONS = (
@@ -28,19 +27,6 @@ _REPRODUCTION_SCENARIO_OPTIONS = (
     ),
     ("--retry-scenarios", "JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS"),
     ("--drift-scenarios", "JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"),
-    ("--land-scenarios", "JJ_STACK_LAND_PROPERTY_SCENARIOS"),
-    (
-        "--land-drift-scenarios",
-        "JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS",
-    ),
-    (
-        "--land-retry-scenarios",
-        "JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS",
-    ),
-    (
-        "--land-handoff-scenarios",
-        "JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS",
-    ),
 )
 
 
@@ -100,34 +86,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--land-scenarios",
-        type=_non_negative_int,
-        help=("Number of generated land scenarios to run (default: max(20, scenarios // 20))."),
-    )
-    parser.add_argument(
-        "--land-drift-scenarios",
-        type=_non_negative_int,
-        help=(
-            "Number of generated land drift scenarios to run (default: max(6, scenarios // 40))."
-        ),
-    )
-    parser.add_argument(
-        "--land-retry-scenarios",
-        type=_non_negative_int,
-        help=(
-            "Number of generated interrupted-land retry scenarios to run "
-            "(default: max(4, scenarios // 40))."
-        ),
-    )
-    parser.add_argument(
-        "--land-handoff-scenarios",
-        type=_non_negative_int,
-        help=(
-            "Number of generated merged-prefix handoff scenarios to run "
-            "(default: max(5, scenarios // 40))."
-        ),
-    )
-    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -174,23 +132,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if seed is None:
         seed = DEFAULT_PROPERTY_SEED
     env["JJ_STACK_SUBMIT_PROPERTY_SEED"] = str(seed)
-    env["JJ_STACK_LAND_PROPERTY_SEED"] = str(seed)
-    land_scenarios = args.land_scenarios
-    if land_scenarios is None:
-        land_scenarios = max(20, args.scenarios // 20)
-    env["JJ_STACK_LAND_PROPERTY_SCENARIOS"] = str(land_scenarios)
-    land_drift_scenarios = args.land_drift_scenarios
-    if land_drift_scenarios is None:
-        land_drift_scenarios = max(6, args.scenarios // 40)
-    env["JJ_STACK_LAND_DRIFT_PROPERTY_SCENARIOS"] = str(land_drift_scenarios)
-    land_retry_scenarios = args.land_retry_scenarios
-    if land_retry_scenarios is None:
-        land_retry_scenarios = max(4, args.scenarios // 40)
-    env["JJ_STACK_LAND_RETRY_PROPERTY_SCENARIOS"] = str(land_retry_scenarios)
-    land_handoff_scenarios = args.land_handoff_scenarios
-    if land_handoff_scenarios is None:
-        land_handoff_scenarios = max(5, args.scenarios // 40)
-    env["JJ_STACK_LAND_HANDOFF_PROPERTY_SCENARIOS"] = str(land_handoff_scenarios)
 
     venv_python = (
         REPO_ROOT

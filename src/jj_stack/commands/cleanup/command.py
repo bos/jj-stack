@@ -43,7 +43,6 @@ from jj_stack.review.change_status import (
     classify_review_change_without_pull_request,
     is_open_pr_record,
 )
-from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.state.operation_lock import (
     acquire_operation_lock,
 )
@@ -360,14 +359,11 @@ async def _guard_remote_cleanup_plans(
         )
     pull_numbers = tuple(plan.review_identity.pr_number for plan in candidates)
     async with build_github_client(repository=target.repository) as github_client:
-        stacks, pull_requests = await asyncio.gather(
-            GithubStackSelection(
-                github_client,
-                pull_numbers,
-                prepared_cleanup.context.state_store,
-            ).overlapping(persist=not prepared_cleanup.dry_run),
-            github_client.get_pull_requests_by_numbers(pull_numbers=pull_numbers),
-        )
+        stacks = await GithubStackSelection(
+            github_client,
+            pull_numbers,
+            prepared_cleanup.context.state_store,
+        ).overlapping(persist=not prepared_cleanup.dry_run)
     stack_by_pull = {
         pull_number: stack.number
         for stack in stacks
@@ -377,21 +373,14 @@ async def _guard_remote_cleanup_plans(
     blocked_change_ids: set[str] = set()
     for plan in candidates:
         pull_number = plan.review_identity.pr_number
-        pull_request = pull_requests[pull_number]
-        blocker = (
-            delegated_landing_mutation_error((pull_request,))
-            if pull_request is not None
-            else None
-        )
         stack_number = stack_by_pull.get(pull_number)
-        if blocker is None and stack_number is None:
+        if stack_number is None:
             continue
         blocked_change_ids.add(plan.change_id)
-        if blocker is None:
-            blocker = (
-                t"it remains in GitHub stack #{stack_number}; run "
-                t"{ui.cmd(f'gh stack unstack {stack_number}')} and retry cleanup"
-            )
+        blocker = (
+            t"it remains in GitHub stack #{stack_number}; run "
+            t"{ui.cmd(f'gh stack unstack {stack_number}')} and retry cleanup"
+        )
         record_action(
             CleanupAction(
                 kind="remote branch",

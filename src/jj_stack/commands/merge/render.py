@@ -1,22 +1,22 @@
-"""Output rendering for the land command."""
+"""Output rendering for the merge command."""
 
 from __future__ import annotations
 
 import jj_stack.console as console
 import jj_stack.ui as ui
 
-from .models import LandResult
+from .models import MergeResult
 
 
-def print_land_result(result: LandResult) -> None:
+def print_merge_result(result: MergeResult) -> None:
     console.output(t"Trunk: {result.trunk_subject} -> {ui.bookmark(result.trunk_branch)}")
     if result.actions:
         if result.applied:
-            header = "Applied land actions:"
+            header = "Applied merge actions:"
         elif result.blocked:
-            header = "Land blocked:"
+            header = "Merge blocked:"
         else:
-            header = "Planned land actions:"
+            header = "Planned merge actions:"
         console.output(header)
         for action in result.actions:
             if action.status == "applied":
@@ -40,13 +40,14 @@ def print_land_result(result: LandResult) -> None:
                     message_labels=body_style,
                 )
             )
-    if result.via == "merge" and result.applied and _any_applied_pull_request(result):
+    if result.applied and _any_applied_pull_request(result):
         console.output(
-            t"GitHub accepted the merges; updating the remaining local stack..."
+            t"GitHub accepted one or more merges. Run "
+            t"{ui.cmd(f'sync {result.selected_revset}')} to update the local stack."
         )
 
 
-def _any_applied_pull_request(result: LandResult) -> bool:
+def _any_applied_pull_request(result: MergeResult) -> bool:
     return any(
         action.kind == "pull request" and action.status == "applied" for action in result.actions
     )

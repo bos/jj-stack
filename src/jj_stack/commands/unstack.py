@@ -61,7 +61,6 @@ from jj_stack.review.discovery import (
     discover_tracked_stacks,
     validate_review_stack_ownership,
 )
-from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
@@ -748,11 +747,8 @@ async def _stream_close_async(
             prepared_close=prepared_close,
             record_action=recorder.record,
         )
-        blocked = _record_delegated_close_blocker(
-            record_action=recorder.record,
-            revisions=status_result.revisions,
-        )
-        if not prepared_close.dry_run and not blocked:
+        blocked = False
+        if not prepared_close.dry_run:
             selection = GithubStackSelection(
                 github_client,
                 tuple(
@@ -984,33 +980,7 @@ def _close_revision_preflight_error(
             t"{ui.cmd('relink')} before retrying",
             status="blocked",
         )
-    return _delegated_close_preflight_error(revision)
-
-
-def _delegated_close_preflight_error(
-    revision: ReviewStatusRevision,
-) -> CloseAction | None:
-    lookup = revision.pull_request_lookup
-    if (
-        lookup is not None
-        and lookup.pull_request is not None
-        and (error := delegated_landing_mutation_error((lookup.pull_request,)))
-    ):
-        return CloseAction(kind="close", body=error, status="blocked")
     return None
-
-
-def _record_delegated_close_blocker(
-    *,
-    record_action: Callable[[CloseAction], None],
-    revisions: tuple[ReviewStatusRevision, ...],
-) -> bool:
-    blockers = (_delegated_close_preflight_error(revision) for revision in revisions)
-    blocker = next((action for action in blockers if action is not None), None)
-    if blocker is None:
-        return False
-    record_action(blocker)
-    return True
 
 
 def _record_retired_review_identity(

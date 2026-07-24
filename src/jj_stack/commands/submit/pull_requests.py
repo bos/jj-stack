@@ -15,7 +15,6 @@ from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_saved_review_identity,
 )
-from jj_stack.review.landing_authority import delegated_landing_mutation_error
 
 from .models import (
     PendingPullRequestSync,
@@ -90,26 +89,6 @@ def ensure_pull_request_syncs_are_safe(
                 t"Cannot sync {ui.change_id(change_id)} without its existing pull request.",
                 hint=t"Repair the review link with {ui.cmd('relink')} before retrying.",
             )
-        draft_changes = pull_request is not None and (
-            (options.draft_mode == "open" and pull_request.is_draft)
-            or (options.draft_mode == "draft_all" and not pull_request.is_draft)
-        )
-        if (
-            not options.dry_run
-            and pull_request is not None
-            and (
-                prepared_revision.remote_action == "pushed"
-                or pull_request.base.ref != pending_sync.base_branch
-                or (pull_request.body or "") != pending_sync.generated_description.body
-                or pull_request.title != pending_sync.generated_description.title
-                or draft_changes
-                or options.re_request
-                or options.reviewers is not None
-                or options.team_reviewers is not None
-            )
-            and (error := delegated_landing_mutation_error((pull_request,)))
-        ):
-            raise CliError(error)
 
 
 async def sync_pull_requests(

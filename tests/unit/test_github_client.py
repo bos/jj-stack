@@ -248,8 +248,8 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
             assert "pr_7: pullRequest(number: 7)" in payload["query"]
             assert "pr_9: pullRequest(number: 9)" in payload["query"]
             assert "pr_11: pullRequest(number: 11)" in payload["query"]
-            assert "autoMergeRequest { enabledAt }" in payload["query"]
-            assert "mergeQueueEntry { id }" in payload["query"]
+            assert "autoMergeRequest" not in payload["query"]
+            assert "mergeQueueEntry" not in payload["query"]
         return httpxyz.Response(
             200,
             json={

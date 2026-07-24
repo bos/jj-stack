@@ -16,7 +16,6 @@ from jj_stack.review.landed_evidence import (
     candidate_for_change,
     collect_landed_evidence,
 )
-from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.review.status import PreparedStatus
 from jj_stack.ui import Message
@@ -111,10 +110,6 @@ def build_selected_convergence_plan(
             pull_request=pull_request,
             repository=repository,
         )
-        if landed and pull_request is not None and (
-            error := delegated_landing_mutation_error((pull_request,))
-        ):
-            raise CliError(error)
         reviewed.append(revision)
     plan = SelectedConvergencePlan(
         landed=tuple(landed),

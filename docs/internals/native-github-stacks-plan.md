@@ -8,8 +8,8 @@ remaining questions together so a long implementation does not depend on convers
 
 ## Progress
 
-Commits 1 through 12 are complete and their step descriptions have been pruned. Commit 13,
-command-surface and policy simplification, is next.
+Commits 1 through 13 are complete and their step descriptions have been pruned. Commit 14,
+historical native resource members, is next.
 
 The implementation list contains only unfinished slices. In the same change that completes a
 slice:
@@ -684,8 +684,6 @@ not implement a general GitHub stack emulator.
 
 Only the unfinished slices need new or changed coverage:
 
-- remove tests that enforce repository-wide queue or auto-merge restrictions; do not replace them
-  with a cross-command permissiveness matrix
 - merged native members form one historical prefix while submit plans against the active suffix
 - remote unstack and cleanup distinguish historical members from the active suffix
 - native async merge targets the highest contiguous open, non-draft candidate by default and can
@@ -703,7 +701,6 @@ Only the unfinished slices need new or changed coverage:
 - legacy `merge` uses the ordinary PR merge API bottom-up and stops after the first rejection
 - a one-PR review in a native-capable repository uses the ordinary PR merge API
 - a missing resource for a multi-PR native review fails closed instead of selecting the legacy API
-- the command surface has `merge`, no `land` alias, no `--via`, and no direct-push path
 - an external direct push cannot make sync retarget or close an open native member
 - a draft or closed PR blocks the candidate prefix, while approvals, checks, conflicts, and
   repository rules are left to GitHub
@@ -717,21 +714,6 @@ count.
 Each commit is one bounded change with its tests and any temporary-plan update needed to describe
 the resulting behavior. A guarded unsupported operation is acceptable between commits; an
 operation that mutates partially and then discovers native incompatibility is not.
-
-### Commit 13: simplify policy and replace the command surface
-
-- remove the repository-wide queue and auto-merge mutation gate, its observations, and its tests
-- rename `land` to `merge` without a compatibility alias
-- remove direct-push merging, `--via`, `--bypass-readiness`, and `--skip-cleanup`
-- keep repositories without native support and unstacked one-PR reviews on the existing ordinary
-  GitHub PR merge path
-- make active native resources fail closed until the async contract is implemented
-- leave GitHub responsible for approval, checks, conflicts, queue policy, and other repository
-  rules
-
-Exit condition: ordinary reviews retain jj rewrite flexibility, the obsolete push transport and
-global restriction policy are deleted, non-native merge remains usable, and the governed
-landing/recovery footprint is smaller than before the slice.
 
 ### Commit 14: historical native resource members
 

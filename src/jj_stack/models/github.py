@@ -1,7 +1,7 @@
 """GitHub API response models."""
 
 from collections.abc import Mapping
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -64,7 +64,6 @@ class GithubPullRequest(BaseModel):
     head: GithubBranchRef
     html_url: str
     is_draft: bool = Field(default=False, alias="draft")
-    landing_owners: frozenset[Literal["auto_merge", "merge_queue"]] | None = None
     merge_commit_sha: str | None = None
     merged_at: str | None = None
     node_id: str | None = None
@@ -94,7 +93,6 @@ class GithubPullRequest(BaseModel):
                 "sha": value.get("headRefOid"),
             },
             "html_url": value.get("url"),
-            "landing_owners": _graphql_landing_owners(value),
             "merge_commit_sha": _graphql_merge_commit_oid(value.get("mergeCommit")),
             "merged_at": value.get("mergedAt"),
             "node_id": value.get("id"),
@@ -111,15 +109,6 @@ class GithubPullRequest(BaseModel):
 def _graphql_merge_commit_oid(value: object) -> str | None:
     oid = value.get("oid") if isinstance(value, dict) else None
     return oid if isinstance(oid, str) else None
-
-
-def _graphql_landing_owners(
-    value: Mapping[str, object],
-) -> frozenset[Literal["auto_merge", "merge_queue"]] | None:
-    fields = (("autoMergeRequest", "auto_merge"), ("mergeQueueEntry", "merge_queue"))
-    if not all(field in value for field, _owner in fields):
-        return None
-    return frozenset(owner for field, owner in fields if value[field] is not None)
 
 
 class GithubPullRequestReviewUser(BaseModel):

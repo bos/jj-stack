@@ -970,8 +970,6 @@ def _pull_request_fields_fragment() -> str:
           number
           state
           isDraft
-          autoMergeRequest { enabledAt }
-          mergeQueueEntry { id }
           mergeCommit {
             oid
           }

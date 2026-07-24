@@ -27,8 +27,8 @@ import jj_stack.bootstrap as bootstrap
 import jj_stack.commands.checkout as checkout_command
 import jj_stack.commands.cleanup.command as cleanup_command
 import jj_stack.commands.doctor as doctor_command
-import jj_stack.commands.land.command as land_command
 import jj_stack.commands.list_ as list_command
+import jj_stack.commands.merge.command as merge_command
 import jj_stack.commands.relink as relink_command
 import jj_stack.commands.restart as restart_command
 import jj_stack.commands.submit.command as submit_command
@@ -65,7 +65,7 @@ _TOP_LEVEL_HELP_USAGE = "jj-stack [--help] [--color WHEN] [--version] [<command>
 _TOP_LEVEL_HELP_DESCRIPTION = """
 `jj-stack` lets you review a series of `jj` changes on GitHub as stacked pull requests.
 
-Use it to submit and refresh changes for review, inspect pull request status, land ready
+Use it to submit and refresh changes for review, inspect pull request status, merge reviewed
 changes, list locally known stacks, and clean up after a review.
 """
 _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
@@ -90,7 +90,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
             HelpCommand("submit", submit_command.HELP),
             HelpCommand("view", view_command.HELP),
             HelpCommand("list", list_command.HELP),
-            HelpCommand("land", land_command.HELP),
+            HelpCommand("merge", merge_command.HELP),
             HelpCommand("unstack", unstack_command.HELP),
         ),
     ),
@@ -397,55 +397,34 @@ def build_parser() -> ArgumentParser:
         revset_nargs=None,
         revset_help="Revision to unlink",
     )
-    land_parser = _add_revision_command(
+    merge_parser = _add_revision_command(
         subcommands,
-        command="land",
-        help_text=normalized_help_text(land_command.HELP),
-        description_text=land_command.__doc__ or "",
-        handler=_forward_handler(land_command.land),
+        command="merge",
+        help_text=normalized_help_text(merge_command.HELP),
+        description_text=merge_command.__doc__ or "",
+        handler=_forward_handler(merge_command.merge),
         revset_help=(
-            t"Revision to land; defaults to {ui.revset('@-')} (the completed change below the "
+            t"Revision to merge; defaults to {ui.revset('@-')} (the completed change below the "
             t"working copy); cannot be combined with {ui.cmd('--pull-request')}"
         ),
     )
-    land_parser.add_argument(
+    merge_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch remote state and preview landing without changing trunk, PRs, or tracking",
+        help="Fetch and validate remote state without merging pull requests",
     )
     add_help_argument(
-        land_parser,
+        merge_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
         help="Select the local change linked to this pull request number or URL",
     )
-    land_parser.add_argument(
-        "--bypass-readiness",
-        action="store_true",
-        help=("Skip draft and review-decision checks while keeping normal safety checks"),
-    )
-    land_parser.add_argument(
-        "--skip-cleanup",
-        action="store_true",
-        help="Keep landed local review bookmarks instead of forgetting them",
-    )
     add_help_argument(
-        land_parser,
-        "--via",
-        choices=("push", "merge"),
-        default="push",
-        help=(
-            t"How to land: {ui.cmd('push')} moves the trunk branch directly (default); "
-            t"{ui.cmd('merge')} merges each ready pull request on GitHub instead"
-        ),
-    )
-    add_help_argument(
-        land_parser,
+        merge_parser,
         "--merge-method",
         choices=("merge", "rebase", "squash"),
         help=(
-            t"GitHub merge method for {ui.cmd('--via merge')}; defaults to the "
-            t"repository's only allowed method"
+            t"GitHub merge method; defaults to the repository's only allowed method"
         ),
     )
     unstack_parser = _add_revision_command(

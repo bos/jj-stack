@@ -579,34 +579,6 @@ def test_submit_invalid_revset_reports_clean_error_without_mutation(
     assert fake_repo.pull_requests == {}
 
 
-def test_submit_does_not_push_a_review_branch_owned_by_auto_merge(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    revision = JjClient(repo).discover_review_stack().head
-    state_store = ReviewStateStore.for_repo(repo)
-    state_before = state_store.load()
-    bookmark = state_before.review_identities[revision.change_id].head_ref
-    remote_before = read_remote_ref(fake_repo.git_dir, bookmark)
-    run_command(["jj", "edit", revision.change_id], repo)
-    write_file(repo / "feature-1.txt", "updated locally\n")
-    run_command(["jj", "status"], repo)
-    fake_repo.pull_requests[1].auto_merge_enabled = True
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "submit", revision.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "disable auto-merge" in captured.err
-    assert read_remote_ref(fake_repo.git_dir, bookmark) == remote_before
-    assert state_store.load() == state_before
-    assert fake_repo.pull_request_events == []
-
-
 def test_submit_rejects_a_shared_prospective_working_copy(
     tmp_path: Path,
     monkeypatch,

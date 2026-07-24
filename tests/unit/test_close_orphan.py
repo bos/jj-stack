@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal, cast
+from typing import cast
 
 from jj_stack.commands._close_actions import CloseAction
 from jj_stack.commands.close_orphan import _lookup_orphaned_pull_request
@@ -30,7 +30,6 @@ def _pull_request(
     *,
     head_label: str | None = None,
     head_ref: str = _BOOKMARK,
-    landing_owners: frozenset[Literal["auto_merge", "merge_queue"]] | None = frozenset(),
     number: int = 1,
     state: str = "open",
 ) -> GithubPullRequest:
@@ -41,7 +40,6 @@ def _pull_request(
             ref=head_ref,
         ),
         html_url=f"https://github.test/{_OWNER}/stacked-review/pull/{number}",
-        landing_owners=landing_owners,
         number=number,
         state=state,
         title="feature 1",
@@ -136,20 +134,6 @@ def test_lookup_orphaned_pr_allows_close_when_saved_pr_is_the_only_branch_claima
     assert blocked is None
     assert inspection is not None
     assert inspection.state == "open"
-
-
-def test_lookup_orphaned_pr_blocks_delegated_landing() -> None:
-    saved_pr = _pull_request(landing_owners=frozenset({"merge_queue"}))
-    client = _GithubClientStub(
-        branch_matches={_BOOKMARK: (saved_pr,)},
-        pull_request=saved_pr,
-    )
-
-    inspection, blocked = _lookup(client)
-
-    assert inspection is not None
-    assert blocked is not None
-    assert "merge queue" in blocked.message
 
 
 def test_lookup_orphaned_pr_blocks_when_saved_pr_is_no_longer_on_github() -> None:

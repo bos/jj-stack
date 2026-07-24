@@ -144,7 +144,7 @@ def test_operation_lock_busy_message_flags_dead_holder_pid(tmp_path: Path) -> No
     (state_dir / HOLDER_FILENAME).write_text(
         json.dumps(
             {
-                "command": "land",
+                "command": "merge",
                 "pid": 99_999_999,
                 "started_at": "2026-05-12T12:00:00+00:00",
             }

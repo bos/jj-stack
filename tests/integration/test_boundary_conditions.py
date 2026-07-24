@@ -21,7 +21,7 @@ from .submit_command_helpers import run_main
         ("view", ()),
         ("submit", ()),
         ("cleanup", ()),
-        ("land", ()),
+        ("merge", ()),
     ],
 )
 def test_commands_do_not_crash_in_empty_repo(

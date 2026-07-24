@@ -39,7 +39,6 @@ from jj_stack.review.bookmarks import bookmark_cleanup_allowed, find_changes_by_
 from jj_stack.review.change_status import (
     classify_review_change,
 )
-from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.ui import Message, plain_text
 
 
@@ -560,8 +559,6 @@ async def _lookup_orphaned_pull_request(
                 status="blocked",
             ),
         )
-    if error := delegated_landing_mutation_error((pull_request,)):
-        return pull_request, CloseAction(kind="close", body=error, status="blocked")
     return pull_request, None
 
 

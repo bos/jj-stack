@@ -34,7 +34,7 @@ _SUBMIT_CONFIG_MODULES = (
     "jj_stack.commands.unstack",
     "jj_stack.commands.close_orphan",
     "jj_stack.commands.cleanup.command",
-    "jj_stack.commands.land.command",
+    "jj_stack.commands.merge.command",
     "jj_stack.review.landed",
     "jj_stack.review.status",
 )
@@ -234,7 +234,7 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
         config_path = write_fake_github_config(template_root, fake_repo)
         # The template is built lazily inside the first test that calls the
         # helper, so pytest's capsys is active. Any output produced here would
-        # land in that test's buffer and be asserted against. Future templates
+        # remain in that test's buffer and be asserted against. Future templates
         # that run production code during build must redirect stdout/stderr too.
         with (
             contextlib.redirect_stdout(io.StringIO()),

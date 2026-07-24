@@ -1,25 +1,23 @@
-"""Thin land policy over fresh, policy-free review observations."""
+"""Thin merge policy over fresh, policy-free review observations."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from jj_stack.commands.land.models import LandRevision
+from jj_stack.commands.merge.models import MergeRevision
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.review.observation import RepositoryObservation, ReviewObservation
 
 
-def land_authority_error(
+def merge_authority_error(
     *,
-    bypass_readiness: bool,
     expected_bases: Mapping[str, tuple[str, ...]],
     expected_repository: GithubRepoAddress,
     expected_trunk_branch: str,
     expected_trunk_commit_id: str,
     observation: RepositoryObservation,
     remote_name: str,
-    revisions: tuple[LandRevision, ...],
+    revisions: tuple[MergeRevision, ...],
 ) -> str | None:
     """Explain why fresh facts do not authorize one immediately following mutation."""
 
@@ -47,7 +45,6 @@ def land_authority_error(
 
     for revision in revisions:
         error = _review_authority_error(
-            bypass_readiness=bypass_readiness,
             expected_bases=expected_bases.get(revision.change_id, ()),
             expected_repository=expected_repository,
             observed=observation.reviews[revision.change_id],
@@ -60,11 +57,10 @@ def land_authority_error(
 
 def _review_authority_error(
     *,
-    bypass_readiness: bool,
     expected_bases: tuple[str, ...],
     expected_repository: GithubRepoAddress,
     observed: ReviewObservation,
-    planned: LandRevision,
+    planned: MergeRevision,
 ) -> str | None:
     identity = observed.identity
     local = observed.local_revision
@@ -102,10 +98,6 @@ def _review_authority_error(
         expected_bases and pull_request.base.ref not in expected_bases
     ):
         return f"pull request #{pull_request.number} state or base branch changed"
-    if error := delegated_landing_mutation_error((pull_request,)):
-        return error
-    if pull_request.is_draft or (
-        not bypass_readiness and pull_request.review_decision != "approved"
-    ):
-        return f"pull request #{pull_request.number} is no longer ready"
+    if pull_request.is_draft:
+        return f"pull request #{pull_request.number} is now a draft"
     return None

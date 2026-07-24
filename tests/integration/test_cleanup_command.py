@@ -149,15 +149,6 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
     fake_repo.native_stacks = {}
-    fake_repo.pull_requests[1].auto_merge_enabled = True
-    delegated_exit_code = run_main(repo, config_path, "cleanup")
-    delegated = capsys.readouterr()
-
-    assert delegated_exit_code == 1
-    assert "controlled by GitHub auto-merge" in " ".join(delegated.out.split())
-    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
-
-    fake_repo.pull_requests[1].auto_merge_enabled = False
     apply_exit_code = run_main(repo, config_path, "cleanup")
     applied = capsys.readouterr()
     normalized_applied = " ".join(applied.out.split())
