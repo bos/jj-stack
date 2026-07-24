@@ -17,6 +17,7 @@ from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
 )
+from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.review.status import (
     PreparedRevision,
     PreparedStatus,
@@ -248,12 +249,14 @@ def _open_landability_decision(
             t"not all identify the same exact commit; run "
             t"{ui.cmd(f'jj-stack submit {revision.change_id}')} before landing",
         )
+    if error := delegated_landing_mutation_error((pull_request,)):
+        return _land_boundary(revision, error)
     if change_status.pr_review_decision_error is not None:
         return _land_boundary(revision, change_status.pr_review_decision_error)
-    if bypass_readiness:
-        return _LandabilityDecision(boundary_message=None)
     if change_status.pr_draft is True:
         return _land_boundary(revision, t"PR #{pull_request.number} is still a draft")
+    if bypass_readiness:
+        return _LandabilityDecision(boundary_message=None)
     if change_status.pr_review_decision == "changes_requested":
         return _land_boundary(revision, t"PR #{pull_request.number} has changes requested")
     if change_status.pr_review_decision != "approved":

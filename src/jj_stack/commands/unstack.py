@@ -61,6 +61,7 @@ from jj_stack.review.discovery import (
     discover_tracked_stacks,
     validate_review_stack_ownership,
 )
+from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
@@ -735,7 +736,6 @@ async def _stream_close_async(
         state=current_state,
     )
     assert github_repository is not None
-    blocked = False
     async with build_github_client(repository=github_repository) as github_client:
         run = _CloseMutationRun(
             commit_ids_by_change_id={
@@ -748,36 +748,32 @@ async def _stream_close_async(
             prepared_close=prepared_close,
             record_action=recorder.record,
         )
-        if not prepared_close.dry_run:
+        blocked = _record_delegated_close_blocker(
+            record_action=recorder.record,
+            revisions=status_result.revisions,
+        )
+        if not prepared_close.dry_run and not blocked:
             selection = GithubStackSelection(
                 github_client,
                 tuple(
-                    identity.pr_number
+                    run.review_identities[prepared_revision.revision.change_id].pr_number
                     for prepared_revision in prepared.status_revisions
-                    if (
-                        identity := run.review_identities.get(
-                            prepared_revision.revision.change_id
-                        )
-                    )
-                    is not None
+                    if prepared_revision.revision.change_id in run.review_identities
                 ),
                 prepared_close.context.state_store,
             )
             native_stacks = await selection.overlapping()
             if native_stacks:
+                native_preflight = (
+                    _close_revision_preflight_error(
+                        change_status=classify_review_status_revision(revision),
+                        revision=revision,
+                        run=run,
+                    )
+                    for revision in status_result.revisions
+                )
                 blocker = next(
-                    (
-                        action
-                        for revision in status_result.revisions
-                        if (
-                            action := _close_revision_preflight_error(
-                                change_status=classify_review_status_revision(revision),
-                                revision=revision,
-                                run=run,
-                            )
-                        )
-                        is not None
-                    ),
+                    (action for action in native_preflight if action is not None),
                     None,
                 )
                 if blocker is not None:
@@ -798,7 +794,6 @@ async def _stream_close_async(
             description="Processing close actions",
             total=progress_total,
         ) as progress:
-            # Process each revision in order, stopping on the first fail-closed block.
             for revision in () if blocked else status_result.revisions:
                 should_stop = await _process_close_revision(
                     change_status=classify_review_status_revision(revision),
@@ -865,10 +860,7 @@ async def _process_close_revision(
     revision: ReviewStatusRevision,
     run: _CloseMutationRun,
 ) -> bool:
-    """Close one revision's PR, retire its tracking, and clean up when requested.
-
-    Returns True when the revision fails closed and processing must stop.
-    """
+    """Close one revision's PR, retire its tracking, and clean up when requested."""
 
     if preflight_error := _close_revision_preflight_error(
         change_status=change_status,
@@ -992,7 +984,33 @@ def _close_revision_preflight_error(
             t"{ui.cmd('relink')} before retrying",
             status="blocked",
         )
+    return _delegated_close_preflight_error(revision)
+
+
+def _delegated_close_preflight_error(
+    revision: ReviewStatusRevision,
+) -> CloseAction | None:
+    lookup = revision.pull_request_lookup
+    if (
+        lookup is not None
+        and lookup.pull_request is not None
+        and (error := delegated_landing_mutation_error((lookup.pull_request,)))
+    ):
+        return CloseAction(kind="close", body=error, status="blocked")
     return None
+
+
+def _record_delegated_close_blocker(
+    *,
+    record_action: Callable[[CloseAction], None],
+    revisions: tuple[ReviewStatusRevision, ...],
+) -> bool:
+    blockers = (_delegated_close_preflight_error(revision) for revision in revisions)
+    blocker = next((action for action in blockers if action is not None), None)
+    if blocker is None:
+        return False
+    record_action(blocker)
+    return True
 
 
 def _record_retired_review_identity(

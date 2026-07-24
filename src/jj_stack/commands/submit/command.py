@@ -56,7 +56,6 @@ from jj_stack.github.resolution import (
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
@@ -81,7 +80,7 @@ from .models import (
 from .native import NativeStackPlan, apply_native_stack_plan, plan_native_stack
 from .pull_requests import (
     discover_pull_requests_by_bookmark,
-    ensure_pull_request_links_are_consistent,
+    ensure_pull_request_syncs_are_safe,
     sync_pull_requests,
 )
 from .render import print_submit_result, render_selected_line
@@ -466,12 +465,8 @@ async def run_submit_async(
             prepared_revisions=prepared_revisions,
             restarted_change_ids=prepared_inputs.restarted_change_ids,
         )
-        ensure_pull_request_links_are_consistent(
-            pending_syncs=pending_syncs,
-            state=mutation_run.state,
-        )
-        _ensure_existing_only_reviews(
-            existing_only=options.existing_only,
+        ensure_pull_request_syncs_are_safe(
+            options=options,
             pending_syncs=pending_syncs,
             state=mutation_run.state,
         )
@@ -491,15 +486,10 @@ async def run_submit_async(
         )
         native_plan = None
         if stack_support.supported:
-            repository_key = (
-                github_repository.host.casefold(),
-                github_repository.owner.casefold(),
-                github_repository.repo.casefold(),
-            )
             retiring_pull_numbers = tuple(
                 restarted.identity.pr_number
                 for restarted in prepared_inputs.restarted_reviews
-                if restarted.identity.repository_key == repository_key
+                if restarted.identity.repository_key == github_repository.repository_key
             )
             desired_pull_numbers = tuple(
                 pending.discovered_pull_request.number
@@ -617,26 +607,3 @@ async def run_submit_async(
         stack=stack,
         trunk_branch=trunk_branch,
     )
-
-
-def _ensure_existing_only_reviews(
-    *,
-    existing_only: bool,
-    pending_syncs: tuple[PendingPullRequestSync, ...],
-    state: ReviewState,
-) -> None:
-    """Make PR creation unreachable for selected convergence."""
-
-    if not existing_only:
-        return
-    for pending in pending_syncs:
-        change_id = pending.prepared.revision.change_id
-        if (
-            state.review_identities.get(change_id) is None
-            or state.submitted_baselines.get(change_id) is None
-            or pending.discovered_pull_request is None
-        ):
-            raise CliError(
-                t"Cannot sync {ui.change_id(change_id)} without its existing pull request.",
-                hint=t"Repair the review link with {ui.cmd('relink')} before retrying.",
-            )

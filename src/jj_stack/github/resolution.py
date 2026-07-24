@@ -24,6 +24,12 @@ class GithubRepoAddress:
     def full_name(self) -> str:
         return f"{self.owner}/{self.repo}"
 
+    @property
+    def repository_key(self) -> tuple[str, str, str]:
+        """Return the case-insensitive nominal repository identity."""
+
+        return self.host.casefold(), self.owner.casefold(), self.repo.casefold()
+
 
 @dataclass(frozen=True, slots=True)
 class GithubTarget:

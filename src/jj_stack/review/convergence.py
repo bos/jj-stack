@@ -16,6 +16,7 @@ from jj_stack.review.landed_evidence import (
     candidate_for_change,
     collect_landed_evidence,
 )
+from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.review.status import PreparedStatus
 from jj_stack.ui import Message
@@ -102,12 +103,18 @@ def build_selected_convergence_plan(
                 t"above an unreviewed change.",
                 hint="Submit the intervening change or select a stack that ends below it.",
             )
+        if revision.change_id in observation.duplicate_claim_change_ids:
+            raise CliError(t"Multiple saved changes claim the review for {revision.change_id}.")
+        pull_request = observation.reviews[revision.change_id].pull_request
         _validate_surviving_review(
             candidate=candidate,
-            observation=observation,
-            pull_request=observation.reviews[revision.change_id].pull_request,
+            pull_request=pull_request,
             repository=repository,
         )
+        if landed and pull_request is not None and (
+            error := delegated_landing_mutation_error((pull_request,))
+        ):
+            raise CliError(error)
         reviewed.append(revision)
     plan = SelectedConvergencePlan(
         landed=tuple(landed),
@@ -162,19 +169,14 @@ def _selected_landed_kind(
 def _validate_surviving_review(
     *,
     candidate: LandedReviewCandidate,
-    observation: RepositoryObservation,
     pull_request: GithubPullRequest | None,
     repository: GithubRepoAddress,
 ) -> None:
-    if candidate.change_id in observation.duplicate_claim_change_ids:
-        raise CliError(t"Multiple saved changes claim the review for {candidate.change_id}.")
     if pull_request is None:
         raise CliError(t"GitHub no longer reports PR #{candidate.review_identity.pr_number}.")
     identity = candidate.review_identity
     if (
-        identity.github_host != repository.host
-        or identity.repository_owner.casefold() != repository.owner.casefold()
-        or identity.repository_name.casefold() != repository.repo.casefold()
+        identity.repository_key != repository.repository_key
         or pull_request.number != identity.pr_number
         or pull_request.head.ref != identity.head_ref
         or pull_request.head.label != f"{identity.head_owner}:{identity.head_ref}"

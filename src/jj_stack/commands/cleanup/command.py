@@ -43,6 +43,7 @@ from jj_stack.review.change_status import (
     classify_review_change_without_pull_request,
     is_open_pr_record,
 )
+from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.state.operation_lock import (
     acquire_operation_lock,
 )
@@ -267,20 +268,40 @@ async def _run_local_cleanup_pass(
         context=prepared_cleanup.context,
         tracked_bookmarks=tracked_bookmarks,
     ):
-        if prepared_cleanup.dry_run:
-            record_action(orphan_plan.action)
-            continue
         if orphan_plan.action.status != "planned":
             record_action(orphan_plan.action)
             continue
         orphan_local_bookmark_plans.append(orphan_plan)
 
-    if not prepared_cleanup.dry_run:
-        allowed_mutation_plans, blocked_change_ids = await _guard_native_cleanup_plans(
-            mutation_plans=tuple(mutation_plans),
-            prepared_cleanup=prepared_cleanup,
-            record_action=record_action,
-        )
+    allowed_mutation_plans, blocked_change_ids = await _guard_remote_cleanup_plans(
+        mutation_plans=tuple(mutation_plans),
+        prepared_cleanup=prepared_cleanup,
+        record_action=record_action,
+    )
+    if prepared_cleanup.dry_run:
+        allowed_by_change = {plan.change_id: plan for plan in allowed_mutation_plans}
+        for retirement in retirements:
+            if retirement.change_id in blocked_change_ids:
+                continue
+            record_action(
+                CleanupAction(
+                    kind="tracking",
+                    status="planned",
+                    body=t"remove tracking for {ui.change_id(retirement.change_id)} "
+                    t"({retirement.stale_reason})",
+                )
+            )
+            plan = allowed_by_change.get(retirement.change_id)
+            if plan is not None:
+                for action in (
+                    plan.local_bookmark_action,
+                    plan.remote_plan.action if plan.remote_plan is not None else None,
+                ):
+                    if action is not None and action.status == "planned":
+                        record_action(action)
+        for orphan_plan in orphan_local_bookmark_plans:
+            record_action(orphan_plan.action)
+    else:
         _apply_stale_cleanup_mutation_plans(
             mutation_plans=allowed_mutation_plans,
             orphan_local_bookmark_plans=tuple(orphan_local_bookmark_plans),
@@ -306,13 +327,13 @@ async def _run_local_cleanup_pass(
     return tuple(prepared_changes)
 
 
-async def _guard_native_cleanup_plans(
+async def _guard_remote_cleanup_plans(
     *,
     mutation_plans: tuple[_StaleCleanupMutationPlan, ...],
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
 ) -> tuple[tuple[_StaleCleanupMutationPlan, ...], set[str]]:
-    """Exclude branch cleanup whose pull request remains in a native stack."""
+    """Exclude remote cleanup that conflicts with live GitHub ownership."""
 
     target = prepared_cleanup.github_target
     candidates = tuple(
@@ -339,37 +360,49 @@ async def _guard_native_cleanup_plans(
         )
     pull_numbers = tuple(plan.review_identity.pr_number for plan in candidates)
     async with build_github_client(repository=target.repository) as github_client:
-        stacks = await GithubStackSelection(
-            github_client,
-            pull_numbers,
-            prepared_cleanup.context.state_store,
-        ).overlapping()
+        stacks, pull_requests = await asyncio.gather(
+            GithubStackSelection(
+                github_client,
+                pull_numbers,
+                prepared_cleanup.context.state_store,
+            ).overlapping(persist=not prepared_cleanup.dry_run),
+            github_client.get_pull_requests_by_numbers(pull_numbers=pull_numbers),
+        )
     stack_by_pull = {
         pull_number: stack.number
         for stack in stacks
         for pull_number in stack.pull_request_numbers
         if pull_number in pull_numbers
     }
-    allowed: list[_StaleCleanupMutationPlan] = []
-    for plan in mutation_plans:
+    blocked_change_ids: set[str] = set()
+    for plan in candidates:
         pull_number = plan.review_identity.pr_number
-        if pull_number not in stack_by_pull:
-            allowed.append(plan)
+        pull_request = pull_requests[pull_number]
+        blocker = (
+            delegated_landing_mutation_error((pull_request,))
+            if pull_request is not None
+            else None
+        )
+        stack_number = stack_by_pull.get(pull_number)
+        if blocker is None and stack_number is None:
             continue
+        blocked_change_ids.add(plan.change_id)
+        if blocker is None:
+            blocker = (
+                t"it remains in GitHub stack #{stack_number}; run "
+                t"{ui.cmd(f'gh stack unstack {stack_number}')} and retry cleanup"
+            )
         record_action(
             CleanupAction(
                 kind="remote branch",
                 status="blocked",
-                body=t"preserve PR #{pull_number}'s branch because it remains in GitHub stack "
-                t"#{stack_by_pull[pull_number]}; run "
-                t"{ui.cmd(f'gh stack unstack {stack_by_pull[pull_number]}')} and retry cleanup",
+                body=t"preserve PR #{pull_number}'s branch because {blocker}",
             )
         )
-    return tuple(allowed), {
-        plan.change_id
-        for plan in mutation_plans
-        if plan.review_identity.pr_number in stack_by_pull
-    }
+    return (
+        tuple(plan for plan in mutation_plans if plan.change_id not in blocked_change_ids),
+        blocked_change_ids,
+    )
 
 
 def _process_stale_cleanup_change(
@@ -397,16 +430,6 @@ def _process_stale_cleanup_change(
         )
         return None
 
-    if prepared_cleanup.dry_run:
-        record_action(
-            CleanupAction(
-                kind="tracking",
-                status="planned",
-                body=t"remove tracking for {ui.change_id(prepared_change.change_id)} "
-                t"({stale_reason})",
-            )
-        )
-
     local_bookmark_plan = _plan_local_bookmark_cleanup(
         cleanup_user_bookmarks=prepared_cleanup.context.config.cleanup_user_bookmarks,
         bookmark_state=prepared_change.bookmark_state,
@@ -427,13 +450,6 @@ def _process_stale_cleanup_change(
         remote_state=prepared_change.remote_state,
         review_status=prepared_change.review_status,
     )
-    if prepared_cleanup.dry_run:
-        if local_bookmark_plan is not None:
-            record_action(local_bookmark_plan)
-        if remote_plan is not None:
-            record_action(remote_plan.action)
-        return None
-
     if local_bookmark_plan is not None and local_bookmark_plan.status != "planned":
         record_action(local_bookmark_plan)
     if remote_plan is not None and remote_plan.action.status != "planned":

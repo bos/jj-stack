@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 from jj_stack.commands.land.models import LandRevision
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.review.observation import RepositoryObservation, ReviewObservation
 
 
@@ -71,11 +72,7 @@ def _review_authority_error(
     if (
         identity != planned.identity
         or identity is None
-        or (
-            identity.github_host != expected_repository.host
-            or identity.repository_owner.casefold() != expected_repository.owner.casefold()
-            or identity.repository_name.casefold() != expected_repository.repo.casefold()
-        )
+        or identity.repository_key != expected_repository.repository_key
     ):
         return f"saved PR tracking for {label} changed"
     if (
@@ -105,8 +102,10 @@ def _review_authority_error(
         expected_bases and pull_request.base.ref not in expected_bases
     ):
         return f"pull request #{pull_request.number} state or base branch changed"
-    if not bypass_readiness and (
-        pull_request.is_draft or pull_request.review_decision != "approved"
+    if error := delegated_landing_mutation_error((pull_request,)):
+        return error
+    if pull_request.is_draft or (
+        not bypass_readiness and pull_request.review_decision != "approved"
     ):
         return f"pull request #{pull_request.number} is no longer ready"
     return None

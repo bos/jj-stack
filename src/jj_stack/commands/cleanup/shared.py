@@ -9,10 +9,7 @@ from typing import Literal
 import jj_stack.console as console
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._close_actions import emit_action_row
-from jj_stack.errors import ErrorMessage
-from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
-    GithubRepoAddress,
     GithubTarget,
     UnresolvedGithubTarget,
 )
@@ -123,14 +120,6 @@ def _render_cleanup_postamble(*, result: CleanupResult) -> tuple[str, ...]:
     return ()
 
 
-def _emit_severity_lines(lines: tuple[tuple[str, str], ...]) -> None:
-    for severity, line in lines:
-        if severity == "warning":
-            console.warning(line)
-        else:
-            console.output(line)
-
-
 def _emit_output_lines(lines: tuple[str, ...]) -> None:
     for line in lines:
         console.output(line)
@@ -152,21 +141,3 @@ def _build_action_streamer(
         emit_action_row(kind=action.kind, status=action.status, body=action.body)
 
     return emit_action
-
-
-def _render_remote_and_github_lines(
-    *,
-    remote: GitRemote | None,
-    remote_error: ErrorMessage | None,
-    github_repository: GithubRepoAddress | None,
-    github_error: ErrorMessage | None,
-) -> tuple[tuple[str, str], ...]:
-    return tuple(
-        ("warning", plain_text(message))
-        for message in remote_and_github_unavailable_messages(
-            github_error=github_error,
-            github_repository=github_repository,
-            remote=remote,
-            remote_error=remote_error,
-        )
-    )

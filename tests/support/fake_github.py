@@ -82,6 +82,7 @@ class FakeGithubPullRequest:
     ) -> dict[str, object]:
         self._refresh_head_sha(repository)
         return {
+            "autoMergeRequest": {"enabledAt": "now"} if self.auto_merge_enabled else None,
             "baseRefName": self.base_ref,
             "body": self.body,
             "headRefName": self.head_ref,
@@ -89,6 +90,7 @@ class FakeGithubPullRequest:
             "headRepositoryOwner": {"login": repository.owner},
             "id": self.node_id,
             "isDraft": self.is_draft,
+            "mergeQueueEntry": {"id": "queue-entry"} if self.is_queued else None,
             "mergeCommit": (
                 None if self.merge_commit_sha is None else {"oid": self.merge_commit_sha}
             ),

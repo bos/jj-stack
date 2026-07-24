@@ -125,16 +125,17 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     run_command(["jj", "bookmark", "delete", bookmark], repo)
     fake_repo.native_stacks = {7: (1,)}
     state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_before = state_store.load()
 
     preview_exit_code = run_main(repo, config_path, "cleanup", "--dry-run")
     preview = capsys.readouterr()
     normalized_preview = " ".join(preview.out.split())
 
-    assert preview_exit_code == 0
+    assert preview_exit_code == 1
     assert "Planned cleanup actions:" in preview.out
-    assert f"remove tracking for {change_id[:8]}" in normalized_preview
-    assert f"remote branch: delete {bookmark}@origin" in normalized_preview
-    assert change_id in state_store.load().review_identities
+    assert "preserve PR #1's branch because it remains in GitHub stack #7" in normalized_preview
+    assert f"remote branch: delete {bookmark}@origin" not in normalized_preview
+    assert state_store.load() == state_before
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
     blocked_exit_code = run_main(repo, config_path, "cleanup")
@@ -148,6 +149,15 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
     fake_repo.native_stacks = {}
+    fake_repo.pull_requests[1].auto_merge_enabled = True
+    delegated_exit_code = run_main(repo, config_path, "cleanup")
+    delegated = capsys.readouterr()
+
+    assert delegated_exit_code == 1
+    assert "controlled by GitHub auto-merge" in " ".join(delegated.out.split())
+    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
+
+    fake_repo.pull_requests[1].auto_merge_enabled = False
     apply_exit_code = run_main(repo, config_path, "cleanup")
     applied = capsys.readouterr()
     normalized_applied = " ".join(applied.out.split())

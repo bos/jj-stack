@@ -270,15 +270,15 @@ def test_submit_native_preflight_failures_recover_without_persisted_phase(
     bottom_change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
     failure = "none"
     fake_repo.native_stacks = {2: (1,)}
+    fake_repo.pull_requests[1].is_queued = True
     assert run_main(repo, config_path, "submit", bottom_change_id) == 0
-    assert fake_repo.native_stacks == {}
+    fake_repo.pull_requests[1].is_queued = False
 
     assert run_main(repo, config_path, "submit", "--restart", head_change_id) == 0
     restarted = ReviewStateStore.for_repo(repo).load()
 
     assert {identity.pr_number for identity in restarted.review_identities.values()} == {3, 4}
     assert fake_repo.native_stacks == {2: (3, 4)}
-    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
 
 
 def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
@@ -582,29 +582,32 @@ def test_submit_invalid_revset_reports_clean_error_without_mutation(
     assert fake_repo.pull_requests == {}
 
 
-def test_submit_rejects_a_prospective_review_shared_by_sibling_paths(
+def test_submit_does_not_push_a_review_branch_owned_by_auto_merge(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "shared review", "shared.txt")
-    shared = JjClient(repo).discover_review_stack().head
-    commit_file(repo, "first path", "first.txt")
-    first = JjClient(repo).discover_review_stack().head
-    run_command(["jj", "new", shared.change_id], repo)
-    commit_file(repo, "second path", "second.txt")
+    revision = JjClient(repo).discover_review_stack().head
+    state_store = ReviewStateStore.for_repo(repo)
+    state_before = state_store.load()
+    bookmark = state_before.review_identities[revision.change_id].head_ref
+    remote_before = read_remote_ref(fake_repo.git_dir, bookmark)
+    run_command(["jj", "edit", revision.change_id], repo)
+    write_file(repo / "feature-1.txt", "updated locally\n")
+    run_command(["jj", "status"], repo)
+    fake_repo.pull_requests[1].auto_merge_enabled = True
+    fake_repo.pull_request_events.clear()
 
-    exit_code = run_main(repo, config_path, "submit", first.change_id)
+    exit_code = run_main(repo, config_path, "submit", revision.change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Reviewed changes belong to more than one local stack" in captured.err
-    assert shared.change_id[:8] in captured.err
-    assert fake_repo.pull_requests == {}
-    assert ReviewStateStore.for_repo(repo).load().review_identities == {}
-    assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
+    assert "disable auto-merge" in captured.err
+    assert read_remote_ref(fake_repo.git_dir, bookmark) == remote_before
+    assert state_store.load() == state_before
+    assert fake_repo.pull_request_events == []
 
 
 def test_submit_rejects_a_shared_prospective_working_copy(

@@ -127,7 +127,7 @@ def test_unstack_local_forgets_tracking_without_closing_pull_request(
     assert JjClient(repo).get_bookmark_state(bookmark).local_target is not None
 
 
-def test_unstack_blocks_remote_mutation_but_allows_local_topology_repair(
+def test_unstack_preserves_a_native_review_owned_by_the_merge_queue_but_allows_local_forget(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -135,24 +135,32 @@ def test_unstack_blocks_remote_mutation_but_allows_local_topology_repair(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change_id = JjClient(repo).discover_review_stack().head.change_id
-    commit_file(repo, "first local path", "first-local-path.txt")
-    run_command(["jj", "new", change_id], repo)
-    commit_file(repo, "second local path", "second-local-path.txt")
     state_store = ReviewStateStore.for_repo(repo)
+    fake_repo.native_stacks = {7: (1,)}
+    fake_repo.pull_requests[1].is_queued = True
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
     state_before = state_store.load()
+    bookmark = state_before.review_identities[change_id].head_ref
+    remote_before = read_remote_ref(fake_repo.git_dir, bookmark)
 
     exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Reviewed changes belong to more than one local stack" in captured.err
-    assert fake_repo.pull_requests[1].state == "open"
+    assert "merge queue" in _combined_output(captured)
+    assert fake_repo.native_stacks == {7: (1,)}
     assert state_store.load() == state_before
+    assert read_remote_ref(fake_repo.git_dir, bookmark) == remote_before
+
+    assert run_main(repo, config_path, "view", change_id) == 0
+    capsys.readouterr()
 
     assert run_main(repo, config_path, "unstack", "--local", change_id) == 0
     capsys.readouterr()
     assert change_id not in state_store.load().review_identities
+    assert fake_repo.native_stacks == {7: (1,)}
     assert fake_repo.pull_requests[1].state == "open"
+    assert read_remote_ref(fake_repo.git_dir, bookmark) == remote_before
 
 
 def test_unstack_local_dry_run_leaves_tracking_and_pull_request_unchanged(

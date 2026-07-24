@@ -201,9 +201,7 @@ def _identity_mismatch(
 ) -> Message | None:
     identity = candidate.review_identity
     if (
-        identity.github_host != repository.host
-        or identity.repository_owner.casefold() != repository.owner.casefold()
-        or identity.repository_name.casefold() != repository.repo.casefold()
+        identity.repository_key != repository.repository_key
         or pull_request.number != identity.pr_number
         or pull_request.head.ref != identity.head_ref
         or pull_request.head.label != f"{identity.head_owner}:{identity.head_ref}"

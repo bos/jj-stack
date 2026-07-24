@@ -41,12 +41,6 @@ def is_overview_comment(body: str) -> bool:
     return STACK_OVERVIEW_COMMENT_MARKER in body
 
 
-def is_stack_summary_comment(body: str) -> bool:
-    """Return whether a GitHub comment body belongs to jj-stack."""
-
-    return is_navigation_comment(body) or is_overview_comment(body)
-
-
 def comment_matches_kind(*, body: str, kind: StackCommentKind) -> bool:
     """Return whether a GitHub comment body has the marker for one kind."""
 

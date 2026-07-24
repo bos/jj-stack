@@ -47,12 +47,6 @@ def short_change_id(change_id: str) -> str:
     return change_id[:8]
 
 
-def format_status_annotation(annotation: str) -> str:
-    """Render a parenthetical status annotation for CLI output."""
-
-    return f"({annotation})"
-
-
 def format_pull_request_label(
     pull_request_number: int,
     *,

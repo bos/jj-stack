@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
-from typing import Literal
 
 import jj_stack.console as console
 import jj_stack.ui as ui
@@ -39,17 +39,8 @@ from jj_stack.review.bookmarks import bookmark_cleanup_allowed, find_changes_by_
 from jj_stack.review.change_status import (
     classify_review_change,
 )
+from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.ui import Message, plain_text
-
-OrphanedPullRequestState = Literal["closed", "open"]
-
-
-@dataclass(frozen=True, slots=True)
-class _OrphanedPullRequestInspection:
-    """Resolved GitHub view of one orphaned tracked pull request."""
-
-    pull_request: GithubPullRequest
-    state: OrphanedPullRequestState
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +198,7 @@ async def run_orphan_close(
         dry_run=dry_run,
     )
     async with build_github_client(repository=github_repository) as github_client:
-        inspection, blocked_action = await _lookup_orphaned_pull_request(
+        pull_request, blocked_action = await _lookup_orphaned_pull_request(
             github_client=github_client,
             pull_request_number=pull_request_number,
             review_identity=review_identity,
@@ -239,7 +230,7 @@ async def run_orphan_close(
         if recorder.blocked:
             _retire_blocked_orphan_close_tracking(
                 change_id=change_id,
-                inspection=inspection,
+                pull_request=pull_request,
                 recorder=recorder,
                 review_identity=review_identity,
                 revision_label=revision_label,
@@ -251,9 +242,9 @@ async def run_orphan_close(
                 run=run,
             )
 
-        if inspection is None:
+        if pull_request is None:
             raise AssertionError("Orphan close inspection must resolve a pull request state.")
-        if not dry_run and (inspection.state == "open" or cleanup_plan.remote_delete):
+        if not dry_run and (pull_request.state == "open" or cleanup_plan.remote_delete):
             try:
                 native_stack = await GithubStackSelection(
                     github_client,
@@ -277,7 +268,7 @@ async def run_orphan_close(
                         status="applied",
                     )
                 )
-        if inspection.state == "open":
+        if pull_request.state == "open":
             recorder.record(
                 CloseAction(
                     kind="pull request",
@@ -348,13 +339,13 @@ def _render_orphan_close_actions(
 def _retire_blocked_orphan_close_tracking(
     *,
     change_id: str,
-    inspection: _OrphanedPullRequestInspection | None,
+    pull_request: GithubPullRequest | None,
     recorder: ActionRecorder[CloseAction],
     review_identity: ReviewIdentity,
     revision_label: Message,
     run: _OrphanCloseRun,
 ) -> None:
-    if inspection is None or inspection.state != "closed":
+    if pull_request is None or pull_request.state == "open":
         return
 
     updated_identity = retire_review_identity(review_identity)
@@ -365,7 +356,7 @@ def _retire_blocked_orphan_close_tracking(
     recorder.record(
         CloseAction(
             kind="tracking",
-            body=t"mark {revision_label} as already {inspection.pull_request.state} on GitHub",
+            body=t"mark {revision_label} as already {pull_request.state} on GitHub",
             status="planned" if dry_run else "applied",
         )
     )
@@ -500,30 +491,37 @@ async def _lookup_orphaned_pull_request(
     github_client: GithubClient,
     pull_request_number: int,
     review_identity: ReviewIdentity,
-) -> tuple[_OrphanedPullRequestInspection | None, CloseAction | None]:
+) -> tuple[GithubPullRequest | None, CloseAction | None]:
     """Verify the saved PR identity and look for live duplicate branch claims."""
 
     bookmark = review_identity.head_ref
 
     try:
-        pull_request = await github_client.get_pull_request(
-            pull_number=pull_request_number,
+        numbered, branch_matches = await asyncio.gather(
+            github_client.get_pull_requests_by_numbers(
+                pull_numbers=(pull_request_number,),
+            ),
+            github_client.get_pull_requests_by_head_refs(
+                head_refs=(bookmark,),
+            ),
         )
-    except GithubClientError as error:
-        if error.status_code == 404:
-            return (
-                None,
-                CloseAction(
-                    kind="close",
-                    body=t"PR #{pull_request_number} is no longer on GitHub",
-                    status="blocked",
-                ),
-            )
+    except GithubClientError:
         return None, _blocked_orphaned_close_github_action()
-    inspection = _inspect_orphaned_pull_request_state(pull_request)
+    pull_request = numbered[pull_request_number]
+    if pull_request is None:
+        return (
+            None,
+            CloseAction(
+                kind="close",
+                body=t"PR #{pull_request_number} is no longer on GitHub",
+                status="blocked",
+            ),
+        )
+    matches = branch_matches.get(bookmark, ())
+    pull_request = pull_request.normalize_state()
     if pull_request.head.ref != bookmark:
         return (
-            inspection,
+            pull_request,
             CloseAction(
                 kind="close",
                 body=(
@@ -536,7 +534,7 @@ async def _lookup_orphaned_pull_request(
     expected_head_label = f"{review_identity.head_owner}:{bookmark}"
     if pull_request.head.label != expected_head_label:
         return (
-            inspection,
+            pull_request,
             CloseAction(
                 kind="close",
                 body=(
@@ -547,22 +545,12 @@ async def _lookup_orphaned_pull_request(
                 status="blocked",
             ),
         )
-
-    try:
-        branch_matches = await github_client.get_pull_requests_by_head_refs(
-            head_refs=(bookmark,),
-        )
-    except GithubClientError:
-        return None, _blocked_orphaned_close_github_action()
-
     other_live_matches = tuple(
-        candidate
-        for candidate in branch_matches.get(bookmark, ())
-        if candidate.number != pull_request_number
+        candidate for candidate in matches if candidate.number != pull_request_number
     )
     if other_live_matches:
         return (
-            inspection,
+            pull_request,
             CloseAction(
                 kind="close",
                 body=(
@@ -572,23 +560,9 @@ async def _lookup_orphaned_pull_request(
                 status="blocked",
             ),
         )
-    return inspection, None
-
-
-def _inspect_orphaned_pull_request_state(
-    pull_request: GithubPullRequest,
-) -> _OrphanedPullRequestInspection:
-    if pull_request.state != "closed" or pull_request.merged_at is None:
-        normalized_pull_request = pull_request
-    else:
-        normalized_pull_request = pull_request.model_copy(update={"state": "merged"})
-    state: OrphanedPullRequestState = (
-        "open" if normalized_pull_request.state == "open" else "closed"
-    )
-    return _OrphanedPullRequestInspection(
-        pull_request=normalized_pull_request,
-        state=state,
-    )
+    if error := delegated_landing_mutation_error((pull_request,)):
+        return pull_request, CloseAction(kind="close", body=error, status="blocked")
+    return pull_request, None
 
 
 def _blocked_orphaned_close_github_action() -> CloseAction:

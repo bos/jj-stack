@@ -112,35 +112,42 @@ def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
 
 
 @pytest.mark.landing_recovery
-def test_sync_rejects_reviewed_sibling_paths_before_recovery_mutation(
+def test_sync_does_not_rebase_a_survivor_owned_by_the_merge_queue(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    initial = JjClient(repo).discover_review_stack()
-    landed = initial.revisions[0]
-    first_sibling = initial.revisions[1]
-    second_sibling = initial.revisions[2]
-    run_command(
-        ["jj", "rebase", "-s", second_sibling.change_id, "-d", landed.change_id],
-        repo,
-    )
+    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    state_store = ReviewStateStore.for_repo(repo)
+    state_before = state_store.load()
+    bookmark = state_before.review_identities[survivor.change_id].head_ref
+    remote_before = read_remote_ref(fake_repo.git_dir, bookmark)
+    base_before = fake_repo.pull_requests[2].base_ref
     jj = JjClient(repo)
-    original_first = jj.resolve_revision(first_sibling.change_id).commit_id
-    original_second = jj.resolve_revision(second_sibling.change_id).commit_id
-    _merge_pull_request(fake_repo, 1)
+    run_command(["jj", "edit", landed.change_id], repo)
+    write_file(repo / "feature-1.txt", "unpublished local edit\n")
+    run_command(["jj", "status"], repo)
+    survivor_before = jj.resolve_revision(survivor.change_id).commit_id
+    fake_repo.auto_merge_reachable_heads = False
+    update_remote_ref(fake_repo, branch="main", target=landed.commit_id)
+    fake_repo.pull_requests[2].is_queued = True
+    fake_repo.pull_request_events.clear()
 
-    exit_code = run_main(repo, config_path, "sync", first_sibling.change_id)
+    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
     captured = capsys.readouterr()
 
-    state = ReviewStateStore.for_repo(repo).load()
     assert exit_code == 1
-    assert "Reviewed changes belong to more than one local stack" in captured.err
-    assert landed.change_id in state.review_identities
-    assert jj.resolve_revision(first_sibling.change_id).commit_id == original_first
-    assert jj.resolve_revision(second_sibling.change_id).commit_id == original_second
+    assert "remove it from the merge queue" in captured.err
+    assert jj.resolve_revision(survivor.change_id).commit_id == survivor_before
+    assert read_remote_ref(fake_repo.git_dir, bookmark) == remote_before
+    assert (fake_repo.pull_requests[1].state, fake_repo.pull_requests[2].base_ref) == (
+        "open",
+        base_before,
+    )
+    assert state_store.load() == state_before
+    assert fake_repo.pull_request_events == []
 
 
 @pytest.mark.landing_recovery

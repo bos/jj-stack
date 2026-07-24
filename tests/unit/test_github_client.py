@@ -185,38 +185,6 @@ def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None
     assert asyncio.run(run_test()) == (None, (8,))
 
 
-def test_github_client_lists_pull_request_reviews() -> None:
-    def handler(request: httpxyz.Request) -> httpxyz.Response:
-        assert request.url.path == "/repos/octo-org/stacked-review/pulls/7/reviews"
-        return httpxyz.Response(
-            200,
-            json=[
-                {
-                    "id": 1,
-                    "state": "APPROVED",
-                    "user": {"login": "reviewer-1"},
-                },
-                {
-                    "id": 2,
-                    "state": "COMMENTED",
-                    "user": {"login": "reviewer-2"},
-                },
-            ],
-            request=request,
-        )
-
-    async def run_test() -> tuple[str, str]:
-        async with _github_client(handler) as client:
-            reviews = await client.list_pull_request_reviews(
-                pull_number=7,
-            )
-        if reviews[0].user is None:
-            raise AssertionError("Review payload should include a user.")
-        return reviews[0].user.login, reviews[1].state
-
-    assert asyncio.run(run_test()) == ("reviewer-1", "COMMENTED")
-
-
 def test_github_client_paginates_pull_request_list() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/repos/octo-org/stacked-review/pulls"
@@ -280,16 +248,20 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
             assert "pr_7: pullRequest(number: 7)" in payload["query"]
             assert "pr_9: pullRequest(number: 9)" in payload["query"]
             assert "pr_11: pullRequest(number: 11)" in payload["query"]
+            assert "autoMergeRequest { enabledAt }" in payload["query"]
+            assert "mergeQueueEntry { id }" in payload["query"]
         return httpxyz.Response(
             200,
             json={
                 "data": {
                     "repository": {
                         "pr_7": {
+                            "autoMergeRequest": None,
                             "baseRefName": "main",
                             "body": "body 7",
                             "headRefName": "review/seven",
                             "headRepositoryOwner": {"login": "octo-org"},
+                            "mergeQueueEntry": None,
                             "mergedAt": None,
                             "number": 7,
                             "state": "OPEN",
@@ -297,10 +269,12 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
                             "url": "https://github.test/octo-org/stacked-review/pull/7",
                         },
                         "pr_9": {
+                            "autoMergeRequest": None,
                             "baseRefName": "review/base",
                             "body": None,
                             "headRefName": "review/nine",
                             "headRepositoryOwner": {"login": "octo-org"},
+                            "mergeQueueEntry": None,
                             "mergedAt": "2026-03-16T12:00:00Z",
                             "number": 9,
                             "state": "CLOSED",

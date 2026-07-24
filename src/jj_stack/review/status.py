@@ -112,12 +112,6 @@ class ReviewStatusRevision:
             return None
         return pull_request.number
 
-    def pull_request_base_ref(self) -> str | None:
-        pull_request = self.pull_request()
-        if pull_request is None:
-            return None
-        return pull_request.base.ref
-
 
 @dataclass(frozen=True, slots=True)
 class StatusResult:
@@ -800,7 +794,6 @@ async def _discover_pull_request_lookups(
             bookmark: PullRequestLookup(
                 message=lookup_error,
                 pull_request=None,
-                repository_error=None,
                 state="error",
             )
             for bookmark in bookmarks
@@ -837,7 +830,6 @@ async def _discover_pull_request_lookups(
                 failed_lookups[bookmark] = PullRequestLookup(
                     message=lookup_error,
                     pull_request=None,
-                    repository_error=None,
                     state="error",
                 )
             else:
@@ -869,7 +861,6 @@ def _pull_request_lookup_from_discovered(
         return PullRequestLookup(
             message=None,
             pull_request=None,
-            repository_error=None,
             state="missing",
         )
     if len(pull_requests) > 1:
@@ -879,33 +870,20 @@ def _pull_request_lookup_from_discovered(
                 t"GitHub reports multiple pull requests for head branch {head_label}: {numbers}."
             ),
             pull_request=None,
-            repository_error=None,
             state="ambiguous",
         )
 
     pull_request = pull_requests[0]
     effective_pull_request = pull_request.normalize_state()
+    message = None
     if effective_pull_request.state != "open":
-        return PullRequestLookup(
-            message=(
-                t"GitHub reports pull request #{effective_pull_request.number} "
-                t"for head branch {head_label} in state "
-                t"{effective_pull_request.state}."
-            ),
-            pull_request=effective_pull_request,
-            review_decision=None,
-            repository_error=None,
-            state="closed",
+        message = (
+            t"GitHub reports pull request #{effective_pull_request.number} "
+            t"for head branch {head_label} in state {effective_pull_request.state}."
         )
-    return PullRequestLookup(
-        message=None,
+    return _single_pull_request_lookup(
+        message=message,
         pull_request=effective_pull_request,
-        review_decision=(
-            None if effective_pull_request.is_draft else effective_pull_request.review_decision
-        ),
-        review_decision_error=None,
-        repository_error=None,
-        state="open",
     )
 
 
@@ -922,25 +900,28 @@ def _pull_request_lookup_from_remembered(
             t"{ui.bookmark(effective_pull_request.head.ref)}, not "
             t"{ui.bookmark(bookmark)}."
         )
-    if effective_pull_request.state != "open":
-        return PullRequestLookup(
-            message=message,
-            pull_request=effective_pull_request,
-            review_decision=None,
-            repository_error=None,
-            source="remembered",
-            state="closed",
-        )
-    return PullRequestLookup(
+    return _single_pull_request_lookup(
         message=message,
         pull_request=effective_pull_request,
-        review_decision=(
-            None if effective_pull_request.is_draft else effective_pull_request.review_decision
-        ),
-        review_decision_error=None,
-        repository_error=None,
         source="remembered",
-        state="open",
+    )
+
+
+def _single_pull_request_lookup(
+    *,
+    message: ErrorMessage | None,
+    pull_request: GithubPullRequest,
+    source: PullRequestLookupSource = "head",
+) -> PullRequestLookup:
+    open_ = pull_request.state == "open"
+    return PullRequestLookup(
+        message=message,
+        pull_request=pull_request,
+        review_decision=(
+            pull_request.review_decision if open_ and not pull_request.is_draft else None
+        ),
+        source=source,
+        state="open" if open_ else "closed",
     )
 
 

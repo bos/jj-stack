@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -51,6 +51,7 @@ class _ProjectionCase:
     expected_message: str | None
     baseline_commit_id: str | None = None
     bypass_readiness: bool = False
+    landing_owners: frozenset[Literal["auto_merge", "merge_queue"]] | None = frozenset()
     link_state: LinkState = "active"
     pr_head_commit_id: str | None = None
     pull_request_state: PullRequestLookupState = "open"
@@ -110,6 +111,11 @@ def test_land_projection_table_covers_exactness_and_boundary_precedence() -> Non
             pull_request_state="missing",
             remote_target="old-commit-1",
         ),
+        _ProjectionCase(
+            "unknown landing ownership",
+            "Could not verify landing ownership",
+            landing_owners=None,
+        ),
     )
     for case in cases:
         revision = _status_revision(
@@ -118,7 +124,7 @@ def test_land_projection_table_covers_exactness_and_boundary_precedence() -> Non
             commit_id="commit-1",
             link_state=case.link_state,
             pr_head_commit_id=case.pr_head_commit_id,
-            pull_request=_pull_request(number=1),
+            pull_request=_pull_request(landing_owners=case.landing_owners, number=1),
             pull_request_state=case.pull_request_state,
             remote_target=case.remote_target,
             review_decision="approved",
@@ -444,6 +450,7 @@ def _pull_request(
     number: int,
     state: str = "open",
     draft: bool = False,
+    landing_owners: frozenset[Literal["auto_merge", "merge_queue"]] | None = frozenset(),
 ) -> GithubPullRequest:
     merged_at = "2026-03-22T12:00:00Z" if state == "merged" else None
     pr_state = "closed" if state == "merged" else state
@@ -452,6 +459,7 @@ def _pull_request(
         draft=draft,
         head=GithubBranchRef(ref=f"review/{number}"),
         html_url=f"https://github.test/octo-org/stacked-review/pull/{number}",
+        landing_owners=landing_owners,
         merged_at=merged_at,
         number=number,
         state=pr_state,

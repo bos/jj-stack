@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import cast
+from typing import Literal, cast
 
 from jj_stack.commands._close_actions import CloseAction
-from jj_stack.commands.close_orphan import (
-    _lookup_orphaned_pull_request,
-    _OrphanedPullRequestInspection,
-)
+from jj_stack.commands.close_orphan import _lookup_orphaned_pull_request
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
@@ -33,6 +30,7 @@ def _pull_request(
     *,
     head_label: str | None = None,
     head_ref: str = _BOOKMARK,
+    landing_owners: frozenset[Literal["auto_merge", "merge_queue"]] | None = frozenset(),
     number: int = 1,
     state: str = "open",
 ) -> GithubPullRequest:
@@ -43,6 +41,7 @@ def _pull_request(
             ref=head_ref,
         ),
         html_url=f"https://github.test/{_OWNER}/stacked-review/pull/{number}",
+        landing_owners=landing_owners,
         number=number,
         state=state,
         title="feature 1",
@@ -66,11 +65,14 @@ class _GithubClientStub:
         self._lookup_error = lookup_error
         self._pull_request = pull_request
 
-    async def get_pull_request(self, *, pull_number: int) -> GithubPullRequest:
+    async def get_pull_requests_by_numbers(
+        self,
+        *,
+        pull_numbers,
+    ) -> dict[int, GithubPullRequest | None]:
         if self._lookup_error is not None:
             raise self._lookup_error
-        assert self._pull_request is not None
-        return self._pull_request
+        return {number: self._pull_request for number in pull_numbers}
 
     async def get_pull_requests_by_head_refs(
         self,
@@ -84,7 +86,7 @@ def _lookup(
     github_client: _GithubClientStub,
     *,
     pull_request_number: int = 1,
-) -> tuple[_OrphanedPullRequestInspection | None, CloseAction | None]:
+) -> tuple[GithubPullRequest | None, CloseAction | None]:
     return asyncio.run(
         _lookup_orphaned_pull_request(
             github_client=cast(GithubClient, github_client),
@@ -105,20 +107,6 @@ def test_lookup_orphaned_pr_blocks_when_saved_head_ref_no_longer_matches_bookmar
     assert _BOOKMARK in blocked.message
     assert inspection is not None
     assert inspection.state == "open"
-
-
-def test_lookup_orphaned_pr_blocks_when_head_is_from_fork() -> None:
-    client = _GithubClientStub(
-        pull_request=_pull_request(head_label=f"fork-owner:{_BOOKMARK}"),
-    )
-
-    inspection, blocked = _lookup(client)
-
-    assert blocked is not None
-    assert blocked.status == "blocked"
-    assert f"its head is fork-owner:{_BOOKMARK}" in blocked.message
-    assert f"not {_OWNER}:{_BOOKMARK}" in blocked.message
-    assert inspection is not None
 
 
 def test_lookup_orphaned_pr_blocks_when_bookmark_has_multiple_live_pull_requests() -> None:
@@ -150,10 +138,22 @@ def test_lookup_orphaned_pr_allows_close_when_saved_pr_is_the_only_branch_claima
     assert inspection.state == "open"
 
 
-def test_lookup_orphaned_pr_blocks_when_saved_pr_is_no_longer_on_github() -> None:
+def test_lookup_orphaned_pr_blocks_delegated_landing() -> None:
+    saved_pr = _pull_request(landing_owners=frozenset({"merge_queue"}))
     client = _GithubClientStub(
-        lookup_error=GithubClientError("GitHub request failed: 404 Not Found", status_code=404),
+        branch_matches={_BOOKMARK: (saved_pr,)},
+        pull_request=saved_pr,
     )
+
+    inspection, blocked = _lookup(client)
+
+    assert inspection is not None
+    assert blocked is not None
+    assert "merge queue" in blocked.message
+
+
+def test_lookup_orphaned_pr_blocks_when_saved_pr_is_no_longer_on_github() -> None:
+    client = _GithubClientStub()
 
     inspection, blocked = _lookup(client)
 

@@ -14,6 +14,7 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.review.bookmarks import bookmark_cleanup_allowed, classify_local_bookmark_forget
+from jj_stack.review.landing_authority import delegated_landing_mutation_error
 from jj_stack.ui import Message
 
 from .landed_evidence import (
@@ -59,18 +60,15 @@ async def finalize_landed_reviews(
 ) -> tuple[LandedReviewResult, ...]:
     """Finalize only the supplied exact-snapshot candidates."""
 
-    return tuple([
-            await _finalize_landed_review(
-                candidate=candidate,
-                finalizer=finalizer,
-                label=(labels or {}).get(candidate.change_id),
-            )
+    return tuple(
+        [
+            await _finalize_review(candidate, finalizer, (labels or {}).get(candidate.change_id))
             for candidate in candidates
-    ])
+        ]
+    )
 
 
-async def _finalize_landed_review(
-    *,
+async def _finalize_review(
     candidate: LandedReviewCandidate,
     finalizer: FinalizationContext,
     label: str | None,
@@ -78,7 +76,6 @@ async def _finalize_landed_review(
     pull_request, reason = await _observe_exact_candidate(candidate, finalizer)
     if reason is not None or pull_request is None:
         return LandedReviewResult(candidate=candidate, outcome="skipped", skip_reason=reason)
-    pull_request = pull_request.normalize_state()
     if pull_request.state != "open":
         return LandedReviewResult(candidate=candidate, outcome="already_terminal")
     if not finalizer.dry_run:
@@ -109,7 +106,7 @@ async def _finalize_open_review(
             reloaded, reason = await _observe_exact_candidate(candidate, finalizer)
             if reason is not None or reloaded is None:
                 return None, reason
-            pull_request = reloaded.normalize_state()
+            pull_request = reloaded
             if pull_request.state != "open":
                 return pull_request, None
             if pull_request.base.ref != finalizer.trunk_branch:
@@ -123,7 +120,6 @@ async def _finalize_open_review(
     reloaded, reason = await _observe_exact_candidate(candidate, finalizer)
     if reason is not None or reloaded is None:
         return None, reason
-    reloaded = reloaded.normalize_state()
     if reloaded.state == "open":
         return None, t"GitHub still reports PR #{reloaded.number} open after closing it"
     if close_conflict and reloaded.state != "merged":
@@ -141,6 +137,7 @@ async def _observe_exact_candidate(
     pull_request = observation.reviews[candidate.change_id].pull_request
     if pull_request is None:
         return None, t"GitHub no longer reports PR #{candidate.review_identity.pr_number}"
+    pull_request = pull_request.normalize_state()
     ancestry = classify_commit_ancestries(
         commit_ids=(candidate.submitted_baseline.commit_id,),
         context=finalizer.command,
@@ -155,11 +152,13 @@ async def _observe_exact_candidate(
     if evidence.state != "landed":
         return None, evidence.reason or "the submitted commit is not confirmed on trunk"
     review = observation.reviews[candidate.change_id]
-    if pull_request.normalize_state().state == "open" and (
+    if pull_request.state == "open" and (
         len(review.head_pull_requests) != 1
         or review.head_pull_requests[0].number != pull_request.number
     ):
         return None, "the review branch no longer identifies exactly the saved pull request"
+    if error := delegated_landing_mutation_error((pull_request,)):
+        return None, error
     return pull_request, None
 
 

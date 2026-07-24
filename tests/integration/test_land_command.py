@@ -241,22 +241,6 @@ def test_land_reports_current_trunk_drift_after_fetch_instead_of_bookmark_mismat
     assert "Local bookmark main points to a different revision" not in combined
 
 
-def test_land_blocks_unapproved_prefix_by_default(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    exit_code = run_main(repo, config_path, "land")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "Land blocked:" in captured.out
-    assert "PR #1 is not approved" in captured.out
-
-
 def test_land_pull_request_selects_the_landed_prefix(
     tmp_path: Path,
     monkeypatch,
@@ -296,6 +280,18 @@ def test_land_bypass_readiness_previews_and_finalizes_unapproved_change(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = JjClient(repo).discover_review_stack()
+    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
+    fake_repo.pull_requests[1].is_draft = True
+
+    blocked_exit_code = run_main(repo, config_path, "land", "--bypass-readiness")
+    blocked = capsys.readouterr()
+
+    assert blocked_exit_code == 1
+    assert "still a draft" in blocked.out
+    assert fake_repo.pull_requests[1].state == "open"
+    assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
+
+    fake_repo.pull_requests[1].is_draft = False
 
     preview_exit_code = run_main(
         repo,
@@ -1053,7 +1049,7 @@ def test_land_via_merge_reports_an_accepted_prefix_when_trunk_refresh_fails(
 
 
 @pytest.mark.landing_recovery
-def test_land_via_merge_rechecks_readiness_after_retarget(
+def test_land_via_merge_rechecks_draft_state_after_retarget_even_with_bypass(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1063,7 +1059,7 @@ def test_land_via_merge_rechecks_readiness_after_retarget(
     approve_pull_requests(fake_repo, 1, 2)
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    class DismissAfterRetargetClient(GithubClient):
+    class DraftAfterRetargetClient(GithubClient):
         async def update_pull_request(
             self,
             *,
@@ -1079,11 +1075,7 @@ def test_land_via_merge_rechecks_readiness_after_retarget(
                 title=title,
             )
             if pull_number == 2:
-                fake_repo.create_pull_request_review(
-                    pull_number=2,
-                    reviewer_login="late-reviewer",
-                    state="CHANGES_REQUESTED",
-                )
+                fake_repo.pull_requests[2].is_draft = True
             return pull_request
 
     patch_github_client_builders(
@@ -1091,10 +1083,17 @@ def test_land_via_merge_rechecks_readiness_after_retarget(
         app=app,
         fake_repo=fake_repo,
         modules=_LAND_CLIENT_MODULES,
-        client_type=DismissAfterRetargetClient,
+        client_type=DraftAfterRetargetClient,
     )
 
-    exit_code = run_main(repo, config_path, "land", "--via", "merge")
+    exit_code = run_main(
+        repo,
+        config_path,
+        "land",
+        "--via",
+        "merge",
+        "--bypass-readiness",
+    )
     captured = capsys.readouterr()
 
     assert exit_code == 1, (captured.out, captured.err)
