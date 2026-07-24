@@ -103,7 +103,7 @@ async def observe_reviews(
     remote_targets: dict[str, str] = {}
     if context is not None and remote is not None and trunk_branch is not None:
         remote_targets = context.jj_client.list_remote_branches(
-            remote=remote.push_url,
+            remote=remote.name,
             patterns=tuple(f"refs/heads/{ref}" for ref in (trunk_branch, *head_refs)),
         )
     local_revisions = (

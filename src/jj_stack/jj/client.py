@@ -136,6 +136,7 @@ class JjClient:
         self._repo_root = repo_root
         self._cli_args = cli_args
         self._config_strings: dict[str, str | None] = {}
+        self._git_root: Path | None = None
 
     @property
     def repo_root(self) -> Path:
@@ -932,7 +933,7 @@ class JjClient:
         if not patterns:
             return {}
         stdout = self._run_git(
-            ("ls-remote", "--refs", self._git_remote_target(remote), *patterns)
+            ("ls-remote", "--refs", self._git_remote_target(remote, push=False), *patterns)
         )
         branches: dict[str, str] = {}
         for line in stdout.splitlines():
@@ -966,7 +967,7 @@ class JjClient:
             (
                 "push",
                 f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}",
-                self._git_remote_target(remote),
+                self._git_remote_target(remote, push=True),
                 f"{desired_target}:refs/heads/{bookmark}",
             )
         )
@@ -988,7 +989,7 @@ class JjClient:
         command = ["push"]
         for bookmark, expected_remote_target in ordered_deletions:
             command.append(f"--force-with-lease=refs/heads/{bookmark}:{expected_remote_target}")
-        command.append(self._git_remote_target(remote))
+        command.append(self._git_remote_target(remote, push=True))
         for bookmark, _expected_remote_target in ordered_deletions:
             command.append(f":refs/heads/{bookmark}")
         self._run_git(command)
@@ -1054,18 +1055,28 @@ class JjClient:
 
     def _run_git(self, args: Sequence[str]) -> str:
         return self._run_command(
-            ["git", *args],
+            ["git", "--git-dir", str(self._backing_git_root()), *args],
             missing_tool_message=t"{ui.cmd('git')} is not installed or is not on PATH.",
             detect_stale_workspace=False,
         )
 
-    def _git_remote_target(self, remote: str) -> str:
-        """Return the push target for a jj remote name or explicit target."""
+    def _backing_git_root(self) -> Path:
+        """Resolve the exact Git object store used by this jj repository."""
+
+        if self._git_root is None:
+            rendered = self._run_jj(("git", "root"), ignore_working_copy=True).strip()
+            if not rendered:
+                raise JjCommandError(f"{ui.cmd('jj git root')} returned an empty path.")
+            self._git_root = Path(rendered)
+        return self._git_root
+
+    def _git_remote_target(self, remote: str, *, push: bool) -> str:
+        """Return the fetch or push target for a jj remote name."""
 
         for configured_remote in self.list_git_remotes():
             if configured_remote.name == remote:
-                return configured_remote.push_url
-        return remote
+                return configured_remote.push_url if push else configured_remote.fetch_url
+        raise JjCommandError(t"Git remote {ui.bookmark(remote)} is not configured.")
 
     def _run_command(
         self,

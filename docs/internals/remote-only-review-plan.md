@@ -115,20 +115,6 @@ The completed series must satisfy all of these:
 - **Validated series:** every code commit passes focused checks, `./check.py`,
   `uv run tools/check_complexity.py`, and independent review.
 
-## 2. Address the backing Git store directly
-
-Create a narrow foundation commit that makes existing direct Git operations correct in colocated
-and non-colocated repositories:
-
-- resolve the backing repository with `jj git root`;
-- run existing remote-list, update, and delete operations against that Git directory and the
-  resolved fetch or push URL, never a named remote;
-- cover both repository layouts at the process boundary;
-- do not add an unused review-update API or a second push path.
-
-Acceptance: current direct Git behavior passes in both layouts, focused checks pass, no complexity
-budget grows, `./check.py` passes, and review records cumulative line-count deltas.
-
 ## 3. Replace persistent bookmarks with remote-only transport
 
 Create one coherent replacement commit:

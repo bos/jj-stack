@@ -863,7 +863,7 @@ def test_query_present_commit_ancestor_membership_distinguishes_absent_commits(
     assert len(seen_commands) == 2, "a failed batch must not fan out into per-commit queries"
 
 
-def test_list_remote_branches_resolves_jj_remote_name_to_push_url(
+def test_list_remote_branches_resolves_jj_remote_name_to_fetch_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
@@ -882,11 +882,17 @@ def test_list_remote_branches_resolves_jj_remote_name_to_push_url(
                 ),
                 stderr="",
             )
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(
+                command, 0, stdout="/repo/.git\n", stderr=""
+            )
         if invocation == (
             "git",
+            "--git-dir",
+            "/repo/.git",
             "ls-remote",
             "--refs",
-            "git@github.test:octo-org/repo.git",
+            "https://github.test/octo-org/repo.git",
             "refs/heads/review/feat",
         ):
             return subprocess.CompletedProcess(
@@ -905,17 +911,39 @@ def test_list_remote_branches_resolves_jj_remote_name_to_push_url(
     assert result == {"review/feat": "abc123"}
     assert seen_commands == [
         ("jj", "--ignore-working-copy", "git", "remote", "list"),
+        ("jj", "--ignore-working-copy", "git", "root"),
         (
             "git",
+            "--git-dir",
+            "/repo/.git",
             "ls-remote",
             "--refs",
-            "git@github.test:octo-org/repo.git",
+            "https://github.test/octo-org/repo.git",
             "refs/heads/review/feat",
         ),
     ]
 
 
-def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
+def test_list_remote_branches_rejects_an_unconfigured_remote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_commands: list[tuple[str, ...]] = []
+
+    def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        seen_commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", runner)
+    with pytest.raises(JjCommandError, match="missing.*not configured"):
+        JjClient(Path("/repo")).list_remote_branches(
+            remote="missing",
+            patterns=("refs/heads/review/feat",),
+        )
+
+    assert seen_commands == [("jj", "--ignore-working-copy", "git", "remote", "list")]
+
+
+def test_direct_remote_mutations_use_push_url_and_cache_backing_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
@@ -934,13 +962,28 @@ def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
                 ),
                 stderr="",
             )
+        if invocation == ("jj", "--ignore-working-copy", "git", "root"):
+            return subprocess.CompletedProcess(
+                command, 0, stdout="/repo/.git\n", stderr=""
+            )
         if invocation in {
             (
                 "git",
+                "--git-dir",
+                "/repo/.git",
                 "push",
                 "--force-with-lease=refs/heads/review/feat:old",
                 "git@github.test:octo-org/repo.git",
                 "new:refs/heads/review/feat",
+            ),
+            (
+                "git",
+                "--git-dir",
+                "/repo/.git",
+                "push",
+                "--force-with-lease=refs/heads/review/feat:new",
+                "git@github.test:octo-org/repo.git",
+                ":refs/heads/review/feat",
             ),
             ("jj", "git", "fetch", "--remote", "origin"),
             ("jj", "bookmark", "track", "review/feat", "--remote", "origin"),
@@ -949,17 +992,26 @@ def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
         raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
-    JjClient(Path("/repo")).update_untracked_remote_bookmark(
+    client = JjClient(Path("/repo"))
+    client.update_untracked_remote_bookmark(
         remote="origin",
         bookmark="review/feat",
         desired_target="new",
         expected_remote_target="old",
     )
+    client.delete_remote_bookmarks(
+        remote="origin",
+        deletions=(("review/feat", "new"),),
+        fetch=False,
+    )
 
     assert seen_commands == [
         ("jj", "--ignore-working-copy", "git", "remote", "list"),
+        ("jj", "--ignore-working-copy", "git", "root"),
         (
             "git",
+            "--git-dir",
+            "/repo/.git",
             "push",
             "--force-with-lease=refs/heads/review/feat:old",
             "git@github.test:octo-org/repo.git",
@@ -967,6 +1019,16 @@ def test_untracked_remote_update_uses_url_for_git_and_name_for_jj(
         ),
         ("jj", "git", "fetch", "--remote", "origin"),
         ("jj", "bookmark", "track", "review/feat", "--remote", "origin"),
+        ("jj", "--ignore-working-copy", "git", "remote", "list"),
+        (
+            "git",
+            "--git-dir",
+            "/repo/.git",
+            "push",
+            "--force-with-lease=refs/heads/review/feat:new",
+            "git@github.test:octo-org/repo.git",
+            ":refs/heads/review/feat",
+        ),
     ]
 
 

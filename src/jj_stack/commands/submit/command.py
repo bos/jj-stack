@@ -547,7 +547,7 @@ async def run_submit_async(
             if pending.prepared.revision.change_id in prepared_inputs.restarted_change_ids
         )
         restart_remote_targets = client.list_remote_branches(
-            remote=remote.push_url,
+            remote=remote.name,
             patterns=tuple(f"refs/heads/{bookmark}" for bookmark in restart_bookmarks),
         )
         _validate_restart_recovery_candidates(

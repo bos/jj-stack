@@ -172,6 +172,12 @@ There is no separate production Git adapter. `JjClient` uses direct Git subproce
 exact remote-ref leases and remote inspection that `jj` does not expose. Test support owns the
 backing-repository and fake-server Git operations.
 
+`JjClient` resolves and caches `jj --ignore-working-copy git root`, then supplies that exact
+object store through `git --git-dir` for every direct Git command. Remote inspection uses the
+configured fetch URL; leased mutation uses the configured push URL. No raw Git command receives
+a configured remote name, and the same boundary works for colocated and non-colocated
+repositories.
+
 Normal `submit` pushes every changed review bookmark in one `jj git push` invocation. The
 auto-close predictor relies on GitHub seeing one atomic ref update rather than a series of
 intermediate branch states. The one-bookmark untracked-remote fallback uses direct
