@@ -199,11 +199,6 @@ classifier over local revision state, saved tracking, remote refs, and already-l
 does not load state, choose a stack, or authorize mutation. Commands apply their own policy to the
 result and keep exact identity, baseline, PR, and bookmark values for concrete mutations.
 
-Repository discovery also owns the capability-independent one-review-path rule. It derives maximal
-live paths from the current DAG, including non-empty working copies in every workspace, and checks
-active plus prospective review identity. Native planners consume that result rather than accepting
-a caller-supplied topology model.
-
 This is where most correctness lives.
 
 ### GitHub client

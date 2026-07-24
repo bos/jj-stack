@@ -122,14 +122,6 @@ If an ancestor on the chain has other reviewable children, those are separate PR
 and out of scope for the current command unless the command explicitly asks about more
 than one stack.
 
-One reviewed change cannot belong to two of those paths. An active `ReviewIdentity`, or a change
-the current operation would attach to a PR, may appear in at most one maximal live root-to-head
-local review path. Non-empty working copies in every workspace count as live path heads.
-Ownership is derived from the current DAG and never persisted. Commands that create or adopt
-review identity validate the prospective result; selected commands that rewrite reviewed history
-or mutate PRs validate the connected component. Read-only inspection and explicit repair remain
-available, and an unrelated invalid component does not block a selected operation elsewhere.
-
 `jj` can model all those shapes; GitHub's stacked-PR UX gets much harder once the unit
 is no longer a simple parent-child chain.
 

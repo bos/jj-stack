@@ -48,7 +48,6 @@ from jj_stack.review.change_status import (
     classify_review_status_revision,
     submitted_state_disagreement,
 )
-from jj_stack.review.discovery import validate_review_stack_ownership
 from jj_stack.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -213,7 +212,6 @@ def prepare_status(
     fetch_only_when_tracked: bool = False,
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
-    validate_review_ownership: bool = False,
 ) -> PreparedStatus:
     """Resolve local status inputs before any GitHub network inspection."""
 
@@ -233,13 +231,6 @@ def prepare_status(
     )
     if fetched_remote_state:
         state = state_store.load()
-    if validate_review_ownership:
-        validate_review_stack_ownership(
-            jj_client=jj_client,
-            selected_revisions=stack.revisions,
-            state=state,
-        )
-
     prepared = prepare_stack_for_status(
         context=context,
         remote=github_target.remote,

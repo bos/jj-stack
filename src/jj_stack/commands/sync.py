@@ -84,7 +84,6 @@ def run_stack_convergence(
             fetch_remote_state=fetch_remote_state,
             re_resolve_after_remote_refresh=True,
             revset=revset,
-            validate_review_ownership=True,
         )
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error

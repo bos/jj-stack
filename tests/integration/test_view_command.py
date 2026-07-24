@@ -263,7 +263,6 @@ def test_view_warns_after_middle_change_is_split_into_sibling_stack(
     normalized_err = " ".join(captured.err.split())
 
     assert exit_code == 0
-    assert "Reviewed changes belong to more than one local stack" not in captured.err
     assert change_c[:8] in captured.err
     assert "changed since its last submit" in captured.err
     assert f"jj-stack view {change_c[:8]}" in normalized_err

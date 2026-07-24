@@ -639,7 +639,7 @@ def test_submit_invalid_revset_reports_clean_error_without_mutation(
     assert fake_repo.pull_requests == {}
 
 
-def test_submit_rejects_a_shared_prospective_working_copy(
+def test_submit_allows_a_shared_change_on_an_unselected_local_path(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -649,18 +649,20 @@ def test_submit_rejects_a_shared_prospective_working_copy(
     commit_file(repo, "shared review", "shared.txt")
     shared = JjClient(repo).discover_review_stack().head
     commit_file(repo, "committed path", "committed.txt")
+    committed_path = JjClient(repo).discover_review_stack().head
     run_command(["jj", "new", shared.change_id], repo)
     write_file(repo / "working-copy.txt", "working copy\n")
-    run_command(["jj", "status"], repo)
+    run_command(["jj", "describe", "-m", "selected path"], repo)
+    selected = JjClient(repo).resolve_revision("@")
 
     exit_code = run_main(repo, config_path, "submit", "@")
     captured = capsys.readouterr()
+    state = ReviewStateStore.for_repo(repo).load()
 
-    assert exit_code == 1
-    assert "Reviewed changes belong to more than one local stack" in captured.err
-    assert shared.change_id[:8] in captured.err
-    assert fake_repo.pull_requests == {}
-    assert ReviewStateStore.for_repo(repo).load().review_identities == {}
+    assert exit_code == 0, captured.err
+    assert set(state.review_identities) == {shared.change_id, selected.change_id}
+    assert committed_path.change_id not in state.review_identities
+    assert len(fake_repo.pull_requests) == 2
 
 
 def test_submit_blocks_unresolved_conflicted_rebase_without_mutation(

@@ -151,7 +151,6 @@ def _prepare_merge(
         fetch_remote_state=True,
         re_resolve_after_remote_refresh=True,
         revset=revset,
-        validate_review_ownership=True,
     )
     prepared = prepared_status.prepared
     for revision in prepared.stack.revisions:

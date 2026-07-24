@@ -3,8 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
-
 import jj_stack.ui as ui
 from jj_stack.commands.list_ import (
     OrphanRow,
@@ -12,7 +10,6 @@ from jj_stack.commands.list_ import (
     _prepare_repo_inspection_context,
 )
 from jj_stack.config import RepoConfig
-from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubTarget
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
@@ -20,7 +17,6 @@ from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.discovery import (
     discover_connected_tracked_stacks,
     discover_tracked_stacks,
-    validate_review_stack_ownership,
 )
 
 
@@ -121,97 +117,6 @@ def test_discover_stacks_extends_only_tracked_heads_for_fully_tracked_linear_sta
     assert queried_descendants == [(root.commit_id, middle.commit_id, head.commit_id)]
     assert queried_base_parents == [("main",)]
     assert queried_trunk_ancestors == [("main",)]
-
-
-def test_review_stack_ownership_counts_active_identity_on_maximal_paths() -> None:
-    trunk = _revision("m" * 32, "main", parent="root", subject="main")
-    shared = _revision("a" * 32, "commit-a", parent="main", subject="shared")
-    first = _revision("b" * 32, "commit-b", parent="commit-a", subject="first")
-    second = _revision("c" * 32, "commit-c", parent="commit-a", subject="second")
-    jj_client = cast(
-        Any,
-        SimpleNamespace(
-            query_descendant_revisions=lambda _commit_ids: (shared, first, second),
-            query_revisions_by_commit_ids=lambda _commit_ids: (trunk,),
-            query_trunk_ancestor_commit_ids=lambda commit_ids: set(commit_ids),
-            resolve_revision=lambda _revset: trunk,
-        ),
-    )
-    identity = _identity()
-
-    with pytest.raises(CliError, match="more than one local stack") as caught:
-        validate_review_stack_ownership(
-            jj_client=jj_client,
-            selected_revisions=(shared, first),
-            state=ReviewState(review_identities={shared.change_id: identity}),
-        )
-    assert "jj log" in str(caught.value)
-    assert "jj rebase" in str(caught.value)
-
-    validate_review_stack_ownership(
-        jj_client=jj_client,
-        selected_revisions=(shared, first),
-        state=ReviewState(
-            review_identities={
-                shared.change_id: identity.model_copy(update={"link_state": "unlinked"})
-            }
-        ),
-    )
-
-
-def test_review_stack_ownership_accepts_a_selected_prefix_of_one_maximal_path() -> None:
-    trunk = _revision("m" * 32, "main", parent="root", subject="main")
-    root = _revision("a" * 32, "commit-a", parent="main", subject="root")
-    middle = _revision("b" * 32, "commit-b", parent="commit-a", subject="middle")
-    head = _revision("c" * 32, "commit-c", parent="commit-b", subject="head")
-    jj_client = cast(
-        Any,
-        SimpleNamespace(
-            query_descendant_revisions=lambda _commit_ids: (root, middle, head),
-            query_revisions_by_commit_ids=lambda _commit_ids: (trunk,),
-            query_trunk_ancestor_commit_ids=lambda commit_ids: set(commit_ids),
-            resolve_revision=lambda _revset: trunk,
-        ),
-    )
-
-    validate_review_stack_ownership(
-        jj_client=jj_client,
-        selected_revisions=(root, middle),
-        state=ReviewState(review_identities={root.change_id: _identity()}),
-        prospective_change_ids=frozenset((middle.change_id,)),
-    )
-
-
-def test_review_stack_ownership_ignores_an_unrelated_invalid_component() -> None:
-    trunk = _revision("m" * 32, "main", parent="root", subject="main")
-    selected = _revision("a" * 32, "selected", parent="main", subject="selected")
-    selected_head = _revision("b" * 32, "selected-head", parent="selected", subject="head")
-    unrelated = _revision("c" * 32, "unrelated", parent="main", subject="unrelated")
-    queried_descendants: list[tuple[str, ...]] = []
-    jj_client = cast(
-        Any,
-        SimpleNamespace(
-            query_descendant_revisions=lambda commit_ids: (
-                queried_descendants.append(tuple(commit_ids)) or (selected, selected_head)
-            ),
-            query_revisions_by_commit_ids=lambda _commit_ids: (trunk,),
-            query_trunk_ancestor_commit_ids=lambda commit_ids: set(commit_ids),
-            resolve_revision=lambda _revset: trunk,
-        ),
-    )
-
-    validate_review_stack_ownership(
-        jj_client=jj_client,
-        selected_revisions=(selected, selected_head),
-        state=ReviewState(
-            review_identities={
-                selected.change_id: _identity(),
-                unrelated.change_id: _identity(pr_number=2),
-            }
-        ),
-    )
-
-    assert queried_descendants == [(selected.commit_id, selected_head.commit_id)]
 
 
 def test_connected_stacks_skip_descendant_walk_when_other_tracking_is_unrelated() -> None:

@@ -40,6 +40,10 @@ repo-wide inventory of the stacks you have in flight, use the `list` command (or
 jj-stack list
 ```
 
+Commands operate on the selected parent chain. If a reviewed ancestor also has another local
+child, that child is a separate path; you do not need to rebase it away before working with the
+selected stack.
+
 When you run `jj log` directly, you may also notice review bookmarks. These bookmark names are
 generated automatically. (By default they start with `review/...`, but you can configure a
 different prefix for your repo.) These bookmarks get turned into git branches that `jj-stack`
