@@ -40,14 +40,12 @@ def print_merge_result(result: MergeResult) -> None:
                     message_labels=body_style,
                 )
             )
-    if result.applied and _any_applied_pull_request(result):
+    if result.final_trunk_commit_id is not None:
+        console.output(
+            t"GitHub reported final trunk commit {ui.commit_id(result.final_trunk_commit_id)}."
+        )
+    if result.applied and result.merged_change_ids:
         console.output(
             t"GitHub accepted one or more merges. Run "
             t"{ui.cmd(f'sync {result.selected_revset}')} to update the local stack."
         )
-
-
-def _any_applied_pull_request(result: MergeResult) -> bool:
-    return any(
-        action.kind == "pull request" and action.status == "applied" for action in result.actions
-    )

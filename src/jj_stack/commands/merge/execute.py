@@ -28,46 +28,18 @@ async def execute_merge_plan(
     merge_method: str,
     plan: MergePlan,
     execution: MergeExecutionInputs,
-    remote_name: str,
-    selected_revset: str,
-    trunk_branch: str,
-    trunk_commit_id: str,
-    trunk_subject: str,
 ) -> MergeResult:
     """Merge the planned bottom prefix through GitHub's ordinary PR API."""
 
-    def merge_result(
-        *,
-        actions: tuple[MergeAction, ...],
-        applied: bool,
-        blocked: bool,
-        merged_change_ids: tuple[str, ...] = (),
-    ) -> MergeResult:
-        return MergeResult(
-            actions=actions,
-            applied=applied,
-            blocked=blocked,
-            merged_change_ids=merged_change_ids,
-            remote_name=remote_name,
-            selected_revset=selected_revset,
-            trunk_branch=trunk_branch,
-            trunk_subject=trunk_subject,
-        )
-
     if plan.blocked:
-        return merge_result(
-            actions=plan.planned_actions(),
-            applied=False,
-            blocked=True,
-        )
+        return execution.result(actions=plan.planned_actions())
 
     execution.context.state_store.require_writable()
-    await execution.native_stacks.require_unstacked()
 
     actions: list[MergeAction] = []
     merged_change_ids: list[str] = []
     blocked_action: MergeAction | None = None
-    current_trunk_commit_id = trunk_commit_id
+    current_trunk_commit_id = execution.trunk_commit_id
     for revision in plan.planned_revisions:
         console.output(
             t"Merging PR #{revision.identity.pr_number} for "
@@ -78,8 +50,8 @@ async def execute_merge_plan(
             github_client=github_client,
             revision=revision,
             merge_method=merge_method,
-            remote_name=remote_name,
-            trunk_branch=trunk_branch,
+            remote_name=execution.remote_name,
+            trunk_branch=execution.trunk_branch,
             trunk_commit_id=current_trunk_commit_id,
         )
         if blocked is not None or final_pull_request is None:
@@ -89,7 +61,7 @@ async def execute_merge_plan(
             MergeAction(
                 kind="pull request",
                 body=t"merge PR #{revision.identity.pr_number} into "
-                t"{ui.bookmark(trunk_branch)} on GitHub for "
+                t"{ui.bookmark(execution.trunk_branch)} on GitHub for "
                 t"{revision.subject} {ui.change_id(revision.change_id)}",
                 status="applied",
             )
@@ -97,8 +69,8 @@ async def execute_merge_plan(
         merged_change_ids.append(revision.change_id)
         try:
             execution.context.jj_client.fetch_remote(
-                remote=remote_name,
-                branches=(trunk_branch,),
+                remote=execution.remote_name,
+                branches=(execution.trunk_branch,),
             )
             current_trunk_commit_id = execution.context.jj_client.resolve_revision(
                 "trunk()"
@@ -107,7 +79,7 @@ async def execute_merge_plan(
             blocked_action = MergeAction(
                 kind="boundary",
                 body=t"after accepted {ui.change_id(revision.change_id)}: could not "
-                t"refresh trunk: {error}; run {ui.cmd(f'sync {selected_revset}')}",
+                t"refresh trunk: {error}; run {ui.cmd(f'sync {execution.selected_revset}')}",
                 status="blocked",
             )
             break
@@ -117,9 +89,7 @@ async def execute_merge_plan(
     blocked = blocked_action is not None or len(merged_change_ids) != len(plan.planned_revisions)
     if not blocked and plan.boundary_action is not None:
         actions.append(plan.boundary_action)
-    return merge_result(
+    return execution.result(
         actions=tuple(actions),
-        applied=bool(merged_change_ids),
-        blocked=blocked,
         merged_change_ids=tuple(merged_change_ids),
     )

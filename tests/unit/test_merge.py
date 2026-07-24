@@ -118,10 +118,11 @@ def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
         blocked=False,
         boundary_action=None,
         planned_revisions=revisions,
+        reviewed_revisions=revisions,
         trunk_branch="main",
     )
 
-    with pytest.raises(CliError, match="rebase merge cannot merge more than one PR"):
+    with pytest.raises(CliError, match="rebase merge cannot merge more than one ordinary PR"):
         validate_merge_plan_method(merge_method="rebase", plan=plan)
 
 
@@ -153,12 +154,15 @@ def test_merge_authority_rejects_repository_drift() -> None:
         reviews={},
     )
 
-    assert merge_authority_error(
-        expected_bases={},
-        expected_repository=expected_repository,
-        expected_trunk_branch="main",
-        expected_trunk_commit_id="trunk-commit",
-        observation=observation,
-        remote_name="origin",
-        revisions=(),
-    ) == "the configured Git remote no longer names the planned GitHub repository"
+    assert (
+        merge_authority_error(
+            expected_bases={},
+            expected_repository=expected_repository,
+            expected_trunk_branch="main",
+            expected_trunk_commit_id="trunk-commit",
+            observation=observation,
+            remote_name="origin",
+            revisions=(),
+        )
+        == "the configured Git remote no longer names the planned GitHub repository"
+    )

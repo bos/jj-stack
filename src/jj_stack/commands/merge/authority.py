@@ -18,6 +18,7 @@ def merge_authority_error(
     observation: RepositoryObservation,
     remote_name: str,
     revisions: tuple[MergeRevision, ...],
+    inactive_allowed: frozenset[str] = frozenset(),
 ) -> str | None:
     """Explain why fresh facts do not authorize one immediately following mutation."""
 
@@ -49,6 +50,7 @@ def merge_authority_error(
             expected_repository=expected_repository,
             observed=observation.reviews[revision.change_id],
             planned=revision,
+            inactive_allowed=revision.change_id in inactive_allowed,
         )
         if error is not None:
             return error
@@ -61,6 +63,7 @@ def _review_authority_error(
     expected_repository: GithubRepoAddress,
     observed: ReviewObservation,
     planned: MergeRevision,
+    inactive_allowed: bool,
 ) -> str | None:
     identity = observed.identity
     local = observed.local_revision
@@ -94,10 +97,10 @@ def _review_authority_error(
         or pull_request.head.sha != planned.commit_id
     ):
         return f"the pull request or its head commit for {label} changed"
-    if pull_request.state != "open" or (
+    if (pull_request.state != "open" and not inactive_allowed) or (
         expected_bases and pull_request.base.ref not in expected_bases
     ):
         return f"pull request #{pull_request.number} state or base branch changed"
-    if pull_request.is_draft:
+    if pull_request.is_draft and not inactive_allowed:
         return f"pull request #{pull_request.number} is now a draft"
     return None

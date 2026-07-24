@@ -20,11 +20,13 @@ class GithubStackSelection:
     pull_numbers: tuple[int, ...]
     state_store: ReviewStateStore
 
-    async def overlapping(self, *, persist: bool = True) -> tuple[GithubStack, ...]:
-        """Return complete native resources overlapping this selection."""
+    async def observe(
+        self,
+        *,
+        persist: bool = True,
+    ) -> tuple[bool, tuple[GithubStack, ...]]:
+        """Resolve support and return current complete native resources."""
 
-        if not self.pull_numbers:
-            return ()
         try:
             support = await resolve_github_stack_support(
                 github_client=self.github_client,
@@ -32,7 +34,7 @@ class GithubStackSelection:
                 persist=persist,
             )
             if not support.supported:
-                return ()
+                return False, ()
             stacks = (
                 support.observed_stacks
                 if support.observed_stacks is not None
@@ -40,6 +42,14 @@ class GithubStackSelection:
             )
         except GithubClientError as error:
             raise CliError("Could not inspect native GitHub stack membership.") from error
+        return True, stacks
+
+    async def overlapping(self, *, persist: bool = True) -> tuple[GithubStack, ...]:
+        """Return complete native resources overlapping this selection."""
+
+        if not self.pull_numbers:
+            return ()
+        _supported, stacks = await self.observe(persist=persist)
         selected = set(self.pull_numbers)
         return tuple(
             stack for stack in stacks if not selected.isdisjoint(stack.pull_request_numbers)
@@ -92,15 +102,10 @@ class GithubStackSelection:
             for pull_number in stack.historical_pull_request_numbers
         }
         selected_active = tuple(
-            pull_number
-            for pull_number in selected
-            if pull_number not in historical_pull_numbers
+            pull_number for pull_number in selected if pull_number not in historical_pull_numbers
         )
         stack = active_stacks[0]
-        if (
-            len(active_stacks) != 1
-            or stack.active_pull_request_numbers != selected_active
-        ):
+        if len(active_stacks) != 1 or stack.active_pull_request_numbers != selected_active:
             raise CliError(
                 "The selected pull requests do not exactly match one native GitHub stack's "
                 "active suffix.",
@@ -118,9 +123,7 @@ class GithubStackSelection:
                 *current.historical_pull_request_numbers,
             }
             current_selected_active = tuple(
-                pull_number
-                for pull_number in selected
-                if pull_number not in current_historical
+                pull_number for pull_number in selected if pull_number not in current_historical
             )
             if current.active_pull_request_numbers != current_selected_active:
                 raise CliError(

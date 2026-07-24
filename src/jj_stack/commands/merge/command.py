@@ -1,20 +1,8 @@
-"""Ask GitHub to merge the reviewed changes at the bottom of a stack.
+"""Ask GitHub to merge a contiguous reviewed prefix from the bottom of a stack.
 
-`merge` selects the contiguous bottom prefix of open, non-draft pull requests. GitHub decides
-whether reviews, checks, conflicts, and repository rules allow each merge. The command processes
-ordinary pull requests bottom-up and stops after the first rejection.
-
-Every pull request must still match its saved tracking, and its live head, review branch,
-submitted commit, and local commit must identify the same exact snapshot. Use `submit` after any
-rewrite.
-
-Use `--dry-run` to fetch and validate current state without changing GitHub. Use `--pull-request`
-to select a target by pull request number or URL. The merge method comes from `--merge-method`, or
-from the repository settings when exactly one method is enabled.
-
-GitHub moves trunk. `merge` does not rewrite local history, refresh surviving review branches, or
-remove tracking. After GitHub accepts a merge, run the selected `sync` command printed in the
-result.
+Native stacks use GitHub's asynchronous stack request; ordinary pull requests merge bottom-up.
+Every candidate must still match its saved tracking, submitted commit, review branch, and live
+head. GitHub alone moves trunk, so a successful result directs the user to `sync` the selection.
 """
 
 from __future__ import annotations
@@ -32,21 +20,18 @@ from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import resolve_trunk_branch
 from jj_stack.jj.client import JjCliArgs
 from jj_stack.models.github import GithubRepository
-from jj_stack.review.change_status import classify_review_status_revision
+from jj_stack.review.discovery import discover_stacks_from_revisions
+from jj_stack.review.observation import RepositoryObservation, observe_review_mutation
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_selected_revset,
 )
-from jj_stack.review.status import (
-    PreparedStatus,
-    StatusResult,
-    prepare_status,
-    stream_status,
-)
+from jj_stack.review.status import PreparedStatus, prepare_status
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from .execute import execute_merge_plan
-from .models import MergeExecutionInputs, MergePlan, MergeResult, PreparedMerge
+from .models import MergeExecutionInputs, MergeResult, PreparedMerge
+from .native import authorize_native_merge, build_native_merge_plan, execute_native_merge
 from .plan import build_merge_plan, validate_merge_plan_method
 from .render import print_merge_result
 
@@ -89,7 +74,7 @@ def _run_merge(
     pull_request: str | None,
     revset: str | None,
 ) -> int:
-    selected_revset = _resolve_merge_target(
+    selected_revset, target_change_id = _resolve_merge_target(
         context=context,
         pull_request=pull_request,
         revset=revset,
@@ -100,6 +85,7 @@ def _run_merge(
             dry_run=dry_run,
             merge_method=merge_method,
             revset=selected_revset,
+            target_change_id=target_change_id,
         )
     result = _stream_merge(prepared_merge=prepared_merge)
     print_merge_result(result)
@@ -111,7 +97,7 @@ def _resolve_merge_target(
     context: CommandContext,
     pull_request: str | None,
     revset: str | None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     if pull_request is not None:
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="merge",
@@ -120,12 +106,31 @@ def _resolve_merge_target(
             revset=revset,
         )
         console.note(t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}")
-        return resolved_revset
-    return resolve_selected_revset(
-        command_label="merge",
-        default_revset="@-",
-        require_explicit=False,
-        revset=revset,
+        selected = context.jj_client.resolve_revision(resolved_revset)
+        stacks = discover_stacks_from_revisions(
+            jj_client=context.jj_client,
+            revisions=(selected,),
+            include_working_copies=True,
+        )
+        matching = tuple(
+            stack
+            for stack in stacks
+            if resolved_revset in {revision.change_id for revision in stack.revisions}
+        )
+        if len(matching) != 1:
+            raise CliError(
+                t"PR #{pull_request_number} does not identify one maximal local review path.",
+                hint=t"Repair the local stack topology before retrying {ui.cmd('merge')}.",
+            )
+        return matching[0].head.change_id, resolved_revset
+    return (
+        resolve_selected_revset(
+            command_label="merge",
+            default_revset="@-",
+            require_explicit=False,
+            revset=revset,
+        ),
+        None,
     )
 
 
@@ -135,6 +140,7 @@ def _prepare_merge(
     dry_run: bool,
     merge_method: str | None,
     revset: str | None,
+    target_change_id: str | None,
 ) -> PreparedMerge:
     prepared_status = prepare_status(
         context=context,
@@ -164,38 +170,20 @@ def _prepare_merge(
         dry_run=dry_run,
         merge_method=merge_method,
         prepared_status=prepared_status,
+        target_change_id=target_change_id,
     )
 
 
 def _stream_merge(*, prepared_merge: PreparedMerge) -> MergeResult:
-    prepared_status = prepared_merge.prepared_status
-    progress_total = prepared_status.github_inspection_count()
-    with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
-        status_result = stream_status(
-            inspect_stack_comments=False,
-            on_revision=lambda _revision, _github_available: progress.advance(),
-            prepared_status=prepared_status,
-        )
-    return asyncio.run(
-        _stream_merge_async(
-            prepared_merge=prepared_merge,
-            status_result=status_result,
-        )
-    )
+    return asyncio.run(_stream_merge_async(prepared_merge=prepared_merge))
 
 
 async def _stream_merge_async(
     *,
     prepared_merge: PreparedMerge,
-    status_result: StatusResult,
 ) -> MergeResult:
     prepared_status = prepared_merge.prepared_status
     prepared = prepared_status.prepared
-    if status_result.github_error is not None:
-        raise CliError(
-            t"Could not inspect GitHub pull request state for {ui.cmd('merge')}: "
-            t"{status_result.github_error}"
-        )
     github_repository = prepared_status.github_repository
     remote = prepared.remote
     if github_repository is None or remote is None:
@@ -219,69 +207,68 @@ async def _stream_merge_async(
             merge_method=prepared_merge.merge_method,
             repository_state=github_repository_state,
         )
-
-        if prepared.stack.revisions and (
-            prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
-        ):
-            raise _stack_not_on_trunk_error(
-                prepared_status=prepared_status,
-                status_result=status_result,
+        try:
+            observation = await observe_review_mutation(
+                change_ids=tuple(revision.change_id for revision in prepared.stack.revisions),
+                context=prepared_merge.context,
+                github_client=github_client,
+                remote_name=remote.name,
+                trunk_branch=trunk_branch,
             )
+        except GithubClientError as error:
+            raise CliError("Could not inspect GitHub state for merge.") from error
 
         plan = build_merge_plan(
-            prepared_status=prepared_status,
-            status_result=status_result,
+            observation=observation,
+            remote_name=remote.name,
+            repository=github_repository,
+            revisions=prepared.stack.revisions,
+            state=prepared.state,
+            target_change_id=prepared_merge.target_change_id,
             trunk_branch=trunk_branch,
+            trunk_commit_id=prepared.stack.trunk.commit_id,
         )
-        validate_merge_plan_method(merge_method=resolved_merge_method, plan=plan)
         selection = GithubStackSelection(
             github_client,
-            tuple(revision.identity.pr_number for revision in plan.planned_revisions),
+            tuple(revision.identity.pr_number for revision in plan.reviewed_revisions),
             prepared_merge.context.state_store,
         )
-        if prepared_merge.dry_run:
-            if not plan.blocked:
-                await selection.require_unstacked(persist=False)
-            return _dry_run_result(
-                plan=plan,
-                remote_name=remote.name,
-                selected_revset=status_result.selected_revset,
-                trunk_branch=trunk_branch,
-                trunk_subject=prepared.stack.trunk.subject,
-            )
-        return await execute_merge_plan(
-            execution=MergeExecutionInputs(
-                context=prepared_merge.context,
-                native_stacks=selection,
-            ),
-            github_client=github_client,
-            merge_method=resolved_merge_method,
-            plan=plan,
+        supported, stacks = await selection.observe(persist=not prepared_merge.dry_run)
+        native = build_native_merge_plan(plan, stacks, supported, prepared_merge.target_change_id)
+        if (
+            prepared.stack.revisions
+            and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
+            and (native is None or not native.terminal_retry)
+        ):
+            raise _stack_not_on_trunk_error(observation, prepared_status)
+        if native is None:
+            validate_merge_plan_method(merge_method=resolved_merge_method, plan=plan)
+        execution = MergeExecutionInputs(
+            context=prepared_merge.context,
             remote_name=remote.name,
-            selected_revset=status_result.selected_revset,
+            selected_revset=prepared_status.selected_revset,
             trunk_branch=trunk_branch,
             trunk_commit_id=prepared.stack.trunk.commit_id,
             trunk_subject=prepared.stack.trunk.subject,
         )
-
-
-def _dry_run_result(
-    *,
-    plan: MergePlan,
-    remote_name: str,
-    selected_revset: str,
-    trunk_branch: str,
-    trunk_subject: str,
-) -> MergeResult:
-    return MergeResult(
-        actions=plan.planned_actions(),
-        applied=False,
-        blocked=plan.blocked,
-        remote_name=remote_name,
-        selected_revset=selected_revset,
-        trunk_branch=trunk_branch,
-        trunk_subject=trunk_subject,
-    )
+        if prepared_merge.dry_run:
+            if native is not None:
+                await authorize_native_merge(execution, github_client, native)
+                return execution.result(actions=(native.action(resolved_merge_method),))
+            return execution.result(actions=plan.planned_actions())
+        if native is not None:
+            return await execute_native_merge(
+                execution=execution,
+                github=github_client,
+                merge_method=resolved_merge_method,
+                native=native,
+            )
+        return await execute_merge_plan(
+            execution=execution,
+            github_client=github_client,
+            merge_method=resolved_merge_method,
+            plan=plan,
+        )
 
 
 def _resolve_merge_method(
@@ -317,34 +304,24 @@ def _resolve_merge_method(
 
 
 def _stack_not_on_trunk_error(
-    *,
+    observation: RepositoryObservation,
     prepared_status: PreparedStatus,
-    status_result: StatusResult,
 ) -> DriftError:
     message = t"Selected stack is not based on the current {ui.revset('trunk()')}."
-    if any(
-        classify_review_status_revision(revision).pr_lifecycle == "merged"
-        for revision in status_result.revisions
-    ):
-        return DriftError(
-            message,
-            condition="merged_ancestor_on_trunk",
-            hint=(
-                t"Some lower changes from this stack already landed. Preview "
-                t"{ui.cmd('jj-stack sync --dry-run')} "
-                t"{ui.revset(status_result.selected_revset)}, then run "
-                t"{ui.cmd('jj-stack sync')} {ui.revset(status_result.selected_revset)} "
-                t"before retrying merge."
-            ),
-        )
-
-    bottom_change_id = prepared_status.prepared.status_revisions[0].revision.change_id
-    rebase_command = f"jj rebase -s {short_change_id(bottom_change_id)} -d 'trunk()'"
-    return DriftError(
-        message,
-        condition="stack_not_on_trunk",
-        hint=(
-            t"No change in the selected stack has landed yet. Move the whole stack onto "
-            t"{ui.revset('trunk()')} with {ui.cmd(rebase_command)} before retrying."
-        ),
+    merged = any(
+        review.pull_request is not None
+        and review.pull_request.normalize_state().state == "merged"
+        for review in observation.reviews.values()
     )
+    if merged:
+        condition = "merged_ancestor_on_trunk"
+        hint = (
+            t"Run {ui.cmd('jj-stack sync')} {ui.revset(prepared_status.selected_revset)} "
+            t"before retrying merge."
+        )
+    else:
+        condition = "stack_not_on_trunk"
+        bottom = prepared_status.prepared.status_revisions[0].revision.change_id
+        rebase = f"jj rebase -s {short_change_id(bottom)} -d 'trunk()'"
+        hint = t"Run {ui.cmd(rebase)} before retrying merge."
+    return DriftError(message, condition=condition, hint=hint)

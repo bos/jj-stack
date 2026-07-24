@@ -8,8 +8,8 @@ remaining questions together so a long implementation does not depend on convers
 
 ## Progress
 
-Commits 1 through 15 are complete and their step descriptions have been pruned. Commit 16,
-native async merge, is next.
+Commits 1 through 16 are complete and their step descriptions have been pruned. Commit 17,
+permanent documentation and plan deletion, is next.
 
 The implementation list contains only unfinished slices. In the same change that completes a
 slice:
@@ -241,6 +241,8 @@ Add typed client models and operations for only the observed endpoints:
 - create a stack from ordered PR numbers
 - append ordered PR numbers to a stack
 - unstack a stack
+- submit one asynchronous native merge with an expected target head
+- poll an accepted asynchronous native merge to a terminal result
 
 The client reports HTTP failures without deciding whether jj-stack should use native stacks or
 comments. Capability selection and reconciliation policy remain in the command layer.
@@ -679,60 +681,11 @@ existing mutation damage a native resource.
 Change one of these only when an implemented native behavior demonstrates a concrete correctness
 or recovery requirement. Record that decision here first.
 
-## Test strategy
-
-Read and apply `testing-philosophy.md` before changing tests.
-
-### Fake GitHub
-
-The existing fake covers completed membership and historical-member work. For the remaining
-slices, add only the async merge submit and poll endpoints. Model candidate-prefix selection,
-target SHA, survivor rewrite, atomic failure, diagnostic `409`, and terminal retry recovery. Do
-not implement a general GitHub stack emulator.
-
-### Focused coverage
-
-Only the unfinished slices need new or changed coverage:
-
-- native async merge targets the highest contiguous open, non-draft candidate by default and can
-  target an explicit lower candidate
-- one native request merges the complete selected prefix; it is never decomposed into per-PR
-  requests
-- native async merge uses the target-head guard, does not adopt a `409` UUID, and recovers a
-  completed retry through terminal observation
-- terminal failure changes no repository, PR, branch, or membership state
-- terminal success reports the merged prefix and exits `0` without rewriting local history or
-  requiring survivor relink
-- legacy `merge` uses the ordinary PR merge API bottom-up and stops after the first rejection
-- a one-PR review in a native-capable repository uses the ordinary PR merge API
-- a missing resource for a multi-PR native review fails closed instead of selecting the legacy API
-- a draft or closed PR blocks the candidate prefix, while approvals, checks, conflicts, and
-  repository rules are left to GitHub
-
-Use one integration test per meaningful cross-system risk and one interruption/retry case. Search
-for and replace overlapping landing/recovery coverage rather than increasing its bounded case
-count.
-
 ## Implementation commits
 
 Each commit is one bounded change with its tests and any temporary-plan update needed to describe
 the resulting behavior. A guarded unsupported operation is acceptable between commits; an
 operation that mutates partially and then discovers native incompatibility is not.
-
-### Commit 16: native async merge
-
-- add the guarded async submit and poll client operations
-- select the contiguous open, non-draft bottom prefix without local approval or mergeability
-  policy
-- route active native resources to one async request for the selected prefix
-- fail closed on a missing resource for a multi-PR review in a native-capable repository
-- recover a lost submit response through a later terminal retry, never by adopting a `409` UUID
-- report terminal native success without local repair and direct the user to selected `sync`
-- add only the merge tests justified by the two concrete GitHub contracts
-
-Exit condition: `merge` always asks GitHub to merge, native resources use one atomic prefix
-request, reviews without a native resource retain the ordinary GitHub PR merge path, and no
-trunk-push transport remains.
 
 ### Commit 17: permanent documentation and plan deletion
 

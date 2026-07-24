@@ -1,7 +1,7 @@
 """GitHub API response models."""
 
 from collections.abc import Mapping
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -72,23 +72,17 @@ class GithubStack(BaseModel):
     @property
     def historical_pull_requests(self) -> tuple[GithubStackPullRequest, ...]:
         return tuple(
-            pull_request
-            for pull_request in self.pull_requests
-            if pull_request.is_historical
+            pull_request for pull_request in self.pull_requests if pull_request.is_historical
         )
 
     @property
     def historical_pull_request_numbers(self) -> tuple[int, ...]:
-        return tuple(
-            pull_request.number for pull_request in self.historical_pull_requests
-        )
+        return tuple(pull_request.number for pull_request in self.historical_pull_requests)
 
     @property
     def active_pull_requests(self) -> tuple[GithubStackPullRequest, ...]:
         return tuple(
-            pull_request
-            for pull_request in self.pull_requests
-            if not pull_request.is_historical
+            pull_request for pull_request in self.pull_requests if not pull_request.is_historical
         )
 
     @property
@@ -104,6 +98,34 @@ class GithubStack(BaseModel):
             elif active_seen:
                 raise ValueError("Merged native stack members must form a bottom prefix.")
         return self
+
+
+class GithubAsyncMergeDetails(BaseModel):
+    """Details returned by GitHub's native asynchronous merge endpoint."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    expected_head_sha: str | None = None
+    merge_method: str | None = None
+    message: str | None = None
+    sha: str | None = None
+    uuid: str | None = None
+
+
+class GithubAsyncMerge(BaseModel):
+    """Pending or terminal native asynchronous merge state."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    details: GithubAsyncMergeDetails
+    status: Literal["failed", "merged", "pending"]
+
+
+class GithubAsyncMergeSubmission(BaseModel):
+    """Typed submit response, including a decoded conflict diagnostic."""
+
+    conflict: bool
+    result: GithubAsyncMerge
 
 
 class GithubPullRequest(BaseModel):

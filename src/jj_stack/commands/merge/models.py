@@ -7,7 +7,6 @@ from typing import Literal
 
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.status import PreparedStatus
 from jj_stack.ui import Message
@@ -33,6 +32,7 @@ class MergeResult:
     selected_revset: str
     trunk_branch: str
     trunk_subject: str
+    final_trunk_commit_id: str | None = None
     merged_change_ids: tuple[str, ...] = ()
 
 
@@ -44,6 +44,7 @@ class PreparedMerge:
     context: CommandContext
     merge_method: str | None
     prepared_status: PreparedStatus
+    target_change_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +52,30 @@ class MergeExecutionInputs:
     """Mutation dependencies independent of normal stack/status preparation."""
 
     context: CommandContext
-    native_stacks: GithubStackSelection
+    remote_name: str
+    selected_revset: str
+    trunk_branch: str
+    trunk_commit_id: str
+    trunk_subject: str
+
+    def result(
+        self,
+        *,
+        actions: tuple[MergeAction, ...],
+        final_trunk_commit_id: str | None = None,
+        merged_change_ids: tuple[str, ...] = (),
+    ) -> MergeResult:
+        return MergeResult(
+            actions=actions,
+            applied=bool(merged_change_ids),
+            blocked=any(action.status == "blocked" for action in actions),
+            final_trunk_commit_id=final_trunk_commit_id,
+            merged_change_ids=merged_change_ids,
+            remote_name=self.remote_name,
+            selected_revset=self.selected_revset,
+            trunk_branch=self.trunk_branch,
+            trunk_subject=self.trunk_subject,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +96,7 @@ class MergePlan:
     blocked: bool
     boundary_action: MergeAction | None
     planned_revisions: tuple[MergeRevision, ...]
+    reviewed_revisions: tuple[MergeRevision, ...]
     trunk_branch: str
 
     def planned_actions(self) -> tuple[MergeAction, ...]:
