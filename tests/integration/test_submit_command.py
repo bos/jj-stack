@@ -179,6 +179,7 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
+    fake_repo.native_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -195,12 +196,6 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
     run_command(["jj", "rebase", "-r", old_bottom_change_id, "-A", old_top_change_id], repo)
     reordered_stack = JjClient(repo).discover_review_stack()
 
-    assert [revision.subject for revision in reordered_stack.revisions] == [
-        "feature 2",
-        "feature 3",
-        "feature 4",
-        "feature 1",
-    ]
     assert run_main(repo, config_path, "submit", reordered_stack.head.change_id) == 0
     capsys.readouterr()
 
@@ -209,21 +204,18 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
         revision.subject: refreshed_state.review_identities[revision.change_id].head_ref
         for revision in reordered_stack.revisions
     }
-    pull_requests_by_title = {
-        pull_request.title: pull_request for pull_request in fake_repo.pull_requests.values()
-    }
-
     assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
-    assert all(
-        pull_request.merged_at is None for pull_request in fake_repo.pull_requests.values()
+    assert (len(fake_repo.pull_requests), fake_repo.native_stacks) == (
+        4,
+        {2: (2, 3, 4, 1)},
     )
-    assert pull_requests_by_title["feature 2"].base_ref == "main"
-    assert pull_requests_by_title["feature 3"].base_ref == bookmarks_by_subject["feature 2"]
-    assert pull_requests_by_title["feature 4"].base_ref == bookmarks_by_subject["feature 3"]
-    assert pull_requests_by_title["feature 1"].base_ref == bookmarks_by_subject["feature 4"]
+    assert fake_repo.pull_requests[2].base_ref == "main"
+    assert fake_repo.pull_requests[3].base_ref == bookmarks_by_subject["feature 2"]
+    assert fake_repo.pull_requests[4].base_ref == bookmarks_by_subject["feature 3"]
+    assert fake_repo.pull_requests[1].base_ref == bookmarks_by_subject["feature 4"]
 
 
-def test_submit_native_membership_failure_and_restart_stop_before_mutation(
+def test_submit_native_preflight_failures_recover_without_persisted_phase(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -236,40 +228,57 @@ def test_submit_native_membership_failure_and_restart_stop_before_mutation(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
     app = create_app(FakeGithubState.single_repository(fake_repo))
+    failure = "membership"
 
-    class FailedMembershipClient(GithubClient):
+    class PreflightFailureClient(GithubClient):
         async def list_stacks(self):
-            raise GithubClientError("Simulated membership failure", status_code=500)
+            if failure == "membership":
+                raise GithubClientError("Simulated membership failure", status_code=500)
+            return await super().list_stacks()
+
+        async def unstack(self, *, stack_number):
+            result = await super().unstack(stack_number=stack_number)
+            if failure == "unstack":
+                raise GithubClientError("Simulated lost unstack response", status_code=500)
+            return result
 
     patch_github_client_builders(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
         modules=("jj_stack.commands.submit.command",),
-        client_type=FailedMembershipClient,
+        client_type=PreflightFailureClient,
     )
     state_before = ReviewStateStore.for_repo(repo).load()
     remote_before = remote_refs(fake_repo.git_dir)
 
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     assert "Could not inspect native GitHub stack membership" in capsys.readouterr().err
-    assert ReviewStateStore.for_repo(repo).load() == state_before
-    assert remote_refs(fake_repo.git_dir) == remote_before
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
-    )
+    failure = "unstack"
     head_change_id = JjClient(repo).discover_review_stack().head.change_id
-    assert run_main(repo, config_path, "submit", "--restart", head_change_id) == 1
-    captured = capsys.readouterr()
+    local_before = JjClient(repo).list_bookmark_states()
+    assert run_main(repo, config_path, "submit", "--dry-run", "--restart", head_change_id) == 0
+    assert fake_repo.native_stacks == {1: (1, 2)}
+    assert JjClient(repo).list_bookmark_states() == local_before
+    assert run_main(repo, config_path, "submit", "--restart", head_change_id) == EXIT_GITHUB
 
-    assert "require replacing native GitHub stack #1" in captured.err
     assert ReviewStateStore.for_repo(repo).load() == state_before
     assert remote_refs(fake_repo.git_dir) == remote_before
-    assert fake_repo.native_stacks == {1: (1, 2)}
+    assert JjClient(repo).list_bookmark_states() == local_before
+    assert fake_repo.native_stacks == {}
+
+    bottom_change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
+    failure = "none"
+    fake_repo.native_stacks = {2: (1,)}
+    assert run_main(repo, config_path, "submit", bottom_change_id) == 0
+    assert fake_repo.native_stacks == {}
+
+    assert run_main(repo, config_path, "submit", "--restart", head_change_id) == 0
+    restarted = ReviewStateStore.for_repo(repo).load()
+
+    assert {identity.pr_number for identity in restarted.review_identities.values()} == {3, 4}
+    assert fake_repo.native_stacks == {2: (3, 4)}
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
 
 
 def test_submit_opens_new_pr_when_middle_change_is_split_in_two(

@@ -44,6 +44,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._github_stack_support import resolve_github_stack_support
+from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
@@ -77,7 +78,7 @@ from .models import (
     SubmitResult,
     SubmittedRevision,
 )
-from .native import apply_native_stack_plan, plan_native_stack
+from .native import NativeStackPlan, apply_native_stack_plan, plan_native_stack
 from .pull_requests import (
     discover_pull_requests_by_bookmark,
     ensure_pull_request_links_are_consistent,
@@ -525,12 +526,14 @@ async def run_submit_async(
                 },
                 retiring_pull_numbers=retiring_pull_numbers,
             )
-            if native_plan.action == "replace":
-                assert (stack := native_plan.affected_stack) is not None
-                raise CliError(
-                    t"Selected changes require replacing native GitHub stack #{stack.number}.",
-                    hint=t"Run {ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
-                )
+            if native_plan.action == "replace" and not dry_run:
+                assert (native_stack := native_plan.affected_stack) is not None
+                await GithubStackSelection(
+                    github_client,
+                    native_stack.pull_request_numbers,
+                    state_store,
+                ).dissolve_exact(observed=(native_stack,))
+                native_plan = NativeStackPlan("create" if len(pending_syncs) > 1 else "none")
         sync_local_bookmarks(
             bookmark_states=bookmark_states,
             client=client,
