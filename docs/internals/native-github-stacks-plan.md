@@ -620,6 +620,11 @@ Selected `sync` accepts the historical prefix and the ordered active-suffix head
 the native operation; it does not demand tree equivalence, explicit `relink`, or a per-survivor
 repair command.
 
+Live testing confirmed that GitHub preserves jj's `change-id` header for both native and ordinary
+rebase merges, but not for squash merges. `sync` uses the fetched result: a matching change ID is
+the landed successor; otherwise it retires the old local change without relabeling the landed
+commit or storing an alias.
+
 ### Merge without a native resource
 
 Repositories without native stack support use GitHub's ordinary PR merge API. So does a one-PR
@@ -693,7 +698,8 @@ Only the unfinished slices need new or changed coverage:
 - native async merge uses the target-head guard, does not adopt a `409` UUID, and recovers a
   completed retry through terminal observation
 - terminal failure changes no repository, PR, branch, or membership state
-- merge-commit, squash, and rebase results feed existing landed evidence
+- rebase results preserve the submitted change ID, while squash results replace it; selected
+  `sync` converges either without relabeling the landed commit or storing an alias
 - terminal success reports the merged prefix and exits `0` without rewriting local history or
   requiring survivor relink
 - selected sync recognizes a historical prefix and accepts the resource's ordered survivor heads
