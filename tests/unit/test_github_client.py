@@ -170,7 +170,17 @@ def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None
             return httpxyz.Response(204, request=request)
         return httpxyz.Response(
             200,
-            json={"number": 3, "pull_requests": [{"number": 8}]},
+            json={
+                "number": 3,
+                "pull_requests": [
+                    {
+                        "head": {"ref": "review/eight", "sha": "head-eight"},
+                        "merged_at": None,
+                        "number": 8,
+                        "state": "open",
+                    }
+                ],
+            },
             request=request,
         )
 

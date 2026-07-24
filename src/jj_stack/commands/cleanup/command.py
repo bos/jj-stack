@@ -367,7 +367,7 @@ async def _guard_remote_cleanup_plans(
     stack_by_pull = {
         pull_number: stack.number
         for stack in stacks
-        for pull_number in stack.pull_request_numbers
+        for pull_number in stack.active_pull_request_numbers
         if pull_number in pull_numbers
     }
     blocked_change_ids: set[str] = set()

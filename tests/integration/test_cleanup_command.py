@@ -148,7 +148,8 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     assert change_id in state_store.load().review_identities
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
-    fake_repo.native_stacks = {}
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-07-23T12:00:00Z"
     apply_exit_code = run_main(repo, config_path, "cleanup")
     applied = capsys.readouterr()
     normalized_applied = " ".join(applied.out.split())
@@ -158,6 +159,7 @@ def test_cleanup_previews_and_applies_stale_tracking_and_remote_branch_removal(
     assert f"remote branch: delete {bookmark}@origin" in normalized_applied
     assert change_id not in state_store.load().review_identities
     assert f"refs/heads/{bookmark}" not in remote_refs(fake_repo.git_dir)
+    assert fake_repo.native_stacks == {7: (1,)}
 
 
 def test_cleanup_preserves_open_orphan_record_and_remote_branch(

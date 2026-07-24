@@ -103,6 +103,30 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     assert operations == ["unstack", "unstack", "close"]
 
 
+def test_unstack_dissolves_active_suffix_and_retains_historical_prefix(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-07-23T12:00:00Z"
+
+    exit_code = run_main(repo, config_path, "unstack", stack.head.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "dissolve GitHub stack #7" in captured.out
+    assert fake_repo.native_stacks == {7: (1,)}
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "closed"
+
+
 def test_unstack_local_forgets_tracking_without_closing_pull_request(
     tmp_path: Path,
     monkeypatch,

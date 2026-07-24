@@ -53,9 +53,15 @@ class GithubStackSelection:
         """Reject an ordinary mutation when the selection overlaps a native resource."""
 
         stacks = await self.overlapping(persist=persist)
-        if not stacks:
+        selected = set(self.pull_numbers)
+        active_stacks = tuple(
+            stack
+            for stack in stacks
+            if not selected.isdisjoint(stack.active_pull_request_numbers)
+        )
+        if not active_stacks:
             return
-        stack_number = stacks[0].number
+        stack_number = active_stacks[0].number
         raise CliError(
             t"GitHub stack #{stack_number} blocks this jj-stack operation.",
             hint=t"Run {ui.cmd(f'gh stack unstack {stack_number}')} and retry.",
@@ -72,23 +78,63 @@ class GithubStackSelection:
         if not stacks:
             return None
         selected = tuple(self.pull_numbers)
-        stack = stacks[0]
-        if len(stacks) != 1 or stack.pull_request_numbers != selected:
+        selected_set = set(selected)
+        active_stacks = tuple(
+            stack
+            for stack in stacks
+            if not selected_set.isdisjoint(stack.active_pull_request_numbers)
+        )
+        if not active_stacks:
+            return None
+        historical_pull_numbers = {
+            pull_number
+            for stack in stacks
+            for pull_number in stack.historical_pull_request_numbers
+        }
+        selected_active = tuple(
+            pull_number
+            for pull_number in selected
+            if pull_number not in historical_pull_numbers
+        )
+        stack = active_stacks[0]
+        if (
+            len(active_stacks) != 1
+            or stack.active_pull_request_numbers != selected_active
+        ):
             raise CliError(
-                "The selected pull requests do not exactly match one native GitHub stack.",
-                hint="Select the complete stack before retrying unstack.",
+                "The selected pull requests do not exactly match one native GitHub stack's "
+                "active suffix.",
+                hint="Select the complete active stack suffix before retrying unstack.",
             )
         try:
             current = await self.github_client.get_stack(stack_number=stack.number)
-            if current.pull_request_numbers != selected:
+            if current.pull_request_numbers != stack.pull_request_numbers:
                 raise CliError(
                     t"GitHub stack #{stack.number} changed while unstack was preparing.",
+                    hint="Inspect the current stack and retry.",
+                )
+            current_historical = {
+                *historical_pull_numbers,
+                *current.historical_pull_request_numbers,
+            }
+            current_selected_active = tuple(
+                pull_number
+                for pull_number in selected
+                if pull_number not in current_historical
+            )
+            if current.active_pull_request_numbers != current_selected_active:
+                raise CliError(
+                    t"GitHub stack #{stack.number}'s active suffix changed while unstack "
+                    t"was preparing.",
                     hint="Inspect the current stack and retry.",
                 )
             remaining = await self.github_client.unstack(stack_number=stack.number)
         except GithubClientError as error:
             raise CliError(t"Could not dissolve GitHub stack #{stack.number}.") from error
-        if remaining is not None:
+        if remaining is not None and (
+            remaining.number != stack.number
+            or remaining.pull_request_numbers != current.historical_pull_request_numbers
+        ):
             members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
             raise CliError(
                 t"GitHub stack #{stack.number} still contains {members}.",

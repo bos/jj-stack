@@ -38,7 +38,25 @@ def test_stack_support_caches_supported_repository_without_reprobing(
         requests += 1
         return httpxyz.Response(
             200,
-            json=[{"number": 3, "pull_requests": [{"number": 7}, {"number": 8}]}],
+            json=[
+                {
+                    "number": 3,
+                    "pull_requests": [
+                        {
+                            "head": {"ref": "review/seven", "sha": "head-seven"},
+                            "merged_at": None,
+                            "number": 7,
+                            "state": "open",
+                        },
+                        {
+                            "head": {"ref": "review/eight", "sha": "head-eight"},
+                            "merged_at": None,
+                            "number": 8,
+                            "state": "open",
+                        },
+                    ],
+                }
+            ],
             request=request,
         )
 

@@ -8,8 +8,8 @@ remaining questions together so a long implementation does not depend on convers
 
 ## Progress
 
-Commits 1 through 13 are complete and their step descriptions have been pruned. Commit 14,
-historical native resource members, is next.
+Commits 1 through 14 are complete and their step descriptions have been pruned. Commit 15,
+native merge synchronization, is next.
 
 The implementation list contains only unfinished slices. In the same change that completes a
 slice:
@@ -680,8 +680,8 @@ Read and apply `testing-philosophy.md` before changing tests.
 
 ### Fake GitHub
 
-The existing fake covers completed membership work. For the remaining slices, add only historical
-member state and the async merge submit and poll endpoints. Model candidate-prefix selection,
+The existing fake covers completed membership and historical-member work. For the remaining
+slices, add only the async merge submit and poll endpoints. Model candidate-prefix selection,
 target SHA, survivor rewrite, atomic failure, diagnostic `409`, and terminal retry recovery. Do
 not implement a general GitHub stack emulator.
 
@@ -689,8 +689,6 @@ not implement a general GitHub stack emulator.
 
 Only the unfinished slices need new or changed coverage:
 
-- merged native members form one historical prefix while submit plans against the active suffix
-- remote unstack and cleanup distinguish historical members from the active suffix
 - native async merge targets the highest contiguous open, non-draft candidate by default and can
   target an explicit lower candidate
 - one native request merges the complete selected prefix; it is never decomposed into per-PR
@@ -720,17 +718,6 @@ count.
 Each commit is one bounded change with its tests and any temporary-plan update needed to describe
 the resulting behavior. A guarded unsupported operation is acceptable between commits; an
 operation that mutates partially and then discovers native incompatibility is not.
-
-### Commit 14: historical native resource members
-
-- retain state, merged time, and head details from native stack responses
-- validate one historical merged prefix and plan submit against its active suffix
-- allow replacement unstack to retain exactly that historical prefix
-- compare stable resource identity and membership rather than rich response-model equality
-- update remote unstack and cleanup guards to distinguish active from historical members
-
-Exit condition: partial merge can leave GitHub's historical resource intact while ordinary
-submit, restructure, unstack, and cleanup operate on active reviews without collateral mutation.
 
 ### Commit 15: native merge synchronization
 

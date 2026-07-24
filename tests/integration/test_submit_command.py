@@ -170,6 +170,66 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
     assert all(_navigation_comments(fake_repo, number) == [] for number in range(3, 6))
 
 
+def test_submit_restructures_active_suffix_without_dissolving_historical_prefix(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+    run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
+    active_change_id = JjClient(repo).discover_review_stack().head.change_id
+    run_command(["jj", "rebase", "-s", active_change_id, "-d", "main"], repo)
+
+    exit_code = run_main(repo, config_path, "submit", active_change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert fake_repo.native_stacks == {7: (1,)}
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "open"
+    assert fake_repo.pull_requests[2].base_ref == "main"
+
+    commit_file(repo, "feature 3", "feature-3.txt")
+    assert run_main(repo, config_path, "submit") == 0
+    assert fake_repo.native_stacks == {1: (2, 3), 7: (1,)}
+
+
+def test_submit_appends_to_active_suffix_after_historical_prefix(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+    fake_repo.update_pull_request_base(
+        fake_repo.pull_requests[2],
+        base_ref="main",
+        reason="native_merge",
+    )
+    run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
+    active_change_id = JjClient(repo).discover_review_stack().head.change_id
+    run_command(["jj", "rebase", "-s", active_change_id, "-d", "main"], repo)
+    commit_file(repo, "feature 3", "feature-3.txt")
+
+    exit_code = run_main(repo, config_path, "submit")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert fake_repo.native_stacks == {7: (1, 2, 3)}
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].base_ref == "main"
+    assert fake_repo.pull_requests[3].base_ref == fake_repo.pull_requests[2].head_ref
+
+
 def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
     tmp_path: Path,
     monkeypatch,

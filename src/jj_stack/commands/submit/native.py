@@ -34,7 +34,9 @@ def plan_native_stack(
 
     selected = set(known_desired).union(retiring_pull_numbers)
     affected = tuple(
-        stack for stack in observed_stacks if not selected.isdisjoint(stack.pull_request_numbers)
+        stack
+        for stack in observed_stacks
+        if not selected.isdisjoint(stack.active_pull_request_numbers)
     )
 
     if not affected:
@@ -48,21 +50,26 @@ def plan_native_stack(
             hint=t"Run {commands}, then retry.",
         )
     stack = affected[0]
-    if not set(stack.pull_request_numbers).issubset(selected):
+    active_pull_numbers = stack.active_pull_request_numbers
+    if not set(active_pull_numbers).issubset(selected):
         raise CliError(
             t"GitHub stack #{stack.number} contains reviews outside the selected local stack.",
             hint=t"Run {ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
         )
+
+    if set(active_pull_numbers).intersection(pull_numbers_requiring_base_update):
+        return NativeStackPlan("replace", stack)
+
+    if active_pull_numbers == desired and (
+        len(desired) >= 2 or stack.historical_pull_requests
+    ):
+        return NativeStackPlan("none")
     if len(desired) < 2:
         return NativeStackPlan("replace", stack)
-
-    if set(stack.pull_request_numbers).intersection(pull_numbers_requiring_base_update):
-        return NativeStackPlan("replace", stack)
-
-    existing = stack.pull_request_numbers
-    if existing == desired:
-        return NativeStackPlan("none")
-    if len(existing) < len(desired) and existing == desired[: len(existing)]:
+    if (
+        len(active_pull_numbers) < len(desired)
+        and active_pull_numbers == desired[: len(active_pull_numbers)]
+    ):
         return NativeStackPlan("append", stack)
     return NativeStackPlan("replace", stack)
 
@@ -95,10 +102,18 @@ async def apply_native_stack_plan(
         else:
             updated = await github_client.append_to_stack(
                 stack_number=stack.number,
-                pull_numbers=pull_numbers[len(stack.pull_request_numbers) :],
+                pull_numbers=pull_numbers[len(stack.active_pull_request_numbers) :],
             )
             expected_number = stack.number
-        if (updated.number, updated.pull_request_numbers) != (expected_number, pull_numbers):
+        expected_members = (
+            pull_numbers
+            if stack is None
+            else (*stack.historical_pull_request_numbers, *pull_numbers)
+        )
+        if (updated.number, updated.pull_request_numbers) != (
+            expected_number,
+            expected_members,
+        ):
             raise _membership_error("GitHub returned unexpected native stack membership.")
     except GithubClientError as error:
         raise CliError(

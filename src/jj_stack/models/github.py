@@ -23,12 +23,38 @@ class GithubRepository(BaseModel):
     url: str
 
 
-class GithubStackPullRequest(BaseModel):
-    """Pull request identity embedded in a native stack response."""
+class GithubBranchRef(BaseModel):
+    """Subset of branch-ref fields embedded in pull request payloads."""
 
     model_config = ConfigDict(extra="ignore")
 
+    label: str | None = None
+    ref: str
+    sha: str | None = None
+
+
+class GithubStackPullRequestHead(BaseModel):
+    """Exact reviewed branch head embedded in a native stack response."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ref: str
+    sha: str
+
+
+class GithubStackPullRequest(BaseModel):
+    """Pull request state embedded in a native stack response."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    head: GithubStackPullRequestHead
+    merged_at: str | None
     number: int
+    state: str
+
+    @property
+    def is_historical(self) -> bool:
+        return self.merged_at is not None
 
 
 class GithubStack(BaseModel):
@@ -43,15 +69,41 @@ class GithubStack(BaseModel):
     def pull_request_numbers(self) -> tuple[int, ...]:
         return tuple(pull_request.number for pull_request in self.pull_requests)
 
+    @property
+    def historical_pull_requests(self) -> tuple[GithubStackPullRequest, ...]:
+        return tuple(
+            pull_request
+            for pull_request in self.pull_requests
+            if pull_request.is_historical
+        )
 
-class GithubBranchRef(BaseModel):
-    """Subset of branch-ref fields embedded in pull request payloads."""
+    @property
+    def historical_pull_request_numbers(self) -> tuple[int, ...]:
+        return tuple(
+            pull_request.number for pull_request in self.historical_pull_requests
+        )
 
-    model_config = ConfigDict(extra="ignore")
+    @property
+    def active_pull_requests(self) -> tuple[GithubStackPullRequest, ...]:
+        return tuple(
+            pull_request
+            for pull_request in self.pull_requests
+            if not pull_request.is_historical
+        )
 
-    label: str | None = None
-    ref: str
-    sha: str | None = None
+    @property
+    def active_pull_request_numbers(self) -> tuple[int, ...]:
+        return tuple(pull_request.number for pull_request in self.active_pull_requests)
+
+    @model_validator(mode="after")
+    def _validate_historical_prefix(self) -> Self:
+        active_seen = False
+        for pull_request in self.pull_requests:
+            if not pull_request.is_historical:
+                active_seen = True
+            elif active_seen:
+                raise ValueError("Merged native stack members must form a bottom prefix.")
+        return self
 
 
 class GithubPullRequest(BaseModel):
