@@ -59,6 +59,7 @@ class GithubClientError(SummarizedError):
         message = str(self).strip()
         for prefix in (
             "GitHub request failed: ",
+            "GitHub pull request base lookup failed: ",
             "GitHub pull request head lookup failed: ",
             "GitHub pull request batch lookup failed: ",
             "GitHub pull request review decision lookup failed: ",
@@ -98,7 +99,7 @@ class GithubClientError(SummarizedError):
 
 
 class _GraphqlPullRequestConnection(BaseModel):
-    nodes: tuple[GithubPullRequest, ...] | None = None
+    nodes: tuple[GithubPullRequest, ...]
 
 
 class _GraphqlReview(BaseModel):
@@ -317,31 +318,46 @@ class GithubClient:
         *,
         head_refs: Sequence[str],
     ) -> dict[str, tuple[GithubPullRequest, ...]]:
-        refs = sorted(set(head_refs))
+        return await self._get_pull_requests_by_refs(refs=head_refs, base=False)
+
+    async def get_open_pull_requests_by_base_refs(
+        self,
+        *,
+        base_refs: Sequence[str],
+    ) -> dict[str, tuple[GithubPullRequest, ...]]:
+        return await self._get_pull_requests_by_refs(refs=base_refs, base=True)
+
+    async def _get_pull_requests_by_refs(
+        self,
+        *,
+        base: bool,
+        refs: Sequence[str],
+    ) -> dict[str, tuple[GithubPullRequest, ...]]:
+        refs = sorted(set(refs))
         if not refs:
             return {}
 
+        kind = "base" if base else "head"
+        response_name = f"pull request {kind} lookup"
         results: dict[str, tuple[GithubPullRequest, ...]] = {}
         for chunk in _chunked(refs, size=_GRAPHQL_PULL_REQUEST_BATCH_SIZE):
-            aliases = {f"head_{index}": head_ref for index, head_ref in enumerate(chunk)}
-            query = _pull_requests_by_head_ref_query(aliases)
+            aliases = {f"{kind}_{index}": ref for index, ref in enumerate(chunk)}
+            query = _pull_requests_by_ref_query(aliases, base=base)
             payload = await self._graphql_query(
                 query,
                 variables=self._repository_variables,
-                response_name="pull request head lookup",
+                response_name=response_name,
             )
             repository = _graphql_repository_payload(
                 payload,
-                response_name="pull request head lookup",
+                response_name=response_name,
             )
-            for alias, head_ref in aliases.items():
-                connection = repository.get(alias)
-                expected_head_label = f"{self._repository.owner}:{head_ref}"
-                results[head_ref] = _pull_request_connection_from_graphql(
+            for alias, ref in aliases.items():
+                results[ref] = _pull_request_connection_from_graphql(
                     alias=alias,
-                    connection=connection,
-                    expected_head_label=expected_head_label,
-                    response_name="pull request head lookup",
+                    connection=repository.get(alias),
+                    expected_head_label=(None if base else f"{self._repository.owner}:{ref}"),
+                    response_name=response_name,
                 )
         return results
 
@@ -897,14 +913,18 @@ def _pull_requests_by_number_query(numbers: Sequence[int]) -> str:
     )
 
 
-def _pull_requests_by_head_ref_query(aliases: dict[str, str]) -> str:
+def _pull_requests_by_ref_query(aliases: dict[str, str], *, base: bool) -> str:
+    first = 100 if base else 2
+    operation_name = "OpenPullRequestsByBaseRef" if base else "PullRequestsByHeadRef"
+    ref_argument = "baseRefName" if base else "headRefName"
+    states = "[OPEN]" if base else "[OPEN, CLOSED, MERGED]"
     selections = "\n\n".join(
         _graphql_document(
             f"""
             {alias}: pullRequests(
-              first: 2,
-              states: [OPEN, CLOSED],
-              headRefName: {json.dumps(head_ref)}
+              first: {first},
+              states: {states},
+              {ref_argument}: {json.dumps(ref)}
             ) {{
               nodes {{
                 ...PullRequestFields
@@ -912,11 +932,11 @@ def _pull_requests_by_head_ref_query(aliases: dict[str, str]) -> str:
             }}
             """
         ).strip()
-        for alias, head_ref in aliases.items()
+        for alias, ref in aliases.items()
     )
     return _with_pull_request_fields_fragment(
         _repository_graphql_query(
-            operation_name="PullRequestsByHeadRef",
+            operation_name=operation_name,
             selections=selections,
         )
     )
@@ -1059,8 +1079,6 @@ def _pull_request_connection_from_graphql(
     expected_head_label: str | None = None,
     response_name: str,
 ) -> tuple[GithubPullRequest, ...]:
-    if connection is None:
-        return ()
     parsed = _validate_graphql_model(
         connection,
         model=_GraphqlPullRequestConnection,
@@ -1068,8 +1086,6 @@ def _pull_request_connection_from_graphql(
             f"GitHub {response_name} response had invalid connection payload for {alias}."
         ),
     )
-    if parsed.nodes is None:
-        return ()
     pull_requests: list[GithubPullRequest] = []
     for pull_request in parsed.nodes:
         if expected_head_label is not None and pull_request.head.label != expected_head_label:

@@ -14,26 +14,6 @@ def no_configured_color(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jj_stack.cli._load_configured_jj_color", lambda **kwargs: None)
 
 
-def test_main_reports_invalid_config_without_traceback(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    repo = _patch_fake_jj_workspace(
-        monkeypatch,
-        tmp_path,
-        jj_stack_config_stdout='jj-stack.bookmark_prefix = ""\n',
-    )
-
-    exit_code = main(["--repository", str(repo), "submit"])
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert captured.err.startswith("Error: ")
-    assert "Invalid jj-stack config" in captured.err
-    assert "Traceback" not in captured.err
-
-
 def test_main_reports_missing_repository_without_traceback(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

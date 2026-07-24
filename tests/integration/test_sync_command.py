@@ -410,14 +410,19 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
     raw_state = json.loads(state_path.read_text(encoding="utf-8"))
     raw_state["review_identities"]["incomplete-change"] = (
         initial_state.review_identities[first.change_id]
-        .model_copy(update={"head_ref": "review/incomplete-change", "pr_number": 99})
+        .model_copy(update={"head_ref": "review/incomplete-incomple", "pr_number": 99})
         .model_dump(mode="json")
     )
-    missing_change_ids = tuple(f"missing-change-{index:02d}" for index in range(64))
+    missing_change_ids = tuple(f"miss{index:04d}change" for index in range(64))
     for index, change_id in enumerate(missing_change_ids, start=100):
         raw_state["review_identities"][change_id] = (
             initial_state.review_identities[first.change_id]
-            .model_copy(update={"head_ref": f"review/{change_id}", "pr_number": index})
+            .model_copy(
+                update={
+                    "head_ref": f"review/missing-{change_id[:8]}",
+                    "pr_number": index,
+                }
+            )
             .model_dump(mode="json")
         )
         raw_state["submitted_baselines"][change_id] = (
@@ -425,10 +430,10 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
             .model_copy(update={"commit_id": f"{index:040x}"})
             .model_dump(mode="json")
         )
-    malformed_change_id = "malformed-baseline"
+    malformed_change_id = "malformedbaseline"
     raw_state["review_identities"][malformed_change_id] = (
         initial_state.review_identities[first.change_id]
-        .model_copy(update={"head_ref": "review/malformed-baseline", "pr_number": 164})
+        .model_copy(update={"head_ref": "review/malformed-malforme", "pr_number": 164})
         .model_dump(mode="json")
     )
     raw_state["submitted_baselines"][malformed_change_id] = (

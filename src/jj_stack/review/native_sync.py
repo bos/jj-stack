@@ -87,7 +87,6 @@ async def resolve_selected_native_observation(
         identity.pr_number
         for revision in selected
         if (identity := state.review_identities.get(revision.change_id)) is not None
-        and identity.is_tracked
     }
     affected = tuple(
         stack
@@ -100,12 +99,11 @@ async def resolve_selected_native_observation(
     change_ids = tuple(
         change_id
         for change_id, identity in state.review_identities.items()
-        if identity.is_tracked
-        and identity.repository_key == repository.repository_key
+        if identity.repository_key == repository.repository_key
         and identity.pr_number in resource_pull_numbers
         and change_id in state.submitted_baselines
     )
-    observation = await review_observation.observe_review_mutation(
+    observation = await review_observation.observe_reviews(
         change_ids=tuple(dict.fromkeys((*change_ids, *initial.reviews))),
         context=context,
         github_client=github,
@@ -286,10 +284,9 @@ def _validated_member_pull_request(
         or observed.identity != identity
         or candidate.change_id in observation.duplicate_claim_change_ids
         or pull_request is None
+        or not identity.matches_pull_request(pull_request)
         or pull_request.number != member.number
-        or pull_request.head.label != f"{identity.head_owner}:{identity.head_ref}"
         or pull_request.head.ref != member.head.ref
-        or member.head.ref != identity.head_ref
     ):
         raise CliError(
             t"Native member PR #{member.number} no longer matches its saved review identity."

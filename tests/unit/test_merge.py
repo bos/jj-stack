@@ -139,18 +139,20 @@ def test_merge_authority_rejects_repository_drift() -> None:
             repo="widgets",
         ),
         duplicate_claim_change_ids=frozenset(),
-        fetched_trunk=None,
+        fetched_trunk_commit_id=None,
         github_repository=_repository(
             allow_merge_commit=False,
             allow_rebase_merge=False,
             allow_squash_merge=True,
         ),
+        open_pull_requests_by_base=None,
         remote=GitRemote(
             name="origin",
             fetch_url="https://github.test/acme/widgets.git",
             push_url="https://github.test/acme/widgets.git",
         ),
         remote_trunk_target="trunk-commit",
+        repository=expected_repository,
         reviews={},
     )
 

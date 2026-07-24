@@ -36,7 +36,7 @@ def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
 
 
-def test_unstack_apply_closes_pull_request_and_retires_active_state(
+def test_unstack_apply_closes_pull_request_and_preserves_exact_tracking(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -106,7 +106,7 @@ def test_unstack_apply_closes_pull_request_and_retires_active_state(
     assert exit_code == 0
     assert "Applied close actions:" in captured.out
     assert fake_repo.pull_requests[1].state == "closed"
-    assert refreshed_state.review_identities[change_id].is_unlinked
+    assert refreshed_state == state_before
     assert issue_comments(fake_repo, 1) == []
     assert operations == ["unstack", "unstack", "close"]
 
@@ -133,6 +133,68 @@ def test_unstack_dissolves_active_suffix_and_retains_historical_prefix(
     assert fake_repo.native_stacks == {7: (1,)}
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "closed"
+
+
+def test_unstack_head_change_before_native_boundary_preserves_github_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    fake_repo.native_stacks = {7: (1,)}
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+    native_observations = 0
+    fresh_boundary_lookups = 0
+    native_mutations: list[int] = []
+
+    class HeadRaceClient(GithubClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.native_observed = False
+
+        async def list_stacks(self):
+            nonlocal native_observations
+            stacks = await super().list_stacks()
+            native_observations += 1
+            self.native_observed = True
+            return stacks
+
+        async def get_pull_requests_by_numbers(self, *, pull_numbers):
+            nonlocal fresh_boundary_lookups
+            if self.native_observed:
+                fresh_boundary_lookups += 1
+                fake_repo.pull_requests[1].head_ref = "review/moved-aaaaaaaa"
+                fake_repo.pull_requests[1].head_label = "octo-org:review/moved-aaaaaaaa"
+            return await super().get_pull_requests_by_numbers(pull_numbers=pull_numbers)
+
+        async def unstack(self, *, stack_number):
+            native_mutations.append(stack_number)
+            return await super().unstack(stack_number=stack_number)
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.unstack", "jj_stack.review.status"),
+        client_type=HeadRaceClient,
+    )
+
+    exit_code = run_main(repo, config_path, "unstack", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "live PR and head no longer uniquely match" in _combined_output(captured)
+    assert native_observations == 1
+    assert fresh_boundary_lookups == 1
+    assert native_mutations == []
+    assert fake_repo.native_stacks == {7: (1,)}
+    assert fake_repo.pull_requests[1].state == "open"
+    assert state_store.load() == initial_state
 
 
 def test_unstack_local_forgets_tracking_without_closing_pull_request(
@@ -243,8 +305,7 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     assert f"Using PR #{first_pr_number} -> {first_change_id}" in captured.out
     assert fake_repo.pull_requests[first_pr_number].state == "closed"
     assert fake_repo.pull_requests[second_pr_number].state == "open"
-    assert refreshed_state.review_identities[first_change_id].is_unlinked
-    assert not refreshed_state.review_identities[second_change_id].is_unlinked
+    assert refreshed_state == initial_state
 
 
 def test_unstack_cleanup_pull_request_without_saved_record_reports_open_pr_not_tracked(
@@ -421,18 +482,27 @@ def test_unstack_apply_reports_blocked_when_github_is_unavailable(
     assert ReviewStateStore.for_repo(repo).load() == initial_state
 
 
-def test_unstack_apply_cleanup_deletes_owned_bookmarks_and_comments(
+def test_unstack_apply_cleanup_deletes_review_bookmarks_comments_and_tracking(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
-    bookmark = ReviewStateStore.for_repo(repo).load().review_identities[change_id].head_ref
     state_store = ReviewStateStore.for_repo(repo)
+    state = state_store.load()
+    bookmarks = tuple(
+        state.review_identities[revision.change_id].head_ref for revision in stack.revisions
+    )
+    external = fake_repo.create_pull_request(
+        base_ref=bookmarks[0],
+        body="",
+        head_ref="manual/external-dependent",
+        title="external dependent",
+    )
     action_order: list[str] = []
     original_delete_remote_bookmarks = JjClient.delete_remote_bookmarks
     original_forget_bookmarks = JjClient.forget_bookmarks
@@ -444,7 +514,7 @@ def test_unstack_apply_cleanup_deletes_owned_bookmarks_and_comments(
         deletions,
         fetch=True,
     ) -> None:
-        action_order.append("remote")
+        action_order.append(f"remote:{tuple(deletions)[0][0]}")
         return original_delete_remote_bookmarks(
             self,
             remote=remote,
@@ -453,7 +523,7 @@ def test_unstack_apply_cleanup_deletes_owned_bookmarks_and_comments(
         )
 
     def tracking_forget_bookmarks(self, bookmarks) -> None:
-        action_order.append("local")
+        action_order.append(f"local:{tuple(bookmarks)[0]}")
         return original_forget_bookmarks(self, bookmarks)
 
     monkeypatch.setattr(
@@ -467,6 +537,22 @@ def test_unstack_apply_cleanup_deletes_owned_bookmarks_and_comments(
         tracking_forget_bookmarks,
     )
 
+    dry_run_exit_code = run_main(
+        repo,
+        config_path,
+        "unstack",
+        "--cleanup",
+        "--dry-run",
+        change_id,
+    )
+    dry_run = capsys.readouterr()
+
+    assert dry_run_exit_code == 1
+    assert f"open PR #{external.number} still" in dry_run.out
+    assert all(fake_repo.pull_requests[number].state == "open" for number in (1, 2))
+    assert state_store.load() == state
+    del fake_repo.pull_requests[external.number]
+
     exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
@@ -474,13 +560,23 @@ def test_unstack_apply_cleanup_deletes_owned_bookmarks_and_comments(
 
     assert exit_code == 0
     assert "Applied close actions:" in captured.out
-    assert "stop review tracking for feature 1" in normalized_output
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert refreshed_state.review_identities[change_id].is_unlinked
-    assert issue_comments(fake_repo, 1) == []
-    assert bookmark not in remote_refs(fake_repo.git_dir)
-    assert JjClient(repo).get_bookmark_state(bookmark).local_target is None
-    assert action_order == ["remote", "local"]
+    assert normalized_output.count("stop review tracking for feature") == 2
+    assert all(
+        pull_request.state == "closed" for pull_request in fake_repo.pull_requests.values()
+    )
+    assert refreshed_state.review_identities == {}
+    assert refreshed_state.submitted_baselines == {}
+    assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
+    assert all(bookmark not in remote_refs(fake_repo.git_dir) for bookmark in bookmarks)
+    assert all(
+        JjClient(repo).get_bookmark_state(bookmark).local_target is None for bookmark in bookmarks
+    )
+    assert action_order == [
+        f"remote:{bookmarks[1]}",
+        f"local:{bookmarks[1]}",
+        f"remote:{bookmarks[0]}",
+        f"local:{bookmarks[0]}",
+    ]
 
 
 def test_unstack_cleanup_pull_request_retires_orphaned_pr(
@@ -492,16 +588,16 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
+    orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    bottom_bookmark = state.review_identities[bottom_change_id].head_ref
-    bottom_pr_number = state.review_identities[bottom_change_id].pr_number
+    orphaned_bookmark = state.review_identities[orphaned_change_id].head_ref
+    orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
 
-    run_command(["jj", "abandon", bottom_change_id], repo)
+    run_command(["jj", "abandon", orphaned_change_id], repo)
 
     async def dissolve_exact(_selection, **_kwargs):
-        return github_stack(bottom_pr_number)
+        return github_stack(orphaned_pr_number)
 
     monkeypatch.setattr(GithubStackSelection, "dissolve_exact", dissolve_exact)
 
@@ -511,7 +607,7 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
         "unstack",
         "--cleanup",
         "--pull-request",
-        str(bottom_pr_number),
+        str(orphaned_pr_number),
     )
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
@@ -520,15 +616,15 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
     assert exit_code == 0
     assert "Applied close actions:" in output
     assert "dissolve GitHub stack #7" in output
-    assert f"close PR #{bottom_pr_number}" in output
+    assert f"close PR #{orphaned_pr_number}" in output
     assert "prune orphan record" in output
-    assert fake_repo.pull_requests[bottom_pr_number].state == "closed"
-    assert issue_comments(fake_repo, bottom_pr_number) == []
-    assert bottom_change_id not in refreshed_state.review_identities
-    assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
+    assert fake_repo.pull_requests[orphaned_pr_number].state == "closed"
+    assert issue_comments(fake_repo, orphaned_pr_number) == []
+    assert orphaned_change_id not in refreshed_state.review_identities
+    assert orphaned_bookmark not in remote_refs(fake_repo.git_dir)
 
 
-def test_unstack_cleanup_orphans_dry_run_then_retires_every_orphan(
+def test_unstack_cleanup_orphans_retries_base_after_dependent_closes(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -557,9 +653,9 @@ def test_unstack_cleanup_orphans_dry_run_then_retires_every_orphan(
     )
     dry_run = capsys.readouterr()
 
-    assert dry_run_exit_code == 0
-    assert dry_run.out.count("Planned close actions:") == 2
-    assert "close PR #1" in dry_run.out
+    assert dry_run_exit_code == 1
+    assert "open PR #2 still" in dry_run.out
+    assert "close PR #1" not in dry_run.out
     assert "close PR #2" in dry_run.out
     assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert state_store.load() == initial_state
@@ -574,14 +670,11 @@ def test_unstack_cleanup_orphans_dry_run_then_retires_every_orphan(
     )
     captured = capsys.readouterr()
 
-    assert exit_code == 0
-    assert captured.out.count("Applied close actions:") == 2
-    assert all(
-        pull_request.state == "closed" for pull_request in fake_repo.pull_requests.values()
-    )
-    assert state_store.load().review_identities == {}
-    remaining_remote_refs = remote_refs(fake_repo.git_dir)
-    assert all(f"refs/heads/{bookmark}" not in remaining_remote_refs for bookmark in bookmarks)
+    assert exit_code == 1
+    assert "open PR #2 still" in captured.out
+    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.pull_requests[2].state == "closed"
+    assert set(state_store.load().review_identities) == {change_ids[0]}
 
     rerun_exit_code = run_main(
         repo,
@@ -594,7 +687,13 @@ def test_unstack_cleanup_orphans_dry_run_then_retires_every_orphan(
     rerun = capsys.readouterr()
 
     assert rerun_exit_code == 0
-    assert "No orphaned pull requests are tracked." in rerun.out
+    assert "close PR #1" in rerun.out
+    assert all(
+        pull_request.state == "closed" for pull_request in fake_repo.pull_requests.values()
+    )
+    assert state_store.load().review_identities == {}
+    remaining_remote_refs = remote_refs(fake_repo.git_dir)
+    assert all(f"refs/heads/{bookmark}" not in remaining_remote_refs for bookmark in bookmarks)
 
 
 def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
@@ -608,6 +707,7 @@ def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     stack = JjClient(repo).discover_review_stack()
     change_ids = tuple(revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
+    fake_repo.pull_requests[2].base_ref = "main"
     run_command(["jj", "abandon", *change_ids], repo)
 
     async def dissolve_exact(selection, **_kwargs):
@@ -687,14 +787,14 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
+    orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    bottom_bookmark = state.review_identities[bottom_change_id].head_ref
-    bottom_pr_number = state.review_identities[bottom_change_id].pr_number
+    orphaned_bookmark = state.review_identities[orphaned_change_id].head_ref
+    orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
 
-    run_command(["jj", "abandon", bottom_change_id], repo)
-    fake_repo.pull_requests[bottom_pr_number].state = "closed"
+    run_command(["jj", "abandon", orphaned_change_id], repo)
+    fake_repo.pull_requests[orphaned_pr_number].state = "closed"
 
     exit_code = run_main(
         repo,
@@ -702,42 +802,47 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
         "unstack",
         "--cleanup",
         "--pull-request",
-        str(bottom_pr_number),
+        str(orphaned_pr_number),
     )
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "prune orphan record" in captured.out
-    assert bottom_change_id not in state_store.load().review_identities
-    assert bottom_bookmark not in remote_refs(fake_repo.git_dir)
+    assert orphaned_change_id not in state_store.load().review_identities
+    assert orphaned_bookmark not in remote_refs(fake_repo.git_dir)
 
 
-def test_unstack_cleanup_pull_request_refuses_when_orphan_bookmark_is_reclaimed(
+def test_unstack_orphan_rechecks_native_membership_before_branch_delete(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    top_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    bottom_bookmark = state.review_identities[bottom_change_id].head_ref
-    bottom_pr_number = state.review_identities[bottom_change_id].pr_number
+    initial_state = state_store.load()
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    bookmark = initial_state.review_identities[change_id].head_ref
+    run_command(["jj", "abandon", change_id], repo)
+    fake_repo.native_stacks = {7: (1,)}
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+    observations = 0
 
-    run_command(["jj", "abandon", bottom_change_id], repo)
-    state = state_store.load()
-    top_identity = state.review_identities[top_change_id]
-    top_baseline = state.submitted_baselines[top_change_id]
-    state_store.relink_review(
-        top_change_id,
-        expected_identity=top_identity,
-        expected_baseline=top_baseline,
-        identity=top_identity.model_copy(update={"head_ref": bottom_bookmark}),
-        baseline=top_baseline,
+    class NativeMembershipRaceClient(GithubClient):
+        async def list_stacks(self):
+            nonlocal observations
+            observations += 1
+            if observations == 2:
+                fake_repo.native_stacks = {8: (1,)}
+            return await super().list_stacks()
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.close_orphan", "jj_stack.commands.unstack"),
+        client_type=NativeMembershipRaceClient,
     )
 
     exit_code = run_main(
@@ -746,16 +851,18 @@ def test_unstack_cleanup_pull_request_refuses_when_orphan_bookmark_is_reclaimed(
         "unstack",
         "--cleanup",
         "--pull-request",
-        str(bottom_pr_number),
+        "1",
     )
     captured = capsys.readouterr()
-    combined = _combined_output(captured)
 
     assert exit_code == 1
-    assert "claimed by another tracked change" in combined
-    assert fake_repo.pull_requests[bottom_pr_number].state == "open"
-    assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
-    assert bottom_change_id in state_store.load().review_identities
+    assert observations == 2
+    assert "dissolve GitHub stack #7" in captured.out
+    assert "GitHub stack #8 blocks this jj-stack operation" in _combined_output(captured)
+    assert fake_repo.native_stacks == {8: (1,)}
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert state_store.load() == initial_state
+    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
 
 def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_missing(
@@ -811,16 +918,16 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
+    orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    bottom_bookmark = state.review_identities[bottom_change_id].head_ref
-    bottom_pr_number = state.review_identities[bottom_change_id].pr_number
+    orphaned_bookmark = state.review_identities[orphaned_change_id].head_ref
+    orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
 
-    run_command(["jj", "abandon", bottom_change_id], repo)
-    run_command(["jj", "bookmark", "set", bottom_bookmark, "-r", "main"], repo)
+    run_command(["jj", "abandon", orphaned_change_id], repo)
+    run_command(["jj", "bookmark", "set", orphaned_bookmark, "-r", "main"], repo)
     run_command(
-        ["jj", "git", "push", "--remote", "origin", "--bookmark", bottom_bookmark],
+        ["jj", "git", "push", "--remote", "origin", "--bookmark", orphaned_bookmark],
         repo,
     )
 
@@ -830,7 +937,7 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
         "unstack",
         "--cleanup",
         "--pull-request",
-        str(bottom_pr_number),
+        str(orphaned_pr_number),
     )
     captured = capsys.readouterr()
     combined = _combined_output(captured)
@@ -838,8 +945,8 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
     assert exit_code == 1
     assert "Close blocked:" in captured.out
     assert "already points to a different revision" in combined
-    assert f"close PR #{bottom_pr_number}" not in captured.out
-    assert bottom_change_id in state_store.load().review_identities
+    assert f"close PR #{orphaned_pr_number}" not in captured.out
+    assert orphaned_change_id in state_store.load().review_identities
 
 
 def test_unstack_cleanup_pull_request_blocks_when_remote_branch_drifted_externally(
@@ -962,14 +1069,14 @@ def test_unstack_cleanup_pull_request_reports_blocked_when_github_is_unavailable
 
     assert exit_code == 1
     assert "Close blocked:" in captured.out
-    assert "cannot close pull requests tracked by jj-stack without live GitHub state" in (
+    assert "cannot inspect pull requests tracked by jj-stack without live GitHub state" in (
         combined_output
     )
     assert ReviewStateStore.for_repo(repo).load() == initial_state
     assert fake_repo.pull_requests[1].state == "open"
 
 
-def test_unstack_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
+def test_unstack_cleanup_pull_request_keeps_tracking_when_cleanup_blocks(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -995,8 +1102,7 @@ def test_unstack_cleanup_pull_request_retires_closed_orphan_when_cleanup_blocks(
     assert exit_code == 1
     assert "Close blocked:" in captured.out
     assert "already points to a different revision" in combined_output
-    assert "mark orphaned change" in captured.out
-    assert refreshed_state.review_identities[change_id].is_unlinked
+    assert refreshed_state == initial_state
 
 
 def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
@@ -1016,6 +1122,7 @@ def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
     bottom_bookmark = state.review_identities[bottom_change_id].head_ref
     bottom_pr_number = state.review_identities[bottom_change_id].pr_number
 
+    fake_repo.pull_requests[2].base_ref = "main"
     run_command(["jj", "abandon", bottom_change_id], repo)
 
     exit_code = run_main(
@@ -1047,17 +1154,17 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
+    orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
-    bottom_bookmark = state.review_identities[bottom_change_id].head_ref
-    bottom_pr_number = state.review_identities[bottom_change_id].pr_number
+    orphaned_bookmark = state.review_identities[orphaned_change_id].head_ref
+    orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
 
-    run_command(["jj", "abandon", bottom_change_id], repo)
-    last_target = state.submitted_baselines[bottom_change_id].commit_id
+    run_command(["jj", "abandon", orphaned_change_id], repo)
+    last_target = state.submitted_baselines[orphaned_change_id].commit_id
     JjClient(repo).delete_remote_bookmarks(
         remote="origin",
-        deletions=((bottom_bookmark, last_target),),
+        deletions=((orphaned_bookmark, last_target),),
     )
 
     exit_code = run_main(
@@ -1066,7 +1173,7 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
         "unstack",
         "--cleanup",
         "--pull-request",
-        str(bottom_pr_number),
+        str(orphaned_pr_number),
     )
     captured = capsys.readouterr()
     output = captured.out
@@ -1075,114 +1182,8 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
     assert "Applied close actions:" in output
     assert "already absent" in output
     assert "prune orphan record" in output
-    assert fake_repo.pull_requests[bottom_pr_number].state == "closed"
-    assert bottom_change_id not in state_store.load().review_identities
-
-
-def test_unstack_cleanup_pull_request_preserves_external_bookmark_without_user_opt_in(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(
-        monkeypatch,
-        tmp_path,
-        fake_repo,
-        extra_config_lines=['use_bookmarks = ["potato/orphan-feature"]'],
-    )
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    stack = JjClient(repo).discover_review_stack()
-    bottom_change_id = stack.revisions[0].change_id
-    run_command(
-        ["jj", "bookmark", "create", "potato/orphan-feature", "-r", bottom_change_id],
-        repo,
-    )
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    state_store = ReviewStateStore.for_repo(repo)
-    pr_number = state_store.load().review_identities[bottom_change_id].pr_number
-
-    run_command(["jj", "abandon", bottom_change_id], repo)
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        str(pr_number),
-    )
-    captured = capsys.readouterr()
-    output = captured.out
-
-    assert exit_code == 0
-    assert f"close PR #{pr_number}" in output
-    assert "prune orphan record" in output
-    assert "remote branch:" not in output
-    assert "local bookmark:" not in output
-    assert fake_repo.pull_requests[pr_number].state == "closed"
-    assert "refs/heads/potato/orphan-feature" in remote_refs(fake_repo.git_dir)
-    assert bottom_change_id not in state_store.load().review_identities
-
-
-def test_unstack_apply_rerun_is_idempotent(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-
-    first_exit_code = run_main(repo, config_path, "unstack", change_id)
-    capsys.readouterr()
-    first_state = state_store.load()
-    del fake_repo.pull_requests[1]
-
-    second_exit_code = run_main(repo, config_path, "unstack", change_id)
-    captured = capsys.readouterr()
-    second_state = state_store.load()
-
-    assert first_exit_code == 0
-    assert second_exit_code == 0
-    assert "No close actions were needed for the selected stack." in captured.out
-    assert first_state.review_identities[change_id].is_unlinked
-    assert second_state.review_identities[change_id].is_unlinked
-    assert 1 not in fake_repo.pull_requests
-
-
-def test_unstack_apply_cleanup_rerun_completes_after_prior_close_when_pr_is_missing(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().review_identities[change_id].head_ref
-
-    assert run_main(repo, config_path, "unstack", change_id) == 0
-    capsys.readouterr()
-    del fake_repo.pull_requests[1]
-
-    exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
-    captured = capsys.readouterr()
-    refreshed_state = state_store.load()
-
-    assert exit_code == 0
-    assert "Applied close actions:" in captured.out
-    assert refreshed_state.review_identities[change_id].is_unlinked
-    assert issue_comments(fake_repo, 1) == []
-    assert bookmark not in remote_refs(fake_repo.git_dir)
-    assert JjClient(repo).get_bookmark_state(bookmark).local_target is None
+    assert fake_repo.pull_requests[orphaned_pr_number].state == "closed"
+    assert orphaned_change_id not in state_store.load().review_identities
 
 
 def test_unstack_apply_blocks_when_github_no_longer_reports_the_cached_pull_request(
@@ -1241,15 +1242,14 @@ def test_unstack_apply_checkpoints_prior_progress_before_later_block(
     assert first_exit_code == 1
     assert second_exit_code == 1
     assert "Close blocked:" in first_run.out
-    assert not checkpointed_state.review_identities[first_change_id].is_unlinked
-    assert checkpointed_state.review_identities[head_change_id].is_unlinked
+    assert checkpointed_state == initial_state
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
     assert "previous close was interrupted" not in second_run.out
     assert f"close PR #{head_pr_number}" not in second_run.out
 
 
-def test_unstack_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(
+def test_unstack_apply_cleanup_keeps_tracking_after_partial_comment_cleanup(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1270,6 +1270,7 @@ def test_unstack_apply_cleanup_keeps_comment_cleanup_after_bookmark_block(
     assert exit_code == 1
     assert "Close blocked:" in captured.out
     assert issue_comments(fake_repo, 1) == []
+    assert change_id in ReviewStateStore.for_repo(repo).load().review_identities
     assert local_target == read_remote_ref(fake_repo.git_dir, "main")
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
     assert fake_repo.pull_requests[1].state == "closed"
@@ -1307,10 +1308,14 @@ def test_unstack_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+    bookmark = initial_state.review_identities[change_id].head_ref
     fake_repo.create_issue_comment(
         body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nextra",
         issue_number=2,
     )
+    initial_comments = issue_comments(fake_repo, 2)
 
     exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
     captured = capsys.readouterr()
@@ -1319,3 +1324,13 @@ def test_unstack_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
     assert "Close blocked:" in captured.out
     assert "stack navigation comment:" in captured.out
     assert fake_repo.pull_requests[2].state == "closed"
+    assert issue_comments(fake_repo, 2) == initial_comments
+    assert (
+        state_store.load().review_identities[change_id]
+        == (initial_state.review_identities[change_id])
+    )
+    assert (
+        state_store.load().submitted_baselines[change_id]
+        == (initial_state.submitted_baselines[change_id])
+    )
+    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)

@@ -25,7 +25,6 @@ DriftKind = Literal[
     "remote_branch_deleted",
     "remote_branch_drift",
     "trunk_advanced",
-    "unlinked_change",
     "wrong_saved_pr_number",
 ]
 DriftOutcome = Literal["fail_closed", "success"]
@@ -200,13 +199,6 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         failures=(),
         composable=True,
         needs_label=False,
-    ),
-    "unlinked_change": DriftKindSpec(
-        boundary="tracking_store",
-        expected_outcome="fail_closed",
-        failures=((1, "change_unlinked"),),
-        composable=True,
-        needs_label=True,
     ),
     "wrong_saved_pr_number": DriftKindSpec(
         boundary="tracking_store",

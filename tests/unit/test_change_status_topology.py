@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-from jj_stack.models.review_state import (
-    LinkState,
-    ReviewIdentity,
-    ReviewState,
-    SubmittedBaseline,
-)
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.change_status import (
     enumerate_orphaned_records,
@@ -43,7 +38,6 @@ def _stack(
 
 def _identity(
     *,
-    link_state: LinkState = "active",
     pr_number: int = 1,
 ) -> ReviewIdentity:
     return ReviewIdentity(
@@ -52,9 +46,7 @@ def _identity(
         repository_name="stacked-review",
         pr_number=pr_number,
         head_owner="octo-org",
-        head_ref="review/example",
-        bookmark_ownership="managed",
-        link_state=link_state,
+        head_ref="review/example-changeaa",
     )
 
 
@@ -95,26 +87,11 @@ def test_submitted_state_disagreement_skips_records_without_saved_baseline() -> 
     assert submitted_state_disagreement(state, (stack,)) == ()
 
 
-def test_submitted_state_disagreement_skips_unlinked_records_even_when_stale() -> None:
-    a = _revision("change-a")
-    stack = _stack(a)
-    state = ReviewState(
-        review_identities={"change-a": _identity(link_state="unlinked")},
-        submitted_baselines={"change-a": SubmittedBaseline(commit_id="old-commit-change-a")},
-    )
-
-    assert submitted_state_disagreement(state, (stack,)) == ()
-
-
 def _orphan_record(
     *,
     pr_number: int = 42,
-    link_state: LinkState = "active",
 ) -> ReviewIdentity:
-    return _identity(
-        link_state=link_state,
-        pr_number=pr_number,
-    )
+    return _identity(pr_number=pr_number)
 
 
 def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_change() -> None:
@@ -139,16 +116,6 @@ def test_enumerate_orphaned_records_reports_every_active_record_with_a_pr() -> N
     orphans = enumerate_orphaned_records(state, ())
 
     assert tuple(orphan.change_id for orphan in orphans) == ("change-orphan",)
-
-
-def test_enumerate_orphaned_records_skips_unlinked_records() -> None:
-    state = ReviewState(
-        review_identities={
-            "change-detached": _orphan_record(link_state="unlinked"),
-        }
-    )
-
-    assert enumerate_orphaned_records(state, ()) == ()
 
 
 def test_submitted_state_disagreement_inspects_each_stack_independently() -> None:

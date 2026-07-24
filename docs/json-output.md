@@ -2,7 +2,7 @@
 
 `jj-stack view --json` and `jj-stack list --json` print structured versions of the
 normal command output. The JSON schema uses the same user-facing concepts as the text
-output: stacks, rows, changes, review bookmarks, pull requests, and status.
+output: stacks, rows, changes, review branches, pull requests, and status.
 
 The checked-in schema is [json-output.schema.json](json-output.schema.json).
 Integration tests validate real command output against that file.
@@ -50,7 +50,6 @@ Known change statuses are:
 - `closed`: PR is closed without being merged
 - `missing`: saved PR identity exists, but GitHub did not report that PR for the branch
 - `ambiguous`: more than one matching PR was found
-- `unlinked`: the change was explicitly detached from review tracking
 - `divergent`: multiple visible revisions exist for the same change
 - `unknown`: GitHub lookup failed for this change
 

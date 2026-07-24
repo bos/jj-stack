@@ -3,8 +3,8 @@
 Shows one row per locally known stack, including the head change ID, stack size, review state,
 and description of the head change. It does not discover stacks that exist only on GitHub.
 
-It also shows orphaned PRs: open PRs that `jj-stack` still knows about, but whose local change
-is no longer part of any current stack. Close and clean up every orphan shown with
+It also shows orphaned PRs: tracked PRs whose local change is no longer part of any current
+stack. Close any open PRs and clean up every verified orphan shown with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
 `--fetch` runs a fetch first so the report uses current remote branch locations.
@@ -34,7 +34,7 @@ from jj_stack.github.resolution import (
 )
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
+from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.change_status import (
     OrphanedRecord,
@@ -331,13 +331,12 @@ def _prepare_repo_inspection_context(
     discovered: tuple[LocalStack, ...],
     state: ReviewState,
 ) -> _RepoInspectionContext:
-    config = context.config
     jj_client = context.jj_client
     github_target = resolve_github_target(jj_client.list_git_remotes())
 
     all_revisions = tuple(revision for stack in discovered for revision in stack.revisions)
     bookmark_states: dict[str, BookmarkState] = {}
-    if github_target.remote is not None or config.use_bookmarks:
+    if github_target.remote is not None:
         pinned_bookmarks = _tracked_pinned_bookmarks_for_repo_inspection(
             revisions=all_revisions,
             state=state,
@@ -476,11 +475,6 @@ def _status_fragments(
             if merged_ancestors == 1
             else f"{merged_ancestors} merged, cleanup needed"
         )
-        fragments.append(ui.semantic_text(label, "warning", "heading"))
-
-    unlinked = sum(1 for status in statuses if status.link == "unlinked")
-    if unlinked:
-        label = "unlinked" if unlinked == 1 else f"{unlinked} unlinked"
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
     closed = sum(1 for status in statuses if status.pr_lifecycle == "closed")
@@ -639,18 +633,12 @@ def _tracked_pinned_bookmarks_for_repo_inspection(
     tracked_revisions = tuple(
         revision
         for revision in revisions
-        if (identity := state.review_identities.get(revision.change_id)) is not None
-        and _saved_identity_requires_bookmark_inspection(identity)
+        if state.review_identities.get(revision.change_id) is not None
     )
     return pinned_bookmarks_for_revisions(
         revisions=tracked_revisions,
         state=state,
     )
-
-
-def _saved_identity_requires_bookmark_inspection(review_identity: ReviewIdentity) -> bool:
-    review_status = classify_saved_review_identity(review_identity, local="present")
-    return review_status.saved_review_identity or review_status.link == "unlinked"
 
 
 def _ensure_unique_repo_bookmarks(

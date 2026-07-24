@@ -87,14 +87,13 @@ If you have already written a PR body in a Markdown file, pass it when submittin
 jj-stack submit --describe <change-id>=pr-body.md
 ```
 
-For a multi-change stack, you can use `--describe stack=stack-overview.md` adds to add an
-overview description of the entire stack to the head PR. This is very helpful to orient a
-reviewer.
+For a multi-change stack, you can use `--describe stack=stack-overview.md` to add an overview
+description of the entire stack to the head PR. This is very helpful to orient a reviewer.
 
-On first submit, `jj-stack` creates one review bookmark per change. By default these bookmarks
-are named with a prefix of `review/...`. They are normal `jj` bookmarks, and they are also the
-GitHub PR branches. `jj-stack` manages them for you, so most of the time you do not need to move
-or rename them yourself.
+On first submit, `jj-stack` creates one review bookmark per change. Its readable name has the
+fixed form `review/<subject-slug>-<short-change-id>`, for example
+`review/add-the-api-qpvuntsm`. The bookmark is also the GitHub PR branch. `jj-stack` keeps that
+name stable for the life of the review, even if you rewrite the change or edit its subject.
 
 Inspect your stack again:
 
@@ -173,8 +172,8 @@ jj-stack view <head-change-id>
 The status output will show whether the next step is `jj-stack submit` or
 `jj-stack sync <head-change-id>`.
 
-If `list` shows an `orphan` row, a PR is still open but the local change it reviewed is
-no longer part of any current stack. When you are ready to close and clean up that PR:
+If `list` shows an `orphan` row, tracking remains for a PR whose local change is no longer part of
+any current stack. When you are ready to close it if needed and clean up its verified artifacts:
 
 ```bash
 jj-stack unstack --cleanup --pull-request <pr> --dry-run
@@ -222,24 +221,15 @@ Repo-level config can be helpful for defaults such as reviewers and labels:
 
 ```toml
 [jj-stack]
-bookmark_prefix = "bos"
 reviewers = ["octocat"]
 labels = ["needs-review"]
-use_bookmarks = ["potato/*", "spam/eggs"]
 ```
 
-If you leave `bookmark_prefix` unset, `jj-stack` keeps the default `review/...` prefix.
-
 `jj-stack submit` can override those defaults with `--reviewers`, `--team-reviewers`,
-`--label`, and `--use-bookmarks`.
+and `--label`.
 
 Passing `--reviewers` or `--team-reviewers` also applies those review requests when the pull
 requests are otherwise unchanged. Existing reviewers that are omitted are left in place.
-
-`cleanup_user_bookmarks` defaults to `false`. Leave it unset if bookmarks selected
-through `use_bookmarks` should be preserved during later cleanup. Set it to `true` only
-if you want `cleanup` and `unstack --cleanup` to delete those reused bookmarks too when that
-cleanup is otherwise safe.
 
 For authentication, `jj-stack` checks `GITHUB_TOKEN`, then `GH_TOKEN`, then falls back
 to `gh auth token` if `gh`, the GitHub CLI, is installed and authenticated.
@@ -258,7 +248,8 @@ While you could model that with plain Git branches, the bookkeeping quickly beco
 - when you modify an intermediate change, `jj-stack` does the PR and branch wrangling
 
 The key point is that you get to keep thinking in terms of local logical changes. `jj-stack`
-manages the GitHub branches, pull requests, and local review bookmarks, and that's it.
+manages the GitHub branches, pull requests, and their small amount of local tracking, and that's
+it.
 
 ## Why use it with coding agents?
 

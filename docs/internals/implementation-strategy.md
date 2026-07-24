@@ -282,6 +282,8 @@ write is lost, the next command rereads current state and reports or completes t
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
+The current top-level state version is 3. Each `ReviewIdentity` is version 2 and contains only
+the exact repository, PR, and head-owner/ref fields; `SubmittedBaseline` remains version 1.
 
 Public `--json` command output is a separate user-facing contract. Its schema lives in
 `docs/json-output.schema.json`, and integration tests validate actual `view --json` and
@@ -296,8 +298,29 @@ rather than changing them during inspection. The command behavior is specified i
 [design.md](design.md).
 
 Orphan cleanup lives in its own command module because it begins from saved identity rather than
-a selected live stack. It shares PR-head, bookmark, duplicate-claim, and managed-comment checks
-with ordinary close cleanup before it mutates GitHub or removes tracking.
+a selected live stack. `review/observation.py` is the single policy-free batch source for saved
+identity and baseline pairs, exact PR numbers, unique head claims, and open base-ref dependents.
+It can overlay staged restart identities for a final joint observation without changing the
+durable state or creating a second exact-PR resolution path.
+Ordinary close, selected cleanup, orphan cleanup, sync, and merge request only the facts their
+mutation boundary needs; `_close_actions.py` applies the shared exact-link and dependent-PR
+authorization instead of observing those facts again through a command-specific path.
+
+Repository-wide cleanup is one lifecycle-driven pass over complete identity/baseline pairs.
+It observes the exact saved PR, prepares branch and comment cleanup for a closed or merged match,
+and rereads the PR, its open base-ref dependents, local bookmark, remote ref, native membership,
+and tracking records at their mutation boundaries. Selected cleanup processes the observed stack
+head-to-base. A dry run may omit only dependents that an earlier selected action would close;
+actual cleanup never omits a live dependent. Local jj descendants remain selected-sync evidence,
+not cleanup authority. Shared code supplies observation and artifact mutation without a second
+eligibility policy.
+
+`submit --restart` keeps the old complete pairs authoritative throughout remote and GitHub work.
+Successful replacement results remain in memory until the canonical observer freshly verifies
+the whole selected replacement stack. The state store compares every old pair, then replaces all
+selected pairs in one atomic write. An interrupted retry may reuse only the unique open PR for
+the deterministic replacement branch when its head commit, planned base, and live remote target
+are still exact; no marker, prefix, journal, or per-review checkpoint authorizes recovery.
 
 ## Data model
 
@@ -505,7 +528,6 @@ When possible, diagnostics point to the exact recovery action:
 
 - `jj-stack view --fetch`
 - `jj-stack submit --restart`
-- `jj-stack restart`
 - `jj-stack relink`
 - `jj-stack unstack`
 - `jj rebase`
@@ -528,8 +550,8 @@ incomplete-report code directly when a printed report is degraded.
 
 Fail-closed verification stops share exit code 1, so `DriftError` in `errors.py` also
 carries a `condition` naming which cross-system check failed (a missing or moved remote
-review branch, a non-open or ambiguous discovered PR, a saved-link mismatch, an unlinked
-change, or a selected merge stack left off current trunk). The
+review branch, a non-open or ambiguous discovered PR, a saved-link mismatch, or a selected merge
+stack left off current trunk). The
 condition is not printed; it exists so the drift property harness
 ([distributed-state.md](./distributed-state.md)) can assert that a fail-closed stop
 fired for the drift it was aimed at rather than merely with the right exit code.

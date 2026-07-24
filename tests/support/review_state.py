@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-from jj_stack.models.review_state import (
-    BookmarkOwnership,
-    LinkState,
-    ReviewIdentity,
-)
+from jj_stack.models.review_state import ReviewIdentity
 
 
 def make_review_identity(
     *,
-    bookmark_ownership: BookmarkOwnership = "managed",
     github_host: str = "github.test",
     head_owner: str = "octo-org",
-    head_ref: str = "review/example",
-    link_state: LinkState = "active",
+    head_ref: str = "review/example-abcdefgh",
     pr_number: int = 1,
     repository_name: str = "stacked-review",
     repository_owner: str = "octo-org",
@@ -29,6 +23,4 @@ def make_review_identity(
         pr_number=pr_number,
         head_owner=head_owner,
         head_ref=head_ref,
-        bookmark_ownership=bookmark_ownership,
-        link_state=link_state,
     )

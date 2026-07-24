@@ -22,7 +22,8 @@ Examples use angle brackets for values you must replace. For example, in
 or `jj-stack`.
 
 One term you will see is *review bookmark*. This is the local `jj` bookmark that `jj-stack` uses
-as a GitHub PR branch. It normally starts with `review/` and is managed for you.
+as a GitHub PR branch. Its fixed readable form is
+`review/<subject-slug>-<short-change-id>`, and `jj-stack` manages it for you.
 
 In interactive terminals, longer multi-step GitHub work shows a progress bar
 on stderr while `jj-stack` is waiting on GitHub.

@@ -26,12 +26,12 @@ have defined behavior but no dedicated current scenario.
    becomes reachable from its base, closes PRs whose head branch is deleted, and records
    native stack transitions.
 4. **Tracking store** — separate versioned `ReviewIdentity` and `SubmittedBaseline` records
-   keyed by full `change_id`. Identity holds host/repository, PR number, canonical head owner/ref,
-   bookmark ownership, and link state; baseline holds the exact submitted commit. Explicit
-   attach, detach, restart, and repair commands change identity. A successful `submit`, or one
-   that recognizes a completed push after interruption, changes the baseline. Recovery,
-   unstacking, or cleanup may remove both. The same envelope holds the cached native-stack
-   capability by repository; status observation never writes any of these records.
+   keyed by full `change_id`. Identity v2 holds host/repository, PR number, and canonical head
+   owner/ref; baseline v1 holds the exact submitted commit. Review creation, `relink`,
+   `submit --restart`, explicit local retirement, and verified cleanup may change identity.
+   A successful `submit`, or one that recognizes a completed push after interruption, changes
+   the baseline. The top-level v3 envelope also holds the cached native-stack capability by
+   repository; status observation never writes any of these records.
 
 The `jj` DAG determines stack topology and content. The fetched trunk commit for the configured
 remote supplies ancestry evidence for the two landed rules in [design.md](design.md); ancestry
@@ -78,7 +78,6 @@ the generated scenario code records only the source expected to produce the prim
 | `remote_branch_deleted` | remote refs, GitHub PRs | fail closed (1) | property |
 | `trunk_advanced` | remote refs | success | property |
 | `wrong_saved_pr_number` | tracking store | fail closed (1) | property |
-| `unlinked_change` | tracking store | fail closed (1) | property |
 | `foreign_branch_fetched` | remote refs, local `jj` | fail closed (2) | property |
 | `conflicted_rebase` | local `jj` | fail closed (3) | deterministic |
 | `merge_commit` | local `jj` | fail closed (2) | deterministic |
@@ -122,12 +121,16 @@ saved tracking that still points at the closed PR.
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.
 
-Recovery stays explicit and narrow: `relink` reattaches a PR to a change; `restart` and
-`submit --restart` create new review identity; and `unstack --cleanup --pull-request` closes and
-cleans up each orphan it can verify. Selected `sync` rebases one selected stack after proving that
-ancestors landed. After fresh identity and head checks, `sync --all` may retarget and close landed
-PRs whose exact submitted commits are on trunk and remove tracking when no visible stack still
-needs it. Drift never triggers silent relinking or replacement PRs.
+Recovery stays explicit and narrow: `relink` reattaches a PR to a change;
+`submit --restart` creates new review identity; and
+`unstack --cleanup --pull-request` closes and cleans up each orphan it can verify.
+Plain `unstack` retains the exact identity and baseline after closing so later cleanup or
+`submit --restart` still has authority; `unstack --local` explicitly removes that pair without
+touching GitHub.
+Selected `sync` rebases one selected stack after proving that ancestors landed. After fresh
+identity and head checks, `sync --all` may retarget and close landed PRs whose exact submitted
+commits are on trunk and remove tracking when no visible stack still needs it. Drift never
+triggers silent relinking or replacement PRs.
 
 ## Why an executable model rather than TLA+/Lean
 

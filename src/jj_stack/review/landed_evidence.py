@@ -63,7 +63,7 @@ def candidate_for_change(state: ReviewState, change_id: str) -> LandedReviewCand
 
     identity = state.review_identities.get(change_id)
     baseline = state.submitted_baselines.get(change_id)
-    if identity is None or baseline is None or not identity.is_tracked:
+    if identity is None or baseline is None:
         return None
     return LandedReviewCandidate(
         change_id=change_id,
@@ -200,11 +200,8 @@ def _identity_mismatch(
     repository: GithubRepoAddress,
 ) -> Message | None:
     identity = candidate.review_identity
-    if (
-        identity.repository_key != repository.repository_key
-        or pull_request.number != identity.pr_number
-        or pull_request.head.ref != identity.head_ref
-        or pull_request.head.label != f"{identity.head_owner}:{identity.head_ref}"
+    if identity.repository_key != repository.repository_key or not identity.matches_pull_request(
+        pull_request
     ):
         return (
             t"PR #{pull_request.number} no longer matches the pull request recorded for "

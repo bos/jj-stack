@@ -505,28 +505,6 @@ def test_view_skips_stack_comment_github_reads(
     assert "stack comment" not in captured.out
 
 
-def test_view_fetch_surfaces_unlinked_state_without_repopulating_link(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-    assert run_main(repo, config_path, "unlink", change_id) == 0
-    capsys.readouterr()
-
-    exit_code = run_main(repo, config_path, "view", "--fetch", change_id)
-    captured = capsys.readouterr()
-    unlinked_identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
-
-    assert exit_code == 0
-    assert "unlinked PR #1" in captured.out
-    assert unlinked_identity.link_state == "unlinked"
-    assert unlinked_identity.pr_number == 1
-
-
 def test_view_reports_unsubmitted_after_state_loss(
     tmp_path: Path,
     monkeypatch,

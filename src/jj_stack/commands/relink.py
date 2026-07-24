@@ -27,6 +27,7 @@ from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
+from jj_stack.review.branches import review_branch_glob, review_branch_matches_change
 from jj_stack.review.change_status import classify_review_change
 from jj_stack.review.selection import resolve_selected_revset
 from jj_stack.state.operation_lock import acquire_operation_lock
@@ -136,7 +137,6 @@ async def _run_relink_async(
         pr_number=pull_request.number,
         head_owner=github_repository.owner,
         head_ref=bookmark,
-        bookmark_ownership="external",
     )
     state_store.relink_review(
         revision.change_id,
@@ -192,6 +192,12 @@ def _validated_relink_bookmark(
         )
 
     bookmark = pull_request.head.ref
+    if not review_branch_matches_change(bookmark, revision.change_id):
+        raise CliError(
+            t"Pull request #{pull_request.number} head {ui.bookmark(bookmark)} does not match "
+            t"change {ui.change_id(revision.change_id)} in jj-stack's reserved "
+            t"{ui.bookmark(review_branch_glob())} namespace."
+        )
     expected_head_label = f"{github_repository.owner}:{bookmark}"
     if pull_request.head.label != expected_head_label:
         raise CliError(
@@ -242,7 +248,7 @@ def _ensure_relinkable_cached_link(
     state: ReviewState,
 ) -> None:
     for other_change_id, identity in state.review_identities.items():
-        if other_change_id == change_id or identity.is_unlinked:
+        if other_change_id == change_id:
             continue
         if identity.head_ref == bookmark:
             raise CliError(

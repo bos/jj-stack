@@ -48,9 +48,13 @@ from jj_stack.models.review_state import (
 )
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.bookmarks import (
-    bookmark_matches_generated_change_id,
-    bookmark_ownership_for_source,
     discover_bookmarks_for_revisions,
+)
+from jj_stack.review.branches import (
+    is_managed_review_branch,
+    is_review_branch,
+    review_branch_glob,
+    review_branch_matches_change,
 )
 from jj_stack.review.change_status import classify_review_change_without_pull_request
 from jj_stack.review.discovery import discover_tracked_stacks
@@ -338,6 +342,13 @@ async def _prepare_checkout(
         prepared_status=prepared_status,
         status_result=status_result,
     )
+    if selection.head_bookmark is not None and prepared_status.prepared.status_revisions:
+        head_change_id = prepared_status.prepared.status_revisions[-1].revision.change_id
+        if not review_branch_matches_change(selection.head_bookmark, head_change_id):
+            raise CliError(
+                t"Pull request branch {ui.bookmark(selection.head_bookmark)} does not match "
+                t"change {ui.change_id(head_change_id)}."
+            )
 
     prepared = prepared_status.prepared
     with console.spinner(description="Loading bookmark state"):
@@ -346,7 +357,6 @@ async def _prepare_checkout(
     if fetch and selection.head_bookmark is not None and prepared.remote is not None:
         with console.spinner(description="Fetching jj remote"):
             authoritative_remote_targets = _fetch_selected_stack_bookmarks(
-                prefix=context.config.bookmark_prefix,
                 client=prepared.client,
                 explicit_head_bookmark=selection.head_bookmark,
                 remote=prepared.remote,
@@ -365,7 +375,6 @@ async def _prepare_checkout(
         bookmark_by_change_id.update(
             discover_bookmarks_for_revisions(
                 bookmark_states=bookmark_states,
-                prefix=context.config.bookmark_prefix,
                 remote_name=prepared.remote.name,
                 revisions=prepared.stack.revisions,
             )
@@ -466,6 +475,16 @@ async def _resolve_pull_request_selection(
         pull_request_reference=pull_request_reference,
     )
     head = pull_request.head.ref
+    if not is_review_branch(head):
+        raise CliError(
+            t"Pull request #{pull_request.number} head {ui.bookmark(head)} is outside "
+            t"jj-stack's reserved {ui.bookmark(review_branch_glob())} namespace."
+        )
+    if not is_managed_review_branch(head):
+        raise CliError(
+            t"Pull request #{pull_request.number} head {ui.bookmark(head)} does not use "
+            t"jj-stack's managed review-branch naming scheme."
+        )
     if fetch:
         client.fetch_remote(remote=remote.name, branches=(head,))
 
@@ -521,7 +540,6 @@ async def _resolve_pull_request_selection(
 
 def _fetch_selected_stack_bookmarks(
     *,
-    prefix: str,
     client: JjClient,
     explicit_head_bookmark: str,
     remote: GitRemote,
@@ -533,7 +551,8 @@ def _fetch_selected_stack_bookmarks(
             {
                 f"refs/heads/{explicit_head_bookmark}",
                 *(
-                    f"refs/heads/{prefix}/*-{revision.change_id[:_DISPLAY_CHANGE_ID_LENGTH]}"
+                    f"refs/heads/{review_branch_glob()}-"
+                    f"{revision.change_id[:_DISPLAY_CHANGE_ID_LENGTH]}"
                     for revision in revisions
                 ),
             }
@@ -554,13 +573,7 @@ def _fetch_selected_stack_bookmarks(
         if change_id == head_change_id:
             continue
         candidates = sorted(
-            name
-            for name in remote_branches
-            if bookmark_matches_generated_change_id(
-                name,
-                change_id,
-                prefix=prefix,
-            )
+            name for name in remote_branches if review_branch_matches_change(name, change_id)
         )
         if len(candidates) > 1:
             raise CliError(
@@ -792,19 +805,10 @@ def _checkout_local_state(
                 pr_number=pull_request.number,
                 head_owner=github_repository.owner,
                 head_ref=bookmark,
-                bookmark_ownership=bookmark_ownership_for_source(status_revision.bookmark_source),
             )
             baseline = SubmittedBaseline(commit_id=prepared_revision.revision.commit_id)
             expected_identity = current_state.review_identities.get(change_id)
             expected_baseline = current_state.submitted_baselines.get(change_id)
-            if expected_identity is not None:
-                identity = identity.model_copy(
-                    update={"link_state": expected_identity.link_state}
-                )
-                if expected_identity.head_ref == bookmark:
-                    identity = identity.model_copy(
-                        update={"bookmark_ownership": expected_identity.bookmark_ownership}
-                    )
             if identity != expected_identity or baseline != expected_baseline:
                 planned_review_adoptions.append(
                     _PlannedReviewAdoption(

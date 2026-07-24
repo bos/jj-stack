@@ -1,60 +1,42 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 import jj_stack.commands.cleanup.command as cleanup_module
-import jj_stack.commands.cleanup.stack_comments as stack_comments_module
 import jj_stack.commands.cleanup.stale as stale_module
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._close_actions import ManagedCommentLookup
-from jj_stack.commands.cleanup.command import (
-    _apply_stale_cleanup_mutation_plans,
-    _plan_remote_branch_cleanup,
+from jj_stack.commands._close_actions import (
+    BookmarkCleanupRun,
+    CloseAction,
+    apply_bookmark_cleanup,
+    plan_bookmark_cleanup,
 )
-from jj_stack.commands.cleanup.shared import (
-    CleanupAction,
-    PreparedCleanup,
-    RemoteBranchCleanupPlan,
-    _StaleCleanupMutationPlan,
-)
-from jj_stack.commands.cleanup.stack_comments import (
-    StackCommentCleanupPlan,
-    _apply_stack_comment_cleanup_action,
-    _plan_stack_comment_cleanup,
-)
-from jj_stack.config import RepoConfig
-from jj_stack.github.client import GithubClient
+from jj_stack.commands.cleanup.shared import PreparedCleanup
 from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.jj.client import JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
-from jj_stack.models.github import GithubIssueComment
-from jj_stack.models.review_state import (
-    BookmarkOwnership,
-    LinkState,
-    ReviewIdentity,
-    ReviewState,
-    SubmittedBaseline,
-)
-from jj_stack.review.change_status import classify_review_change_without_pull_request
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
+CHANGE_ID = "aaaaaaaaabcdefgh"
+BOOKMARK = "review/feature-aaaaaaaa"
 _REMOTE_URL = "git@github.com:octo-org/stacked-review.git"
 _REMOTE = GitRemote(name="origin", fetch_url=_REMOTE_URL, push_url=_REMOTE_URL)
 
 
 def _fake_context(
     *,
-    config: RepoConfig | None = None,
     jj_client: JjClient | None = None,
     state_store: ReviewStateStore | None = None,
 ) -> CommandContext:
     return cast(
         CommandContext,
         SimpleNamespace(
-            config=RepoConfig() if config is None else config,
             jj_client=cast(JjClient, SimpleNamespace()) if jj_client is None else jj_client,
             state_store=(
                 cast(ReviewStateStore, SimpleNamespace()) if state_store is None else state_store
@@ -63,155 +45,30 @@ def _fake_context(
     )
 
 
-def _review_identity(
-    *,
-    bookmark: str = "review/feature-aaaaaaaa",
-    bookmark_ownership: BookmarkOwnership = "managed",
-    link_state: LinkState = "active",
-    pr_number: int = 1,
-) -> ReviewIdentity:
+def _identity() -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
+        github_host="github.com",
         repository_owner="octo-org",
         repository_name="stacked-review",
-        pr_number=pr_number,
+        pr_number=1,
         head_owner="octo-org",
-        head_ref=bookmark,
-        bookmark_ownership=bookmark_ownership,
-        link_state=link_state,
+        head_ref=BOOKMARK,
     )
 
 
-def test_stack_comment_cleanup_blocked_plan_surfaces_action_without_github_deletes() -> None:
-    """A blocked stack-comment plan surfaces the blocked action and deletes nothing.
+def test_duplicate_claim_facts_are_scoped_to_one_repository() -> None:
+    identity = _identity()
+    other = identity.model_copy(update={"repository_name": "another-repository"})
 
-    The github_client below is a bare SimpleNamespace with no methods: any
-    comment-delete attempt would raise AttributeError, so the run completing is
-    itself the proof that no GitHub deletes were performed.
-    """
-
-    prepared_cleanup = PreparedCleanup(
-        context=_fake_context(),
-        bookmark_states={},
-        github_target=GithubTarget(
-            remote=_REMOTE,
-            repository=GithubRepoAddress(
-                host="github.com",
-                owner="octo-org",
-                repo="stacked-review",
-            ),
-        ),
-        dry_run=True,
-        state=ReviewState(),
-    )
-    blocked_action = CleanupAction(
-        kind="stack navigation comment",
-        body="cannot delete stack navigation comments because GitHub reports multiple candidates",
-        status="blocked",
-    )
-    recorded_actions: list[CleanupAction] = []
-
-    asyncio.run(
-        _apply_stack_comment_cleanup_action(
-            comment_plan=StackCommentCleanupPlan(actions=(blocked_action,)),
-            github_client=cast(GithubClient, SimpleNamespace()),
-            prepared_cleanup=prepared_cleanup,
-            record_action=recorded_actions.append,
-        )
-    )
-
-    assert recorded_actions == [blocked_action]
-    assert recorded_actions[0].status == "blocked"
+    assert duplicate_review_claim_change_ids({"saved": identity, "other": other}) == frozenset()
+    assert duplicate_review_claim_change_ids(
+        {"saved": identity, "duplicate": identity}
+    ) == frozenset({"saved", "duplicate"})
 
 
-def test_stack_comment_cleanup_blocks_all_comment_deletes_when_one_lookup_blocks(
+def test_local_cleanup_observations_keep_current_commit_outside_supported_stacks(
     monkeypatch,
 ) -> None:
-    blocked_reason = "cannot delete stack overview comments because GitHub reports duplicates"
-
-    async def fake_find_managed_comments(**kwargs):
-        return (
-            ManagedCommentLookup(
-                kind="navigation",
-                comment=GithubIssueComment(
-                    body="managed navigation",
-                    databaseId=12,
-                    url="https://api.github.test/comments/12",
-                ),
-            ),
-            ManagedCommentLookup(kind="overview", blocked_reason=blocked_reason),
-        )
-
-    monkeypatch.setattr(
-        stack_comments_module,
-        "_find_managed_comments",
-        fake_find_managed_comments,
-    )
-
-    class FakeGithubClient:
-        async def get_pull_request(self, *, pull_number):
-            return SimpleNamespace(
-                head=SimpleNamespace(
-                    label="octo-org:review/other",
-                    ref="review/other",
-                )
-            )
-
-    plan = asyncio.run(
-        _plan_stack_comment_cleanup(
-            review_identity=_review_identity(
-                bookmark="review/feature",
-                link_state="unlinked",
-                pr_number=1,
-            ),
-            github_client=cast(GithubClient, FakeGithubClient()),
-        )
-    )
-
-    assert plan == StackCommentCleanupPlan(
-        actions=(
-            CleanupAction(
-                kind="stack overview comment",
-                body=blocked_reason,
-                status="blocked",
-            ),
-        )
-    )
-
-
-def test_cleanup_command_exits_nonzero_when_cleanup_result_blocks(
-    monkeypatch,
-) -> None:
-    prepared_cleanup = PreparedCleanup(
-        context=_fake_context(),
-        bookmark_states={},
-        github_target=None,
-        dry_run=False,
-        state=ReviewState(),
-    )
-    blocked_action = CleanupAction(
-        kind="stack navigation comment",
-        body="cannot inspect stack navigation comments for PR #1",
-        status="blocked",
-    )
-
-    async def fake_run_cleanup_async(**kwargs):
-        return cleanup_module.CleanupResult(actions=(blocked_action,))
-
-    monkeypatch.setattr(cleanup_module, "_prepare_cleanup", lambda **kwargs: prepared_cleanup)
-    monkeypatch.setattr(cleanup_module, "_stale_change_reasons", lambda **kwargs: {})
-    monkeypatch.setattr(cleanup_module, "_run_cleanup_async", fake_run_cleanup_async)
-
-    assert (
-        cleanup_module._run_cleanup_command(
-            context=_fake_context(),
-            dry_run=False,
-        )
-        == 1
-    )
-
-
-def test_stale_change_reasons_reports_changes_outside_supported_stacks(monkeypatch) -> None:
     live_revision = make_revision(
         change_id="live-change",
         commit_id="live-commit",
@@ -231,122 +88,192 @@ def test_stale_change_reasons_reports_changes_outside_supported_stacks(monkeypat
                 "stale-change": (stale_revision,),
             }
 
-    def fake_discover_stacks_from_revisions(*, jj_client, revisions):
-        return (SimpleNamespace(revisions=(live_revision,)),)
-
     monkeypatch.setattr(
         stale_module,
         "discover_stacks_from_revisions",
-        fake_discover_stacks_from_revisions,
+        lambda **kwargs: (SimpleNamespace(revisions=(live_revision,)),),
     )
 
-    reasons = stale_module._stale_change_reasons(
+    observations = stale_module._local_cleanup_observations(
         change_ids=("live-change", "stale-change"),
         context=_fake_context(jj_client=cast(JjClient, FakeJjClient())),
     )
 
-    assert reasons["live-change"] is None
-    assert reasons["stale-change"] == "local change no longer participates in a supported stack"
-
-
-def test_orphan_local_bookmark_cleanup_keeps_supported_targets_only(monkeypatch) -> None:
-    live_revision = make_revision(
-        change_id="live-change",
-        commit_id="live-commit",
-        description="live\n",
+    assert observations["live-change"] == stale_module.LocalCleanupObservation(
+        current_commit_id="live-commit",
+        stale_reason=None,
     )
-    stale_revision = make_revision(
-        change_id="stale-change",
-        commit_id="stale-commit",
-        description="stale\n",
+    assert observations["stale-change"] == stale_module.LocalCleanupObservation(
+        current_commit_id="stale-commit",
+        stale_reason="local change no longer participates in a supported stack",
     )
 
-    class FakeJjClient:
-        def query_revisions_by_commit_ids(self, commit_ids):
-            return (live_revision, stale_revision)
 
-    def fake_discover_stacks_from_revisions(*, jj_client, revisions):
-        return (SimpleNamespace(revisions=(live_revision,)),)
-
-    monkeypatch.setattr(
-        stale_module,
-        "discover_stacks_from_revisions",
-        fake_discover_stacks_from_revisions,
+def test_cleanup_plan_uses_current_local_commit_and_saved_remote_baseline() -> None:
+    state = BookmarkState(
+        name=BOOKMARK,
+        local_targets=("current-local",),
+        remote_targets=(RemoteBookmarkState(remote="origin", targets=("saved-remote",)),),
     )
 
-    plans = stale_module._plan_orphan_local_bookmark_cleanups(
-        bookmark_states={
-            "other/live": BookmarkState(name="other/live", local_targets=("skip",)),
-            "review/conflict": BookmarkState(
-                name="review/conflict",
-                local_targets=("left", "right"),
-            ),
-            "review/live": BookmarkState(
-                name="review/live",
-                local_targets=("live-commit",),
-            ),
-            "review/stale": BookmarkState(
-                name="review/stale",
-                local_targets=("stale-commit",),
-            ),
-        },
-        context=_fake_context(jj_client=cast(JjClient, FakeJjClient())),
-        tracked_bookmarks=set(),
+    plan = plan_bookmark_cleanup(
+        bookmark=BOOKMARK,
+        bookmark_state=state,
+        change_id=CHANGE_ID,
+        local_commit_id="current-local",
+        record_action=lambda action: None,
+        remote_commit_id="saved-remote",
+        remote_name="origin",
+        review_identity=_identity(),
     )
 
-    actions_by_bookmark = {plan.bookmark: plan.action for plan in plans}
-    assert actions_by_bookmark["review/conflict"].status == "blocked"
-    assert actions_by_bookmark["review/stale"].status == "planned"
-    assert "review/live" not in actions_by_bookmark
-    assert "other/live" not in actions_by_bookmark
+    assert plan.local_forget is True
+    assert plan.remote_delete is True
+    assert plan.blocked is False
 
 
-def test_plan_remote_branch_cleanup_allows_delete_when_local_forget_is_planned() -> None:
-    remote_state = RemoteBookmarkState(remote="origin", targets=("commit-1",))
-    review_identity = _review_identity(
-        bookmark="bosullivan/feature-aaaaaaaa",
-        pr_number=1,
+def test_apply_cleanup_rechecks_bookmark_before_any_mutation() -> None:
+    initial_state = BookmarkState(
+        name=BOOKMARK,
+        local_targets=("current-local",),
+        remote_targets=(RemoteBookmarkState(remote="origin", targets=("saved-remote",)),),
     )
-    plan = _plan_remote_branch_cleanup(
-        cleanup_user_bookmarks=False,
-        bookmark_state=BookmarkState(
-            name="bosullivan/feature-aaaaaaaa",
-            local_targets=("commit-1",),
-            remote_targets=(remote_state,),
-        ),
-        prefix="bosullivan",
-        local_bookmark_forget_planned=True,
-        remote=_REMOTE,
-        remote_state=remote_state,
-        review_identity=review_identity,
-        review_status=classify_review_change_without_pull_request(
-            commit_id=None,
-            local="orphaned",
-            remote_state=remote_state,
-            review_identity=review_identity,
-        ),
-    )
-
-    assert plan is not None
-    assert plan.action.status == "planned"
-    assert plan.expected_remote_target == "commit-1"
-
-
-def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_once() -> None:
-    calls: list[tuple[str, object]] = []
+    moved_state = initial_state.model_copy(update={"local_targets": ("moved-local",)})
+    calls: list[str] = []
 
     class RecordingJjClient:
-        def delete_remote_bookmarks(self, *, remote, deletions, fetch=True) -> None:
-            calls.append(("delete_remote_bookmarks", (remote, tuple(deletions), fetch)))
+        def get_bookmark_state(self, bookmark):
+            calls.append("get")
+            return moved_state
 
-        def forget_bookmarks(self, bookmarks) -> None:
-            calls.append(("forget_bookmarks", tuple(bookmarks)))
+        def list_remote_branches(self, *, remote, patterns):
+            calls.append("list")
+            return {BOOKMARK: "saved-remote"}
 
-        def fetch_remote(self, *, remote, branches=None) -> None:
-            calls.append(("fetch_remote", (remote, branches)))
+        def delete_remote_bookmarks(self, **kwargs):
+            calls.append("delete")
 
-    prepared_cleanup = PreparedCleanup(
-        context=_fake_context(jj_client=cast(JjClient, RecordingJjClient())),
+        def forget_bookmarks(self, bookmarks):
+            calls.append("forget")
+
+    actions: list[CloseAction] = []
+    plan = plan_bookmark_cleanup(
+        bookmark=BOOKMARK,
+        bookmark_state=initial_state,
+        change_id=CHANGE_ID,
+        local_commit_id="current-local",
+        record_action=actions.append,
+        remote_commit_id="saved-remote",
+        remote_name="origin",
+        review_identity=_identity(),
+    )
+    run = cast(
+        BookmarkCleanupRun,
+        SimpleNamespace(
+            dry_run=False,
+            jj_client=cast(JjClient, RecordingJjClient()),
+        ),
+    )
+
+    current = apply_bookmark_cleanup(
+        bookmark=BOOKMARK,
+        change_id=CHANGE_ID,
+        cleanup_plan=plan,
+        local_commit_id="current-local",
+        record_action=actions.append,
+        remote_commit_id="saved-remote",
+        remote_name="origin",
+        review_identity=_identity(),
+        run=run,
+    )
+
+    assert current is False
+    assert calls == ["get", "list"]
+    assert actions[-1].status == "blocked"
+
+
+@pytest.mark.parametrize(
+    ("initial_remote_target", "live_remote_target"),
+    (
+        (None, "saved-remote"),
+        ("saved-remote", "moved-remote"),
+    ),
+)
+def test_apply_cleanup_blocks_when_exact_remote_ref_changes_before_mutation(
+    initial_remote_target: str | None,
+    live_remote_target: str,
+) -> None:
+    initial_remote_states = (
+        ()
+        if initial_remote_target is None
+        else (
+            RemoteBookmarkState(
+                remote="origin",
+                targets=(initial_remote_target,),
+            ),
+        )
+    )
+    initial_state = BookmarkState(
+        name=BOOKMARK,
+        local_targets=("current-local",),
+        remote_targets=initial_remote_states,
+    )
+    calls: list[str] = []
+
+    class RecordingJjClient:
+        def get_bookmark_state(self, bookmark):
+            calls.append("get")
+            return initial_state
+
+        def list_remote_branches(self, *, remote, patterns):
+            calls.append("list")
+            return {BOOKMARK: live_remote_target}
+
+        def delete_remote_bookmarks(self, **kwargs):
+            calls.append("delete")
+
+        def forget_bookmarks(self, bookmarks):
+            calls.append("forget")
+
+    actions: list[CloseAction] = []
+    plan = plan_bookmark_cleanup(
+        bookmark=BOOKMARK,
+        bookmark_state=initial_state,
+        change_id=CHANGE_ID,
+        local_commit_id="current-local",
+        record_action=actions.append,
+        remote_commit_id="saved-remote",
+        remote_name="origin",
+        review_identity=_identity(),
+    )
+
+    current = apply_bookmark_cleanup(
+        bookmark=BOOKMARK,
+        change_id=CHANGE_ID,
+        cleanup_plan=plan,
+        local_commit_id="current-local",
+        record_action=actions.append,
+        remote_commit_id="saved-remote",
+        remote_name="origin",
+        review_identity=_identity(),
+        run=cast(
+            BookmarkCleanupRun,
+            SimpleNamespace(
+                dry_run=False,
+                jj_client=cast(JjClient, RecordingJjClient()),
+            ),
+        ),
+    )
+
+    assert current is False
+    assert calls == ["get", "list"]
+    assert actions[-1].status == "blocked"
+
+
+def test_cleanup_remote_context_uses_only_complete_tracking_pairs() -> None:
+    state = ReviewState(review_identities={CHANGE_ID: _identity()})
+    prepared = PreparedCleanup(
+        context=_fake_context(),
         bookmark_states={},
         github_target=GithubTarget(
             remote=_REMOTE,
@@ -357,70 +284,35 @@ def test_apply_stale_cleanup_batches_remote_deletes_then_forgets_then_fetches_on
             ),
         ),
         dry_run=False,
-        state=ReviewState(),
+        state=state,
     )
 
-    def mutation_plan(bookmark: str, expected_target: str) -> _StaleCleanupMutationPlan:
-        return _StaleCleanupMutationPlan(
-            change_id=bookmark,
-            local_bookmark_action=CleanupAction(
-                kind="local bookmark",
-                status="planned",
-                body=f"forget {bookmark}",
-            ),
-            remote_plan=RemoteBranchCleanupPlan(
-                action=CleanupAction(
-                    kind="remote branch",
-                    status="planned",
-                    body=f"delete {bookmark}@origin",
-                ),
-                expected_remote_target=expected_target,
-            ),
-            review_identity=_review_identity(bookmark=bookmark),
-        )
+    assert cleanup_module._cleanup_needs_remote_context(prepared_cleanup=prepared) is False
 
-    recorded_actions: list[CleanupAction] = []
-    _apply_stale_cleanup_mutation_plans(
-        mutation_plans=(
-            mutation_plan("review/feature-1", "commit-1"),
-            mutation_plan("review/feature-2", "commit-2"),
+
+def test_refresh_review_branches_ignores_other_repository_without_fetching() -> None:
+    class NoFetchJjClient:
+        def fetch_remote(self, **kwargs):
+            raise AssertionError("repository-mismatched branches must not be fetched")
+
+    identity = _identity().model_copy(update={"repository_name": "another-repository"})
+    state = ReviewState(
+        review_identities={CHANGE_ID: identity},
+        submitted_baselines={CHANGE_ID: SubmittedBaseline(commit_id="saved-remote")},
+    )
+    prepared = PreparedCleanup(
+        context=_fake_context(jj_client=cast(JjClient, NoFetchJjClient())),
+        bookmark_states={},
+        github_target=GithubTarget(
+            remote=_REMOTE,
+            repository=GithubRepoAddress(
+                host="github.com",
+                owner="octo-org",
+                repo="stacked-review",
+            ),
         ),
-        prepared_cleanup=prepared_cleanup,
-        record_action=recorded_actions.append,
+        dry_run=False,
+        state=state,
     )
 
-    assert calls == [
-        (
-            "delete_remote_bookmarks",
-            (
-                "origin",
-                (("review/feature-1", "commit-1"), ("review/feature-2", "commit-2")),
-                False,
-            ),
-        ),
-        ("forget_bookmarks", ("review/feature-1", "review/feature-2")),
-        ("fetch_remote", ("origin", None)),
-    ]
-    assert all(action.status == "applied" for action in recorded_actions)
-
-
-def test_plan_local_bookmark_cleanup_forgets_safe_review_bookmark() -> None:
-    plan = cleanup_module._plan_local_bookmark_cleanup(
-        cleanup_user_bookmarks=False,
-        bookmark_state=BookmarkState(
-            name="bosullivan/feature-aaaaaaaa",
-            local_targets=("commit-1",),
-        ),
-        prefix="bosullivan",
-        review_identity=_review_identity(
-            bookmark="bosullivan/feature-aaaaaaaa",
-        ),
-        stale_reason="local change is no longer reviewable",
-        submitted_baseline=SubmittedBaseline(commit_id="commit-1"),
-    )
-
-    assert plan is not None
-    assert plan.kind == "local bookmark"
-    assert plan.status == "planned"
-    assert "forget bosullivan/feature-aaaaaaaa" in plan.message
-    assert "no longer reviewable" in plan.message
+    assert cleanup_module._refresh_review_branches(prepared_cleanup=prepared) is prepared

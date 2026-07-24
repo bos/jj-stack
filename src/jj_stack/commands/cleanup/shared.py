@@ -13,13 +13,12 @@ from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
 )
-from jj_stack.models.bookmarks import BookmarkState, GitRemote, RemoteBookmarkState
+from jj_stack.models.bookmarks import BookmarkState, GitRemote
 from jj_stack.models.review_state import (
     ReviewIdentity,
     ReviewState,
     SubmittedBaseline,
 )
-from jj_stack.review.change_status import ReviewChangeStatus
 from jj_stack.ui import Message, plain_text
 
 CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -67,43 +66,15 @@ class PreparedCleanup:
 
 
 @dataclass(frozen=True, slots=True)
-class RemoteBranchCleanupPlan:
-    """Planned or blocked remote-branch cleanup details."""
-
-    action: CleanupAction
-    expected_remote_target: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class OrphanLocalBookmarkCleanupPlan:
-    """Planned or blocked cleanup for one untracked local review bookmark."""
-
-    action: CleanupAction
-    bookmark: str
-
-
-@dataclass(frozen=True, slots=True)
 class PreparedCleanupChange:
     """Locally prepared cleanup state for one complete tracked review."""
 
     bookmark_state: BookmarkState
     change_id: str
-    inspect_stack_comment: bool
-    remote_state: RemoteBookmarkState | None
+    current_commit_id: str | None
     review_identity: ReviewIdentity
-    review_status: ReviewChangeStatus
     stale_reason: str | None
     submitted_baseline: SubmittedBaseline
-
-
-@dataclass(frozen=True, slots=True)
-class _StaleCleanupMutationPlan:
-    """Planned local bookmark and remote branch mutations for one stale change."""
-
-    change_id: str
-    local_bookmark_action: CleanupAction | None
-    remote_plan: RemoteBranchCleanupPlan | None
-    review_identity: ReviewIdentity
 
 
 def _render_cleanup_action_header(*, dry_run: bool) -> str:

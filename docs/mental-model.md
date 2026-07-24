@@ -22,9 +22,10 @@ agent to review:
 - refreshing those PRs after local rewrites
 - inspecting review state and asking GitHub to merge reviewed changes
 
-To create a review branch, `jj-stack` creates a bookmark with a well-defined prefix. By default
-that prefix is `review/`, but you can choose a different prefix such as `my-review-stack/`.
-These bookmarks are managed automatically, so you don't need to manage them yourself.
+To create a review branch, `jj-stack` creates a bookmark named
+`review/<subject-slug>-<short-change-id>`. The readable subject hints at the change's purpose;
+the suffix ties the name to its stable change ID. These bookmarks are managed automatically, so
+you don't need to manage them yourself.
 `jj-stack` creates them for review and can remove them later during
 `jj-stack unstack --cleanup` or `jj-stack cleanup`. Merging itself does not rewrite local
 history or remove review state; selected `sync` reconciles GitHub's result first.
@@ -36,6 +37,7 @@ they are in, and how they relate to each other.
 
 To stay in sync with GitHub, `jj-stack` uses a small amount of supporting local metadata. That
 metadata helps it:
+
 - remember which GitHub PR goes with which local change
 - keep the branch name of a review stable, even if you rewrite the change or its title
 - safely recover if a command is interrupted, by re-deriving what remains to do

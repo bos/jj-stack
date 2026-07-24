@@ -99,7 +99,7 @@ def test_resolve_orphaned_pull_request_fails_closed_on_multiple_matches() -> Non
             pull_request_reference="17",
             state=state,
         )
-    assert "Repair the tracking data" in str(excinfo.value)
+    assert "Discard an incorrect claim with unstack --local" in str(excinfo.value)
     assert excinfo.value.exit_code == EXIT_AMBIGUOUS
 
 
@@ -118,7 +118,6 @@ def _identity(
         pr_number=pr_number,
         head_owner="octo-org",
         head_ref=head_ref,
-        bookmark_ownership="managed",
     )
 
 

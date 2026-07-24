@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from jj_stack.cli import main
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -125,39 +123,6 @@ def test_checkout_reports_up_to_date_when_selected_stack_is_already_imported(
     assert exit_code == 0
     assert "Local tracking is already up to date for this stack." in captured.out
     assert "no changes to review" not in captured.out
-
-
-@pytest.mark.parametrize("link_state", ["active", "unlinked"])
-def test_checkout_preserves_saved_bookmark_policy(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-    link_state: str,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    change_id, identity = next(iter(state.review_identities.items()))
-    preserved_identity = identity.model_copy(
-        update={
-            "bookmark_ownership": "external",
-            "link_state": link_state,
-        }
-    )
-    preserved_state = state_store.relink_review(
-        change_id,
-        expected_identity=identity,
-        expected_baseline=state.submitted_baselines[change_id],
-        identity=preserved_identity,
-        baseline=state.submitted_baselines[change_id],
-    )
-
-    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "1")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    assert state_store.load() == preserved_state
 
 
 def test_checkout_current_fails_closed_when_head_has_no_discoverable_remote_review_link(

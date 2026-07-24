@@ -201,9 +201,7 @@ def _validate_surviving_review(
     identity = candidate.review_identity
     if (
         identity.repository_key != repository.repository_key
-        or pull_request.number != identity.pr_number
-        or pull_request.head.ref != identity.head_ref
-        or pull_request.head.label != f"{identity.head_owner}:{identity.head_ref}"
+        or not identity.matches_pull_request(pull_request)
         or pull_request.normalize_state().state != "open"
     ):
         raise CliError(

@@ -127,13 +127,14 @@ is no longer a simple parent-child chain.
 ### Pull request branch
 
 Each review change gets exactly one bookmark, used as the GitHub PR head branch. The
-bookmark name is readable to humans and stable for tooling.
+bookmark name is readable to humans and stable for tooling. `jj-stack` reserves the fixed
+`review/` namespace; branches outside the complete managed grammar cannot be adopted.
 
-By default it is built from:
+The initial name is built from:
 
-- the configured prefix from `[jj-stack] bookmark_prefix` (default `review`)
-- a slug from the first line of the commit description
-- a short fixed-length `change_id` suffix (8 chars by default)
+- the fixed `review/` prefix
+- a lowercase ASCII slug from the first line of the commit description
+- an eight-character `change_id` suffix
 
 ```text
 review/<slug-from-subject>-<change_id.short(8)>
@@ -148,25 +149,20 @@ review/fix-bookmark-resolution-ypvmkkuo
 The slug helps reviewers using the GitHub UI or plain Git. The `change_id` suffix keeps
 the name tied to the logical change without becoming noisy. Eight characters is fixed,
 readable, and effectively unique once combined with the slug. If two resolved names collide,
-`submit` stops; the user must resolve the collision, for example with distinct bookmarks,
-narrower `--use-bookmarks` patterns, or a different subject for an untracked change.
+`submit` stops; a never-submitted change can use a different subject to produce a different
+initial slug.
 
 The slug is only an input to the *initial* default name. Once a bookmark is created it is
 not automatically renamed when the commit subject changes — title churn must not cause
 branch churn during review.
 
-In other words: generate once, then pin. For an already tracked change,
+In other words: generate once, then pin. For a tracked change,
 `ReviewIdentity.head_ref` is the only branch-name authority; ordinary commands never rename or
-replace it from discovery. For an untracked change, resolution first uses an existing bookmark
-matched by `--use-bookmarks` or the configured `use_bookmarks` patterns, then an existing managed
-bookmark for that change, and otherwise generates the default. `submit` saves the resulting ref
-as part of the new review identity.
+replace it from discovery. For an untracked change, resolution first reuses one existing managed
+bookmark whose suffix matches the change and whose local or selected-remote target still exists;
+otherwise it generates the default. Zero or multiple candidates cannot establish identity.
 
 If two changes resolve to the same bookmark, `submit` stops before mutating anything.
-
-Bookmarks matched through `use_bookmarks` are external names rather than tool-managed
-review bookmarks. `submit` may push them, but later cleanup does not delete or forget
-them by default.
 
 ### Review base
 
@@ -220,16 +216,17 @@ All of that already lives in the commit DAG, the change-ID model, and the bookma
 
 Tracking contains two distinct versioned records keyed by full `change_id`:
 
-- `ReviewIdentity`: GitHub host, repository owner/name, PR number, one canonical head owner/ref,
-  bookmark ownership, and link state
+- `ReviewIdentity` version 2: GitHub host, repository owner/name, PR number, and one canonical
+  head owner/ref
 - `SubmittedBaseline`: the last successfully submitted `commit_id` for that identity
 
-The identity's head ref is the pinned local review bookmark name. No other field may act as a
-second branch-name authority. Only review creation, `relink`, `restart`, `submit --restart`,
-`unlink`, `unstack`, checkout/bootstrap, or removal after dependency checks may change an
-identity. Ordinary `submit` may update only `SubmittedBaseline`, after verifying that the live PR
-matches the saved `ReviewIdentity` and its head SHA equals the current local commit being
-recorded. `view` and `list` never change either record.
+The identity's head ref is the pinned review branch name. No other field may act as a second
+branch-name authority. Only review creation, `relink`, `submit --restart`, checkout/bootstrap,
+`unstack --local`, or verified retirement after dependency checks may change an identity. Plain
+`unstack` retains the identity and baseline after closing the PR. Ordinary `submit` may update
+only `SubmittedBaseline`, after verifying that the live PR matches the saved
+`ReviewIdentity` and its head SHA equals the current local commit being recorded. `view` and
+`list` never change either record.
 
 A live PR matches `ReviewIdentity` only when its GitHub host, repository, PR number, and head
 owner/ref equal the saved fields. A check for the exact reviewed snapshot additionally requires
@@ -253,20 +250,19 @@ before mutating an eligible review. A cached `false` uses navigation comments wi
 stack API read. A cached `true` never changes implementations mid-command: a required membership
 read that returns `404` fails without changing the cached value.
 
-A change can be in one of three link states:
+A change can be in one of two tracking states:
 
 - **untracked**: no record yet. Predicted bookmark names and remote observations alone do
   not count as tracking.
-- **tracked (active)**: a record exists; the tool inspects and updates it normally.
-- **unlinked**: a record exists, but the user explicitly detached it. The tool must not
-  silently reattach.
+- **tracked**: a `ReviewIdentity` record exists; the tool inspects the exact saved PR and
+  branch. A complete submitted review also has a `SubmittedBaseline`.
 
 PR rediscovery is an explicit recovery flow. Plain `view` does not create identity for a
 never-tracked change, and ordinary commands never replace a missing, closed, moved, or ambiguous
 review automatically. They preserve the saved identity and name `relink` or `submit --restart`.
 
-User-authored settings (e.g. reviewer or label preferences, `use_bookmarks` patterns)
-live in `jj` config, not in the tracking-state file.
+User-authored settings such as reviewer or label preferences live in `jj` config, not in the
+tracking-state file.
 
 Managed comments are derived output, not a source of truth. In a repository without native GitHub
 stack support, `submit` regenerates navigation comments from the current `jj` stack. In every
@@ -527,18 +523,14 @@ The recovery surface is explicit and narrow:
   as the submitted baseline. Replacing any stale saved baseline is what lets a later
   `submit` update the relinked review rather than rejecting that branch or opening a
   replacement.
-- `jj-stack restart <revset>` is a repair command for abandoning stale or unusable
-  PR tracking on a selected stack. It keeps the `jj` changes, clears their previous PR
-  identity, assigns fresh managed review bookmark names, and leaves the next `submit`
-  to create replacement PRs explicitly.
-- `jj-stack submit --restart <revset>` is the user-facing one-step version of that
-  repair. It computes the same fresh tracking state in memory, creates replacement
-  PRs, and only persists the new PR identity as part of the successful submit path.
+- `jj-stack submit --restart <revset>` replaces stale or unusable reviews while keeping the
+  selected `jj` changes. It derives each replacement branch deterministically from the saved
+  head ref, old PR number, and change ID. It retains every old identity and baseline until the
+  whole selected replacement stack has passed a fresh joint check and can be saved in one write.
 
 Selector defaults are listed once under "CLI shape" below. The principle: lifecycle
-commands default to the stack headed by `@-`; repair commands (`restart`, `relink`,
-`unlink`) require an explicit `<revset>`; `@` is always explicit user intent and is
-never selected by an omitted argument.
+commands default to the stack headed by `@-`; `relink` requires one explicit `<revset>`; `@` is
+always explicit user intent and is never selected by an omitted argument.
 
 ### `view`
 
@@ -664,7 +656,7 @@ a separate internal bucket. The same schema file covers both `view --json` and
 
 These commands are not sources of truth and do not reattach identity. They inspect a
 `jj`-derived stack after damage, cross-machine work, or manual edits on GitHub; explicit
-`checkout`, `relink`, or restart operations own reattachment.
+`checkout`, `relink`, or `submit --restart` own reattachment.
 
 ### `checkout`
 
@@ -798,32 +790,34 @@ or otherwise dropped from every current stack): saved tracking is the only avail
 identity, so `unstack` acts from the exact saved PR and branch fields and still fails
 closed if either is missing or ambiguous. Before deleting a branch, it verifies that
 the saved PR still uses the saved branch name on the configured GitHub repository, not
-just a same-named branch from another owner. "Ambiguous" includes the case where the
-saved branch is now claimed by another tracked change (e.g. via `use_bookmarks`) —
-branch deletion in that mode would silently take a branch out from under a live review.
+just a same-named branch from another owner. A saved branch claimed by another tracked change is
+ambiguous; branch deletion in that state would silently take a branch out from under another
+review.
 
-`unstack --cleanup --pull-request orphans` selects every open-PR tracking record that
-`list` reports as an orphan when the command begins. The `orphans` selector cannot be
-combined with a revset or `--local`. The command processes targets in pull-request-number
-order and applies the same PR-head, bookmark-ownership, and duplicate-claim checks used for
-one orphan. A blocked target remains open and tracked; other independently verified targets
-continue, and the command exits `1` if any target was blocked. A hard failure stops the
-batch with prior successful cleanup preserved. `--dry-run` performs the same selection and
-verification without closing PRs or deleting review artifacts.
+`unstack --cleanup --pull-request orphans` selects every tracked PR whose local change is absent
+and which `list` reports as an orphan when the command begins. The `orphans` selector cannot be
+combined with a revset or `--local`. The command processes targets in pull-request-number order
+and applies the same exact PR-head and duplicate-claim checks used for one orphan. It closes a
+verified open PR and cleans a verified closed or merged PR. A blocked target remains tracked and,
+if open, remains open; other independently verified targets continue, and the command exits `1`
+if any target was blocked. A hard failure stops the batch with prior successful cleanup
+preserved. `--dry-run` performs the same selection and verification without closing PRs or
+deleting review artifacts.
 
 Without `--cleanup`, `unstack`:
 
 - closes the open PRs the tool is already tracking for the stack
-- updates tracking so those changes are no longer treated as actively tracked
 - skips already-merged or already-closed PRs rather than treating them as new close
   targets
 - leaves local bookmarks and remote PR branches in place
+- retains each exact `ReviewIdentity` and `SubmittedBaseline`, so later cleanup or
+  `submit --restart` can still prove what it is replacing
 
 With `--local`, `unstack` removes only the saved local tracking records for the selected
-stack. It does not close PRs, delete remote branches, delete local bookmarks, or inspect
-GitHub. The local `jj` changes remain in place. This mode is for checkouts that should
-stop treating the stack as locally tracked while leaving the GitHub review stack alone.
-It cannot be combined with `--cleanup`.
+stack: the identity and baseline pair is removed together. It does not close PRs, delete remote
+branches, delete local bookmarks, or inspect GitHub. The local `jj` changes remain in place. This
+mode is for checkouts that should stop treating the stack as locally tracked while leaving the
+GitHub review stack alone. It cannot be combined with `--cleanup`.
 
 With `--cleanup`, `unstack` also performs conservative post-close cleanup for review
 artifacts the tool can verify belong to the stack:
@@ -832,18 +826,20 @@ artifacts the tool can verify belong to the stack:
   the stack
 - forget local bookmarks, only when verified to belong to the stack
 - delete managed navigation and overview comments belonging to the stack
-- prune identity and baseline only when no visible path still depends on them
-- preserve external bookmarks (e.g. ones reused via `use_bookmarks`) unless the user
-  opts in to cleaning them up too
+- remove the identity and baseline pair only when no same-repository open PR still names the
+  saved review branch as its base
 
-That opt-in is `cleanup_user_bookmarks = true` under `[jj-stack]`. The default is
-`false`.
+If the tool cannot verify the exact saved identity, submitted baseline, live PR, local bookmark,
+and remote branch needed for a deletion, `--cleanup` refuses it rather than falling back to
+namespace or branch-name heuristics.
 
-The opt-in stays explicit because closing PRs is less destructive than deleting
-branches. Preview output makes the difference clear so the user can choose between
-"close only" and "close and clean up". If the tool cannot verify exact local and remote
-review identity, `--cleanup` refuses the deletion rather than falling back to
-branch-name heuristics.
+For branch deletion and tracking retirement, the dependent-PR rule is exact: every open PR in the
+same GitHub repository whose `base.ref` equals the candidate `ReviewIdentity.head_ref` blocks the
+cleanup. The PR need not have jj-stack tracking or a local change; an untracked or orphaned PR is
+still a dependent. Selected stack cleanup works from the head toward the base so an upper selected
+PR is closed before its parent is reconsidered. A dry run may treat only earlier selected PRs in
+that order as closed. The real command never makes that assumption and observes GitHub again at
+each mutation boundary.
 
 `unstack` is idempotent:
 
@@ -852,79 +848,42 @@ branch-name heuristics.
 - rerunning `unstack --cleanup` after an earlier `unstack` performs only the remaining safe
   cleanup, not another close
 
-### `unlink`
+### `submit --restart`
 
-`jj-stack unlink <revset>` is the repair-oriented inverse of `relink`: it intentionally
-detaches one change from active PR tracking without touching GitHub.
+`jj-stack submit --restart <revset>` replaces stale or unusable reviews for the selected stack
+while keeping the local changes. It requires existing complete tracking for every selected
+change.
 
-`unlink` is an advanced repair command, not the normal way to end a review. Its unit of
-intent mirrors `relink`: one change, identified from the local DAG.
+For each change it derives one retry-stable branch from the saved head ref, saved PR number, and
+full change ID:
 
-`unlink` changes the saved identity's link state to `unlinked` while preserving its GitHub
-repository, PR, and head identity as an explicit instruction not to reattach automatically.
-Simply deleting the record would allow later discovery to mistake the old review for active
-tracking.
+```text
+review/<original-stem>-fresh-pr<old-pr-number>-<short-change-id>
+```
 
-Unlinked state means:
+If the saved branch already has a terminal `fresh-pr<number>` marker, the new saved PR number
+replaces it rather than accumulating markers. A branch that does not match the fixed managed
+grammar and the selected change's suffix cannot authorize restart.
 
-- `view --fetch` may still report a discovered remote bookmark or PR for the same
-  branch, but it labels them as unlinked rather than reactivating tracking
-- `checkout` may restore local bookmark state for the change, but keeps the unlinked
-  marker; it does not restore active PR tracking
-- a preserved local bookmark surfaces as an unlinked bookmark rather than as actively
-  tracked
-- `submit` refuses to reuse unlinked state automatically, even if a local bookmark or
-  a discovered PR would normally count as proof
-- `merge` rejects unlinked changes as not safely mergeable
-- `relink` is the explicit way back in; it clears the unlinked marker and reestablishes
-  active tracking
+Every old `ReviewIdentity` and `SubmittedBaseline` remains durable while the replacements are
+being created. Replacement identities are staged only in memory. After every PR, native-stack
+update, managed comment, and post-submit closure check succeeds, `submit --restart` jointly
+reobserves all replacement PRs and branches. Each one must still name the configured repository,
+unique owner/head ref, exact selected commit, planned base, and exact remote branch target. One
+compare-and-swap then replaces every selected identity/baseline pair in a single state-file write.
 
-By default `unlink` is local-only:
+An existing replacement branch is usable only when its local and remote targets are absent or
+equal the exact selected commit. A unique open PR already using the deterministic replacement
+branch is recovered after an interrupted restart only when its repository, owner, head ref, head
+commit, base, and live remote target still equal the current plan. This is a narrow retry rule,
+not general PR discovery or implicit relinking. Any mismatch or ambiguous/terminal PR blocks the
+restart and directs the user to inspect it and use `relink` only when it is the intended review.
 
-- it does not close PRs
-- it does not delete PR branches
-- it does not delete managed navigation or overview comments
-- it does not refresh remote bookmark observations: a fetch imports whatever the
-  remote now holds into the local view mid-repair, and saved tracking plus
-  remembered observations already decide link state
-
-It may preserve the local bookmark, but once the unlinked marker exists that bookmark
-no longer counts as proof that the change is still being tracked. That precedence rule
-is part of the product contract, not an implementation detail.
-
-`unlink` is idempotent:
-
-- unlinking an already-unlinked change is a no-op
-- unlinking a change that was never linked errors out rather than creating an unlinked
-  marker for a never-linked change
-
-Broader cleanup remains with `cleanup`. Unlinked records do not expire just because the
-remote PR disappeared, but `cleanup` prunes unlinked markers whose `change_id` no longer
-resolves anywhere in visible history.
-
-### `restart`
-
-`jj-stack restart <revset>` prepares the selected stack to be submitted as fresh PRs.
-It is for cases where the local changes should continue, but the old PR tracking should
-not: closed PRs that should not be reopened, deleted PRs, or broken branch/PR links
-left by a tool bug or manual GitHub repair.
-
-Most users should reach this behavior through `jj-stack submit --restart <revset>`.
-The standalone `restart` command remains the local-only form when the operator wants to inspect or
-stage the tracking reset separately.
-
-`restart` removes the old `ReviewIdentity` and `SubmittedBaseline` for every selected stack change
-that has previous PR tracking. It does not mark the changes as unlinked. Instead it assigns fresh
-local managed review bookmark names that still end with each change's short change ID, so the next
-`submit <revset>` can create replacement identities without reusing stale PR branches.
-`restart` is local-only: it does not close PRs, reopen PRs, delete branches, push
-bookmarks, or create replacement PRs by itself. Use `restart --dry-run <revset>` to
-inspect the planned reset first.
-
-`submit --restart` does not save that reset before GitHub work begins. If submit cannot
-create or verify the replacement PRs, the old tracking state remains available for
-inspection and recovery. It also fails before pushing if a planned replacement branch
-already has an open PR on GitHub, rather than accidentally updating that PR.
+Any failure before or during the final state write leaves every old pair in place. Rerunning the
+same restart recovers exact replacement candidates and does not create another generation of PRs.
+After a restart completes, a later explicit restart intentionally derives a new generation from
+the newly saved PR numbers. A dry run applies the same candidate classification but never
+mutates branches, PRs, comments, native membership, or tracking.
 
 ## Rewrite behavior
 
@@ -941,9 +900,10 @@ This design behaves well under normal `jj` rewrite-heavy workflows:
   and any descendants' PR bases recalculate against the new parent.
 - **Abandon**: the change leaves every current local stack and descendants reattach
   to its parent. Its PR becomes *orphaned* — surviving stacks never close, reuse, or
-  retarget it, and `cleanup` keeps the saved PR and branch identity until the PR is
-  closed, merged, or absent. Explicit closure goes through `unstack --cleanup
-  --pull-request <pr>`.
+  retarget it. Cleanup removes its saved identity only after verifying the exact PR is closed or
+  merged and its artifacts are safe to remove. An absent PR fails closed and leaves tracking for
+  explicit repair or later verification. Explicit closure goes through
+  `unstack --cleanup --pull-request <pr>`.
 - **Split**: new logical review changes get new change IDs and usually become new
   PRs. The original keeps its `change_id` and PR and is updated normally on next
   `submit`. This is a feature, not a bug.
@@ -1018,10 +978,9 @@ Run with no subcommand, the executable behaves the same as `view` on the current
 
 Top-level help groups commands by intent. `--help` and `help` foreground the core
 review lifecycle (`submit`, `view`, `merge`, `unstack`) plus support commands
-(`cleanup`, `checkout`, `sync`, `doctor`). Repair commands (`restart`, `relink`, `unlink`) and
-shell-integration glue (`completion`) stay hidden by default and only appear in
-`jj-stack help --all`. The `help` command itself is hidden parser glue: `jj-stack help`
-is the same as
+(`cleanup`, `checkout`, `sync`, `doctor`). The repair command `relink` and shell-integration glue
+(`completion`) stay hidden by default and only appear in `jj-stack help --all`. The `help`
+command itself is hidden parser glue: `jj-stack help` is the same as
 `jj-stack --help`, and `jj-stack help <command>` is the same as
 `jj-stack <command> --help`. The default top-level help also keeps advanced global
 options (`--repository`, `--config`, `--config-file`, `--debug`, `--time-output`) out
@@ -1043,7 +1002,7 @@ Target selection is conservative:
   removed
 - `submit --re-request` re-requests users whose latest review is `APPROVED` or
   `CHANGES_REQUESTED`; pending review requests stay in place
-- `restart`, `relink`, and `unlink` require one explicit `<revset>`
+- `relink` requires one explicit `<revset>`
 - `sync --all` is mutually exclusive with a selector; plain `sync` defaults to `@-`
 - `checkout` accepts at most one explicit selector flag (`--pick`, `--pull-request`, or
   `--revset`) and otherwise defaults to the current stack headed by `@-`
@@ -1104,9 +1063,10 @@ one before merging.
   `delete_remote_bookmarks`). GitHub closes any PR whose head ref points at the
   deleted branch. Defense: branch deletion is invoked only by `cleanup`, `unstack`
   (including the `unstack --cleanup --pull-request <n>` orphan sub-mode), under an exact ref
-  lease. An existing PR must match `ReviewIdentity` and be closed or landed. If the PR is absent,
-  the saved identity must still mark the branch as tool-owned. No visible dependent stack may
-  still need the link; open or dependent orphaned PRs keep their branch.
+  lease. The saved PR must still exist, match `ReviewIdentity`, and be closed or merged. No
+  same-repository open PR may have `base.ref == ReviewIdentity.head_ref`; this includes PRs with
+  no jj-stack tracking or local change. Such a dependent keeps the branch and the identity and
+  baseline pair.
 
 - **`update_pull_request(base=…)`**. Setting a PR base to a branch that already
   contains the PR's head triggers GitHub's merged auto-close. Defense: in `submit`,
@@ -1187,19 +1147,34 @@ must clear before introducing a new GitHub call.
 `jj-stack cleanup` is conservative garbage collection, never a correctness prerequisite or a
 local-history repair command. Selected `sync` owns rebasing after landed ancestors.
 
-Cleanup may remove only provably tool-owned derived artifacts:
+Cleanup may remove only derived artifacts named by one complete identity and baseline pair:
 
 - managed comments rediscovered by an unambiguous content marker
 - local managed bookmarks whose exact current target is verified safe to remove
 - remote managed review refs under an exact expected-target lease
-- obsolete identity/baseline records only after no open review or visible dependent path needs
-  them
+- obsolete identity/baseline records only after no same-repository open PR uses the saved head
+  ref as its base
 
-Before deleting a remote ref or comment, cleanup reloads the configured repository and PR. An
-existing PR must match `ReviewIdentity`; comment deletion additionally verifies its managed body
-marker. If the PR is absent, branch deletion requires saved tool ownership and an exact ref lease.
-An open orphan keeps its branch and tracking until explicit orphan cleanup. External bookmarks
-are preserved unless the configured user-bookmark policy permits removal.
+Plain cleanup iterates complete tracked pairs and observes the exact saved PR number, repository,
+head owner, and head ref. It batches that observation first, then falls back to bounded
+one-record observations only when GitHub cannot return the batch. A matching closed or merged PR
+is eligible; a matching open review is preserved. An open orphan is reported but is not closed
+or cleaned by this repository-wide command. Missing PRs, lookup failures, identity mismatches,
+and duplicate head claims fail closed for that record without blocking independently observable
+records.
+
+Eligibility also requires that GitHub report no open PR in the same repository whose `base.ref`
+equals the saved `head_ref`. This check includes untracked and orphaned PRs. Local jj descendants
+do not replace it: descendant visibility is authority for selected `sync`, not for deleting a
+GitHub branch or retiring review tracking.
+
+Immediately before deleting branch or bookmark artifacts, cleanup reloads the exact saved PR, its
+unique head claim, and its open base dependents. Comment deletion additionally verifies its
+managed body marker. It then rereads the local bookmark and exact remote ref immediately before
+applying the planned cleanup. A changed target or plan blocks the mutation. The remote deletion
+carries an exact submitted-commit lease. Cleanup observes the PR and base dependents again
+immediately before retiring the identity/baseline pair, and retires it only after all authorized
+artifact cleanup succeeds.
 
 In a native repository, cleanup reads current membership before deleting a branch for a known PR.
 An active member keeps its branch. A historical merged member does not block otherwise authorized
@@ -1207,8 +1182,9 @@ landed-branch cleanup merely because GitHub retains it in the resource.
 
 Malformed, obsolete, absent, ambiguous, or individually failing records are reported and skipped
 without blocking independent cleanup work. Failed cleanup leaves safe leftovers and never changes
-whether a GitHub merge succeeded. Every warning names the selected `sync`, `relink`, `unlink`,
-restart, or later `cleanup` command that can finish the work.
+whether a GitHub merge succeeded. Every warning names the selected `sync`, `relink`,
+`submit --restart`, explicit `unstack --cleanup`, or later `cleanup` command that can finish the
+work.
 
 `cleanup --dry-run` performs the same discovery and safety classification without mutation.
 
@@ -1315,7 +1291,7 @@ config. The top-level schema keeps `ReviewIdentity` and `SubmittedBaseline` reco
 observation or last-submitted-commit update cannot replace PR identity accidentally.
 
 Reads isolate individual absent, malformed, or obsolete records. One bad identity or baseline is
-reported with `relink`, restart, or unlink guidance and does not poison independent useful work.
+reported with `relink` or `submit --restart` guidance and does not poison independent useful work.
 An unreadable or unsupported top-level file blocks mutation, reports its exact path, and tells the
 user how to move it aside before explicitly re-adopting reviews through `checkout` or `relink`.
 There is no migration or automatic discard path.
@@ -1324,18 +1300,16 @@ Shape:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "review_identities": {
     "<full-change-id>": {
-      "version": 1,
+      "version": 2,
       "github_host": "github.com",
       "repository_owner": "octocat",
       "repository_name": "example",
       "pr_number": 123,
       "head_owner": "octocat",
-      "head_ref": "review/fix-bookmark-resolution-ypvmkkuo",
-      "bookmark_ownership": "managed",
-      "link_state": "active"
+      "head_ref": "review/fix-bookmark-resolution-ypvmkkuo"
     }
   },
   "stacked_pull_requests": {
@@ -1365,9 +1339,6 @@ reviewers = ["octocat"]
 labels = ["needs-review"]
 ```
 
-Bookmark-selection patterns such as `use_bookmarks` belong in config, not in the
-tracking-state file.
-
 ## Current scope
 
 Supported:
@@ -1384,7 +1355,7 @@ Unsupported:
 - merge commits inside the review chain
 - divergent changes
 - stacked reviews that cross repos or remotes
-- bookmark naming collisions caused by matched or generated names
+- review-branch naming collisions caused by generated names
 - native stacks of 100 or more reviews; no batching or size-specific recovery is provided
 
 ## Bottom line

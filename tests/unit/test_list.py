@@ -67,7 +67,6 @@ def _identity(*, bookmark: str = "review/feature-abcdefgh", pr_number: int = 1) 
         pr_number=pr_number,
         head_owner="octo-org",
         head_ref=bookmark,
-        bookmark_ownership="managed",
     )
 
 

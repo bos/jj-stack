@@ -956,9 +956,6 @@ def _apply_drift_operation(
             baseline=stored_baseline,
         )
         return None
-    if drift.kind == "unlinked_change":
-        assert run_cli(("unlink", submitted.change_id)) == 0, drift.trace
-        return None
     if drift.kind == "remote_branch_drift":
         drift_target = next(
             candidate.remote_target

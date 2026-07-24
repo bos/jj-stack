@@ -14,8 +14,10 @@ from pathlib import Path
 
 import httpxyz
 
+from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.jj.client import JjClient
 
 from .fake_github import (
     FakeGithubRepository,
@@ -305,8 +307,7 @@ def init_fake_github_repo_with_submitted_stack(
 
 
 def _build_manual_pr_template(template_root: Path) -> None:
-    """Build a template with `feature 1` committed, `review/manual-feature-1`
-    pushed, and a manually-created PR #1 targeting it.
+    """Build a template with `feature 1` committed and a manual review PR.
 
     Unlike the submitted-stack template this never runs jj-stack `main()`, so it
     has no state-home to rehome: only the jj repo, the remote, and the pickled
@@ -314,8 +315,9 @@ def _build_manual_pr_template(template_root: Path) -> None:
     need it forgotten do so as a cheap per-test step.
     """
     repo, fake_repo = _copy_fake_github_repo_from_template(template_root, _get_cached_template())
-    manual_bookmark = "review/manual-feature-1"
     commit_file(repo, "feature 1", "feature-1.txt")
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    manual_bookmark = f"review/manual-feature-{short_change_id(change_id)}"
     run_command(["jj", "bookmark", "create", manual_bookmark, "-r", "@-"], repo)
     run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", manual_bookmark], repo)
     fake_repo.create_pull_request(
@@ -330,8 +332,7 @@ def _build_manual_pr_template(template_root: Path) -> None:
 def init_fake_github_repo_with_manual_pr(
     tmp_path: Path,
 ) -> tuple[Path, FakeGithubRepository]:
-    """Return a repo with `feature 1` committed, `review/manual-feature-1`
-    pushed, and a manual PR #1 already targeting it (bookmark still present).
+    """Return a repo with `feature 1` committed and a manual review PR.
 
     Mirrors the manual-PR setup shared by several relink tests. Callers still
     invoke `configure_submit_environment` to wire the monkeypatches for the

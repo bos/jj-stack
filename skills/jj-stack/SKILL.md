@@ -36,10 +36,10 @@ command they use before any direct GitHub mutation.
    stack, and never create, delete, or force-push its review branches by
    hand. Use `gh stack` only for the exact resource-dissolution repair
    described below.
-2. **Check ownership before the first `gh` or API write in a repo.** Run
+2. **Check tracking before the first `gh` or API write in a repo.** Run
    `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json
-   --fetch` for one PR. If the PR, branch, bookmark, or change appears in the
-   output, the stack is managed; cache that answer for the session. Do this
+   --fetch` for one PR. If the PR, branch, or change appears in the output,
+   the stack is tracked; cache that answer for the session. Do this
    lazily — the trigger is a pending GitHub write, not entering a repo. These
    commands exit 10 when they print a report that is incomplete or needs
    attention; read the JSON before concluding anything.
@@ -75,11 +75,11 @@ or `<!-- jj-stack-overview -->`; jj-stack manages those.
 **Structural and lifecycle writes are not**: closing, merging, or reopening a
 PR; retargeting base or head; deleting or force-pushing a review branch;
 creating a replacement PR; or equivalent `gh api` mutations. These desync
-local changes, review bookmarks, and tracking data. Map the intent to a
-   jj-stack command instead; use `gh` only if the user explicitly confirms after
-   you explain that risk. The one routine exception is an exact `gh stack
-   unstack <number>` command printed by `submit` when one old GitHub stack spans
-   multiple desired local paths; run it, then submit each path separately.
+local changes, review branches, and tracking data. Map the intent to a
+jj-stack command instead; use `gh` only if the user explicitly confirms after
+you explain that risk. The one routine exception is an exact `gh stack
+unstack <number>` command printed by `submit` when one old GitHub stack spans
+multiple desired local paths; run it, then submit each path separately.
 
 - **Merge reviewed bottom changes:** `merge --dry-run`, then `merge`. It
   selects the consecutive open, non-draft PRs from the bottom and requires
@@ -95,6 +95,10 @@ local changes, review bookmarks, and tracking data. Map the intent to a
   `list`, add `--pull-request <pr>`; to preview and retire every orphan, use
   `unstack --cleanup --pull-request orphans --dry-run`, then
   `unstack --cleanup --pull-request orphans`.
+- **Collect closed or merged leftovers:** `cleanup --dry-run`, then `cleanup`.
+  It checks each exact saved PR and removes only verified artifacts for
+  closed or merged reviews. Open reviews and open orphans are preserved;
+  mismatched or unavailable GitHub state blocks that record.
 - **Stop tracking locally but leave PRs open:** `unstack --local`.
 - **Change PR base/head because the stack shape changed:** reshape with `jj`,
   then `submit --dry-run` and `submit`.
@@ -107,13 +111,17 @@ local changes, review bookmarks, and tracking data. Map the intent to a
   `checkout --pull-request <pr> --fetch` for a whole stack (sets up tracking
   only; rewrites nothing and does not touch GitHub), or
   `relink <pr> <revset>` for one PR/change link.
-- **Fresh PRs for the same local changes:** `restart --dry-run <revset>`,
-  then `restart <revset>` and `submit <revset>`.
+- **Fresh PRs for the same local changes:** `submit --restart --dry-run
+  <revset>`, then `submit --restart <revset>`. Replacement branches preserve
+  the readable original name, add `fresh-pr<old-pr-number>`, and keep the
+  short change ID suffix. If submission stops, rerun the same command: exact
+  replacement PRs are reused, and all old tracking remains until the whole
+  selected replacement stack succeeds.
 
 If a direct GitHub mutation already happened, do not rebuild changes or PRs
 by hand. Inspect with `list --fetch --json`, `view --pull-request <pr> --json
---fetch`, and `doctor`, then choose `checkout`, `relink`, `unlink`,
-`restart`, or `unstack` from what you see.
+--fetch`, and `doctor`, then choose `checkout`, `relink`, `submit --restart`,
+or `unstack` from what you see.
 
 ## Everyday flow
 
@@ -137,8 +145,8 @@ by hand. Inspect with `list --fetch --json`, `view --pull-request <pr> --json
 
 0 success; 1 any other failure, including a blocked action; 2 selection is
 not a supported stack; 3 unresolved conflicts; 4 GitHub auth/API failure;
-5 invalid arguments; 6 ambiguous selector (fails closed — repair with
-`unlink`/`relink` or select explicitly); 10 `view`/`list` printed a report
+5 invalid arguments; 6 ambiguous selector (fails closed — use `relink` to
+repair an incorrect attachment or select explicitly); 10 `view`/`list` printed a report
 that is incomplete or needs attention (the output is still valid — read it);
 130 interrupted.
 

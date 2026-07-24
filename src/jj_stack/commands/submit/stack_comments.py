@@ -153,6 +153,7 @@ async def _sync_managed_comment(
             comment_id=existing_comment.id,
             github_client=github_client,
             kind=kind,
+            pull_request_number=pull_request_number,
         )
         return None
     if existing_comment is not None:

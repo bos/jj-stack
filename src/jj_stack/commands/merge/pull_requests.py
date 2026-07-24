@@ -11,7 +11,7 @@ from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import SubmittedBaseline
 from jj_stack.review.landed import FinalizationContext, observe_landed_candidate
 from jj_stack.review.landed_evidence import LandedReviewCandidate, collect_landed_evidence
-from jj_stack.review.observation import observe_review_mutation
+from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import Message
 
 from .authority import merge_authority_error
@@ -96,7 +96,7 @@ async def _fresh(
     trunk_commit_id: str,
 ) -> tuple[GithubPullRequest | None, str | None]:
     try:
-        observation = await observe_review_mutation(
+        observation = await observe_reviews(
             change_ids=(revision.change_id,),
             context=context,
             github_client=github,

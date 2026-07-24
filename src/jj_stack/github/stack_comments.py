@@ -54,8 +54,40 @@ async def delete_stack_comment(
     comment_id: int,
     github_client: GithubClient,
     kind: StackCommentKind,
-) -> None:
-    """Delete one managed stack comment, tolerating an already-deleted target."""
+    pull_request_number: int,
+) -> bool:
+    """Re-observe and delete one exact managed comment.
+
+    Returns whether the expected comment still existed and was deleted. An
+    already-absent target is complete only while no replacement marker exists.
+    """
+
+    try:
+        comments = await github_client.list_issue_comments(
+            issue_number=pull_request_number,
+        )
+    except GithubClientError as error:
+        raise CliError(
+            t"Could not verify {stack_comment_label(kind)} #{comment_id} on "
+            t"PR #{pull_request_number}"
+        ) from error
+
+    expected_comment = next((comment for comment in comments if comment.id == comment_id), None)
+    matching_comments = tuple(
+        comment for comment in comments if comment_matches_kind(body=comment.body, kind=kind)
+    )
+    if expected_comment is None:
+        if not matching_comments:
+            return False
+        raise CliError(
+            t"Cannot delete {stack_comment_label(kind)} #{comment_id} because its marker "
+            t"now belongs to a different or ambiguous comment on PR #{pull_request_number}."
+        )
+    if len(matching_comments) != 1 or matching_comments[0].id != comment_id:
+        raise CliError(
+            t"Cannot delete {stack_comment_label(kind)} #{comment_id} because its marker "
+            t"changed or became ambiguous on PR #{pull_request_number}."
+        )
 
     try:
         await github_client.delete_issue_comment(
@@ -63,5 +95,6 @@ async def delete_stack_comment(
         )
     except GithubClientError as error:
         if error.status_code == 404:
-            return
+            return False
         raise CliError(f"Could not delete {stack_comment_label(kind)} #{comment_id}") from error
+    return True

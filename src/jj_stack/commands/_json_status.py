@@ -58,8 +58,6 @@ def saved_pull_request_json(
 def _review_change_status(status: ReviewChangeStatus) -> str:
     if status.local == "divergent":
         return "divergent"
-    if status.link == "unlinked":
-        return "unlinked"
     if status.pr_lifecycle in {"ambiguous", "closed", "merged", "missing"}:
         return status.pr_lifecycle
     if status.has_pull_request_lookup_failure:

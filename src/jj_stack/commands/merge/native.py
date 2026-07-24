@@ -9,7 +9,7 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubAsyncMerge, GithubStack
-from jj_stack.review.observation import observe_review_mutation
+from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import Message
 
 from .authority import merge_authority_error
@@ -145,7 +145,7 @@ async def authorize_native_merge(
     resource = await github.get_stack(stack_number=native.resource.number)
     revisions = native.planned if native.terminal_retry else native.active
     inactive = revisions if native.terminal_retry else native.active[len(native.planned) :]
-    observation = await observe_review_mutation(
+    observation = await observe_reviews(
         change_ids=tuple(revision.change_id for revision in revisions),
         context=execution.context,
         github_client=github,

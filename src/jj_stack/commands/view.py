@@ -40,11 +40,10 @@ from jj_stack.github.error_messages import (
 from jj_stack.jj.client import JjCliArgs, UnsupportedStackError
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.bookmarks import bookmark_glob, is_review_bookmark
+from jj_stack.review.branches import is_review_branch, review_branch_glob
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
-    classify_saved_review_identity,
 )
 from jj_stack.review.discovery import discover_connected_tracked_stacks
 from jj_stack.review.selection import (
@@ -304,9 +303,7 @@ def _stack_has_tracked_change_outside_selection(
         review_identity = state.review_identities.get(revision.change_id)
         if review_identity is None:
             continue
-        change_status = classify_saved_review_identity(review_identity, local="present")
-        if change_status.saved_review_identity or change_status.link == "unlinked":
-            return True
+        return True
     return False
 
 
@@ -739,14 +736,14 @@ def render_status_advisory_lines(
         if pull_request is None:
             continue
         base_ref = pull_request.base.ref
-        if not is_review_bookmark(base_ref, prefix=config.bookmark_prefix):
+        if not is_review_branch(base_ref):
             continue
         policy_warning_rows.append(
             (
                 "Repository policy",
                 t"Repository policy warning: PR #{pull_request.number} merged into "
                 t"{ui.bookmark(base_ref)}; configure GitHub to block merges of PRs "
-                t"targeting {ui.bookmark(bookmark_glob(config.bookmark_prefix))}",
+                t"targeting {ui.bookmark(review_branch_glob())}",
             )
         )
     if (
@@ -1028,8 +1025,6 @@ def _classify_revision_for_summary(
     """Classify a revision into submitted, unsubmitted, or other."""
 
     change_status = classified.status
-    if change_status.link == "unlinked":
-        return "submitted"
     if change_status.pr_lifecycle in {"open", "closed", "merged"}:
         return "submitted"
     if change_status.saved_review_identity:
@@ -1048,22 +1043,7 @@ def _format_status_summary(
     saved_label = _format_saved_pull_request_label(review_identity)
     change_status = classified.status
     summary: str
-    if change_status.link == "unlinked":
-        if lookup is not None and lookup.pull_request is not None:
-            pull_request = lookup.pull_request
-            if pull_request.state == "open":
-                summary = format_pull_request_label(
-                    pull_request.number,
-                    is_draft=pull_request.is_draft,
-                    prefix="unlinked ",
-                )
-            else:
-                summary = f"unlinked PR #{pull_request.number} {pull_request.state}"
-        elif change_status.remote_branch != "absent":
-            summary = "unlinked branch"
-        else:
-            summary = "unlinked"
-    elif change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
+    if change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
         if saved_label is not None:
             summary = saved_label
         elif change_status.saved_review_identity:
@@ -1168,8 +1148,6 @@ def _classified_revision_has_link_advisory(
     classified: _ClassifiedStatusRevision,
 ) -> bool:
     change_status = classified.status
-    if change_status.link == "unlinked":
-        return False
     revision = classified.revision
     lookup = revision.pull_request_lookup
     if lookup is None:

@@ -44,10 +44,9 @@ Commands operate on the selected parent chain. If a reviewed ancestor also has a
 child, that child is a separate path; you do not need to rebase it away before working with the
 selected stack.
 
-When you run `jj log` directly, you may also notice review bookmarks. These bookmark names are
-generated automatically. (By default they start with `review/...`, but you can configure a
-different prefix for your repo.) These bookmarks get turned into git branches that `jj-stack`
-uses for GitHub PRs.
+When you run `jj log` directly, you may also notice review bookmarks. Their names are generated
+automatically as `review/<subject-slug>-<short-change-id>`. These bookmarks get turned into Git
+branches that `jj-stack` uses for GitHub PRs.
 
 ## 3. Submit the stack
 
@@ -86,8 +85,8 @@ For a multi-change stack, `--describe stack=stack-overview.md` adds stack overvi
 to the head PR's stack comment.
 
 If a change does not already have its review branch and PR set up, `jj-stack submit` creates
-the matching review bookmark for it. After that, it reuses that bookmark as the stable GitHub PR
-head branch while you revise your local change.
+the matching review bookmark for it. After that, it reuses that name as the stable GitHub PR head
+branch while you revise your local change.
 
 ## 4. Revise locally as reviews come in
 
@@ -260,20 +259,31 @@ jj-stack unstack --pull-request 7 --dry-run
 jj-stack unstack --pull-request 7
 ```
 
-Use `--cleanup` when you also want to remove review branches, bookmarks, and comments that
-`jj-stack` can verify are safe to delete after the PRs close. It remembers that the review was
-closed so a future `submit` cannot silently reuse it.
+Plain `unstack` closes the PRs but retains their exact tracking and submitted commits. That
+information prevents a later `submit` from silently reusing a closed review and lets
+`cleanup` or `submit --restart` verify what it is acting on.
 
-Use `--local` when you only want this local repository to stop tracking the stack. It leaves the
-PRs, review branches, and local bookmarks alone:
+Use `--cleanup` when you also want to remove review branches, bookmarks, comments, and tracking
+that `jj-stack` can verify are safe to delete after the PRs close.
+
+Cleanup keeps a review branch and its tracking whenever any open PR in the same GitHub repository
+still uses that branch as its base, even if that PR is not tracked by `jj-stack` or its local
+change is gone. Close or retarget the dependent PR named in the blocker, then rerun the same
+cleanup command. For a selected stack, `jj-stack` works from the head down; a preview may account
+for upper selected PRs it would close first, while the real command checks GitHub again before
+each deletion.
+
+Use `--local` when you only want this local repository to stop tracking the stack. It removes the
+exact local PR and submitted-commit records while leaving the PRs, review branches, and local
+bookmarks alone:
 
 ```bash
 jj-stack unstack --local
 ```
 
-If `jj-stack list` shows an `orphan` row, the PR is still open but its local change is no
-longer part of any current stack. When you are ready, preview closing it and cleaning up its
-review artifacts:
+If `jj-stack list` shows an `orphan` row, tracking remains for a PR whose local change is no
+longer part of any current stack. When you are ready, preview closing it if needed and cleaning
+up its verified review artifacts:
 
 ```bash
 jj-stack unstack --cleanup --pull-request 7 --dry-run
@@ -330,6 +340,9 @@ Then choose the recovery command based on what was interrupted:
 jj-stack submit <head-change-id>
 jj-stack unstack <head-change-id>
 
+# interrupted submit --restart: keep the flag and the same stack head
+jj-stack submit --restart <head-change-id>
+
 # if the interrupted command was unstack --cleanup, keep that explicit option
 jj-stack unstack --cleanup <head-change-id>
 
@@ -347,6 +360,8 @@ jj-stack merge <head-change-id>
 
 Use explicit selectors after a failure, not a naked command that falls back to
 the default stack. If you want to undo review work that was partially created,
-use `unstack --cleanup` on the stack you want to close and clean up.
+use `unstack --cleanup` on the stack you want to close and clean up. This does not apply to an
+interrupted `submit --restart`: `unstack` still selects the old reviews, so rerun the same
+restart instead.
 
 See the [troubleshooting guide](troubleshooting.md) for more recovery scenarios.

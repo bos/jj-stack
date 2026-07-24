@@ -424,7 +424,6 @@ def _identity(
         pr_number=pr_number,
         head_owner="octo-org",
         head_ref=head_ref,
-        bookmark_ownership="managed",
     )
 
 

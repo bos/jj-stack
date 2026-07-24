@@ -508,63 +508,23 @@ def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     assert fake_repo.pull_requests[2].merged_at is not None
 
 
-def test_submit_uses_configured_bookmark_prefix(
+def test_submit_uses_readable_review_branch_names(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(
-        monkeypatch,
-        tmp_path,
-        fake_repo,
-        extra_config_lines=['bookmark_prefix = "bosullivan"'],
-    )
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    state = ReviewStateStore.for_repo(repo).load()
-
-    bookmarks = [identity.head_ref for identity in state.review_identities.values()]
-    assert len(bookmarks) == 2
-    assert all(bookmark.startswith("bosullivan/") for bookmark in bookmarks)
-    assert all(
-        f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
-    )
-
-
-def test_submit_uses_configured_use_bookmarks(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(
-        monkeypatch,
-        tmp_path,
-        fake_repo,
-        extra_config_lines=['use_bookmarks = ["potato/*", "spam/eggs"]'],
-    )
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
     stack = JjClient(repo).discover_review_stack()
-    run_command(
-        ["jj", "bookmark", "create", "potato/feature-1", "-r", stack.revisions[0].commit_id], repo
-    )
-    run_command(
-        ["jj", "bookmark", "create", "spam/eggs", "-r", stack.revisions[1].commit_id], repo
-    )
 
     assert run_main(repo, config_path, "submit") == 0
     state = ReviewStateStore.for_repo(repo).load()
 
-    first_identity = state.review_identities[stack.revisions[0].change_id]
-    second_identity = state.review_identities[stack.revisions[1].change_id]
-    assert first_identity.head_ref == "potato/feature-1"
-    assert first_identity.bookmark_ownership == "external"
-    assert second_identity.head_ref == "spam/eggs"
-    assert second_identity.bookmark_ownership == "external"
-    assert "refs/heads/potato/feature-1" in remote_refs(fake_repo.git_dir)
-    assert "refs/heads/spam/eggs" in remote_refs(fake_repo.git_dir)
+    for revision, subject in zip(stack.revisions, ("feature-1", "feature-2"), strict=True):
+        branch = state.review_identities[revision.change_id].head_ref
+        assert branch == f"review/{subject}-{revision.change_id[:8]}"
+        assert f"refs/heads/{branch}" in remote_refs(fake_repo.git_dir)
 
 
 def test_submit_draft_new_does_not_convert_published_pull_requests_back_to_draft(
@@ -1246,30 +1206,6 @@ def test_submit_reports_up_to_date_when_remote_bookmark_and_pr_already_match(
     assert "unchanged" in captured.out
     assert remote_refs(fake_repo.git_dir) == first_refs
     assert {number: pr.title for number, pr in fake_repo.pull_requests.items()} == first_prs
-
-
-def test_submit_rejects_unlinked_change_until_relink(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-    assert run_main(repo, config_path, "unlink", change_id) == 0
-    capsys.readouterr()
-    commit_file(repo, "first local path", "first-local-path.txt")
-    first_head = JjClient(repo).discover_review_stack().head
-    run_command(["jj", "new", change_id], repo)
-    commit_file(repo, "second local path", "second-local-path.txt")
-
-    exit_code = run_main(repo, config_path, "submit", first_head.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "unlinked from review tracking" in captured.err
-    assert "relink" in captured.err
 
 
 def test_submit_updates_existing_untracked_remote_bookmark(

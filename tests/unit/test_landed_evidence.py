@@ -22,7 +22,6 @@ def _candidate() -> LandedReviewCandidate:
             pr_number=1,
             head_owner="octo-org",
             head_ref="review/change-1",
-            bookmark_ownership="managed",
         ),
         submitted_baseline=SubmittedBaseline(commit_id="submitted-1"),
     )

@@ -51,7 +51,7 @@ from jj_stack.review.landed_evidence import LandedReviewCandidate
 from jj_stack.review.native_sync import resolve_selected_native_observation
 from jj_stack.review.observation import (
     RepositoryObservation,
-    observe_review_mutation,
+    observe_reviews,
 )
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
 from jj_stack.state.operation_lock import acquire_operation_lock
@@ -134,7 +134,7 @@ async def _run_selected_convergence(
             remote_name=target.remote.name,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
-        observation = await observe_review_mutation(
+        observation = await observe_reviews(
             change_ids=tuple(revision.change_id for revision in selected),
             context=context,
             github_client=github,
@@ -330,16 +330,14 @@ def _selected_observation_error(
         or observation.configured_repository != target.repository
     ):
         return "the configured Git remote changed during sync"
-    if (
-        observation.github_repository.full_name.casefold()
-        != target.repository.full_name.casefold()
-    ):
+    github_repository = observation.github_repository
+    assert github_repository is not None
+    if github_repository.full_name.casefold() != target.repository.full_name.casefold():
         return "GitHub no longer reports the configured repository"
-    if observation.github_repository.default_branch not in (None, "", trunk_branch):
+    if github_repository.default_branch not in (None, "", trunk_branch):
         return "GitHub no longer reports the selected trunk branch as its default"
-    fetched_trunk = observation.fetched_trunk
     expected_trunk = prepared_status.prepared.stack.trunk.commit_id
-    if fetched_trunk is None or fetched_trunk.commit_id != expected_trunk:
+    if observation.fetched_trunk_commit_id != expected_trunk:
         return "fetched trunk changed during sync preparation"
     if observation.remote_trunk_target != expected_trunk:
         return "the live trunk ref moved after the fetch"
@@ -371,5 +369,4 @@ def _sync_submit_options(*, dry_run: bool, revset: str) -> SubmitOptions:
         reviewers=None,
         revset=revset,
         team_reviewers=None,
-        use_bookmarks=None,
     )

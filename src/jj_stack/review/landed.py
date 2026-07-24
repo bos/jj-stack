@@ -21,7 +21,7 @@ from .landed_evidence import (
     classify_exact_snapshot,
     collect_landed_evidence,
 )
-from .observation import RepositoryObservation, observe_review_mutation
+from .observation import RepositoryObservation, observe_reviews
 
 LandedReviewOutcome = Literal["finalized", "already_terminal", "skipped"]
 
@@ -160,7 +160,7 @@ async def observe_landed_candidate(
     finalizer: FinalizationContext,
 ) -> tuple[RepositoryObservation | None, Message | None]:
     try:
-        observation = await observe_review_mutation(
+        observation = await observe_reviews(
             change_ids=(candidate.change_id,),
             context=finalizer.command,
             github_client=finalizer.github,
@@ -174,12 +174,12 @@ async def observe_landed_candidate(
     if observation.configured_repository != finalizer.github.repository:
         return None, "the configured remote no longer names the expected GitHub repository"
     github_repository = observation.github_repository
+    assert github_repository is not None
     if github_repository.full_name.casefold() != finalizer.github.repository.full_name.casefold():
         return None, "GitHub no longer reports the expected repository"
     if github_repository.default_branch not in (None, "", finalizer.trunk_branch):
         return None, "GitHub no longer reports the expected trunk branch as its default"
-    fetched_trunk = observation.fetched_trunk
-    if fetched_trunk is None or fetched_trunk.commit_id != finalizer.trunk_commit_id:
+    if observation.fetched_trunk_commit_id != finalizer.trunk_commit_id:
         return None, t"fetched {ui.revset('trunk()')} changed while checking the merged PR"
     if observation.remote_trunk_target != finalizer.trunk_commit_id:
         return None, "the live trunk ref moved after the last fetch"
@@ -230,9 +230,7 @@ async def retire_landed_reviews(
         bookmark = candidate.review_identity.head_ref
         if cleanup_bookmarks and bookmark_cleanup_allowed(
             bookmark=bookmark,
-            bookmark_managed=candidate.review_identity.manages_bookmark,
-            cleanup_user_bookmarks=context.config.cleanup_user_bookmarks,
-            prefix=context.config.bookmark_prefix,
+            change_id=candidate.change_id,
         ):
             bookmark_state = context.jj_client.get_bookmark_state(bookmark)
             forgot = (

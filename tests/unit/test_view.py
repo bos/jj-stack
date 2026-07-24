@@ -10,7 +10,7 @@ import jj_stack.ui as ui_module
 from jj_stack.config import RepoConfig
 from jj_stack.models.bookmarks import RemoteBookmarkState
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import LinkState, ReviewIdentity, SubmittedBaseline
+from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.review.status import (
     ManagedCommentsLookup,
     PullRequestLookup,
@@ -68,9 +68,7 @@ def _status_revision(
     )
 
 
-def _identity(
-    *, bookmark: str, pr_number: int, link_state: LinkState = "active"
-) -> ReviewIdentity:
+def _identity(*, bookmark: str, pr_number: int) -> ReviewIdentity:
     return ReviewIdentity(
         github_host="github.test",
         repository_owner="octo-org",
@@ -78,8 +76,6 @@ def _identity(
         pr_number=pr_number,
         head_owner="octo-org",
         head_ref=bookmark,
-        bookmark_ownership="managed",
-        link_state=link_state,
     )
 
 
@@ -114,7 +110,7 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
                     submitted_state_disagreements=(),
                 ),
             ),
-            config=RepoConfig(bookmark_prefix="team"),
+            config=RepoConfig(),
         )
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
@@ -126,7 +122,7 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
         "jj-stack sync @"
     )
     assert "PR #5 is merged" in normalized_lines
-    assert "merged into team/feature-base" in normalized_lines
+    assert "later local changes are still based on it" in normalized_lines
 
 
 def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:

@@ -27,19 +27,17 @@ def merge_authority_error(
         return f"Git remote {remote_name} is no longer configured"
     if observation.configured_repository != expected_repository:
         return "the configured Git remote no longer names the planned GitHub repository"
-    if (
-        observation.github_repository.full_name.casefold()
-        != expected_repository.full_name.casefold()
-    ):
+    github_repository = observation.github_repository
+    assert github_repository is not None
+    if github_repository.full_name.casefold() != expected_repository.full_name.casefold():
         return "GitHub no longer reports the planned repository"
-    if observation.github_repository.default_branch not in (None, "", expected_trunk_branch):
+    if github_repository.default_branch not in (None, "", expected_trunk_branch):
         return "GitHub no longer reports the planned trunk branch as its default"
     if any(
         revision.change_id in observation.duplicate_claim_change_ids for revision in revisions
     ):
         return "multiple saved changes now claim the same pull request or review branch"
-    fetched_trunk = observation.fetched_trunk
-    if fetched_trunk is None or fetched_trunk.commit_id != expected_trunk_commit_id:
+    if observation.fetched_trunk_commit_id != expected_trunk_commit_id:
         return "fetched trunk changed after planning"
     if observation.remote_trunk_target != expected_trunk_commit_id:
         return "the live trunk ref moved after planning"
@@ -89,11 +87,9 @@ def _review_authority_error(
         return f"GitHub no longer reports the saved pull request for {label}"
     pull_request = pull_request.normalize_state()
     if (
-        pull_request.number != planned.identity.pr_number
+        not planned.identity.matches_pull_request(pull_request)
         or len(observed.head_pull_requests) != 1
         or observed.head_pull_requests[0].number != pull_request.number
-        or pull_request.head.label != f"{identity.head_owner}:{identity.head_ref}"
-        or pull_request.head.ref != identity.head_ref
         or pull_request.head.sha != planned.commit_id
     ):
         return f"the pull request or its head commit for {label} changed"

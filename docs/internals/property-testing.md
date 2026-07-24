@@ -140,11 +140,11 @@ composable with other drifts, whether it targets one submitted change, and the m
 expected outcomes.
 
 Fail-closed kinds (for example an externally closed, merged, or replaced PR, a corrupted
-saved PR number, an explicitly unlinked change, a drifted or deleted remote review branch,
-or a foreign branch fetch that makes a stack change immutable or divergent) must produce a
-contractual exit code and one of the kind's expected diagnoses while leaving every
-boundary untouched: no remote ref changes, no local or remembered-remote bookmark changes,
-no PR, review, or comment mutations, and unchanged loaded tracking records.
+saved PR number, a drifted or deleted remote review branch, or a foreign branch fetch that makes
+a stack change immutable or divergent) must produce a contractual exit code and one of the
+kind's expected diagnoses while leaving every boundary untouched: no remote ref changes, no
+local or remembered-remote bookmark changes, no PR, review, or comment mutations, and unchanged
+loaded tracking records.
 That includes keeping a newly inserted change free of bookmark and tracking state when an
 older submitted change makes preflight fail. The structured diagnosis comes from the CLI's
 fail-closed error: a `DriftError` condition or `unsupported_stack:<reason>` captured from the
@@ -212,8 +212,8 @@ sync.
 
 For every live change after the final submit:
 
-- `ReviewIdentity` records the saved repository, PR number, canonical head owner/ref,
-  bookmark ownership, and link state for the change
+- `ReviewIdentity` records the saved repository, PR number, and canonical head owner/ref for the
+  change
 - if the change existed in the initial submitted stack, the PR number is unchanged
 - the remote review branch points at the live `commit_id`
 - the PR is open and unmerged

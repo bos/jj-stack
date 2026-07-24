@@ -1,13 +1,9 @@
 """End review for a stack without changing its local jj changes.
 
-With no mode flag, `unstack` closes the tracked open pull requests but keeps their review branches
-and local bookmarks. Passing `--cleanup` also removes review branches, bookmarks, and comments
-that `jj-stack` can verify are safe to delete. `jj-stack` remembers that the reviews were closed
-so a later `submit` cannot silently reuse them.
-
-If you asked `jj-stack` to use your own bookmarks with `submit --use-bookmarks`, those are
-preserved unless `jj-stack.cleanup_user_bookmarks = true`. Use `--pull-request` to close by PR
-number or URL.
+With no mode flag, `unstack` closes the tracked open pull requests but keeps their review
+branches, local bookmarks, and tracking so cleanup or `submit --restart` remains safe. Passing
+`--cleanup` also removes review branches, bookmarks, comments, and tracking that `jj-stack` can
+verify are safe to delete. Use `--pull-request` to close by PR number or URL.
 
 Use `jj-stack unstack --cleanup --pull-request <pr>` to close and clean up an orphaned PR shown
 by `list`. Use `jj-stack unstack --cleanup --pull-request orphans` to clean up every orphan
@@ -35,10 +31,15 @@ from jj_stack.commands._close_actions import (
     CloseAction,
     CloseActionBody,
     apply_bookmark_cleanup,
+    apply_managed_comment_cleanup,
+    authorize_current_review_cleanup,
+    authorize_current_tracked_pull_request,
+    authorize_tracked_review,
+    close_current_tracked_pull_request,
     emit_close_actions,
     find_managed_comments as _find_managed_comments,
+    github_observation_blocker,
     plan_bookmark_cleanup,
-    retire_review_identity,
 )
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.commands.close_orphan import (
@@ -47,7 +48,7 @@ from jj_stack.commands.close_orphan import (
     state_has_pull_request_record,
 )
 from jj_stack.errors import AmbiguousSelectionError, CliError, ErrorMessage, UsageError
-from jj_stack.github.client import GithubClient, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
     GithubRepoAddress,
@@ -57,12 +58,14 @@ from jj_stack.github.stack_comments import stack_comment_label
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, GitRemote
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.review.bookmarks import bookmark_cleanup_allowed
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
     enumerate_orphaned_records,
 )
 from jj_stack.review.discovery import discover_tracked_stacks
+from jj_stack.review.observation import RepositoryObservation, observe_reviews
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
@@ -132,21 +135,20 @@ class _CloseMutationRun:
     commit_ids_by_change_id: dict[str, str]
     current_state: ReviewState
     github_client: GithubClient
+    initial_observation: RepositoryObservation | None
+    planned_closed_pull_requests: set[int]
     review_identities: dict[str, ReviewIdentity]
     prepared_close: PreparedClose
     record_action: Callable[[CloseAction], None]
 
     @property
-    def bookmark_prefix(self) -> str:
-        return self.prepared_close.context.config.bookmark_prefix
-
-    @property
-    def cleanup_user_bookmarks(self) -> bool:
-        return self.prepared_close.context.config.cleanup_user_bookmarks
-
-    @property
     def dry_run(self) -> bool:
         return self.prepared_close.dry_run
+
+    @property
+    def cleanup_retry_command(self) -> str:
+        head = self.prepared_close.prepared_status.prepared.stack.head
+        return f"unstack --cleanup {head.change_id}"
 
     @property
     def jj_client(self) -> JjClient:
@@ -273,7 +275,7 @@ async def _run_orphan_closes(
         pull_request_number: [
             change_id
             for change_id, review_identity in state.review_identities.items()
-            if review_identity.pr_number == pull_request_number and review_identity.is_tracked
+            if review_identity.pr_number == pull_request_number
         ]
         for pull_request_number in orphan_targets_by_pull_request
     }
@@ -290,8 +292,8 @@ async def _run_orphan_closes(
         raise AmbiguousSelectionError(
             t"Cannot clean up orphaned pull requests because multiple tracking records claim "
             t"the same PR: {details}.",
-            hint=t"Repair the tracking data with {ui.cmd('unlink')} or {ui.cmd('relink')} "
-            t"before retrying.",
+            hint=t"Discard an incorrect claim with {ui.cmd('unstack --local')} or repair it "
+            t"with {ui.cmd('relink')} before retrying.",
         )
 
     targets = tuple(
@@ -733,6 +735,30 @@ async def _stream_close_async(
 
     assert github_repository is not None
     async with build_github_client(repository=github_repository) as github_client:
+        review_identities = dict(current_state.review_identities)
+        selection = GithubStackSelection(
+            github_client,
+            tuple(
+                review_identities[prepared_revision.revision.change_id].pr_number
+                for prepared_revision in prepared.status_revisions
+                if prepared_revision.revision.change_id in review_identities
+            ),
+            prepared_close.context.state_store,
+        )
+        native_stacks = await selection.overlapping(persist=not prepared_close.dry_run)
+        initial_observation = None
+        blocked = False
+        if native_stacks or (prepared_close.dry_run and prepared_close.cleanup):
+            try:
+                initial_observation = await observe_reviews(
+                    change_ids=tuple(revision.change_id for revision in status_result.revisions),
+                    github_client=github_client,
+                    include_open_dependents=prepared_close.dry_run and prepared_close.cleanup,
+                    state_store=prepared_close.context.state_store,
+                )
+            except GithubClientError:
+                recorder.record(github_observation_blocker())
+                blocked = True
         run = _CloseMutationRun(
             commit_ids_by_change_id={
                 prepared_revision.revision.change_id: prepared_revision.revision.commit_id
@@ -740,22 +766,13 @@ async def _stream_close_async(
             },
             current_state=current_state,
             github_client=github_client,
-            review_identities=dict(current_state.review_identities),
+            initial_observation=initial_observation,
+            planned_closed_pull_requests=set(),
+            review_identities=review_identities,
             prepared_close=prepared_close,
             record_action=recorder.record,
         )
-        blocked = False
-        selection = GithubStackSelection(
-            github_client,
-            tuple(
-                run.review_identities[prepared_revision.revision.change_id].pr_number
-                for prepared_revision in prepared.status_revisions
-                if prepared_revision.revision.change_id in run.review_identities
-            ),
-            prepared_close.context.state_store,
-        )
-        native_stacks = await selection.overlapping(persist=not prepared_close.dry_run)
-        if native_stacks:
+        if native_stacks and not blocked:
             native_preflight = (
                 _close_revision_preflight_error(
                     change_status=classify_review_status_revision(revision),
@@ -768,17 +785,24 @@ async def _stream_close_async(
                 (action for action in native_preflight if action is not None),
                 None,
             )
+            if blocker is None:
+                assert initial_observation is not None
+                blocker = _selected_observation_blocker(
+                    observation=initial_observation,
+                    revisions=status_result.revisions,
+                    run=run,
+                )
             if blocker is not None:
                 recorder.record(blocker)
                 blocked = True
             else:
-                if prepared_close.dry_run:
-                    native_stack = await selection.authorize_exact_active_suffix(
-                        observed=native_stacks,
-                        persist=False,
+                native_stack = (
+                    await selection.authorize_exact_active_suffix(
+                        observed=native_stacks, persist=False
                     )
-                else:
-                    native_stack = await selection.dissolve_exact(observed=native_stacks)
+                    if prepared_close.dry_run
+                    else await selection.dissolve_exact(observed=native_stacks)
+                )
                 if native_stack is not None:
                     recorder.record(
                         CloseAction(
@@ -816,11 +840,9 @@ def _inspected_close_has_no_work(*, revisions: tuple[ReviewStatusRevision, ...])
     """Whether close has nothing to do for the inspected revisions.
 
     Both plain close and cleanup only act on changes jj-stack tracks: closing
-    a linked pull request, forgetting a bookmark we saved, deleting a remote
-    branch we pushed. None of those exist for a change without review
-    identity, so either variant is a true no-op on such a stack. A
-    config-pinned bookmark without review identity is intentionally ignored --
-    we never pushed that branch and must not delete it.
+    a saved pull request, forgetting its bookmark, or deleting its remote
+    branch. None of those are authorized for a change without review identity,
+    so either variant is a true no-op on such a stack.
     """
 
     return not any(
@@ -852,6 +874,31 @@ def _close_result(
     )
 
 
+def _selected_observation_blocker(
+    *,
+    observation: RepositoryObservation,
+    revisions: tuple[ReviewStatusRevision, ...],
+    run: _CloseMutationRun,
+) -> CloseAction | None:
+    """Authorize every selected tracked PR from one batch observation."""
+
+    for revision in revisions:
+        identity = run.review_identities.get(revision.change_id)
+        baseline = run.current_state.submitted_baselines.get(revision.change_id)
+        if identity is None or baseline is None:
+            continue
+        _pull_request, blocker = authorize_tracked_review(
+            allowed_states=frozenset({"open", "closed", "merged"}),
+            change_id=revision.change_id,
+            observation=observation,
+            review_identity=identity,
+            submitted_baseline=baseline,
+        )
+        if blocker is not None:
+            return blocker
+    return None
+
+
 async def _process_close_revision(
     *,
     change_status: ReviewChangeStatus,
@@ -877,63 +924,65 @@ async def _process_close_revision(
     )
     if review_identity is None or submitted_baseline is None:
         return False
-    lookup = revision.pull_request_lookup
-
     revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
 
-    if change_status.pr_lifecycle == "missing":
-        if not run.prepared_close.cleanup or not change_status.saved_review_identity:
-            return False
-    else:
-        if lookup is None:
-            return False
-        if change_status.pr_lifecycle == "open" and lookup.pull_request is not None:
-            pull_request_number = lookup.pull_request.number
-            run.record_action(
-                CloseAction(
-                    kind="pull request",
-                    body=t"close PR #{pull_request_number} for {revision_label}",
-                    status="planned" if run.dry_run else "applied",
-                )
-            )
-            if not run.dry_run:
-                await run.github_client.close_pull_request(
-                    pull_number=pull_request_number,
-                )
-        elif change_status.pr_lifecycle in {"closed", "merged"}:
-            pass
-        else:
-            return False
-
-    updated_identity = _record_retired_review_identity(
-        review_identity=review_identity,
-        revision=revision,
-        revision_label=revision_label,
-        run=run,
+    observed_pull_request = (
+        None
+        if revision.pull_request_lookup is None
+        else revision.pull_request_lookup.pull_request
     )
+    pull_request, close_action = await close_current_tracked_pull_request(
+        change_id=revision.change_id,
+        dry_run=run.dry_run,
+        github_client=run.github_client,
+        observed_pull_request=observed_pull_request,
+        review_identity=review_identity,
+        state_store=run.prepared_close.context.state_store,
+        submitted_baseline=submitted_baseline,
+        target_label=revision_label,
+    )
+    if close_action is not None:
+        run.record_action(close_action)
+        if close_action.status == "blocked":
+            return True
+
     if not run.prepared_close.cleanup:
-        _persist_retired_review_identity(
-            change_id=revision.change_id,
-            previous_identity=review_identity,
-            updated_identity=updated_identity,
-            run=run,
-        )
         return False
+    if run.dry_run and pull_request is not None:
+        run.planned_closed_pull_requests.add(pull_request.number)
     bookmark_states = run.prepared_close.prepared_status.prepared.bookmark_states
-    await _cleanup_revision(
+    cleanup_succeeded = await _cleanup_revision(
         bookmark_state=bookmark_states.get(
             revision.bookmark,
             BookmarkState(name=revision.bookmark),
         ),
-        review_identity=updated_identity,
-        commit_id=run.commit_ids_by_change_id.get(revision.change_id),
+        review_identity=review_identity,
+        local_commit_id=run.commit_ids_by_change_id.get(revision.change_id),
         revision=revision,
         run=run,
+        submitted_baseline=submitted_baseline,
     )
-    _persist_retired_review_identity(
+    if not cleanup_succeeded:
+        return True
+    if not run.dry_run:
+        _pull_request, blocker = await authorize_current_tracked_pull_request(
+            allowed_states=frozenset({"closed", "merged"}),
+            change_id=revision.change_id,
+            github_client=run.github_client,
+            require_no_open_dependents=True,
+            retry_command=run.cleanup_retry_command,
+            review_identity=review_identity,
+            state_store=run.prepared_close.context.state_store,
+            submitted_baseline=submitted_baseline,
+        )
+        if blocker is not None:
+            run.record_action(blocker)
+            return True
+    _retire_cleaned_review(
         change_id=revision.change_id,
-        previous_identity=review_identity,
-        updated_identity=updated_identity,
+        review_identity=review_identity,
+        submitted_baseline=submitted_baseline,
+        revision_label=revision_label,
         run=run,
     )
     return False
@@ -965,6 +1014,18 @@ def _close_revision_preflight_error(
             t"{ui.cmd('relink')} before retrying",
             status="blocked",
         )
+    github_repository = run.prepared_close.prepared_status.github_repository
+    if (
+        github_repository is None
+        or review_identity.repository_key != github_repository.repository_key
+    ):
+        return CloseAction(
+            kind="close",
+            body=t"cannot close PR #{review_identity.pr_number} because its saved repository "
+            t"does not match the configured GitHub repository; run {ui.cmd('relink')} before "
+            t"retrying",
+            status="blocked",
+        )
     lookup = revision.pull_request_lookup
     if change_status.pr_lifecycle == "ambiguous" or change_status.has_pull_request_lookup_failure:
         body = (
@@ -973,7 +1034,15 @@ def _close_revision_preflight_error(
             else "cannot safely determine the pull request for this path"
         )
         return CloseAction(kind="close", body=body, status="blocked")
-    if change_status.pr_lifecycle == "missing" and not review_identity.is_unlinked:
+    pull_request = None if lookup is None else lookup.pull_request
+    if pull_request is not None and not review_identity.matches_pull_request(pull_request):
+        return CloseAction(
+            kind="close",
+            body=t"cannot close PR #{pull_request.number} because it is not the exact pull "
+            t"request saved for {ui.change_id(revision.change_id)}",
+            status="blocked",
+        )
+    if change_status.pr_lifecycle == "missing":
         revision_label = t"{revision.subject} ({ui.change_id(revision.change_id)})"
         return CloseAction(
             kind="close",
@@ -982,72 +1051,83 @@ def _close_revision_preflight_error(
             t"{ui.cmd('relink')} before retrying",
             status="blocked",
         )
+    if run.prepared_close.cleanup and not bookmark_cleanup_allowed(
+        bookmark=review_identity.head_ref,
+        change_id=revision.change_id,
+    ):
+        return CloseAction(
+            kind="tracking",
+            body=t"cannot clean up {ui.bookmark(review_identity.head_ref)} because it does "
+            t"not match change {ui.change_id(revision.change_id)}; run "
+            t"{ui.cmd('relink')} before retrying",
+            status="blocked",
+        )
     return None
 
 
-def _record_retired_review_identity(
-    *,
-    review_identity: ReviewIdentity,
-    revision: ReviewStatusRevision,
-    revision_label: CloseActionBody,
-    run: _CloseMutationRun,
-) -> ReviewIdentity:
-    updated_identity = retire_review_identity(review_identity)
-    if updated_identity != review_identity:
-        run.record_action(
-            CloseAction(
-                kind="tracking",
-                body=t"stop review tracking for {revision_label}",
-                status="planned" if run.dry_run else "applied",
-            )
-        )
-    return updated_identity
-
-
-def _persist_retired_review_identity(
+def _retire_cleaned_review(
     *,
     change_id: str,
-    previous_identity: ReviewIdentity,
-    updated_identity: ReviewIdentity,
+    review_identity: ReviewIdentity,
+    submitted_baseline: SubmittedBaseline,
+    revision_label: CloseActionBody,
     run: _CloseMutationRun,
 ) -> None:
-    if run.dry_run or updated_identity == previous_identity:
-        return
-    run.prepared_close.context.state_store.set_link_state(
-        change_id,
-        expected_identity=previous_identity,
-        link_state="unlinked",
+    run.record_action(
+        CloseAction(
+            kind="tracking",
+            body=t"stop review tracking for {revision_label}",
+            status="planned" if run.dry_run else "applied",
+        )
     )
-    run.review_identities[change_id] = updated_identity
+    if run.dry_run:
+        return
+    run.prepared_close.context.state_store.retire_review(
+        change_id,
+        expected_identity=review_identity,
+        expected_baseline=submitted_baseline,
+    )
+    run.review_identities.pop(change_id, None)
 
 
 async def _cleanup_revision(
     *,
     bookmark_state: BookmarkState,
     review_identity: ReviewIdentity,
-    commit_id: str | None,
+    local_commit_id: str | None,
     revision: ReviewStatusRevision,
     run: _CloseMutationRun,
-) -> None:
+    submitted_baseline: SubmittedBaseline,
+) -> bool:
     bookmark = review_identity.head_ref
     cleanup_plan = plan_bookmark_cleanup(
         bookmark=bookmark,
         bookmark_state=bookmark_state,
-        cleanup_user_bookmarks=run.cleanup_user_bookmarks,
-        commit_id=commit_id,
-        prefix=run.bookmark_prefix,
+        change_id=revision.change_id,
+        local_commit_id=local_commit_id,
         record_action=run.record_action,
+        remote_commit_id=submitted_baseline.commit_id,
         remote_name=run.remote_name,
         review_identity=review_identity,
     )
-    apply_bookmark_cleanup(
-        bookmark=bookmark,
-        cleanup_plan=cleanup_plan,
-        commit_id=commit_id,
-        record_action=run.record_action,
-        remote_name=run.remote_name,
-        run=run,
-    )
+    if cleanup_plan.blocked:
+        return False
+
+    if run.dry_run:
+        assert run.initial_observation is not None
+        _pull_request, blocker = authorize_tracked_review(
+            allowed_states=frozenset({"open", "closed", "merged"}),
+            change_id=revision.change_id,
+            observation=run.initial_observation,
+            preview_closed_dependents=frozenset(run.planned_closed_pull_requests),
+            require_no_open_dependents=True,
+            retry_command=run.cleanup_retry_command,
+            review_identity=review_identity,
+            submitted_baseline=submitted_baseline,
+        )
+        if blocker is not None:
+            run.record_action(blocker)
+            return False
 
     lookups = await _find_managed_comments(
         github_client=run.github_client,
@@ -1062,20 +1142,41 @@ async def _cleanup_revision(
                     status="blocked",
                 )
             )
-            return
-        if lookup.comment is None:
-            continue
-        run.record_action(
-            CloseAction(
-                kind=stack_comment_label(lookup.kind),
-                body=(
-                    f"delete {stack_comment_label(lookup.kind)} #{lookup.comment.id} from PR "
-                    f"#{review_identity.pr_number}"
-                ),
-                status="planned" if run.dry_run else "applied",
-            )
+            return False
+    if not run.dry_run:
+        blocker = await authorize_current_review_cleanup(
+            change_id=revision.change_id,
+            delete_remote_branch=cleanup_plan.remote_delete,
+            github_client=run.github_client,
+            retry_command=run.cleanup_retry_command,
+            review_identity=review_identity,
+            state_store=run.prepared_close.context.state_store,
+            submitted_baseline=submitted_baseline,
         )
-        if not run.dry_run:
-            await run.github_client.delete_issue_comment(
-                comment_id=lookup.comment.id,
-            )
+        if blocker is not None:
+            run.record_action(blocker)
+            return False
+    if not apply_bookmark_cleanup(
+        bookmark=bookmark,
+        change_id=revision.change_id,
+        cleanup_plan=cleanup_plan,
+        local_commit_id=local_commit_id,
+        record_action=run.record_action,
+        remote_commit_id=submitted_baseline.commit_id,
+        remote_name=run.remote_name,
+        review_identity=review_identity,
+        run=run,
+    ):
+        return False
+    comment_actions, comments_current = await apply_managed_comment_cleanup(
+        change_id=revision.change_id,
+        dry_run=run.dry_run,
+        github_client=run.github_client,
+        lookups=lookups,
+        review_identity=review_identity,
+        state_store=run.prepared_close.context.state_store,
+        submitted_baseline=submitted_baseline,
+    )
+    for action in comment_actions:
+        run.record_action(action)
+    return comments_current

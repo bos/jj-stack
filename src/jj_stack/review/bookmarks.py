@@ -2,26 +2,23 @@
 
 from __future__ import annotations
 
-import fnmatch
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
 import jj_stack.ui as ui
-from jj_stack.config import DEFAULT_BOOKMARK_PREFIX
 from jj_stack.errors import CliError
-from jj_stack.formatting import short_change_id
 from jj_stack.models.bookmarks import BookmarkState
-from jj_stack.models.review_state import BookmarkOwnership, ReviewIdentity
+from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalRevision
+from jj_stack.review.branches import (
+    generate_review_branch,
+    review_branch_matches_change,
+)
 from jj_stack.review.change_status import classify_review_change_without_pull_request
 from jj_stack.ui import Message
 
-_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
-_DEFAULT_SLUG = "change"
-
-BookmarkSource = Literal["saved", "matched", "discovered", "generated"]
+BookmarkSource = Literal["saved", "discovered", "generated"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,13 +47,9 @@ class BookmarkResolver:
         self,
         review_identities: Mapping[str, ReviewIdentity],
         *,
-        prefix: str = DEFAULT_BOOKMARK_PREFIX,
-        matched_bookmarks: Mapping[str, str] | None = None,
         discovered_bookmarks: Mapping[str, str] | None = None,
     ) -> None:
         self._review_identities = review_identities
-        self._prefix = prefix
-        self._matched_bookmarks = matched_bookmarks or {}
         self._discovered_bookmarks = discovered_bookmarks or {}
 
     def resolve_revisions(
@@ -77,15 +70,6 @@ class BookmarkResolver:
                     )
                 )
                 continue
-            if matched_bookmark := self._matched_bookmarks.get(revision.change_id):
-                resolutions.append(
-                    ResolvedBookmark(
-                        bookmark=matched_bookmark,
-                        change_id=revision.change_id,
-                        source="matched",
-                    )
-                )
-                continue
             if discovered_bookmark := self._discovered_bookmarks.get(revision.change_id):
                 resolutions.append(
                     ResolvedBookmark(
@@ -96,10 +80,7 @@ class BookmarkResolver:
                 )
                 continue
 
-            bookmark = generate_bookmark_name(
-                revision,
-                prefix=self._prefix,
-            )
+            bookmark = generate_review_branch(revision)
             resolutions.append(
                 ResolvedBookmark(
                     bookmark=bookmark,
@@ -110,38 +91,17 @@ class BookmarkResolver:
         return tuple(resolutions)
 
 
-def bookmark_glob(prefix: str) -> str:
-    """Return the wildcard pattern for managed review branches."""
-
-    return f"{prefix}/*"
-
-
-def is_review_bookmark(bookmark: str, *, prefix: str) -> bool:
-    """Whether `bookmark` uses the configured managed review prefix."""
-
-    return bookmark.startswith(f"{prefix}/")
-
-
 LocalBookmarkForgetSafety = Literal["absent", "conflicted", "diverged", "unverified", "safe"]
 
 
 def bookmark_cleanup_allowed(
     *,
     bookmark: str,
-    bookmark_managed: bool,
-    cleanup_user_bookmarks: bool,
-    prefix: str,
+    change_id: str,
 ) -> bool:
-    """Whether cleanup may touch this bookmark at all.
+    """Whether cleanup may touch this managed review bookmark."""
 
-    Managed bookmarks are cleanable only under the configured review prefix; external
-    bookmarks (e.g. matched through `use_bookmarks`) need the explicit
-    `cleanup_user_bookmarks` opt-in.
-    """
-
-    if bookmark_managed:
-        return is_review_bookmark(bookmark, prefix=prefix)
-    return cleanup_user_bookmarks
+    return review_branch_matches_change(bookmark, change_id)
 
 
 def classify_local_bookmark_forget(
@@ -175,59 +135,9 @@ def local_bookmark_forget_blocked_body(
     )
 
 
-def generate_bookmark_name(
-    revision: LocalRevision,
-    *,
-    prefix: str = DEFAULT_BOOKMARK_PREFIX,
-) -> str:
-    """Generate the default bookmark for a change."""
-
-    first_line = revision.description.splitlines()[0] if revision.description else ""
-    slug = _NON_ALNUM_RE.sub("-", first_line.lower()).strip("-") or _DEFAULT_SLUG
-    return f"{prefix}/{slug}-{short_change_id(revision.change_id)}"
-
-
-def match_bookmarks_for_revisions(
-    *,
-    bookmark_states: dict[str, BookmarkState],
-    patterns: tuple[str, ...],
-    revisions: tuple[RevisionWithChangeId, ...],
-    remote_name: str | None,
-) -> dict[str, str]:
-    """Match existing bookmarks to revisions by bookmark glob and commit target."""
-
-    if not patterns:
-        return {}
-
-    matched: dict[str, str] = {}
-    for revision in revisions:
-        candidates = [
-            bookmark
-            for bookmark, bookmark_state in bookmark_states.items()
-            if any(fnmatch.fnmatchcase(bookmark, pattern) for pattern in patterns)
-            and _bookmark_state_matches_revision(
-                bookmark_state=bookmark_state,
-                commit_id=revision.commit_id,
-                remote_name=remote_name,
-            )
-        ]
-        unique_candidates = sorted(set(candidates))
-        if len(unique_candidates) > 1:
-            raise CliError(
-                t"Could not safely select a bookmark for change "
-                t"{ui.change_id(revision.change_id)}: multiple existing bookmarks match "
-                t"the configured bookmark patterns: "
-                t"{ui.join(ui.bookmark, unique_candidates)}."
-            )
-        if unique_candidates:
-            matched[revision.change_id] = unique_candidates[0]
-    return matched
-
-
 def discover_bookmarks_for_revisions(
     *,
     bookmark_states: dict[str, BookmarkState],
-    prefix: str = DEFAULT_BOOKMARK_PREFIX,
     remote_name: str,
     revisions: tuple[RevisionWithChangeId, ...],
 ) -> dict[str, str]:
@@ -236,31 +146,13 @@ def discover_bookmarks_for_revisions(
         candidates = [
             bookmark
             for bookmark, bookmark_state in bookmark_states.items()
-            if bookmark_matches_generated_change_id(
-                bookmark,
-                revision.change_id,
-                prefix=prefix,
-            )
+            if review_branch_matches_change(bookmark, revision.change_id)
             and _bookmark_state_is_discoverable(bookmark_state, remote_name)
         ]
         if not candidates:
             continue
         unique_candidates = sorted(set(candidates))
         if len(unique_candidates) > 1:
-            local_candidates = [
-                bookmark
-                for bookmark in unique_candidates
-                if bookmark_matches_restart_change_id(
-                    bookmark,
-                    revision.change_id,
-                    prefix=prefix,
-                )
-                and bookmark_states[bookmark].local_target == revision.commit_id
-                and bookmark_states[bookmark].remote_target(remote_name) is None
-            ]
-            if len(local_candidates) == 1:
-                discovered[revision.change_id] = local_candidates[0]
-                continue
             raise CliError(
                 t"Could not safely rediscover the bookmark for change "
                 t"{ui.change_id(revision.change_id)}: multiple existing bookmarks match "
@@ -289,7 +181,7 @@ def ensure_unique_bookmarks(resolutions: tuple[ResolvedBookmark, ...]) -> None:
     )
     raise CliError(
         t"Selected stack resolves multiple changes to the same bookmark: {collisions}.",
-        hint="Use distinct bookmarks or narrower --use-bookmarks patterns before submitting.",
+        hint="Change an untracked change's subject or repair the saved review links.",
     )
 
 
@@ -302,10 +194,7 @@ def find_changes_by_bookmark(
     Used to detect cross-claim collisions before mutating remote state — for
     example, when `unstack --cleanup --pull-request <pr>` is asked to delete an
     orphaned PR's branch but the same bookmark is now claimed by another live
-    review record (typically through a `use_bookmarks` pattern).
-
-    All records that pin the bookmark are returned, including unlinked ones —
-    they still own a name and must not be silently overwritten.
+    review record.
     """
 
     return tuple(
@@ -313,43 +202,6 @@ def find_changes_by_bookmark(
         for change_id, review_identity in review_identities.items()
         if review_identity.head_ref == bookmark
     )
-
-
-def bookmark_matches_generated_change_id(
-    bookmark: str,
-    change_id: str,
-    *,
-    prefix: str = DEFAULT_BOOKMARK_PREFIX,
-) -> bool:
-    return is_review_bookmark(
-        bookmark,
-        prefix=prefix,
-    ) and bookmark.endswith(f"-{short_change_id(change_id)}")
-
-
-def bookmark_matches_restart_change_id(
-    bookmark: str,
-    change_id: str,
-    *,
-    prefix: str = DEFAULT_BOOKMARK_PREFIX,
-) -> bool:
-    """Whether a bookmark uses the explicit fresh-review naming protocol."""
-
-    short_id = re.escape(short_change_id(change_id))
-    escaped_prefix = re.escape(prefix)
-    return (
-        re.fullmatch(
-            rf"{escaped_prefix}/.+-fresh(?:-pr[1-9]\d*|-(?:[2-9]|[1-9]\d))?-{short_id}",
-            bookmark,
-        )
-        is not None
-    )
-
-
-def bookmark_ownership_for_source(source: BookmarkSource) -> BookmarkOwnership:
-    """Return whether jj-stack should clean up a bookmark from this source."""
-
-    return "external" if source == "matched" else "managed"
 
 
 def _bookmark_state_is_discoverable(bookmark_state: BookmarkState, remote_name: str) -> bool:
@@ -361,21 +213,3 @@ def _bookmark_state_is_discoverable(bookmark_state: BookmarkState, remote_name: 
         remote_state=remote_state,
     )
     return remote_status.remote_branch != "absent"
-
-
-def _bookmark_state_matches_revision(
-    *,
-    bookmark_state: BookmarkState,
-    commit_id: str,
-    remote_name: str | None,
-) -> bool:
-    if bookmark_state.local_target == commit_id:
-        return True
-    if remote_name is None:
-        return False
-    remote_state = bookmark_state.remote_target(remote_name)
-    remote_status = classify_review_change_without_pull_request(
-        commit_id=commit_id,
-        remote_state=remote_state,
-    )
-    return remote_status.remote_branch_matches_commit is True

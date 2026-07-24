@@ -7,7 +7,7 @@ import json
 import os
 import shlex
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Never
 
@@ -15,13 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool, Valida
 
 from jj_stack.errors import CliError
 from jj_stack.models.review_state import (
-    LinkState,
     ReviewIdentity,
     ReviewState,
     ReviewStateRecordIssue,
     ReviewStateRecordType,
     SubmittedBaseline,
 )
+from jj_stack.review.branches import review_branch_matches_change
 
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
@@ -52,7 +52,7 @@ class _StoredReviewState(BaseModel):
 
 
 class ReviewStateStore:
-    """Load tracking state and atomically compare-and-write individual records."""
+    """Load tracking state and atomically compare-and-write review records."""
 
     def __init__(
         self,
@@ -112,6 +112,7 @@ class ReviewStateStore:
     ) -> ReviewState:
         """Atomically create an identity and baseline when both records are absent."""
 
+        _require_identity_matches_change(identity, change_id)
         envelope = self._load_envelope()
         if change_id in envelope.review_identities or change_id in envelope.submitted_baselines:
             self._raise_conflict(change_id, "create review")
@@ -131,45 +132,49 @@ class ReviewStateStore:
     ) -> ReviewState:
         """Atomically replace the two records after comparing their prior values."""
 
-        envelope = self._load_envelope()
-        issue_fingerprints = {
-            issue.record_type: issue.fingerprint
-            for issue in expected_issues
-            if issue.change_id == change_id
-        }
-        self._compare_record(
-            envelope,
-            change_id,
-            expected_identity,
-            "relink review",
-            _IDENTITY,
-            issue_fingerprints.get(_IDENTITY),
+        return self.relink_reviews(
+            expected={change_id: (expected_identity, expected_baseline)},
+            expected_issues={change_id: expected_issues},
+            replacements={change_id: (identity, baseline)},
         )
-        self._compare_record(
-            envelope,
-            change_id,
-            expected_baseline,
-            "relink review",
-            _BASELINE,
-            issue_fingerprints.get(_BASELINE),
-        )
-        envelope.review_identities[change_id] = identity.model_dump(mode="json")
-        envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
-        return self._persist(envelope)
 
-    def set_link_state(
+    def relink_reviews(
         self,
-        change_id: str,
         *,
-        expected_identity: ReviewIdentity,
-        link_state: LinkState,
+        expected: Mapping[
+            str,
+            tuple[ReviewIdentity | None, SubmittedBaseline | None],
+        ],
+        expected_issues: Mapping[str, tuple[ReviewStateRecordIssue, ...]] | None = None,
+        replacements: Mapping[str, tuple[ReviewIdentity, SubmittedBaseline]],
     ) -> ReviewState:
-        """Atomically change only the explicit link state of one identity."""
+        """Atomically replace complete review pairs after comparing every prior value."""
 
+        if expected.keys() != replacements.keys():
+            raise ValueError("Expected and replacement review sets must have identical keys.")
         envelope = self._load_envelope()
-        self._compare_record(envelope, change_id, expected_identity, "set link state", _IDENTITY)
-        identity = expected_identity.model_copy(update={"link_state": link_state})
-        envelope.review_identities[change_id] = identity.model_dump(mode="json")
+        for change_id, (identity, _baseline) in replacements.items():
+            _require_identity_matches_change(identity, change_id)
+            issues = () if expected_issues is None else expected_issues.get(change_id, ())
+            fingerprints = {
+                issue.record_type: issue.fingerprint
+                for issue in issues
+                if issue.change_id == change_id
+            }
+            for expected_record, record_type in zip(
+                expected[change_id], (_IDENTITY, _BASELINE), strict=True
+            ):
+                self._compare_record(
+                    envelope,
+                    change_id,
+                    expected_record,
+                    "relink reviews",
+                    record_type,
+                    fingerprints.get(record_type),
+                )
+        for change_id, (identity, baseline) in replacements.items():
+            envelope.review_identities[change_id] = identity.model_dump(mode="json")
+            envelope.submitted_baselines[change_id] = baseline.model_dump(mode="json")
         return self._persist(envelope)
 
     def advance_baseline(
@@ -210,7 +215,7 @@ class ReviewStateStore:
 
     def _load_envelope(self) -> _StoredReviewState:
         if not self._path.exists():
-            return _StoredReviewState(version=2)
+            return _StoredReviewState(version=3)
         if not self._path.is_file():
             raise self._invalid_state_error(f"jj-stack data path is not a file: {self._path}")
         try:
@@ -230,7 +235,7 @@ class ReviewStateStore:
                 f"Invalid jj-stack data in {self._path}: top level must be an object"
             )
         version = raw.get("version")
-        if version != 2:
+        if version != 3:
             raise self._invalid_state_error(
                 f"Invalid jj-stack data in {self._path}: unsupported version {version!r}"
             )
@@ -302,12 +307,11 @@ class ReviewStateStore:
         record_type: ReviewStateRecordType,
         invalid_fingerprint: str | None = None,
     ) -> None:
-        if record_type == _IDENTITY:
-            records = envelope.review_identities
-            validator = _validate_identity
-        else:
-            records = envelope.submitted_baselines
-            validator = _validate_baseline
+        records = (
+            envelope.review_identities
+            if record_type == _IDENTITY
+            else envelope.submitted_baselines
+        )
         if change_id not in records:
             if expected is not None:
                 self._raise_conflict(change_id, operation)
@@ -319,7 +323,11 @@ class ReviewStateStore:
             return
         record = records.get(change_id)
         try:
-            current = validator(record)
+            current = (
+                _validate_identity(record, change_id)
+                if record_type == _IDENTITY
+                else _validate_baseline(record)
+            )
         except ValidationError, ValueError:
             if expected is None and invalid_fingerprint == _record_fingerprint(record):
                 return
@@ -339,7 +347,7 @@ def _isolate_records(envelope: _StoredReviewState) -> ReviewState:
     issues: list[ReviewStateRecordIssue] = []
     for change_id, record in envelope.review_identities.items():
         try:
-            identities[change_id] = _validate_identity(record)
+            identities[change_id] = _validate_identity(record, change_id)
         except (ValidationError, ValueError) as error:
             issues.append(
                 _record_issue("review_identity", change_id, record, validation_error=str(error))
@@ -409,10 +417,19 @@ def _record_fingerprint(record: JsonValue | None, *, present: bool = True) -> st
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
 
-def _validate_identity(record: JsonValue | None) -> ReviewIdentity:
+def _validate_identity(record: JsonValue | None, change_id: str) -> ReviewIdentity:
     if not isinstance(record, dict) or "version" not in record:
         raise ValueError("Persisted review identity is missing its version.")
-    return ReviewIdentity.model_validate(record)
+    identity = ReviewIdentity.model_validate(record)
+    _require_identity_matches_change(identity, change_id)
+    return identity
+
+
+def _require_identity_matches_change(identity: ReviewIdentity, change_id: str) -> None:
+    if not review_branch_matches_change(identity.head_ref, change_id):
+        raise ValueError(
+            f"Review branch {identity.head_ref!r} does not match change {change_id!r}."
+        )
 
 
 def _validate_baseline(record: JsonValue | None) -> SubmittedBaseline:

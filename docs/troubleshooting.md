@@ -75,6 +75,11 @@ If no open PR exists and you want fresh PRs, run:
 jj-stack submit --restart <stack-head>
 ```
 
+`--restart` requires complete tracking for every selected change. It keeps all old tracking until
+the whole replacement stack succeeds. If the command is interrupted after creating some PRs,
+rerun the same command with the same stack head; `jj-stack` reuses only replacement PRs whose
+branch, commit, and base still exactly match the plan.
+
 If GitHub reports a remembered PR as closed or merged, decide what outcome you
 want before choosing a command:
 
@@ -285,9 +290,22 @@ jj-stack unstack --pull-request 7 --dry-run
 jj-stack unstack --pull-request 7
 ```
 
-This closes the stack's pull requests. Add `--cleanup` if you also want to delete review branches,
-bookmarks, and comments that `jj-stack` can verify are safe to remove. `jj-stack` remembers the
-review was closed so a later `submit` cannot silently reuse it.
+This closes the stack's pull requests but keeps their exact tracking and submitted commits. That
+lets later cleanup verify the old artifacts and prevents `submit` from silently reusing a closed
+review. Add `--cleanup` if you also want to delete review branches, bookmarks, comments, and
+tracking that `jj-stack` can verify are safe to remove.
+
+Plain `jj-stack cleanup` observes the exact saved PR before acting. It removes artifacts and
+tracking only for a PR that GitHub reports as closed or merged. It leaves open reviews alone,
+reports open orphaned reviews without deleting them, and fails closed when the saved PR, branch,
+repository, or current GitHub result does not match.
+
+Cleanup also keeps the review branch and tracking if any open PR in the same repository uses that
+branch as its base. This includes PRs that `jj-stack` does not track and PRs whose local changes
+are gone. The blocker names one such PR: close it or retarget it to another base, then rerun the
+same cleanup command. Selected `unstack --cleanup` works from the stack head down, but the real
+command still checks GitHub again immediately before deleting branch or bookmark artifacts and
+before removing tracking.
 
 ## A command was interrupted before it finished
 
@@ -317,6 +335,8 @@ command.
 
 - `submit`: preview with `jj-stack submit --dry-run <head-change-id>`, then run
   `jj-stack submit <head-change-id>`.
+- `submit --restart`: rerun `jj-stack submit --restart <head-change-id>`. Exact replacement PRs
+  from the interrupted run are reused; the old tracking remains until the whole stack succeeds.
 - `unstack` or `unstack --cleanup`: add `--dry-run` to the same explicit command, inspect it,
   then rerun without `--dry-run`.
 - `sync`: preview with `jj-stack sync --dry-run <head-change-id>`, then run
@@ -345,3 +365,7 @@ remains, use `jj-stack list` to find the orphaned PR and then
 `jj-stack unstack --cleanup --pull-request <pr>`. To clean up every orphan shown by
 `jj-stack list`, preview `jj-stack unstack --cleanup --pull-request orphans --dry-run`, then
 run it again without `--dry-run`.
+
+This backout does not apply to an interrupted `submit --restart`: its replacement PRs are not
+tracked until the whole restart succeeds, so `unstack` would still select the old reviews. Rerun
+the same restart instead.

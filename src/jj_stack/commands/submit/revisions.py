@@ -113,10 +113,6 @@ def prepare_submit_revisions(
 
     prepared_revisions: list[PreparedSubmitRevision] = []
     for entry in classified:
-        ensure_change_is_not_unlinked(
-            change_id=entry.revision.change_id,
-            review_status=entry.review_status,
-        )
         local_action = _resolve_local_action(
             entry.bookmark,
             entry.bookmark_state.local_targets,
@@ -177,7 +173,7 @@ def sync_local_bookmarks(
             prepared_revision.bookmark,
             BookmarkState(name=prepared_revision.bookmark),
         )
-        allow_backwards = _bookmark_is_already_managed_for_change(
+        allow_backwards = _bookmark_move_is_same_change(
             bookmark=prepared_revision.bookmark,
             bookmark_state=bookmark_state,
             review_identity=state.review_identities.get(prepared_revision.revision.change_id),
@@ -201,7 +197,7 @@ def _resolve_local_target_change_ids_for_bookmark_updates(
     local_targets: list[str] = []
     for prepared_revision in bookmark_updates:
         review_identity = state.review_identities.get(prepared_revision.revision.change_id)
-        if _identity_manages_bookmark(
+        if _identity_names_bookmark(
             bookmark=prepared_revision.bookmark,
             review_identity=review_identity,
         ):
@@ -300,7 +296,6 @@ def _saved_remote_target(entry: _ClassifiedRevision) -> str | None:
     if (
         review_identity is None
         or submitted_baseline is None
-        or entry.review_status.link != "active"
         or review_identity.head_ref != entry.bookmark
     ):
         return None
@@ -339,7 +334,7 @@ def _ensure_actual_remote_target_is_safe(
     )
 
 
-def _bookmark_is_already_managed_for_change(
+def _bookmark_move_is_same_change(
     *,
     bookmark: str,
     bookmark_state: BookmarkState,
@@ -347,17 +342,16 @@ def _bookmark_is_already_managed_for_change(
     change_id: str,
     local_target_change_ids: dict[str, str],
 ) -> bool:
-    """Whether `submit` is reasserting an already-managed bookmark for the same change.
+    """Whether `submit` is moving the saved bookmark within the same change.
 
     Same-change rewrites such as `jj split` can leave the bookmark pointing at a sibling
     of the desired commit (the other half of the split, or any post-rewrite commit that
     is not a descendant of the previous target). `jj bookmark set` refuses such
     "backwards or sideways" moves by default. The move is legitimate when the tool's
-    tracking state already records this bookmark as managed for this change, or when
-    the bookmark's current local target itself resolves to the same logical change as
-    the desired commit. In either case `allow_backwards` is correct. For any other
-    case the default guard stays in effect so an unrelated bookmark cannot be silently
-    retargeted.
+    tracking state already records this bookmark for the change, or when the bookmark's
+    current local target itself resolves to the same logical change as the desired commit.
+    In either case `allow_backwards` is correct. For any other case the default guard stays
+    in effect so an unrelated bookmark cannot be silently retargeted.
 
     A hidden `local_target` (e.g., abandoned by the user manually) is absent from the
     preloaded visible revision map. That keeps the default guard in effect, which is
@@ -365,7 +359,7 @@ def _bookmark_is_already_managed_for_change(
     identity that we cannot prove.
     """
 
-    if _identity_manages_bookmark(
+    if _identity_names_bookmark(
         bookmark=bookmark,
         review_identity=review_identity,
     ):
@@ -376,16 +370,12 @@ def _bookmark_is_already_managed_for_change(
     return local_target_change_ids.get(local_target) == change_id
 
 
-def _identity_manages_bookmark(
+def _identity_names_bookmark(
     *,
     bookmark: str,
     review_identity: ReviewIdentity | None,
 ) -> bool:
-    return (
-        review_identity is not None
-        and review_identity.manages_bookmark
-        and review_identity.head_ref == bookmark
-    )
+    return review_identity is not None and review_identity.head_ref == bookmark
 
 
 def _resolve_local_action(
@@ -435,11 +425,7 @@ def _bookmark_link_is_proven(entry: _ClassifiedRevision) -> bool:
         return True
     if entry.bookmark_source != "saved":
         return False
-    return (
-        entry.review_status.link == "active"
-        and entry.review_identity is not None
-        and entry.review_identity.head_ref == entry.bookmark
-    )
+    return entry.review_identity is not None and entry.review_identity.head_ref == entry.bookmark
 
 
 def sync_remote_bookmarks(
@@ -473,17 +459,3 @@ def sync_remote_bookmarks(
                 desired_target=prepared_revision.revision.commit_id,
                 expected_remote_target=prepared_revision.expected_remote_target,
             )
-
-
-def ensure_change_is_not_unlinked(
-    *,
-    change_id: str,
-    review_status: ReviewChangeStatus,
-) -> None:
-    if review_status.link != "unlinked":
-        return
-    raise DriftError(
-        t"Change {ui.change_id(change_id)} is unlinked from review tracking.",
-        condition="change_unlinked",
-        hint=t"Run {ui.cmd('relink')} to reattach it before submitting again.",
-    )

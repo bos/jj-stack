@@ -29,7 +29,7 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-    manual_bookmark = "review/manual-feature-1"
+    manual_bookmark = fake_repo.pull_requests[1].head_ref
     run_command(["jj", "bookmark", "forget", manual_bookmark], repo)
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 relinked"],
@@ -126,17 +126,17 @@ def test_relink_reports_missing_pull_request_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_relink_rejects_existing_local_bookmark_on_different_change(
+def test_relink_rejects_pull_request_branch_for_a_different_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_manual_pr(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    manual_bookmark = "review/manual-feature-1"
+    manual_bookmark = fake_repo.pull_requests[1].head_ref
 
-    # The template leaves `review/manual-feature-1` on `feature 1`; stack a new
-    # `feature 2` on top so the relink target is a different revision.
+    # The template leaves the PR branch on `feature 1`; stack a new `feature 2`
+    # on top so the relink target is a different revision.
     commit_file(repo, "feature 2", "feature-2.txt")
     stack = JjClient(repo).discover_review_stack()
     bottom_commit_id = stack.revisions[0].commit_id
@@ -147,7 +147,7 @@ def test_relink_rejects_existing_local_bookmark_on_different_change(
     bookmark_state = JjClient(repo).get_bookmark_state(manual_bookmark)
 
     assert exit_code == 1
-    assert "already points to a different revision" in captured.err
+    assert "does not match change" in captured.err
     assert bookmark_state.local_target == bottom_commit_id
 
 
@@ -160,7 +160,7 @@ def test_relink_rejects_pull_request_with_missing_remote_head_branch(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-    manual_bookmark = "review/manual-feature-1"
+    manual_bookmark = fake_repo.pull_requests[1].head_ref
     run_command(["jj", "bookmark", "forget", manual_bookmark], repo)
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 relinked"],
@@ -183,25 +183,3 @@ def test_relink_rejects_pull_request_with_missing_remote_head_branch(
 
     assert exit_code == 1
     assert "does not exist" in captured.err
-
-
-def test_relink_clears_unlinked_state(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
-    assert run_main(repo, config_path, "unlink", change_id) == 0
-    capsys.readouterr()
-
-    exit_code = run_main(repo, config_path, "relink", "1", change_id)
-    captured = capsys.readouterr()
-    relinked_identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
-
-    assert exit_code == 0
-    assert "Relinked PR #1" in captured.out
-    assert relinked_identity.link_state == "active"
-    assert relinked_identity.pr_number == 1

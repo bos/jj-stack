@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-LinkState = Literal["active", "unlinked"]
-BookmarkOwnership = Literal["managed", "external"]
+if TYPE_CHECKING:
+    from jj_stack.models.github import GithubPullRequest
+
 ReviewStateRecordType = Literal["review_identity", "submitted_baseline"]
 
 
@@ -16,33 +17,13 @@ class ReviewIdentity(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[1] = 1
+    version: Literal[2] = 2
     github_host: str
     repository_owner: str
     repository_name: str
     pr_number: int
     head_owner: str
     head_ref: str
-    bookmark_ownership: BookmarkOwnership
-    link_state: LinkState = "active"
-
-    @property
-    def is_tracked(self) -> bool:
-        """Whether commands may inspect and update this review."""
-
-        return self.link_state == "active"
-
-    @property
-    def is_unlinked(self) -> bool:
-        """Whether the user explicitly detached this review."""
-
-        return self.link_state == "unlinked"
-
-    @property
-    def manages_bookmark(self) -> bool:
-        """Whether jj-stack may retire the review bookmark."""
-
-        return self.bookmark_ownership == "managed"
 
     @property
     def repository_key(self) -> tuple[str, str, str]:
@@ -52,6 +33,15 @@ class ReviewIdentity(BaseModel):
             self.github_host.casefold(),
             self.repository_owner.casefold(),
             self.repository_name.casefold(),
+        )
+
+    def matches_pull_request(self, pull_request: GithubPullRequest) -> bool:
+        """Whether live GitHub data is the exact pull request saved by this identity."""
+
+        return (
+            pull_request.number == self.pr_number
+            and pull_request.head.ref == self.head_ref
+            and pull_request.head.label == f"{self.head_owner}:{self.head_ref}"
         )
 
 
@@ -80,7 +70,7 @@ class ReviewState(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[2] = 2
+    version: Literal[3] = 3
     review_identities: dict[str, ReviewIdentity] = Field(default_factory=dict)
     submitted_baselines: dict[str, SubmittedBaseline] = Field(default_factory=dict)
     record_issues: tuple[ReviewStateRecordIssue, ...] = Field(

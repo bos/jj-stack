@@ -115,32 +115,6 @@ The completed series must satisfy all of these:
 - **Validated series:** every code commit passes focused checks, `./check.py`,
   `uv run tools/check_complexity.py`, and independent review.
 
-## 1. Remove optional bookmark policy and staging commands
-
-Create a deletion-first commit while retaining the single existing local-bookmark transport until
-its replacement is complete:
-
-- reserve `review/` exclusively for jj-stack and remove `bookmark_prefix`, `use_bookmarks`,
-  `cleanup_user_bookmarks`, and `--use-bookmarks`;
-- remove adoption of user bookmarks, the saved bookmark-ownership field, and ownership-specific
-  cleanup policy; relink accepts only the managed branch grammar, and cleanup eligibility requires
-  the namespace plus exact saved PR, head, and baseline authorization;
-- remove link state and the `unlink` command; `unstack --local` remains the explicit way to remove
-  local tracking;
-- remove standalone `restart`;
-- make `submit --restart` derive its readable fresh name only from the saved head ref, old PR
-  number, and change ID, replacing rather than accumulating an earlier `fresh-pr<number>` marker;
-  retain the old identity until the replacement PR and baseline are installed together;
-- retain `BookmarkState`, bookmark conflicts, local bookmark movement, implicit discovery, and
-  public `bookmark` vocabulary explicitly until the replacement commit;
-- bump the incompatible tracking schema without a migration or shim;
-- update the canonical design, affected user docs, CLI help, and focused tests in the same commit.
-
-Acceptance: the removed configuration, state, and commands have no remaining code or
-documentation path. Existing submission still has exactly one local-bookmark transport. Focused
-checks and `./check.py` pass, no complexity budget grows, and review records cumulative line-count
-deltas.
-
 ## 2. Address the backing Git store directly
 
 Create a narrow foundation commit that makes existing direct Git operations correct in colocated

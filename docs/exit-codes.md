@@ -31,5 +31,5 @@ Notes:
 - Exit 2 covers stack shapes `jj-stack` does not review: merge commits, divergent changes, a
   working copy that never reaches `trunk()`, and similar. The message names the offending
   change.
-- Exit 6 means repair the selection first, for example with `unlink` or `relink`, or rerun
-  with an explicit revision.
+- Exit 6 means rerun with an explicit revision or repair an incorrect saved PR attachment with
+  `relink`.

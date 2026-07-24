@@ -13,7 +13,6 @@ from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient, JjCommandError
 
 CONFIG_SECTION = "jj-stack"
-DEFAULT_BOOKMARK_PREFIX = "review"
 _TYPO_CUTOFF = 0.75
 
 
@@ -22,37 +21,9 @@ class RepoConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    bookmark_prefix: str = DEFAULT_BOOKMARK_PREFIX
-    cleanup_user_bookmarks: bool = False
     labels: list[str] = Field(default_factory=list)
     reviewers: list[str] = Field(default_factory=list)
     team_reviewers: list[str] = Field(default_factory=list)
-    use_bookmarks: list[str] = Field(default_factory=list)
-
-    @field_validator("bookmark_prefix")
-    @classmethod
-    def _validate_bookmark_prefix(cls, value: str) -> str:
-        prefix = value.strip()
-        if not prefix:
-            raise ValueError("bookmark_prefix must not be empty")
-        if "/" in prefix:
-            raise ValueError("bookmark_prefix must not contain '/'")
-        return prefix
-
-    @field_validator("use_bookmarks")
-    @classmethod
-    def _validate_use_bookmarks(cls, values: list[str]) -> list[str]:
-        patterns: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            pattern = value.strip()
-            if not pattern:
-                continue
-            if pattern in seen:
-                continue
-            seen.add(pattern)
-            patterns.append(pattern)
-        return patterns
 
 
 class LoggingConfig(BaseModel):

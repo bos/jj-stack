@@ -73,18 +73,6 @@ that the predictor pre-retargets it before push. The fake GitHub already
 simulates the head-contained-in-base auto-close, so the missing piece is the
 fixture, not the simulator.
 
-## Submit Bookmark Same-Change Fallback Path Coverage
-
-_Benefit: small — a safety-net branch with no direct test today, easy to
-let rot._
-
-The bookmark-managed check that decides whether to pass `allow_backwards` to `set_bookmark` has
-two arms: a fast path where a matching managed `ReviewIdentity` proves ownership, and a fallback
-that asks `jj` whether the bookmark's current local target resolves to the same `change_id` as
-the desired commit. The split integration test exercises only the first arm because the prior
-submit creates the identity. A focused untracked or external-identity fixture would lock in the
-fallback so a future refactor cannot silently break it.
-
 ## Post-Submit Closure Detector — Coverage Gaps
 
 _Benefit: small — the predictor and the existing detector already cover the

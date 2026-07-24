@@ -6,7 +6,7 @@ from typing import ClassVar
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.state.store import ReviewStateStore
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -328,36 +328,6 @@ def test_list_batches_github_lookup_across_repo_stacks(
     assert CountingGithubClient.review_decision_calls == []
 
 
-def test_list_fails_closed_when_tracked_changes_share_bookmark(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "feature 2", "feature-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    change_ids = tuple(state.review_identities)
-    shared_bookmark = state.review_identities[change_ids[0]].head_ref
-    state_path = resolve_state_path(repo)
-    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
-    state_payload["review_identities"][change_ids[1]]["head_ref"] = shared_bookmark
-    write_file(state_path, json.dumps(state_payload))
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "Could not safely inspect stacks" in captured.err
-    assert "same bookmark" in captured.err
-
-
 def test_list_reports_no_stacks_when_state_is_empty(
     tmp_path,
     monkeypatch,
@@ -425,25 +395,6 @@ def test_list_does_not_extend_through_another_workspaces_working_copy(
     assert [change["change_id"] for change in payload["rows"][0]["changes"]] == [
         feature_change_id
     ]
-
-
-def test_list_marks_unlinked_change(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    change_id = JjClient(repo).discover_review_stack().head.change_id
-    assert run_main(repo, config_path, "unlink", change_id) == 0
-    capsys.readouterr()
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "unlinked" in captured.out
 
 
 def test_list_falls_back_when_github_unavailable(

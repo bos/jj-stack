@@ -31,7 +31,7 @@ from jj_stack.github.resolution import resolve_trunk_branch
 from jj_stack.jj.client import JjCliArgs
 from jj_stack.models.github import GithubRepository
 from jj_stack.review.discovery import discover_stacks_from_revisions
-from jj_stack.review.observation import RepositoryObservation, observe_review_mutation
+from jj_stack.review.observation import RepositoryObservation, observe_reviews
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_selected_revset,
@@ -218,7 +218,7 @@ async def _stream_merge_async(
             repository_state=github_repository_state,
         )
         try:
-            observation = await observe_review_mutation(
+            observation = await observe_reviews(
                 change_ids=tuple(revision.change_id for revision in prepared.stack.revisions),
                 context=prepared_merge.context,
                 github_client=github_client,

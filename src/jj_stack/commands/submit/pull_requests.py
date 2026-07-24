@@ -10,7 +10,6 @@ from jj_stack.errors import CliError, DriftError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.review.bookmarks import BookmarkSource, bookmark_ownership_for_source
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_saved_review_identity,
@@ -24,7 +23,6 @@ from .models import (
     SubmitOptions,
     SubmittedRevision,
 )
-from .revisions import ensure_change_is_not_unlinked
 
 
 async def discover_pull_requests_by_bookmark(
@@ -55,6 +53,7 @@ def ensure_pull_request_syncs_are_safe(
     *,
     options: SubmitOptions,
     pending_syncs: Sequence[PendingPullRequestSync],
+    restarted_change_ids: frozenset[str] = frozenset(),
     state: ReviewState,
 ) -> None:
     """Verify every planned PR sync before any mutation.
@@ -70,17 +69,18 @@ def ensure_pull_request_syncs_are_safe(
         change_id = prepared_revision.revision.change_id
         review_identity = state.review_identities.get(change_id)
         submitted_baseline = state.submitted_baselines.get(change_id)
-        _ensure_pull_request_link_is_consistent(
-            bookmark=prepared_revision.bookmark,
-            change_id=change_id,
-            discovered_pull_request=pending_sync.discovered_pull_request,
-            review_identity=review_identity,
-            saved_status=classify_saved_review_identity(
-                review_identity,
-                local="present",
-            ),
-            submitted_baseline=submitted_baseline,
-        )
+        if change_id not in restarted_change_ids:
+            _ensure_pull_request_link_is_consistent(
+                bookmark=prepared_revision.bookmark,
+                change_id=change_id,
+                discovered_pull_request=pending_sync.discovered_pull_request,
+                review_identity=review_identity,
+                saved_status=classify_saved_review_identity(
+                    review_identity,
+                    local="present",
+                ),
+                submitted_baseline=submitted_baseline,
+            )
         pull_request = pending_sync.discovered_pull_request
         if options.existing_only and (
             review_identity is None or submitted_baseline is None or pull_request is None
@@ -241,7 +241,6 @@ async def _sync_pull_request(
     if pull_request is not None:
         next_identity = _submitted_identity(
             bookmark=bookmark,
-            bookmark_source=prepared_revision.bookmark_source,
             github_client=github_client,
             pull_request=pull_request,
             review_identity=review_identity,
@@ -355,10 +354,6 @@ def _ensure_pull_request_link_is_consistent(
     saved_status: ReviewChangeStatus,
     submitted_baseline: SubmittedBaseline | None,
 ) -> None:
-    ensure_change_is_not_unlinked(
-        change_id=change_id,
-        review_status=saved_status,
-    )
     if review_identity is None:
         if submitted_baseline is not None:
             raise CliError(
@@ -522,7 +517,6 @@ async def _update_pull_request(
 def _submitted_identity(
     *,
     bookmark: str,
-    bookmark_source: BookmarkSource,
     github_client: GithubClient,
     pull_request: GithubPullRequest,
     review_identity: ReviewIdentity | None,
@@ -535,6 +529,5 @@ def _submitted_identity(
             pr_number=pull_request.number,
             head_owner=github_client.repository.owner,
             head_ref=bookmark,
-            bookmark_ownership=bookmark_ownership_for_source(bookmark_source),
         )
     return review_identity

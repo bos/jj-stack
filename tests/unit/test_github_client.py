@@ -388,6 +388,31 @@ def test_github_client_rejects_graphql_payload_missing_repository_data() -> None
         asyncio.run(run_test())
 
 
+@pytest.mark.parametrize(
+    "repository_payload",
+    ({}, {"base_0": {}}),
+)
+def test_github_client_rejects_incomplete_pull_request_connection(
+    repository_payload: dict[str, object],
+) -> None:
+    def handler(request: httpxyz.Request) -> httpxyz.Response:
+        assert request.url.path == "/graphql"
+        return httpxyz.Response(
+            200,
+            json={"data": {"repository": repository_payload}},
+            request=request,
+        )
+
+    async def run_test() -> None:
+        async with _github_client(handler) as client:
+            await client.get_open_pull_requests_by_base_refs(
+                base_refs=("review/seven",),
+            )
+
+    with pytest.raises(GithubClientError, match="invalid connection payload"):
+        asyncio.run(run_test())
+
+
 def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/graphql"
@@ -397,6 +422,7 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
         assert 'headRefName: "review/nine"' in payload["query"]
         assert "headRepositoryOwner" in payload["query"]
         assert "reviewDecision" in payload["query"]
+        assert "states: [OPEN, CLOSED, MERGED]" in payload["query"]
         return httpxyz.Response(
             200,
             json={
@@ -411,7 +437,7 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
                                     "headRepositoryOwner": {"login": "octo-org"},
                                     "mergedAt": "2026-03-16T12:00:00Z",
                                     "number": 9,
-                                    "state": "CLOSED",
+                                    "state": "MERGED",
                                     "title": "nine",
                                     "url": "https://github.test/octo-org/stacked-review/pull/9",
                                 }
@@ -455,7 +481,7 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
 
     assert asyncio.run(run_test()) == (
         "review/seven",
-        "closed",
+        "merged",
         "octo-org:review/seven",
         "approved",
     )

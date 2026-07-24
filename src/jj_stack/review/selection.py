@@ -69,9 +69,9 @@ def resolve_orphaned_pull_request(
     live-link path handle it) or when no matching tracked record exists (let
     the live-link path raise its targeted diagnostic).
 
-    Raises `CliError` when two or more active tracked records claim the same
-    pull request number. The tracking data is ambiguous; the user must repair
-    it via `unlink` or `relink` before `unstack --cleanup --pull-request` can
+    Raises `CliError` when two or more tracked records claim the same pull
+    request number. The tracking data is ambiguous; the user must discard an
+    incorrect claim or relink it before `unstack --cleanup --pull-request` can
     act, because there is no single orphan target to retire.
 
     The membership check matches what `list` renders as an `orphan` row: a
@@ -96,8 +96,8 @@ def resolve_orphaned_pull_request(
         raise AmbiguousSelectionError(
             t"PR #{pull_request_number} is claimed by multiple tracked records ({rendered}).",
             hint=(
-                t"Repair the tracking data with {ui.cmd('unlink')} "
-                t"or {ui.cmd('relink')} before retrying."
+                t"Discard an incorrect claim with {ui.cmd('unstack --local')} or repair it "
+                t"with {ui.cmd('relink')} before retrying."
             ),
         )
     change_id = matching_change_ids[0]
@@ -202,7 +202,7 @@ def _identity_links_pull_request(
     *,
     pull_request_number: int,
 ) -> bool:
-    return review_identity.is_tracked and review_identity.pr_number == pull_request_number
+    return review_identity.pr_number == pull_request_number
 
 
 def _parse_repo_pull_request_number(

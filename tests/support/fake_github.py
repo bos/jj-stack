@@ -67,6 +67,10 @@ class FakeGithubPullRequest:
     requested_team_reviewers: list[str] = field(default_factory=list)
     state: str = "open"
 
+    @property
+    def graphql_state(self) -> str:
+        return "merged" if self.merged_at is not None else self.state
+
     def to_payload(
         self,
         *,
@@ -114,7 +118,7 @@ class FakeGithubPullRequest:
             ),
             "mergedAt": self.merged_at,
             "number": self.number,
-            "state": self.state.upper(),
+            "state": self.graphql_state.upper(),
             "title": self.title,
             "url": f"{web_origin}/{repository.full_name}/pull/{self.number}",
         }
@@ -1549,35 +1553,55 @@ def _graphql_repository_payload(
     web_origin: str,
 ) -> dict[str, object]:
     lines = query.splitlines()
-    head_ref_queries: list[tuple[str, str]] = []
+    ref_queries: list[tuple[str, str, str, int, frozenset[str]]] = []
     for index, line in enumerate(lines):
         alias, separator, selection = line.strip().partition(":")
         if not separator or not alias.isidentifier():
             continue
         if not selection.lstrip().startswith("pullRequests("):
             continue
+        first = 100
+        ref_kind: str | None = None
+        ref_value: str | None = None
+        states: frozenset[str] = frozenset()
         for argument_line in lines[index + 1 :]:
             stripped_argument = argument_line.strip()
             if stripped_argument.startswith(")"):
                 break
-            if not stripped_argument.startswith("headRefName:"):
-                continue
-            head_ref = json.loads(stripped_argument.removeprefix("headRefName:").strip())
-            head_ref_queries.append((alias, head_ref))
-            break
+            if stripped_argument.startswith("first:"):
+                first = int(stripped_argument.removeprefix("first:").strip().removesuffix(","))
+            elif stripped_argument.startswith("states:"):
+                raw_states = stripped_argument.removeprefix("states:").strip().removesuffix(",")
+                states = frozenset(
+                    state.strip().lower() for state in raw_states.strip("[]").split(",")
+                )
+            elif stripped_argument.startswith("headRefName:"):
+                ref_kind = "head"
+                ref_value = json.loads(stripped_argument.removeprefix("headRefName:").strip())
+            elif stripped_argument.startswith("baseRefName:"):
+                ref_kind = "base"
+                ref_value = json.loads(stripped_argument.removeprefix("baseRefName:").strip())
+        if ref_kind is not None and ref_value is not None:
+            ref_queries.append((alias, ref_kind, ref_value, first, states))
 
-    if head_ref_queries:
+    if ref_queries:
         payload: dict[str, object] = {}
-        for alias, head_ref in head_ref_queries:
+        for alias, ref_kind, ref_value, first, states in ref_queries:
+            matching_pull_requests = [
+                pull_request
+                for pull_request in repository.pull_requests.values()
+                if (pull_request.head_ref if ref_kind == "head" else pull_request.base_ref)
+                == ref_value
+            ]
+            repository.refresh_pull_requests(matching_pull_requests)
             matching_pull_requests = sorted(
                 (
                     pull_request
-                    for pull_request in repository.pull_requests.values()
-                    if pull_request.head_ref == head_ref
+                    for pull_request in matching_pull_requests
+                    if not states or pull_request.graphql_state in states
                 ),
                 key=lambda candidate: candidate.number,
             )
-            repository.refresh_pull_requests(matching_pull_requests)
             payload[alias] = {
                 "nodes": [
                     _graphql_pull_request_payload(
@@ -1587,7 +1611,7 @@ def _graphql_repository_payload(
                         refreshed=True,
                     )
                     for pull_request in matching_pull_requests
-                ][:2]
+                ][:first]
             }
         return payload
 

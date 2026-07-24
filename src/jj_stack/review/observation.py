@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 import jj_stack.github.resolution as github_resolution
 from jj_stack.bootstrap import CommandContext
-from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
-from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.bookmarks import GitRemote
 from jj_stack.models.github import GithubPullRequest, GithubRepository
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
+from jj_stack.state.store import ReviewStateStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,14 +31,16 @@ class ReviewObservation:
 
 @dataclass(frozen=True, slots=True)
 class RepositoryObservation:
-    """One fresh repository observation shared by a single mutation policy."""
+    """Fresh review facts shared by mutation policies."""
 
-    configured_repository: GithubRepoAddress | None
+    configured_repository: github_resolution.GithubRepoAddress | None
     duplicate_claim_change_ids: frozenset[str]
-    fetched_trunk: LocalRevision | None
-    github_repository: GithubRepository
+    fetched_trunk_commit_id: str | None
+    github_repository: GithubRepository | None
+    open_pull_requests_by_base: Mapping[str, tuple[GithubPullRequest, ...]] | None
     remote: GitRemote | None
     remote_trunk_target: str | None
+    repository: github_resolution.GithubRepoAddress
     reviews: Mapping[str, ReviewObservation]
 
 
@@ -47,94 +49,97 @@ def duplicate_review_claim_change_ids(
 ) -> frozenset[str]:
     """Invalidate every change participating in a duplicate PR or head claim."""
 
-    claims = tuple(
-        (change_id, identity.repository_key, kind, target)
-        for change_id, identity in identities.items()
-        for kind, target in (
-            ("pr", str(identity.pr_number)),
-            ("head", f"{identity.head_owner.casefold()}:{identity.head_ref}"),
-        )
+    values = identities.values()
+    pr_claims = Counter((item.repository_key, item.pr_number) for item in values)
+    head_claims = Counter(
+        (item.repository_key, item.head_owner.casefold(), item.head_ref) for item in values
     )
-    counts = Counter((repository, kind, target) for _, repository, kind, target in claims)
     return frozenset(
         change_id
-        for change_id, repository, kind, target in claims
-        if counts[(repository, kind, target)] > 1
+        for change_id, item in identities.items()
+        if pr_claims[(item.repository_key, item.pr_number)] > 1
+        or head_claims[(item.repository_key, item.head_owner.casefold(), item.head_ref)] > 1
     )
 
 
-async def observe_review_mutation(
+async def observe_reviews(
     *,
     change_ids: tuple[str, ...],
-    context: CommandContext,
+    context: CommandContext | None = None,
     github_client: GithubClient,
-    remote_name: str,
-    trunk_branch: str,
+    identity_overrides: Mapping[str, ReviewIdentity] | None = None,
+    include_open_dependents: bool = False,
+    remote_name: str | None = None,
+    state_store: ReviewStateStore | None = None,
+    trunk_branch: str | None = None,
 ) -> RepositoryObservation:
-    """Reload facts needed by one immediately following review mutation."""
+    """Reload policy-free facts needed by an immediately following mutation."""
 
-    ordered_change_ids = tuple(dict.fromkeys(change_ids))
-    remotes = {remote.name: remote for remote in context.jj_client.list_git_remotes()}
-    remote = remotes.get(remote_name)
-    configured_repository = (
-        github_resolution.parse_github_repo(remote) if remote is not None else None
-    )
-    state = context.state_store.load()
-    duplicate_claim_change_ids = duplicate_review_claim_change_ids(
-        state.review_identities
-    )
+    remotes = () if context is None else context.jj_client.list_git_remotes()
+    remote = next((item for item in remotes if item.name == remote_name), None)
+    store = context.state_store if context is not None else state_store
+    assert store is not None
+    state = store.load()
+    claim_identities = dict(state.review_identities)
+    claim_identities.update(identity_overrides or {})
     identities = {
-        change_id: state.review_identities.get(change_id) for change_id in ordered_change_ids
+        change_id: claim_identities.get(change_id)
+        for change_id in dict.fromkeys(change_ids)
     }
+    repository = github_client.repository
     known_identities = tuple(identity for identity in identities.values() if identity is not None)
     head_refs = tuple(dict.fromkeys(identity.head_ref for identity in known_identities))
     pull_numbers = tuple(dict.fromkeys(identity.pr_number for identity in known_identities))
-
-    github_repository = await github_client.get_repository()
-    pull_requests = await github_client.get_pull_requests_by_numbers(
-        pull_numbers=pull_numbers,
+    numbered, by_head, by_base, github_repository = await asyncio.gather(
+        github_client.get_pull_requests_by_numbers(pull_numbers=pull_numbers),
+        github_client.get_pull_requests_by_head_refs(head_refs=head_refs),
+        (
+            github_client.get_open_pull_requests_by_base_refs(base_refs=head_refs)
+            if include_open_dependents
+            else asyncio.sleep(0, result=None)
+        ),
+        github_client.get_repository() if context is not None else asyncio.sleep(0, result=None),
     )
-    pull_requests_by_head = await github_client.get_pull_requests_by_head_refs(
-        head_refs=head_refs,
-    )
-
     remote_targets: dict[str, str] = {}
-    if remote is not None:
+    if context is not None and remote is not None and trunk_branch is not None:
         remote_targets = context.jj_client.list_remote_branches(
             remote=remote.push_url,
             patterns=tuple(f"refs/heads/{ref}" for ref in (trunk_branch, *head_refs)),
         )
-    reviews: dict[str, ReviewObservation] = {}
-    for change_id in ordered_change_ids:
-        identity = identities[change_id]
-        try:
-            local_revision = context.jj_client.resolve_revision(change_id)
-        except CliError:
-            local_revision = None
-        head_ref = identity.head_ref if identity is not None else None
-        reviews[change_id] = ReviewObservation(
+    local_revisions = (
+        context.jj_client.query_revisions_by_change_ids(tuple(identities))
+        if context is not None
+        else {}
+    )
+    reviews = {
+        change_id: ReviewObservation(
             baseline=state.submitted_baselines.get(change_id),
             head_pull_requests=(
-                pull_requests_by_head.get(head_ref, ()) if head_ref is not None else ()
+                by_head.get(identity.head_ref, ()) if identity is not None else ()
             ),
             identity=identity,
-            local_revision=local_revision,
-            pull_request=(
-                pull_requests.get(identity.pr_number) if identity is not None else None
+            local_revision=(matches[0] if len(matches) == 1 else None),
+            pull_request=(numbered.get(identity.pr_number) if identity is not None else None),
+            remote_review_target=(
+                remote_targets.get(identity.head_ref) if identity is not None else None
             ),
-            remote_review_target=(remote_targets.get(head_ref) if head_ref is not None else None),
         )
+        for change_id, identity in identities.items()
+        for matches in (local_revisions.get(change_id, ()),)
+    }
 
-    try:
-        fetched_trunk = context.jj_client.resolve_revision("trunk()")
-    except CliError:
-        fetched_trunk = None
+    fetched_trunks = (
+        context.jj_client.query_revisions("trunk()", limit=2) if context is not None else ()
+    )
+    fetched_commit = fetched_trunks[0].commit_id if len(fetched_trunks) == 1 else None
     return RepositoryObservation(
-        configured_repository=configured_repository,
-        duplicate_claim_change_ids=duplicate_claim_change_ids,
-        fetched_trunk=fetched_trunk,
+        configured_repository=github_resolution.parse_github_repo(remote) if remote else None,
+        duplicate_claim_change_ids=duplicate_review_claim_change_ids(claim_identities),
+        fetched_trunk_commit_id=fetched_commit,
         github_repository=github_repository,
+        open_pull_requests_by_base=by_base,
         remote=remote,
-        remote_trunk_target=remote_targets.get(trunk_branch),
+        remote_trunk_target=remote_targets.get(trunk_branch) if trunk_branch else None,
+        repository=repository,
         reviews=reviews,
     )

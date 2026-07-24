@@ -111,9 +111,7 @@ class GithubStackSelection:
     ) -> GithubStack | None:
         """Return the freshly authorized resource for this exact active suffix."""
 
-        stacks = (
-            observed if observed is not None else await self.overlapping(persist=persist)
-        )
+        stacks = observed if observed is not None else await self.overlapping(persist=persist)
         if not stacks:
             return None
         selected = tuple(self.pull_numbers)

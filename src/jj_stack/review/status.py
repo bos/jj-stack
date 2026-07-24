@@ -42,7 +42,6 @@ from jj_stack.review.bookmarks import (
     BookmarkSource,
     discover_bookmarks_for_revisions,
     ensure_unique_bookmarks,
-    match_bookmarks_for_revisions,
 )
 from jj_stack.review.change_status import (
     classify_review_status_revision,
@@ -477,33 +476,23 @@ def prepare_stack_for_status(
 ) -> PreparedStack:
     """Build prepared status inputs for one already-resolved local stack."""
 
-    config = context.config
     jj_client = context.jj_client
     pinned_bookmarks = pinned_bookmarks_for_revisions(revisions=stack.revisions, state=state)
     if bookmark_states is None:
         bookmark_states = {}
-        if remote is not None or config.use_bookmarks:
+        if remote is not None:
             bookmark_states = jj_client.list_bookmark_states(pinned_bookmarks)
 
-    matched_bookmarks = match_bookmarks_for_revisions(
-        bookmark_states=bookmark_states,
-        patterns=tuple(config.use_bookmarks),
-        revisions=stack.revisions,
-        remote_name=remote.name if remote is not None else None,
-    )
     discovered_bookmarks: dict[str, str] = {}
     if remote is not None and pinned_bookmarks is None:
         discovered_bookmarks = discover_bookmarks_for_revisions(
             bookmark_states=bookmark_states,
-            prefix=config.bookmark_prefix,
             remote_name=remote.name,
             revisions=stack.revisions,
         )
 
     bookmark_resolutions = BookmarkResolver(
         state.review_identities,
-        prefix=config.bookmark_prefix,
-        matched_bookmarks=matched_bookmarks,
         discovered_bookmarks=discovered_bookmarks,
     ).resolve_revisions(stack.revisions)
     ensure_unique_bookmarks(bookmark_resolutions)

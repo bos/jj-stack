@@ -12,7 +12,6 @@ from jj_stack.review.bookmarks import (
     ResolvedBookmark,
     discover_bookmarks_for_revisions,
     ensure_unique_bookmarks,
-    match_bookmarks_for_revisions,
 )
 from jj_stack.review.restart import RestartedReview, restart_state_for_stack
 
@@ -34,7 +33,6 @@ def prepare_submit_inputs(
     """Load local submit state before any GitHub mutation begins."""
 
     client = context.jj_client
-    config = context.config
     state_store = context.state_store
     remote = select_submit_remote(client.list_git_remotes())
     stack = client.discover_review_stack(options.revset)
@@ -52,7 +50,7 @@ def prepare_submit_inputs(
     if options.restart:
         restart_result = restart_state_for_stack(
             bookmark_states=bookmark_states,
-            config=config,
+            remote_name=remote.name,
             stack=stack,
             state=state,
         )
@@ -64,22 +62,17 @@ def prepare_submit_inputs(
         forced_bookmarks = {
             restarted.change_id: restarted.new_bookmark for restarted in restart_result.changed
         }
-    matched_bookmarks = match_bookmarks_for_revisions(
-        bookmark_states=bookmark_states,
-        patterns=resolved_options.use_bookmarks,
-        revisions=stack.revisions,
-        remote_name=remote.name,
-    )
     discovered_bookmarks = discover_bookmarks_for_revisions(
         bookmark_states=bookmark_states,
-        prefix=config.bookmark_prefix,
         remote_name=remote.name,
-        revisions=stack.revisions,
+        revisions=tuple(
+            revision
+            for revision in stack.revisions
+            if revision.change_id not in restarted_change_ids
+        ),
     )
     bookmark_resolutions = BookmarkResolver(
         state.review_identities,
-        prefix=config.bookmark_prefix,
-        matched_bookmarks=matched_bookmarks,
         discovered_bookmarks=discovered_bookmarks,
     ).resolve_revisions(stack.revisions)
     if forced_bookmarks:

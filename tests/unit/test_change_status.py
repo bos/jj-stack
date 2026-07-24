@@ -31,7 +31,6 @@ def _identity(*, pr_number: int = 1) -> ReviewIdentity:
         pr_number=pr_number,
         head_owner="octo-org",
         head_ref="review/change",
-        bookmark_ownership="managed",
     )
 
 

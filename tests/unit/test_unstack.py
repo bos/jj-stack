@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
 
@@ -11,23 +12,30 @@ from jj_stack.commands.unstack import (
     CloseAction,
     PreparedClose,
     _cleanup_revision,
+    _close_revision_preflight_error,
     _CloseMutationRun,
     unstack,
 )
-from jj_stack.config import RepoConfig
 from jj_stack.errors import UsageError
 from jj_stack.github.client import GithubClient
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjCliArgs, JjClient
 from jj_stack.models.bookmarks import BookmarkState, RemoteBookmarkState
-from jj_stack.models.review_state import BookmarkOwnership, ReviewIdentity, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.review.change_status import ReviewChangeStatus
 from jj_stack.review.status import ReviewStatusRevision
+
+CHANGE_ID = "aaaaaaaaaaaaaaaa"
+BOOKMARK = "review/feature-aaaaaaaa"
 
 
 def test_unstack_rejects_orphans_without_cleanup_before_bootstrap(monkeypatch) -> None:
-    def fail_bootstrap(**_kwargs) -> None:
-        raise AssertionError("invalid options must not bootstrap the repository")
-
-    monkeypatch.setattr("jj_stack.commands.unstack.bootstrap_context", fail_bootstrap)
+    monkeypatch.setattr(
+        "jj_stack.commands.unstack.bootstrap_context",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid options must not bootstrap the repository")
+        ),
+    )
 
     with pytest.raises(UsageError, match="orphans requires --cleanup"):
         unstack(
@@ -42,72 +50,39 @@ def test_unstack_rejects_orphans_without_cleanup_before_bootstrap(monkeypatch) -
         )
 
 
-def _stub_revision(*, change_id: str) -> ReviewStatusRevision:
-    return ReviewStatusRevision(
-        bookmark="",
-        bookmark_source="generated",
-        change_id=change_id,
-        commit_id="",
-        local_divergent=False,
-        pull_request_lookup=None,
-        review_identity=None,
-        remote_state=None,
-        submitted_baseline=None,
-        managed_comments_lookup=None,
-        subject="",
-    )
-
-
-def _review_identity(
-    *,
-    bookmark: str = "review/feature-aaaaaaaa",
-    bookmark_ownership: BookmarkOwnership = "managed",
-) -> ReviewIdentity:
-    return ReviewIdentity(
-        github_host="github.test",
-        repository_owner="octo-org",
-        repository_name="stacked-review",
-        pr_number=1,
-        head_owner="octo-org",
-        head_ref=bookmark,
-        bookmark_ownership=bookmark_ownership,
-    )
-
-
 @pytest.mark.parametrize(
     ("bookmark_state", "expected_action"),
-    [
+    (
         pytest.param(
             BookmarkState(
-                name="review/feature-aaaaaaaa",
+                name=BOOKMARK,
                 local_targets=("commit-1", "commit-2"),
                 remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
             ),
             CloseAction(
                 kind="local bookmark",
                 status="blocked",
-                body=t"cannot forget {ui.bookmark('review/feature-aaaaaaaa')} because it is "
-                t"conflicted",
+                body=t"cannot forget {ui.bookmark(BOOKMARK)} because it is conflicted",
             ),
             id="conflicted-local",
         ),
         pytest.param(
             BookmarkState(
-                name="review/feature-aaaaaaaa",
+                name=BOOKMARK,
                 local_targets=("other-commit",),
                 remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
             ),
             CloseAction(
                 kind="local bookmark",
                 status="blocked",
-                body=t"cannot forget {ui.bookmark('review/feature-aaaaaaaa')} because it "
-                t"already points to a different revision",
+                body=t"cannot forget {ui.bookmark(BOOKMARK)} because it already points to "
+                t"a different revision",
             ),
             id="moved-local",
         ),
         pytest.param(
             BookmarkState(
-                name="review/feature-aaaaaaaa",
+                name=BOOKMARK,
                 local_targets=("commit-1",),
                 remote_targets=(
                     RemoteBookmarkState(remote="origin", targets=("commit-1", "commit-2")),
@@ -116,26 +91,26 @@ def _review_identity(
             CloseAction(
                 kind="remote branch",
                 status="blocked",
-                body=t"cannot delete {ui.bookmark('review/feature-aaaaaaaa@origin')} "
-                t"because the remote bookmark is conflicted",
+                body=t"cannot delete {ui.bookmark(f'{BOOKMARK}@origin')} because the remote "
+                t"bookmark is conflicted",
             ),
             id="conflicted-remote",
         ),
         pytest.param(
             BookmarkState(
-                name="review/feature-aaaaaaaa",
+                name=BOOKMARK,
                 local_targets=("commit-1",),
                 remote_targets=(RemoteBookmarkState(remote="origin", targets=("other-commit",)),),
             ),
             CloseAction(
                 kind="remote branch",
                 status="blocked",
-                body=t"cannot delete {ui.bookmark('review/feature-aaaaaaaa@origin')} "
-                t"because it already points to a different revision",
+                body=t"cannot delete {ui.bookmark(f'{BOOKMARK}@origin')} because it already "
+                t"points to a different revision",
             ),
             id="moved-remote",
         ),
-    ],
+    ),
 )
 def test_cleanup_revision_blocks_unsafe_bookmarks(
     bookmark_state: BookmarkState,
@@ -144,12 +119,58 @@ def test_cleanup_revision_blocks_unsafe_bookmarks(
     result = asyncio.run(_run_cleanup_revision(bookmark_state=bookmark_state))
 
     assert len(result.actions) == 1
-    action = result.actions[0]
-    assert action.kind == expected_action.kind
-    assert action.status == expected_action.status
-    assert action.message == expected_action.message
+    assert result.actions[0].kind == expected_action.kind
+    assert result.actions[0].status == expected_action.status
+    assert result.actions[0].message == expected_action.message
     assert result.jj_client.delete_calls == []
     assert result.jj_client.forget_calls == []
+
+
+def test_unstack_blocks_saved_identity_from_another_repository() -> None:
+    identity = _review_identity().model_copy(update={"repository_name": "other-repository"})
+    revision = replace(_stub_revision(), review_identity=identity)
+    action = _close_revision_preflight_error(
+        change_status=ReviewChangeStatus(
+            local="present",
+            remote_branch="current",
+            remote_branch_matches_commit=True,
+            pr_lifecycle="open",
+            pr_draft=False,
+            pr_review_decision="none",
+            saved_review_identity=True,
+        ),
+        revision=revision,
+        run=_CloseMutationRun(
+            commit_ids_by_change_id={CHANGE_ID: "commit-1"},
+            current_state=ReviewState(
+                review_identities={CHANGE_ID: identity},
+                submitted_baselines={CHANGE_ID: SubmittedBaseline(commit_id="commit-1")},
+            ),
+            github_client=cast(GithubClient, SimpleNamespace()),
+            initial_observation=None,
+            planned_closed_pull_requests=set(),
+            review_identities={CHANGE_ID: identity},
+            prepared_close=cast(
+                PreparedClose,
+                SimpleNamespace(
+                    cleanup=False,
+                    dry_run=False,
+                    prepared_status=SimpleNamespace(
+                        github_repository=GithubRepoAddress(
+                            host="github.test",
+                            owner="octo-org",
+                            repo="stacked-review",
+                        ),
+                    ),
+                ),
+            ),
+            record_action=lambda action: None,
+        ),
+    )
+
+    assert action is not None
+    assert action.status == "blocked"
+    assert "saved repository does not match" in action.message
 
 
 class _CleanupResult:
@@ -159,9 +180,19 @@ class _CleanupResult:
 
 
 class _JjClientStub:
-    def __init__(self) -> None:
+    def __init__(self, bookmark_state: BookmarkState) -> None:
+        self.bookmark_state = bookmark_state
         self.delete_calls: list[tuple[str, tuple[tuple[str, str], ...]]] = []
         self.forget_calls: list[str] = []
+
+    def get_bookmark_state(self, bookmark: str) -> BookmarkState:
+        return self.bookmark_state
+
+    def list_remote_branches(self, *, remote: str, patterns) -> dict[str, str]:
+        remote_state = self.bookmark_state.remote_target(remote)
+        if remote_state is None or remote_state.target is None:
+            return {}
+        return {self.bookmark_state.name: remote_state.target}
 
     def delete_remote_bookmarks(
         self,
@@ -181,20 +212,10 @@ class _GithubClientStub:
         return ()
 
 
-def _prepared_close(
-    *,
-    cleanup_user_bookmarks: bool = False,
-    jj_client: _JjClientStub,
-) -> PreparedClose:
+def _prepared_close(*, jj_client: _JjClientStub) -> PreparedClose:
     return cast(
         PreparedClose,
         SimpleNamespace(
-            context=SimpleNamespace(
-                config=RepoConfig(
-                    bookmark_prefix="review",
-                    cleanup_user_bookmarks=cleanup_user_bookmarks,
-                )
-            ),
             dry_run=False,
             prepared_status=SimpleNamespace(
                 prepared=SimpleNamespace(
@@ -208,55 +229,49 @@ def _prepared_close(
 
 async def _run_cleanup_revision(*, bookmark_state: BookmarkState) -> _CleanupResult:
     actions: list[CloseAction] = []
-    jj_client = _JjClientStub()
+    jj_client = _JjClientStub(bookmark_state)
     await _cleanup_revision(
         bookmark_state=bookmark_state,
-        commit_id="commit-1",
+        local_commit_id="commit-1",
         review_identity=_review_identity(),
-        revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
+        revision=_stub_revision(),
         run=_CloseMutationRun(
             commit_ids_by_change_id={},
             current_state=ReviewState(),
             github_client=cast(GithubClient, _GithubClientStub()),
+            initial_observation=None,
+            planned_closed_pull_requests=set(),
             review_identities={},
             prepared_close=_prepared_close(jj_client=jj_client),
             record_action=actions.append,
         ),
+        submitted_baseline=SubmittedBaseline(commit_id="commit-1"),
     )
     return _CleanupResult(actions=actions, jj_client=jj_client)
 
 
-def test_cleanup_revision_deletes_external_bookmark_when_configured() -> None:
-    actions: list[CloseAction] = []
-    jj_client = _JjClientStub()
-
-    asyncio.run(
-        _cleanup_revision(
-            bookmark_state=BookmarkState(
-                name="potato/feature-aaaaaaaa",
-                local_targets=("commit-1",),
-                remote_targets=(RemoteBookmarkState(remote="origin", targets=("commit-1",)),),
-            ),
-            review_identity=_review_identity(
-                bookmark="potato/feature-aaaaaaaa",
-                bookmark_ownership="external",
-            ),
-            commit_id="commit-1",
-            revision=_stub_revision(change_id="aaaaaaaaaaaaaaaa"),
-            run=_CloseMutationRun(
-                commit_ids_by_change_id={},
-                current_state=ReviewState(),
-                github_client=cast(GithubClient, _GithubClientStub()),
-                review_identities={},
-                prepared_close=_prepared_close(
-                    cleanup_user_bookmarks=True,
-                    jj_client=jj_client,
-                ),
-                record_action=actions.append,
-            ),
-        )
+def _review_identity() -> ReviewIdentity:
+    return ReviewIdentity(
+        github_host="github.test",
+        repository_owner="octo-org",
+        repository_name="stacked-review",
+        pr_number=1,
+        head_owner="octo-org",
+        head_ref=BOOKMARK,
     )
 
-    assert [action.kind for action in actions] == ["remote branch", "local bookmark"]
-    assert jj_client.delete_calls == [("origin", (("potato/feature-aaaaaaaa", "commit-1"),))]
-    assert jj_client.forget_calls == ["potato/feature-aaaaaaaa"]
+
+def _stub_revision() -> ReviewStatusRevision:
+    return ReviewStatusRevision(
+        bookmark=BOOKMARK,
+        bookmark_source="saved",
+        change_id=CHANGE_ID,
+        commit_id="commit-1",
+        local_divergent=False,
+        pull_request_lookup=None,
+        review_identity=_review_identity(),
+        remote_state=None,
+        submitted_baseline=SubmittedBaseline(commit_id="commit-1"),
+        managed_comments_lookup=None,
+        subject="feature",
+    )

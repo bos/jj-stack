@@ -30,10 +30,8 @@ import jj_stack.commands.doctor as doctor_command
 import jj_stack.commands.list_ as list_command
 import jj_stack.commands.merge.command as merge_command
 import jj_stack.commands.relink as relink_command
-import jj_stack.commands.restart as restart_command
 import jj_stack.commands.submit.command as submit_command
 import jj_stack.commands.sync as sync_command
-import jj_stack.commands.unlink as unlink_command
 import jj_stack.commands.unstack as unstack_command
 import jj_stack.commands.view as view_command
 import jj_stack.console as console
@@ -109,11 +107,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
     ),
     (
         "Advanced repair",
-        (
-            HelpCommand("restart", restart_command.HELP, hidden=True),
-            HelpCommand("relink", relink_command.HELP, hidden=True),
-            HelpCommand("unlink", unlink_command.HELP, hidden=True),
-        ),
+        (HelpCommand("relink", relink_command.HELP, hidden=True),),
     ),
     (
         "Configuration",
@@ -284,18 +278,6 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         submit_parser,
-        "--use-bookmarks",
-        dest="use_bookmarks",
-        metavar="BOOKMARKS",
-        action="append",
-        help=(
-            "Prefer existing bookmark names or globs for selected changes. "
-            "Reused bookmarks stay during cleanup unless "
-            "jj-stack.cleanup_user_bookmarks is true"
-        ),
-    )
-    add_help_argument(
-        submit_parser,
         "--re-request",
         action="store_true",
         help=(
@@ -309,7 +291,7 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help=(
             "Create fresh PRs for selected changes without closing the old PRs; replace local "
-            "tracking only after the new submit succeeds"
+            "tracking only after the whole replacement stack succeeds"
         ),
     )
     view_parser = _add_revision_command(
@@ -381,29 +363,6 @@ def build_parser() -> ArgumentParser:
         description_text=relink_command.__doc__ or "",
         handler=_forward_handler(relink_command.relink),
     )
-    restart_parser = _add_revision_command(
-        subcommands,
-        command="restart",
-        help_text=normalized_help_text(restart_command.HELP),
-        description_text=restart_command.__doc__ or "",
-        handler=_forward_handler(restart_command.restart),
-        revset_nargs=None,
-        revset_help="Stack head to prepare for fresh pull requests",
-    )
-    restart_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be reset without changing tracking data",
-    )
-    _add_revision_command(
-        subcommands,
-        command="unlink",
-        help_text=normalized_help_text(unlink_command.HELP),
-        description_text=unlink_command.__doc__ or "",
-        handler=_forward_handler(unlink_command.unlink),
-        revset_nargs=None,
-        revset_help="Revision to unlink",
-    )
     merge_parser = _add_revision_command(
         subcommands,
         command="merge",
@@ -430,9 +389,7 @@ def build_parser() -> ArgumentParser:
         merge_parser,
         "--merge-method",
         choices=("merge", "rebase", "squash"),
-        help=(
-            t"GitHub merge method; defaults to the repository's only allowed method"
-        ),
+        help=(t"GitHub merge method; defaults to the repository's only allowed method"),
     )
     unstack_parser = _add_revision_command(
         subcommands,

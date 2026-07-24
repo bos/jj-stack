@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from jj_stack.jj.client import JjClient
@@ -37,7 +37,6 @@ class SubmitOptions:
     reviewers: list[str] | None
     revset: str | None
     team_reviewers: list[str] | None
-    use_bookmarks: list[str] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +46,6 @@ class ResolvedSubmitOptions:
     labels: list[str]
     reviewers: list[str]
     team_reviewers: list[str]
-    use_bookmarks: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +140,9 @@ class SubmitMutationRun:
     restarted_reviews: dict[str, RestartedReview]
     state: ReviewState
     state_store: ReviewStateStore
+    restart_submissions: dict[str, tuple[ReviewIdentity, SubmittedBaseline]] = field(
+        default_factory=dict
+    )
 
     def record_submission(
         self,
@@ -156,13 +157,7 @@ class SubmitMutationRun:
             return
         restarted = self.restarted_reviews.get(change_id)
         if restarted is not None:
-            self.state = self.state_store.relink_review(
-                change_id,
-                expected_identity=restarted.identity,
-                expected_baseline=restarted.baseline,
-                identity=identity,
-                baseline=baseline,
-            )
+            self.restart_submissions[change_id] = identity, baseline
             return
         expected_identity = self.state.review_identities.get(change_id)
         expected_baseline = self.state.submitted_baselines.get(change_id)
@@ -182,6 +177,22 @@ class SubmitMutationRun:
             expected_identity=expected_identity,
             expected_baseline=expected_baseline,
             baseline=baseline,
+        )
+
+    def commit_restart_submissions(self) -> None:
+        """Replace every restarted tracking pair in one final state write."""
+
+        if self.dry_run or not self.restarted_reviews:
+            return
+        expected = {
+            change_id: (restarted.identity, restarted.baseline)
+            for change_id, restarted in self.restarted_reviews.items()
+        }
+        if self.restart_submissions.keys() != expected.keys():
+            raise AssertionError("Restart completed without every replacement review.")
+        self.state = self.state_store.relink_reviews(
+            expected=expected,
+            replacements=self.restart_submissions,
         )
 
 

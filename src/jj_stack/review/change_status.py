@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from jj_stack.review.status import PullRequestLookup, ReviewStatusRevision
 
 LocalReviewState = Literal["present", "divergent", "orphaned", "missing"]
-ReviewLinkState = Literal["untracked", "active", "unlinked"]
 RemoteBranchReviewState = Literal[
     "absent",
     "current",
@@ -49,7 +48,6 @@ class ReviewChangeStatus:
     """Orthogonal review state axes for one logical change."""
 
     local: LocalReviewState
-    link: ReviewLinkState
     remote_branch: RemoteBranchReviewState
     remote_branch_matches_commit: bool | None
     pr_lifecycle: PullRequestLifecycle
@@ -108,7 +106,6 @@ def classify_review_change(
     lifecycle, pr_lookup_error = _pull_request_lifecycle(pull_request_lookup)
     return ReviewChangeStatus(
         local=local,
-        link=_link_state(review_identity),
         remote_branch=_remote_branch_state(
             commit_id=commit_id,
             remote_state=remote_state,
@@ -169,22 +166,11 @@ def classify_saved_review_identity(
     )
 
 
-def is_open_pr_record(review_identity: ReviewIdentity) -> bool:
-    """Whether a saved record may still name an open PR, from tracking alone.
-
-    Identity-only tracking cannot know live PR lifecycle, so every actively
-    linked record with a PR number counts; live inspection decides what to do
-    with it. Retired reviews are unlinked or removed, so they never count.
-    """
-
-    return review_identity.is_tracked
-
-
 def enumerate_orphaned_records(
     state: ReviewState,
     local_stacks: Sequence[LocalStack],
 ) -> tuple[OrphanedRecord, ...]:
-    """Return saved open-PR records whose change is no longer in any live stack."""
+    """Return saved review records whose change is no longer in any live stack."""
 
     live_change_ids: set[str] = set()
     for stack in local_stacks:
@@ -194,8 +180,6 @@ def enumerate_orphaned_records(
     orphans: list[OrphanedRecord] = []
     for change_id, review_identity in state.review_identities.items():
         if change_id in live_change_ids:
-            continue
-        if not is_open_pr_record(review_identity):
             continue
         orphans.append(OrphanedRecord(change_id=change_id, review_identity=review_identity))
     return tuple(orphans)
@@ -211,22 +195,12 @@ def submitted_state_disagreement(
     for stack in local_stacks:
         for revision in stack.revisions:
             review_identity = state.review_identities.get(revision.change_id)
-            if review_identity is None or review_identity.is_unlinked:
+            if review_identity is None:
                 continue
             baseline = state.submitted_baselines.get(revision.change_id)
             if baseline is not None and baseline.commit_id != revision.commit_id:
                 disagreements.append(revision.change_id)
     return tuple(disagreements)
-
-
-def _link_state(
-    review_identity: ReviewIdentity | None,
-) -> ReviewLinkState:
-    if review_identity is None:
-        return "untracked"
-    if review_identity.is_unlinked:
-        return "unlinked"
-    return "active"
 
 
 def _remote_branch_state(

@@ -13,12 +13,18 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.submit.auto_close import (
     verify_no_unexpected_pull_request_closures,
 )
-from jj_stack.commands.submit.command import _resolve_submit_options, run_submit_async
+from jj_stack.commands.submit.command import (
+    _resolve_submit_options,
+    _validate_restart_recovery_candidates,
+    run_submit_async,
+)
 from jj_stack.commands.submit.inputs import (
     preflight_private_commits as _preflight_private_commits,
 )
 from jj_stack.commands.submit.models import (
+    GeneratedDescription,
     LocalBookmarkAction,
+    PendingPullRequestSync,
     PreparedSubmitInputs,
     PreparedSubmitRevision,
     PushOperation,
@@ -59,6 +65,7 @@ from jj_stack.review.change_status import (
     classify_review_change_without_pull_request,
     classify_saved_review_identity,
 )
+from jj_stack.review.restart import RestartedChange, RestartedReview
 from jj_stack.state.store import ReviewStateStore
 from tests.support.review_state import make_review_identity
 from tests.support.revision_helpers import make_revision
@@ -81,7 +88,6 @@ def _submit_options(*, dry_run: bool = False) -> SubmitOptions:
         reviewers=None,
         revset="@",
         team_reviewers=None,
-        use_bookmarks=None,
     )
 
 
@@ -153,6 +159,134 @@ def test_submit_prepared_callback_runs_after_spinner_stops(monkeypatch) -> None:
 
     assert selected_lines == [(trunk.change_id, trunk.subject)]
     assert result.selected_change_id == trunk.change_id
+
+
+def test_restart_recovery_rejects_a_changed_candidate() -> None:
+    prepared = _prepared_revision(
+        "review/feature-fresh-pr17-abcdefgh",
+        "new-commit",
+        "batch",
+        change_id="abcdefghijk",
+    )
+
+    with pytest.raises(CliError, match="Cannot recover the restart") as caught:
+        _validate_restart_recovery_candidates(
+            head_owner="octo-org",
+            pending_syncs=(
+                PendingPullRequestSync(
+                    base_branch="main",
+                    discovered_pull_request=_github_pull_request(number=18),
+                    generated_description=GeneratedDescription(title="batch", body=""),
+                    parent_change_id=None,
+                    prepared=prepared,
+                    stack_head_change_id=prepared.revision.change_id,
+                ),
+            ),
+            remote_targets={prepared.bookmark: prepared.revision.commit_id},
+            restarted_change_ids=frozenset({prepared.revision.change_id}),
+        )
+
+    assert caught.value.hint is not None
+    assert "relink 18 abcdefgh" in str(caught.value.hint)
+
+
+def test_restart_recovery_rejects_a_changed_remote_branch() -> None:
+    prepared = _prepared_revision(
+        "review/feature-fresh-pr17-abcdefgh",
+        "new-commit",
+        "batch",
+        change_id="abcdefghijk",
+    )
+    pull_request = _github_pull_request(number=18).model_copy(
+        update={
+            "head": GithubBranchRef(
+                label=f"octo-org:{prepared.bookmark}",
+                ref=prepared.bookmark,
+                sha=prepared.revision.commit_id,
+            )
+        }
+    )
+
+    with pytest.raises(CliError, match="replacement branch"):
+        _validate_restart_recovery_candidates(
+            head_owner="octo-org",
+            pending_syncs=(
+                PendingPullRequestSync(
+                    base_branch="main",
+                    discovered_pull_request=pull_request,
+                    generated_description=GeneratedDescription(title="batch", body=""),
+                    parent_change_id=None,
+                    prepared=prepared,
+                    stack_head_change_id=prepared.revision.change_id,
+                ),
+            ),
+            remote_targets={prepared.bookmark: "other-commit"},
+            restarted_change_ids=frozenset({prepared.revision.change_id}),
+        )
+
+
+def test_restart_submission_stages_then_replaces_the_exact_saved_pair() -> None:
+    change_id = "abcdefghijk"
+    old_identity = make_review_identity(
+        head_ref="review/feature-abcdefgh",
+        pr_number=17,
+    )
+    old_baseline = SubmittedBaseline(commit_id="old-commit")
+    new_identity = make_review_identity(
+        head_ref="review/feature-fresh-pr17-abcdefgh",
+        pr_number=18,
+    )
+    new_baseline = SubmittedBaseline(commit_id="new-commit")
+    replacement_state = ReviewState(
+        review_identities={change_id: new_identity},
+        submitted_baselines={change_id: new_baseline},
+    )
+    calls: list[dict[str, object]] = []
+
+    class RecordingStore:
+        def relink_reviews(self, **kwargs):
+            calls.append(kwargs)
+            return replacement_state
+
+    restarted = RestartedReview(
+        baseline=old_baseline,
+        change=RestartedChange(
+            change_id=change_id,
+            new_bookmark=new_identity.head_ref,
+            old_bookmark=old_identity.head_ref,
+            old_pr_number=old_identity.pr_number,
+            subject="feature",
+        ),
+        commit_id="new-commit",
+        identity=old_identity,
+    )
+    run = SubmitMutationRun(
+        dry_run=False,
+        restarted_reviews={change_id: restarted},
+        state=ReviewState(
+            review_identities={change_id: old_identity},
+            submitted_baselines={change_id: old_baseline},
+        ),
+        state_store=cast(ReviewStateStore, RecordingStore()),
+    )
+
+    run.record_submission(
+        baseline=new_baseline,
+        change_id=change_id,
+        identity=new_identity,
+    )
+    assert calls == []
+    assert run.state.review_identities[change_id] == old_identity
+
+    run.commit_restart_submissions()
+
+    assert calls == [
+        {
+            "expected": {change_id: (old_identity, old_baseline)},
+            "replacements": {change_id: (new_identity, new_baseline)},
+        }
+    ]
+    assert run.state == replacement_state
 
 
 def test_resolve_local_action_rejects_conflicted_bookmark() -> None:

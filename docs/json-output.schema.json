@@ -56,7 +56,6 @@
         "closed",
         "missing",
         "ambiguous",
-        "unlinked",
         "divergent",
         "unknown"
       ]

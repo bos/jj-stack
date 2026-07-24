@@ -111,8 +111,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             tracked_pull_numbers=frozenset(
                 identity.pr_number
                 for identity in state.review_identities.values()
-                if identity.is_tracked
-                and identity.repository_key == target.repository.repository_key
+                if identity.repository_key == target.repository.repository_key
             ),
         )
         had_failure = had_failure or len(authorized_exact) != len(exact_candidates)
