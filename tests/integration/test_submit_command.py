@@ -1064,6 +1064,10 @@ def test_submit_single_change_clears_stale_managed_stack_comment(
         body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nstale stack navigation",
         issue_number=1,
     )
+    fake_repo.create_issue_comment(
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstale stack overview",
+        issue_number=1,
+    )
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
@@ -1965,6 +1969,10 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
     stale_comment_3 = _navigation_comments(fake_repo, issue_number_3)[0]
     stale_comment_1.body = f"{STACK_NAVIGATION_COMMENT_MARKER}\nstale bottom navigation"
     stale_comment_2.body = f"{STACK_NAVIGATION_COMMENT_MARKER}\nstale middle navigation"
+    stale_overview_2 = fake_repo.create_issue_comment(
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstale overview",
+        issue_number=issue_number_2,
+    )
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
     updated_comment_ids: list[int] = []
@@ -2001,7 +2009,8 @@ def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
     assert stale_comment_2.id in updated_comment_ids
     assert stale_comment_3.id not in updated_comment_ids
     assert len(_navigation_comments(fake_repo, issue_number_1)) == 1
-    assert len(issue_comments(fake_repo, issue_number_2)) == 1
+    assert len(issue_comments(fake_repo, issue_number_2)) == 2
+    assert stale_overview_2.body.endswith("stale overview")
     assert len(issue_comments(fake_repo, issue_number_3)) == 1
 
 

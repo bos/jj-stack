@@ -47,6 +47,14 @@ def is_stack_summary_comment(body: str) -> bool:
     return is_navigation_comment(body) or is_overview_comment(body)
 
 
+def comment_matches_kind(*, body: str, kind: StackCommentKind) -> bool:
+    """Return whether a GitHub comment body has the marker for one kind."""
+
+    if kind == "navigation":
+        return is_navigation_comment(body)
+    return is_overview_comment(body)
+
+
 async def delete_stack_comment(
     *,
     comment_id: int,

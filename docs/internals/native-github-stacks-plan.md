@@ -353,7 +353,7 @@ decision.
 Navigation comments:
 
 - synchronize only when cached native support is `false`
-- on a native repository, do not list, create, update, or delete them
+- on a native repository, do not classify, reject, create, update, or delete them
 - do not remove comments left by submissions made before native support was detected
 
 Stack overview comments:
@@ -478,7 +478,8 @@ Add the narrowest tests protecting these distinct risks:
 - a later invocation uses cached `false` without a stack API request
 - a first successful native list is reused for submission planning
 - native creation produces no navigation comments
-- a single-PR native submit preserves an old navigation comment without listing comments
+- native submit may load an unfiltered issue-comment response for overview synchronization, but
+  never classifies, rejects, updates, or deletes navigation comments
 - native title/body refresh omits `base`
 - exact membership is a no-op
 - a prefix appends only the new top PRs
@@ -577,7 +578,7 @@ legacy behavior.
 - use cached capability resolution in `submit`
 - use native resources for create, exact no-op, and top-only append
 - reject multi-resource overlap or an overlapping resource with an unselected member
-- preserve old navigation comments without listing them on native repositories
+- preserve old navigation comments without managing them on native repositories
 - fail closed on `replace` until its ordered execution is implemented
 - add focused fake-server and integration coverage
 

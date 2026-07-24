@@ -119,16 +119,6 @@ class PendingPullRequestSync:
 
 
 @dataclass(frozen=True, slots=True)
-class PendingStackCommentSync:
-    """One queued stack-comment sync task."""
-
-    change_id: str
-    navigation_comment_body: str | None
-    overview_comment_body: str | None
-    pull_request_number: int
-
-
-@dataclass(frozen=True, slots=True)
 class PreparedSubmitInputs:
     """Local submit inputs prepared before GitHub mutations begin."""
 

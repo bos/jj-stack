@@ -90,7 +90,11 @@ from .revisions import (
     sync_local_bookmarks,
     sync_remote_bookmarks,
 )
-from .stack_comments import sync_stack_comments
+from .stack_comments import (
+    navigation_comment_bodies,
+    stack_overview_comment_bodies,
+    sync_stack_comments,
+)
 
 HELP = "Send a jj stack to GitHub for review"
 
@@ -582,11 +586,15 @@ async def run_submit_async(
         if not dry_run:
             await sync_stack_comments(
                 concurrency=_GITHUB_INSPECTION_CONCURRENCY,
-                generated_stack_description=prepared_inputs.generated_stack_description,
                 github_client=github_client,
-                revisions=submitted_revisions,
-                run=mutation_run,
-                trunk_branch=trunk_branch,
+                navigation_bodies=navigation_comment_bodies(
+                    revisions=submitted_revisions,
+                    trunk_branch=trunk_branch,
+                ),
+                overview_bodies=stack_overview_comment_bodies(
+                    generated_stack_description=prepared_inputs.generated_stack_description,
+                    revisions=submitted_revisions,
+                ),
             )
             await verify_no_unexpected_pull_request_closures(
                 discovered_pull_requests=discovered_pull_requests,

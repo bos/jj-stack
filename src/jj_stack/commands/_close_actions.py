@@ -11,8 +11,7 @@ import jj_stack.ui as ui
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import (
     StackCommentKind,
-    is_navigation_comment,
-    is_overview_comment,
+    comment_matches_kind,
     stack_comment_label,
 )
 from jj_stack.jj.client import JjClient
@@ -67,12 +66,6 @@ class CloseAction:
 
 NAVIGATION_COMMENT_KIND = stack_comment_label("navigation")
 OVERVIEW_COMMENT_KIND = stack_comment_label("overview")
-
-
-def comment_matches_kind(*, body: str, kind: StackCommentKind) -> bool:
-    if kind == "navigation":
-        return is_navigation_comment(body)
-    return is_overview_comment(body)
 
 
 @dataclass(frozen=True, slots=True)

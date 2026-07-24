@@ -4,93 +4,105 @@ from __future__ import annotations
 
 import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.commands._close_actions import (
-    comment_matches_kind as _managed_comment_matches_kind,
-)
 from jj_stack.concurrency import run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import (
     StackCommentKind,
+    comment_matches_kind,
     delete_stack_comment,
     stack_comment_label,
     stack_comment_marker,
 )
 from jj_stack.models.github import GithubIssueComment
 
-from .models import (
-    GeneratedDescription,
-    PendingStackCommentSync,
-    SubmitMutationRun,
-    SubmittedRevision,
-)
+from .models import GeneratedDescription, SubmittedRevision
+
+
+def navigation_comment_bodies(
+    *,
+    revisions: tuple[SubmittedRevision, ...],
+    trunk_branch: str,
+) -> dict[int, str | None]:
+    """Return desired navigation-comment bodies keyed by pull request."""
+
+    multi_change_stack = len(revisions) > 1
+    bodies: dict[int, str | None] = {}
+    for revision in revisions:
+        if revision.pull_request_number is None:
+            continue
+        bodies[revision.pull_request_number] = (
+            _render_navigation_comment(
+                current=revision,
+                revisions=revisions,
+                trunk_branch=trunk_branch,
+            )
+            if multi_change_stack
+            else None
+        )
+    return bodies
+
+
+def stack_overview_comment_bodies(
+    *,
+    generated_stack_description: GeneratedDescription | None,
+    revisions: tuple[SubmittedRevision, ...],
+) -> dict[int, str | None]:
+    """Return desired stack-overview bodies keyed by pull request."""
+
+    if not revisions:
+        return {}
+    description_lines = _render_generated_stack_description(generated_stack_description)
+    overview_body = (
+        "\n".join([stack_comment_marker("overview"), *description_lines])
+        if len(revisions) > 1 and description_lines
+        else None
+    )
+    head_change_id = revisions[-1].change_id
+    return {
+        revision.pull_request_number: (
+            overview_body if revision.change_id == head_change_id else None
+        )
+        for revision in revisions
+        if revision.pull_request_number is not None
+    }
 
 
 async def sync_stack_comments(
     *,
     concurrency: int,
-    generated_stack_description: GeneratedDescription | None,
     github_client: GithubClient,
-    revisions: tuple[SubmittedRevision, ...],
-    run: SubmitMutationRun,
-    trunk_branch: str,
+    navigation_bodies: dict[int, str | None],
+    overview_bodies: dict[int, str | None],
 ) -> None:
-    """Synchronize navigation and overview comments for a submitted stack."""
+    """Synchronize the supplied navigation and overview responsibilities."""
 
-    if not revisions:
-        return
-
-    head_change_id = revisions[-1].change_id
-    has_navigation_comments = len(revisions) > 1
-    overview_description_lines = _render_generated_stack_description(generated_stack_description)
-    has_overview_comment = has_navigation_comments and bool(overview_description_lines)
-    pending: list[PendingStackCommentSync] = []
-    for revision in revisions:
-        if revision.pull_request_number is None:
-            continue
-        navigation_comment_body = None
-        if has_navigation_comments:
-            navigation_comment_body = _render_navigation_comment(
-                current=revision,
-                revisions=revisions,
-                trunk_branch=trunk_branch,
-            )
-        overview_comment_body = None
-        if has_overview_comment and revision.change_id == head_change_id:
-            overview_comment_body = "\n".join(
-                [stack_comment_marker("overview"), *overview_description_lines]
-            )
-        pending.append(
-            PendingStackCommentSync(
-                change_id=revision.change_id,
-                navigation_comment_body=navigation_comment_body,
-                overview_comment_body=overview_comment_body,
-                pull_request_number=revision.pull_request_number,
-            )
-        )
-    if not pending:
+    pull_request_numbers = tuple(dict.fromkeys((*navigation_bodies, *overview_bodies)))
+    if not pull_request_numbers:
         return
     with console.spinner(description="Loading stack comments"):
         try:
             comments_by_pull_request_number = (
                 await github_client.get_issue_comments_by_pull_request_numbers(
-                    pull_numbers=tuple(
-                        pending_sync.pull_request_number for pending_sync in pending
-                    ),
+                    pull_numbers=pull_request_numbers,
                 )
             )
         except GithubClientError as error:
             raise CliError("Could not list stack comments") from error
 
-    with console.progress(description="Syncing stack comments", total=len(pending)) as progress:
+    with console.progress(
+        description="Syncing stack comments",
+        total=len(pull_request_numbers),
+    ) as progress:
         await run_bounded_tasks(
             concurrency=concurrency,
-            items=tuple(pending),
-            run_item=lambda pending_sync: _sync_stack_comment_task(
+            items=pull_request_numbers,
+            run_item=lambda pull_request_number: _sync_stack_comment_task(
                 github_client=github_client,
-                comments=comments_by_pull_request_number[pending_sync.pull_request_number],
-                pending_sync=pending_sync,
-                run=run,
+                comments=comments_by_pull_request_number[pull_request_number],
+                navigation_bodies=navigation_bodies,
+                overview_bodies=overview_bodies,
+                pull_request_number=pull_request_number,
             ),
             on_success=lambda _index, _result: progress.advance(),
         )
@@ -100,25 +112,26 @@ async def _sync_stack_comment_task(
     *,
     comments: tuple[GithubIssueComment, ...],
     github_client: GithubClient,
-    pending_sync: PendingStackCommentSync,
-    run: SubmitMutationRun,
+    navigation_bodies: dict[int, str | None],
+    overview_bodies: dict[int, str | None],
+    pull_request_number: int,
 ) -> None:
-    await _sync_managed_comment(
-        comment_body=pending_sync.navigation_comment_body,
-        comments=comments,
-        github_client=github_client,
-        kind="navigation",
-        pull_request_number=pending_sync.pull_request_number,
-        run=run,
-    )
-    await _sync_managed_comment(
-        comment_body=pending_sync.overview_comment_body,
-        comments=comments,
-        github_client=github_client,
-        kind="overview",
-        pull_request_number=pending_sync.pull_request_number,
-        run=run,
-    )
+    if pull_request_number in navigation_bodies:
+        await _sync_managed_comment(
+            comment_body=navigation_bodies[pull_request_number],
+            comments=comments,
+            github_client=github_client,
+            kind="navigation",
+            pull_request_number=pull_request_number,
+        )
+    if pull_request_number in overview_bodies:
+        await _sync_managed_comment(
+            comment_body=overview_bodies[pull_request_number],
+            comments=comments,
+            github_client=github_client,
+            kind="overview",
+            pull_request_number=pull_request_number,
+        )
 
 
 async def _sync_managed_comment(
@@ -128,9 +141,7 @@ async def _sync_managed_comment(
     github_client: GithubClient,
     kind: StackCommentKind,
     pull_request_number: int,
-    run: SubmitMutationRun,
 ) -> GithubIssueComment | None:
-    dry_run = run.dry_run
     existing_comment = _discover_managed_comment(
         comments=comments,
         kind=kind,
@@ -138,17 +149,14 @@ async def _sync_managed_comment(
     if comment_body is None:
         if existing_comment is None:
             return None
-        if not dry_run:
-            await delete_stack_comment(
-                comment_id=existing_comment.id,
-                github_client=github_client,
-                kind=kind,
-            )
+        await delete_stack_comment(
+            comment_id=existing_comment.id,
+            github_client=github_client,
+            kind=kind,
+        )
         return None
     if existing_comment is not None:
         if existing_comment.body == comment_body:
-            return existing_comment
-        if dry_run:
             return existing_comment
         return await _update_stack_comment(
             comment_body=comment_body,
@@ -156,8 +164,6 @@ async def _sync_managed_comment(
             github_client=github_client,
             kind=kind,
         )
-    if dry_run:
-        return None
     return await _create_stack_comment(
         comment_body=comment_body,
         github_client=github_client,
@@ -172,9 +178,7 @@ def _discover_managed_comment(
     kind: StackCommentKind,
 ) -> GithubIssueComment | None:
     matching_comments = [
-        comment
-        for comment in comments
-        if _managed_comment_matches_kind(body=comment.body, kind=kind)
+        comment for comment in comments if comment_matches_kind(body=comment.body, kind=kind)
     ]
     if not matching_comments:
         return None
