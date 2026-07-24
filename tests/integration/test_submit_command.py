@@ -535,6 +535,55 @@ def test_submit_invalid_revset_reports_clean_error_without_mutation(
     assert fake_repo.pull_requests == {}
 
 
+def test_submit_rejects_a_prospective_review_shared_by_sibling_paths(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "shared review", "shared.txt")
+    shared = JjClient(repo).discover_review_stack().head
+    commit_file(repo, "first path", "first.txt")
+    first = JjClient(repo).discover_review_stack().head
+    run_command(["jj", "new", shared.change_id], repo)
+    commit_file(repo, "second path", "second.txt")
+
+    exit_code = run_main(repo, config_path, "submit", first.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Reviewed changes belong to more than one local stack" in captured.err
+    assert shared.change_id[:8] in captured.err
+    assert fake_repo.pull_requests == {}
+    assert ReviewStateStore.for_repo(repo).load().review_identities == {}
+    assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
+
+
+def test_submit_rejects_a_shared_prospective_working_copy(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "shared review", "shared.txt")
+    shared = JjClient(repo).discover_review_stack().head
+    commit_file(repo, "committed path", "committed.txt")
+    run_command(["jj", "new", shared.change_id], repo)
+    write_file(repo / "working-copy.txt", "working copy\n")
+    run_command(["jj", "status"], repo)
+
+    exit_code = run_main(repo, config_path, "submit", "@")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Reviewed changes belong to more than one local stack" in captured.err
+    assert shared.change_id[:8] in captured.err
+    assert fake_repo.pull_requests == {}
+    assert ReviewStateStore.for_repo(repo).load().review_identities == {}
+
+
 def test_submit_blocks_unresolved_conflicted_rebase_without_mutation(
     tmp_path: Path,
     monkeypatch,
@@ -1117,8 +1166,12 @@ def test_submit_rejects_unlinked_change_until_relink(
     change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
     assert run_main(repo, config_path, "unlink", change_id) == 0
     capsys.readouterr()
+    commit_file(repo, "first local path", "first-local-path.txt")
+    first_head = JjClient(repo).discover_review_stack().head
+    run_command(["jj", "new", change_id], repo)
+    commit_file(repo, "second local path", "second-local-path.txt")
 
-    exit_code = run_main(repo, config_path, "submit", change_id)
+    exit_code = run_main(repo, config_path, "submit", first_head.change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1

@@ -14,6 +14,7 @@ from jj_stack.review.bookmarks import (
     ensure_unique_bookmarks,
     match_bookmarks_for_revisions,
 )
+from jj_stack.review.discovery import validate_review_stack_ownership
 from jj_stack.review.restart import RestartedReview, restart_state_for_stack
 
 from .descriptions import resolve_generated_descriptions
@@ -64,6 +65,17 @@ def prepare_submit_inputs(
         forced_bookmarks = {
             restarted.change_id: restarted.new_bookmark for restarted in restart_result.changed
         }
+    validate_review_stack_ownership(
+        jj_client=client,
+        selected_revisions=stack.revisions,
+        state=state,
+        prospective_change_ids=frozenset(
+            revision.change_id
+            for revision in stack.revisions
+            if revision.change_id not in state.review_identities
+            and revision.change_id not in state.submitted_baselines
+        ),
+    )
     matched_bookmarks = match_bookmarks_for_revisions(
         bookmark_states=bookmark_states,
         patterns=resolved_options.use_bookmarks,

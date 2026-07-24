@@ -19,10 +19,6 @@ PROPERTY_TEST_FILES = (
 DEFAULT_PROPERTY_SEED = 8675309
 _REPRODUCTION_SCENARIO_OPTIONS = (
     (
-        "--cross-stack-scenarios",
-        "JJ_STACK_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS",
-    ),
-    (
         "--stack-merge-scenarios",
         "JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS",
     ),
@@ -70,14 +66,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--random-seed",
         action="store_true",
         help="Generate and print one random seed for scenarios and pytest ordering.",
-    )
-    parser.add_argument(
-        "--cross-stack-scenarios",
-        type=_non_negative_int,
-        help=(
-            "Number of generated cross-stack split scenarios to run "
-            "(default: max(4, scenarios // 10))."
-        ),
     )
     parser.add_argument(
         "--stack-merge-scenarios",
@@ -166,10 +154,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     env.setdefault("JJ_USER", "Test User")
     env.setdefault("JJ_EMAIL", "test@example.com")
     env["JJ_STACK_SUBMIT_PROPERTY_SCENARIOS"] = str(args.scenarios)
-    cross_stack_scenarios = args.cross_stack_scenarios
-    if cross_stack_scenarios is None:
-        cross_stack_scenarios = max(4, args.scenarios // 10)
-    env["JJ_STACK_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS"] = str(cross_stack_scenarios)
     stack_merge_scenarios = args.stack_merge_scenarios
     if stack_merge_scenarios is None:
         stack_merge_scenarios = max(4, args.scenarios // 10)

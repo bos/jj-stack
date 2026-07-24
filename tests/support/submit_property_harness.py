@@ -17,7 +17,6 @@ from jj_stack.state.store import ReviewStateStore
 from .fake_github import FakeGithubRepository
 from .integration_helpers import commit_file, run_command, write_file
 from .submit_property_scenarios import (
-    CrossStackSplitScenario,
     DriftOperation,
     ExternalDriftScenario,
     StackEditOperation,
@@ -338,66 +337,6 @@ def _replay_failed_resubmit(
         strict_base_events=False,
     )
     _assert_retry_metadata(fake_repo)
-
-
-def replay_cross_stack_split_scenario(
-    *,
-    discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
-    repo: Path,
-    scenario: CrossStackSplitScenario,
-    submit: SubmitRunner,
-) -> None:
-    """Replay a split-stack rewrite and assert only the selected stack is updated."""
-
-    labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
-
-    assert submit(None) == 0
-    discard_output()
-    baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
-    _approve_initial_pull_requests(fake_repo, baseline)
-    fake_repo.pull_request_events.clear()
-
-    run_command(
-        [
-            "jj",
-            "rebase",
-            "-s",
-            labels_to_change_ids[scenario.source_label],
-            "-d",
-            labels_to_change_ids[scenario.target_label],
-        ],
-        repo,
-    )
-    selected_stack = _discover_stack_for_labels(
-        repo=repo,
-        labels=scenario.selected_labels,
-        labels_to_change_ids=labels_to_change_ids,
-    )
-    _discover_stack_for_labels(
-        repo=repo,
-        labels=scenario.deferred_stack_labels,
-        labels_to_change_ids=labels_to_change_ids,
-    )
-
-    assert submit(selected_stack.head.change_id) == 0
-    discard_output()
-
-    _assert_successful_submit_invariants(
-        baseline=baseline,
-        fake_repo=fake_repo,
-        invariants=scenario.invariants,
-        labels_to_change_ids=labels_to_change_ids,
-        repo=repo,
-        stack=selected_stack,
-        strict_base_events=False,
-    )
-    _assert_deferred_stack_untouched(
-        baseline=baseline,
-        fake_repo=fake_repo,
-        repo=repo,
-        scenario=scenario,
-    )
 
 
 def replay_stack_merge_scenario(
@@ -907,21 +846,6 @@ def _assert_no_transient_damage_events(
             assert event.kind != "base", event
         if strict_base_events and event.kind == "base":
             assert event.pull_request_number in expected_changed_base_pr_numbers, event
-
-
-def _assert_deferred_stack_untouched(
-    *,
-    baseline: dict[str, SubmittedBaseline],
-    fake_repo: FakeGithubRepository,
-    repo: Path,
-    scenario: CrossStackSplitScenario,
-) -> None:
-    _assert_deferred_labels_untouched(
-        baseline=baseline,
-        deferred_labels=scenario.deferred_labels,
-        fake_repo=fake_repo,
-        repo=repo,
-    )
 
 
 def _assert_deferred_labels_untouched(

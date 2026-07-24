@@ -160,6 +160,47 @@ def test_checkout_preserves_saved_bookmark_policy(
     assert state_store.load() == preserved_state
 
 
+@pytest.mark.parametrize(("link_state", "expected_exit_code"), (("active", 1), ("unlinked", 0)))
+def test_checkout_validates_only_adoptions_that_remain_active(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    link_state: str,
+    expected_exit_code: int,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    state = state_store.load()
+    change_id, identity = next(iter(state.review_identities.items()))
+    baseline = state.submitted_baselines[change_id]
+    stale_baseline = baseline.model_copy(
+        update={"commit_id": JjClient(repo).resolve_revision("main").commit_id}
+    )
+    state_store.relink_review(
+        change_id,
+        expected_identity=identity,
+        expected_baseline=baseline,
+        identity=identity.model_copy(update={"link_state": link_state}),
+        baseline=stale_baseline,
+    )
+    commit_file(repo, "first local path", "first-local-path.txt")
+    run_command(["jj", "new", change_id], repo)
+    commit_file(repo, "second local path", "second-local-path.txt")
+
+    exit_code = _main(repo, config_path, "checkout", "--fetch", "--pull-request", "1")
+    captured = capsys.readouterr()
+    refreshed = state_store.load()
+
+    assert exit_code == expected_exit_code
+    assert refreshed.review_identities[change_id].link_state == link_state
+    if link_state == "active":
+        assert "Reviewed changes belong to more than one local stack" in captured.err
+        assert refreshed.submitted_baselines[change_id] == stale_baseline
+    else:
+        assert refreshed.submitted_baselines[change_id] == baseline
+
+
 def test_checkout_current_fails_closed_when_head_has_no_discoverable_remote_review_link(
     tmp_path: Path,
     monkeypatch,

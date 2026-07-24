@@ -125,6 +125,7 @@ def discover_stacks_from_revisions(
     *,
     jj_client: JjClient,
     revisions: tuple[LocalRevision, ...],
+    include_working_copies: bool = False,
 ) -> tuple[LocalStack, ...]:
     """Return supported review stacks connected to already-resolved revisions."""
 
@@ -144,6 +145,58 @@ def discover_stacks_from_revisions(
         jj_client=jj_client,
         revisions=(*descendants, *reviewable_revisions),
         trunk=trunk,
+        include_working_copies=include_working_copies,
+    )
+
+
+def validate_review_stack_ownership(
+    *,
+    jj_client: JjClient,
+    selected_revisions: tuple[LocalRevision, ...],
+    state: ReviewState,
+    prospective_change_ids: frozenset[str] = frozenset(),
+) -> None:
+    """Require each active or prospective review to belong to one maximal path."""
+
+    reviewed_change_ids = {
+        change_id
+        for change_id, identity in state.review_identities.items()
+        if identity.is_tracked
+    } | set(prospective_change_ids)
+    if not reviewed_change_ids:
+        return
+    stacks = discover_stacks_from_revisions(
+        jj_client=jj_client,
+        revisions=selected_revisions,
+        include_working_copies=True,
+    )
+    owners: dict[str, list[LocalStack]] = {}
+    for stack in stacks:
+        for change_id in {revision.change_id for revision in stack.revisions}.intersection(
+            reviewed_change_ids
+        ):
+            owners.setdefault(change_id, []).append(stack)
+    conflicts = {change_id: paths for change_id, paths in owners.items() if len(paths) > 1}
+    if not conflicts:
+        return
+    details = ui.join(
+        lambda item: (
+            t"{ui.change_id(item[0])} via {
+                ui.join(
+                    lambda stack: (
+                        t'{ui.change_id(stack.head.change_id)} '
+                        t'(commit {ui.commit_id(stack.head.commit_id)})'
+                    ),
+                    item[1],
+                )
+            }"
+        ),
+        sorted(conflicts.items()),
+    )
+    raise CliError(
+        t"Reviewed changes belong to more than one local stack: {details}.",
+        hint=t"Run {ui.cmd('jj log')} to inspect the paths, then use {ui.cmd('jj rebase')} "
+        t"to give each reviewed change one stack before retrying.",
     )
 
 
@@ -153,11 +206,12 @@ def _discover_stacks_from_revisions(
     revisions: tuple[LocalRevision, ...],
     trunk: LocalRevision,
     known_base_parents: tuple[LocalRevision, ...] = (),
+    include_working_copies: bool = False,
 ) -> tuple[LocalStack, ...]:
     all_revisions_by_commit_id = {
         revision.commit_id: revision
         for revision in revisions
-        if not revision.is_working_copy
+        if (include_working_copies or not revision.is_working_copy)
         and revision.is_reviewable(allow_divergent=True, allow_immutable=True)
     }
     if not all_revisions_by_commit_id:

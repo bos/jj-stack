@@ -112,53 +112,35 @@ def test_sync_completes_the_protected_trunk_flow_after_land_via_merge(
 
 
 @pytest.mark.landing_recovery
-def test_sync_repairs_one_sibling_path_without_retiring_shared_landed_state(
+def test_sync_rejects_reviewed_sibling_paths_before_recovery_mutation(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     initial = JjClient(repo).discover_review_stack()
     landed = initial.revisions[0]
     first_sibling = initial.revisions[1]
-    run_command(["jj", "new", landed.change_id], repo)
-    commit_file(repo, "feature sibling", "feature-sibling.txt")
-    second_sibling = JjClient(repo).discover_review_stack().head
-    assert run_main(repo, config_path, "submit", second_sibling.change_id) == 0
-    capsys.readouterr()
-    original_first = first_sibling.commit_id
-    original_second = second_sibling.commit_id
+    second_sibling = initial.revisions[2]
+    run_command(
+        ["jj", "rebase", "-s", second_sibling.change_id, "-d", landed.change_id],
+        repo,
+    )
+    jj = JjClient(repo)
+    original_first = jj.resolve_revision(first_sibling.change_id).commit_id
+    original_second = jj.resolve_revision(second_sibling.change_id).commit_id
     _merge_pull_request(fake_repo, 1)
 
-    assert run_main(repo, config_path, "sync", "--all") == 0
-    global_recovery = capsys.readouterr()
-    assert "GitHub merged it as a different commit" in global_recovery.err
-    assert first_sibling.change_id in global_recovery.err
-    assert second_sibling.change_id in global_recovery.err
-    assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
-    assert JjClient(repo).resolve_revision(first_sibling.change_id).commit_id == original_first
-    assert JjClient(repo).resolve_revision(second_sibling.change_id).commit_id == original_second
-
-    assert run_main(repo, config_path, "sync", first_sibling.change_id) == 0
-    first_sync = capsys.readouterr()
-
-    jj = JjClient(repo)
-    rewritten_first = jj.resolve_revision(first_sibling.change_id)
-    assert rewritten_first.commit_id != original_first
-    assert jj.resolve_revision(second_sibling.change_id).commit_id == original_second
-    assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
-    assert "another local stack" in first_sync.out
-    assert "jj-stack sync" in first_sync.out
-
-    assert run_main(repo, config_path, "sync", second_sibling.change_id) == 0
-    capsys.readouterr()
+    exit_code = run_main(repo, config_path, "sync", first_sibling.change_id)
+    captured = capsys.readouterr()
 
     state = ReviewStateStore.for_repo(repo).load()
-    rewritten_second = jj.resolve_revision(second_sibling.change_id)
-    assert rewritten_second.commit_id != original_second
-    assert landed.change_id not in state.review_identities
-    assert landed.change_id not in state.submitted_baselines
+    assert exit_code == 1
+    assert "Reviewed changes belong to more than one local stack" in captured.err
+    assert landed.change_id in state.review_identities
+    assert jj.resolve_revision(first_sibling.change_id).commit_id == original_first
+    assert jj.resolve_revision(second_sibling.change_id).commit_id == original_second
 
 
 @pytest.mark.landing_recovery
@@ -198,7 +180,7 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     landed, reviewed = JjClient(repo).discover_review_stack().revisions
-    run_command(["jj", "new", landed.change_id], repo)
+    run_command(["jj", "new", "main"], repo)
     commit_file(repo, "side change", "side.txt")
     side = JjClient(repo).resolve_revision("@-")
     run_command(["jj", "new", reviewed.change_id, side.change_id], repo)

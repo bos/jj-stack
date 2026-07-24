@@ -109,6 +109,7 @@ def run_stack_convergence(
             fetch_remote_state=fetch_remote_state,
             re_resolve_after_remote_refresh=True,
             revset=revset,
+            validate_review_ownership=True,
         )
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
@@ -135,7 +136,6 @@ async def _run_selected_convergence(
     if not selected:
         console.output("Nothing to sync: the selected revision is already on trunk.")
         return 0
-
     async with build_github_client(repository=target.repository) as github:
         repository_state = await github.get_repository()
         trunk_branch = resolve_trunk_branch(

@@ -48,7 +48,10 @@ from jj_stack.review.bookmarks import (
     discover_bookmarks_for_revisions,
 )
 from jj_stack.review.change_status import classify_review_change_without_pull_request
-from jj_stack.review.discovery import discover_tracked_stacks
+from jj_stack.review.discovery import (
+    discover_tracked_stacks,
+    validate_review_stack_ownership,
+)
 from jj_stack.review.status import (
     PreparedRevision,
     PreparedStatus,
@@ -822,6 +825,18 @@ def _checkout_local_state(
             )
         )
 
+    prospective_change_ids = frozenset(
+        adoption.change_id
+        for adoption in planned_review_adoptions
+        if adoption.identity.is_tracked
+    )
+    if prospective_change_ids:
+        validate_review_stack_ownership(
+            jj_client=client,
+            selected_revisions=prepared.stack.revisions,
+            state=current_state,
+            prospective_change_ids=prospective_change_ids,
+        )
     for planned in planned_checkouts:
         if planned.update_local_bookmark:
             bookmark_token = ui.bookmark(planned.bookmark)

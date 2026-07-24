@@ -57,7 +57,10 @@ from jj_stack.review.change_status import (
     classify_review_status_revision,
     enumerate_orphaned_records,
 )
-from jj_stack.review.discovery import discover_tracked_stacks
+from jj_stack.review.discovery import (
+    discover_tracked_stacks,
+    validate_review_stack_ownership,
+)
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
@@ -726,6 +729,11 @@ async def _stream_close_async(
             prepared_close=prepared_close,
         )
 
+    validate_review_stack_ownership(
+        jj_client=prepared.client,
+        selected_revisions=prepared.stack.revisions,
+        state=current_state,
+    )
     assert github_repository is not None
     blocked = False
     async with build_github_client(repository=github_repository) as github_client:

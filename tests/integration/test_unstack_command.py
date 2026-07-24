@@ -130,6 +130,34 @@ def test_unstack_local_forgets_tracking_without_closing_pull_request(
     assert JjClient(repo).get_bookmark_state(bookmark).local_target is not None
 
 
+def test_unstack_blocks_remote_mutation_but_allows_local_topology_repair(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    commit_file(repo, "first local path", "first-local-path.txt")
+    run_command(["jj", "new", change_id], repo)
+    commit_file(repo, "second local path", "second-local-path.txt")
+    state_store = ReviewStateStore.for_repo(repo)
+    state_before = state_store.load()
+
+    exit_code = run_main(repo, config_path, "unstack", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Reviewed changes belong to more than one local stack" in captured.err
+    assert fake_repo.pull_requests[1].state == "open"
+    assert state_store.load() == state_before
+
+    assert run_main(repo, config_path, "unstack", "--local", change_id) == 0
+    capsys.readouterr()
+    assert change_id not in state_store.load().review_identities
+    assert fake_repo.pull_requests[1].state == "open"
+
+
 def test_unstack_local_dry_run_leaves_tracking_and_pull_request_unchanged(
     tmp_path: Path,
     monkeypatch,

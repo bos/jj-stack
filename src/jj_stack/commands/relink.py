@@ -27,6 +27,7 @@ from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.change_status import classify_review_change
+from jj_stack.review.discovery import validate_review_stack_ownership
 from jj_stack.review.selection import resolve_selected_revset
 from jj_stack.state.operation_lock import acquire_operation_lock
 
@@ -122,6 +123,12 @@ async def _run_relink_async(
     )
 
     state = state_store.load()
+    validate_review_stack_ownership(
+        jj_client=client,
+        selected_revisions=stack.revisions,
+        state=state,
+        prospective_change_ids=frozenset((revision.change_id,)),
+    )
     _ensure_relinkable_cached_link(
         bookmark=bookmark,
         change_id=revision.change_id,

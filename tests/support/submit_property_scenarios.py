@@ -349,50 +349,6 @@ class SubmitRetryScenario:
 
 
 @dataclass(frozen=True, slots=True)
-class CrossStackSplitScenario:
-    """A rewrite that splits one submitted stack into selected and deferred stacks."""
-
-    name: str
-    hazard_class: str
-    initial_size: int
-    source_label: str
-    target_label: str
-    selected_labels: tuple[str, ...]
-    deferred_labels: tuple[str, ...]
-    deferred_stack_labels: tuple[str, ...]
-    rewritten_initial_labels: tuple[str, ...]
-
-    @property
-    def trace(self) -> str:
-        return f"move_suffix_onto:{self.source_label}:{self.target_label}"
-
-    @property
-    def invariants(self) -> SubmitInvariants:
-        return SubmitInvariants(
-            final_live_labels=self.selected_labels,
-            initial_size=self.initial_size,
-            orphaned_labels=(),
-            trace=self.trace,
-        )
-
-    @property
-    def canonical_key(
-        self,
-    ) -> tuple[
-        str,
-        tuple[str, ...],
-        tuple[str, ...],
-        tuple[str, ...],
-    ]:
-        return (
-            self.hazard_class,
-            self.selected_labels,
-            self.deferred_labels,
-            self.rewritten_initial_labels,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class StackMergeScenario:
     """A rewrite that merges two independently submitted stacks into one stack."""
 
@@ -553,24 +509,6 @@ def stack_edit_scenarios_from_environment() -> tuple[StackEditScenario, ...]:
         )
     )
     return generate_stack_edit_scenarios(count=count, seed=seed)
-
-
-def cross_stack_scenarios_from_environment() -> tuple[CrossStackSplitScenario, ...]:
-    """Return deterministic cross-stack split scenarios for the pytest adapter."""
-
-    count = int(
-        os.environ.get(
-            "JJ_STACK_SUBMIT_PROPERTY_CROSS_STACK_SCENARIOS",
-            str(DEFAULT_CROSS_STACK_SCENARIO_COUNT),
-        )
-    )
-    seed = int(
-        os.environ.get(
-            "JJ_STACK_SUBMIT_PROPERTY_SEED",
-            str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
-        )
-    )
-    return generate_cross_stack_split_scenarios(count=count, seed=seed)
 
 
 def stack_merge_scenarios_from_environment() -> tuple[StackMergeScenario, ...]:
@@ -796,54 +734,6 @@ def generate_stack_move_scenarios(
             source_from_first=source_from_first,
             source_index=rng.randrange(source_size),
             target_index=rng.randrange(target_size),
-        )
-        if scenario.canonical_key in seen:
-            continue
-        seen.add(scenario.canonical_key)
-        scenarios.append(scenario)
-
-    return tuple(scenarios)
-
-
-def generate_cross_stack_split_scenarios(
-    *,
-    count: int,
-    seed: int,
-) -> tuple[CrossStackSplitScenario, ...]:
-    """Generate suffix-move scenarios that split one submitted stack into two stacks."""
-
-    if count < 1:
-        return ()
-
-    scenarios: list[CrossStackSplitScenario] = []
-    seen: set[
-        tuple[
-            str,
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-        ]
-    ] = set()
-    for scenario in _fixed_cross_stack_split_scenarios():
-        scenarios.append(scenario)
-        seen.add(scenario.canonical_key)
-        if len(scenarios) >= count:
-            return tuple(scenarios)
-
-    rng = random.Random(seed + 1)
-    max_attempts = count * MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER
-    attempts = 0
-    while len(scenarios) < count and attempts < max_attempts:
-        attempts += 1
-        initial_size = rng.randint(4, 8)
-        source_index = rng.randint(2, initial_size - 1)
-        target_index = rng.randint(0, source_index - 2)
-        scenario = _cross_stack_split_scenario(
-            initial_size=initial_size,
-            source_index=source_index,
-            target_index=target_index,
-            hazard_class="random",
-            name=f"cross-random-{attempts:03d}",
         )
         if scenario.canonical_key in seen:
             continue
@@ -1205,44 +1095,6 @@ def _stack_merge_scenario(
     )
 
 
-def _fixed_cross_stack_split_scenarios() -> tuple[CrossStackSplitScenario, ...]:
-    return (
-        _cross_stack_split_scenario(
-            initial_size=4,
-            source_index=2,
-            target_index=0,
-            hazard_class="split-middle",
-            name="split-middle-deferred-one",
-        ),
-    )
-
-
-def _cross_stack_split_scenario(
-    *,
-    initial_size: int,
-    source_index: int,
-    target_index: int,
-    hazard_class: str,
-    name: str,
-) -> CrossStackSplitScenario:
-    labels = tuple(initial_label(index) for index in range(1, initial_size + 1))
-    if target_index + 1 >= source_index:
-        raise AssertionError("cross-stack split requires at least one deferred label.")
-    selected_labels = (*labels[: target_index + 1], *labels[source_index:])
-    deferred_labels = labels[target_index + 1 : source_index]
-    return CrossStackSplitScenario(
-        deferred_labels=deferred_labels,
-        deferred_stack_labels=(*labels[: target_index + 1], *deferred_labels),
-        hazard_class=hazard_class,
-        initial_size=initial_size,
-        name=name,
-        rewritten_initial_labels=labels[source_index:],
-        selected_labels=selected_labels,
-        source_label=labels[source_index],
-        target_label=labels[target_index],
-    )
-
-
 def initial_label(index: int) -> str:
     return f"c{index}"
 
@@ -1391,7 +1243,6 @@ def _label_sort_key(label: str) -> tuple[str, int]:
 # Unconfigured pytest runs exercise only the fixed observable-risk representatives.
 # Larger counts continue into deterministic randomized generation through the opt-in runner.
 DEFAULT_STACK_EDIT_SCENARIO_COUNT = len(_fixed_stack_edit_scenarios())
-DEFAULT_CROSS_STACK_SCENARIO_COUNT = len(_fixed_cross_stack_split_scenarios())
 DEFAULT_STACK_MERGE_SCENARIO_COUNT = len(_fixed_stack_merge_scenarios())
 DEFAULT_STACK_MOVE_SCENARIO_COUNT = len(_fixed_stack_move_scenarios())
 DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT = len(_fixed_submit_retry_scenarios())

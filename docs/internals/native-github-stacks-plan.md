@@ -32,6 +32,7 @@ The implementation must preserve the existing product invariants:
 - `ReviewIdentity` remains the authority for the PR attached to a change
 - `SubmittedBaseline` remains the exact reviewed snapshot
 - GitHub stack membership is derived remote state, not local topology
+- an active or prospectively reviewed change belongs to at most one maximal local review path
 - ordinary commands affect only selected review identities
 - ambiguous remote identity or membership fails closed
 - interrupted operations recover by observing current state, not by replaying durable intent
@@ -48,7 +49,6 @@ The implementation must preserve the existing product invariants:
 - no generalized stack-projection backend or plugin interface
 - no native-stack changes to `view`, `list`, `checkout`, `unstack`, or cleanup without a concrete
   behavior that requires them
-- no native projection for sibling review stacks that share a reviewed change
 - no speculative tree-equivalence or server-rebase recovery
 
 ## External evidence
@@ -95,6 +95,8 @@ The local source at `~/dev/gh-stack` establishes the closest upstream precedent:
 - exact membership is a no-op
 - removal or reorder is not expressible through the append endpoint
 - a PR may belong to only one native stack
+- `link` refuses PRs spread across multiple resources or an update that would drop members
+- `submit` restructures at most the one complete native resource represented by its local stack
 - unstacking operates on the native stack resource and may leave queued or auto-merge PRs
   stacked
 
@@ -196,6 +198,36 @@ desired base differs must be unstacked before the base mutation.
 Update the permanent GitHub mutation-safety documentation in the final documentation commit to
 describe the new field-sensitive behavior.
 
+## Capability-independent review topology
+
+GitHub's one-stack-per-PR rule is the jj-stack product model in every repository, not a native
+submission special case:
+
+- an active `ReviewIdentity`, or a change the current operation would attach to a PR, may appear
+  in at most one maximal live root-to-head local review path
+- non-empty working-copy heads, including working copies in other workspaces, are live path heads
+- ownership is derived from the current `jj` DAG and is never persisted
+- unlinked identities do not count as active reviews
+- selected prefixes of one linear maximal path do not manufacture additional ownership
+
+One discovery-layer authority validates this rule. It receives `ReviewState` plus the explicit
+prospective changes for an operation and reports the shared changes and conflicting path heads.
+Do not expose a caller-supplied list-of-paths policy helper in native submission.
+
+Commands that create or adopt review identity validate the resulting prospective ownership before
+bookmarks, state, GitHub, or remote branches change. Selected commands that mutate reviewed
+history or PRs validate their connected component before mutation. Read-only inspection and
+commands needed to repair the violation remain usable; an unrelated invalid component does not
+block a selected operation elsewhere.
+
+The rest of GitHub's restrictions do not become local topology:
+
+- a one-change review remains valid even though GitHub creates no native resource for it
+- append-only updates and base-update rejection are mutation sequencing
+- closed, merged, queued, and auto-merge states are live admission or authorization facts, not
+  reasons to reject an otherwise valid local path
+- topology rewrites remain valid after their resulting maximal reviewed paths are disjoint
+
 ## Native submission planning
 
 Plan the native operation after existing PR discovery and identity validation, but before local
@@ -232,50 +264,40 @@ becoming a plan state.
 
 - the desired sequence cannot be reached through append, or a current native member needs a PR
   base mutation
-- examples include reorder, insertion below the current top, dissolving a stack that shrank to
-  one PR, moving changes between stacks, abandoning a reviewed change, and merging stacks
+- examples include reorder, insertion below the current top, dissolving a surviving one-member
+  resource, and removing an unreviewed position before PR creation
 - a protective pre-push base retarget also requires replacement even when membership is exact
-- unstack all affected native resources before branch or PR-base mutation
+- unstack the one resource exactly owned by the selected reviews before branch or PR-base mutation
 - create one native resource after PR synchronization when the final sequence has at least two
   PRs
 
-### Unselected native members
+### Resource-closed selection
 
-Native membership is a derived review artifact, and GitHub can dissolve it only as a complete
-resource. `replace` may therefore unstack a complete overlapping native resource that also
-contains unselected PRs. It must not update, close, retarget, push the head of, or otherwise
-directly mutate those unselected reviews.
+Native submission may automatically mutate at most one complete resource owned by the selected
+reviews. Every member of an overlapping resource must resolve to an active same-repository
+`ReviewIdentity` in the selected maximal local review path.
 
-Before planning replacement, every unselected member must match an active same-repository
-`ReviewIdentity` and its live PR. Include those PRs in the existing post-push ancestry simulation.
-If an unselected PR's post-push head or base cannot be resolved, or its head would become
-reachable from its base, fail before unstacking or any other mutation. The error identifies the
-collateral PR and points to selected submission of its current local stack first; an orphan
-instead keeps its existing explicit cleanup guidance.
+Fail before mutation when selected PRs overlap more than one native resource or an overlapping
+resource contains an unselected member. Do not dissolve collateral resources, choose one local
+path as canonical, or coordinate repeated submissions. The error identifies the resource and
+points to `gh stack unstack <number>`; after explicit dissolution, ordinary selected submissions
+can create each disjoint desired resource.
 
-Immediately before pushing selected branches, reload collateral head/base state and rerun the
-closure simulation. After mutation, include every collateral PR in the unexpected-closure
-verification.
+Tracked orphan members are not a collateral exception. Explicitly dissolve their resource before
+submitting a new local topology or clean them up through the existing orphan workflow.
 
-Pushing a selected branch that remains a collateral PR's base can temporarily change that PR's
-effective diff and mergeability. That indirect effect is authorized because the selected branch
-is itself being submitted; avoiding it can make disjoint rewrites impossible to converge. The
-collateral PR must remain open, and its API fields and head branch remain unchanged.
+### Live member admission
 
-This is not repository-wide submission authority. The only direct out-of-selection API mutation
-is removal of the indivisible derived native resource. Proven-safe collateral reviews remain open
-and unstacked. A later ordinary `submit` of a current local stack creates its desired native
-resource; a tracked orphan intentionally remains unstacked.
+Immediately before `create` or `append`, freshly validate only the unstacked PRs that the
+operation will add. Each must be open, whether draft or ready for review, not queued for merge,
+and have auto-merge disabled.
 
-### Shared reviewed prefixes
-
-GitHub permits a PR to belong to only one native stack, while jj-stack otherwise permits sibling
-local stacks to share reviewed ancestors. There is no lossless native projection for that shape.
-
-Before native mutation, repository-wide local discovery must fail if one reviewed change would
-belong to more than one desired local stack. The error names the shared changes and tells the user
-to make the reviewed stacks disjoint with `jj`, then submit each affected stack. Do not choose one
-sibling as canonical, duplicate a PR, or fall back to comments for only part of the repository.
+PRs already in the exact target resource are not being admitted again. Their current draft,
+queue, auto-merge, or open/closed state does not by itself turn `none` into an error or prevent
+`append`; apply admission checks only to the appended delta. After `replace` dissolves a resource,
+every desired PR is unstacked and must pass admission before recreation. A queued or auto-merge
+member may instead prevent complete dissolution, which is handled by the fresh post-unstack
+membership check below.
 
 ### Fresh authorization
 
@@ -283,8 +305,6 @@ Immediately before unstacking:
 
 - fetch the exact stack resource again
 - require its membership to match the plan
-- when it has collateral members, batch-reload their PRs, require the same active identities, and
-  rerun the post-push closure simulation with their current heads and bases
 
 Immediately before appending:
 
@@ -302,17 +322,18 @@ These are mutation-authorization reads, not capability probes.
 The ordered live flow is:
 
 1. prepare the selected local stack, descriptions, bookmarks, and desired PR data
-2. load the GitHub repository and discover PRs
-3. resolve cached native support, detecting and saving it only when absent
-4. validate every saved and discovered review identity
-5. load current native membership when support is enabled
-6. derive the native action
-7. for `replace`, re-read and unstack the affected native resources
-8. apply safe local bookmark changes
-9. run the existing protected branch-push and PR synchronization flow
-10. re-read native authorization facts and apply `create` or `append`
-11. synchronize the applicable comment kinds
-12. run the existing unexpected-PR-closure verification
+2. validate capability-independent review-path ownership
+3. load the GitHub repository and discover PRs
+4. resolve cached native support, detecting and saving it only when absent
+5. validate every saved and discovered review identity
+6. load current native membership when support is enabled
+7. derive the native action
+8. for `replace`, re-read and unstack the selected complete native resource
+9. apply safe local bookmark changes
+10. run the existing protected branch-push and PR synchronization flow
+11. re-read native authorization facts and apply `create` or `append`
+12. synchronize the applicable comment kinds
+13. run the existing unexpected-PR-closure verification
 
 If unstacking returns remaining members because GitHub considers them locked, stop. Do not push
 branches or update PR bases after an incomplete unstack.
@@ -349,20 +370,13 @@ ordinary review cleanup. That is not a repository-transition mechanism.
 
 ## Cross-stack rewrites
 
-No repository-wide submission mode is needed. For a selected stack, `replace` dissolves every
-overlapping native resource, submits only the selected reviews, and creates only the selected
-desired native resource.
+There is no repository-wide submission mode or automatic collateral reconciliation. The resulting
+maximal local reviewed paths must first be disjoint. If one old native resource spans more than
+one desired path, explicitly dissolve it with `gh stack unstack <number>`, then run ordinary
+selected submission once for each desired stack.
 
-For disjoint review stacks, repeated ordinary selected submissions handle:
-
-- splitting one previously native stack into several local stacks
-- abandoning a reviewed change while keeping its orphan PR open
-- moving a change between stacks while leaving a source remainder
-- combining stacks when ordinary selected submission does not contain every affected member
-
-The first submission may leave unselected PRs open and unstacked. Each later selected submission
-uses the same rule until the local stacks have their desired native resources. A retry recomputes
-from the current local DAG and live membership; no command persists a multi-stack plan.
+A retry recomputes from the current local DAG and live membership. No command persists a
+multi-stack plan.
 
 `sync --all` remains unchanged in both repository types.
 
@@ -428,7 +442,7 @@ existing mutation damage a native resource.
 - remote `unstack` must dissolve an exactly selected native resource before closing its PRs; if
   native membership includes an unselected PR, fail closed
 - cleanup must not delete a branch whose PR remains in a native resource; it fails with the
-  affected stack's selected-submit follow-up instead
+  affected `gh stack unstack <number>` follow-up instead
 - `sync` and `sync --all` retain their existing recovery behavior
 
 Change one of these only when an implemented native behavior demonstrates a concrete correctness
@@ -470,10 +484,13 @@ Add the narrowest tests protecting these distinct risks:
 - a prefix appends only the new top PRs
 - reorder unstacking happens before any PR base mutation and preserves PR identity
 - interruption after unstack recovers through ordinary resubmission
-- replacement leaves unselected native members open, unchanged, and unstacked
-- missing collateral identity and predicted collateral auto-close both block before mutation
-- sibling local stacks sharing a reviewed change fail before mutation
-- repeated selected submission handles one representative split or abandon
+- active or prospective review ownership shared by maximal local paths fails before mutation
+- ownership validation includes non-empty working-copy heads and ignores unrelated components
+- submit, checkout, relink, and remote unstack enforce ownership at their mutation boundaries
+- read-only inspection and local unstack remain available to diagnose or repair invalid topology
+- multi-resource overlap and an unselected resource member both fail before mutation
+- resource-closure errors name every affected resource and its exact `gh stack unstack <number>`
+  command
 - explicit stack overview prose still works in both repository types
 
 Use a planner unit table for the action classification, one integration test per meaningful
@@ -520,14 +537,11 @@ Exit condition: title/body updates can succeed on an already native-stacked PR w
 ### Commit 4: native action planning
 
 - add the pure `none`, `create`, `append`, and `replace` classification
-- include protective pre-push retargets and stacks shrinking below two PRs
-- include complete overlapping resources while keeping unselected PRs out of the mutation plan
-- add a pure shared-reviewed-prefix check over current local stacks
+- include protective pre-push retargets and surviving one-member resource remnants
 - cover the decision table at the planner layer
 
 Exit condition: every selected-stack membership shape has one action or one fail-closed error,
-and shared reviewed prefixes have one reusable rejection, without network or persistence logic in
-the planner.
+without network or persistence logic in the planner.
 
 ### Commit 5: native mutation safety gates
 
@@ -539,7 +553,17 @@ the planner.
 Exit condition: externally created native stacks cannot be damaged by an existing jj-stack
 mutation, even before jj-stack starts creating native resources itself.
 
-### Commit 6: split comment responsibilities
+### Commit 6: unique reviewed-path ownership
+
+- add one discovery-layer authority for active and prospective review ownership
+- validate canonical maximal local paths, excluding unlinked identities
+- apply it before review creation/adoption and selected review mutations in both repository modes
+- remove the native-only shared-prefix helper and successful shared-sibling behavior it supersedes
+
+Exit condition: an active or prospectively reviewed change belongs to at most one maximal local
+review path, while read-only and repair commands remain usable.
+
+### Commit 7: split comment responsibilities
 
 - separate navigation synchronization from stack-overview synchronization
 - preserve current legacy behavior at every call site
@@ -548,11 +572,11 @@ mutation, even before jj-stack starts creating native resources itself.
 Exit condition: later native submission can omit navigation work without changing overview or
 legacy behavior.
 
-### Commit 7: native create, no-op, and append submission
+### Commit 8: native create, no-op, and append submission
 
 - use cached capability resolution in `submit`
-- discover current review-connected stacks and reject shared reviewed prefixes before mutation
 - use native resources for create, exact no-op, and top-only append
+- reject multi-resource overlap or an overlapping resource with an unselected member
 - preserve old navigation comments without listing them on native repositories
 - fail closed on `replace` until its ordered execution is implemented
 - add focused fake-server and integration coverage
@@ -560,20 +584,17 @@ legacy behavior.
 Exit condition: ordinary additive stack submission uses the correct repository implementation,
 and structural edits stop before every local or remote mutation.
 
-### Commit 8: selected-stack replacement
+### Commit 9: resource-closed selected-stack replacement
 
-- implement selected-scope `replace`
-- unstack complete overlapping resources before protected branch pushes or any PR base mutation
-- verify collateral identity and post-push closure safety before unstacking
-- recheck collateral head/base state immediately before selected branch pushes
-- leave every collateral member open and directly unchanged, and verify that after submission
-- handle a stack shrinking to one PR without creating a replacement resource
+- implement `replace` for one complete resource owned by the selected reviews
+- unstack it before protected branch pushes or any PR base mutation
+- dissolve a surviving one-member resource without creating a replacement resource
 - add one interruption-and-retry integration case
 
 Exit condition: ordinary supported single-stack edits preserve PR identity and recover
 observationally after interruption.
 
-### Commit 9: native landing evidence
+### Commit 10: native landing evidence
 
 - complete the approved live experiments
 - record the resulting contract in this plan
@@ -582,7 +603,7 @@ observationally after interruption.
 Exit condition: endpoint, freshness, partial-result, and survivor behavior are concrete enough to
 implement without speculative recovery.
 
-### Commit 10: native merge landing
+### Commit 11: native merge landing
 
 - implement native merge landing
 - add only the merge-landing tests justified by observed behavior
@@ -590,7 +611,7 @@ implement without speculative recovery.
 Exit condition: `land --via merge` uses the native stack API with exact authorization and
 observational recovery.
 
-### Commit 11: native direct-push landing
+### Commit 12: native direct-push landing
 
 - implement the observed safe direct-push sequence or retain a documented fail-closed rejection
 - cover only the distinct direct-push mutation and survivor risks
@@ -598,7 +619,7 @@ observational recovery.
 Exit condition: every advertised landing mode either works on native stacks with exact
 authorization and observational recovery or is explicitly documented as unsupported.
 
-### Commit 12: permanent documentation and plan deletion
+### Commit 13: permanent documentation and plan deletion
 
 - reconcile the finished behavior into `design.md`
 - update `implementation-strategy.md` for the actual final component and test boundaries
@@ -636,7 +657,8 @@ The work is complete only when:
 - repositories with native support use GitHub stacks and do not manage navigation comments
 - explicit stack overview prose works in both repository types
 - normal selected-stack edits create, append, or replace native resources safely
-- supported disjoint cross-stack rewrites converge through repeated selected submission
+- disjoint cross-stack rewrites require explicit dissolution only when an old native resource
+  spans more than one desired path, then converge through ordinary selected submission
 - landing behavior is evidence-backed and cannot accidentally use the ordinary PR merge API
 - no GitHub stack topology or operation phase is persisted
 - the canonical docs and user guidance describe the finished behavior

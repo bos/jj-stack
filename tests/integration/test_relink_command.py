@@ -205,3 +205,26 @@ def test_relink_clears_unlinked_state(
     assert "Relinked PR #1" in captured.out
     assert relinked_identity.link_state == "active"
     assert relinked_identity.pr_number == 1
+
+
+def test_relink_rejects_reactivating_a_review_shared_by_local_paths(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack().head.change_id
+    assert run_main(repo, config_path, "unlink", change_id) == 0
+    capsys.readouterr()
+    commit_file(repo, "first local path", "first-local-path.txt")
+    run_command(["jj", "new", change_id], repo)
+    commit_file(repo, "second local path", "second-local-path.txt")
+    state_before = ReviewStateStore.for_repo(repo).load()
+
+    exit_code = run_main(repo, config_path, "relink", "1", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Reviewed changes belong to more than one local stack" in captured.err
+    assert ReviewStateStore.for_repo(repo).load() == state_before
