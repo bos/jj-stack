@@ -1,7 +1,5 @@
 """Plan and apply native GitHub stack membership for submit."""
 
-from __future__ import annotations
-
 from collections.abc import Sequence, Set
 from dataclasses import dataclass
 from typing import Literal
@@ -11,27 +9,25 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubStack
 
-NativeStackAction = Literal["none", "create", "append", "replace"]
-
 
 @dataclass(frozen=True, slots=True)
 class NativeStackPlan:
-    """One selected-stack action plus the exact resource it depends on."""
-
-    action: NativeStackAction
+    action: Literal["none", "create", "append", "replace"]
     affected_stack: GithubStack | None = None
+
+    @property
+    def authorization_key(self) -> tuple[str, tuple[int, tuple[int, ...]] | None]:
+        stack = self.affected_stack
+        return self.action, None if stack is None else (stack.number, stack.pull_request_numbers)
 
 
 def plan_native_stack(
     *,
-    desired_pull_numbers: Sequence[int | None],
+    desired: tuple[int | None, ...],
     observed_stacks: Sequence[GithubStack],
     pull_numbers_requiring_base_update: Set[int],
     retiring_pull_numbers: Sequence[int] = (),
 ) -> NativeStackPlan:
-    """Classify one selected stack without performing or scheduling mutations."""
-
-    desired = tuple(desired_pull_numbers)
     known_desired = tuple(number for number in desired if number is not None)
     if len(set(known_desired)) != len(known_desired):
         raise CliError("Selected changes resolve to the same pull request more than once.")
@@ -42,19 +38,14 @@ def plan_native_stack(
     )
 
     if not affected:
-        action: NativeStackAction = "none" if len(desired) < 2 else "create"
-        return NativeStackPlan(action)
+        return NativeStackPlan("none" if len(desired) < 2 else "create")
     if len(affected) != 1:
         affected_numbers = tuple(sorted(stack.number for stack in affected))
+        commands = ui.join(lambda number: ui.cmd(f"gh stack unstack {number}"), affected_numbers)
         raise CliError(
             t"Selected reviews belong to native GitHub stacks "
             t"{ui.join(lambda number: f'#{number}', affected_numbers)}.",
-            hint=t"Run {
-                ui.join(
-                    lambda number: ui.cmd(f'gh stack unstack {number}'),
-                    affected_numbers,
-                )
-            }, then retry.",
+            hint=t"Run {commands}, then retry.",
         )
     stack = affected[0]
     if not set(stack.pull_request_numbers).issubset(selected):
@@ -76,6 +67,10 @@ def plan_native_stack(
     return NativeStackPlan("replace", stack)
 
 
+def _membership_error(message: str) -> CliError:
+    return CliError(message, hint=t"Rerun {ui.cmd('jj-stack submit')} to inspect membership.")
+
+
 async def apply_native_stack_plan(
     *,
     github_client: GithubClient,
@@ -86,30 +81,27 @@ async def apply_native_stack_plan(
         return
     assert plan.action != "replace"
     try:
-        observed = await github_client.list_stacks()
-        current = plan_native_stack(
-            desired_pull_numbers=pull_numbers,
-            observed_stacks=observed,
+        authorized = plan_native_stack(
+            desired=pull_numbers,
+            observed_stacks=await github_client.list_stacks(),
             pull_numbers_requiring_base_update=frozenset(),
         )
-        if current != plan:
-            raise CliError(
-                "Native GitHub stack membership changed while submit was running.",
-                hint=t"Rerun {ui.cmd('jj-stack submit')} with the current membership.",
-            )
-        if plan.action == "create":
+        if authorized.authorization_key != plan.authorization_key:
+            raise _membership_error("Native GitHub stack membership changed during submit.")
+        stack = authorized.affected_stack
+        if stack is None:
             updated = await github_client.create_stack(pull_numbers=pull_numbers)
+            expected_number = updated.number
         else:
-            assert (stack := plan.affected_stack) is not None
-            delta = pull_numbers[len(stack.pull_request_numbers) :]
             updated = await github_client.append_to_stack(
                 stack_number=stack.number,
-                pull_numbers=delta,
+                pull_numbers=pull_numbers[len(stack.pull_request_numbers) :],
             )
+            expected_number = stack.number
+        if (updated.number, updated.pull_request_numbers) != (expected_number, pull_numbers):
+            raise _membership_error("GitHub returned unexpected native stack membership.")
     except GithubClientError as error:
-        raise CliError(f"Could not {plan.action} the native GitHub stack") from error
-    if updated.pull_request_numbers != pull_numbers:
         raise CliError(
-            "GitHub returned unexpected native stack membership after submit.",
-            hint=t"Rerun {ui.cmd('jj-stack submit')} to inspect the current membership.",
-        )
+            "Could not update the native GitHub stack",
+            hint=t"Resolve GitHub's reported error, then rerun {ui.cmd('jj-stack submit')}.",
+        ) from error

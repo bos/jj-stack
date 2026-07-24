@@ -89,24 +89,20 @@ def _assert_stack_pull_requests_match_dag(
         assert pull_request.base_ref == expected_base
 
 
-def test_submit_native_stack_recovers_lost_create_response_and_appends_delta(
+def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
     tmp_path: Path,
     monkeypatch,
+    capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
     fake_repo.native_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
-    list_calls = [0]
     appended: list[tuple[int, ...]] = []
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class LoseFirstCreateResponseClient(GithubClient):
-        async def list_stacks(self):
-            list_calls[0] += 1
-            return await super().list_stacks()
-
         async def create_stack(self, *, pull_numbers):
             await super().create_stack(pull_numbers=pull_numbers)
             raise GithubClientError("Simulated lost response", status_code=500)
@@ -130,9 +126,8 @@ def test_submit_native_stack_recovers_lost_create_response_and_appends_delta(
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
 
-    exit_code = run_main(repo, config_path, "submit")
-    assert exit_code == EXIT_GITHUB
-    assert list_calls == [1]
+    assert run_main(repo, config_path, "submit") == EXIT_GITHUB
+    assert "jj-stack submit" in capsys.readouterr().err
     assert fake_repo.native_stacks == {1: (1, 2)}
     assert len(state_store.load().review_identities) == 2
 
@@ -153,7 +148,6 @@ def test_submit_native_stack_recovers_lost_create_response_and_appends_delta(
     write_file(stack_description, "Native stack overview\n")
 
     assert run_main(repo, config_path, "submit", "--describe", f"stack={stack_description}") == 0
-    assert list_calls == [2]
     assert fake_repo.pull_requests[2].title == "feature 2 renamed"
     assert fake_repo.pull_requests[2].body == "updated body"
     assert (
@@ -162,15 +156,18 @@ def test_submit_native_stack_recovers_lost_create_response_and_appends_delta(
     )
     assert "Native stack overview" in _overview_comments(fake_repo, 2)[0].body
 
-    commit_file(repo, "feature 3", "feature-3.txt")
+    for number in range(3, 6):
+        commit_file(repo, f"feature {number}", f"feature-{number}.txt")
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     assert fake_repo.native_stacks == {1: (1, 2)}
     fake_repo.pull_requests[3].is_queued = False
     assert run_main(repo, config_path, "submit") == 0
 
-    assert list_calls == [6]
-    assert (fake_repo.native_stacks, appended) == ({1: (1, 2, 3)}, [(3,), (3,)])
-    assert _navigation_comments(fake_repo, 3) == []
+    assert (fake_repo.native_stacks, appended) == (
+        {1: (1, 2, 3, 4, 5)},
+        [(3, 4, 5), (3, 4, 5)],
+    )
+    assert all(_navigation_comments(fake_repo, number) == [] for number in range(3, 6))
 
 
 def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(

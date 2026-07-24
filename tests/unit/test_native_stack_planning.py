@@ -46,7 +46,7 @@ def test_native_stack_plan_classifies_selected_membership(
     expected_stack_number: int | None,
 ) -> None:
     plan = plan_native_stack(
-        desired_pull_numbers=desired,
+        desired=desired,
         observed_stacks=observed,
         pull_numbers_requiring_base_update=base_updates,
         retiring_pull_numbers=retiring,
@@ -89,7 +89,7 @@ def test_native_stack_plan_rejects_ambiguous_selected_membership(
 ) -> None:
     with pytest.raises(CliError) as caught:
         plan_native_stack(
-            desired_pull_numbers=desired,
+            desired=desired,
             observed_stacks=observed,
             pull_numbers_requiring_base_update=frozenset(),
         )

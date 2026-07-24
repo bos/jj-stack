@@ -504,7 +504,7 @@ async def run_submit_async(
                 except GithubClientError as error:
                     raise CliError("Could not inspect native GitHub stack membership") from error
             native_plan = plan_native_stack(
-                desired_pull_numbers=desired_pull_numbers,
+                desired=desired_pull_numbers,
                 observed_stacks=observed_stacks or (),
                 pull_numbers_requiring_base_update={
                     pull_request.number

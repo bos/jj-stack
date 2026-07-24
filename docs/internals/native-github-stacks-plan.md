@@ -6,6 +6,11 @@ This file is the single implementation authority for native GitHub stack support
 is underway. It keeps the accepted behavior, external evidence, architecture, delivery order, and
 remaining questions together so a long implementation does not depend on conversation history.
 
+## Progress
+
+Commits 1 through 12 are complete. Commit 13, historical native resource members, is next.
+Update this section in the same change that completes each remaining implementation commit.
+
 For this work only, this file supersedes conflicting native-stack or stack-comment statements in
 `design.md`, `implementation-strategy.md`, and `backlog.md`. Existing behavior outside this scope
 continues to follow `design.md`.
@@ -356,12 +361,14 @@ requiring at least two PRs means a one-PR review has no native resource; it does
 review invalid. The append-only endpoint means replacement must dissolve and recreate a complete
 resource; it does not make a local reorder invalid.
 
-The documented maximum array sizes on create and append are request limits, not evidence of a
-maximum native resource size. Do not add a local stack-length policy without a confirmed resource
-constraint. Create at most 100 members, then append further members in batches of at most 100,
-re-reading membership before each dependent append. The single merge method per landing request
-already matches jj-stack's one-method-per-command behavior, and the active bottom is the first
-member of its existing ready bottom prefix.
+The single merge method per landing request already matches jj-stack's
+one-method-per-command behavior, and the active bottom is the first member of its existing ready
+bottom prefix.
+
+Supporting native stacks of 100 or more reviews is explicitly out of scope. Submit sends the
+complete desired membership in one create request, or all new top members in one append request.
+Do not add request-size validation, batching, size-specific recovery, or tests for unusually large
+stacks. A request GitHub refuses is an ordinary GitHub error.
 
 ## Native submission planning
 
@@ -503,7 +510,7 @@ The ordered live flow is:
 8. for `replace`, re-read and unstack the selected complete native resource
 9. apply safe local bookmark changes
 10. run the existing protected branch-push and PR synchronization flow
-11. re-read native authorization facts and apply `create` or each bounded `append`
+11. re-read native authorization facts and apply one complete `create` or `append`
 12. synchronize the applicable comment kinds
 13. run the existing unexpected-PR-closure verification
 
@@ -511,9 +518,8 @@ If unstacking returns remaining members because GitHub considers them locked, st
 branches or update PR bases after an incomplete unstack.
 
 If execution stops after a successful unstack, the next `submit` observes unstacked PRs and plans
-creation when at least two remain. If execution stops after PR synchronization, creation, or one
-append batch, the next `submit` observes the correct prefix and retries the remaining native
-operation.
+creation when at least two remain. If execution stops after PR synchronization, creation, or
+append, the next `submit` observes live membership and computes what remains.
 
 Do not persist an action, stack number, expected membership, retry phase, or operation journal.
 
@@ -738,7 +744,6 @@ Add the narrowest tests protecting these distinct risks:
 - native title/body refresh omits `base`
 - exact membership is a no-op
 - a prefix appends only the new top PRs
-- a 101-or-more-member submission splits requests at 100 and retries from the observed prefix
 - reorder unstacking happens before any PR base mutation and preserves PR identity
 - interruption after unstack recovers through ordinary resubmission
 - active or prospective review ownership shared by maximal local paths fails before mutation
@@ -885,14 +890,14 @@ implement without speculative recovery.
 Exit condition: native and legacy repositories enforce the same exclusive landing authority and
 draft lifecycle without another roundtrip or persisted state.
 
-### Commit 12: bounded native submission requests
+### Commit 12: native submission mutation
 
-- create or append at most 100 members per request
-- re-read and authorize the observed prefix before each dependent append
-- recover interruption by replanning from that prefix without additional state
+- create or append the complete desired membership in one request
+- re-read and authorize observed membership immediately before mutation
+- recover interruption by replanning from live membership without additional state
 
-Exit condition: request-array limits do not become a local topology limit, and each append remains
-authorized by the immediately preceding live resource state.
+Exit condition: one authorized request applies the complete desired membership, and interruption
+recovery needs no persisted operation state.
 
 ### Commit 13: historical native resource members
 
@@ -932,6 +937,7 @@ preserves exact survivor authorization for explicit recovery.
 ### Commit 16: permanent documentation and plan deletion
 
 - reconcile the finished behavior into `design.md`
+- retain the explicit exclusion of support for native stacks of 100 or more reviews
 - update `implementation-strategy.md` for the actual final component and test boundaries
 - update user docs, help, exit-code documentation, and the bundled skill where required
 - remove or replace superseded backlog entries
