@@ -3,7 +3,7 @@ name: jj-stack
 license: Apache-2.0
 description: >
   Manage jj-native stacked GitHub review with jj-stack. Use when inspecting,
-  creating, submitting, refreshing, revising, landing, cleaning up, or
+  creating, submitting, refreshing, revising, merging, cleaning up, or
   recovering stacked pull requests for local jj changes, and before mutating
   any GitHub pull request or branch with gh or the GitHub API in a jj repo.
 ---
@@ -12,7 +12,7 @@ description: >
 
 `jj-stack` sends a linear chain of local `jj` changes to GitHub as dependent
 pull requests. Division of labor: `jj` edits the local stack; `jj-stack` owns
-its GitHub review state (review branches, PRs, landing, cleanup).
+its GitHub review state (review branches, PRs, merging, cleanup).
 
 ## Resolving the command
 
@@ -32,9 +32,10 @@ command they use before any direct GitHub mutation.
 ## Rules
 
 1. **Edit the stack with `jj`; talk to GitHub with `jj-stack`.** Never use
-   `git branch`/`checkout`/`rebase`, manual branch pushes, or `gh stack` on a
-   jj-stack stack, and never create, delete, or force-push its review
-   branches by hand.
+   `git branch`/`checkout`/`rebase` or manual branch pushes on a jj-stack
+   stack, and never create, delete, or force-push its review branches by
+   hand. Use `gh stack` only for the exact resource-dissolution repair
+   described below.
 2. **Check ownership before the first `gh` or API write in a repo.** Run
    `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json
    --fetch` for one PR. If the PR, branch, bookmark, or change appears in the
@@ -44,11 +45,11 @@ command they use before any direct GitHub mutation.
    attention; read the JSON before concluding anything.
 3. **Use jj-stack as the stack authority.** Once jj-stack is detected anywhere
    in a repo, use it for stack-level PR work in that repo: status, submit,
-   refresh, base/head changes caused by stack rewrites, landing, cleanup,
+   refresh, base/head changes caused by stack rewrites, merging, cleanup,
    closing, importing, relinking, and recovery. `gh` remains fine for reads and
    collaboration metadata, but not as the source of truth or mutation path for
    the stack.
-4. **Inspect before mutating.** Run `view` or `list` before `submit`, `land`,
+4. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`,
    `cleanup`, or `unstack`, and preview with `--dry-run` whenever the next
    step is uncertain.
 5. **Select explicitly after anything ambiguous.** `submit` defaults to the
@@ -75,18 +76,19 @@ or `<!-- jj-stack-overview -->`; jj-stack manages those.
 PR; retargeting base or head; deleting or force-pushing a review branch;
 creating a replacement PR; or equivalent `gh api` mutations. These desync
 local changes, review bookmarks, and tracking data. Map the intent to a
-jj-stack command instead; use `gh` only if the user explicitly confirms after
-you explain that risk.
+   jj-stack command instead; use `gh` only if the user explicitly confirms after
+   you explain that risk. The one routine exception is an exact `gh stack
+   unstack <number>` command printed by `submit` when one old GitHub stack spans
+   multiple desired local paths; run it, then submit each path separately.
 
-- **Land ready bottom changes:** `land --dry-run`, then `land`. Lands the
-  consecutive ready changes at the bottom and stops before the first unready
-  one; `--pull-request <pr>` stops earlier. When branch protection forbids
-  direct trunk pushes outright (GitHub says changes must be made through a
-  pull request — not merely that required checks are pending), use
-  `land --via merge`: it merges each ready PR on GitHub bottom-up (this is
-  the one sanctioned way a managed PR gets merged) and stops at the first PR
-  GitHub reports as not mergeable. It does not move local history — run
-  `sync` afterwards.
+- **Merge reviewed bottom changes:** `merge --dry-run`, then `merge`. It
+  selects the consecutive open, non-draft PRs from the bottom and requires
+  every candidate to match the exact submitted commit. GitHub decides
+  approvals, checks, conflicts, and repository policy. Repositories with
+  GitHub stack support use one atomic bottom-prefix request; others merge PRs
+  bottom-up and may stop after lower PRs have merged. It never pushes trunk or
+  rewrites local history. Run the selected `sync <head-change-id>` printed
+  after GitHub accepts anything.
 - **Close an abandoned stack's PRs:** `unstack --dry-run`, then `unstack`.
 - **Also remove review branches and tracking:** `unstack --cleanup`, only
   after confirming the stack should be retired. For an orphaned PR from
@@ -96,10 +98,11 @@ you explain that risk.
 - **Stop tracking locally but leave PRs open:** `unstack --local`.
 - **Change PR base/head because the stack shape changed:** reshape with `jj`,
   then `submit --dry-run` and `submit`.
-- **Recover from a squash/rebase merge made on GitHub:** `sync` chains the
-  whole repair — fetch, drop merged ancestors, resubmit survivors. To preview
-  or step through it instead: `cleanup --rebase --dry-run`, `cleanup
-  --rebase`, then `submit`.
+- **Recover after GitHub merges:** `sync --dry-run <head-change-id>`, then
+  `sync <head-change-id>` chains the repair — fetch, retire merged ancestors,
+  rebase selected survivors, and update their existing PRs. GitHub rebase
+  merges preserve jj change IDs; squash merges do not, and `sync` handles both
+  from the fetched merge result.
 - **Adopt existing PRs into local tracking:**
   `checkout --pull-request <pr> --fetch` for a whole stack (sets up tracking
   only; rewrites nothing and does not touch GitHub), or
@@ -125,12 +128,10 @@ by hand. Inspect with `list --fetch --json`, `view --pull-request <pr> --json
 4. Apply review feedback in the change it belongs to: edit the lower `jj`
    change, let descendants rebase, then `view` and `submit`. Do not patch a
    higher change to avoid touching a lower one.
-5. When bottom changes are ready, `land --dry-run`, then `land`
-   (`land --via merge` on repos whose trunk cannot be pushed directly, then
-   `sync`).
-6. If `trunk()` merely advanced, use plain `jj rebase`. `sync` (or its
-   stepwise form, `cleanup --rebase` then `submit`) is only for ancestors
-   already merged on GitHub under different commit IDs.
+5. When bottom changes are ready, `merge --dry-run`, then `merge`, followed
+   by the printed selected `sync`.
+6. If `trunk()` merely advanced, use plain `jj rebase`. `sync` is for
+   ancestors already merged on GitHub under exact or rewritten commit IDs.
 
 ## Exit codes
 
@@ -143,16 +144,12 @@ that is incomplete or needs attention (the output is still valid — read it);
 
 ## When something goes wrong
 
-- Direct-push `land` rejected with `GH006: Protected branch update failed`:
-  the reason line decides the fix — read it before reacting. "required
-  status checks are expected" (or pending/failing) means direct pushes are
-  allowed but the checks must first pass on the exact commits being landed;
-  they are usually re-running after a rebase/refresh, so wait for the
-  review-branch checks and rerun `land` — switching to `--via merge` does
-  not help because the merge API enforces the same checks. Only "changes
-  must be made through a pull request" means direct pushes are forbidden and
-  `--via merge` is the answer; "not authorized" is an access problem, not a
-  transport problem.
+- `merge` rejected by GitHub: read the reported check, conflict, queue,
+  policy, or authorization reason, fix it, and rerun the same explicit
+  command. A native terminal failure merges nothing. If ordinary bottom-up
+  merging accepted lower PRs first, run selected `sync` before retrying the
+  remainder. A matching request already pending should be allowed to finish,
+  then observed by rerunning the same target and method.
 - Interrupted command: `view`, then rerun with an explicit change ID, revset,
   or `--pull-request` selector.
 - jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.

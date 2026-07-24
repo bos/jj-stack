@@ -69,7 +69,7 @@ Highest-value commands should grow 2-3 short examples in long help:
 
 - `submit`
 - `view`
-- `land`
+- `merge`
 - `unstack`
 - `checkout`
 - `sync`
@@ -123,7 +123,7 @@ The work should focus on content gaps first:
 
 - missing recovery scenarios
 - missing explanation of jj↔GitHub round trips
-- better examples of stack lifecycle after land / restack / checkout
+- better examples of stack lifecycle after merge / restack / checkout
 
 ### 4b. Add one focused workflow page
 
@@ -133,7 +133,7 @@ That page should cover:
 
 - amend vs. rebase from the user's point of view
 - when `submit` is enough and when selected `sync` is the right next step
-- what happens after part of a stack lands
+- what happens after part of a stack merges
 - what to do when review state exists on GitHub but not in the current workspace
 
 This is more valuable than a large workflow directory.
@@ -224,8 +224,8 @@ Priority order:
 This plan is succeeding when a user can quickly answer questions like:
 
 - "What stack will `submit` operate on if I run it right now?"
-- "Why did `land` stop, and what do I run next?"
-- "Part of my stack landed; how do I fix the rest locally?"
+- "Why did `merge` stop, and what do I run next?"
+- "Part of my stack merged; how do I fix the rest locally?"
 - "These PRs exist on GitHub already; how do I reconnect this workspace?"
 - "What are those `review/...` bookmarks and when should I care about them?"
 

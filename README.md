@@ -182,22 +182,17 @@ Your typical author loop is:
 2. Run `jj-stack submit`.
 3. Revise those changes locally as reviews come in.
 4. Re-run `jj-stack submit`.
-5. Once the bottom changes are approved, run `jj-stack land`.
-6. If lower changes were merged on GitHub instead of with `jj-stack land`, run
-   `jj-stack sync <head-change-id>` when status says the remaining stack needs updating.
+5. Once the bottom changes are ready, run `jj-stack merge`.
+6. Run the printed `jj-stack sync <head-change-id>` to reconcile local history.
 
-`land` pushes the ready, exactly submitted changes at the bottom of your stack to GitHub trunk.
-When cleanup is safe, it forgets their managed local review bookmarks and removes their review
-tracking. If another local stack still depends on a landed change, it keeps that bookmark and
-tracking and prints the `sync` command for the dependent stack. It stops before the first change
-that is not ready or no longer matches the snapshot reviewers saw. After any local rewrite,
-including a rebase with the same diff, run `submit` before `land`.
+`merge` asks GitHub to merge the consecutive open, non-draft PRs at the bottom of the stack. It
+requires every candidate to remain at the exact commit last submitted, but GitHub decides
+approvals, checks, conflicts, and repository policy. Repositories with GitHub stack support merge
+the selected bottom portion as one operation; other repositories merge PRs bottom-up and stop at
+the first rejection.
 
-Immediately before changing trunk or a pull request, `land` rechecks the repository, trunk, PR,
-exact commit, and readiness. It stops if any of those changed since planning.
-
-Run `jj-stack sync <head-change-id>` when lower changes were merged on GitHub, for example with a
-squash merge, and your local stack still contains the old commits. It rebases the remaining
+`merge` never pushes trunk, rewrites local history, or removes review tracking. Run
+`jj-stack sync <head-change-id>` after GitHub merges lower changes. It rebases the remaining
 selected changes onto `trunk()`, updates only PRs that already exist for them, and cleans up a
 merged PR when no PR above still needs its review branch. Unreviewed trailing work stays local,
 and other local stacks are left alone. Preview it with
@@ -277,8 +272,8 @@ requests are otherwise unchanged. Existing reviewers that are omitted are left i
 
 `cleanup_user_bookmarks` defaults to `false`. Leave it unset if bookmarks selected
 through `use_bookmarks` should be preserved during later cleanup. Set it to `true` only
-if you want `cleanup`, `unstack --cleanup`, and `land` to delete those reused bookmarks too
-when that cleanup is otherwise safe.
+if you want `cleanup` and `unstack --cleanup` to delete those reused bookmarks too when that
+cleanup is otherwise safe.
 
 For authentication, `jj-stack` checks `GITHUB_TOKEN`, then `GH_TOKEN`, then falls back
 to `gh auth token` if `gh`, the GitHub CLI, is installed and authenticated.
@@ -315,7 +310,7 @@ obscuring the rest of the work.
   Context windows are bigger in 2026, but agent attention is still limited, and human
   attention feels under ever more strain.
 
-- Validation is more easily staged. It's easier to approve and land good changes while others
+- Validation is more easily staged. It's easier to approve and merge good changes while others
   are still in flux.
 
 - Mutable local history is more valuable with agents. Agent-produced first drafts often need
@@ -356,7 +351,6 @@ agent-written. Nevertheless, I've provided heavy oversight.
 - linear stacks only
 - one PR per change ID
 
-GitHub is developing its own stacked review support, currently in limited preview. That model
-appears compatible with `jj-stack`'s current model. Once stacked review support launches more
-widely, I'll be able to test the API and server-side merge/rebase behaviour, and quickly support
-it in `jj-stack` with minimal change to the CLI UX.
+When GitHub exposes native stacked-review support for a repository, `jj-stack` registers submitted
+PRs in GitHub's stack model and asks GitHub to merge them together. Otherwise, PR comments provide
+stack navigation and `merge` submits eligible PRs bottom-up.

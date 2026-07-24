@@ -2,23 +2,6 @@
 
 Items that need to be implemented or thought through, but are not blocking current work.
 
-## Unverified GitHub landing contracts
-
-_Benefit: large — these observations determine whether the fake accurately represents the
-external contracts used by landing and recovery._
-
-A disposable live-GitHub experiment would cover:
-
-- direct-push pull-request lifecycle
-- retarget-and-close behavior
-- `merge_commit_sha` for merge, squash, and rebase methods
-- merged-head branch deletion
-- rejection of a merge request whose expected head is stale
-
-No live experiment has been run. Until one is separately approved and recorded, fake-dependent
-conclusions in these families remain conditional and release evidence must report the gap rather
-than treating local tests as proof.
-
 ## Crash and Interrupt Diagnosis
 
 _Benefit: medium — affects users with failed mutating commands, which is uncommon
@@ -37,15 +20,17 @@ Possible follow-up work:
 _Benefit: unknown — potentially useful for recovery and checkout UX, but not needed for the
 current core workflow._
 
-Since `jj` 0.30 the `change-id` header in Git commit objects is written and imported by
-default (`git.write-change-id-header`), so change IDs survive ordinary push/fetch round
-trips. The `jj` changelog notes the limits that matter here: `git rebase` and some forges
-drop the header when they rewrite commits, and GitHub squash merges create fresh commits
-without it. Selected `sync` therefore proves that a merged ancestor is no longer needed from the
-exact submitted commit or live merge-result commit on trunk, not from header identity. Normal Git
-and GitHub commit views do not show the header, and it should not become a new source of truth for
-jj-stack. Still, it may be useful evidence in future recovery flows where the user
-experience should follow a logical `jj` change rather than one exact commit object.
+Since `jj` 0.30 the `change-id` header in Git commit objects is written and imported by default
+(`git.write-change-id-header`), so change IDs survive ordinary push/fetch round trips. Live GitHub
+experiments established that both native and ordinary rebase merge preserve it, while squash
+merge does not. Selected `sync` uses a preserved header to recognize the fetched successor;
+otherwise it retires the old local change from exact merge-result evidence without relabeling the
+landed commit or storing an alias.
+
+The header remains evidence, not a new source of truth. Normal Git and GitHub commit views do not
+show it, and exact review identity plus fetched trunk and merge-result checks still authorize
+recovery. It may nevertheless help future recovery flows where the user experience should follow
+a logical `jj` change rather than one exact commit object.
 
 High-level cases where this might help:
 
@@ -56,29 +41,19 @@ High-level cases where this might help:
 - reducing unnecessary manual relinking when jj-stack can tell that a GitHub PR branch and
   a local change probably share the same underlying `jj` change identity
 
-## Additional landing modes and merge queues
+## Merge queue integration
 
-_Benefit: medium — high value for teams that require merge queues, but complex
-to design correctly and not blocking the current direct-push flow._
+_Benefit: medium — high value for teams that require queues, but not part of the current merge
+contract._
 
-The canonical `land` model supports direct push and GitHub PR merge. The remaining product
-question is whether it should eventually support a landing PR or merge queue while keeping the
-`jj` DAG as the source of truth. Concrete follow-up questions:
+Live evidence shows that GitHub accepts a native asynchronous stack-merge request for processing
+under a queue ruleset, then returns a terminal failure requiring the queue. The ordinary PR API
+cannot enqueue that native member either. `jj-stack` therefore reports the GitHub rejection and
+does not impose repository-wide queue or auto-merge restrictions.
 
-- whether `land` should add a landing-PR or merge-queue mode
-- how queue-backed landing should report queued, running, failed, and merged
-  states in `view` without introducing forge-owned stack metadata as a
-  competing source of truth
-- how the queue or landing-PR path should preserve the current fail-closed
-  behavior when the changes ready to land move locally while a queued landing is in
-  flight
-- whether queue-backed landing can recover from current state without durable intent or replay
-  data
-- how repo policy requirements such as required checks, branch protection, and
-  review-only `review/*` branches should be diagnosed before a landing attempt
-
-This should be designed explicitly rather than bolted onto the current `land`
-flow piecemeal.
+A future queue integration needs an explicit design for current-state observation, user-visible
+queued/running/failed states, and safe retry without durable intent, phases, or replay data. It
+must not make unrelated review mutations read-only merely because another PR is queued.
 
 ## Pre-Push Auto-Close Predictor — Out-of-Stack Base Coverage
 
@@ -197,17 +172,6 @@ The transition vocabulary and required behaviors live in
 - reconsider a formal state model only if concurrent commands or multiple remotes make the
   interactions too complex for the current executable scenarios
 
-## Land Property Harness Follow-ups
-
-_Benefit: small — the land families now cover composed edits, external drift,
-interrupted retries, and the merged-prefix handoff chain; these extensions deepen the
-same models._
-
-- `--via merge` variants of the land drift family (the readiness walk is shared, so
-  push-only coverage was chosen first; the mergeability stop adds one more boundary)
-- composed drift pairs against land, mirroring the submit drift family's dual-drift
-  combinations
-
 ## Property Harness Cost Trims
 
 _Benefit: small — fixed representatives run by default, but expanded randomized pools affect
@@ -228,35 +192,3 @@ corresponding failures prove important._
 - stack-comment failures
 - draft-state and review-rerequest failures
 - retry after an external GitHub change between attempts
-
-## Native GitHub Stack Metadata via `gh stack link`
-
-_Benefit: medium — replaces tool-managed PR comments with GitHub's first-class
-stacked-PR UI, but depends on a GitHub feature that is still rolling out._
-
-GitHub's `gh stack` CLI ships a `link` subcommand designed for external branch
-managers (jj, Sapling, git-town): it registers an ordered set of PRs as a
-server-side stack so GitHub renders native stack navigation in the PR UI.
-jj-stack currently projects the same information into PR comments via the
-hidden `<!-- jj-stack-navigation -->` and `<!-- jj-stack-overview -->` markers.
-
-Possible follow-up work:
-
-- on submit, register or update the stack via the API behind `gh stack link`
-  instead of (or in addition to) writing navigation comments
-- drop the navigation comment path entirely once native stacks are broadly
-  available, keeping the overview comment only if it still adds value
-- decide how `checkout` should treat PRs that are linked into a native GitHub
-  stack but have no local tracking data
-
-## Landing cleanup follow-ups
-
-_Benefit: small each; recorded so leaving safe cleanup work remains an explicit decision._
-
-- Direct-push landed review branches are left on the remote by design (the current land flow only
-  forgets local bookmarks). A `cleanup` GC pass could delete tool-owned remote branches
-  whose PRs were closed as landed, but it would need an exact remote-target lease in addition to
-  the existing ownership checks.
-- Real GitHub's merged detection after retargeting a directly pushed PR remains part of the
-  deferred live-evidence experiment above. Do not change the production landed-state check based
-  only on the fake server's auto-merge behavior.

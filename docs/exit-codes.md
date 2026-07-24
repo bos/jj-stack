@@ -26,8 +26,8 @@ Notes:
   selector given fails to resolve, it fails with one of the error codes instead.
 - With `--json`, exit 10 still comes with a valid payload on stdout; read the exit code
   together with the payload. See [json-output.md](json-output.md).
-- Commands that mutate review state (`submit`, `land`, `sync`, `unstack`, `cleanup`) exit 1 when
-  they ran but had to stop before completing every action; stderr names what blocked them.
+- Commands that mutate review state (`submit`, `merge`, `sync`, `unstack`, `cleanup`) exit 1 when
+  they ran but had to stop before completing every action; command output names what blocked them.
 - Exit 2 covers stack shapes `jj-stack` does not review: merge commits, divergent changes, a
   working copy that never reaches `trunk()`, and similar. The message names the offending
   change.

@@ -136,7 +136,7 @@ Status identifies tracked changes whose current commits no longer match the last
 submit. `submit` refreshes that stack's PR branches and base branches on GitHub so reviewers see
 the current local stack.
 
-## `land` says the local change differs from what reviewers approved
+## `merge` says the local change differs from what reviewers approved
 
 Possible causes:
 
@@ -157,43 +157,30 @@ jj-stack submit --re-request
 ```
 
 A pure rebase with the same diff still changes the reviewed commit identity. Rerun `submit` so
-the review branch, PR, and `jj-stack` tracking all name that exact commit before landing.
+the review branch, PR, and `jj-stack` tracking all name that exact commit before merging.
 
-## `land` fails pushing trunk with a protected-branch error
+## GitHub rejects `merge`
 
-GitHub rejected the direct trunk push with output like:
+Possible causes:
 
-```text
-GH006: Protected branch update failed for refs/heads/main
-7 of 7 required status checks are expected
-```
+- required checks are pending or failing
+- a review or repository rule is not satisfied
+- the changes conflict
+- a ruleset requires a merge queue
+- your account cannot merge the pull request
 
-The reason after the `GH006` or `GH013` line decides the fix — read it before changing anything:
+What to do:
 
-- **"required status checks are expected"** (or pending, or failing): direct pushes are
-  allowed here, but the required checks must pass on the exact commits being landed
-  first. This is common right after a rebase and `submit`: checks are re-running against
-  the newly submitted commits. Wait for the review-branch checks to finish, then rerun
-  `jj-stack land`. Do not switch to `land --via merge` for this —
-  the merge API enforces the same required checks and refuses just the same.
-- **"Changes must be made through a pull request"**: the repo forbids direct pushes to
-  trunk entirely. Land through GitHub instead:
-
-  ```bash
-  jj-stack land --via merge
-  ```
-
-  An uninterrupted merge landing rebases and updates the remaining reviewed changes before it
-  returns. Run `jj-stack sync <change-id>` only if that follow-up was interrupted or failed, then
-  rerun `jj-stack land --via merge <change-id>` if you still want to land the remaining PRs.
-
-- **A ruleset requires a merge queue**: `jj-stack` cannot add PRs to GitHub's merge queue. Add the
-  bottom ready PR to the queue and let GitHub merge it. Then run
-  `jj-stack sync --dry-run <head-change-id>` followed by `jj-stack sync <head-change-id>` to
-  rebase the remaining stack and retarget its PRs. Repeat for the next bottom ready PR.
-
-- **"You're not authorized to push to this branch"**: an access problem, not a landing
-  problem. Fix repo permissions before retrying either transport.
+- Read GitHub's reason in the error. Fix that condition, then rerun the same explicit `merge`
+  command.
+- For an identical GitHub stack request already in progress, wait and rerun. Once it completes,
+  the retry observes the terminal result.
+- A failed GitHub stack operation merges nothing. An ordinary bottom-up merge can leave lower PRs
+  merged before a later one is rejected; run `jj-stack sync <head-change-id>`, then retry
+  `jj-stack merge <head-change-id>` if you still want the remainder.
+- `jj-stack` does not enqueue merge-queue work. If repository policy requires a queue, use the
+  repository's supported queue workflow, then run selected `sync` after GitHub merges the work.
+- An authorization rejection is an access problem. Fix repository permissions before retrying.
 
 ## PRs for this stack exist on GitHub but `jj-stack` doesn't know about them
 
@@ -212,27 +199,26 @@ Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage
 yet." This command is *not* for rewriting history or changing what is in the stack, only for
 telling `jj-stack` which local changes go with which PRs.
 
-## Old review branches or local review bookmarks remain after landing or closing
+## Old review branches or local review bookmarks remain after merging or closing
 
 Possible causes:
 
 - your `unstack` succeeded, but the follow-up cleanup hasn't run yet
-- you ran `land --skip-cleanup` to keep local review bookmarks on purpose
-- something prevented `jj-stack` from cleaning up automatically
-- a direct-push `land` succeeded; it closes the PR and forgets managed local bookmarks, but
-  currently leaves the remote review branch in place
+- GitHub merged the PRs, but selected `sync` or later cleanup has not run yet
+- another visible stack still needs the saved review link
+- something prevented conservative cleanup from proving that an artifact is safe to remove
 
 What to do:
 
 ```bash
+jj-stack sync <head-change-id>
 jj-stack cleanup --dry-run # optional
 jj-stack cleanup
 ```
 
-Use `--dry-run` first to preview what `cleanup` can remove. Then run plain `cleanup` to apply the
-listed actions. A remote branch left by a successful direct-push `land` may no longer have local
-tracking, so `cleanup` will not necessarily list it; delete that branch manually on GitHub if you
-no longer want it.
+Run selected `sync` first when merged ancestors still appear in the local stack. Use
+`cleanup --dry-run` to preview any remaining branch, bookmark, comment, or tracking removal, then
+run plain `cleanup` to apply the listed actions.
 
 ## You want to stop reviewing a stack on GitHub
 
@@ -289,17 +275,14 @@ command.
   `jj-stack sync <revset>`.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
   `jj-stack sync --all`.
-- `land --via merge`: if GitHub accepted a merge, preview with
-  `jj-stack sync --dry-run <head-change-id>`, then run `jj-stack sync <head-change-id>`. Rerun
-  `jj-stack land --via merge <head-change-id>` if you still want to land the remaining PRs. If
-  GitHub accepted no merge, retry the original command with the same selector and options.
-- Direct-push `land`: if trunk changed, preview with `jj-stack sync --all --dry-run`, then run
-  `jj-stack sync --all`. If the push did not reach trunk, retry the original command with the
-  same selector and options.
+- `merge`: rerun the same explicit selector and merge method. A matching request still in progress
+  asks you to wait; a completed native request is observed on retry. If an ordinary merge accepted
+  lower PRs first, preview with `jj-stack sync --dry-run <head-change-id>`, then run
+  `jj-stack sync <head-change-id>` before retrying the remainder.
 
 `sync <head-change-id>` handles commits rewritten by GitHub while keeping a review branch that a
-PR above still needs. `sync --all` handles a direct push whose exact submitted commit already
-reached trunk. Both inspect current GitHub state and trunk history.
+PR above still needs. `sync --all` checks independently tracked exact commits already on trunk.
+Both inspect current GitHub state and trunk history.
 
 ### Back out
 

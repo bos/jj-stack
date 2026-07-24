@@ -91,7 +91,7 @@ wrapper, or neighboring package does not count as simplification. CI runs
 `uv run tools/check_complexity.py`; run it locally when SLOCCount is available. Edits to
 `complexity-budget.toml`, the governed path list, or either pytest budget marker require the same
 scrutiny as an implementation change. The gate caps marked tests; reviewers remain responsible
-for marking every case in the bounded landing-and-recovery corpus.
+for marking every case in the bounded merge-and-recovery corpus.
 
 ## Review the user experience directly
 

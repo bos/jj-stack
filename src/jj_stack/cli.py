@@ -417,7 +417,7 @@ def build_parser() -> ArgumentParser:
         merge_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
-        help="Select the local change linked to this pull request number or URL",
+        help="Stop after the local change linked to this pull request number or URL",
     )
     add_help_argument(
         merge_parser,

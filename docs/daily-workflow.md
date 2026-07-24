@@ -96,6 +96,10 @@ Once the local stack looks right again, refresh GitHub:
 jj-stack submit
 ```
 
+If you split one previously submitted GitHub stack into separate local paths, `submit` may tell
+you that the old GitHub stack spans both results. Run the exact `gh stack unstack <number>`
+command in that diagnostic to dissolve the old grouping, then submit each resulting local stack.
+
 If you want to ask prior reviewers to take another look after you've addressed feedback, run:
 
 ```bash
@@ -137,81 +141,59 @@ For more detail, pass `--verbose`:
 jj-stack view --verbose
 ```
 
-## 6. Land the changes that are ready
+## 6. Ask GitHub to merge reviewed changes
 
-When the bottom part of the stack is ready to land:
-
-```bash
-jj-stack land
-```
-
-What does it mean for a change to be "ready"? Its state on GitHub must be:
-- open
-- not a draft
-- approved by at least one reviewer
-- no outstanding changes requested by any reviewer
-
-And also, locally, we need the `jj` state to be clean:
-- it has no unresolved conflicts
-- it has not diverged
-
-If you rewrote a reviewed change, rerun `submit` before landing even when the diff is unchanged.
-`land` accepts only the exact commit last sent for review when both the review
-branch and PR still point to it; `land` will not refresh a review to make the change landable.
-
-Immediately before changing trunk or a pull request, `land` rechecks the repository, trunk, PR,
-exact commit, and readiness. It stops if any of those changed since planning.
-
-If you want to preview the landing plan without actually landing your changes:
+When the bottom part of the stack is ready:
 
 ```bash
-jj-stack land --dry-run
+jj-stack merge
 ```
 
-If you want to land only up through one specific pull request:
+`merge` considers the consecutive open, non-draft PRs from the bottom of the stack. It does not
+try to duplicate GitHub's rules for approvals, checks, conflicts, merge queues, or repository
+policy. GitHub evaluates those rules when it handles the request.
+
+If you rewrote a reviewed change, rerun `submit` before merging even when the diff is unchanged.
+`merge` accepts only the exact commit last sent for review when the review branch and PR still
+point to it. It will not refresh a review to make the change mergeable.
+
+To preview the same selection and validation without asking GitHub to merge:
 
 ```bash
-jj-stack land --pull-request 7
+jj-stack merge --dry-run
 ```
 
-By default, a successful direct `land` forgets the local review bookmarks for the changes that
-actually landed and removes their review tracking. If another local stack still depends on a
-landed change, `land` keeps that bookmark and tracking and prints the `sync` command for the
-dependent stack. Use `--skip-cleanup` if you want to keep local review bookmarks deliberately.
-
-`land` lands the consecutive run of ready PRs at the bottom of your stack. It stops as soon as
-there's a change it cannot land, and will not land changes above a non-landable change. To land
-mid-stack changes, use `jj arrange` or `jj rebase` to reorder your stack and move them to the
-bottom first.
-
-A successful `land` pushes your local git commit IDs directly to `trunk()`. If later local
-changes remain above the landed changes, they will not need rebasing just because some changes
-landed. If someone lands your changes through the GitHub UI, say using a squash merge, you might
-need to rebase; read on.
-
-If your repo's branch protection requires changes to arrive through pull requests, the direct
-trunk push is not available. Land through GitHub instead, unless the repository requires a merge
-queue (which `jj-stack` cannot drive):
+To stop the selected bottom portion at one pull request:
 
 ```bash
-jj-stack land --via merge
+jj-stack merge --pull-request 7
 ```
 
-This retargets each ready PR to trunk and merges it on GitHub, bottom to top, stopping at the
-first PR GitHub reports as not mergeable (for example, when required checks are still running).
-The merge method comes from your repo's settings when only one is allowed; otherwise pass
-`--merge-method squash` (or `rebase`/`merge`). Because GitHub does the merging, your local
-commits are not what lands on trunk. The command rebases the remaining selected changes and
-updates only PRs that already existed for them. Unreviewed trailing work stays local. If it is
-interrupted after GitHub accepted a merge, run `jj-stack sync --dry-run <head-change-id>`, then
-`jj-stack sync <head-change-id>`. Rerun `jj-stack land --via merge <head-change-id>` if you still
-want to land the remaining PRs. If GitHub accepted no merge, retry your original `land --via
-merge` command directly.
+The merge method comes from repository settings when only one is enabled. If several are enabled,
+choose one explicitly:
+
+```bash
+jj-stack merge --merge-method squash
+```
+
+In repositories with GitHub stack support, GitHub merges the selected bottom portion as one
+operation. A failed operation merges nothing. GitHub may rewrite the branches for PRs that remain
+above a partial selection.
+
+In other repositories, GitHub merges the PRs bottom-up and stops at the first rejection. PRs it
+already accepted below that point stay merged. A one-PR review uses this same path even in a
+repository with GitHub stack support. Merging several ordinary PRs with `rebase` is not supported
+in one command because the first rewrite invalidates the later reviewed commit identities.
+
+`merge` does not rewrite local history, refresh surviving PRs, or remove tracking. After GitHub
+merges anything, run the selected `sync` command printed in the result. If an identical stack
+request is already pending, wait and rerun the same explicit `merge` command; once GitHub
+finishes, the retry observes the completed result.
 
 ## 7. Update a stack after GitHub merged lower PRs
 
-Use `sync` with the stack's head change ID when GitHub merged lower PRs through different commit
-IDs and your local stack still contains the old commits:
+Use `sync` with the stack's head change ID after `merge`, or whenever GitHub merged lower PRs
+through different commit IDs and your local stack still contains the old commits:
 
 ```bash
 jj-stack sync <head-change-id>
@@ -222,8 +204,12 @@ changes, and updates only PRs that already exist for them. It does not open a PR
 or touch other local stacks. If it cannot safely remove an old local copy, it leaves the change
 alone and prints the next command to run.
 
+GitHub rebase merges preserve jj change IDs, while squash merges do not. `sync` handles both:
+it follows a matching fetched change ID when present, and otherwise retires the old local change
+from the exact GitHub merge result without relabeling the commit that landed.
+
 `sync` does not otherwise rewrite history. If your stack simply drifted because `trunk()`
-advanced without anything in your stack landing, rebase with plain `jj`:
+advanced without anything in your stack merging, rebase with plain `jj`:
 
 ```bash
 jj rebase -s <bottom-of-stack> -d 'trunk()'
@@ -292,13 +278,12 @@ jj-stack view
 jj-stack submit
 # edit in jj
 jj-stack submit
-jj-stack land
+jj-stack merge
+jj-stack sync <head-change-id>
 ```
 
-Use `sync <head-change-id>` only when GitHub merged changes by another route or an interrupted
-`land --via merge` had already merged a PR. Rerun `land --via merge <head-change-id>` afterwards
-if you still want to land the remainder. If a direct-push `land` was interrupted after trunk
-changed, use `sync --all`. A successful uninterrupted `land` needs no routine follow-up command.
+Use the head change ID printed by `merge`. If GitHub rejected an ordinary PR after accepting lower
+ones, sync first and then rerun `merge <head-change-id>` if you still want to merge the remainder.
 
 ## When something goes wrong
 
@@ -325,14 +310,10 @@ jj-stack sync <head-change-id>
 jj-stack sync --all --dry-run
 jj-stack sync --all
 
-# land --via merge after GitHub accepted a merge: reconcile, then resume landing if desired
+# merge after GitHub accepted one or more PRs: reconcile, then retry if desired
 jj-stack sync --dry-run <head-change-id>
 jj-stack sync <head-change-id>
-jj-stack land --via merge <head-change-id>
-
-# direct-push land: find exact submitted commits that already reached trunk
-jj-stack sync --all --dry-run
-jj-stack sync --all
+jj-stack merge <head-change-id>
 ```
 
 Use explicit selectors after a failure, not a naked command that falls back to

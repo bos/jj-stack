@@ -1,8 +1,12 @@
-"""Ask GitHub to merge a contiguous reviewed prefix from the bottom of a stack.
+"""Ask GitHub to merge reviewed changes at the bottom of a stack.
 
-Native stacks use GitHub's asynchronous stack request; ordinary pull requests merge bottom-up.
-Every candidate must still match its saved tracking, submitted commit, review branch, and live
-head. GitHub alone moves trunk, so a successful result directs the user to `sync` the selection.
+Candidates are the consecutive open, non-draft pull requests from the bottom. Each must still
+match the exact commit last submitted; GitHub decides whether reviews, checks, conflicts, and
+repository rules allow the merge.
+
+Repositories with GitHub stack support merge the selected changes together. Other repositories
+merge pull requests bottom-up and stop at the first rejection. This command does not update local
+history or remove review state; run the printed `sync` command after GitHub merges anything.
 """
 
 from __future__ import annotations

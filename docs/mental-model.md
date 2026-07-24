@@ -20,14 +20,14 @@ agent to review:
 - assigning one `git` review branch and one PR per change in the stack
 - setting the base branch for each PR
 - refreshing those PRs after local rewrites
-- inspecting review state and landing ready changes
+- inspecting review state and asking GitHub to merge reviewed changes
 
 To create a review branch, `jj-stack` creates a bookmark with a well-defined prefix. By default
 that prefix is `review/`, but you can choose a different prefix such as `my-review-stack/`.
 These bookmarks are managed automatically, so you don't need to manage them yourself.
-`jj-stack` creates them for review, forgets the local ones after `jj-stack land` lands
-changes, and can also remove them later during `jj-stack unstack --cleanup` or `jj-stack
-cleanup`.
+`jj-stack` creates them for review and can remove them later during
+`jj-stack unstack --cleanup` or `jj-stack cleanup`. Merging itself does not rewrite local
+history or remove review state; selected `sync` reconciles GitHub's result first.
 
 ## Source of truth
 
@@ -59,6 +59,11 @@ This allows you to escape from the trap of thinking about "one long-lived local 
 request."  `jj-stack` creates `git` review branches only because GitHub requires them. Those
 branches are a transport layer; the main authoring model is still local `jj` history.
 
+When GitHub provides its stacked-PR feature, `jj-stack` registers the ordered PRs there. Otherwise
+it shows the same navigation through managed PR comments. Native membership remains derived
+GitHub state: the local DAG still decides which changes belong together. One active reviewed
+change cannot belong to two local review paths.
+
 ## Practical rule
 
 When in doubt:
@@ -66,3 +71,5 @@ When in doubt:
 - use `jj` to change the stack
 - use `jj-stack view` to inspect the matching GitHub PR stack
 - use `jj-stack submit` to refresh that PR stack
+- use `jj-stack merge` to ask GitHub to merge the reviewed bottom changes
+- use selected `jj-stack sync` afterward to reconcile local history

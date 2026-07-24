@@ -2,7 +2,7 @@
 
 This document covers the implementation choices that follow from the single canonical product
 specification, [design.md](design.md). It defines repository layout, component boundaries,
-tooling, test strategy, delivery shape, and the current implementation gaps.
+tooling, test strategy, and delivery shape.
 
 The canonical product specification is authoritative. This file records how the current code is
 built, not what the product does.
@@ -84,7 +84,8 @@ The bundled agent skill in `skills/jj-stack/` is installed separately from the e
 
 - discovers and caches the working invocation for a repository
 - uses `list --json` and `view --json` to recognize locally managed reviews
-- warns before direct `gh` mutations that could disrupt managed PRs or review branches
+- routes structural PR and review-branch changes through `jj-stack`, except for the explicit
+  `gh stack unstack` repair that dissolves one native resource before disjoint submissions
 
 Built-in help and the user guide own the command and alias inventory.
 
@@ -111,12 +112,16 @@ src/
     ...
     models/
     commands/
+      _github_stack_support.py
+      _native_stack_safety.py
       cleanup/
-      land/
+      merge/
       submit/
+        native.py
     jj/
     github/
     review/
+      native_sync.py
     state/
 tests/
   unit/
@@ -176,7 +181,8 @@ intermediate branch states. The one-bookmark untracked-remote fallback uses dire
 
 Planning is a layering rule rather than a separate package. Shared classification lives under
 `review/`, while command-specific planning lives beside the command, such as
-`commands/land/plan.py` and the submit modules. Given typed local and remote state, it decides:
+`commands/merge/plan.py`, `commands/merge/native.py`, and the submit modules. Given typed local
+and remote state, it decides:
 
 - which changes are reviewable
 - which bookmark each change should use
@@ -193,13 +199,19 @@ classifier over local revision state, saved tracking, remote refs, and already-l
 does not load state, choose a stack, or authorize mutation. Commands apply their own policy to the
 result and keep exact identity, baseline, PR, and bookmark values for concrete mutations.
 
+Repository discovery also owns the capability-independent one-review-path rule. It derives maximal
+live paths from the current DAG, including non-empty working copies in every workspace, and checks
+active plus prospective review identity. Native planners consume that result rather than accepting
+a caller-supplied topology model.
+
 This is where most correctness lives.
 
 ### GitHub client
 
 Thin `httpxyz` wrapper plus typed `pydantic` models. Knows how to fetch PR state, batch PR
 lookup by PR number or known head branch, create PRs, update PRs, assign reviewers and labels,
-manage stack-summary comments, and handle endpoint-specific pagination or retry.
+manage stack-summary comments, list/create/append/unstack native resources, submit and poll
+asynchronous native merges, and handle endpoint-specific pagination or retry.
 
 When endpoint semantics allow it, the client and command layers prefer batched or
 bounded-parallel GitHub work over one-request-per-item serial loops. Ordering
@@ -222,7 +234,8 @@ Property families and their assertions live in [property-testing.md](property-te
 managed comments, falling back to REST pagination only for PRs whose first comment page
 is incomplete.
 
-It does not decide stack topology or branch naming.
+The client reports endpoint results but does not decide capability, stack topology, branch naming,
+native membership policy, or fallback behavior.
 
 ### Config and tracking state
 
@@ -233,6 +246,8 @@ It does not decide stack topology or branch naming.
   effective `--config` / `--config-file` overrides on every `jj` invocation
 - tracking state lives in
   `${XDG_STATE_HOME:-~/.local/state}/jj-stack/repos/<repo-id>/state.json`
+- the state-file envelope also caches one `stacked_pull_requests` boolean for each resolved GitHub
+  repository; the enclosing path supplies the local repository half of the cache key
 - `<repo-id>` is derived from the canonical `.jj/repo` storage path so every workspace
   for the same repo shares one state location. Primary workspaces expose that path as a
   directory; additional workspaces expose a path file whose contents are resolved relative
@@ -248,18 +263,21 @@ The repo state directory also contains the operation lock files:
 
 Mutating commands hold the lock through their mutation phase. Bootstrap, validation, interactive
 selection, and final rendering may happen outside it. The lock is process coordination only. The
-state directory contains no operation journal, land note, phase, selector, path, or recovery
-checkpoint.
+state directory contains no operation journal, merge note, phase, selector, path, native resource
+ID, or recovery checkpoint.
 
-Landing and recovery share current-state observation rather than a durable operation state
+Merge and recovery share current-state observation rather than a durable operation state
 machine:
 
-- `commands/land/` checks and changes one selected stack
+- `commands/merge/` checks and asks GitHub to merge one selected review path
 - `commands/sync.py` repairs a selected stack or performs explicit repository-wide recovery
 - `review/landed_evidence.py` distinguishes an exact submitted commit from a rewritten GitHub
   merge result
 - `review/landed.py` changes landed PRs and removes saved tracking
 - `review/convergence.py` checks whether another visible stack still needs that tracking
+- `review/native_sync.py` validates historical native members and survivor transitions
+- `commands/_github_stack_support.py` owns the one cached capability decision
+- `commands/_native_stack_safety.py` shares resource-closure checks without owning command policy
 
 State saves are atomic but not fsync durable. The saved identity prevents action on a different PR
 or branch, while the baseline records the exact reviewed commit. If a reconstructible cleanup
@@ -361,7 +379,9 @@ Implemented local coverage includes:
 
 - unit tests for parsing, planning, and model behavior
 - local integration tests against the fake GitHub server and a real backing Git repo
-- 16 fixed generated/property cases that replay the integration harness in the default suite
+- six fixed generated/property cases that replay the integration harness in the default suite
+- focused merge and recovery cases, including native atomic failure, partial survivor rewrites,
+  terminal retry, and ordinary sequential stops
 
 Local tests are the default.
 
@@ -417,14 +437,21 @@ Rules:
 The fake server owns a real Git repo because many assertions are about actual remote
 branch state, not just JSON responses.
 
+Its native endpoints model ordered resource membership, historical merged prefixes, exact active
+suffix unstacking, create/append admission, and asynchronous merge submission and polling. The
+merge fixtures cover atomic failure, partial survivor rewrites, and terminal retry. They remain
+bounded contracts rather than a general native-stack emulator.
+
 We use FastAPI for the fake server unless Starlette later proves to offer a clear
 concrete advantage for this test harness.
 
-## Live GitHub evidence gap
+## Live GitHub evidence
 
-No live suite exists. The exact external contracts still needing evidence are recorded once in
-[backlog.md](backlog.md). Running a future live check requires explicit credentials, a disposable
-repository, and separate approval for the external mutations.
+There is no credentialed live suite. Approved disposable-repository experiments established the
+native create, append, unstack, historical-member, asynchronous merge, queue-rejection,
+merge-method, expected-head, and Git `change-id` contracts modeled by the fake. Future live checks
+still require explicit credentials, a disposable repository, and separate approval for external
+mutations.
 
 ## Development workflow
 
@@ -432,7 +459,7 @@ Because we build a stacked review tool, we use stacked review discipline:
 
 - every implementation slice is logically self-contained
 - every commit has a clear purpose and description
-- tests for the slice land with the slice
+- tests for the slice ship with the slice
 - any code change passes its relevant tests before the commit
 - docs move with behavior, not weeks later
 
@@ -505,7 +532,7 @@ incomplete-report code directly when a printed report is degraded.
 Fail-closed verification stops share exit code 1, so `DriftError` in `errors.py` also
 carries a `condition` naming which cross-system check failed (a missing or moved remote
 review branch, a non-open or ambiguous discovered PR, a saved-link mismatch, an unlinked
-change, or a selected land stack left off current trunk). The
+change, or a selected merge stack left off current trunk). The
 condition is not printed; it exists so the drift property harness
 ([distributed-state.md](./distributed-state.md)) can assert that a fail-closed stop
 fired for the drift it was aimed at rather than merely with the right exit code.

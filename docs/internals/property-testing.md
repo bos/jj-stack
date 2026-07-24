@@ -39,7 +39,7 @@ testing should spend its budget on those cross-system invariants.
   vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
   compact operation trace that can be copied into a deterministic regression test.
-- Keep the default suite fast. `./check.py` runs a fixed 16-case property corpus; larger
+- Keep the default suite fast. `./check.py` runs a fixed six-case property corpus; larger
   generated or randomized pools remain opt-in.
 - Use all available workers when exploration is widened. Scenario modules expose generated cases
   as ordinary data so pytest can distribute them across cores.
@@ -61,9 +61,9 @@ inspect fake GitHub events, and check invariants through plain Python APIs. Pyte
 APIs to temporary directories, monkeypatching, captured output, concise assertion reporting, and
 `pytest-xdist` scheduling.
 
-The scenario modules generate small `StackEditScenario` values. Submit and land use one shared
-`StackEditOperation` vocabulary and pure order-transition model; each command adds its own
-expected results and real-`jj` replay. Each submit scenario has:
+The scenario modules generate small `StackEditScenario` values. Submit uses one
+`StackEditOperation` vocabulary and pure order-transition model with real-`jj` replay. Each
+scenario has:
 
 - an initial stack size
 - an ordered list of stack-edit operations
@@ -169,112 +169,20 @@ The fixed corpus includes the composite `agent-recreated-pr` scenario described 
 [distributed-state.md](distributed-state.md). `submit` must refuse with the unsupported-stack
 diagnostic, and `view` must still report.
 
-## Land harness
+## Merge and sync coverage
 
-Land scenarios compose the states `land` actually meets. Each starts from a submitted linear
-stack, optionally applies a short trace of stack edits from the shared
-edit vocabulary — rewrite, insert before or after, abandon, reorder, and squash, with or
-without a follow-up resubmit — approves a prefix of the final live stack, then lands through one
-landing mode. Scenario dimensions also cover `--pull-request` selection, which caps the
-walk at the selected change, and a second independently submitted bystander stack whose
-identity, submitted commit, PR, and review branch the land must leave unchanged even though
-trunk moves under it.
+Merge and post-merge convergence use focused deterministic integration tests rather than the
+submit property generator. The tested boundaries include exact submitted-head validation,
+bottom-prefix selection, draft and closed boundaries, ordinary bottom-up stops, native atomic
+failure, partial native survivor rewrites, terminal retry, historical-member cleanup, and selected
+or repository-wide sync authorization.
 
-The walk model is exact rather than diff-based. A change is landable only when its live
-`commit_id`, submitted baseline, review ref, and PR head all identify the same snapshot. Any
-rewrite since submit — including a diff-equivalent rebase, move, reorder, or abandon repair —
-stops the walk. An inserted change without an existing review and an unapproved review are
-also stopping boundaries. `land` never refreshes or creates a review to make a change
-landable; a separate `submit` must first advance the submitted baseline.
-
-For direct-push landing, the checks require:
-
-- remote trunk points at the last landed local commit, and stays put when nothing is
-  ready to land
-- landed PRs are closed as merged, and their remote review branches are left intact
-  at the landed commits
-- landed local review bookmarks are forgotten only after proving that no surviving review still
-  uses them; the `--skip-cleanup` exception has focused command coverage
-- local review tracking for the landed prefix is removed; tracking above the landing
-  boundary and for orphaned changes is untouched
-- `list --json` stops reporting landed changes and still reports the remaining tracked
-  suffix
-
-For `land --via merge`, GitHub moves trunk by merging the accepted changes. Before returning,
-`land` verifies those results, rebases the selected surviving changes onto the merged trunk, and
-updates only survivors that already have reviews and passed current identity checks. Trailing
-unreviewed work remains local. Reviews above a `--pull-request` cap are out of scope and are not
-resubmitted. If they depend on a GitHub-rewritten landed change, its tracking remains and the
-output names the selected `sync` recovery. A blocked merge scenario marks the first PR after the
-merged changes as unmergeable. The command stops there, keeps the blocker open and tracked,
-verifies accepted merge results, removes proven landed ancestors when safe, rebases survivors
-onto fetched trunk, and updates only existing reviewed survivors.
-
-Both landing modes assert transient events, not only final state: each landed PR closes exactly
-once, and PRs outside the command's selected scope see no state or base event. Survivors during
-merge landing may be updated. The first blocked PR may be retargeted to trunk before GitHub
-refuses the merge, but it must never change state.
-
-## Land drift harness
-
-Land drift scenarios apply one external transition to a submitted, fully approved stack,
-then run `land` on its default selection so the drifted state must survive the
-in-command fetch. The model predicts one of three outcomes:
-
-- fail closed: an externally advanced trunk or externally merged selected review must stop
-  `land` before mutation. The external-merge case is handed to selected `sync` even when its
-  merge result is reachable from fetched trunk
-- prefix stop: an externally closed PR, a draft toggle, a changes-requested review, or a
-  deleted mid-stack review branch stops the readiness walk at the drifted change, and
-  the prefix below lands normally with the standard direct-push contract
-- fetch abandons: deleting the head change's review branch lets the fetch abandon the
-  local change (nothing else references it), so the re-resolved selection lands the
-  untouched survivors below it
-
-The mid-stack versus head split for deleted branches mirrors jj's own semantics: a
-mid-stack change stays visible because descendants' bookmarks keep it reachable, while
-an unreferenced head is abandoned by the fetch. Every drift scenario ends by running
-`view` on the default selection and requiring a report exit rather than a crash.
-In both prefix-stop and fetch-abandon outcomes, the stopping change keeps its saved bookmark
-name, PR number, and submitted commit, while its live GitHub PR remains unchanged. In the
-fetch-abandon case, the actual `jj` bookmark is gone with the deleted branch. `land` owns only
-the prefix it actually landed and leaves the saved identity and baseline for explicit follow-up.
-Derived managed comments on the landed changes may be deleted while finishing the operation.
-Fail-closed outcomes also assert the typed condition carried by the CLI error, so a
-plain stack fork caused by advanced trunk cannot pass by stopping on the
-merged-ancestor check or vice versa.
-
-## Land retry harness
-
-Land retry scenarios interrupt one direct-push land at a fault point, then run `sync --all` and
-require successful recovery rather than rollback. There is no saved transaction to resume. The
-fixed property family covers a failure while closing PRs and a lost tracking-removal save.
-Expanded runs also cover a load failure just after the trunk push and a lost push
-acknowledgement. The deterministic process-death corpus separately terminates a CLI child after
-the accepted trunk push, after an accepted PR merge, and before a tracking-removal save, then
-recovers in a fresh child.
-
-The checks span both runs with one event window: each landed PR transitions to closed exactly once
-in total, so recovery finishes only what the interrupted run left unfinished. Recovery must end
-with the standard direct-push contract and `list --json` free of the landed prefix; global
-recovery leaves existing reviews on the suffix unchanged. The deterministic integration suite
-covers fail-closed variants where a review repository, canonical head identity, review branch, or
-PR head changes between runs: `sync --all` preserves that exact identity and continues with the
-rest. Independently tracked sibling stacks remain unchanged.
-
-## Land handoff harness
-
-The handoff family replays multi-command recovery end to end. A prefix reaches trunk through an
-interrupted merge landing or through squash merges outside the tool with GitHub's usual
-head-branch auto-delete. Then selected `sync` rebuilds the suffix and updates its existing
-reviews, and a final direct-push land consumes it.
-
-The checks require recovery to finish before the final land: every suffix change
-keeps its PR number, bookmark, and pre-handoff approvals, the bottom suffix PR targets
-trunk, review branches point at the rebased commits, and the merged prefix sees no
-further event of any kind after the handoff begins. The recovery run proves the pre-merge local
-copies irrelevant to later work and removes their tracking directly. The chain must end with
-`list --json` empty and no tracking for any original change.
+The native tests assert both final Git and PR state and the significant API events. A terminal
+native failure changes nothing. A successful partial request may change survivor heads and bases,
+but `merge` does not rewrite local history; selected `sync` validates and converges that remote
+transition. Ordinary multi-PR merge is sequential, so a rejected PR preserves merges GitHub
+already accepted below it. These are bounded command contracts, not generated merge property
+families or a durable recovery state machine.
 
 ## Interrupted-submit retry harness
 
@@ -333,10 +241,9 @@ For the submitted stack as a whole:
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
-The default suite runs 16 fixed scenarios across submit edits, cross-stack changes, drift,
-landing, and retries. Their authoritative names and counts live in
-`tests/support/submit_property_scenarios.py` and `tests/support/land_property_scenarios.py`;
-larger deterministic pools remain opt-in.
+The default suite runs six fixed scenarios across submit edits, cross-stack changes, drift, and
+submit retries. Their authoritative names and counts live in
+`tests/support/submit_property_scenarios.py`; larger deterministic pools remain opt-in.
 
 ## Efficiency
 

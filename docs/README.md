@@ -10,7 +10,7 @@ GitHub head branch for one review change.
 - [Mental Model](mental-model.md)
   Understand what stays in `jj` and what `jj-stack` owns on GitHub.
 - [Daily Workflow](daily-workflow.md)
-  The normal author loop for submit, review, land, and cleanup.
+  The normal author loop for submit, review, merge, sync, and cleanup.
 - [JSON Output](json-output.md)
   The structured output schema for `view --json` and `list --json`.
 - [Exit Codes](exit-codes.md)

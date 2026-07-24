@@ -17,25 +17,28 @@ have defined behavior but no dedicated current scenario.
    (rebase, squash, abandon, new, describe), by `jj git fetch`, and by `jj-stack` itself
    (bookmark moves, pushes, selected `sync`).
 2. **Remote Git refs** — the branch namespace of the GitHub repository. Moved by
-   `jj-stack` pushes, by anyone else's pushes (a teammate landing to `main`, an agent
+   `jj-stack` pushes, by anyone else's pushes (a teammate merging to `main`, an agent
    pushing a branch with plain git), and by branch deletion from the GitHub UI or `gh`.
-3. **GitHub PR database** — PRs with head/base refs, open/closed/merged state, draft
-   flags, reviews, labels, comments. Moved by `jj-stack` mutations, by humans and agents
+3. **GitHub review state** — PRs with head/base refs, open/closed/merged state, draft
+   flags, reviews, labels, comments, plus native stack resources with ordered membership
+   and historical merge results. Moved by `jj-stack` mutations, by humans and agents
    through the UI or `gh`, and by GitHub itself: it auto-closes an open PR whose head
-   becomes reachable from its base, and closes PRs whose head branch is deleted.
+   becomes reachable from its base, closes PRs whose head branch is deleted, and records
+   native stack transitions.
 4. **Tracking store** — separate versioned `ReviewIdentity` and `SubmittedBaseline` records
    keyed by full `change_id`. Identity holds host/repository, PR number, canonical head owner/ref,
    bookmark ownership, and link state; baseline holds the exact submitted commit. Explicit
    attach, detach, restart, and repair commands change identity. A successful `submit`, or one
-   that recognizes a completed push after interruption, changes the baseline. Landing, recovery,
-   unstacking, or cleanup may remove both. Status observation never writes either record.
+   that recognizes a completed push after interruption, changes the baseline. Recovery,
+   unstacking, or cleanup may remove both. The same envelope holds the cached native-stack
+   capability by repository; status observation never writes any of these records.
 
 The `jj` DAG determines stack topology and content. The fetched trunk commit for the configured
 remote supplies ancestry evidence for the two landed rules in [design.md](design.md); ancestry
-alone does not authorize a mutation. GitHub determines PR identity, lifecycle, reviews, and
-merge-result identity. Saved identity and baseline records may block a mutation when they disagree
-with current state, but cannot authorize one by themselves. Every mutation rechecks the relevant
-sources.
+alone does not authorize a mutation. GitHub determines PR identity, lifecycle, reviews,
+native-resource membership and transitions, and merge-result identity. Saved identity and baseline
+records may block a mutation when they disagree with current state, but cannot authorize one by
+themselves. Every mutation rechecks the relevant sources.
 
 ## Healthy linkage
 
