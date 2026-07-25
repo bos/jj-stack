@@ -115,19 +115,6 @@ The completed series must satisfy all of these:
 - **Validated series:** every code commit passes focused checks, `./check.py`,
   `uv run tools/check_complexity.py`, and independent review.
 
-## 4. Consolidate the surviving test suite
-
-Review the surviving tests against the testing philosophy after the mechanism is gone:
-
-- delete assertions whose only distinct risk was local bookmark implementation detail;
-- retain boundary coverage for atomic leases, retries, remote drift, PR/head mismatch, cleanup
-  authorization, state-loss recovery, cross-stack rewrites, and foreign fetched branches;
-- reduce property scenarios to durable DAG, remote-ref, GitHub, and tracking invariants;
-- add no new behavior or production mechanism in this commit.
-
-Acceptance: the focused and full suites pass, test and total line counts fall, no complexity
-budget grows, `./check.py` passes, and independent review finds no lost distinct risk.
-
 ## 5. Review and simplify all documentation
 
 Perform a fresh end-to-end review of user-facing and internal documentation after the code

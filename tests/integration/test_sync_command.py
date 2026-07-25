@@ -225,8 +225,6 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     assert interrupted_state.submitted_baselines[survivor.change_id].commit_id == remote_survivor
     assert remote_survivor != baseline_before.commit_id
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == remote_survivor
-    review_temp = JjClient(repo).review_temp_artifacts()
-    assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
 
     monkeypatch.setattr(sync_command, "run_submit_async", real_run_submit)
     retry_exit_code = run_main(repo, config_path, "sync", survivor.change_id)

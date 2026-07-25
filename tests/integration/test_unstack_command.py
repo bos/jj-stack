@@ -220,7 +220,6 @@ def test_unstack_local_forgets_tracking_without_closing_pull_request(
     assert fake_repo.pull_requests[1].state == "open"
     assert change_id not in state_store.load().review_identities
     assert read_remote_ref(fake_repo.git_dir, branch)
-    assert JjClient(repo).list_imported_review_bookmarks() == ()
 
 
 def test_unstack_local_dry_run_leaves_tracking_and_pull_request_unchanged(
@@ -524,7 +523,7 @@ def test_unstack_apply_reports_blocked_when_github_is_unavailable(
     assert ReviewStateStore.for_repo(repo).load() == initial_state
 
 
-def test_unstack_apply_cleanup_deletes_review_bookmarks_comments_and_tracking(
+def test_unstack_apply_cleanup_deletes_review_branches_comments_and_tracking(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -598,7 +597,6 @@ def test_unstack_apply_cleanup_deletes_review_bookmarks_comments_and_tracking(
     assert refreshed_state.submitted_baselines == {}
     assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
     assert all(branch not in remote_refs(fake_repo.git_dir) for branch in branches)
-    assert JjClient(repo).list_imported_review_bookmarks() == ()
     assert action_order == [
         f"remote:{branches[1]}",
         f"remote:{branches[0]}",

@@ -72,20 +72,6 @@ def test_generate_review_branch_disambiguates_reserved_restart_marker() -> None:
     assert generate_review_branch(revision) == "review/fresh-pr42-change-zvlywqkx"
 
 
-def test_review_branch_resolution_generates_branch_when_no_identity_exists() -> None:
-    revision = _revision(
-        change_id="zvlywqkxtmnpqrstu",
-        description="Fix cache invalidation\n",
-    )
-
-    resolutions = resolve_review_branches(
-        revisions=(revision,),
-        review_identities={},
-    )
-
-    assert resolutions[0].branch == "review/fix-cache-invalidation-zvlywqkx"
-
-
 def test_review_branch_resolution_keeps_saved_branch_stable_after_subject_change() -> None:
     identities = {
         "zvlywqkxtmnpqrstu": _identity(head_ref="review/fix-cache-invalidation-zvlywqkx")

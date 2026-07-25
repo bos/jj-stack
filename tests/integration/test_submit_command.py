@@ -313,15 +313,12 @@ def test_submit_native_preflight_failures_recover_without_persisted_phase(
     assert "Could not inspect native GitHub stack membership" in capsys.readouterr().err
     failure = "unstack"
     head_change_id = JjClient(repo).discover_review_stack().head.change_id
-    local_before = JjClient(repo).list_imported_review_bookmarks()
     assert run_main(repo, config_path, "submit", "--dry-run", "--restart", head_change_id) == 0
     assert fake_repo.native_stacks == {1: (1, 2)}
-    assert JjClient(repo).list_imported_review_bookmarks() == local_before
     assert run_main(repo, config_path, "submit", "--restart", head_change_id) == EXIT_GITHUB
 
     assert ReviewStateStore.for_repo(repo).load() == state_before
     assert remote_refs(fake_repo.git_dir) == remote_before
-    assert JjClient(repo).list_imported_review_bookmarks() == local_before
     assert fake_repo.native_stacks == {}
 
     bottom_change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
@@ -1236,7 +1233,6 @@ def test_submit_updates_existing_remote_review_branch(
     assert exit_code == 0
     assert "pushed" in captured.out
     assert read_remote_ref(fake_repo.git_dir, bookmark) == rewritten_stack.revisions[-1].commit_id
-    assert JjClient(repo).list_imported_review_bookmarks() == ()
     assert fake_repo.pull_requests[pr_number].title == "feature 1 renamed"
     assert fake_repo.pull_requests[pr_number].body == "feature 1 renamed"
 
@@ -1279,8 +1275,6 @@ def test_submit_rerun_recovers_after_lost_remote_update_response(
     with pytest.raises(RuntimeError, match="Simulated failure after remote update"):
         run_main(repo, config_path, "submit", change_id)
     capsys.readouterr()
-
-    assert JjClient(repo).list_imported_review_bookmarks() == ()
 
     monkeypatch.setattr(
         "jj_stack.commands.submit.command.JjClient.mutate_remote_review_refs",

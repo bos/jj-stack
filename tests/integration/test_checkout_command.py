@@ -38,8 +38,8 @@ def test_checkout_bootstraps_tracking_without_importing_review_branches(
     assert ReviewStateStore.for_repo(repo).load() == expected
     client = JjClient(repo)
     assert client.list_imported_review_bookmarks() == ()
-    assert client.review_temp_artifacts().ref_target is None
-    assert client.review_temp_artifacts().bookmark_targets == ()
+    review_temp = client.review_temp_artifacts()
+    assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
 
 
 def test_checkout_without_fetch_rejects_an_imported_review_bookmark(

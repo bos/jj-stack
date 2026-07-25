@@ -146,7 +146,6 @@ def test_relink_rejects_pull_request_branch_for_a_different_change(
     assert exit_code == 1
     assert "does not match change" in captured.err
     assert top_change_id not in ReviewStateStore.for_repo(repo).load().review_identities
-    assert JjClient(repo).review_temp_artifacts().ref_target is None
 
 
 def test_relink_rejects_pull_request_with_missing_remote_head_branch(

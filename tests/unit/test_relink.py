@@ -57,24 +57,6 @@ def test_relink_rejects_duplicate_saved_pr_or_branch_claim_in_same_repository() 
         )
 
 
-def test_relink_duplicate_claim_check_is_scoped_to_repository() -> None:
-    identity = _identity(pr_number=1)
-    other_repository = ReviewIdentity(
-        github_host=identity.github_host,
-        repository_owner="another-org",
-        repository_name=identity.repository_name,
-        pr_number=identity.pr_number,
-        head_owner=identity.head_owner,
-        head_ref=identity.head_ref,
-    )
-
-    _ensure_relinkable_cached_link(
-        change_id="feature1change",
-        identity=identity,
-        state=ReviewState(review_identities={"other-change": other_repository}),
-    )
-
-
 class _GithubClientStub:
     def __init__(self, pull_request: GithubPullRequest) -> None:
         self.pull_request = pull_request

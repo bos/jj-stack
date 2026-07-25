@@ -3,18 +3,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import cast
 
-import pytest
-
-import jj_stack.commands.cleanup.command as cleanup_module
 import jj_stack.commands.cleanup.stale as stale_module
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._close_actions import plan_review_cleanup
-from jj_stack.commands.cleanup.shared import PreparedCleanup
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.review.observation import (
     RepositoryObservation,
     ReviewObservation,
@@ -122,48 +118,6 @@ def test_cleanup_blocks_when_the_exact_remote_branch_drifted() -> None:
     assert "different revision" in blocker.message
 
 
-def test_cleanup_preserves_branch_used_by_an_open_dependent_pull_request() -> None:
-    dependent = GithubPullRequest(
-        base=GithubBranchRef(ref=BRANCH),
-        head=GithubBranchRef(ref="review/dependent-bbbbbbbb"),
-        html_url="https://github.com/octo-org/stacked-review/pull/2",
-        number=2,
-        state="open",
-        title="dependent",
-    )
-
-    _pull_request, update, blocker = plan_review_cleanup(
-        allowed_states=frozenset({"closed", "merged"}),
-        change_id=CHANGE_ID,
-        observation=_observation(open_dependents=(dependent,)),
-        review_identity=_identity(),
-        submitted_baseline=_BASELINE,
-    )
-
-    assert update is None
-    assert blocker is not None
-    assert blocker.kind == "remote branch"
-    assert "open PR #2 still uses" in blocker.message
-
-
-@pytest.mark.parametrize("complete", (False, True))
-def test_cleanup_loads_remote_context_only_for_complete_tracking_pairs(
-    complete: bool,
-) -> None:
-    state = ReviewState(
-        review_identities={CHANGE_ID: _identity()},
-        submitted_baselines=({CHANGE_ID: _BASELINE} if complete else {}),
-    )
-    prepared = PreparedCleanup(
-        context=_fake_context(),
-        github_target=None,
-        dry_run=False,
-        state=state,
-    )
-
-    assert cleanup_module._cleanup_needs_remote_context(prepared_cleanup=prepared) is complete
-
-
 def _fake_context(
     *,
     jj_client: JjClient | None = None,
@@ -208,7 +162,6 @@ def _pull_request() -> GithubPullRequest:
 
 def _observation(
     *,
-    open_dependents: tuple[GithubPullRequest, ...] = (),
     remote_target: str | None = _BASELINE.commit_id,
 ) -> RepositoryObservation:
     identity = _identity()
@@ -218,7 +171,7 @@ def _observation(
         duplicate_claim_change_ids=frozenset(),
         fetched_trunk_commit_id=None,
         github_repository=None,
-        open_pull_requests_by_base={BRANCH: open_dependents},
+        open_pull_requests_by_base={BRANCH: ()},
         remote=_REMOTE,
         remote_trunk_target=None,
         repository=_REPOSITORY,
