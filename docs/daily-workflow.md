@@ -44,11 +44,6 @@ Commands operate on the selected parent chain. If a reviewed ancestor also has a
 child, that child is a separate path; you do not need to rebase it away before working with the
 selected stack.
 
-Review branch names stay readable and stable as
-`review/<subject-slug>-<short-change-id>`, but those branches live only on the Git remote.
-`jj-stack` saves each exact name with its PR identity instead of leaving persistent review
-bookmarks in your local `jj` view, so they do not clutter `jj log` or bookmark output.
-
 ## 3. Submit the stack
 
 Create or refresh the GitHub pull requests for the current stack:
@@ -133,7 +128,7 @@ jj-stack checkout --pull-request <pr> --fetch
 
 Despite its name, `checkout` does not move the working copy. It fetches only the exact reviewed
 commits needed to identify the stack, saves local tracking, and prints the tip commit. It does not
-leave review bookmarks behind. To continue above a remote-only stack, use
+leave persistent review bookmarks behind. To continue on top of those reviewed commits, use
 `jj new <tip-commit-id>` afterward; to edit an existing change directly, use
 `jj edit <change-id>`.
 

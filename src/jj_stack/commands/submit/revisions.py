@@ -45,7 +45,7 @@ def prepare_submit_revisions(
                 )
             if remote_target is None:
                 raise DriftError(
-                    t"Remote review branch "
+                    t"Review branch "
                     t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} no longer exists.",
                     condition="remote_branch_missing",
                     hint=(
@@ -55,7 +55,7 @@ def prepare_submit_revisions(
                 )
             if remote_target not in {baseline.commit_id, revision.commit_id}:
                 raise DriftError(
-                    t"Remote review branch "
+                    t"Review branch "
                     t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} points to an "
                     t"unexpected commit.",
                     condition="remote_branch_moved",
@@ -81,7 +81,7 @@ def prepare_submit_revisions(
                 )
         elif remote_target not in {None, revision.commit_id}:
             raise DriftError(
-                t"Remote review branch "
+                t"Review branch "
                 t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} already exists and "
                 t"points to another change.",
                 condition="remote_branch_moved",

@@ -57,8 +57,8 @@ on `trunk()`, but it may also fork from a recent ancestor of `trunk()`. Each suc
 based on the preceding PR in the stack.
 
 This allows you to escape from the trap of thinking about "one long-lived local branch per pull
-request." `jj-stack` creates remote Git review branches only because GitHub requires them. Those
-branches are a transport layer; the main authoring model is still local `jj` history.
+request." `jj-stack` creates review branches only because GitHub requires them. Those branches are
+a transport layer; the main authoring model is still local `jj` history.
 
 When GitHub provides its stacked-PR feature, `jj-stack` registers the ordered PRs there. Otherwise
 it shows the same navigation through managed PR comments. Native membership remains derived

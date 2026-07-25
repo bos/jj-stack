@@ -90,11 +90,9 @@ jj-stack submit --describe <change-id>=pr-body.md
 For a multi-change stack, you can use `--describe stack=stack-overview.md` to add an overview
 description of the entire stack to the head PR. This is very helpful to orient a reviewer.
 
-On first submit, `jj-stack` creates one GitHub review branch per change. Its readable name has
-the fixed form `review/<subject-slug>-<short-change-id>`, for example
-`review/add-the-api-qpvuntsm`. `jj-stack` keeps that name stable for the life of the review, even
-if you rewrite the change or edit its subject. The branches stay on the Git remote rather than
-appearing as persistent bookmarks in your local `jj` view.
+On first submit, `jj-stack` creates one stable, readable GitHub review branch per change, such as
+`review/add-the-api-qpvuntsm`. The branches stay on the Git remote rather than appearing as
+persistent bookmarks in your local `jj` view.
 
 Inspect your stack again:
 

@@ -9,9 +9,8 @@ testing should spend its budget on those cross-system invariants.
 ## Requirements
 
 - Test user-reachable stack edits: reorder, reparent, insert, abandon, rewrite,
-  squash, split-stack suffix moves, two-stack merges, single-change moves between
-  independently submitted stacks, and combinations of those edits after an initial
-  successful submit.
+  squash, two-stack merges, single-change moves between independently submitted
+  stacks, and combinations of those edits after an initial successful submit.
 - Use real `jj` commands, real remote branch updates, the CLI entrypoint, and the fake
   GitHub server for integration coverage. A pure model may supplement this, but it must
   not replace replay through the actual integration boundary.
@@ -107,26 +106,26 @@ The successful-submit operations cover the common linear-stack edit surface:
 - squash a live change into its predecessor
 
 Those operations cover the common single-selected-stack failure classes while staying
-small enough for quick shrinking by inspection. Separate harness families cover split-stack
-suffix moves, two-stack merges, single-change moves between stacks, and failed-submit retries.
-Duplicate is not represented in the current model.
+small enough for quick shrinking by inspection. Separate harness families cover two-stack
+merges, single-change moves between stacks, and failed-submit retries. Duplicate is not
+represented in the current model.
 
 ## Cross-stack harnesses
 
-Three harness families cover edits that involve more than one submitted stack:
+Two harness families cover edits that involve more than one submitted stack:
 
-- **Split:** submit one resulting stack. Update its PRs; leave the unselected stack's tracking,
-  branches, PRs, bases, state, and approvals unchanged.
 - **Merge:** submit the combined stack. Reuse every PR and approval by `change_id`; recompute
   heads and bases; store no topology.
 - **Move:** submit the destination stack. Reuse the moved change's PR; leave the source remainder
   unchanged.
 
-All three families assert that no original PR is unexpectedly closed, merged, or replaced.
-Selected PR bases are recomputed; PRs in the unselected or source remainder must not receive a
-base-retarget event. Fixed cases cover a suffix split, merging two stacks, and moving a middle
-change while leaving a nonempty source remainder. Expanded runs vary directions, sizes, and
-insertion points.
+Both families assert that no original PR is unexpectedly closed, merged, or replaced. Selected PR
+bases are recomputed; PRs in the source remainder must not receive a base-retarget event. Fixed
+cases cover merging two stacks and moving a middle change while leaving a nonempty source
+remainder. Expanded runs vary directions, sizes, and insertion points.
+
+Focused deterministic tests cover resubmitting after `jj split` creates an additional change and
+the `view` warning after a reviewed path gains a sibling.
 
 ## External-drift harness
 
@@ -240,8 +239,8 @@ For the submitted stack as a whole:
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
-The default suite runs six fixed scenarios across submit edits, cross-stack changes, drift, and
-submit retries. Their authoritative names and counts live in
+The default suite runs six fixed scenarios: one stack edit, one merge, one move, one submit retry,
+and two drift cases. Their authoritative names and counts live in
 `tests/support/submit_property_scenarios.py`; larger deterministic pools remain opt-in.
 
 ## Efficiency

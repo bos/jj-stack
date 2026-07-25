@@ -50,9 +50,9 @@ jj config set --repo 'revset-aliases."trunk()"' main
 
 Possible causes:
 
-- the remote review branch moved or disappeared
+- the review branch moved or disappeared
 - a PR link or review branch changed on another machine or workspace
-- you want to refresh both live GitHub state and exact remote-branch observations
+- you want to refresh fetched repository state and check current review branches
 
 What to do:
 
@@ -62,7 +62,8 @@ jj-stack view --fetch
 
 `view` already checks live GitHub state when GitHub is reachable. `view --fetch` also refreshes
 ordinary fetched repository state and directly observes each saved review branch. Ordinary fetch
-excludes `review/*`, so this read-only refresh does not import persistent review bookmarks.
+excludes `review/*`, so this read-only refresh does not import the review branches as persistent
+bookmarks.
 
 If a change shows `submitted, no PR found for branch`, `jj-stack` has tracking
 for a previous submit, but GitHub did not report a PR for the current review
@@ -223,9 +224,8 @@ jj-stack checkout --pull-request <number-or-url> --fetch
 ```
 
 Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage them locally
-yet." It fetches only the exact reviewed commits and creates or refreshes local tracking. It does
-not leave review bookmarks, move the working copy, or rewrite history. After fetching a
-remote-only stack, use the tip commit printed by `checkout`:
+yet." It connects the PRs to local tracking and prints their tip without moving the working copy.
+To continue from that tip:
 
 ```bash
 jj new <tip-commit-id>
@@ -274,9 +274,9 @@ run plain `cleanup` to apply the listed actions.
 
 ## A command reports an imported managed review bookmark
 
-Normal `jj-stack` fetches exclude `review/*`. This diagnostic means an older configuration or a
-manual fetch imported a managed review branch into the local bookmark view, where it could make a
-review change immutable or ambiguous.
+Normal `jj-stack` fetches exclude `review/*`. This diagnostic means a manual or non-isolated fetch
+imported a managed review branch into the local bookmark view, where it could make a review change
+immutable or ambiguous.
 
 Move any local work to a bookmark outside `review/`, then forget the imported managed bookmark
 with the exact `jj bookmark forget --include-remotes <review/...>` command from the diagnostic
@@ -309,22 +309,9 @@ lets later cleanup verify the old artifacts and prevents `submit` from silently 
 review. Add `--cleanup` if you also want to delete review branches, comments, and
 tracking that `jj-stack` can verify are safe to remove.
 
-Plain `jj-stack cleanup` observes the exact saved PR before acting. It removes artifacts and
-tracking only for a PR that GitHub reports as closed or merged. It leaves open reviews alone,
-reports open orphaned reviews without deleting them, and fails closed when the saved PR, branch,
-repository, or current GitHub result does not match.
-
-Cleanup also keeps the review branch and tracking if any open PR in the same repository uses that
-branch as its base. This includes PRs that `jj-stack` does not track and PRs whose local changes
-are gone. The blocker names one such PR: close it or retarget it to another base, then rerun the
-same cleanup command. Selected `unstack --cleanup` works from the stack head down, but the real
-command still checks GitHub again immediately before deleting a branch and before removing
-tracking.
-
-Immediately before deletion, cleanup rechecks the exact saved PR, confirms no other tracked
-change claims the same head branch, verifies that no same-repository open PR depends on it as a
-base, and requires the review not to be an active member of a native GitHub stack. It then
-observes the exact remote ref again and deletes it only under its expected-target lease.
+Plain `jj-stack cleanup` handles closed or merged reviews and leaves open reviews alone. If it
+reports that another open PR depends on a review branch, close or retarget the named PR and rerun
+the same cleanup command.
 
 ## A command was interrupted before it finished
 
@@ -348,9 +335,8 @@ jj-stack view <head-change-id>
 ### Finish what was started
 
 Use the stack's head change ID so you do not accidentally operate on another stack or only on a
-prefix of the affected stack.
-`jj-stack` inspects current jj, tracking, and GitHub state instead of replaying the failed
-command.
+prefix of the affected stack. `jj-stack` rereads current jj, tracking, remote, and GitHub state
+each time.
 
 - `submit`: preview with `jj-stack submit --dry-run <head-change-id>`, then run
   `jj-stack submit <head-change-id>`.

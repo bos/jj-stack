@@ -1,8 +1,9 @@
 """Check jj-stack's configuration and connectivity.
 
-Runs read-only checks for review-fetch isolation, temporary import state, remote
-selection, GitHub connectivity, authentication, and trunk discovery. Nothing is
-changed. Exit status is 0 if all checks pass or warn; 1 if any check fails.
+Runs read-only checks for review-branch fetch settings, leftovers from interrupted
+checkout or sync commands, remote selection, GitHub connectivity, authentication,
+and trunk discovery. Nothing is changed. Exit status is 0 if all checks pass or
+warn; 1 if any check fails.
 
 Failures include a recovery command when jj-stack can determine one.
 """
@@ -77,8 +78,8 @@ async def _run_checks(
     if selected_remote is None:
         results.extend(
             _skipped(
-                "review fetch",
-                "review temp",
+                "review branch fetch",
+                "checkout/sync leftovers",
                 "GitHub remote",
                 "GitHub auth",
                 "connectivity",
@@ -177,7 +178,7 @@ def _check_review_fetch_isolation(
         )
     except ReviewFetchIsolationRequired as error:
         return CheckResult(
-            "review fetch",
+            "review branch fetch",
             "fail",
             (
                 error_message(error),
@@ -185,9 +186,9 @@ def _check_review_fetch_isolation(
             ),
         )
     except CliError as error:
-        return CheckResult("review fetch", "fail", str(error))
+        return CheckResult("review branch fetch", "fail", str(error))
     return CheckResult(
-        "review fetch",
+        "review branch fetch",
         "ok",
         t"exactly one {ui.code(isolation.refspec)} exclusion",
     )
@@ -196,11 +197,11 @@ def _check_review_fetch_isolation(
 def _check_review_temp(*, context: CommandContext) -> CheckResult:
     artifacts = context.jj_client.review_temp_artifacts()
     if artifacts.ref_target is None and not artifacts.bookmark_targets:
-        return CheckResult("review temp", "ok", "absent")
+        return CheckResult("checkout/sync leftovers", "ok", "none")
     return CheckResult(
-        "review temp",
+        "checkout/sync leftovers",
         "warn",
-        t"temporary review-import state remains; retry the interrupted "
+        t"leftovers from an interrupted command remain; retry the "
         t"{ui.cmd('jj-stack checkout --fetch')} or {ui.cmd('jj-stack sync')} command to clear it",
     )
 

@@ -328,7 +328,7 @@ def build_parser() -> ArgumentParser:
         "-f",
         "--fetch",
         action="store_true",
-        help="Fetch first so view uses current remote branch locations",
+        help="Fetch ordinary remote state and check current review branches before reporting",
     )
     view_parser.add_argument(
         "-v",
@@ -348,7 +348,7 @@ def build_parser() -> ArgumentParser:
         "-f",
         "--fetch",
         action="store_true",
-        help="Fetch first so list uses current remote branch locations",
+        help="Fetch ordinary remote state and check current review branches before reporting",
     )
     list_parser.add_argument(
         "--json",
@@ -933,9 +933,9 @@ def _add_checkout_parser(
         "--fetch",
         action="store_true",
         help=(
-            t"Refresh the selected stack's remote branch state and, for "
-            t"{ui.cmd('--pull-request')}, import only the exact branches needed "
-            t"for that stack"
+            t"Fetch ordinary remote state and, for "
+            t"{ui.cmd('--pull-request')}, fetch the reviewed commits without "
+            t"leaving persistent review bookmarks"
         ),
     )
     return parser

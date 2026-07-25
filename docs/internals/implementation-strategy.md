@@ -296,10 +296,10 @@ purpose: after a native merge rewrites the active suffix, it validates every act
 and parent, reobserves the whole branch set, then imports the exact top into jj. It rebases only
 trailing local descendants, abandons the replaced local active copies, and advances every adopted
 baseline together through the state store's existing pair compare-and-swap authority. It
-reobserves the branch set again before leaving the attachment. If that check fails, the checkpoint
-lets a retry adopt the newer exact chain while historical tracking remains until survivor submit
-succeeds. No review bookmark survives; the exact imported commits become the local unbookmarked
-survivor chain.
+reobserves the branch set again before leaving the attachment. If that check fails, the updated
+baselines let a retry adopt the newer exact chain while historical tracking remains until
+survivor submit succeeds. No review bookmark survives; the exact imported commits become the
+local unbookmarked survivor chain.
 
 State saves are atomic but not fsync durable. The saved identity prevents action on a different PR
 or branch, while the baseline records the exact reviewed commit. If a reconstructible cleanup

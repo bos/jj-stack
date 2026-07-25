@@ -12,7 +12,9 @@ description: >
 
 `jj-stack` sends a linear chain of local `jj` changes to GitHub as dependent
 pull requests. Division of labor: `jj` edits the local stack; `jj-stack` owns
-its GitHub review state (review branches, PRs, merging, cleanup).
+its GitHub review state (review branches, PRs, merging, cleanup). Stable
+`review/<subject-slug>-<eight-character-change-id>` branches stay on the
+selected Git remote and do not become persistent local bookmarks.
 
 ## Resolving the command
 
@@ -38,11 +40,13 @@ command they use before any direct GitHub mutation.
    described below.
 2. **Check tracking before the first `gh` or API write in a repo.** Run
    `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json
-   --fetch` for one PR. If the PR, branch, or change appears in the output,
-   the stack is tracked; cache that answer for the session. Do this
-   lazily — the trigger is a pending GitHub write, not entering a repo. These
-   commands exit 10 when they print a report that is incomplete or needs
-   attention; read the JSON before concluding anything.
+   --fetch` for one PR. A matching PR or `branch` field proves tracking; a bare
+   change with `status: unsubmitted` does not. Absence does not prove a GitHub
+   PR is unmanaged after local tracking loss: run
+   `checkout --pull-request <pr> --fetch` and inspect again. Cache the answer
+   for the session. Do this lazily — the trigger is a pending GitHub write, not
+   entering a repo. These commands exit 10 when they print a report that is
+   incomplete or needs attention; read the JSON before concluding anything.
 3. **Use jj-stack as the stack authority.** Once jj-stack is detected anywhere
    in a repo, use it for stack-level PR work in that repo: status, submit,
    refresh, base/head changes caused by stack rewrites, merging, cleanup,
@@ -108,8 +112,9 @@ multiple desired local paths; run it, then submit each path separately.
   merges preserve jj change IDs; squash merges do not, and `sync` handles both
   from the fetched merge result.
 - **Adopt existing PRs into local tracking:**
-  `checkout --pull-request <pr> --fetch` for a whole stack (sets up tracking
-  only; rewrites nothing and does not touch GitHub), or
+  `checkout --pull-request <pr> --fetch` for a whole stack (fetches the reviewed
+  commits and saves tracking without moving the working copy, rewriting
+  existing changes, or touching GitHub), or
   `relink <pr> <revset>` for one PR/change link.
 - **Fresh PRs for the same local changes:** `submit --restart --dry-run
   <revset>`, then `submit --restart <revset>`. Replacement branches preserve
@@ -129,8 +134,8 @@ or `unstack` from what you see.
    put a dependency in the same change or a lower one, and unrelated work in
    a separate stack.
 2. Confirm the shape with `view` (`--json` for machine-readable output,
-   `--fetch` when current remote branch positions matter); `list` shows the
-   repo-wide inventory.
+   `--fetch` to fetch ordinary remote state and check current review branches);
+   `list` shows the repo-wide inventory.
 3. `submit --dry-run`, then `submit` to create or refresh PRs. Add
    `--re-request` only when the user wants previous reviewers asked again.
 4. Apply review feedback in the change it belongs to: edit the lower `jj`
@@ -163,4 +168,6 @@ that is incomplete or needs attention (the output is still valid — read it);
 - jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.
 - Stale workspace: `jj workspace update-stale`.
 - Local recovery: `jj op log` and `jj undo`; never destructive git commands.
+- Imported review bookmark or interrupted checkout/sync leftovers: run `doctor`
+  and follow the exact recovery command it prints.
 - Auth or remote resolution unclear: `doctor`.

@@ -21,10 +21,6 @@ Examples use angle brackets for values you must replace. For example, in
 `jj-stack view <head-change-id>`, replace `<head-change-id>` with the change ID shown by `jj log`
 or `jj-stack`.
 
-One term you will see is *review branch*. This is the Git branch that GitHub uses for a pull
-request. Its fixed readable form is `review/<subject-slug>-<short-change-id>`, and `jj-stack`
-manages it on the remote without leaving a persistent local bookmark.
-
 In interactive terminals, longer multi-step GitHub work shows a progress bar
 on stderr while `jj-stack` is waiting on GitHub.
 

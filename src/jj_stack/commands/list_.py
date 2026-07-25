@@ -7,7 +7,7 @@ It also shows orphaned PRs: tracked PRs whose local change is no longer part of 
 stack. Close any open PRs and clean up every verified orphan shown with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
-`--fetch` runs a fetch first so the report uses current remote branch locations.
+`--fetch` fetches ordinary remote state and checks current review branches before reporting.
 """
 
 from __future__ import annotations

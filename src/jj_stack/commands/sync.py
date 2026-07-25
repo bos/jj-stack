@@ -1,4 +1,4 @@
-"""Reconcile a selected stack after merges, or retire exact landed reviews with `sync --all`."""
+"""Update a stack after GitHub merges, or clean up merged reviews with `sync --all`."""
 
 from __future__ import annotations
 

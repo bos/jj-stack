@@ -1,4 +1,8 @@
-"""Attach exact GitHub pull requests to local jj changes without bookmarks."""
+"""Connect existing GitHub pull requests to local jj changes.
+
+With --pull-request --fetch, fetch the reviewed commits without moving the working copy or leaving
+persistent review bookmarks.
+"""
 
 from __future__ import annotations
 

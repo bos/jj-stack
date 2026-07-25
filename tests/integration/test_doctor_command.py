@@ -65,7 +65,7 @@ def test_doctor_exits_zero_for_healthy_repo(
 
     assert exit_code == 0
     assert "GitHub auth" in captured.out
-    assert "review temp" in captured.out
+    assert "checkout/sync leftovers" in captured.out
     assert "Traceback" not in captured.out + captured.err
 
 

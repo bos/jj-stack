@@ -140,7 +140,7 @@ review/<slug-from-subject>-<change_id.short(8)>
 Example:
 
 ```text
-review/fix-bookmark-resolution-ypvmkkuo
+review/add-cache-index-ypvmkkuo
 ```
 
 The slug helps reviewers using the GitHub UI or plain Git. The `change_id` suffix keeps
@@ -491,10 +491,11 @@ PRs so the operator can reopen or restore them on GitHub. Defense-in-depth for t
 predictor, not a substitute.
 
 For a stack with exactly one change, `submit` behaves like a plain PR-submit flow: no stack helper
-invocation and no new navigation or overview comment. Legacy repositories remove older managed
-navigation and overview comments left from a larger selected stack. Native repositories leave
-navigation comments untouched and remove only an obsolete managed overview. After a successful
-live submit, the URL of the top of the stack is printed so the user can open it in a browser.
+invocation and no new navigation or overview comment. Repositories without native GitHub stack
+support remove older managed navigation and overview comments left from a larger selected stack.
+Native repositories leave navigation comments untouched and remove only an obsolete managed
+overview. After a successful live submit, the URL of the top of the stack is printed so the user
+can open it in a browser.
 
 There is no meaningful stack metadata to add when the stack has only one PR.
 
@@ -667,11 +668,11 @@ revset and PR number, and omitting selector flags defaults to the stack headed b
 `checkout --pick` is a third, interactive selector: it lists the locally tracked stacks
 (current stack first) numbered on standard output, reads one number from standard
 input, and then proceeds exactly as if that stack's head had been passed via
-`--revset`. The picker offers only stacks that already have local tracking — attaching
-a remote-only stack still requires an explicit `--pull-request`. Empty, non-numeric, or
-out-of-range input fails closed with a usage error, and no tracked stacks at all is a
-targeted error pointing at `--pull-request`. The prompt happens before the operation
-lock is taken so an idle picker never blocks other commands.
+`--revset`. The picker offers only stacks that already have local tracking — attaching a stack
+that exists only on GitHub still requires an explicit `--pull-request`. Empty, non-numeric, or
+out-of-range input fails closed with a usage error, and no tracked stacks at all is a targeted
+error pointing at `--pull-request`. The prompt happens before the operation lock is taken so an
+idle picker never blocks other commands.
 
 `checkout` sets up tracking, not workspace motion:
 
@@ -758,8 +759,8 @@ resource only while at least one complete tracked historical member validates th
 This is bounded remote-result authority, not tree-equivalence evidence or permission to accept
 later drift. Global sync requires a native PR to report terminally merged before finalizing it and
 preserves tracked historical evidence while an active tracked suffix still needs selected sync.
-An exact native member commit merely appearing on trunk does not authorize the legacy
-retarget-and-close path.
+An exact native member commit merely appearing on trunk does not authorize `sync --all` to
+retarget and close the review.
 
 GitHub preserves jj's Git `change-id` header through both native and ordinary rebase merges, but
 not through squash merges. Selected `sync` uses the fetched result: a matching change ID is the
@@ -827,20 +828,10 @@ artifacts the tool can verify belong to the stack:
 - remove the identity and baseline pair only when no same-repository open PR still names the
   saved review branch as its base
 
-If the tool cannot verify the exact saved identity, submitted baseline, live PR, unique branch
-claim, dependent-stack state, native membership, and remote target needed for a deletion,
-`--cleanup` refuses it rather than falling back to namespace or branch-name heuristics.
-
-For branch deletion and tracking retirement, the dependent-PR rule is exact: every open PR in the
-same GitHub repository whose `base.ref` equals the candidate `ReviewIdentity.head_ref` blocks the
-cleanup. The PR need not have jj-stack tracking or a local change; an untracked or orphaned PR is
-still a dependent. Selected stack cleanup works from the head toward the base so an upper selected
-PR is closed before its parent is reconsidered. A dry run may treat only earlier selected PRs in
-that order as closed. The real command never makes that assumption and observes GitHub again at
-each mutation boundary. Immediately before deletion it also requires the exact PR to remain
-closed or merged, exactly one tracked change to claim the head branch, and no active native-stack
-membership. It then rereads the remote ref and deletes only its exact submitted target under a
-lease.
+The exact eligibility and recheck rules are defined once under
+[Cleanup semantics](#cleanup-semantics). Selected cleanup works from the head toward the base, so
+a dry run may treat only earlier selected PRs in that order as closed. The real command observes
+GitHub again at each mutation boundary.
 
 `unstack` is idempotent:
 
@@ -1061,11 +1052,9 @@ one before merging.
 
 - **Deletion of a remote review branch** (the same direct leased mutation transport). GitHub
   closes any PR whose head ref points at the deleted branch. Defense: branch deletion is invoked
-  only by `cleanup` or `unstack --cleanup` under an exact ref lease. Immediately before deletion,
-  the saved PR must still exist, match `ReviewIdentity`, and be closed or merged; the head branch
-  must have one tracked claim; no same-repository open PR may use it as a base; and no active
-  native-stack member may still require it. The exact remote target is then reread and must equal
-  the submitted baseline. A failed check keeps the branch and identity/baseline pair.
+  only by `cleanup` or `unstack --cleanup` after the exact
+  [cleanup checks](#cleanup-semantics), under an exact ref lease. A failed check keeps the branch
+  and identity/baseline pair.
 
 - **`update_pull_request(base=…)`**. Setting a PR base to a branch that already
   contains the PR's head triggers GitHub's merged auto-close. Defense: in `submit`,
@@ -1316,7 +1305,7 @@ Shape:
       "repository_name": "example",
       "pr_number": 123,
       "head_owner": "octocat",
-      "head_ref": "review/fix-bookmark-resolution-ypvmkkuo"
+      "head_ref": "review/add-cache-index-ypvmkkuo"
     }
   },
   "stacked_pull_requests": {
