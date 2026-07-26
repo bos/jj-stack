@@ -234,6 +234,19 @@ jj new <tip-commit-id>
 Use `jj-stack checkout --pick` only for stacks this local repository already tracks; to discover
 a GitHub-only stack, select one of its PRs explicitly as shown above.
 
+If `checkout` instead reports that the change is already here at a different commit, this
+repository already has the change and you have edited it since the last submit. Fetching would
+leave two copies of it, so `checkout` stops. Attach the pull request to the change you already
+have, then publish your edit:
+
+```bash
+jj-stack relink <number> <change-id>
+jj-stack submit
+```
+
+For a stack of several PRs, relink attaches the one you name; rerun `jj-stack submit` and follow
+the guidance it prints for any remaining untracked branch.
+
 ## `submit` says one GitHub stack spans several local paths
 
 GitHub still groups PRs that your local `jj` history now places on separate paths. `jj-stack`

@@ -709,6 +709,10 @@ Failure guidance stays specific:
 - if multiple PRs match the same head branch, point at `view --fetch` and `relink`
 - if any checked-out revision lacks an exact discovered remote branch, stop rather than inventing
   a local match
+- before `--fetch` imports anything, read the selected PR head's change ID from the remote object
+  without creating a ref. If a visible local revision already holds that change at another
+  commit, stop and name `relink`, because importing would leave a divergent copy that no rerun can
+  remove. If the change is already divergent, name the revisions to reconcile instead
 - if the fetched stack shape is unsupported locally, point at selected `sync` only when the issue
   is proven landed ancestry rather than remote identity
 - if `checkout` defaulted to the current stack and that stack has no matching PR, say so

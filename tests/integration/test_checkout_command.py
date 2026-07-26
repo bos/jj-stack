@@ -62,6 +62,28 @@ def test_checkout_without_fetch_rejects_an_imported_review_bookmark(
     assert JjClient(repo).list_imported_review_bookmarks() == (identity.head_ref,)
 
 
+def test_checkout_fetch_rejects_a_locally_rewritten_pull_request_without_importing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    change_id = next(iter(state_store.load().review_identities))
+    resolve_state_path(repo).unlink()
+    run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
+    capsys.readouterr()
+
+    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "1") == 1
+
+    captured = capsys.readouterr()
+    unwrapped = " ".join(captured.err.split())
+    assert "already here at a different commit" in unwrapped
+    assert f"jj-stack relink 1 {change_id}" in unwrapped
+    assert len(JjClient(repo).query_revisions(f"change_id({change_id})")) == 1
+
+
 def test_checkout_pull_request_rejects_cross_repository_head(
     tmp_path: Path,
     monkeypatch,

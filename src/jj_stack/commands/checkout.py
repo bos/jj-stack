@@ -23,7 +23,7 @@ from jj_stack.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.client import JjCliArgs, JjClient, UnsupportedStackError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
@@ -34,6 +34,7 @@ from jj_stack.review.branches import (
 )
 from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.observation import duplicate_review_claim_change_ids
+from jj_stack.review.status import status_preparation_cli_error
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 HELP = "Connect jj-stack to an existing stack of pull requests"
@@ -188,6 +189,12 @@ async def _checkout_pull_request_stack(
                 remote=remote.name,
                 on_isolation_change=report_fetch_isolation,
             )
+            _reject_locally_rewritten_change(
+                client=client,
+                head_sha=top_head_sha,
+                pull_number=pull_number,
+                remote_name=remote.name,
+            )
             with client.import_remote_review_ref(
                 remote=remote.name,
                 branch=top_pull_request.head.ref,
@@ -197,11 +204,7 @@ async def _checkout_pull_request_stack(
                     branch=top_pull_request.head.ref,
                     revision=imported,
                 )
-                stack = client.discover_review_stack(
-                    imported.commit_id,
-                    allow_divergent=False,
-                    allow_immutable=True,
-                )
+                stack = _discover_checkout_stack(client=client, revision=imported.commit_id)
         else:
             matches = client.query_revisions_by_commit_ids((top_head_sha,))
             if len(matches) != 1:
@@ -213,11 +216,7 @@ async def _checkout_pull_request_stack(
                 branch=top_pull_request.head.ref,
                 revision=matches[0],
             )
-            stack = client.discover_review_stack(
-                top_head_sha,
-                allow_divergent=False,
-                allow_immutable=True,
-            )
+            stack = _discover_checkout_stack(client=client, revision=top_head_sha)
 
         pull_requests = await _load_pull_request_chain(
             github_client=github_client,
@@ -253,6 +252,58 @@ async def _checkout_pull_request_stack(
         fetched_tip_commit=(top_head_sha if fetch else None),
         stack=stack,
     )
+
+
+def _reject_locally_rewritten_change(
+    *,
+    client: JjClient,
+    head_sha: str,
+    pull_number: int,
+    remote_name: str,
+) -> None:
+    """Reject a fetch that would import a rewritten copy of a visible local change.
+
+    The remote commit's change ID is read without creating a ref, because importing it first
+    would leave a divergent second copy behind that no rerun can remove. On a fresh checkout
+    that costs one extra object fetch; reading the same header inside the import primitive
+    would instead give that shared primitive a second policy path.
+    """
+
+    change_id = client.read_remote_git_change_id(remote=remote_name, commit_id=head_sha)
+    if change_id is None:
+        return
+    # `change_id()` rather than an exact symbol: it tolerates a change that is already
+    # divergent, which is the state this check exists to keep the tool out of.
+    local = client.query_revisions(f"change_id({change_id})")
+    if not any(revision.commit_id != head_sha for revision in local):
+        return
+    if len(local) > 1:
+        raise CliError(
+            t"Change {ui.change_id(change_id)} already has more than one visible revision "
+            t"here, so PR #{pull_number} cannot be attached to one of them.",
+            hint=t"Inspect them with {ui.cmd('jj log -r')} "
+            t"{ui.revset(f'change_id({change_id})')}, abandon the copies you do not want, "
+            t"then retry.",
+        )
+    raise CliError(
+        t"Change {ui.change_id(change_id)} is already here at a different commit than "
+        t"PR #{pull_number}'s head, so fetching it would leave two copies.",
+        hint=t"Attach the pull request to the local change with "
+        t"{ui.cmd(f'jj-stack relink {pull_number} {change_id}')}.",
+    )
+
+
+def _discover_checkout_stack(*, client: JjClient, revision: str) -> LocalStack:
+    """Resolve the reviewed stack, translating shape failures into repair guidance."""
+
+    try:
+        return client.discover_review_stack(
+            revision,
+            allow_divergent=False,
+            allow_immutable=True,
+        )
+    except UnsupportedStackError as error:
+        raise status_preparation_cli_error(error) from error
 
 
 async def _load_pull_request(
