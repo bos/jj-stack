@@ -274,15 +274,17 @@ run plain `cleanup` to apply the listed actions.
 
 ## A command reports an imported managed review bookmark
 
-Normal `jj-stack` fetches exclude `review/*`. This diagnostic means a manual or non-isolated fetch
-imported a managed review branch into the local bookmark view, where it could make a review change
-immutable or ambiguous.
+Normal `jj-stack` fetches exclude `review/*`. This diagnostic means a manual or non-isolated
+fetch imported a managed review branch, or a leftover backing Git ref was exposed during a
+`jj-stack` operation. The bookmark could otherwise make a review change immutable or ambiguous.
 
 Move any local work to a bookmark outside `review/`, then forget the imported managed bookmark
-with the exact `jj bookmark forget --include-remotes <review/...>` command from the diagnostic
-and rerun `jj-stack`. If the diagnostic instead names an effective
-`remotes.<remote>.fetch-bookmarks` override, unset that exact setting first so `jj-stack` can keep
-the managed namespace isolated.
+with the exact `jj bookmark forget --include-remotes <review/...>` command from the diagnostic.
+Run the printed `jj git export` command next so the backing Git ref is also removed, then rerun
+`jj-stack`.
+
+If the diagnostic instead names an effective `remotes.<remote>.fetch-bookmarks` override, unset
+that exact setting first so `jj-stack` can keep the managed namespace isolated.
 
 ## You want to stop reviewing a stack on GitHub
 

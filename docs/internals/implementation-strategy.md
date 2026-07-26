@@ -180,12 +180,15 @@ a configured remote name, and the same boundary works for colocated and non-colo
 repositories.
 
 Ordinary fetch installs a negative Git refspec for `refs/heads/review/*` and rejects an effective
-jj `fetch-bookmarks` override that would bypass it. Review observation uses direct `git ls-remote`
-against the fetch URL, without importing refs or bookmarks. Explicit `checkout` attachment fetches
-one exact remote ref into a fixed temporary Git ref, imports it into jj, verifies the full change
-ID, and removes the temporary ref and bookmark in a `finally` path. `relink` instead fetches and
-reads the exact remote commit object without creating a ref, then compares its full change ID to
-the selected local revision.
+jj `fetch-bookmarks` override that would bypass it. Every broad jj import or fetch that jj-stack
+performs immediately rechecks for imported managed review bookmarks before callers consume its
+result. Recovery ends with `jj git export`, so forgetting an imported bookmark also removes its
+raw local or remote-tracking ref. Review observation uses direct `git ls-remote` against the fetch
+URL, without importing refs or bookmarks. Explicit `checkout` attachment fetches one exact remote
+ref into a fixed temporary Git ref, imports it into jj, verifies the full change ID, and removes
+the temporary ref and bookmark in a `finally` path. `relink` instead fetches and reads the exact
+remote commit object without creating a ref, then compares its full change ID to the selected
+local revision.
 
 Every submit or deletion expresses its complete remote-ref mutation as one direct atomic Git push
 to the push URL. Each update carries an exact `force-with-lease` expectation, including expected

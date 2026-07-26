@@ -63,29 +63,80 @@ def test_list_git_remotes_preserves_distinct_fetch_and_push_urls(tmp_path: Path)
     assert remote.push_url == "git@github.test:octo-org/stacked-review.git"
 
 
-def test_imported_review_bookmark_diagnostic_emits_a_working_recovery_command(
+@pytest.mark.parametrize(
+    ("layout_flag", "exposure"),
+    (("--no-colocate", "import"), ("--colocate", "fetch")),
+)
+def test_stale_raw_review_ref_is_rejected_after_broad_operations(
     tmp_path: Path,
+    layout_flag: str,
+    exposure: str,
 ) -> None:
-    repo = init_repo(tmp_path)
+    repo = tmp_path / "repo"
     remote = tmp_path / "remote.git"
     run_command(["git", "init", "--bare", str(remote)], tmp_path)
+    run_command(["jj", "git", "init", layout_flag, str(repo)], tmp_path)
     commit_file(repo, "feature", "feature.txt")
+    commit_id = _commit_id(repo, "@-")
     change_id = _change_id(repo, "@-")
     branch = f"review/feature-{change_id[:8]}"
     run_command(["jj", "git", "remote", "add", "origin", str(remote)], repo)
     run_command(["jj", "bookmark", "create", branch, "-r", "@-"], repo)
     run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", branch], repo)
     run_command(["jj", "bookmark", "forget", branch], repo)
+    run_command(["jj", "bookmark", "forget", "--include-remotes", branch], repo)
+    run_command(["jj", "git", "export"], repo)
     client = JjClient(repo)
+    client.ensure_review_fetch_isolation(remote="origin")
 
-    with pytest.raises(CliError) as raised:
-        client.ensure_review_fetch_isolation(remote="origin")
-
-    assert raised.value.hint is not None
-    hint = plain_text(raised.value.hint)
-    command = hint.split("run ", maxsplit=1)[1].split(", then", maxsplit=1)[0]
-    run_command(shlex.split(command), repo)
+    git_root = Path(run_command(["jj", "git", "root"], repo).stdout.strip())
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(git_root),
+            "update-ref",
+            f"refs/remotes/origin/{branch}",
+            commit_id,
+        ],
+        repo,
+    )
     assert client.list_imported_review_bookmarks() == ()
+
+    with pytest.raises(CliError) as exposed_raised:
+        if exposure == "fetch":
+            client.fetch_remote(remote="origin")
+        else:
+            with client.import_remote_review_ref(
+                remote="origin",
+                branch=branch,
+                expected_target=commit_id,
+                expected_change_id=change_id,
+            ):
+                pytest.fail("an imported stale review ref should prevent attachment")
+
+    assert exposed_raised.value.hint is not None
+    imported_hint = plain_text(exposed_raised.value.hint)
+    forget = imported_hint.split("run ", maxsplit=1)[1].split(", then run ", maxsplit=1)[0]
+    export = imported_hint.split(", then run ", maxsplit=1)[1].split(".", maxsplit=1)[0]
+    assert client.list_imported_review_bookmarks() == (branch,)
+    assert client.review_temp_artifacts().bookmark_targets == ()
+    assert client.review_temp_artifacts().ref_target is None
+    run_command(shlex.split(forget), repo)
+    run_command(shlex.split(export), repo)
+    assert client.list_imported_review_bookmarks() == ()
+
+    client.fetch_remote(remote="origin")
+    with client.import_remote_review_ref(
+        remote="origin",
+        branch=branch,
+        expected_target=commit_id,
+        expected_change_id=change_id,
+    ) as imported:
+        assert imported.commit_id == commit_id
+    assert client.list_imported_review_bookmarks() == ()
+    assert client.review_temp_artifacts().bookmark_targets == ()
+    assert client.review_temp_artifacts().ref_target is None
 
 
 @pytest.mark.parametrize("layout_flag", ("--colocate", "--no-colocate"))

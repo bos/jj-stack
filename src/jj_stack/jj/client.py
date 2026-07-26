@@ -902,21 +902,7 @@ class JjClient:
                 hint=hint,
             )
 
-        imported = self.list_imported_review_bookmarks()
-        if imported:
-            forget = ui.cmd(
-                "jj bookmark forget --include-remotes "
-                + " ".join(shlex.quote(name) for name in imported)
-            )
-            raise CliError(
-                t"Managed review bookmarks are already imported locally: "
-                t"{ui.join(ui.bookmark, imported)}.",
-                hint=(
-                    t"Move any work you need to keep to names outside "
-                    t"{ui.bookmark(_review_namespace())}, run {forget}, then use checkout or "
-                    t"relink to restore tracking."
-                ),
-            )
+        self._require_no_imported_review_bookmarks()
 
         config_key = f"remote.{remote}.fetch"
         configured = self._git_fetch_refspecs(remote)
@@ -972,6 +958,27 @@ class JjClient:
         if on_change is not None:
             on_change(result)
         return result
+
+    def _require_no_imported_review_bookmarks(self) -> None:
+        """Reject managed review bookmarks that have entered the local jj view."""
+
+        imported = self.list_imported_review_bookmarks()
+        if not imported:
+            return
+        forget = ui.cmd(
+            "jj bookmark forget --include-remotes "
+            + " ".join(shlex.quote(name) for name in imported)
+        )
+        export = ui.cmd("jj git export")
+        raise CliError(
+            t"Managed review bookmarks are already imported locally: "
+            t"{ui.join(ui.bookmark, imported)}.",
+            hint=(
+                t"Move any work you need to keep to names outside "
+                t"{ui.bookmark(_review_namespace())}, run {forget}, then run {export}. "
+                t"Then retry the command."
+            ),
+        )
 
     def list_imported_review_bookmarks(self) -> tuple[str, ...]:
         """Return managed-namespace bookmarks already imported into jj."""
@@ -1086,6 +1093,7 @@ class JjClient:
                 expected_targets=expected_targets,
             )
             self._run_jj(("git", "import"), ignore_working_copy=True)
+            self._require_no_imported_review_bookmarks()
             revision = self.resolve_revision(_quote_revset_symbol(_REVIEW_TEMP_BOOKMARK))
             if revision.commit_id != expected_target:
                 raise JjCommandError(
@@ -1161,6 +1169,7 @@ class JjClient:
             on_change=on_isolation_change,
         )
         self._run_jj(("git", "fetch", "--remote", remote))
+        self._require_no_imported_review_bookmarks()
 
     def list_remote_branches(
         self,
