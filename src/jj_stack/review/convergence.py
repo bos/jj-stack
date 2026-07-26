@@ -128,11 +128,20 @@ def build_selected_convergence_plan(
             pull_request is None
             or identity.repository_key != repository.repository_key
             or not identity.matches_pull_request(pull_request)
-            or pull_request.normalize_state().state != "open"
         ):
             raise CliError(
                 t"The pull request no longer matches saved tracking for "
-                t"{ui.change_id(candidate.change_id)}."
+                t"{ui.change_id(candidate.change_id)}.",
+                hint=t"Reattach the intended review with {ui.cmd('jj-stack relink')}, or replace "
+                t"it using {ui.cmd(f'jj-stack submit --restart {candidate.change_id}')}.",
+            )
+        lifecycle = pull_request.normalize_state().state
+        if lifecycle != "open":
+            raise CliError(
+                t"PR #{pull_request.number} for {ui.change_id(candidate.change_id)} is "
+                t"{lifecycle}, so sync cannot update that review.",
+                hint=t"Reopen it on GitHub, or replace it using "
+                t"{ui.cmd(f'jj-stack submit --restart {candidate.change_id}')}.",
             )
         reviewed.append(revision)
     plan = SelectedConvergencePlan(
