@@ -2,7 +2,7 @@
 production = 21_062
 tests = 22_020
 total = 43_179
-land = 1_697
+merge = 1_697
 governed = 3_307
 governed_module = 502
 checker = 179
@@ -20,7 +20,7 @@ production = "Production"
 tests = "Tests"
 total = "Production and tests combined"
 checker = "Complexity checker"
-land = "Merge command"
+merge = "Merge command"
 governed = "Landing and recovery code"
 c901 = "Production"
 governed_c901 = "Landing and recovery code"
@@ -32,7 +32,7 @@ production = "line"
 tests = "line"
 total = "line"
 checker = "line"
-land = "line"
+merge = "line"
 governed = "line"
 c901 = "function"
 governed_c901 = "function"
@@ -43,7 +43,7 @@ landing_recovery = "case"
 production = ["src"]
 tests = ["tests"]
 checker = ["tools/check_complexity.py"]
-land = ["src/jj_stack/commands/merge"]
+merge = ["src/jj_stack/commands/merge"]
 governed = [
   "src/jj_stack/commands/merge",
   "src/jj_stack/commands/sync.py",

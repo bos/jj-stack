@@ -93,7 +93,7 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
         "tests": "Tests",
         "total": "Production and tests combined",
         "checker": "Complexity checker",
-        "land": "Merge command",
+        "merge": "Merge command",
         "governed": "Landing and recovery code",
         "c901": "Production",
         "governed_c901": "Landing and recovery code",
@@ -103,9 +103,9 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
     limits = {name: 10 for name in labels} | {"governed_module": 5}
     limits["governed_c901"] = 0
     measured = {name: 8 for name in labels}
-    measured |= {"checker": 10, "land": 12, "governed": 11, "governed_c901": 0}
+    measured |= {"checker": 10, "merge": 12, "governed": 11, "governed_c901": 0}
     units = {
-        name: "line" for name in ("production", "tests", "total", "checker", "land", "governed")
+        name: "line" for name in ("production", "tests", "total", "checker", "merge", "governed")
     }
     units |= {"c901": "function", "governed_c901": "function"}
     units |= {"fixed_property": "case", "landing_recovery": "case"}

@@ -96,7 +96,7 @@ def _report(
 ) -> int:
     failures: list[str] = []
     sections = (
-        ("Code size", ("production", "tests", "total", "land", "governed", "checker")),
+        ("Code size", ("production", "tests", "total", "merge", "governed", "checker")),
         ("Functions with a complexity score above 10", ("c901", "governed_c901")),
         ("Fixed test-case limits", ("fixed_property", "landing_recovery")),
     )
@@ -149,7 +149,7 @@ def main() -> int:
         "production": _code_lines(paths["production"]),
         "tests": _code_lines(paths["tests"]),
         "checker": _code_lines(paths["checker"]),
-        "land": _code_lines(paths["land"]),
+        "merge": _code_lines(paths["merge"]),
         "governed": _code_lines(paths["governed"]),
     }
     measured["total"] = measured["production"] + measured["tests"]
