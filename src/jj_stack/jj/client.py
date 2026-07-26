@@ -1273,7 +1273,9 @@ class JjClient:
         if all(update.desired_target == update.expected_target for update in ordered_updates):
             return
 
-        command = ["push", "--atomic"]
+        # Carry only the leased review refs: tag auto-follow would publish unrelated local
+        # tags, and a pre-push hook was never invoked when this went through `jj git push`.
+        command = ["push", "--atomic", "--no-follow-tags", "--no-verify"]
         for ref, update in zip(refs, ordered_updates, strict=True):
             expected = update.expected_target or ""
             command.append(f"--force-with-lease={ref}:{expected}")

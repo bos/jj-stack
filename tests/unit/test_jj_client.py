@@ -1256,6 +1256,8 @@ def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects
         if invocation[3:] == (
             "push",
             "--atomic",
+            "--no-follow-tags",
+            "--no-verify",
             f"--force-with-lease={old_ref}:old",
             f"--force-with-lease={new_ref}:",
             "git@github.test:octo-org/repo.git",
