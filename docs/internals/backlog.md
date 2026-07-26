@@ -190,3 +190,25 @@ Covering every head means reading the pull-request chain before the import. That
 runs after it, and the chain read that follows the import is the one that authorizes the tracking
 write, so a pre-import walk would either duplicate those requests or move the authorizing read
 earlier. Decide which before implementing.
+
+## Rename the reserved review branch namespace to `jj-stack/`
+
+_Benefit: medium — `review/` is a plausible name for a user's own branches, and the whole
+namespace is reserved, so a collision costs the user a branch that silently stops updating._
+
+The reserved namespace is `review/`. The fetch exclusion covers all of it and the
+imported-bookmark guard reports all of it, so any branch a user keeps under `review/` is refused
+or stops being fetched. `jj-stack/` would make that reservation almost collision-free while
+keeping the same one-namespace rule.
+
+Deferred because the change is mechanical but wide, and because it resets live tracking:
+
+- every saved `ReviewIdentity.head_ref` starts with `review/`, and the state store validates head
+  refs against the managed grammar on every read, so existing records become malformed. Per the
+  tracking-state rules they are reported and isolated with `relink` guidance rather than dropped,
+  but anyone with live stacks re-adopts them
+- existing remote `review/*` branches become unmanaged and need deleting by hand
+- the prefix constant is one line; the hardcoded branch strings across the tests and every doc
+  mention are the bulk of the work
+
+No migration or compatibility shim should be written for this; the project has no such burden.
