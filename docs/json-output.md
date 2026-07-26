@@ -35,7 +35,8 @@ omitted otherwise.
 
 `branch` is present only when tracking data attaches the change to an exact review branch.
 An unsubmitted change has no `branch` field; `jj-stack` does not generate a speculative name
-for status output.
+for status output. An orphan row always has one, because saved tracking is the only thing that
+identifies it.
 
 `pull_request` is present when `jj-stack` knows the matching PR identity. It contains PR
 identity, not a duplicate status summary; use the change's `status` field for review

@@ -90,6 +90,7 @@
       "required": [
         "type",
         "change_id",
+        "branch",
         "subject",
         "status"
       ],

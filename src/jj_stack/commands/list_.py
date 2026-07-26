@@ -282,12 +282,12 @@ def _json_stack_row(row: StackRow) -> dict[str, object]:
 
 def _json_orphan_row(row: OrphanRow) -> dict[str, object]:
     payload: dict[str, object] = {
+        "branch": row.branch,
         "change_id": row.change_id,
         "status": ui.plain_text(row.state),
         "subject": row.subject,
         "type": "orphan",
     }
-    payload["branch"] = row.branch
     if row.pull_request is not None:
         payload["pull_request"] = row.pull_request
     return payload
