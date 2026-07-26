@@ -77,7 +77,8 @@ def test_unstack_apply_closes_pull_request_and_preserves_exact_tracking(
     dry_run = capsys.readouterr()
 
     assert dry_run_exit_code == 1
-    assert "do not exactly match one native GitHub stack" in _combined_output(dry_run)
+    assert "keeps #2 active outside the selected stack" in _combined_output(dry_run)
+    assert "gh stack unstack 7" in _combined_output(dry_run)
     assert operations == [] and fake_repo.pull_requests[1].state == "open"
     assert state_store.load() == state_before
 
@@ -85,7 +86,7 @@ def test_unstack_apply_closes_pull_request_and_preserves_exact_tracking(
     blocked = capsys.readouterr()
 
     assert blocked_exit_code == 1
-    assert "do not exactly match one native GitHub stack" in _combined_output(blocked)
+    assert "keeps #2 active outside the selected stack" in _combined_output(blocked)
     assert operations == [] and fake_repo.pull_requests[1].state == "open"
     assert state_store.load() == state_before
 
@@ -133,6 +134,31 @@ def test_unstack_dissolves_active_suffix_and_retains_historical_prefix(
     assert "dissolve GitHub stack #7" in captured.out
     assert fake_repo.native_stacks == {7: (1,)}
     assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].state == "closed"
+
+
+def test_unstack_dissolves_a_resource_that_dropped_a_closed_selected_review(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A selected review GitHub no longer lists as a member must not block the dissolve."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = JjClient(repo).discover_review_stack()
+    state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.native_stacks = {7: (2,)}
+
+    exit_code = run_main(repo, config_path, "unstack", stack.head.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, _combined_output(captured)
+    assert "dissolve GitHub stack #7" in captured.out
+    assert fake_repo.native_stacks == {}
+    assert fake_repo.pull_requests[1].merged_at is None
     assert fake_repo.pull_requests[2].state == "closed"
 
 
@@ -1215,7 +1241,7 @@ def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
 
     assert exit_code == 1
     assert "Close blocked:" in output
-    assert "do not exactly match one native GitHub stack" in _combined_output(captured)
+    assert "keeps #2 active outside the selected stack" in _combined_output(captured)
     assert fake_repo.pull_requests[bottom_pr_number].state == "open"
     assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
     assert state_store.load() == state

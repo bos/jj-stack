@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, replace
 
 import jj_stack.ui as ui
+from jj_stack.commands._native_stack_safety import selected_native_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubAsyncMerge, GithubStack
@@ -48,25 +49,15 @@ def build_native_merge_plan(
     by_pull = {
         revision.identity.pr_number: revision for revision in merge_plan.reviewed_revisions
     }
-    overlaps = tuple(
-        stack for stack in stacks if not set(by_pull).isdisjoint(stack.pull_request_numbers)
-    )
-    if not overlaps:
+    resource = selected_native_stack(selected_pull_numbers=tuple(by_pull), stacks=stacks)
+    if resource is None:
         if len(by_pull) > 1:
             raise CliError(
                 "GitHub did not report a native stack for this multi-PR review.",
                 hint=t"Run {ui.cmd('submit')} before merging.",
             )
         return None
-    if len(overlaps) != 1:
-        raise CliError("Selected reviews overlap multiple native GitHub stacks.")
-    resource = overlaps[0]
-    try:
-        active = tuple(by_pull[number] for number in resource.active_pull_request_numbers)
-    except KeyError as error:
-        raise CliError(
-            t"GitHub stack #{resource.number} has an unselected active member."
-        ) from error
+    active = tuple(by_pull[number] for number in resource.active_pull_request_numbers)
     if merge_plan.planned_revisions:
         planned_numbers = tuple(
             revision.identity.pr_number for revision in merge_plan.planned_revisions

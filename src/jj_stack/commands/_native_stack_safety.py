@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 import jj_stack.ui as ui
@@ -10,6 +11,64 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubStack
 from jj_stack.state.store import ReviewStateStore
+
+
+def selected_native_stack(
+    *,
+    selected_pull_numbers: Collection[int],
+    stacks: Sequence[GithubStack],
+) -> GithubStack | None:
+    """Return the one native GitHub stack the selected pull requests belong to.
+
+    This is the only authority for that question. The selection may overlap at most one
+    resource, and every active member of that resource must be selected; a merged prefix
+    GitHub retains is always valid, so a resource the selection only touches through merged
+    members is still returned for callers that reconcile them. Callers that mutate a
+    resource separately require a selected review to still be an active member.
+    """
+
+    selected = set(selected_pull_numbers)
+    overlapping = tuple(
+        stack for stack in stacks if not selected.isdisjoint(stack.pull_request_numbers)
+    )
+    if not overlapping:
+        return None
+    # Only a resource the selection still has an active member in can be dissolved. GitHub keeps
+    # merged members forever, so unstacking a fully merged resource changes nothing, and naming
+    # one in a hint would leave the user retrying a command that cannot make progress.
+    dissolvable = tuple(
+        stack
+        for stack in overlapping
+        if not selected.isdisjoint(stack.active_pull_request_numbers)
+    )
+    if len(dissolvable) > 1:
+        numbers = tuple(sorted(stack.number for stack in dissolvable))
+        raise CliError(
+            t"The selected reviews belong to native GitHub stacks "
+            t"{ui.join(lambda number: f'#{number}', numbers)}.",
+            hint=t"Run {ui.join(lambda number: ui.cmd(f'gh stack unstack {number}'), numbers)}, "
+            t"then retry.",
+        )
+    if not dissolvable and len(overlapping) > 1:
+        numbers = tuple(sorted(stack.number for stack in overlapping))
+        raise CliError(
+            t"The selected reviews are merged members of native GitHub stacks "
+            t"{ui.join(lambda number: f'#{number}', numbers)}.",
+            hint="Select changes belonging to one of those stacks, then retry.",
+        )
+    stack = dissolvable[0] if dissolvable else overlapping[0]
+    unselected = tuple(
+        number for number in stack.active_pull_request_numbers if number not in selected
+    )
+    if unselected:
+        raise CliError(
+            t"GitHub stack #{stack.number} keeps "
+            t"{ui.join(lambda number: f'#{number}', unselected)} active outside the selected "
+            t"stack.",
+            hint=t"Select the complete stack, or run "
+            t"{ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
+        )
+    return stack
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,15 +103,21 @@ class GithubStackSelection:
             raise CliError("Could not inspect native GitHub stack membership.") from error
         return True, stacks
 
-    async def overlapping(self, *, persist: bool = True) -> tuple[GithubStack, ...]:
-        """Return complete native resources overlapping this selection."""
+    async def active_stacks(self, *, persist: bool = True) -> tuple[GithubStack, ...]:
+        """Return the resources in which a selected review is still an active member.
+
+        Only these resources can be dissolved or blocked on: GitHub keeps merged members
+        forever, so a resource the selection only touches through them needs no mutation.
+        """
 
         if not self.pull_numbers:
             return ()
         _supported, stacks = await self.observe(persist=persist)
         selected = set(self.pull_numbers)
         return tuple(
-            stack for stack in stacks if not selected.isdisjoint(stack.pull_request_numbers)
+            stack
+            for stack in stacks
+            if not selected.isdisjoint(stack.active_pull_request_numbers)
         )
 
     async def require_unstacked(
@@ -60,18 +125,12 @@ class GithubStackSelection:
         *,
         persist: bool = True,
     ) -> None:
-        """Reject an ordinary mutation when the selection overlaps a native resource."""
+        """Reject an ordinary mutation while a selected review is still an active member."""
 
-        stacks = await self.overlapping(persist=persist)
-        selected = set(self.pull_numbers)
-        active_stacks = tuple(
-            stack
-            for stack in stacks
-            if not selected.isdisjoint(stack.active_pull_request_numbers)
-        )
-        if not active_stacks:
+        blocking = await self.active_stacks(persist=persist)
+        if not blocking:
             return
-        stack_number = active_stacks[0].number
+        stack_number = blocking[0].number
         raise CliError(
             t"GitHub stack #{stack_number} blocks this jj-stack operation.",
             hint=t"Run {ui.cmd(f'gh stack unstack {stack_number}')} and retry.",
@@ -109,55 +168,20 @@ class GithubStackSelection:
         observed: tuple[GithubStack, ...] | None = None,
         persist: bool = True,
     ) -> GithubStack | None:
-        """Return the freshly authorized resource for this exact active suffix."""
+        """Return the freshly authorized resource holding the selection's active reviews."""
 
-        stacks = observed if observed is not None else await self.overlapping(persist=persist)
+        stacks = observed if observed is not None else await self.active_stacks(persist=persist)
         if not stacks:
             return None
-        selected = tuple(self.pull_numbers)
-        selected_set = set(selected)
-        active_stacks = tuple(
-            stack
-            for stack in stacks
-            if not selected_set.isdisjoint(stack.active_pull_request_numbers)
-        )
-        if not active_stacks:
-            return None
-        historical_pull_numbers = {
-            pull_number
-            for stack in stacks
-            for pull_number in stack.historical_pull_request_numbers
-        }
-        selected_active = tuple(
-            pull_number for pull_number in selected if pull_number not in historical_pull_numbers
-        )
-        stack = active_stacks[0]
-        if len(active_stacks) != 1 or stack.active_pull_request_numbers != selected_active:
-            raise CliError(
-                "The selected pull requests do not exactly match one native GitHub stack's "
-                "active suffix.",
-                hint="Select the complete active stack suffix before retrying unstack.",
-            )
+        stack = selected_native_stack(selected_pull_numbers=self.pull_numbers, stacks=stacks)
+        assert stack is not None
         try:
             current = await self.github_client.get_stack(stack_number=stack.number)
-            if current.pull_request_numbers != stack.pull_request_numbers:
-                raise CliError(
-                    t"GitHub stack #{stack.number} changed while unstack was preparing.",
-                    hint="Inspect the current stack and retry.",
-                )
-            current_historical = {
-                *historical_pull_numbers,
-                *current.historical_pull_request_numbers,
-            }
-            current_selected_active = tuple(
-                pull_number for pull_number in selected if pull_number not in current_historical
-            )
-            if current.active_pull_request_numbers != current_selected_active:
-                raise CliError(
-                    t"GitHub stack #{stack.number}'s active suffix changed while unstack "
-                    t"was preparing.",
-                    hint="Inspect the current stack and retry.",
-                )
         except GithubClientError as error:
             raise CliError(t"Could not inspect GitHub stack #{stack.number}.") from error
+        if current.pull_request_numbers != stack.pull_request_numbers:
+            raise CliError(
+                t"GitHub stack #{stack.number} changed before jj-stack could dissolve it.",
+                hint=t"Run {ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
+            )
         return current

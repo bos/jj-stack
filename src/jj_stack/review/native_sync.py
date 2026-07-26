@@ -6,6 +6,7 @@ import jj_stack.review.observation as review_observation
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._github_stack_support import resolve_github_stack_support
+from jj_stack.commands._native_stack_safety import selected_native_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
@@ -151,17 +152,12 @@ def build_selected_native_sync(
     selected_pull_numbers = {
         candidate.review_identity.pr_number for candidate in selected_candidates
     }
-    affected = tuple(
-        stack
-        for stack in native_stacks
-        if not selected_pull_numbers.isdisjoint(stack.pull_request_numbers)
+    stack = selected_native_stack(
+        selected_pull_numbers=selected_pull_numbers,
+        stacks=native_stacks,
     )
-    if not affected:
+    if stack is None:
         return (), ()
-    if len(affected) != 1:
-        numbers = ui.join(lambda stack: f"#{stack.number}", affected)
-        raise CliError(t"Selected reviews overlap multiple native GitHub stacks: {numbers}.")
-    stack = affected[0]
     selected_resource_numbers = tuple(
         pull_number
         for pull_number in stack.pull_request_numbers
@@ -173,15 +169,6 @@ def build_selected_native_sync(
     ):
         raise CliError(
             t"Selected reviews do not match GitHub stack #{stack.number}'s ordered members."
-        )
-    unselected_numbers = {member.number for member in stack.active_pull_requests} - set(
-        selected_resource_numbers
-    )
-    if unselected_numbers:
-        numbers = ", ".join(f"#{number}" for number in sorted(unselected_numbers))
-        raise CliError(
-            t"Active native members {numbers} in GitHub stack #{stack.number} are not "
-            t"terminally merged within the selected local stack."
         )
     historical: list[NativeHistoricalReview] = []
     survivors: list[NativeSurvivorReview] = []
@@ -213,12 +200,12 @@ def build_selected_native_sync(
         local_revision = selected_by_change_id[candidate.change_id]
         _require_unedited_native_survivor(candidate, local_revision, member)
         observed = observation.reviews[candidate.change_id]
-        review_matches = (
-            pull_request.normalize_state().state == "open",
-            pull_request.head.sha == member.head.sha,
-            observed.remote_review_target == member.head.sha,
-        )
-        if review_matches != (True, True, True):
+        # A closed or draft active member is still an affected survivor; only its branch has
+        # to match here. Convergence decides which surviving reviews can still be updated.
+        if (
+            pull_request.head.sha != member.head.sha
+            or observed.remote_review_target != member.head.sha
+        ):
             raise CliError(
                 t"Active native member PR #{member.number} does not match its reviewed branch."
             )

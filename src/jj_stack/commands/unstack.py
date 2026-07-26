@@ -749,7 +749,7 @@ async def _stream_close_async(
             ),
             prepared_close.context.state_store,
         )
-        native_stacks = await selection.overlapping(persist=not prepared_close.dry_run)
+        native_stacks = await selection.active_stacks(persist=not prepared_close.dry_run)
         initial_observation = None
         blocked = False
         if native_stacks or prepared_close.cleanup:

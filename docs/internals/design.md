@@ -416,11 +416,16 @@ Given a chosen head revision:
    - `append` when one resource's active suffix is an exact ordered prefix and only new top
      members remain
    - `replace` for reorder, removal, insertion below the top, or any base mutation of a native
-     member. Re-read and unstack the exact selected active suffix before changing branches or
-     bases; a retained historical merged prefix is valid.
+     member. Re-read and unstack the resource's complete active suffix before changing branches
+     or bases; a retained historical merged prefix is valid.
    Every active PR in an overlapping native GitHub stack must belong to the selected local parent
-   chain. A closed-unmerged or unselected active member, overlap with multiple native stacks, or
-   changed membership fails before mutation.
+   chain, and the selection may overlap only one resource it could still have to mutate. This is
+   one membership rule shared by `submit`, `merge`, selected `sync`, and `unstack`: it looks only
+   for active members the selection leaves out, so a selected review GitHub no longer lists as a
+   member never blocks, and a resource GitHub retains only for merged members is not an overlap to
+   resolve. An unselected active member or changed membership fails before mutation, naming the
+   `gh stack unstack` command that resolves it. A closed-unmerged review is rejected earlier, when
+   `submit` checks the pull request it discovered for that change.
 9. Treat proven landed ancestors as no longer reviewable. Build the complete desired remote-ref
    set for the remaining changes, directly observe every current ref at the fetch URL, then
    reobserve the whole set immediately before mutation. A tracked branch may move only from its
@@ -788,7 +793,7 @@ orphaned pull requests.
 `unstack` is stack-first. It looks at the local stack, finds the open PRs the tool is
 already tracking there, and either runs or previews the actions needed to end review.
 
-In a native repository, remote unstacking must select one resource's exact active suffix before
+In a native repository, remote unstacking must cover one resource's complete active suffix before
 closing its PRs. It freshly verifies the resource before mutation. GitHub may retain the
 historical merged prefix after removing that suffix; any unselected active member or incomplete
 removal fails closed. `unstack --local` never consults or changes native membership.
@@ -1108,7 +1113,7 @@ one before merging.
 - **Native stack unstack**. Removes active PRs from a native resource and can leave its historical
   merged prefix. Defense: immediately before mutation, fetch the exact resource and require its
   ordered membership to match the selected plan. Submission replacement and remote `unstack`
-  select the exact complete active suffix; an incomplete result stops before branch or PR-base
+  cover the resource's complete active suffix; an incomplete result stops before branch or PR-base
   mutation.
 
 - **Native asynchronous merge**. Destructive by design: GitHub atomically merges a bottom prefix

@@ -291,8 +291,11 @@ machine:
 - `review/convergence.py` checks whether another visible stack still needs that tracking
 - `review/native_sync.py` validates historical native members and survivor transitions
 - `commands/_github_stack_support.py` owns the one cached capability decision
-- `commands/_native_stack_safety.py` verifies that every active member of an overlapping native
-  GitHub stack belongs to the selected local chain, without owning command policy
+- `commands/_native_stack_safety.py` owns the one native membership decision:
+  `selected_native_stack` resolves the single resource a selected review set belongs to and
+  requires every active member of it to be selected. `submit`, `merge`, selected `sync`,
+  `unstack`, and cleanup call it and derive their own consequence from the resource it returns;
+  none of them repeats the decision
 
 Selected native sync uses the same fixed temporary attachment as checkout for one additional
 purpose: after a native merge rewrites the active suffix, it validates every active raw Git commit

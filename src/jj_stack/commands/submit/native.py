@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jj_stack.ui as ui
+from jj_stack.commands._native_stack_safety import selected_native_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubStack
@@ -33,29 +34,10 @@ def plan_native_stack(
         raise CliError("Selected changes resolve to the same pull request more than once.")
 
     selected = set(known_desired).union(retiring_pull_numbers)
-    affected = tuple(
-        stack
-        for stack in observed_stacks
-        if not selected.isdisjoint(stack.active_pull_request_numbers)
-    )
-
-    if not affected:
+    stack = selected_native_stack(selected_pull_numbers=selected, stacks=observed_stacks)
+    if stack is None or selected.isdisjoint(stack.active_pull_request_numbers):
         return NativeStackPlan("none" if len(desired) < 2 else "create")
-    if len(affected) != 1:
-        affected_numbers = tuple(sorted(stack.number for stack in affected))
-        commands = ui.join(lambda number: ui.cmd(f"gh stack unstack {number}"), affected_numbers)
-        raise CliError(
-            t"Selected reviews belong to native GitHub stacks "
-            t"{ui.join(lambda number: f'#{number}', affected_numbers)}.",
-            hint=t"Run {commands}, then retry.",
-        )
-    stack = affected[0]
     active_pull_numbers = stack.active_pull_request_numbers
-    if not set(active_pull_numbers).issubset(selected):
-        raise CliError(
-            t"GitHub stack #{stack.number} contains reviews outside the selected local stack.",
-            hint=t"Run {ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
-        )
 
     if set(active_pull_numbers).intersection(pull_numbers_requiring_base_update):
         return NativeStackPlan("replace", stack)

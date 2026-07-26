@@ -197,6 +197,33 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
 
 
 @pytest.mark.landing_recovery
+def test_sync_reports_a_closed_native_survivor_as_a_review_mismatch_not_branch_drift(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A closed active member is still a survivor, so its branch must not take the blame."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    _simulate_native_partial_merge(fake_repo)
+    fake_repo.pull_requests[2].state = "closed"
+    state_before = state_store.load()
+
+    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "no longer matches saved tracking" in captured.err
+    assert JjClient(repo).resolve_revision(landed.change_id).commit_id == landed.commit_id
+    assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == survivor.commit_id
+    assert state_store.load() == state_before
+
+
+@pytest.mark.landing_recovery
 def test_sync_retries_native_adoption_after_survivor_submit_fails(
     tmp_path: Path,
     monkeypatch,
@@ -375,7 +402,8 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     selected = capsys.readouterr()
 
     assert selected_exit == 1
-    assert "not terminally merged" in selected.err
+    assert "keeps #1 active outside the selected stack" in selected.err
+    assert "gh stack unstack 7" in selected.err
     assert first.change_id in state_store.load().review_identities
     assert fake_repo.pull_requests[1].state == "open"
 
