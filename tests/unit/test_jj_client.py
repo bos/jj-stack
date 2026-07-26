@@ -1182,7 +1182,7 @@ def test_review_fetch_isolation_reports_the_effective_override_origin(
     assert "jj config unset --repo" in str(raised.value)
 
 
-def test_imported_review_bookmark_scan_ignores_unknown_namespace_refs(
+def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = (
@@ -1199,6 +1199,7 @@ def test_imported_review_bookmark_scan_ignores_unknown_namespace_refs(
 
     assert JjClient(Path("/repo")).list_imported_review_bookmarks() == (
         "review/feature-abcdefgh",
+        "review/not-managed",
     )
 
 

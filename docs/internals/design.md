@@ -164,13 +164,15 @@ If two changes resolve to the same branch, `submit` stops before mutating anythi
 
 Ordinary fetches exclude `refs/heads/review/*` through the selected remote's Git refspec. An
 effective jj `remotes.<remote>.fetch-bookmarks` override would bypass that isolation, so commands
-stop and name the setting to unset. A complete managed review bookmark already imported locally
-also stops commands with explicit guidance to move any work aside, forget the bookmark, and export
-the updated jj view. Every broad jj import or fetch that jj-stack performs repeats that check
-before its result is used. If such an operation exposes a managed review ref that existed only in
-the backing Git store, the same diagnostic stops the command before the bookmark can affect
-attachment or stack discovery. These are environment diagnostics, not a second source of branch
-identity.
+stop and name the setting to unset. Any bookmark in the reserved namespace already imported
+locally also stops commands with explicit guidance to move any work aside, forget the bookmark,
+and export the updated jj view. The reservation and this check cover the same namespace on
+purpose: an untracked remote bookmark anywhere under `review/` makes its target immutable, so a
+name test narrower than the fetch exclusion would leave that state with no diagnostic. Every broad
+jj import or fetch that jj-stack performs repeats the check before its result is used. If such an
+operation exposes a reserved-namespace ref that existed only in the backing Git store, the same
+diagnostic stops the command before the bookmark can affect attachment or stack discovery. These
+are environment diagnostics, not a second source of branch identity.
 
 ### Review base
 

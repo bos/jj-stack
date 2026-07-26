@@ -285,15 +285,17 @@ Run selected `sync` first when merged ancestors still appear in the local stack.
 `cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then
 run plain `cleanup` to apply the listed actions.
 
-## A command reports an imported managed review bookmark
+## A command reports an imported review bookmark
 
-Normal `jj-stack` fetches exclude `review/*`. This diagnostic means a manual or non-isolated
-fetch imported a managed review branch, or a leftover backing Git ref was exposed during a
-`jj-stack` operation. The bookmark could otherwise make a review change immutable or ambiguous.
+`jj-stack` reserves the whole `review/` namespace and its fetches exclude it. This diagnostic
+means a manual or non-isolated fetch imported a bookmark from that namespace, or a leftover
+backing Git ref was exposed during a `jj-stack` operation. Such a bookmark can make a review
+change immutable or ambiguous, which is why any name under `review/` is reported and not only the
+names `jj-stack` generates.
 
-Move any local work to a bookmark outside `review/`, then forget the imported managed bookmark
-with the exact `jj bookmark forget --include-remotes <review/...>` command from the diagnostic.
-Run the printed `jj git export` command next so the backing Git ref is also removed, then rerun
+Move any local work to a bookmark outside `review/`, then forget the imported bookmark with the
+exact `jj bookmark forget --include-remotes <review/...>` command from the diagnostic. Run the
+printed `jj git export` command next so the backing Git ref is also removed, then rerun
 `jj-stack`.
 
 If the diagnostic instead names an effective `remotes.<remote>.fetch-bookmarks` override, unset

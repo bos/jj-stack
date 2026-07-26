@@ -960,7 +960,7 @@ class JjClient:
         return result
 
     def _require_no_imported_review_bookmarks(self) -> None:
-        """Reject managed review bookmarks that have entered the local jj view."""
+        """Reject reserved-namespace bookmarks that have entered the local jj view."""
 
         imported = self.list_imported_review_bookmarks()
         if not imported:
@@ -971,8 +971,8 @@ class JjClient:
         )
         export = ui.cmd("jj git export")
         raise CliError(
-            t"Managed review bookmarks are already imported locally: "
-            t"{ui.join(ui.bookmark, imported)}.",
+            t"Bookmarks in the reserved {ui.bookmark(_review_namespace())} namespace are "
+            t"imported locally: {ui.join(ui.bookmark, imported)}.",
             hint=(
                 t"Move any work you need to keep to names outside "
                 t"{ui.bookmark(_review_namespace())}, run {forget}, then run {export}. "
@@ -981,9 +981,14 @@ class JjClient:
         )
 
     def list_imported_review_bookmarks(self) -> tuple[str, ...]:
-        """Return managed-namespace bookmarks already imported into jj."""
+        """Return every reserved-namespace bookmark already imported into jj.
 
-        from jj_stack.review.branches import is_managed_review_branch, review_branch_glob
+        The fetch exclusion reserves the whole namespace, so this reports the whole namespace
+        too. An untracked remote bookmark here would make its target immutable, and a narrower
+        name test would leave that with no diagnostic.
+        """
+
+        from jj_stack.review.branches import review_branch_glob
 
         stdout = self._run_jj(
             (
@@ -1007,9 +1012,7 @@ class JjClient:
                     t"Unexpected {ui.cmd('jj bookmark list')} payload while checking "
                     t"the reserved review namespace."
                 )
-            name = raw["name"]
-            if is_managed_review_branch(name):
-                names.add(name)
+            names.add(raw["name"])
         return tuple(sorted(names))
 
     def review_temp_ref_target(self) -> str | None:
