@@ -195,6 +195,43 @@ def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None
     assert asyncio.run(run_test()) == (None, (8,))
 
 
+def test_github_client_paginates_stack_list() -> None:
+    def _stack(number: int, pull_number: int) -> dict[str, object]:
+        return {
+            "number": number,
+            "pull_requests": [
+                {
+                    "head": {"ref": f"review/{pull_number}", "sha": f"head-{pull_number}"},
+                    "merged_at": None,
+                    "number": pull_number,
+                    "state": "open",
+                }
+            ],
+        }
+
+    def handler(request: httpxyz.Request) -> httpxyz.Response:
+        assert request.url.path == "/repos/octo-org/stacked-review/stacks"
+        if request.url.params.get("page") == "2":
+            return httpxyz.Response(200, json=[_stack(2, 20)], request=request)
+        return httpxyz.Response(
+            200,
+            headers={
+                "Link": (
+                    "<https://api.github.test/repos/octo-org/stacked-review/stacks?page=2>; "
+                    'rel="next"'
+                )
+            },
+            json=[_stack(1, 10)],
+            request=request,
+        )
+
+    async def run_test() -> tuple[int, ...]:
+        async with _github_client(handler) as client:
+            return tuple(stack.number for stack in await client.list_stacks())
+
+    assert asyncio.run(run_test()) == (1, 2)
+
+
 def test_github_client_paginates_pull_request_list() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/repos/octo-org/stacked-review/pulls"

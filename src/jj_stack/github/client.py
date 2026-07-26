@@ -165,10 +165,10 @@ class GithubClient:
         return GithubRepository.model_validate(self._expect_success(response))
 
     async def list_stacks(self) -> tuple[GithubStack, ...]:
-        response = await self._request("GET", f"{self._repo_path}/stacks")
-        payload = self._expect_stack_payload(response, response_name="stack list")
-        if not isinstance(payload, list):
-            raise GithubClientError("GitHub stack list response was not a JSON array.")
+        payload = await self._get_paginated_json_array(
+            f"{self._repo_path}/stacks",
+            response_name="stack list",
+        )
         return tuple(
             _validate_stack_payload(item, response_name="stack list") for item in payload
         )
@@ -176,7 +176,7 @@ class GithubClient:
     async def get_stack(self, *, stack_number: int) -> GithubStack:
         response = await self._request("GET", f"{self._repo_path}/stacks/{stack_number}")
         return _validate_stack_payload(
-            self._expect_stack_payload(response, response_name="stack lookup"),
+            self._expect_json_payload(response, response_name="stack lookup"),
             response_name="stack lookup",
         )
 
@@ -187,7 +187,7 @@ class GithubClient:
             json={"pull_requests": list(pull_numbers)},
         )
         return _validate_stack_payload(
-            self._expect_stack_payload(response, response_name="stack creation"),
+            self._expect_json_payload(response, response_name="stack creation"),
             response_name="stack creation",
         )
 
@@ -203,7 +203,7 @@ class GithubClient:
             json={"pull_requests": list(pull_numbers)},
         )
         return _validate_stack_payload(
-            self._expect_stack_payload(response, response_name="stack append"),
+            self._expect_json_payload(response, response_name="stack append"),
             response_name="stack append",
         )
 
@@ -216,7 +216,7 @@ class GithubClient:
             self._expect_no_content(response)
             return None
         return _validate_stack_payload(
-            self._expect_stack_payload(response, response_name="unstack"),
+            self._expect_json_payload(response, response_name="unstack"),
             response_name="unstack",
         )
 
@@ -719,7 +719,7 @@ class GithubClient:
                 next_path,
                 params=next_params,
             )
-            payload = self._expect_success(response)
+            payload = self._expect_json_payload(response, response_name=response_name)
             if not isinstance(payload, list):
                 raise GithubClientError(f"GitHub {response_name} response was not a JSON array.")
             items.extend(payload)
@@ -779,7 +779,7 @@ class GithubClient:
                 status_code=error.response.status_code,
             ) from error
 
-    def _expect_stack_payload(
+    def _expect_json_payload(
         self,
         response: httpxyz.Response,
         *,
