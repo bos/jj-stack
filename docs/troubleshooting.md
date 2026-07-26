@@ -62,8 +62,9 @@ jj-stack view --fetch
 
 `view` already checks live GitHub state when GitHub is reachable. `view --fetch` also refreshes
 ordinary fetched repository state and directly observes each saved review branch. Ordinary fetch
-excludes `review/*`, so this read-only refresh does not import the review branches as persistent
-bookmarks.
+excludes `review/*` — `jj-stack` adds that exclusion to the remote's Git fetch configuration the
+first time it needs the remote, and says so — which is why this read-only refresh does not
+import the review branches as persistent bookmarks. See the README for how to undo it.
 
 If a change shows `submitted, no PR found for branch`, `jj-stack` has tracking
 for a previous submit, but GitHub did not report a PR for the current review

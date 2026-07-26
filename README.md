@@ -59,6 +59,23 @@ jj-stack
 
 (This is a synonym for `jj-stack view`.)
 
+`jj-stack` reserves the `review/` branch namespace for the branches it pushes, and keeps them off
+your local bookmark view. The first command that needs the remote adds one exclusion to that
+remote's Git fetch configuration and tells you it did:
+
+```text
+Reserved review/ for jj-stack and added fetch exclusion ^refs/heads/review/*.
+```
+
+After that, neither `jj git fetch` nor `git fetch` brings `review/*` branches into this repo. Do
+not keep your own branches under `review/`. To undo the reservation, remove that one line from the
+Git repository backing `jj`:
+
+```bash
+git --git-dir "$(jj git root)" config --unset --fixed-value \
+  remote.origin.fetch '^refs/heads/review/*'
+```
+
 ### Two-minute first run
 
 Suppose you have a few local changes stacked on top of `trunk()`:
