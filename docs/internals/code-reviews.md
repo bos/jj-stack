@@ -102,13 +102,19 @@ from. In particular, check whether a user could understand what happened and wha
 
 Treat docs, help text, and CLI output as part of correctness. Review them for:
 
+- approachability to a newcomer
 - internal jargon that leaks implementation details
 - wording that is technically true but hard to understand
 - scary wording that overstates destructive behavior
 - output that adds noise instead of clarity
 - inconsistency across commands that should feel uniform
+- drift between what the docs say and what commands do, and also across docs and help
 
 Prefer language that matches how a jj user thinks, not how the implementation is structured.
+
+Internal docs also need attention. They can easily accumulate incidental implementation details
+that become irrelevant but clutter context. Agents can develop bizarre insular terminology that
+mean nothing to a human reader. These docs too should be approachable and understandable.
 
 ## Performance matters
 
