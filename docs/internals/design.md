@@ -272,33 +272,13 @@ how to move it aside before re-adopting reviews through `checkout` or `relink`.
 
 ## Storage strategy
 
-Do not write into `jj` internals (`.jj/repo/store/extra/`, the view/op store, private ref
-namespaces). Those would tie the tool to `jj`-internal storage details. Do not store config or
-tracking state in the working tree.
+Nothing goes in `jj`'s internals (`.jj/repo/store/extra/`, the view/op store, private ref
+namespaces) — that would tie the tool to storage details `jj` keeps flexible — and nothing goes in
+the working tree. That leaves
+two homes.
 
-So storage splits in two:
-
-- human-authored config in `jj`'s normal config scopes under the `jj-stack` namespace
-- tracking state in `~/.local/state/jj-stack/repos/<repo-id>/state.json`
-
-Repo defaults follow `jj`'s own precedence:
-
-- user config (`jj config edit --user`)
-- repo config (`jj config edit --repo`)
-- workspace config (`jj config edit --workspace`)
-
-That keeps `jj-stack` aligned with `jj`'s config model rather than inventing a parallel
-conditional-matching system.
-
-State is repo-scoped, so every workspace for the same repo shares one location without a separate
-bootstrap step and without writing any tool-specific file into the workspace.
-
-Mutating commands serialize against each other through a repo-scoped advisory lock. Read-only
-commands do not take it and never write tracking observations.
-
-### User settings
-
-User-authored settings live in `jj` config under `[jj-stack]`, not in the tracking-state file:
+User settings live in `jj`'s own config under `[jj-stack]`, so they follow jj's ordinary
+user/repo/workspace precedence instead of a parallel system of our own:
 
 ```toml
 [jj-stack]
@@ -307,20 +287,20 @@ team_reviewers = ["platform"]
 labels = ["needs-review"]
 ```
 
-`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. A
-typo of a known key is rejected with a suggestion; unrelated keys are ignored.
+`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. A typo
+of a known key is rejected with a suggestion; an unrelated key is ignored.
 
-Managed comments are derived output, not a source of truth. In a repository without native GitHub
-stack support, `submit` regenerates navigation comments from the current `jj` stack. In every
-repository, explicit or helper-generated stack prose is stored in one overview comment on the
-selected head PR. `submit`, `unstack`, and `cleanup` may read comments to re-find or delete
-comments the tool previously wrote, but `view` does not inspect issue comments.
+Tracking state lives outside the repository, at
+`~/.local/state/jj-stack/repos/<repo-id>/state.json`. It is keyed by repository, so every
+workspace sharing that repository shares one file, with no bootstrap step and no tool-specific
+file in the working tree.
 
 ## Concurrency
 
-The lock only serializes concurrent processes. Commands do not persist their planned selection,
-selected parent chain, progress phase, or remaining work. After an interruption, the next command
-rereads `jj`, the remote, and GitHub and computes what remains.
+Mutating commands serialize against each other through a repo-scoped advisory lock; read-only
+commands do not take it. The lock only serializes concurrent processes: no command persists its
+planned selection, parent chain, progress phase, or remaining work. After an interruption the next
+command rereads `jj`, the remote, and GitHub, and computes what remains.
 
 ## Policies
 
