@@ -53,6 +53,7 @@ def test_command_surface_has_merge_without_land_or_transport_flags(capsys) -> No
         parser.parse_args(["merge", "--skip-cleanup"])
 
 
+@pytest.mark.landing_recovery
 def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
     repository = _repository(
         allow_merge_commit=False,
@@ -63,6 +64,7 @@ def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
     assert _resolve_merge_method(merge_method=None, repository_state=repository) == "squash"
 
 
+@pytest.mark.landing_recovery
 @pytest.mark.parametrize(
     ("repository", "message"),
     (
@@ -100,6 +102,7 @@ def test_resolve_merge_method_rejects_ambiguous_or_absent_settings(
         _resolve_merge_method(merge_method=None, repository_state=repository)
 
 
+@pytest.mark.landing_recovery
 def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
     revisions = tuple(
         MergeRevision(
@@ -126,6 +129,7 @@ def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
         validate_merge_plan_method(merge_method="rebase", plan=plan)
 
 
+@pytest.mark.landing_recovery
 def test_merge_authority_rejects_repository_drift() -> None:
     expected_repository = GithubRepoAddress(
         host="github.test",

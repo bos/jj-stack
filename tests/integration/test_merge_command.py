@@ -23,6 +23,10 @@ from .submit_command_helpers import (
     run_main,
 )
 
+# Every case in this file is part of the bounded merge and post-merge convergence
+# corpus described in docs/internals/property-testing.md.
+pytestmark = pytest.mark.landing_recovery
+
 
 def test_merge_uses_github_for_unapproved_prefix_and_leaves_local_state(
     tmp_path: Path,
@@ -174,7 +178,6 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     ) == tuple(revision.commit_id for revision in stack_before.revisions)
 
 
-@pytest.mark.landing_recovery
 def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
     tmp_path: Path,
     monkeypatch,
@@ -217,7 +220,6 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
     assert JjClient(repo).resolve_revision("@").only_parent_commit_id() == merge_commit
 
 
-@pytest.mark.landing_recovery
 def test_native_merge_terminal_failure_is_atomic(
     tmp_path: Path,
     monkeypatch,
@@ -254,7 +256,6 @@ def test_native_merge_terminal_failure_is_atomic(
     assert state_store.load() == state_before
 
 
-@pytest.mark.landing_recovery
 @pytest.mark.parametrize("dry_run", (False, True))
 def test_native_merge_reobserves_lower_heads_before_request(
     tmp_path: Path,
@@ -302,7 +303,6 @@ def test_native_merge_reobserves_lower_heads_before_request(
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
 
 
-@pytest.mark.landing_recovery
 def test_native_merge_recovers_only_from_a_terminal_retry(
     tmp_path: Path,
     monkeypatch,
@@ -470,7 +470,6 @@ def test_merge_requires_submit_after_a_diff_equivalent_rebase(
     assert state_store.load() == state_before
 
 
-@pytest.mark.landing_recovery
 def test_merge_expected_head_guard_rejects_a_race(
     tmp_path: Path,
     monkeypatch,

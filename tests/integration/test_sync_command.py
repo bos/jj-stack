@@ -25,6 +25,10 @@ from .submit_command_helpers import (
     run_main,
 )
 
+# Every case in this file is part of the bounded merge and post-merge convergence
+# corpus described in docs/internals/property-testing.md.
+pytestmark = pytest.mark.landing_recovery
+
 
 def _merge_pull_request(fake_repo, pull_number: int) -> None:
     fake_repo.apply_squash_merge(fake_repo.pull_requests[pull_number])
@@ -114,7 +118,6 @@ def test_sync_converges_the_local_stack_after_merge(
     assert fake_repo.pull_requests[2].state == "open"
 
 
-@pytest.mark.landing_recovery
 def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
     tmp_path: Path,
     monkeypatch,
@@ -144,7 +147,6 @@ def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
     assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
-@pytest.mark.landing_recovery
 def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
     tmp_path: Path,
     monkeypatch,
@@ -175,7 +177,6 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
     assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
-@pytest.mark.landing_recovery
 def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     tmp_path: Path,
     monkeypatch,
@@ -227,7 +228,6 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
 
-@pytest.mark.landing_recovery
 def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     tmp_path: Path,
     monkeypatch,
@@ -257,7 +257,6 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     assert state_store.load() == state_before
 
 
-@pytest.mark.landing_recovery
 def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_drift(
     tmp_path: Path,
     monkeypatch,
@@ -286,7 +285,6 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     assert state_store.load() == state_before
 
 
-@pytest.mark.landing_recovery
 def test_sync_retries_native_adoption_after_survivor_submit_fails(
     tmp_path: Path,
     monkeypatch,
@@ -326,7 +324,6 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     assert recovered_state.submitted_baselines[survivor.change_id].commit_id == remote_survivor
 
 
-@pytest.mark.landing_recovery
 def test_sync_checks_native_branch_drift_before_rewriting_local_history(
     tmp_path: Path,
     monkeypatch,
@@ -374,7 +371,6 @@ def test_sync_checks_native_branch_drift_before_rewriting_local_history(
     assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
 
 
-@pytest.mark.landing_recovery
 def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     tmp_path: Path,
     monkeypatch,
@@ -445,7 +441,6 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     )
 
 
-@pytest.mark.landing_recovery
 def test_sync_all_requires_terminal_merge_for_exact_native_member(
     tmp_path: Path,
     monkeypatch,
@@ -517,7 +512,6 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     assert fake_repo.native_stacks == {7: (1, 2)}
 
 
-@pytest.mark.landing_recovery
 def test_sync_does_not_trust_active_native_head_drift_without_merged_history(
     tmp_path: Path,
     monkeypatch,
@@ -541,7 +535,6 @@ def test_sync_does_not_trust_active_native_head_drift_without_merged_history(
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
 
-@pytest.mark.landing_recovery
 def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     tmp_path: Path,
     monkeypatch,
@@ -569,7 +562,6 @@ def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     assert set(fake_repo.pull_requests) == {1, 2}
 
 
-@pytest.mark.landing_recovery
 def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     tmp_path: Path,
     monkeypatch,
@@ -603,7 +595,6 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
-@pytest.mark.landing_recovery
 def test_sync_rebases_trailing_local_work_without_creating_a_review(
     tmp_path: Path,
     monkeypatch,
@@ -634,7 +625,6 @@ def test_sync_rebases_trailing_local_work_without_creating_a_review(
     assert trailing.change_id not in ReviewStateStore.for_repo(repo).load().review_identities
 
 
-@pytest.mark.landing_recovery
 def test_sync_requires_every_surviving_review_before_rewriting(
     tmp_path: Path,
     monkeypatch,
@@ -657,7 +647,6 @@ def test_sync_requires_every_surviving_review_before_rewriting(
     assert set(fake_repo.pull_requests) == {1}
 
 
-@pytest.mark.landing_recovery
 def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
     tmp_path: Path,
     monkeypatch,
