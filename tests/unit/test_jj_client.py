@@ -118,6 +118,13 @@ _EMPTY_WORKING_COPY = _revision_line(
     empty=True,
     working_copy=True,
 )
+_UNDESCRIBED_WORKING_COPY = _revision_line(
+    commit_id="wc",
+    parents=["head"],
+    change_id="wc-change",
+    description="",
+    working_copy=True,
+)
 _HEAD = _revision_line(
     commit_id="head", parents=["parent"], change_id="head-change", description="head\n"
 )
@@ -228,6 +235,46 @@ def test_discover_review_stack_uses_parent_of_empty_working_copy_as_default_sele
         ): (
             trunk_scan
             + _revision_with_flag_line(_EMPTY_WORKING_COPY, is_trunk=False)
+            + _revision_with_flag_line(_HEAD, is_trunk=False)
+        ),
+        (
+            "jj",
+            "log",
+            "--no-graph",
+            "-r",
+            "heads(first_ancestors('head') & ::'trunk')",
+            "-T",
+            _template(),
+            "--limit",
+            "2",
+        ): _TRUNK,
+        ("jj", "log", "--no-graph", "-r", "'trunk'::'head'", "-T", _template()): (
+            _HEAD + _PARENT + _TRUNK
+        ),
+    }
+
+    stack = _client(monkeypatch, responses).discover_review_stack()
+
+    assert stack.selected_revset == "@-"
+    assert [revision.subject for revision in stack.revisions] == ["parent", "head"]
+
+
+def test_discover_review_stack_skips_an_undescribed_working_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trunk_scan = _revision_with_flag_line(_TRUNK, is_trunk=True)
+    responses: dict[tuple[str, ...], str] = {
+        (
+            "jj",
+            "log",
+            "--no-graph",
+            "-r",
+            "trunk() | @ | @-",
+            "-T",
+            _trunk_scan_template(),
+        ): (
+            trunk_scan
+            + _revision_with_flag_line(_UNDESCRIBED_WORKING_COPY, is_trunk=False)
             + _revision_with_flag_line(_HEAD, is_trunk=False)
         ),
         (

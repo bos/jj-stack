@@ -120,6 +120,7 @@ UnsupportedStackReason = Literal[
     "merge_commit",
     "reached_root_before_trunk",
     "trunk_resolved_to_root",
+    "undescribed_working_copy",
 ]
 
 
@@ -231,6 +232,13 @@ class JjClient:
                     "Select a concrete change instead.",
                     reason="empty_working_copy",
                 )
+            if head.is_working_copy and not head.description.strip():
+                raise UnsupportedStackError(
+                    "Selected revision resolves to the working-copy commit, which has no "
+                    "description. Describe it with `jj describe` before submitting it for "
+                    "review.",
+                    reason="undescribed_working_copy",
+                )
 
         if head.commit_id == trunk.commit_id:
             return LocalStack(
@@ -326,7 +334,7 @@ class JjClient:
         trunk = self._validate_trunk(trunk)
         if working_copy is None:
             raise CliError("Could not resolve the current working-copy revision.")
-        if working_copy.empty:
+        if working_copy.empty or not working_copy.description.strip():
             parent_commit_id = working_copy.parents[0] if working_copy.parents else None
             parent = (
                 revisions_by_commit_id.get(parent_commit_id)
@@ -1532,6 +1540,12 @@ class JjClient:
                 revision.change_id,
                 "empty working-copy commits are not reviewable.",
                 reason="empty_working_copy",
+            )
+        if revision.is_working_copy and not revision.description.strip():
+            raise UnsupportedStackError.stack_shape(
+                revision.change_id,
+                t"describe it with {ui.cmd('jj describe')} before submitting it for review.",
+                reason="undescribed_working_copy",
             )
         if revision.hidden:
             raise UnsupportedStackError.stack_shape(

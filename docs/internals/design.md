@@ -138,9 +138,9 @@ required make them not worth supporting in `jj-stack`.
 ### Pull request branch
 
 Each tracked review change gets exactly one remote Git branch, used as the GitHub PR head. The
-branch name is readable to humans and stable for tooling. `jj-stack` reserves the fixed `review/`
-namespace; branches outside the complete managed grammar cannot be adopted. Managed review
-branches do not persist as local jj bookmarks.
+branch name is managed by `jj-stack`, readable to humans, and stable for tooling. `jj-stack`
+reserves the fixed `review/` namespace. These managed review branches do not persist as local jj
+bookmarks.
 
 The initial name is built from:
 
