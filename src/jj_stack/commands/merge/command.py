@@ -145,7 +145,7 @@ def _resolve_merge_target(
     return (
         resolve_selected_revset(
             command_label="merge",
-            default_revset="@-",
+            default_revset=None,
             require_explicit=False,
             revset=revset,
         ),

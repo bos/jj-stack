@@ -29,10 +29,9 @@ review and can remove them later during `jj-stack unstack --cleanup` or `jj-stac
 Merging itself does not rewrite local history or remove review state; selected `sync` reconciles
 GitHub's result first.
 
-## Source of truth
+## Stack structure
 
-We use the local `jj` DAG as the source of truth for the stack: which changes exist, what order
-they are in, and how they relate to each other.
+The local `jj` DAG determines which stack changes exist, their order, and their relationships.
 
 To stay in sync with GitHub, `jj-stack` uses a small amount of supporting local metadata. That
 metadata helps it:
@@ -44,8 +43,8 @@ metadata helps it:
 This has a few consequences:
 
 - Local rewrites are easy and flexible.
-- `jj-stack` keeps only a small amount of supporting metadata. Your local `jj` history is still
-  the source of truth for the stack.
+- `jj-stack` keeps only a small amount of supporting metadata. Your local `jj` history still
+  determines the stack.
 - If `jj-stack` cannot tell which GitHub PR or branch belongs to a local change, it stops and
   asks you to fix the ambiguity instead of updating the wrong PR.
 

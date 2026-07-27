@@ -201,8 +201,8 @@ def build_parser() -> ArgumentParser:
         description_text=submit_command.__doc__ or "",
         handler=_forward_handler(submit_command.submit, open_="open"),
         revset_help=(
-            t"Revision to submit; defaults to {ui.revset('@-')} (the completed change below "
-            t"the working copy)"
+            t"Revision to submit; defaults to {ui.revset('@')} when the working-copy change is "
+            t"described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
     add_help_argument(
@@ -349,8 +349,9 @@ def build_parser() -> ArgumentParser:
         description_text=merge_command.__doc__ or "",
         handler=_forward_handler(merge_command.merge),
         revset_help=(
-            t"Revision to merge; defaults to {ui.revset('@-')} (the completed change below the "
-            t"working copy); cannot be combined with {ui.cmd('--pull-request')}"
+            t"Revision to merge; defaults to {ui.revset('@')} when the working-copy change is "
+            t"described and nonempty, otherwise {ui.revset('@-')}; cannot be combined with "
+            t"{ui.cmd('--pull-request')}"
         ),
     )
     merge_parser.add_argument(
@@ -378,8 +379,9 @@ def build_parser() -> ArgumentParser:
         description_text=unstack_command.__doc__ or "",
         handler=_forward_handler(unstack_command.unstack),
         revset_help=(
-            t"Revision to unstack; defaults to {ui.revset('@-')} (the completed change below "
-            t"the working copy); cannot be combined with {ui.cmd('--pull-request')}"
+            t"Revision to unstack; defaults to {ui.revset('@')} when the working-copy change is "
+            t"described and nonempty, otherwise {ui.revset('@-')}; cannot be combined with "
+            t"{ui.cmd('--pull-request')}"
         ),
     )
     unstack_parser.add_argument(
@@ -434,8 +436,8 @@ def build_parser() -> ArgumentParser:
         description_text=sync_command.__doc__ or "",
         handler=_forward_handler(sync_command.sync, all_="all"),
         revset_help=(
-            t"Revision to sync; defaults to {ui.revset('@-')} (the completed change below the "
-            t"working copy)"
+            t"Revision to sync; defaults to {ui.revset('@')} when the working-copy change is "
+            t"described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
     add_help_argument(
@@ -456,12 +458,17 @@ def build_parser() -> ArgumentParser:
         ),
     )
 
-    _add_command_parser(
+    doctor_parser = _add_command_parser(
         subcommands,
         command="doctor",
         help_text=normalized_help_text(doctor_command.HELP),
         description_text=doctor_command.__doc__ or "",
         handler=_forward_handler(doctor_command.doctor),
+    )
+    doctor_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Apply the local repairs doctor can make safely, instead of only reporting them",
     )
 
     completion_parser = _add_command_parser(
@@ -896,7 +903,10 @@ def _add_checkout_parser(
     add_help_argument(
         selector,
         "--revset",
-        help="Local stack to connect, identified by revset",
+        help=(
+            t"Local stack to connect; defaults to {ui.revset('@')} when the working-copy "
+            t"change is described and nonempty, otherwise {ui.revset('@-')}"
+        ),
     )
     add_help_argument(
         selector,

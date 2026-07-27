@@ -4,7 +4,7 @@ This document covers the implementation choices that follow from the single cano
 specification, [design.md](design.md). It defines repository layout, component boundaries,
 tooling, test strategy, and delivery shape.
 
-The canonical product specification is authoritative. This file records how the current code is
+The canonical product specification defines behavior. This file records how the current code is
 built, not what the product does.
 
 ## Summary
@@ -28,7 +28,7 @@ self-contained, well-described stacked commits.
 ## Goals
 
 1. Build a useful tool quickly without painting ourselves into a corner.
-2. Keep the `jj` DAG as the source of truth for stack topology.
+2. Let the `jj` DAG determine stack topology.
 3. Keep GitHub integration narrow, explicit, and easy to inspect in tests.
 4. Prefer end-to-end feature slices over big batches of infrastructure work.
 5. Make the local fake GitHub environment the default place to develop and debug
@@ -195,11 +195,11 @@ to the push URL. Each update carries an exact `force-with-lease` expectation, in
 absence for a new branch. There is no sequential fallback and no follow-up fetch. The auto-close
 predictor therefore evaluates the same one-step ref transition GitHub will observe.
 
-Two crash windows would otherwise strand a stack behind that lease. A tracked branch may also move
-from the exact target an interrupted push already left there. An untracked change whose branch is
-already on the remote — a first submit that pushed and then failed before recording anything — is
-adopted only when exactly one candidate carries a commit whose `change-id` header is that change;
-none, or more than one, is ambiguous and fails closed.
+Two crash windows would otherwise strand a stack behind that lease. A tracked branch may also
+move from the exact target an interrupted push already left there. An untracked change whose
+branch is already on the remote — a first submit that pushed and then failed before recording
+anything — is adopted only when exactly one candidate carries a commit whose `change-id` header
+is that change; none, or more than one, is ambiguous and fails closed.
 
 ### Planning rule
 
@@ -220,8 +220,9 @@ semantics.
 
 Derived per-change review state lives in `review/change_status.py`. `ReviewChangeStatus` is a pure
 classifier over local revision state, saved tracking, remote refs, and already-loaded PR data. It
-does not load state, choose a stack, or authorize mutation. Commands apply their own policy to the
-result and keep exact identity, baseline, PR, and branch values for concrete mutations.
+does not load state, choose a stack, or decide whether mutation is safe. Commands apply their own
+policy to the result and keep exact identity, baseline, PR, and branch values for concrete
+mutations.
 
 This is where most correctness lives.
 
@@ -314,7 +315,7 @@ Selected native sync uses the same fixed temporary attachment as checkout for on
 purpose: after a native merge rewrites the active suffix, it validates every active raw Git commit
 and parent, reobserves the whole branch set, then imports the exact top into jj. It rebases only
 trailing local descendants, abandons the replaced local active copies, and advances every adopted
-baseline together through the state store's existing pair compare-and-swap authority. It
+baseline together through the state store's existing pair compare-and-swap. It
 reobserves the branch set again before leaving the attachment. If that check fails, the updated
 baselines let a retry adopt the newer exact chain while historical tracking remains until
 survivor submit succeeds. No review bookmark survives; the exact imported commits become the
@@ -324,7 +325,7 @@ State saves are atomic but not fsync durable. The saved identity prevents action
 or branch, while the baseline records the exact reviewed commit. If a reconstructible cleanup
 write is lost, the next command rereads current state and reports or completes the remaining work.
 
-Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
+Tracking state stays minimal and optional. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
 The current top-level state version is 3. Each `ReviewIdentity` is version 3 and contains only
 the exact repository, PR, and head-owner/ref fields; `SubmittedBaseline` remains version 1.
@@ -342,13 +343,13 @@ rather than changing them during inspection. The command behavior is specified i
 [design.md](design.md).
 
 Orphan cleanup lives in its own command module because it begins from saved identity rather than
-a selected live stack. `review/observation.py` is the single policy-free batch source for saved
-identity and baseline pairs, exact PR numbers, unique head claims, and open base-ref dependents.
-It does not create a second exact-PR resolution path.
+a selected live stack. `review/observation.py` batches raw observations of saved identity and
+baseline pairs, exact PR numbers, unique head claims, and open base-ref dependents. It does not
+create a second exact-PR resolution path.
 
 Ordinary close, selected cleanup, orphan cleanup, sync, and merge request only the facts their
 mutation boundary needs; `_close_actions.py` applies the shared exact-link and dependent-PR
-authorization instead of observing those facts again through a command-specific path.
+eligibility checks instead of observing those facts again through a command-specific path.
 
 Repository-wide cleanup is one lifecycle-driven pass over complete identity/baseline pairs.
 It observes the exact saved PR, prepares branch and comment cleanup for a closed or merged match,
@@ -356,8 +357,8 @@ and rereads the PR, its unique head claim, open base-ref dependents, remote ref,
 membership, and tracking records at their mutation boundaries. Selected cleanup processes the
 observed stack head-to-base. A dry run may omit only dependents that an earlier selected action
 would close; actual cleanup never omits a live dependent. Local jj descendants remain
-selected-sync evidence, not cleanup authority. Shared code supplies observation and artifact
-mutation without a second eligibility policy.
+selected-sync evidence, not cleanup evidence. Shared code supplies observation and artifact
+mutation without a second set of eligibility rules.
 
 ## Data model
 

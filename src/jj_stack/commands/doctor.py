@@ -1,17 +1,20 @@
 """Check jj-stack's configuration and connectivity.
 
-Runs read-only checks for review-branch fetch settings, leftovers from interrupted
-checkout or sync commands, remote selection, GitHub connectivity, authentication,
-and trunk discovery. Nothing is changed. Exit status is 0 if all checks pass or
-warn; 1 if any check fails.
+Checks review-branch fetch settings, leftovers from interrupted checkout or sync
+commands, remote selection, GitHub connectivity, authentication, and trunk discovery.
+Reports only; pass --fix to also apply the local repairs it can make safely, which
+today means reserving the review-branch namespace in the remote's fetch configuration.
+Nothing on GitHub is ever changed.
 
-Failures include a recovery command when jj-stack can determine one.
+Exit status is 0 if every check passed, warned, or was fixed; 1 if any check failed.
+Failures name a recovery command where jj-stack can determine one.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -33,6 +36,7 @@ from jj_stack.github.resolution import (
 from jj_stack.jj.client import JjCliArgs, ReviewFetchIsolationRequired
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
+from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
 HELP = "Check repository setup and GitHub connectivity"
@@ -43,7 +47,7 @@ type CheckDetail = Message
 @dataclass(slots=True, frozen=True)
 class CheckResult:
     label: str
-    status: Literal["ok", "warn", "fail", "skip"]
+    status: Literal["ok", "warn", "fail", "fixed", "skip"]
     detail: CheckDetail
 
 
@@ -51,6 +55,7 @@ def doctor(
     *,
     cli_args: JjCliArgs,
     debug: bool,
+    fix: bool,
     repository: Path | None,
 ) -> int:
     """CLI entrypoint for `doctor`."""
@@ -59,8 +64,16 @@ def doctor(
         cli_args=cli_args,
         debug=debug,
     )
-    with console.spinner(description="Running checks"):
-        results = asyncio.run(_run_checks(context=context))
+    operation = (
+        acquire_operation_lock(
+            context.state_store.require_writable(),
+            command="doctor --fix",
+        )
+        if fix
+        else nullcontext()
+    )
+    with operation, console.spinner(description="Running checks"):
+        results = asyncio.run(_run_checks(context=context, fix=fix))
     console.output(_results_table(results))
     return 1 if any(r.status == "fail" for r in results) else 0
 
@@ -68,6 +81,7 @@ def doctor(
 async def _run_checks(
     *,
     context: CommandContext,
+    fix: bool,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
 
@@ -88,7 +102,9 @@ async def _run_checks(
         )
         return results
 
-    results.append(_check_review_fetch_isolation(context=context, remote=selected_remote))
+    results.append(
+        _check_review_fetch_isolation(context=context, fix=fix, remote=selected_remote)
+    )
     results.append(_check_review_temp(context=context))
 
     # Check 2: GitHub remote parsing
@@ -169,12 +185,13 @@ def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, GithubRepoAddr
 def _check_review_fetch_isolation(
     *,
     context: CommandContext,
+    fix: bool,
     remote: GitRemote,
 ) -> CheckResult:
     try:
         isolation = context.jj_client.ensure_review_fetch_isolation(
             remote=remote.name,
-            dry_run=True,
+            dry_run=not fix,
         )
     except ReviewFetchIsolationRequired as error:
         return CheckResult(
@@ -182,15 +199,14 @@ def _check_review_fetch_isolation(
             "fail",
             (
                 error_message(error),
-                t" {ui.cmd('jj-stack submit')}, or any other command that contacts the "
-                t"remote, applies it.",
+                t" Apply it with {ui.cmd('jj-stack doctor --fix')}.",
             ),
         )
     except CliError as error:
         return CheckResult("review branch fetch", "fail", str(error))
     return CheckResult(
         "review branch fetch",
-        "ok",
+        "fixed" if isolation.status == "applied" else "ok",
         t"exactly one {ui.code(isolation.refspec)} exclusion",
     )
 

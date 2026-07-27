@@ -67,7 +67,7 @@ def sync(
             context=context,
             dry_run=dry_run,
             print_selected=revset is None,
-            revset=revset or "@-",
+            revset=revset,
         )
 
 
@@ -77,7 +77,7 @@ def run_stack_convergence(
     dry_run: bool,
     fetch_remote_state: bool = True,
     print_selected: bool = False,
-    revset: str,
+    revset: str | None,
 ) -> int:
     try:
         prepared_status = prepare_status(

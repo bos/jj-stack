@@ -204,7 +204,7 @@ def _submit_options_from_cli(
 ) -> SubmitOptions:
     selected_revset = resolve_selected_revset(
         command_label="submit",
-        default_revset="@-",
+        default_revset=None,
         require_explicit=False,
         revset=revset,
     )
@@ -620,7 +620,11 @@ async def run_submit_async(
                 concurrency=_GITHUB_INSPECTION_CONCURRENCY,
                 github_client=github_client,
                 navigation_bodies=(
-                    {}
+                    {
+                        pull_number: None
+                        for revision in submitted_revisions
+                        if (pull_number := revision.pull_request_number) is not None
+                    }
                     if native_plan is not None
                     else navigation_comment_bodies(
                         revisions=submitted_revisions,

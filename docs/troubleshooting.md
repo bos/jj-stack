@@ -211,7 +211,7 @@ What to do:
   `jj-stack merge <head-change-id>` if you still want the remainder.
 - `jj-stack` does not enqueue merge-queue work. If repository policy requires a queue, use the
   repository's supported queue workflow, then run selected `sync` after GitHub merges the work.
-- An authorization rejection is an access problem. Fix repository permissions before retrying.
+- An access-denied response is a permissions problem. Fix repository permissions before retrying.
 
 ## PRs for this stack exist on GitHub but `jj-stack` doesn't know about them
 
@@ -388,4 +388,3 @@ remains, use `jj-stack list` to find the orphaned PR and then
 `jj-stack unstack --cleanup --pull-request <pr>`. To clean up every orphan shown by
 `jj-stack list`, preview `jj-stack unstack --cleanup --pull-request orphans --dry-run`, then
 run it again without `--dry-run`.
-

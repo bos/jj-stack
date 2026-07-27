@@ -47,12 +47,11 @@ command they use before any direct GitHub mutation.
    for the session. Do this lazily — the trigger is a pending GitHub write, not
    entering a repo. These commands exit 10 when they print a report that is
    incomplete or needs attention; read the JSON before concluding anything.
-3. **Use jj-stack as the stack authority.** Once jj-stack is detected anywhere
+3. **Use jj-stack for stack changes.** Once jj-stack is detected anywhere
    in a repo, use it for stack-level PR work in that repo: status, submit,
    refresh, base/head changes caused by stack rewrites, merging, cleanup,
    closing, importing, relinking, and recovery. `gh` remains fine for reads and
-   collaboration metadata, but not as the source of truth or mutation path for
-   the stack.
+   collaboration metadata, but not for deciding or changing stack shape.
 4. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`,
    `cleanup`, or `unstack`, and preview with `--dry-run` whenever the next
    step is uncertain.
@@ -158,7 +157,7 @@ that is incomplete or needs attention (the output is still valid — read it);
 ## When something goes wrong
 
 - `merge` rejected by GitHub: read the reported check, conflict, queue,
-  policy, or authorization reason, fix it, and rerun the same explicit
+  policy, or access reason, fix it, and rerun the same explicit
   command. A native terminal failure merges nothing. If ordinary bottom-up
   merging accepted lower PRs first, run selected `sync` before retrying the
   remainder. A matching request already pending should be allowed to finish,

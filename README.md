@@ -131,8 +131,8 @@ jj-stack list
 
 ## Mental model
 
-The unit of review is one local `jj` change. The local `jj` DAG is the source of truth
-for which changes are in the stack and what order they are in.
+The unit of review is one local `jj` change. The local `jj` DAG determines which changes are in
+the stack and their order.
 
 On GitHub:
 
@@ -258,7 +258,7 @@ series of dependent steps, especially when intermediate steps need revision.
 While you could model that with plain Git branches, the bookkeeping quickly becomes unwieldy.
 `jj-stack` takes a different approach:
 
-- your local `jj` DAG is the source of truth for the stack
+- your local `jj` DAG determines the stack
 - history stays mutable in `jj`
 - GitHub gets the review branches and PRs it needs
 - when you modify an intermediate change, `jj-stack` does the PR and branch wrangling

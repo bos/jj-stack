@@ -131,13 +131,9 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
     assert fake_repo.native_stacks == {1: (1, 2)}
     assert len(state_store.load().review_identities) == 2
 
-    for body in ("old navigation one", "old navigation two"):
-        fake_repo.create_issue_comment(
-            body=f"{STACK_NAVIGATION_COMMENT_MARKER}\n{body}",
-            issue_number=2,
-        )
-    old_navigation = tuple(
-        (comment.id, comment.body) for comment in _navigation_comments(fake_repo, 2)
+    fake_repo.create_issue_comment(
+        body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nold navigation",
+        issue_number=2,
     )
     top_change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
     run_command(
@@ -150,10 +146,7 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
     assert run_main(repo, config_path, "submit", "--describe", f"stack={stack_description}") == 0
     assert fake_repo.pull_requests[2].title == "feature 2 renamed"
     assert fake_repo.pull_requests[2].body == "updated body"
-    assert (
-        tuple((comment.id, comment.body) for comment in _navigation_comments(fake_repo, 2))
-        == old_navigation
-    )
+    assert _navigation_comments(fake_repo, 2) == []
     assert "Native stack overview" in _overview_comments(fake_repo, 2)[0].body
 
     for number in range(3, 6):
@@ -672,7 +665,7 @@ def test_submit_invalid_revset_reports_clean_error_without_mutation(
     assert fake_repo.pull_requests == {}
 
 
-def test_submit_allows_a_shared_change_on_an_unselected_local_path(
+def test_submit_defaults_to_a_described_nonempty_working_copy(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -688,7 +681,7 @@ def test_submit_allows_a_shared_change_on_an_unselected_local_path(
     run_command(["jj", "describe", "-m", "selected path"], repo)
     selected = JjClient(repo).resolve_revision("@")
 
-    exit_code = run_main(repo, config_path, "submit", "@")
+    exit_code = run_main(repo, config_path, "submit")
     captured = capsys.readouterr()
     state = ReviewStateStore.for_repo(repo).load()
 

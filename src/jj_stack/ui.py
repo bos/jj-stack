@@ -19,7 +19,7 @@ class SemanticText:
         return self.text
 
 
-StatusValue = Literal["ok", "warn", "fail", "skip"]
+StatusValue = Literal["ok", "warn", "fail", "fixed", "skip"]
 type Message = str | Template | SemanticText | tuple[Message, ...]
 
 

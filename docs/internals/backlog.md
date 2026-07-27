@@ -27,10 +27,10 @@ merge does not. Selected `sync` uses a preserved header to recognize the fetched
 otherwise it retires the old local change from exact merge-result evidence without relabeling the
 landed commit or storing an alias.
 
-The header remains evidence, not a new source of truth. Normal Git and GitHub commit views do not
-show it, and exact review identity plus fetched trunk and merge-result checks still authorize
-recovery. It may nevertheless help future recovery flows where the user experience should follow
-a logical `jj` change rather than one exact commit object.
+The header remains supporting evidence, not a new identity. Normal Git and GitHub commit views do
+not show it, and exact review identity plus fetched trunk and merge-result checks are still
+required for recovery. It may nevertheless help future recovery flows where the user experience
+should follow a logical `jj` change rather than one exact commit object.
 
 High-level cases where this might help:
 
@@ -187,29 +187,37 @@ already caught: the selected head's commit differs too. Reaching the gap needs t
 change absent or hidden while a lower one survives in rewritten form.
 
 Covering every head means reading the pull-request chain before the import. That walk currently
-runs after it, and the chain read that follows the import is the one that authorizes the tracking
-write, so a pre-import walk would either duplicate those requests or move the authorizing read
+runs after it, and only the chain read that follows the import is used for the tracking write. A
+pre-import walk would therefore either duplicate those requests or move the required read
 earlier. Decide which before implementing.
 
-## Rename the reserved review branch namespace to `jj-stack/`
+## Default the reserved review branch namespace to `jj-stack/` and make it configurable
 
 _Benefit: medium — `review/` is a plausible name for a user's own branches, and the whole
 namespace is reserved, so a collision costs the user a branch that silently stops updating._
 
-The reserved namespace is `review/`. The fetch exclusion covers all of it and the
-imported-bookmark guard reports all of it, so any branch a user keeps under `review/` is refused
-or stops being fetched. `jj-stack/` would make that reservation almost collision-free while
-keeping the same one-namespace rule.
+Default to `jj-stack/`, and make the namespace a `branch_prefix` key in the `[jj-stack]` config
+table. One namespace stays reserved per repository; only its name becomes a setting. It was
+configurable once, as `bookmark_prefix`, and `ktvyqsuvuuvw` was right to collapse the alternate
+policies around it but wrong to hardcode the name. Validate non-empty, no `/`, otherwise the slug
+charset of generated names, and no overlap with `jj-stack-tmp/`.
 
-Deferred because the change is mechanical but wide, and because it resets live tracking:
+Two things to do first, both worth doing anyway:
 
-- every saved `ReviewIdentity.head_ref` starts with `review/`, and the state store validates head
-  refs against the managed grammar on every read, so existing records become malformed. Per the
-  tracking-state rules they are reported and isolated with `relink` guidance rather than dropped,
-  but anyone with live stacks re-adopts them
-- existing remote `review/*` branches become unmanaged and need deleting by hand
-- the prefix constant is one line; the hardcoded branch strings across the tests and every doc
-  mention are the bulk of the work
+- `state/store.py` currently requires a saved `head_ref` to start with `review/` and to carry a
+  slug stem, on top of the short change-ID suffix that ties the record to its change. Only the
+  suffix earns anything there: `checkout` and `relink` already refuse a PR head that is not a
+  managed name, and `submit` generates the names, so the store is a second enforcement point for a
+  naming rule it does not own. Narrow it to the suffix, or a prefix change invalidates every live
+  record.
+- `load_config` takes a `JjClient`, so the client cannot hold resolved config, and `jj/client.py`
+  reaches the prefix through lazy imports with `ReviewFetchIsolation.refspec` defaulting from a
+  factory. Passing the namespace in as an argument replaces both and drops the import cycle they
+  work around.
+
+The rest is mechanical: hardcoded `review/` across the tests, plus `design.md` (which calls the
+namespace fixed, and whose settings block gains the key), `mental-model.md`,
+`troubleshooting.md`, and `json-output.md`.
 
 No migration or compatibility shim should be written for this; the project has no such burden.
 
@@ -222,13 +230,13 @@ every other record, against the stated per-record isolation._
 ambiguous, or individually failing records are reported and skipped without blocking independent
 cleanup work." A `DriftError` raised by the leased remote-ref deletion is caught nowhere on the
 repository-wide path, so it propagates and ends the whole command. A single review branch that
-moved externally therefore blocks cleanup of records that were independently authorized.
+moved externally therefore blocks cleanup of records that passed their own checks.
 
 `tests/integration/test_cleanup_command.py` pins the abort for a single-record repository, which
 is why the gap is invisible: with one record there is nothing else to block.
 
 The fix is a per-record boundary around the branch deletion that records a blocked action and
-continues, matching how the surrounding authorization failures already behave. Note the removed
+continues, matching how the surrounding validation failures already behave. Note the removed
 `if not cleanup_current: return False` fallbacks were the vestige of exactly this skip, never
 wired up; the missing piece is the guarantee, not those returns.
 

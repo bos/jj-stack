@@ -6,7 +6,7 @@ the project. Most users of the tool will never need to read any of this.
 
 If you are looking for how to use `jj-stack`, see the [user guide](../README.md).
 
-## Authority and contents
+## Contents
 
 - **[design.md](design.md)** — the single canonical product specification. Read it before
   changing user-visible behavior.

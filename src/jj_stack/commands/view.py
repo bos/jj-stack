@@ -6,7 +6,8 @@ By default it summarizes the submitted and unsubmitted changes in each selected 
 `--fetch` fetches ordinary remote state and checks current review branches before reporting. Use
 one or more revsets and `--pull-request` selectors to inspect several stacks in one run.
 
-Common examples: `jj-stack view` inspects the stack ending at `@-`;
+Common examples: `jj-stack view` inspects the current described, nonempty working-copy change,
+or the completed change below it when the working copy is empty or undescribed;
 `jj-stack view --pull-request 123` finds the local stack for one linked PR; and
 `jj-stack view <head-change-id>` checks current review branches before reporting.
 """

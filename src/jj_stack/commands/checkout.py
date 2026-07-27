@@ -121,7 +121,7 @@ def _checkout_saved_stack(
             on_isolation_change=report_fetch_isolation,
         )
     stack = client.discover_review_stack(
-        revset or "@-",
+        revset,
         allow_divergent=True,
         allow_immutable=True,
     )

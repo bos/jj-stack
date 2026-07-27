@@ -398,7 +398,7 @@ def _resolve_local_unstack_revset(
     command_label = "unstack --local --dry-run" if dry_run else "unstack --local"
     return resolve_selected_revset(
         command_label=command_label,
-        default_revset="@-",
+        default_revset=None,
         require_explicit=False,
         revset=revset,
     )
@@ -525,7 +525,7 @@ def _resolve_close_target(
     return _CloseSelectedStack(
         revset=resolve_selected_revset(
             command_label=command_label,
-            default_revset="@-",
+            default_revset=None,
             require_explicit=False,
             revset=revset,
         )

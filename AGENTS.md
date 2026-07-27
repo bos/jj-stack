@@ -7,10 +7,10 @@ compatibility code, migration code, or the like.
 
 - A replacement is incomplete until it deletes the mechanism it supersedes in the same change.
   Do not add a temporary parallel model with a promise to remove it in a later cleanup slice.
-- Give each jj-stack-owned durable policy fact one authority and one representation. Shared
-  observation or storage code must not create a second policy path for deciding or changing it.
-- Separate observation from authority: batch independent read-only facts, but keep dependent
-  mutations in order and re-read their authorization facts immediately before changing state.
+- Define each jj-stack-owned durable policy fact once and store it one way. Shared observation or
+  storage code must not create a second path for deciding or changing it.
+- Batch independent read-only facts, but keep dependent mutations in order and re-read their
+  preconditions immediately before changing state.
 - Apply the cumulative complexity budgets after every code slice. CI runs
   `uv run tools/check_complexity.py`; run it locally when the pinned `tokei` is installed. A
   budget increase is a design stop that requires explicit review, not routine maintenance of the
@@ -60,9 +60,8 @@ compatibility code, migration code, or the like.
   and prefer deleting case-specific rules that follow from the principles over adding new
   ones. Never add durable transaction or replay state; recovery is observational
   (see design.md).
-- Preserve the core invariants: the `jj` DAG is the source of truth, local cache is sparse,
-  GitHub pull requests are derived from the local `jj` stack, and ambiguous linkage fails
-  closed.
+- Preserve the core invariants: the `jj` DAG determines stack topology, local cache is sparse,
+  GitHub pull requests are derived from the local `jj` stack, and ambiguous linkage fails closed.
 - If behavior changes, update `design.md` and the user docs in the same change and make sure tests
   pass. Update `implementation-strategy.md` only for an architecture, tooling, or test-layer
   change; use `jj` commits for slice history.

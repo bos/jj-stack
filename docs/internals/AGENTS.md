@@ -16,7 +16,7 @@ agents working on the codebase. Most users will never open this directory.
   for every landed implementation change.
 - `testing-philosophy.md` — what kinds of tests to write and why.
 - `backlog.md` — non-blocking follow-up items: design debt, deferred features,
-  open architecture questions. It has no normative authority; add to it rather
+  open architecture questions. It does not define behavior; add to it rather
   than leaving TODOs in code.
 
 Only `design.md` defines product behavior. Other documents explain implementation, testing,

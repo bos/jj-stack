@@ -173,7 +173,7 @@ Merge and post-merge convergence use focused deterministic integration tests rat
 submit property generator. The tested boundaries include exact submitted-head validation,
 bottom-prefix selection, draft and closed boundaries, ordinary bottom-up stops, native atomic
 failure, partial native survivor rewrites, terminal retry, historical-member cleanup, and selected
-or repository-wide sync authorization.
+or repository-wide sync eligibility.
 
 The native tests assert both final Git and PR state and the significant API events. A terminal
 native failure changes nothing. A successful partial request may change survivor heads and bases,
@@ -240,7 +240,7 @@ For the submitted stack as a whole:
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
 The default suite runs six fixed scenarios: one stack edit, one merge, one move, one submit retry,
-and two drift cases. Their authoritative names and counts live in
+and two drift cases. Their defined names and counts live in
 `tests/support/submit_property_scenarios.py`; larger deterministic pools remain opt-in.
 
 ## Efficiency
@@ -259,7 +259,7 @@ Expanded property runs are launched by hand:
 $ tests/run_submit_property_scenarios.py 500
 ```
 
-The runner's `--help` is the authority for family counts, seeds, workers, environment setup, and
+The runner's `--help` lists family counts, seeds, workers, environment setup, and
 additional pytest arguments.
 
 `--random-seed` generates one seed and uses it for both scenario generation and

@@ -8,6 +8,7 @@ import jj_stack.commands.doctor as doctor_mod
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
+from jj_stack.state.operation_lock import read_operation_lock_holder
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -96,8 +97,40 @@ def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
     output = " ".join(capsys.readouterr().out.split())
 
     assert exit_code == 1
-    assert "jj-stack submit" in output
+    assert "jj-stack doctor --fix" in output
     assert "without --dry-run" not in output
+
+
+def test_doctor_fix_applies_the_review_fetch_exclusion(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
+
+    assert run_main(repo, config_path, "doctor") == 1
+    capsys.readouterr()
+
+    run_checks = doctor_mod._run_checks
+
+    async def run_checks_with_lock_assertion(*, context, fix):
+        holder = read_operation_lock_holder(context.state_store.require_writable())
+        assert fix
+        assert holder is not None
+        assert holder.command == "doctor --fix"
+        return await run_checks(context=context, fix=fix)
+
+    monkeypatch.setattr(doctor_mod, "_run_checks", run_checks_with_lock_assertion)
+    assert run_main(repo, config_path, "doctor", "--fix") == 0
+    fixed_output = " ".join(capsys.readouterr().out.split())
+    assert "fixed" in fixed_output
+
+    # The repair sticks, so a plain run now passes and offers no advice.
+    monkeypatch.setattr(doctor_mod, "_run_checks", run_checks)
+    assert run_main(repo, config_path, "doctor") == 0
+    rerun_output = " ".join(capsys.readouterr().out.split())
+    assert "jj-stack doctor --fix" not in rerun_output
 
 
 def test_doctor_shows_skipped_checks_when_remote_fails(

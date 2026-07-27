@@ -1,6 +1,6 @@
 # Distributed state model
 
-Status: current drift model. [design.md](design.md) remains the behavioral authority.
+Status: current drift model. [design.md](design.md) defines product behavior.
 
 `jj-stack` coordinates four sources of state that can move independently. Drift bugs arise when
 they disagree. This file names those sources, the supported transitions that move them, the
@@ -29,10 +29,10 @@ have defined behavior but no dedicated current scenario.
    [design.md](design.md). Moved by the commands that design.md allows to change an identity or
    advance a baseline; status observation never writes any of them.
 
-Which source is authoritative for what, and what a healthy link between them requires, are
-specified in [design.md](design.md) — this file does not restate them. What matters here is that
-all four move independently, so any pair can disagree, and every mutation rechecks the sources it
-depends on rather than trusting an earlier observation.
+What each source determines, and what a healthy link between them requires, are specified in
+[design.md](design.md) — this file does not restate them. All four move independently, so any
+pair can disagree, and every mutation rechecks the sources it depends on rather than trusting an
+earlier observation.
 
 ## Legal transitions worth modeling
 
@@ -95,8 +95,8 @@ saved tracking that still points at the closed PR.
   `ConflictedStackError` for local shape), so the harness asserts *which* check fired,
   not just the exit code — a stop for the wrong reason names the wrong repair path and
   must fail the model.
-- **Recheck before mutation.** Planning observations never authorize a later mutation, per safety
-  rule 4 in [design.md](design.md).
+- **Recheck before mutation.** Planning observations never permit a later mutation, per safety
+  rule 4, *merge what was reviewed*, in [design.md](design.md).
 - **Inspection must still report.** `view` must produce a report or a targeted
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.

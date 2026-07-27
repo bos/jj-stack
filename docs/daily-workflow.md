@@ -15,11 +15,12 @@ intentionally focused on one linear stack at a time.
 
 ## 2. Inspect before submitting
 
-`jj-stack` will by default submit the current stack ending at `@-` (the most recent completed
-change below your working directory). In the common case, this is the stack you just built on
-top of `trunk()`. If `trunk()` has advanced since you last rebased, your stack instead starts
-from an older ancestor of `trunk()`. `jj-stack view` will show the ancestor in the footer
-beneath your stack, so you can see exactly what the stack is based on.
+`jj-stack` will by default submit the current stack ending at `@` when the working-copy change
+has a description and contents. If the working copy is empty or undescribed, it uses `@-`
+instead. In the common case, this is the stack you just built on top of `trunk()`. If `trunk()`
+has advanced since you last rebased, your stack instead starts from an older ancestor of
+`trunk()`. `jj-stack view` will show the ancestor in the footer beneath your stack, so you can
+see exactly what the stack is based on.
 
 You can easily check what the tool thinks that stack is:
 

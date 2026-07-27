@@ -442,6 +442,7 @@ def _render_status_badge(status: ui.StatusBadge) -> Text:
         "ok": ("hint heading",),
         "warn": ("warning heading",),
         "fail": ("error heading",),
+        "fixed": ("hint heading",),
         "skip": ("hint heading",),
     }
     return rich_text(ui.semantic_text(status.value, *labels[status.value]))
