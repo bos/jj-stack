@@ -465,6 +465,76 @@ def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
     assert len(fake_repo.pull_requests) == 3
 
 
+def test_submit_retargets_only_the_selected_fork_when_a_split_stack_shares_a_review_base(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Rebasing the upper half of a submitted stack onto its bottom change forks the
+    review path. Submitting one fork moves the lowest pull request on that fork onto the
+    review branch of the shared change, so two open pull requests end up on the same base
+    ref. The deferred fork keeps its pull request, branch, and tracking until the user
+    submits it explicitly.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=4)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    change_ids = [
+        revision.change_id for revision in JjClient(repo).discover_review_stack().revisions
+    ]
+    submitted_state = ReviewStateStore.for_repo(repo).load()
+    deferred_change_id = change_ids[1]
+    deferred_identity = submitted_state.review_identities[deferred_change_id]
+    deferred_baseline = submitted_state.submitted_baselines[deferred_change_id]
+    deferred_pull_request = fake_repo.pull_requests[deferred_identity.pr_number]
+    shared_base_ref = deferred_pull_request.base_ref
+    deferred_remote_target = read_remote_ref(fake_repo.git_dir, deferred_identity.head_ref)
+    deferred_events = [
+        event
+        for event in fake_repo.pull_request_events
+        if event.pull_request_number == deferred_identity.pr_number
+    ]
+
+    run_command(["jj", "rebase", "-s", change_ids[2], "-d", change_ids[0]], repo)
+    selected_stack = JjClient(repo).discover_review_stack(change_ids[3])
+    assert [revision.change_id for revision in selected_stack.revisions] == [
+        change_ids[0],
+        change_ids[2],
+        change_ids[3],
+    ]
+
+    exit_code = run_main(repo, config_path, "submit", change_ids[3])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, captured.err
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=selected_stack,
+    )
+
+    refreshed_state = ReviewStateStore.for_repo(repo).load()
+    forked_pr_number = refreshed_state.review_identities[change_ids[2]].pr_number
+    assert fake_repo.pull_requests[forked_pr_number].base_ref == shared_base_ref
+
+    assert deferred_pull_request.base_ref == shared_base_ref
+    assert deferred_pull_request.head_ref == deferred_identity.head_ref
+    assert deferred_pull_request.state == "open"
+    assert deferred_pull_request.merged_at is None
+    assert read_remote_ref(fake_repo.git_dir, deferred_identity.head_ref) == (
+        deferred_remote_target
+    )
+    assert refreshed_state.review_identities[deferred_change_id] == deferred_identity
+    assert refreshed_state.submitted_baselines[deferred_change_id] == deferred_baseline
+    assert [
+        event
+        for event in fake_repo.pull_request_events
+        if event.pull_request_number == deferred_identity.pr_number
+    ] == deferred_events
+    assert len(fake_repo.pull_requests) == 4
+
+
 def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
     tmp_path: Path,
     monkeypatch,
