@@ -424,9 +424,9 @@ selected local parent chain, and a selection may touch only one GitHub stack it 
 to change. The rule looks only for open members the selection leaves out, so a review GitHub no
 longer lists never blocks, and a GitHub stack holding nothing but merged pull requests is not in
 the way. An open member the user did not select, or membership that changed while the command was
-running, fails before any mutation and names `gh stack unstack`. `submit`, `merge`, selected
-`sync`, and `unstack` all apply this one rule and re-check it immediately before the mutation it
-authorizes.
+running, fails before any mutation, and tells the user to dissolve the GitHub stack with
+`gh stack unstack`. Four jj-stack commands apply this one rule and re-check it immediately before
+the mutation it authorizes: `submit`, `merge`, selected `sync`, and `unstack`.
 
 A GitHub merge may rewrite the open members above the ones it merged. Selected `sync` then adopts
 the exact commits GitHub produced rather than replaying the same diffs, and accepts the new heads
@@ -695,10 +695,11 @@ defense must either prove the destructive default does not apply or gain one bef
   mutation safety — a snapshot match plus expected state, base, and head SHA, re-read immediately
   before the request. Only a terminal merged result is success. A rejection stops there, with PRs
   below already merged.
-- **GitHub stack create, append, and unstack.** GitHub puts each admitted pull request in exactly
-  one stack. Covered by the membership rule, re-checked immediately before the mutation; an
-  incomplete removal stops before any branch or base change. GitHub's mutation is the admission
-  authority, and there is no fallback to comments after it rejects one.
+- **Creating a GitHub stack, appending to one, and removing members from one.** GitHub puts each
+  admitted pull request in exactly one stack. Covered by the membership rule, re-checked
+  immediately before the mutation; an incomplete removal stops before any branch or base change.
+  GitHub's mutation is the admission authority, and there is no fallback to comments after it
+  rejects one.
 - **`convert_pull_request_to_draft`**, **`mark_pull_request_ready_for_review`.** Repo policy may
   dismiss approvals on draft conversion or trigger required CI on ready-for-review. Invoked only
   for `--draft=all` and `--open` respectively, never by default. New PRs are created directly as
