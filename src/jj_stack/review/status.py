@@ -26,7 +26,6 @@ from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
     resolve_github_target,
-    select_submit_remote,
 )
 from jj_stack.github.stack_comments import (
     is_navigation_comment,
@@ -304,26 +303,6 @@ def _resolve_selected_stack(
     if re_resolve_after_remote_refresh:
         stack = resolve()
     return stack, True
-
-
-def refresh_remote_state_for_status(
-    *,
-    jj_client: JjClient,
-    on_fetch_isolation_change: Callable[[ReviewFetchIsolation], None] | None = None,
-) -> None:
-    """Refresh remembered remote state once for `view --fetch` when possible."""
-
-    remotes = jj_client.list_git_remotes()
-    if not remotes:
-        return
-    try:
-        remote = select_submit_remote(remotes)
-    except CliError:
-        return
-    jj_client.fetch_remote(
-        remote=remote.name,
-        on_isolation_change=on_fetch_isolation_change,
-    )
 
 
 def stream_status(

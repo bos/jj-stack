@@ -21,6 +21,15 @@ and the exact commit last sent for review. It also caches one boolean per local/
 pair for native stack support. Everything else is observed or derived. That keeps the tool feeling
 like an extension of `jj` rather than a parallel stack manager.
 
+## Design goals
+
+1. Make stacked GitHub PRs feel native in a `jj` workflow.
+2. Be easy to use.
+3. Avoid out-of-band metadata as a source of truth.
+4. Keep branch names stable across rewrite-heavy review.
+5. Recompute as much as possible from `jj` state on every run.
+6. Keep any persisted state optional, minimal, and tool-owned.
+
 ## Safety rules, in priority order
 
 These rules are ordered. A lower rule never justifies weakening a higher one.
@@ -47,27 +56,18 @@ This can't be followed often enough to be a genuine rule, but it's a good UX asp
 Three things can answer a question about the state of a review, and each is authoritative for a
 different set of questions:
 
-- the **`jj` DAG** — what changes exist locally, how they are related, and what they contain.
-- **GitHub** — everything about a pull request: whether it exists, its state, its reviews, which
-  native stack it belongs to, and what a merge produced. Whether reviewed work actually landed is
-  settled only by ancestry from the fetched trunk commit, under
-  [Landed evidence](#landed-evidence).
-- **local tracking** — which pull request and branch belong to a change, and the exact commit
-  last sent for review. Nothing else. It exists to stop a command acting on the wrong review, and
-  can never authorize one on its own.
+1. The **`jj` DAG** — what changes exist locally, how they are related, and what they contain.
+2. **GitHub** — everything about a pull request: whether it exists, its state, its reviews,
+   which native stack it belongs to, and what a merge produced. Whether reviewed work actually
+   landed is settled only by ancestry from the fetched trunk commit, under [Landed
+   evidence](#landed-evidence).
+3. **Local tracking** — which pull request and branch belong to a change, and the exact commit
+   last sent for review. Nothing else. It exists to stop a command acting on the wrong review,
+   and can never authorize one on its own.
 
 Local tracking holds one further fact: whether a given local repository and GitHub repository
 support native GitHub stacks. It caches no permissions, no stack shape, and nothing about an
 operation in progress.
-
-## Design goals
-
-1. Make stacked GitHub PRs feel native in a `jj` workflow.
-2. Be easy to use.
-3. Avoid out-of-band metadata as a source of truth.
-4. Keep branch names stable across rewrite-heavy review.
-5. Recompute as much as possible from `jj` state on every run.
-6. Keep any persisted state optional, minimal, and tool-owned.
 
 ## Recommended GitHub policy
 
@@ -95,8 +95,8 @@ A few `jj` and Git properties drive this design:
   transport branches and rejects locally imported names in that namespace.
 - `change_id` is the durable logical identity of a change across rewrites. The Git commit ID
   is not.
-- Notably, `change_id` seems to survive a GitHub rebase merge, which is a nice property for us.
-  It appears to be obliterated by a squash merge.
+- Notably, `change_id` seems to survive a GitHub rebase merge, which is a very nice property for
+  users. It appears to be obliterated by a squash merge.
 - `jj`'s internal storage is not an extension API; the tool does not write into `.jj/`
   internals.
 
@@ -104,8 +104,8 @@ A few `jj` and Git properties drive this design:
 
 ### Review change
 
-A review change is one visible mutable `jj` change, identified by full `change_id`. That is the
-durable identity — not the commit ID, not the remote branch name, not the current diff base.
+A review change is one visible mutable `jj` change, identified by full `change_id`. The commit
+ID, remote branch name, and current diff base are *not* involved.
 
 "Visible mutable" follows `jj`'s own revsets:
 

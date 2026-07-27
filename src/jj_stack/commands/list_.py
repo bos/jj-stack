@@ -20,7 +20,6 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._json_status import (
     review_change_json,
     saved_pull_request_json,
@@ -52,7 +51,6 @@ from jj_stack.review.status import (
     lookup_pull_request_lookups,
     observe_remote_targets_for_status,
     prepare_stack_for_status,
-    refresh_remote_state_for_status,
 )
 
 HELP = "List review stacks connected in this repository"
@@ -94,7 +92,6 @@ def list_(
     as_json: bool,
     cli_args: JjCliArgs,
     debug: bool,
-    fetch: bool,
     repository: Path | None,
 ) -> int:
     """CLI entrypoint for `list`."""
@@ -107,7 +104,6 @@ def list_(
     return _run_list(
         as_json=as_json,
         context=context,
-        fetch=fetch,
     )
 
 
@@ -115,14 +111,7 @@ def _run_list(
     *,
     as_json: bool,
     context: CommandContext,
-    fetch: bool,
 ) -> int:
-    if fetch:
-        refresh_remote_state_for_status(
-            jj_client=context.jj_client,
-            on_fetch_isolation_change=report_fetch_isolation,
-        )
-
     state = context.state_store.load()
     state_incomplete = bool(state.record_issues)
     with console.spinner(description="Inspecting local stacks"):

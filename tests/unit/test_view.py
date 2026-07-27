@@ -209,7 +209,7 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
 
     assert "Missing GitHub PR" in normalized_lines
     assert "GitHub did not report a PR for the remembered review branch" in normalized_lines
-    assert "jj-stack view --fetch <change>" in normalized_lines
+    assert "jj git fetch" in normalized_lines
     assert "Relink an open PR if one exists" in normalized_lines
     assert "jj-stack unstack --cleanup @" in normalized_lines
     assert "GitHub did not report remembered PR #42 for this branch" in normalized_lines

@@ -14,19 +14,12 @@ from jj_stack.models.review_state import ReviewState
 from .entrypoint_test_helpers import patch_bootstrap
 
 
-def test_view_fetches_once_and_skips_duplicate_stack(
+def test_view_skips_duplicate_stack(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     patch_bootstrap(monkeypatch, view_module, tmp_path)
-    fetched: list[str] = []
     rendered: list[str] = []
-
-    monkeypatch.setattr(
-        view_module,
-        "refresh_remote_state_for_status",
-        lambda **kwargs: fetched.append("fetched"),
-    )
 
     def fake_prepare_status_for_revset(**kwargs):
         revset = kwargs["revset"]
@@ -64,7 +57,6 @@ def test_view_fetches_once_and_skips_duplicate_stack(
         as_json=False,
         cli_args=JjCliArgs(),
         debug=False,
-        fetch=True,
         pull_request=None,
         repository=tmp_path,
         revset=None,
@@ -77,7 +69,6 @@ def test_view_fetches_once_and_skips_duplicate_stack(
     )
 
     assert exit_code == 0
-    assert fetched == ["fetched"]
     assert rendered == ["foo", "baz"]
 
 
@@ -130,7 +121,6 @@ def test_view_continues_after_selector_error(
             as_json=False,
             cli_args=JjCliArgs(),
             debug=False,
-            fetch=False,
             pull_request=None,
             repository=tmp_path,
             revset=None,
@@ -204,7 +194,6 @@ def test_view_json_continues_after_selector_error(
             as_json=True,
             cli_args=JjCliArgs(),
             debug=False,
-            fetch=False,
             pull_request=None,
             repository=tmp_path,
             revset=None,

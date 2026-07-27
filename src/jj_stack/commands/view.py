@@ -22,7 +22,6 @@ from typing import Literal
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._json_status import review_change_json
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.config import RepoConfig
@@ -58,7 +57,6 @@ from jj_stack.review.status import (
     ReviewStatusRevision,
     StatusResult,
     prepare_status,
-    refresh_remote_state_for_status,
     status_preparation_cli_error,
     stream_status,
 )
@@ -98,7 +96,6 @@ def view(
     as_json: bool,
     cli_args: JjCliArgs,
     debug: bool,
-    fetch: bool,
     pull_request: str | Sequence[str] | None,
     repository: Path | None,
     revset: str | Sequence[str] | None,
@@ -114,7 +111,6 @@ def view(
     )
     return _run_status(
         context=context,
-        fetch=fetch,
         selectors=_normalize_status_selectors(
             pull_request=pull_request,
             revset=revset,
@@ -129,16 +125,9 @@ def _run_status(
     *,
     as_json: bool,
     context: CommandContext,
-    fetch: bool,
     selectors: tuple[ViewSelector, ...],
     verbose: bool,
 ) -> int:
-    if fetch:
-        refresh_remote_state_for_status(
-            jj_client=context.jj_client,
-            on_fetch_isolation_change=report_fetch_isolation,
-        )
-
     if not selectors:
         prepared_status = _prepare_status_with_spinner(
             context=context,
@@ -950,7 +939,7 @@ def _link_advisory_summary_row(
         detail = (
             "GitHub did not report a PR for the remembered review branch of "
             f"{change_phrase}. Run ",
-            ui.cmd("jj-stack view --fetch <change>"),
+            ui.cmd("jj git fetch"),
             " if branch state may be stale. Relink an open PR if one exists; otherwise end "
             "the review with ",
             end_review_command,
@@ -962,7 +951,7 @@ def _link_advisory_summary_row(
         detail = (
             "GitHub reports multiple PRs for the remembered review branch of "
             f"{change_phrase}. Run ",
-            ui.cmd("jj-stack view --fetch <change>"),
+            ui.cmd("jj git fetch"),
             " to refresh, then relink the intended open PR.",
         )
         return label, detail

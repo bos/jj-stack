@@ -591,7 +591,7 @@ def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
 
     del fake_repo.pull_requests[1]
 
-    exit_code = run_main(repo, config_path, "view", "--fetch", change_id)
+    exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 

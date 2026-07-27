@@ -316,12 +316,6 @@ def build_parser() -> ArgumentParser:
         help="Output stack status as JSON",
     )
     view_parser.add_argument(
-        "-f",
-        "--fetch",
-        action="store_true",
-        help="Fetch ordinary remote state and check current review branches before reporting",
-    )
-    view_parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -334,12 +328,6 @@ def build_parser() -> ArgumentParser:
         help_text=normalized_help_text(list_command.HELP),
         description_text=list_command.__doc__ or "",
         handler=_forward_handler(list_command.list_),
-    )
-    list_parser.add_argument(
-        "-f",
-        "--fetch",
-        action="store_true",
-        help="Fetch ordinary remote state and check current review branches before reporting",
     )
     list_parser.add_argument(
         "--json",
@@ -787,9 +775,7 @@ def _parse_view_command_args(argv: Sequence[str]) -> _ParsedViewCommandArgs | No
     return _ParsedViewCommandArgs(argv=tuple(normalized), selectors=tuple(selectors))
 
 
-_VIEW_SELECTOR_FLAGS = frozenset(
-    {"-f", "--fetch", "-v", "--verbose", "-h", "--help", "--debug", "--time-output"}
-)
+_VIEW_SELECTOR_FLAGS = frozenset({"-v", "--verbose", "-h", "--help", "--debug", "--time-output"})
 
 
 def _find_subcommand_index(argv: Sequence[str]) -> int | None:
