@@ -12,7 +12,6 @@ from jj_stack.models.github import GithubPullRequest, GithubStack
 from jj_stack.review.convergence import dependent_path_commands
 from jj_stack.review.landed import (
     FinalizationContext,
-    LandedReviewResult,
     finalize_landed_reviews,
     landed_exit_code,
     render_landed_results,
@@ -129,22 +128,10 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             trunk_branch=trunk_branch,
             trunk_commit_id=trunk.commit_id,
         )
-        legacy_exact = tuple(
-            candidate
-            for candidate in authorized_exact
-            if candidate.change_id not in terminal_required
-        )
-        legacy_results = iter(
-            await finalize_landed_reviews(
-                candidates=legacy_exact,
-                finalizer=finalizer,
-            )
-        )
-        results = tuple(
-            LandedReviewResult(candidate=candidate, outcome="already_terminal")
-            if candidate.change_id in terminal_required
-            else next(legacy_results)
-            for candidate in authorized_exact
+        results = await finalize_landed_reviews(
+            candidates=authorized_exact,
+            finalizer=finalizer,
+            skip_finalization=terminal_required,
         )
         results = await retire_landed_reviews(
             evidence={candidate.change_id: "exact" for candidate in authorized_exact},

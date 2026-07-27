@@ -50,13 +50,19 @@ async def finalize_landed_reviews(
     *,
     candidates: tuple[LandedReviewCandidate, ...],
     finalizer: FinalizationContext,
-    labels: dict[str, str] | None = None,
+    skip_finalization: frozenset[str] = frozenset(),
 ) -> tuple[LandedReviewResult, ...]:
-    """Finalize only the supplied exact-snapshot candidates."""
+    """Finalize the supplied candidates, reporting skipped ones as already terminal.
+
+    Callers pass their whole candidate list and name the ones GitHub has already finished, so
+    they do not each have to split the list and reinterleave the results afterwards.
+    """
 
     return tuple(
         [
-            await _finalize_review(candidate, finalizer, (labels or {}).get(candidate.change_id))
+            LandedReviewResult(candidate=candidate, outcome="already_terminal")
+            if candidate.change_id in skip_finalization
+            else await _finalize_review(candidate, finalizer)
             for candidate in candidates
         ]
     )
@@ -65,7 +71,6 @@ async def finalize_landed_reviews(
 async def _finalize_review(
     candidate: LandedReviewCandidate,
     finalizer: FinalizationContext,
-    label: str | None,
 ) -> LandedReviewResult:
     pull_request, reason = await _observe_exact_candidate(candidate, finalizer)
     if reason is not None or pull_request is None:
@@ -73,8 +78,9 @@ async def _finalize_review(
     if pull_request.state != "open":
         return LandedReviewResult(candidate=candidate, outcome="already_terminal")
     if not finalizer.dry_run:
-        rendered = label or candidate.change_id
-        console.output(t"Finalizing PR #{pull_request.number} for {rendered}...")
+        console.output(
+            t"Finalizing PR #{pull_request.number} for {candidate.change_id}..."
+        )
         pull_request, reason = await _finalize_open_review(
             candidate=candidate,
             finalizer=finalizer,

@@ -27,7 +27,6 @@ from jj_stack.review.convergence import (
 )
 from jj_stack.review.landed import (
     FinalizationContext,
-    LandedReviewResult,
     finalize_landed_reviews,
     landed_exit_code,
     render_landed_results,
@@ -192,11 +191,6 @@ async def _apply_selected_plan(
     trunk_branch: str,
     trunk_commit_id: str,
 ) -> int:
-    exact = tuple(
-        landed.candidate
-        for landed in plan.landed
-        if landed.evidence_kind == "exact" and not landed.native
-    )
     finalizer = FinalizationContext(
         command=context,
         dry_run=dry_run,
@@ -205,19 +199,14 @@ async def _apply_selected_plan(
         trunk_branch=trunk_branch,
         trunk_commit_id=trunk_commit_id,
     )
-    exact_results = await finalize_landed_reviews(
-        candidates=exact,
+    results = await finalize_landed_reviews(
+        candidates=tuple(landed.candidate for landed in plan.landed),
         finalizer=finalizer,
-    )
-    exact_result_iterator = iter(exact_results)
-    results = tuple(
-        next(exact_result_iterator)
-        if landed.evidence_kind == "exact" and not landed.native
-        else LandedReviewResult(
-            candidate=landed.candidate,
-            outcome="already_terminal",
-        )
-        for landed in plan.landed
+        skip_finalization=frozenset(
+            landed.candidate.change_id
+            for landed in plan.landed
+            if landed.evidence_kind != "exact" or landed.native
+        ),
     )
     rebase_revision_ids = (
         tuple(revision.commit_id for revision in plan.survivors) if plan.landed else ()
