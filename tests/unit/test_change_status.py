@@ -24,7 +24,6 @@ def _pull_request(*, draft: bool = False, state: str = "open") -> GithubPullRequ
 
 def _identity(*, pr_number: int = 1) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="stacked-review",
         pr_number=pr_number,

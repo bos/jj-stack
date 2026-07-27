@@ -19,7 +19,6 @@ def _candidate() -> LandedReviewCandidate:
     return LandedReviewCandidate(
         change_id="change-1",
         review_identity=ReviewIdentity(
-            github_host="github.test",
             repository_owner="octo-org",
             repository_name="stacked-review",
             pr_number=1,
@@ -80,7 +79,6 @@ def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
             candidate=_candidate(),
             pull_request=pull_request,
             repository=GithubRepoAddress(
-                host="github.test",
                 owner=owner,
                 repo="stacked-review",
             ),
@@ -133,7 +131,6 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
             merge_result_ancestry=ancestry,
             pull_request=pull_request,
             repository=GithubRepoAddress(
-                host="github.test",
                 owner="octo-org",
                 repo="stacked-review",
             ),

@@ -152,7 +152,7 @@ def _add_github_like_remote(repo: Path) -> None:
             "remote",
             "add",
             "origin",
-            "https://github.test/octo-org/stacked-review.git",
+            "https://github.com/octo-org/stacked-review.git",
         ],
         repo,
     )

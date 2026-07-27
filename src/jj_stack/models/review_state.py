@@ -17,8 +17,7 @@ class ReviewIdentity(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[2] = 2
-    github_host: str
+    version: Literal[3] = 3
     repository_owner: str
     repository_name: str
     pr_number: int
@@ -26,11 +25,10 @@ class ReviewIdentity(BaseModel):
     head_ref: str
 
     @property
-    def repository_key(self) -> tuple[str, str, str]:
+    def repository_key(self) -> tuple[str, str]:
         """Return the case-insensitive nominal repository identity."""
 
         return (
-            self.github_host.casefold(),
             self.repository_owner.casefold(),
             self.repository_name.casefold(),
         )

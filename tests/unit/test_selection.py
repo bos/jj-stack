@@ -112,7 +112,6 @@ def _identity(
     pr_number: int,
 ) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="stacked-review",
         pr_number=pr_number,

@@ -132,13 +132,11 @@ def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
 @pytest.mark.landing_recovery
 def test_merge_authority_rejects_repository_drift() -> None:
     expected_repository = GithubRepoAddress(
-        host="github.test",
         owner="acme",
         repo="widgets",
     )
     observation = RepositoryObservation(
         configured_repository=GithubRepoAddress(
-            host="github.test",
             owner="other",
             repo="widgets",
         ),

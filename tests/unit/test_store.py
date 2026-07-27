@@ -24,7 +24,6 @@ def _identity(
     pr_number: int = 17,
 ) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.com",
         repository_owner="octocat",
         repository_name="example",
         pr_number=pr_number,
@@ -33,7 +32,7 @@ def _identity(
     )
 
 
-def test_store_persists_schema_three_identity_two_and_baseline_one(tmp_path: Path) -> None:
+def test_store_persists_schema_three_identity_three_and_baseline_one(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     store = ReviewStateStore(state_path)
     identity = _identity()
@@ -46,18 +45,18 @@ def test_store_persists_schema_three_identity_two_and_baseline_one(tmp_path: Pat
     assert persisted.submitted_baselines == {CHANGE_ID: baseline}
     rendered = json.loads(state_path.read_text(encoding="utf-8"))
     assert rendered["version"] == 3
-    assert rendered["review_identities"][CHANGE_ID]["version"] == 2
+    assert rendered["review_identities"][CHANGE_ID]["version"] == 3
     assert rendered["submitted_baselines"][CHANGE_ID]["version"] == 1
 
 
 def test_store_keeps_stack_support_per_github_repository(tmp_path: Path) -> None:
     store = ReviewStateStore(tmp_path / "state.json")
 
-    store.set_stacked_pull_requests("github.com/octocat/example", True)
-    store.set_stacked_pull_requests("github.com/octocat/legacy", False)
+    store.set_stacked_pull_requests("octocat/example", True)
+    store.set_stacked_pull_requests("octocat/legacy", False)
 
-    assert store.get_stacked_pull_requests("github.com/octocat/example") is True
-    assert store.get_stacked_pull_requests("github.com/octocat/legacy") is False
+    assert store.get_stacked_pull_requests("octocat/example") is True
+    assert store.get_stacked_pull_requests("octocat/legacy") is False
 
 
 def test_store_rejects_ambiguous_stack_support(tmp_path: Path) -> None:
@@ -66,14 +65,14 @@ def test_store_rejects_ambiguous_stack_support(tmp_path: Path) -> None:
         json.dumps(
             {
                 "version": 3,
-                "stacked_pull_requests": {"github.com/octocat/example": "true"},
+                "stacked_pull_requests": {"octocat/example": "true"},
             }
         ),
         encoding="utf-8",
     )
 
     with pytest.raises(ReviewStateError, match="valid boolean"):
-        ReviewStateStore(state_path).get_stacked_pull_requests("github.com/octocat/example")
+        ReviewStateStore(state_path).get_stacked_pull_requests("octocat/example")
 
 
 def test_store_returns_schema_three_defaults_when_file_is_missing(tmp_path: Path) -> None:
@@ -103,7 +102,6 @@ def test_atomic_relink_failure_preserves_original_pair(
             expected_identity=identity,
             expected_baseline=baseline,
             identity=ReviewIdentity(
-                github_host=identity.github_host,
                 repository_owner=identity.repository_owner,
                 repository_name=identity.repository_name,
                 pr_number=18,

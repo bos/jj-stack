@@ -25,7 +25,6 @@ _BASELINE = SubmittedBaseline(commit_id="saved-remote")
 _REMOTE_URL = "git@github.com:octo-org/stacked-review.git"
 _REMOTE = GitRemote(name="origin", fetch_url=_REMOTE_URL, push_url=_REMOTE_URL)
 _REPOSITORY = GithubRepoAddress(
-    host="github.com",
     owner="octo-org",
     repo="stacked-review",
 )
@@ -134,7 +133,6 @@ def _fake_context(
 
 def _identity() -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.com",
         repository_owner="octo-org",
         repository_name="stacked-review",
         pr_number=1,

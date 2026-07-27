@@ -43,9 +43,7 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
     monkeypatch.setattr(
         doctor_mod,
         "parse_github_repo",
-        lambda remote: GithubRepoAddress(
-            host="github.test", owner=fake_repo.owner, repo=fake_repo.name
-        ),
+        lambda remote: GithubRepoAddress(owner=fake_repo.owner, repo=fake_repo.name),
     )
 
     return write_fake_github_config(tmp_path, fake_repo)
@@ -134,7 +132,7 @@ def test_doctor_fails_when_github_token_missing(
     # Remove the token that _configure_doctor_environment sets.
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
-    monkeypatch.setattr(doctor_mod, "github_token_for_host", lambda hostname: None)
+    monkeypatch.setattr(doctor_mod, "github_token", lambda: None)
 
     exit_code = run_main(repo, config_path, "doctor")
     captured = capsys.readouterr()

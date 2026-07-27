@@ -142,7 +142,7 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     fake_repo.pull_requests[3].state = "closed"
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests(
-        "github.test/octo-org/stacked-review",
+        "octo-org/stacked-review",
         True,
     )
     stack_before = JjClient(repo).discover_review_stack()
@@ -189,7 +189,7 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
     fake_repo.native_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests(
-        "github.test/octo-org/stacked-review",
+        "octo-org/stacked-review",
         True,
     )
     stack = JjClient(repo).discover_review_stack()
@@ -231,7 +231,7 @@ def test_native_merge_terminal_failure_is_atomic(
     fake_repo.unmergeable_pull_numbers.add(2)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests(
-        "github.test/octo-org/stacked-review",
+        "octo-org/stacked-review",
         True,
     )
     state_before = state_store.load()
@@ -269,7 +269,7 @@ def test_native_merge_reobserves_lower_heads_before_request(
     fake_repo.native_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests(
-        "github.test/octo-org/stacked-review",
+        "octo-org/stacked-review",
         True,
     )
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
@@ -313,7 +313,7 @@ def test_native_merge_recovers_only_from_a_terminal_retry(
     fake_repo.native_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests(
-        "github.test/octo-org/stacked-review",
+        "octo-org/stacked-review",
         True,
     )
     state_before = state_store.load()
@@ -379,7 +379,7 @@ def test_native_merge_requires_a_resource_for_a_multi_pr_review(
     fake_repo.native_stacks = {}
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests(
-        "github.test/octo-org/stacked-review",
+        "octo-org/stacked-review",
         True,
     )
     state_before = state_store.load()
@@ -405,7 +405,7 @@ def test_merge_one_pr_without_a_native_resource_uses_the_ordinary_api(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.native_stacks = {}
     ReviewStateStore.for_repo(repo).set_stacked_pull_requests(
-        "github.test/octo-org/stacked-review",
+        "octo-org/stacked-review",
         True,
     )
 

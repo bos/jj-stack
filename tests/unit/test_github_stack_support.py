@@ -21,7 +21,6 @@ def _github_client(handler) -> GithubClient:
             transport=httpxyz.MockTransport(handler),
         ),
         repository=GithubRepoAddress(
-            host="github.test",
             owner="local-name",
             repo="stacked-review",
         ),
@@ -129,9 +128,7 @@ def test_stack_support_does_not_cache_uncertain_failure(tmp_path: Path) -> None:
         asyncio.run(run_test())
 
     assert (
-        ReviewStateStore(state_path).get_stacked_pull_requests(
-            "github.test/local-name/stacked-review"
-        )
+        ReviewStateStore(state_path).get_stacked_pull_requests("local-name/stacked-review")
         is None
     )
 
@@ -170,8 +167,6 @@ def test_stack_support_classifies_malformed_response_without_caching(
         asyncio.run(run_test())
 
     assert (
-        ReviewStateStore(state_path).get_stacked_pull_requests(
-            "github.test/local-name/stacked-review"
-        )
+        ReviewStateStore(state_path).get_stacked_pull_requests("local-name/stacked-review")
         is None
     )

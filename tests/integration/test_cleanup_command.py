@@ -58,7 +58,7 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
     fake_repo.pull_requests[1].state = "closed"
     run_command(["jj", "abandon", change_id], repo)
     fake_repo.native_stacks = {7: (1,)}
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     state_before = state_store.load()
 
     preview_exit_code = run_main(repo, config_path, "cleanup", "--dry-run")

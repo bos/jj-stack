@@ -54,7 +54,7 @@ def test_unstack_apply_closes_pull_request_and_preserves_exact_tracking(
     native_members = (1, 2)
     locked = True
     fake_repo.native_stacks = {7: native_members}
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
 
     class NativeStackClient(GithubClient):
         async def unstack(self, *, stack_number):
@@ -122,7 +122,7 @@ def test_unstack_dissolves_active_suffix_and_retains_historical_prefix(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = JjClient(repo).discover_review_stack()
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-07-23T12:00:00Z"
@@ -148,7 +148,7 @@ def test_unstack_dissolves_a_resource_that_dropped_a_closed_selected_review(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = JjClient(repo).discover_review_stack()
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.native_stacks = {7: (2,)}
 
@@ -173,7 +173,7 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
     initial_state = state_store.load()
     change_id = JjClient(repo).discover_review_stack().head.change_id
     fake_repo.native_stacks = {7: (1,)}
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     app = create_app(FakeGithubState.single_repository(fake_repo))
     native_observations = 0
     fresh_boundary_lookups = 0
@@ -470,7 +470,7 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1,)}
     initial_state = state_store.load()
 
@@ -912,7 +912,7 @@ def test_unstack_orphan_rechecks_native_membership_before_branch_delete(
     bookmark = initial_state.review_identities[change_id].head_ref
     run_command(["jj", "abandon", change_id], repo)
     fake_repo.native_stacks = {7: (1,)}
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     app = create_app(FakeGithubState.single_repository(fake_repo))
     observations = 0
 
@@ -1218,7 +1218,7 @@ def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
     stack = JjClient(repo).discover_review_stack()
     bottom_change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     state = state_store.load()
     bottom_bookmark = state.review_identities[bottom_change_id].head_ref

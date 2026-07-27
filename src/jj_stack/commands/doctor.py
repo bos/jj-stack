@@ -20,7 +20,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.errors import CliError, error_message
-from jj_stack.github.auth import github_token_for_host, github_token_from_env
+from jj_stack.github.auth import github_token, github_token_from_env
 from jj_stack.github.client import (
     GithubClientError,
     build_github_client,
@@ -100,7 +100,7 @@ async def _run_checks(
         return results
 
     # Check 3: GitHub auth
-    auth_result, token = _check_github_auth(parsed_repo.host)
+    auth_result, token = _check_github_auth()
     results.append(auth_result)
 
     if token is None:
@@ -163,7 +163,7 @@ def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, GithubRepoAddr
             ),
             None,
         )
-    return CheckResult("GitHub remote", "ok", f"{parsed.host}/{parsed.full_name}"), parsed
+    return CheckResult("GitHub remote", "ok", parsed.full_name), parsed
 
 
 def _check_review_fetch_isolation(
@@ -206,14 +206,14 @@ def _check_review_temp(*, context: CommandContext) -> CheckResult:
     )
 
 
-def _check_github_auth(hostname: str) -> tuple[CheckResult, str | None]:
+def _check_github_auth() -> tuple[CheckResult, str | None]:
     env_token = github_token_from_env()
     if env_token:
         env_var = "GITHUB_TOKEN" if os.environ.get("GITHUB_TOKEN") else "GH_TOKEN"
         return CheckResult("GitHub auth", "ok", f"token found ({env_var})"), env_token
 
     # Env vars not set — try the gh CLI
-    token = github_token_for_host(hostname)
+    token = github_token()
     if token:
         return CheckResult("GitHub auth", "ok", "token found (gh CLI)"), token
 
@@ -239,7 +239,7 @@ async def _check_github_connectivity(
                 CheckResult(
                     "connectivity",
                     "fail",
-                    f"{parsed_repo.host}/{parsed_repo.full_name}: {error.user_facing_reason()}",
+                    f"{parsed_repo.full_name}: {error.user_facing_reason()}",
                 ),
                 None,
             )
@@ -248,7 +248,7 @@ async def _check_github_connectivity(
                 CheckResult(
                     "connectivity",
                     "fail",
-                    f"{parsed_repo.host}/{parsed_repo.full_name}: request failed ({error})",
+                    f"{parsed_repo.full_name}: request failed ({error})",
                 ),
                 None,
             )
@@ -256,7 +256,7 @@ async def _check_github_connectivity(
         CheckResult(
             "connectivity",
             "ok",
-            f"reached {parsed_repo.host}/{parsed_repo.full_name}",
+            f"reached {parsed_repo.full_name}",
         ),
         github_repo,
     )

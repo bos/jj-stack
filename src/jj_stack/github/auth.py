@@ -10,16 +10,16 @@ def github_token_from_env() -> str | None:
     return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
 
 
-def github_token_for_host(hostname: str) -> str | None:
+def github_token() -> str | None:
     if token := github_token_from_env():
         return token
-    return _github_token_from_gh_cli(hostname)
+    return _github_token_from_gh_cli()
 
 
-def _github_token_from_gh_cli(hostname: str) -> str | None:
+def _github_token_from_gh_cli() -> str | None:
     try:
         completed = subprocess.run(
-            ["gh", "auth", "token", "--hostname", hostname],
+            ["gh", "auth", "token"],
             capture_output=True,
             check=False,
             text=True,

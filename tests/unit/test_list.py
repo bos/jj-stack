@@ -57,7 +57,6 @@ def _revision(
 
 def _identity(*, bookmark: str = "review/feature-abcdefgh", pr_number: int = 1) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="repo",
         pr_number=pr_number,

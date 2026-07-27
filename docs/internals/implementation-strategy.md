@@ -320,7 +320,7 @@ write is lost, the next command rereads current state and reports or completes t
 
 Tracking state stays minimal, optional, and non-authoritative. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
-The current top-level state version is 3. Each `ReviewIdentity` is version 2 and contains only
+The current top-level state version is 3. Each `ReviewIdentity` is version 3 and contains only
 the exact repository, PR, and head-owner/ref fields; `SubmittedBaseline` remains version 1.
 
 Public `--json` command output is a separate user-facing contract. Its schema lives in
@@ -382,8 +382,8 @@ Resolution order:
   otherwise fail
 - trunk branch: the selected remote's default branch if it can be found, then one remote
   bookmark on the selected remote that points at `trunk()`, otherwise fail
-- GitHub host/owner/repo: derive from the selected remote's fetch and push URLs,
-  which must identify the same repository, otherwise fail
+- GitHub owner/repo: derive from the selected remote's fetch and push URLs, which must identify
+  the same repository; SSH host aliases are transport configuration and need not match
 
 Ambiguity is a hard stop, not something the tool guesses past.
 
@@ -393,8 +393,7 @@ GitHub credentials resolve in this order:
 
 - `GITHUB_TOKEN`, if set
 - `GH_TOKEN`, if set
-- `gh auth token --hostname <resolved-github-host>`, if `gh` is installed and
-  authenticated
+- `gh auth token`, if `gh` is installed and authenticated
 - otherwise send no authentication header; `doctor` reports the missing token, and ordinary
   commands fail if GitHub rejects the request
 

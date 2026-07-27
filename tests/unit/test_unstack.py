@@ -75,7 +75,6 @@ def test_unstack_blocks_saved_identity_from_another_repository() -> None:
                     dry_run=False,
                     prepared_status=SimpleNamespace(
                         github_repository=GithubRepoAddress(
-                            host="github.test",
                             owner="octo-org",
                             repo="stacked-review",
                         ),
@@ -121,7 +120,6 @@ def test_selected_cleanup_rejects_saved_branch_that_does_not_match_change() -> N
                     dry_run=False,
                     prepared_status=SimpleNamespace(
                         github_repository=GithubRepoAddress(
-                            host="github.test",
                             owner="octo-org",
                             repo="stacked-review",
                         ),
@@ -139,7 +137,6 @@ def test_selected_cleanup_rejects_saved_branch_that_does_not_match_change() -> N
 
 def _review_identity() -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="stacked-review",
         pr_number=1,

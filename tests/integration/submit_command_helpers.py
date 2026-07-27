@@ -113,7 +113,7 @@ def patch_github_client_builders(
         )
 
     def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
-        return GithubRepoAddress(host="github.test", owner=fake_repo.owner, repo=fake_repo.name)
+        return GithubRepoAddress(owner=fake_repo.owner, repo=fake_repo.name)
 
     resolution_module = importlib.import_module("jj_stack.github.resolution")
     monkeypatch.setattr(resolution_module, "parse_github_repo", parse_github_repo)

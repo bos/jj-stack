@@ -92,7 +92,6 @@ def _pull_request(*, head_owner: str, state: str) -> GithubPullRequest:
 
 def _identity(*, pr_number: int) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="stacked-review",
         pr_number=pr_number,

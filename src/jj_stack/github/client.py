@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import EXIT_GITHUB, SummarizedError
-from jj_stack.github.auth import github_token_for_host, github_token_from_env
+from jj_stack.github.auth import github_token, github_token_from_env
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import (
     GithubAsyncMerge,
@@ -1099,7 +1099,7 @@ def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
         "Accept": "application/vnd.github+json",
         "User-Agent": "jj-stack/dev",
     }
-    if token := github_token_for_host(repository.host):
+    if token := github_token():
         headers["Authorization"] = f"Bearer {token}"
 
     return GithubClient(

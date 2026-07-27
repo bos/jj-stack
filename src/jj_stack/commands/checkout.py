@@ -412,7 +412,6 @@ def _save_checkout_tracking(
             )
         replacements[revision.change_id] = (
             ReviewIdentity(
-                github_host=repository.host,
                 repository_owner=repository.owner,
                 repository_name=repository.repo,
                 pr_number=pull_request.number,

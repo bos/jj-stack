@@ -16,7 +16,6 @@ _PULL_REQUEST_URL_RE = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class ParsedPullRequestUrl:
-    host: str
     number: int
     owner: str
     repo: str
@@ -36,7 +35,6 @@ def parse_pull_request_url(reference: str) -> ParsedPullRequestUrl | None:
     if match is None:
         return None
     return ParsedPullRequestUrl(
-        host=parsed.hostname,
         number=int(match.group("number")),
         owner=match.group("owner"),
         repo=match.group("repo"),
@@ -48,7 +46,6 @@ def parse_repository_pull_request_reference(
     github_repository: GithubRepoAddress,
     invalid_reference_message: str | None = None,
     reference: str,
-    wrong_host_message: str | None = None,
     wrong_repository_message: str | None = None,
 ) -> int:
     parsed = parse_pull_request_number(reference)
@@ -62,14 +59,6 @@ def parse_repository_pull_request_reference(
             or (
                 f"Pull request reference {reference} is not a pull request number "
                 f"or URL for {github_repository.full_name}."
-            )
-        )
-    if pull_request_url.host != github_repository.host:
-        raise UsageError(
-            wrong_host_message
-            or (
-                f"Pull request URL {reference} does not match configured host "
-                f"{github_repository.host}."
             )
         )
     if (

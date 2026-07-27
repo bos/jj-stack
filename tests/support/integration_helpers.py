@@ -69,7 +69,6 @@ def configure_fake_github_environment(
 
     def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
         return GithubRepoAddress(
-            host="github.test",
             owner=fake_repo.owner,
             repo=fake_repo.name,
         )
@@ -218,9 +217,7 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
             )
 
         def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
-            return GithubRepoAddress(
-                host="github.test", owner=fake_repo.owner, repo=fake_repo.name
-            )
+            return GithubRepoAddress(owner=fake_repo.owner, repo=fake_repo.name)
 
         for mod_name in _SUBMIT_CONFIG_MODULES:
             mod = importlib.import_module(mod_name)

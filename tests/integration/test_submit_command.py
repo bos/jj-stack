@@ -124,7 +124,7 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
         client_type=LoseFirstCreateResponseClient,
     )
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
 
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     assert "jj-stack submit" in capsys.readouterr().err
@@ -178,7 +178,7 @@ def test_submit_restructures_active_suffix_without_dissolving_historical_prefix(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
@@ -207,7 +207,7 @@ def test_submit_appends_to_active_suffix_after_historical_prefix(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
     fake_repo.update_pull_request_base(
@@ -990,9 +990,7 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     assert fake_repo.pull_requests == {}
     assert remote_refs(fake_repo.git_dir) == initial_remote_refs
     assert (
-        ReviewStateStore.for_repo(repo).get_stacked_pull_requests(
-            "github.test/octo-org/stacked-review"
-        )
+        ReviewStateStore.for_repo(repo).get_stacked_pull_requests("octo-org/stacked-review")
         is None
     )
 

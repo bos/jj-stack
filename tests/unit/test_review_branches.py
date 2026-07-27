@@ -83,7 +83,6 @@ def test_review_branch_resolution_rejects_multiple_changes_on_same_branch() -> N
 
 def _identity(*, head_ref: str) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="stacked-review",
         pr_number=1,

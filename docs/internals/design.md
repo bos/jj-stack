@@ -229,15 +229,16 @@ remote observation.
 
 Tracking contains two distinct versioned records keyed by full `change_id`:
 
-- `ReviewIdentity` version 2: GitHub host, repository owner/name, PR number, and one canonical
-  head owner/ref
+- `ReviewIdentity` version 3: repository owner/name, PR number, and one canonical head owner/ref
 - `SubmittedBaseline`: the last successfully submitted `commit_id` for that identity
+
+(We do not support GitHub enterprise appliances, only `github.com`.)
 
 Two checks against those records recur throughout this document. They are defined here and cited
 by name everywhere else:
 
-- **identity match** — the live PR's GitHub host, repository, PR number, and head owner/ref all
-  equal the saved `ReviewIdentity` fields.
+- **identity match** — the live PR's repository, PR number, and head owner/ref all equal the saved
+  `ReviewIdentity` fields.
 - **snapshot match** — an identity match whose live PR head SHA also equals
   `SubmittedBaseline.commit_id`.
 
@@ -252,11 +253,11 @@ PR lifecycle, draft state, review decision, URL, comments, readiness, merge resu
 parent/stack pointers, landed state, and whether cleanup is safe are observed live or computed for
 output rather than stored in tracking.
 
-The same state-file envelope contains `stacked_pull_requests`, a boolean map keyed by the resolved
-GitHub host, owner, and repository. The enclosing state path supplies the local repository half of
-the key. An absent entry means detection has not completed; it is not a third capability value.
-The first command that needs the distinction calls GitHub's stack-list endpoint and saves `true`
-on success or `false` on a conclusive `404`. Other failures save nothing. There is no automatic or
+The same state-file envelope contains `stacked_pull_requests`, a boolean map keyed by the owner
+and repository. The enclosing state path supplies the local repository half of the key. An
+absent entry means detection has not completed; it is not a third capability value. The first
+command that needs the distinction calls GitHub's stack-list endpoint and saves `true` on
+success or `false` on a conclusive `404`. Other failures save nothing. There is no automatic or
 explicit redetection. Dry-run may probe but never saves the result.
 
 A cached `false` uses navigation comments without another stack API read. A required membership

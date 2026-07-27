@@ -19,7 +19,6 @@ def _github_client(handler, *, client_type=GithubClient) -> GithubClient:
             transport=httpxyz.MockTransport(handler),
         ),
         repository=GithubRepoAddress(
-            host="github.test",
             owner="octo-org",
             repo="stacked-review",
         ),

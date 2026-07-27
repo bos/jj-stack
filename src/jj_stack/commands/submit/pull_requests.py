@@ -531,7 +531,6 @@ def _submitted_identity(
 ) -> ReviewIdentity:
     if review_identity is None:
         return ReviewIdentity(
-            github_host=github_client.repository.host,
             repository_owner=github_client.repository.owner,
             repository_name=github_client.repository.repo,
             pr_number=pull_request.number,

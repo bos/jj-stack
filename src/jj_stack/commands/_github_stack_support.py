@@ -22,7 +22,7 @@ async def resolve_github_stack_support(
     persist: bool = True,
 ) -> GithubStackSupport:
     repository = github_client.repository
-    repository_key = f"{repository.host}/{repository.owner}/{repository.repo}".casefold()
+    repository_key = f"{repository.owner}/{repository.repo}".casefold()
     cached = state_store.get_stacked_pull_requests(repository_key)
     if cached is not None:
         return GithubStackSupport(supported=cached)

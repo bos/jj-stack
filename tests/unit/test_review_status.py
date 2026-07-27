@@ -194,7 +194,6 @@ def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) 
 def test_pull_request_lookup_falls_back_to_exact_remembered_pr_number() -> None:
     class FakeGithubClient:
         repository = GithubRepoAddress(
-            host="github.test",
             owner="octo-org",
             repo="stacked-review",
         )
@@ -276,7 +275,6 @@ def _github_target() -> GithubTarget:
     return GithubTarget(
         remote=_STATUS_REMOTE,
         repository=GithubRepoAddress(
-            host="github.com",
             owner="octo-org",
             repo="stacked-review",
         ),
@@ -289,7 +287,6 @@ def _identity(
     pr_number: int = 1,
 ) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="stacked-review",
         pr_number=pr_number,

@@ -90,10 +90,6 @@ async def _run_relink_async(
             f"{pull_request_reference} is not a pull request number or URL for "
             f"{repository.full_name}."
         ),
-        wrong_host_message=(
-            f"{pull_request_reference} is not a pull request number or URL for "
-            f"{repository.full_name}."
-        ),
         wrong_repository_message=(
             f"{pull_request_reference} does not belong to {repository.full_name}."
         ),
@@ -131,7 +127,6 @@ async def _run_relink_async(
             t"{ui.change_id(revision.change_id)}."
         )
     identity = ReviewIdentity(
-        github_host=repository.host,
         repository_owner=repository.owner,
         repository_name=repository.repo,
         pr_number=pull_number,

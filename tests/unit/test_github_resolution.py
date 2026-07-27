@@ -56,7 +56,6 @@ def test_parse_github_repo_accepts_matching_fetch_and_push_urls() -> None:
     )
 
     assert repository is not None
-    assert repository.host == "github.com"
     assert repository.owner == "octo-org"
     assert repository.repo == "stacked-review"
 
@@ -71,7 +70,6 @@ def test_parse_github_repo_parses_scp_style_remote_without_user() -> None:
     )
 
     assert repository is not None
-    assert repository.host == "github.com"
     assert repository.owner == "octo-org"
     assert repository.repo == "stacked-review"
 
@@ -86,11 +84,25 @@ def test_parse_github_repo_returns_none_for_unparseable_remote() -> None:
     assert parse_github_repo(remote) is None
 
 
+def test_parse_github_repo_accepts_distinct_ssh_host_aliases() -> None:
+    repository = parse_github_repo(
+        GitRemote(
+            name="origin",
+            fetch_url="git@gh-bos:octo-org/stacked-review.git",
+            push_url="git@gh-voxel:octo-org/stacked-review.git",
+        )
+    )
+
+    assert repository is not None
+    assert repository.owner == "octo-org"
+    assert repository.repo == "stacked-review"
+
+
 def test_parse_github_repo_rejects_fetch_and_push_repository_mismatch() -> None:
     remote = GitRemote(
         name="origin",
-        fetch_url="https://github.test/octo-org/stacked-review.git",
-        push_url="git@github.test:octo-org/fork.git",
+        fetch_url="https://github.com/octo-org/stacked-review.git",
+        push_url="git@github.com:octo-org/fork.git",
     )
 
     assert parse_github_repo(remote) is None

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import jj_stack.github.auth as github_auth_module
-from jj_stack.github.auth import github_token_for_host, github_token_from_env
+from jj_stack.github.auth import github_token, github_token_from_env
 
 
 def test_github_token_from_env_precedence(
@@ -21,7 +21,7 @@ def test_github_token_from_env_precedence(
     assert github_token_from_env() == "gh-token"
 
 
-def test_github_token_for_host_falls_back_to_gh_cli(
+def test_github_token_falls_back_to_default_gh_cli_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -34,5 +34,5 @@ def test_github_token_for_host_falls_back_to_gh_cli(
 
     monkeypatch.setattr(github_auth_module.subprocess, "run", fake_run)
 
-    assert github_token_for_host("github.com") == "gh-token"
-    assert calls == [["gh", "auth", "token", "--hostname", "github.com"]]
+    assert github_token() == "gh-token"
+    assert calls == [["gh", "auth", "token"]]

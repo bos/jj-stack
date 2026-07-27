@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 class GithubRepoAddress:
     """GitHub repository coordinates parsed from a Git remote URL."""
 
-    host: str
     owner: str
     repo: str
 
@@ -29,10 +28,10 @@ class GithubRepoAddress:
         return f"{self.owner}/{self.repo}"
 
     @property
-    def repository_key(self) -> tuple[str, str, str]:
+    def repository_key(self) -> tuple[str, str]:
         """Return the case-insensitive nominal repository identity."""
 
-        return self.host.casefold(), self.owner.casefold(), self.repo.casefold()
+        return self.owner.casefold(), self.repo.casefold()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,13 +98,9 @@ def _parse_github_url(remote_url: str) -> GithubRepoAddress | None:
 
     parsed = urlparse(remote_url)
     if parsed.scheme in {"http", "https", "ssh"} and parsed.hostname:
-        host = parsed.hostname
-        if parsed.scheme == "ssh" and host == "ssh.github.com" and parsed.netloc.endswith(":443"):
-            host = "github.com"
         raw_path = parsed.path
     elif _looks_like_scp_remote(remote_url):
-        host, _, raw_path = remote_url.partition(":")
-        host = host.rsplit("@", maxsplit=1)[-1]
+        _, _, raw_path = remote_url.partition(":")
     else:
         return None
 
@@ -114,7 +109,7 @@ def _parse_github_url(remote_url: str) -> GithubRepoAddress | None:
     if len(parts) != 2:
         return None
     owner, repo = parts
-    return GithubRepoAddress(host=host, owner=owner, repo=repo)
+    return GithubRepoAddress(owner=owner, repo=repo)
 
 
 def _looks_like_scp_remote(url: str) -> bool:

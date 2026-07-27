@@ -7,7 +7,6 @@ from jj_stack.models.review_state import ReviewIdentity
 
 def make_review_identity(
     *,
-    github_host: str = "github.test",
     head_owner: str = "octo-org",
     head_ref: str = "review/example-abcdefgh",
     pr_number: int = 1,
@@ -17,7 +16,6 @@ def make_review_identity(
     """Build one complete nominal review identity."""
 
     return ReviewIdentity(
-        github_host=github_host,
         repository_owner=repository_owner,
         repository_name=repository_name,
         pr_number=pr_number,

@@ -68,7 +68,6 @@ def _status_revision(
 
 def _identity(*, branch: str, pr_number: int) -> ReviewIdentity:
     return ReviewIdentity(
-        github_host="github.test",
         repository_owner="octo-org",
         repository_name="repo",
         pr_number=pr_number,

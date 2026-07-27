@@ -39,7 +39,7 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
         repo,
         config_path,
         "relink",
-        "https://github.test/octo-org/stacked-review/pull/1",
+        "https://github.com/octo-org/stacked-review/pull/1",
         change_id,
     )
     captured = capsys.readouterr()

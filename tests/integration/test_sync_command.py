@@ -183,7 +183,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     landed, survivor = JjClient(repo).discover_review_stack().revisions
     remote_survivor = _simulate_native_partial_merge(fake_repo)
 
@@ -234,7 +234,7 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     landed, survivor = JjClient(repo).discover_review_stack().revisions
     _simulate_native_partial_merge(fake_repo)
     state_before = state_store.load()
@@ -265,7 +265,7 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     landed, survivor = JjClient(repo).discover_review_stack().revisions
     _simulate_native_partial_merge(fake_repo)
     fake_repo.pull_requests[2].state = "closed"
@@ -291,7 +291,7 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     landed, survivor = JjClient(repo).discover_review_stack().revisions
     baseline_before = state_store.load().submitted_baselines[survivor.change_id]
     remote_survivor = _simulate_native_partial_merge(fake_repo)
@@ -330,7 +330,7 @@ def test_sync_checks_native_branch_drift_before_rewriting_local_history(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     landed, survivor = JjClient(repo).discover_review_stack().revisions
     _simulate_native_partial_merge(fake_repo)
     state_before = state_store.load()
@@ -377,7 +377,7 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     landed, survivor = JjClient(repo).discover_review_stack().revisions
     first_remote_survivor = _simulate_native_partial_merge(fake_repo)
     require_targets = JjClient._require_remote_branch_targets_at_url
@@ -449,7 +449,7 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     first, second = JjClient(repo).discover_review_stack().revisions
     state_store = ReviewStateStore.for_repo(repo)
     second_baseline = state_store.load().submitted_baselines[second.change_id]
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.auto_merge_reachable_heads = False
     update_remote_ref(fake_repo, branch="main", target=first.commit_id)
@@ -518,7 +518,7 @@ def test_sync_does_not_trust_active_native_head_drift_without_merged_history(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("github.test/octo-org/stacked-review", True)
+    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     _first, second = JjClient(repo).discover_review_stack().revisions
     baseline = state_store.load().submitted_baselines[second.change_id]
     fake_repo.native_stacks = {7: (1, 2)}
