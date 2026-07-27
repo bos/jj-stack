@@ -172,16 +172,6 @@ def resolve_trunk_branch(
 ) -> tuple[str, dict[str, str]]:
     """Resolve the GitHub base branch used for bottom-of-stack pull requests."""
 
-    if github_repository_state.default_branch:
-        branch = github_repository_state.default_branch
-        return (
-            branch,
-            client.list_remote_branches(
-                remote=remote.name,
-                patterns=(f"refs/heads/{branch}",),
-            ),
-        )
-
     remote_targets = {
         branch: target
         for branch, target in client.list_remote_branches(
@@ -193,6 +183,23 @@ def resolve_trunk_branch(
     matches = tuple(
         branch for branch, target in remote_targets.items() if target == trunk_commit_id
     )
+    default_branch = github_repository_state.default_branch
+    if default_branch:
+        # No match at all usually just means trunk() is behind the remote, which is fine.
+        # A match on some *other* branch is positive evidence that GitHub's default branch
+        # is not the branch jj calls trunk, and basing pull requests on it would be wrong.
+        if matches and default_branch not in matches:
+            raise CliError(
+                t"GitHub's default branch for {ui.bookmark(remote.name)} is "
+                t"{ui.bookmark(default_branch)}, but {ui.revset('trunk()')} is "
+                t"{ui.join(ui.bookmark, matches)}.",
+                hint=(
+                    t"Point {ui.revset('trunk()')} at {ui.bookmark(default_branch)}, or change "
+                    t"the repository's default branch on GitHub, so pull requests are based on "
+                    t"the branch you review against."
+                ),
+            )
+        return default_branch, remote_targets
     if len(matches) == 1:
         return matches[0], remote_targets
     if len(matches) > 1:

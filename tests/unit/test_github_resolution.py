@@ -108,7 +108,7 @@ def test_parse_github_repo_rejects_fetch_and_push_repository_mismatch() -> None:
     assert parse_github_repo(remote) is None
 
 
-def test_resolve_trunk_branch_uses_repository_default_branch_and_observes_exact_ref() -> None:
+def test_resolve_trunk_branch_prefers_the_default_branch_when_it_is_one_of_the_matches() -> None:
     client = _RemoteBranchClient({"main": "trunk123", "stable": "trunk123"})
 
     branch, targets = resolve_trunk_branch(
@@ -119,8 +119,33 @@ def test_resolve_trunk_branch_uses_repository_default_branch_and_observes_exact_
     )
 
     assert branch == "main"
-    assert targets == {"main": "trunk123"}
-    assert client.patterns == [("refs/heads/main",)]
+    assert targets == {"main": "trunk123", "stable": "trunk123"}
+    assert client.patterns == [("refs/heads/*",)]
+
+
+def test_resolve_trunk_branch_accepts_a_default_branch_ahead_of_local_trunk() -> None:
+    client = _RemoteBranchClient({"main": "moved-ahead"})
+
+    branch, _targets = resolve_trunk_branch(
+        client=cast(JjClient, client),
+        github_repository_state=_github_repository(default_branch="main"),
+        remote=_remote("origin"),
+        trunk_commit_id="stale-local-trunk",
+    )
+
+    assert branch == "main"
+
+
+def test_resolve_trunk_branch_rejects_a_default_branch_that_is_not_trunk() -> None:
+    client = _RemoteBranchClient({"develop": "develop999", "main": "trunk123"})
+
+    with pytest.raises(CliError, match="default branch"):
+        resolve_trunk_branch(
+            client=cast(JjClient, client),
+            github_repository_state=_github_repository(default_branch="develop"),
+            remote=_remote("origin"),
+            trunk_commit_id="trunk123",
+        )
 
 
 def test_resolve_trunk_branch_falls_back_to_unique_non_review_remote_branch() -> None:

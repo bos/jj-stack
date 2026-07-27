@@ -270,26 +270,6 @@ repair it with `relink`, while other records stay usable. An unreadable or unsup
 file blocks every command that loads tracking state, reports its exact path, and tells the user
 how to move it aside before re-adopting reviews through `checkout` or `relink`.
 
-## User settings
-
-User-authored settings live in `jj` config under `[jj-stack]`, not in the tracking-state file:
-
-```toml
-[jj-stack]
-reviewers = ["octocat"]
-team_reviewers = ["platform"]
-labels = ["needs-review"]
-```
-
-`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. A
-typo of a known key is rejected with a suggestion; unrelated keys are ignored.
-
-Managed comments are derived output, not a source of truth. In a repository without native GitHub
-stack support, `submit` regenerates navigation comments from the current `jj` stack. In every
-repository, explicit or helper-generated stack prose is stored in one overview comment on the
-selected head PR. `submit`, `unstack`, and `cleanup` may read comments to re-find or delete
-comments the tool previously wrote, but `view` does not inspect issue comments.
-
 ## Storage strategy
 
 Do not write into `jj` internals (`.jj/repo/store/extra/`, the view/op store, private ref
@@ -315,6 +295,26 @@ bootstrap step and without writing any tool-specific file into the workspace.
 
 Mutating commands serialize against each other through a repo-scoped advisory lock. Read-only
 commands do not take it and never write tracking observations.
+
+### User settings
+
+User-authored settings live in `jj` config under `[jj-stack]`, not in the tracking-state file:
+
+```toml
+[jj-stack]
+reviewers = ["octocat"]
+team_reviewers = ["platform"]
+labels = ["needs-review"]
+```
+
+`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. A
+typo of a known key is rejected with a suggestion; unrelated keys are ignored.
+
+Managed comments are derived output, not a source of truth. In a repository without native GitHub
+stack support, `submit` regenerates navigation comments from the current `jj` stack. In every
+repository, explicit or helper-generated stack prose is stored in one overview comment on the
+selected head PR. `submit`, `unstack`, and `cleanup` may read comments to re-find or delete
+comments the tool previously wrote, but `view` does not inspect issue comments.
 
 ## Concurrency
 
