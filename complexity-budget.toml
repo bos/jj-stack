@@ -12,8 +12,8 @@ c901 = 18
 governed_c901 = 0
 
 [pytest]
-fixed_property = 16
-landing_recovery = 30
+fixed_property = 8
+landing_recovery = 48
 
 [labels]
 production = "Production"
