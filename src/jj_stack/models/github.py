@@ -48,9 +48,8 @@ class GithubStackPullRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     head: GithubStackPullRequestHead
-    merged_at: str | None
     number: int
-    state: str
+    merged_at: str | None = None
 
     @property
     def is_historical(self) -> bool:

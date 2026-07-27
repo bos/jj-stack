@@ -32,18 +32,16 @@ def test_graphql_review_decision_normalizes_known_states_and_drops_unknown() -> 
     assert unknown.review_decision is None
 
 
-def test_native_stack_retains_member_state_and_rejects_nonprefix_history() -> None:
+def test_native_stack_splits_history_and_rejects_nonprefix_history() -> None:
     historical = {
         "head": {"ref": "review/one", "sha": "head-one"},
         "merged_at": "2026-07-23T12:00:00Z",
         "number": 1,
-        "state": "closed",
     }
     active = {
         "head": {"ref": "review/two", "sha": "head-two"},
         "merged_at": None,
         "number": 2,
-        "state": "open",
     }
 
     stack = GithubStack.model_validate({"number": 7, "pull_requests": [historical, active]})
@@ -56,3 +54,17 @@ def test_native_stack_retains_member_state_and_rejects_nonprefix_history() -> No
     }
     with pytest.raises(ValueError, match="bottom prefix"):
         GithubStack.model_validate({"number": 7, "pull_requests": [active, historical]})
+
+
+def test_native_stack_member_needs_only_its_head_and_number() -> None:
+    """An omitted `merged_at` must not fail every command that reads native membership."""
+
+    stack = GithubStack.model_validate(
+        {
+            "number": 7,
+            "pull_requests": [{"head": {"ref": "review/one", "sha": "head-one"}, "number": 1}],
+        }
+    )
+
+    assert stack.active_pull_request_numbers == (1,)
+    assert stack.historical_pull_request_numbers == ()
