@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -32,6 +32,9 @@ class LandedReviewResult:
     retired_tracking: bool = False
     skip_reason: Message | None = None
     retirement_skip_reason: Message | None = None
+    # Set only when retirement was authorized and the durable write then failed. Preserving
+    # tracking a dependent stack still needs is ordinary operation, not a failure.
+    retirement_failed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +242,7 @@ async def retire_landed_reviews(
                 results[index] = replace(
                     result,
                     retirement_skip_reason=str(error),
+                    retirement_failed=True,
                 )
                 continue
         results[index] = replace(
@@ -284,6 +288,17 @@ async def _retirement_authority_error(
     return None if rewritten.state == "landed" else rewritten.reason or rewritten.state
 
 
+def landed_exit_code(*, base: int, results: Sequence[LandedReviewResult]) -> int:
+    """Fold a failed tracking removal into a command's exit status.
+
+    Preserving tracking a dependent stack still needs is ordinary operation and leaves the
+    base status alone; a durable write that was authorized and then failed is a failure a
+    scripted caller has to be able to see.
+    """
+
+    return 1 if any(result.retirement_failed for result in results) else base
+
+
 def render_landed_results(
     *,
     dry_run: bool,
@@ -308,6 +323,12 @@ def render_landed_results(
             console.output(t"  {marker} finish merged PR #{candidate.review_identity.pr_number}")
         if result.retired_tracking:
             console.output(t"  {marker} remove tracking for {ui.change_id(candidate.change_id)}")
+        elif result.retirement_failed:
+            console.output(
+                t"  ✗ could not remove tracking for {ui.change_id(candidate.change_id)}: "
+                t"{result.retirement_skip_reason}. Retry with "
+                t"{ui.cmd('jj-stack cleanup')}."
+            )
         elif result.retirement_skip_reason is not None:
             console.output(
                 t"  ! leave {ui.change_id(candidate.change_id)} tracked: "

@@ -14,6 +14,7 @@ from jj_stack.review.landed import (
     FinalizationContext,
     LandedReviewResult,
     finalize_landed_reviews,
+    landed_exit_code,
     render_landed_results,
     retire_landed_reviews,
 )
@@ -152,7 +153,8 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             terminal_required=terminal_required,
         )
     render_landed_results(dry_run=dry_run, results=results)
-    return 1 if had_failure or any(result.outcome == "skipped" for result in results) else 0
+    blocked = had_failure or any(result.outcome == "skipped" for result in results)
+    return landed_exit_code(base=1 if blocked else 0, results=results)
 
 
 def _authorize_exact_candidates(

@@ -29,6 +29,7 @@ from jj_stack.review.landed import (
     FinalizationContext,
     LandedReviewResult,
     finalize_landed_reviews,
+    landed_exit_code,
     render_landed_results,
     retire_landed_reviews,
 )
@@ -332,7 +333,7 @@ async def _apply_selected_plan(
         ),
     )
     render_landed_results(dry_run=dry_run, results=results)
-    return update_result
+    return landed_exit_code(base=update_result, results=results)
 
 
 async def _update_selected_reviews(

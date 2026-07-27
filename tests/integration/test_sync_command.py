@@ -115,6 +115,67 @@ def test_sync_converges_the_local_stack_after_merge(
 
 
 @pytest.mark.landing_recovery
+def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A failed durable write must not look like a clean run to a scripted caller."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.pull_requests[2].is_draft = True
+    landed, top = JjClient(repo).discover_review_stack().revisions
+    assert run_main(repo, config_path, "merge") == 0
+    capsys.readouterr()
+
+    def fail_retire(*_args: object, **_kwargs: object) -> None:
+        raise OSError("state file is read-only")
+
+    monkeypatch.setattr(ReviewStateStore, "retire_review", fail_retire)
+
+    exit_code = run_main(repo, config_path, "sync", top.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    unwrapped = " ".join(captured.out.split())
+    assert "could not remove tracking" in unwrapped
+    assert "jj-stack cleanup" in unwrapped
+    assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
+
+
+@pytest.mark.landing_recovery
+def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Repository-wide recovery computes its own exit status and needs the same rule."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    (landed,) = JjClient(repo).discover_review_stack().revisions
+    # Global recovery acts only on an exact submitted commit reachable from trunk. The fake's
+    # merge endpoint always squashes, so land the exact commit on trunk directly instead.
+    update_remote_ref(fake_repo, branch="main", target=landed.commit_id)
+    fake_repo.pull_requests[1].state = "closed"
+    fake_repo.pull_requests[1].merged_at = "2026-07-26T12:00:00Z"
+    capsys.readouterr()
+
+    def fail_retire(*_args: object, **_kwargs: object) -> None:
+        raise OSError("state file is read-only")
+
+    monkeypatch.setattr(ReviewStateStore, "retire_review", fail_retire)
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "could not remove tracking" in " ".join(captured.out.split())
+    assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
+
+
+@pytest.mark.landing_recovery
 def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     tmp_path: Path,
     monkeypatch,
