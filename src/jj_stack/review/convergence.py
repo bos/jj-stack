@@ -122,7 +122,11 @@ def build_selected_convergence_plan(
                 hint="Submit the intervening change or select a stack that ends below it.",
             )
         if revision.change_id in observation.duplicate_claim_change_ids:
-            raise CliError(t"Multiple saved changes claim the review for {revision.change_id}.")
+            raise CliError(
+                t"Multiple saved changes claim the review for {revision.change_id}.",
+                hint=t"Run {ui.cmd('jj-stack list')} to find them, then drop the wrong one with "
+                t"{ui.cmd('jj-stack unstack --local')}.",
+            )
         pull_request = observation.reviews[revision.change_id].pull_request
         identity = candidate.review_identity
         if (
@@ -165,12 +169,25 @@ def _selected_landed_kind(
 ) -> LandedEvidenceKind | None:
     observed = observation.reviews[candidate.change_id]
     if observed.identity != candidate.review_identity:
-        raise CliError(t"Saved PR tracking changed for {ui.change_id(candidate.change_id)}.")
+        raise CliError(
+            t"Saved PR tracking changed for {ui.change_id(candidate.change_id)}.",
+            hint=t"Inspect it with {ui.cmd('jj-stack view --fetch')}, then reattach the intended "
+            t"review with {ui.cmd('jj-stack relink')}.",
+        )
     if candidate.change_id in observation.duplicate_claim_change_ids:
-        raise CliError(t"Multiple saved changes claim the review for {candidate.change_id}.")
+        raise CliError(
+            t"Multiple saved changes claim the review for {candidate.change_id}.",
+            hint=t"Run {ui.cmd('jj-stack list')} to find them, then drop the wrong one with "
+            t"{ui.cmd('jj-stack unstack --local')}.",
+        )
     pull_request = observed.pull_request
     if pull_request is None:
-        raise CliError(t"GitHub no longer reports PR #{candidate.review_identity.pr_number}.")
+        raise CliError(
+            t"GitHub no longer reports PR #{candidate.review_identity.pr_number}.",
+            hint=t"Confirm it with {ui.cmd('jj-stack view --fetch')}, then reattach an open "
+            t"replacement with {ui.cmd('jj-stack relink')} or open fresh reviews with "
+            t"{ui.cmd('jj-stack submit --restart')}.",
+        )
     exact, rewritten = collect_landed_evidence(
         candidate=candidate,
         context=context,
@@ -204,7 +221,9 @@ def _validate_rebase_scope(
         if revision.conflict or revision.divergent or len(revision.parents) != 1:
             raise CliError(
                 t"The changes remaining after the merge are not linear at "
-                t"{ui.change_id(revision.change_id)}."
+                t"{ui.change_id(revision.change_id)}.",
+                hint=t"Resolve the conflict or divergence with {ui.cmd('jj')}, then rerun sync "
+                t"for this stack.",
             )
     if not plan.landed or not plan.survivors:
         return
@@ -274,7 +293,9 @@ def _require_no_landed_local_edits(
         ):
             raise CliError(
                 t"Cannot remove merged {ui.change_id(item.candidate.change_id)} because it has "
-                t"unpublished local edits since submit"
+                t"unpublished local edits since submit.",
+                hint=t"Publish them with {ui.cmd('jj-stack submit')}, or drop them, then rerun "
+                t"sync.",
             )
 
 

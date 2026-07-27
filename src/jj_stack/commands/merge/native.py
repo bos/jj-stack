@@ -99,7 +99,8 @@ async def execute_native_merge(
         )
     except GithubClientError as error:
         raise CliError(
-            t"Could not request native merge through PR #{native.target.identity.pr_number}."
+            t"Could not request native merge through PR #{native.target.identity.pr_number}.",
+            hint="Resolve the GitHub error above, then rerun merge.",
         ) from error
     if submission.conflict:
         details = submission.result.details
@@ -159,7 +160,10 @@ async def authorize_native_merge(
         revisions=revisions,
     )
     if error or resource.pull_request_numbers != native.resource.pull_request_numbers:
-        raise CliError(error or t"GitHub stack #{resource.number} changed after planning.")
+        raise CliError(
+            error or t"GitHub stack #{resource.number} changed after planning.",
+            hint=t"Rerun {ui.cmd('jj-stack merge')} to plan against the current stack.",
+        )
 
 
 async def _terminal(

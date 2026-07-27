@@ -48,7 +48,8 @@ async def merge_pull_request(
             )
         except GithubClientError as error:
             raise CliError(
-                t"Could not retarget PR #{pull_request.number} to {ui.bookmark(trunk_branch)}"
+                t"Could not retarget PR #{pull_request.number} to {ui.bookmark(trunk_branch)}",
+                hint="Resolve the GitHub error above, then rerun merge.",
             ) from error
         pull_request, reason = await _fresh(
             bases=(trunk_branch,),
@@ -81,7 +82,10 @@ async def merge_pull_request(
         elif error.status_code == 405:
             reason = "GitHub reports it is not mergeable (checks, conflicts, or policy)"
         else:
-            raise CliError(t"Could not merge PR #{pull_request.number} on GitHub") from error
+            raise CliError(
+                t"Could not merge PR #{pull_request.number} on GitHub",
+                hint="Resolve the GitHub error above, then rerun merge.",
+            ) from error
         return None, _boundary(revision, reason)
     return pull_request, None
 

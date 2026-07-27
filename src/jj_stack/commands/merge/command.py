@@ -178,10 +178,18 @@ def _prepare_merge(
             )
     if prepared.remote is None:
         message = prepared.remote_error or t"Could not determine which Git remote to use."
-        raise CliError(message)
+        raise CliError(
+            message,
+            hint=t"Configure one GitHub remote, then rerun. "
+            t"{ui.cmd('jj-stack doctor')} reports what it found.",
+        )
     if prepared_status.github_repository is None:
         message = prepared_status.github_repository_error or t"Could not resolve GitHub target."
-        raise CliError(message)
+        raise CliError(
+            message,
+            hint=t"Point jj-stack at a GitHub remote, then rerun. "
+            t"{ui.cmd('jj-stack doctor')} reports what it found.",
+        )
 
     if not dry_run:
         context.state_store.require_writable()
@@ -210,7 +218,8 @@ async def _stream_merge_async(
             github_repository_state = await github_client.get_repository()
         except GithubClientError as error:
             raise CliError(
-                t"Could not load GitHub repository {github_repository.full_name}"
+                t"Could not load GitHub repository {github_repository.full_name}",
+                hint="Resolve the GitHub error above, then rerun merge.",
             ) from error
         with console.spinner(description="Loading remote branches"):
             trunk_branch, _trunk_targets = resolve_trunk_branch(
@@ -232,7 +241,10 @@ async def _stream_merge_async(
                 trunk_branch=trunk_branch,
             )
         except GithubClientError as error:
-            raise CliError("Could not inspect GitHub state for merge.") from error
+            raise CliError(
+                "Could not inspect GitHub state for merge.",
+                hint="Resolve the GitHub error above, then rerun merge.",
+            ) from error
 
         plan = build_merge_plan(
             observation=observation,

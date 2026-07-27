@@ -57,7 +57,10 @@ async def observe_native_stacks(
             else await github.list_stacks()
         )
     except GithubClientError as error:
-        raise CliError("Could not inspect native GitHub stack membership.") from error
+        raise CliError(
+            "Could not inspect native GitHub stack membership.",
+            hint=t"Resolve the GitHub error above, then rerun the command.",
+        ) from error
 
 
 async def resolve_selected_native_observation(
@@ -169,7 +172,9 @@ def build_selected_native_sync(
         != selected_resource_numbers
     ):
         raise CliError(
-            t"Selected reviews do not match GitHub stack #{stack.number}'s ordered members."
+            t"Selected reviews do not match GitHub stack #{stack.number}'s ordered members.",
+            hint=t"Bring them back into line with {ui.cmd('jj-stack submit')}, or dissolve the "
+            t"stack with {ui.cmd(f'gh stack unstack {stack.number}')} and resubmit.",
         )
     historical: list[NativeHistoricalReview] = []
     survivors: list[NativeSurvivorReview] = []
@@ -197,14 +202,20 @@ def build_selected_native_sync(
             )
             continue
         if selected_by_change_id[candidate.change_id].immutable:
-            raise CliError(t"Native member PR #{member.number} is not terminally merged.")
+            raise CliError(
+                t"Native member PR #{member.number} is not terminally merged.",
+                hint=t"Check GitHub's result with {ui.cmd('jj-stack view --fetch')}, then "
+                t"rerun sync once it reports the merge.",
+            )
         if holds_unpublished_edit(
             published_commit_ids=(candidate.submitted_baseline.commit_id, member.head.sha),
             revision=selected_by_change_id[candidate.change_id],
         ):
             raise CliError(
                 t"Cannot sync {ui.change_id(candidate.change_id)} because it has unpublished "
-                t"local edits since submit."
+                t"local edits since submit.",
+                hint=t"Publish them with {ui.cmd('jj-stack submit')}, or drop them, then rerun "
+                t"sync.",
             )
         observed = observation.reviews[candidate.change_id]
         # A closed or draft active member is still an affected survivor; only its branch has
@@ -214,7 +225,8 @@ def build_selected_native_sync(
             or observed.remote_review_target != member.head.sha
         ):
             raise CliError(
-                t"Active native member PR #{member.number} does not match its reviewed branch."
+                t"Active native member PR #{member.number} does not match its reviewed branch.",
+                hint=t"Republish the review with {ui.cmd('jj-stack submit')}, then rerun sync.",
             )
         survivors.append(
             NativeSurvivorReview(
@@ -247,10 +259,16 @@ def _historical_review(
 ) -> NativeHistoricalReview:
     if member.head.sha != candidate.submitted_baseline.commit_id:
         raise CliError(
-            t"Historical native member PR #{member.number} no longer reports its submitted head."
+            t"Historical native member PR #{member.number} no longer reports its submitted head.",
+            hint=t"Inspect it with {ui.cmd('jj-stack view --fetch')}, then reattach the "
+            t"intended review with {ui.cmd('jj-stack relink')}.",
         )
     if pull_request.normalize_state().state != "merged":
-        raise CliError(t"Native member PR #{member.number} is not terminally merged.")
+        raise CliError(
+            t"Native member PR #{member.number} is not terminally merged.",
+            hint=t"Check GitHub's result with {ui.cmd('jj-stack view --fetch')}, then rerun "
+            t"sync once it reports the merge.",
+        )
     exact, rewritten = collect_landed_evidence(
         candidate=candidate,
         context=context,
@@ -264,7 +282,10 @@ def _historical_review(
         evidence_kind = "rewritten"
     else:
         reason = rewritten.reason or exact.reason or "no merge result is on fetched trunk"
-        raise CliError(t"Cannot retire native member PR #{member.number}: {reason}.")
+        raise CliError(
+            t"Cannot retire native member PR #{member.number}: {reason}.",
+            hint=t"Make GitHub's merge result reachable from trunk, then rerun sync.",
+        )
     return NativeHistoricalReview(
         candidate=candidate,
         evidence_kind=evidence_kind,
@@ -291,6 +312,8 @@ def _validated_member_pull_request(
         or pull_request.head.ref != member.head.ref
     ):
         raise CliError(
-            t"Native member PR #{member.number} no longer matches its saved review identity."
+            t"Native member PR #{member.number} no longer matches its saved review identity.",
+            hint=t"Reattach it with {ui.cmd('jj-stack relink')}, or replace it with "
+            t"{ui.cmd('jj-stack submit --restart')}.",
         )
     return pull_request

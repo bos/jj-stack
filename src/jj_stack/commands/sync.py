@@ -145,7 +145,12 @@ async def _run_selected_convergence(
             trunk_branch=trunk_branch,
         )
         if error is not None:
-            raise CliError(error)
+            raise CliError(
+                error,
+                hint=t"Inspect the stack with {ui.cmd('jj-stack view --fetch')}, then repair it "
+                t"with {ui.cmd('jj-stack relink')} or republish it with "
+                t"{ui.cmd('jj-stack submit')}.",
+            )
         plan = build_selected_convergence_plan(
             context=context,
             native_stacks=native_stacks,
@@ -170,7 +175,11 @@ def _selected_target(
 ) -> tuple[GithubTarget, tuple[LocalRevision, ...]]:
     target = prepared_status.github_target
     if not isinstance(target, GithubTarget):
-        raise CliError(target.github_repository_error or "Could not resolve GitHub target.")
+        raise CliError(
+            target.github_repository_error or "Could not resolve GitHub target.",
+            hint=t"Point jj-stack at a GitHub remote, then rerun. "
+            t"{ui.cmd('jj-stack doctor')} reports what it found.",
+        )
     selected = prepared_status.prepared.stack.revisions
     for revision in selected:
         if prepared_status.prepared.state.issues_for(revision.change_id):

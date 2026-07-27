@@ -32,7 +32,11 @@ from jj_stack.ui import Message
 async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
     target = github_resolution.resolve_github_target(context.jj_client.list_git_remotes())
     if not isinstance(target, github_resolution.GithubTarget):
-        raise CliError(target.github_repository_error or "Could not resolve GitHub target.")
+        raise CliError(
+            target.github_repository_error or "Could not resolve GitHub target.",
+            hint=t"Point jj-stack at a GitHub remote, then rerun. "
+            t"{ui.cmd('jj-stack doctor')} reports what it found.",
+        )
     context.jj_client.fetch_remote(
         remote=target.remote.name,
         dry_run=dry_run,
