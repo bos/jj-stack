@@ -1134,14 +1134,13 @@ async def _cleanup_revision(
         run.record_action(blocker)
         return False
 
-    if not apply_remote_branch_cleanup(
+    apply_remote_branch_cleanup(
         dry_run=run.dry_run,
         jj_client=run.jj_client,
         record_action=run.record_action,
         remote_name=run.remote_name,
         update=branch_update,
-    ):
-        return False
+    )
     comment_actions, comments_current = await apply_managed_comment_cleanup(
         change_id=revision.change_id,
         dry_run=run.dry_run,

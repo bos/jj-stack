@@ -150,16 +150,9 @@ async def _run_cleanup_async(
     *,
     on_action: Callable[[CleanupAction], None] | None,
     prepared_cleanup: PreparedCleanup,
-    local_observations: dict[str, LocalCleanupObservation] | None = None,
+    local_observations: dict[str, LocalCleanupObservation],
 ) -> CleanupResult:
     recorder = ActionRecorder[CleanupAction](on_action=on_action)
-    if local_observations is None:
-        local_observations = _local_cleanup_observations(
-            change_ids=tuple(prepared_cleanup.state.review_identities),
-            context=prepared_cleanup.context,
-        )
-    if _cleanup_needs_remote_context(prepared_cleanup=prepared_cleanup):
-        prepared_cleanup = _load_cleanup_remote_context(prepared_cleanup=prepared_cleanup)
     prepared_changes = _run_local_cleanup_pass(
         prepared_cleanup=prepared_cleanup,
         record_action=recorder.record,
@@ -215,7 +208,6 @@ def _run_local_cleanup_pass(
         local_observation = local_observations.get(
             change_id,
             LocalCleanupObservation(
-                current_commit_id=None,
                 stale_reason="local change was not inspected",
             ),
         )
@@ -454,15 +446,13 @@ async def _apply_tracked_review_cleanup(
 
     identity = prepared_change.review_identity
     baseline = prepared_change.submitted_baseline
-    cleanup_current = apply_remote_branch_cleanup(
+    apply_remote_branch_cleanup(
         dry_run=prepared_cleanup.dry_run,
         jj_client=prepared_cleanup.context.jj_client,
         record_action=lambda action: record_action(_cleanup_action(action)),
         remote_name=remote_name,
         update=branch_update,
     )
-    if not cleanup_current:
-        return False
     comment_actions, comments_current = await apply_managed_comment_cleanup(
         change_id=prepared_change.change_id,
         dry_run=prepared_cleanup.dry_run,

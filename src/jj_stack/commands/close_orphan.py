@@ -54,7 +54,6 @@ class _OrphanCloseRun:
 class _PreparedOrphanClose:
     """Preflighted inputs for one orphan mutation phase."""
 
-    branch: str
     branch_update: ReviewRefUpdate | None
     change_id: str
     comment_lookups: tuple[ManagedCommentLookup, ...]
@@ -157,7 +156,6 @@ async def run_orphan_close(
             t"its orphaned branch.",
             hint=t"Run {ui.cmd('relink')} to repair the saved review before retrying.",
         )
-    branch = review_identity.head_ref
 
     github_target = resolve_github_target(jj_client.list_git_remotes())
     if isinstance(github_target, UnresolvedGithubTarget):
@@ -179,7 +177,6 @@ async def run_orphan_close(
     )
     async with build_github_client(repository=github_repository) as github_client:
         prepared = await _preflight_orphan_close(
-            branch=branch,
             change_id=change_id,
             github_client=github_client,
             pull_request_number=pull_request_number,
@@ -206,7 +203,6 @@ async def run_orphan_close(
 
 async def _preflight_orphan_close(
     *,
-    branch: str,
     change_id: str,
     github_client: GithubClient,
     pull_request_number: int,
@@ -251,7 +247,6 @@ async def _preflight_orphan_close(
     if recorder.blocked:
         return None
     return _PreparedOrphanClose(
-        branch=branch,
         branch_update=branch_update,
         change_id=change_id,
         comment_lookups=comment_lookups,
@@ -391,16 +386,13 @@ async def _cleanup_orphan_artifacts(
         if blocked_action is not None:
             recorder.record(blocked_action)
             return
-    cleanup_current = apply_remote_branch_cleanup(
+    apply_remote_branch_cleanup(
         dry_run=run.dry_run,
         jj_client=run.context.jj_client,
         record_action=recorder.record,
         remote_name=prepared.remote_name,
         update=prepared.branch_update,
     )
-    if not cleanup_current:
-        return
-
     if not run.dry_run:
         blocked_action = await authorize_current_review_cleanup(
             change_id=prepared.change_id,

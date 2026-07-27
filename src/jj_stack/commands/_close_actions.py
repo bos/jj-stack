@@ -618,8 +618,11 @@ def apply_remote_branch_cleanup(
     record_action: Callable[[CloseAction], None],
     remote_name: str,
     update: ReviewRefUpdate | None,
-) -> bool:
-    """Execute one pre-authorized remote branch deletion with an exact lease."""
+) -> None:
+    """Execute one pre-authorized remote branch deletion with an exact lease.
+
+    A rejected lease raises, so there is no failure for callers to branch on.
+    """
 
     if update is not None:
         if not dry_run:
@@ -634,4 +637,3 @@ def apply_remote_branch_cleanup(
                 status="planned" if dry_run else "applied",
             )
         )
-    return True

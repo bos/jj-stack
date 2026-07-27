@@ -13,7 +13,6 @@ from jj_stack.review.discovery import discover_stacks_from_revisions
 class LocalCleanupObservation:
     """Current local target and staleness for one tracked change."""
 
-    current_commit_id: str | None
     stale_reason: str | None
 
 
@@ -30,13 +29,11 @@ def _local_cleanup_observations(
         revisions = matched_revisions.get(change_id, ())
         if not revisions:
             observations[change_id] = LocalCleanupObservation(
-                current_commit_id=None,
                 stale_reason="no visible local change matches that cached change ID",
             )
             continue
         if len(revisions) > 1:
             observations[change_id] = LocalCleanupObservation(
-                current_commit_id=None,
                 stale_reason="multiple visible revisions still share that change ID",
             )
             continue
@@ -44,13 +41,11 @@ def _local_cleanup_observations(
         revision = revisions[0]
         if not revision.is_reviewable():
             observations[change_id] = LocalCleanupObservation(
-                current_commit_id=revision.commit_id,
                 stale_reason="local change is no longer reviewable",
             )
             continue
 
         observations[change_id] = LocalCleanupObservation(
-            current_commit_id=revision.commit_id,
             stale_reason=None,
         )
 
@@ -68,7 +63,6 @@ def _local_cleanup_observations(
     for revision in candidate_revisions:
         if revision.commit_id not in supported_commit_ids:
             observations[revision.change_id] = LocalCleanupObservation(
-                current_commit_id=revision.commit_id,
                 stale_reason="local change no longer participates in a supported stack",
             )
     return observations

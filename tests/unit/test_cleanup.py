@@ -75,11 +75,9 @@ def test_local_cleanup_observations_keep_current_commit_outside_supported_stacks
     )
 
     assert observations["live-change"] == stale_module.LocalCleanupObservation(
-        current_commit_id="live-commit",
         stale_reason=None,
     )
     assert observations["stale-change"] == stale_module.LocalCleanupObservation(
-        current_commit_id="stale-commit",
         stale_reason="local change no longer participates in a supported stack",
     )
 
