@@ -282,16 +282,13 @@ def dependent_path_commands(
     *,
     ancestor_commit_id: str,
     context: CommandContext,
-    excluded_commit_ids: set[str] | None = None,
     excluded_change_ids: set[str] | None = None,
 ) -> Message | None:
-    excluded = excluded_commit_ids or set()
     excluded_changes = excluded_change_ids or set()
     dependents = tuple(
         revision
         for revision in context.jj_client.query_descendant_revisions((ancestor_commit_id,))
-        if revision.commit_id not in excluded
-        and revision.change_id not in excluded_changes
+        if revision.change_id not in excluded_changes
         and not (revision.is_working_copy and revision.empty)
     )
     if not dependents:

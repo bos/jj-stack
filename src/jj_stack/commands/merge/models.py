@@ -28,7 +28,6 @@ class MergeResult:
     actions: tuple[MergeAction, ...]
     applied: bool
     blocked: bool
-    remote_name: str
     selected_revset: str
     trunk_branch: str
     trunk_subject: str
@@ -71,7 +70,6 @@ class MergeExecutionInputs:
             blocked=any(action.status == "blocked" for action in actions),
             final_trunk_commit_id=final_trunk_commit_id,
             merged_change_ids=merged_change_ids,
-            remote_name=self.remote_name,
             selected_revset=self.selected_revset,
             trunk_branch=self.trunk_branch,
             trunk_subject=self.trunk_subject,

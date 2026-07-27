@@ -98,7 +98,7 @@ def _run_merge(
             revset=selected_revset,
             target_change_id=target_change_id,
         )
-    result = _stream_merge(prepared_merge=prepared_merge)
+    result = asyncio.run(_stream_merge_async(prepared_merge=prepared_merge))
     print_merge_result(result)
     return 1 if result.blocked else 0
 
@@ -192,10 +192,6 @@ def _prepare_merge(
         prepared_status=prepared_status,
         target_change_id=target_change_id,
     )
-
-
-def _stream_merge(*, prepared_merge: PreparedMerge) -> MergeResult:
-    return asyncio.run(_stream_merge_async(prepared_merge=prepared_merge))
 
 
 async def _stream_merge_async(

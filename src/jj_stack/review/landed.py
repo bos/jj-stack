@@ -223,13 +223,6 @@ async def retire_landed_reviews(
             results[index] = replace(result, retirement_skip_reason=reason)
             continue
         if not finalizer.dry_run:
-            reason = await current_retirement_error(candidate)
-            if reason is not None:
-                results[index] = replace(
-                    result,
-                    retirement_skip_reason=reason,
-                )
-                continue
             try:
                 context.state_store.retire_review(
                     candidate.change_id,
