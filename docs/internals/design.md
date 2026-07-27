@@ -37,7 +37,12 @@ These rules are ordered. A lower rule never justifies weakening a higher one.
 6. Never drop a saved link to a pull request until doing so is safe — either the user named it
    for removal, or GitHub has confirmed the work landed and no other local stack still depends on
    it. Cleanup left undone must never block unrelated work.
-7. Every stop and every warning names a command the user can run next.
+
+This can't be followed often enough to be a genuine rule, but it's a good UX aspiration:
+
+7. Most stops and warnings try to name a command the user can run next to resolve the problem or
+   make progress. They do so when (a) it is clear what the right next thing to do is and (b)
+   there's a reasonable probability the condition in question could be seen in the wild.
 
 Three things can answer a question about the state of a review, and each is authoritative for a
 different set of questions:
@@ -92,8 +97,6 @@ A few `jj` and Git properties drive this design:
   is not.
 - Notably, `change_id` seems to survive a GitHub rebase merge, which is a nice property for us.
   It appears to be obliterated by a squash merge.
-- Both `jj-lib` and the CLI are moving integration surfaces; this tool keeps its
-  assumptions narrow.
 - `jj`'s internal storage is not an extension API; the tool does not write into `.jj/`
   internals.
 
@@ -123,10 +126,11 @@ Commands validate only that one chain. Other visible children elsewhere in the D
 stacks, not an error: if an ancestor on the chain has other reviewable children, those are
 separate PR chains, out of scope unless the command explicitly asks about more than one stack.
 
-`jj-stack` supports only linear stacks. Merge commits inside the chain, divergent changes,
-multiple reviewable parents, and unresolved conflicts are rejected for simplicity. An immutable
-boundary reached as a non-first parent of a merge is exposed so recovery can diagnose the landed
-ancestry, but never published.
+`jj-stack` supports only linear stacks: merge commits inside the chain and divergent changes are
+rejected. Unresolved conflicts are not a shape problem — `view` and `list` report them — but
+`submit` and `sync` refuse to act on a conflicted change. An immutable boundary reached as a
+non-first parent of a merge is exposed so recovery can diagnose the landed ancestry, but never
+published.
 
 `jj` *can* model all those shapes, but the UX complexity and mental gymnastics that would be
 required make them not worth supporting in `jj-stack`.
@@ -259,12 +263,13 @@ PR rediscovery is an explicit recovery flow: ordinary commands never replace a m
 moved, or ambiguous review automatically. They preserve the saved identity and name `relink`, or
 `unstack --cleanup` followed by a fresh `submit`.
 
-Identity and baseline stay separate records so that recording a new submitted commit cannot
-overwrite PR identity. Reads isolate individual absent, malformed, or obsolete records: one bad
-record is reported on its own, telling the user to repair it with `relink`, and the other records
-stay usable. An unreadable or unsupported top-level file blocks mutation, reports its exact path,
-and tells the user how to move it aside before re-adopting reviews through `checkout` or
-`relink`. There is no migration or automatic discard path.
+Recording a new submitted commit cannot overwrite PR identity: every write goes through a
+compare-and-swap that fails if the identity changed underneath it. Reads isolate individual
+absent, malformed, or obsolete records: one bad record is reported on its own, telling the user to
+repair it with `relink`, and the other records stay usable. An unreadable or unsupported top-level
+file blocks every command that loads tracking state, reports its exact path, and tells the user
+how to move it aside before re-adopting reviews through `checkout` or `relink`. There is no
+migration or automatic discard path.
 
 User-authored settings live in `jj` config under `[jj-stack]`, not in the tracking-state file:
 
@@ -275,8 +280,9 @@ team_reviewers = ["platform"]
 labels = ["needs-review"]
 ```
 
-`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. An
-unrecognized key under `[jj-stack]` is reported rather than ignored.
+`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. A key
+that looks like a typo of a known one is rejected with a suggestion; an unrelated key is
+ignored.
 
 Managed comments are derived output, not a source of truth. In a repository without native GitHub
 stack support, `submit` regenerates navigation comments from the current `jj` stack. In every
@@ -339,7 +345,7 @@ change is gone. No default invocation of any command reaches beyond the selected
 
 What a stack is, and which shapes are rejected, is defined under [Review stack](#review-stack).
 
-Ambiguity always fails closed, and every stop names a command that resolves it (safety rule 7).
+Ambiguity always fails closed.
 
 ### Identity and mutation safety
 
@@ -399,21 +405,25 @@ retired without relabeling the landed commit or storing an alias.
 
 ### Native stack membership
 
-Where GitHub supports them natively, a **GitHub stack** is GitHub's own object: an ordered list
-of pull requests it manages as a group. Once a pull request in one has merged, GitHub keeps it in
-the list as history and it can no longer be moved. The unmerged ones above it are the only ones
-that can still be reordered, removed, or retargeted, and this document calls those **open
-members**. Whether a repository supports GitHub stacks at all is the cached boolean described
-under [Stored in the tracking-state file](#stored-in-the-tracking-state-file).
+GitHub's own support for stacked pull requests is in limited alpha, so most repositories do not
+have it and `jj-stack` has to work either way. Where it is available, a **GitHub stack** is
+GitHub's own object: an ordered list of pull requests it manages as a group. Where it is not,
+`jj-stack` supplies the missing navigation itself, by writing comments that link the pull requests
+together — if GitHub ships the feature broadly, that whole comment mechanism can go. Once a pull
+request in one has merged, GitHub keeps it in the list as history and it can no longer be moved.
+The unmerged ones above it are the only ones that can still be reordered, removed, or retargeted,
+and this document calls those **open members**. Whether a repository supports GitHub stacks at all
+is the cached boolean described under [Stored in the tracking-state
+file](#stored-in-the-tracking-state-file).
 
 **Membership rule.** Every open member of a GitHub stack the selection touches must belong to the
 selected local parent chain, and a selection may touch only one GitHub stack it could still have
 to change. The rule looks only for open members the selection leaves out, so a review GitHub no
 longer lists never blocks, and a GitHub stack holding nothing but merged pull requests is not in
 the way. An open member the user did not select, or membership that changed while the command was
-running, fails before any mutation, and tells the user to dissolve the GitHub stack with
-`gh stack unstack`. Four jj-stack commands apply this one rule and re-check it immediately before
-the mutation it authorizes: `submit`, `merge`, selected `sync`, and `unstack`.
+running, fails before any mutation, and tells the user to dissolve the GitHub stack with `gh stack
+unstack`. Five jj-stack commands apply this one rule and re-check it immediately before the
+mutation it authorizes: `submit`, `merge`, selected `sync`, `unstack`, and `cleanup`.
 
 A GitHub merge may rewrite the open members above the ones it merged. Selected `sync` then adopts
 the exact commits GitHub produced rather than replaying the same diffs, and accepts the new heads
@@ -427,8 +437,9 @@ remote to be holding right now. If anything moved in between, the whole push fai
 lands; there is no falling back to pushing refs one at a time. jj-stack will not take over a
 branch it has no record of. A topology change counts as a change even when the diff does not.
 
-PR work runs bottom-up after that transition, so a parent's branch always holds an ancestor of its
-child's head. Base is the nearest still-open ancestor PR, or trunk.
+A PR's base is its parent's review branch, or trunk for the bottom change — chosen by position
+in the stack, not by whether the parent's PR is still open. If a parent's PR is not open, `submit`
+stops before mutating anything rather than reaching past it.
 
 Intermediate GitHub states are allowed but must preserve review identity: a rewritten stack must
 never leave a selected PR based on a branch that now contains its head, which GitHub reads as
@@ -453,7 +464,7 @@ A record is eligible only when GitHub reports the exact saved PR closed or merge
 tracked change claims its branch, and no open PR in the same repository — tracked, untracked, or
 orphaned — uses the saved head ref as its base. Local jj descendants do not substitute for that
 last check: descendant visibility authorizes selected `sync`, not deleting a GitHub branch. An
-an open member of a GitHub stack keeps its branch, while one GitHub retains only as merged
+open member of a GitHub stack keeps its branch, while one GitHub retains only as merged
 history does not block otherwise authorized cleanup.
 
 The identity/baseline pair is retired only after all authorized artifact cleanup succeeds. Damaged
@@ -462,9 +473,12 @@ cleanup leaves safe leftovers, and every warning names the command that finishes
 
 ### Inspection
 
-`view` and `list` are read-only. Being read-only might not stop a command guessing, but we never
-guess: a change never attached to a review is reported as not submitted, rather than resolved by
-looking for a pull request on the branch name that change would have produced.
+`view` and `list` change no review state — no pull request, no branch, no tracking record.
+`--fetch` is not inert, though: it rewrites the remote's fetch refspec to exclude `review/*` if
+that is not already in place, and runs an ordinary `jj git fetch`, which snapshots the working
+copy. Neither command guesses: a change never attached to a review is reported as not submitted,
+rather than resolved by looking for a pull request on the branch name that change would have
+produced.
 
 They tolerate the history a fetch exposes rather than calling a stack broken: `view` walks past
 immutable or divergent side copies of merged changes, and a merged PR still on the stack becomes a
@@ -488,7 +502,7 @@ What each is for and what it may change. The policies above constrain all of the
   publishes a never-submitted change. After everything succeeds it refetches every PR that was
   open at the start and fails loudly, naming them, if any is now closed or missing: detection,
   not repair.
-- **`view`**, **`list`** — report; change nothing.
+- **`view`**, **`list`** — report.
 - **`sync`** — reconciles one stack with what landed: rebases the changes that did not land onto
   fetched trunk, updates their existing reviews, and drops the tracking for the ones that did.
   Never creates a PR. Does not rebase merely because trunk advanced — `jj rebase` owns that. Stops
@@ -549,14 +563,13 @@ This design behaves well under normal `jj` rewrite-heavy workflows:
   explicit repair or later verification. Explicit closure goes through
   `unstack --cleanup --pull-request <pr>`.
 - **Split**: new logical review changes get new change IDs and usually become new
-  PRs. The original keeps its `change_id` and PR and is updated normally on next
-  `submit`. This is a feature, not a bug.
+  PRs. The original keeps its `change_id` and PR and is updated normally on next `submit`.
 - **Duplicate**: the duplicate has a new `change_id` and is treated as a new
   reviewable change on whatever stack it lands on; the original keeps its PR
   untouched.
-- **Ancestor merged on GitHub**: merged ancestors stop acting as review bases.
-  Descendants target the nearest still-open ancestor PR, or trunk if none remain.
-  Selected `sync` proves the merge result on fetched trunk and performs that local rewrite.
+- **Ancestor merged on GitHub**: selected `sync` proves the merge result on fetched trunk and
+  rewrites local history, which is what removes the merged ancestor from the chain. Until then
+  `submit` stops rather than guessing a new base.
 
 ### Cross-stack rewrites
 
@@ -577,8 +590,6 @@ for their own explicit command.
   change on the chain bottom-up, reusing existing PRs by `change_id` and
   recalculating bases. The merged chain ends up with one overview comment on its new
   head and no internal trace of the old stack boundary.
-
-The same applies when one rewrite affects more than two stacks.
 
 Stacks the user has not yet resubmitted may still display old navigation or overview
 comments. That is expected — `submit` does not chase comments on stacks it isn't
@@ -614,14 +625,15 @@ saved parent graph.
 Built-in `--help` and the user guide own command names, aliases, and exact parser syntax. This
 specification records only the enduring selection rules and effects of those commands.
 
-Run with no subcommand, the executable behaves the same as `view` on the current stack.
+Run with no subcommand, the executable behaves the same as `view` with no arguments.
 Selection defaults are specified under [Selection](#selection).
 
 Three submit flags carry behavior the parser cannot express, so they are recorded here.
 `--reviewers` and `--team-reviewers` request those reviewers even when the pull requests are
 otherwise unchanged, and never remove reviewers they omit. `--re-request` likewise acts on an
-otherwise-unchanged pull request, asking again only for users whose latest review is `APPROVED`
-or `CHANGES_REQUESTED`; it adds requests and never cancels a pending one.
+otherwise-unchanged pull request, asking again only for users whose latest opinionated review —
+ignoring plain comments — approved or requested changes; it adds requests and never cancels a
+pending one.
 
 ### Exit codes
 
@@ -648,8 +660,6 @@ Notable absences:
 
 - no standalone `rebase` command — `jj` already handles descendant rewrites better
   than Git
-- no `track parent` command — the parent relation comes from the DAG
-- no generic metadata-repair command — recovery cases stay explicit and narrow
 
 ## GitHub mutation safety
 
@@ -671,9 +681,10 @@ defense must either prove the destructive default does not apply or gain one bef
 - **`update_pull_request(base=…)`**, **`create_pull_request`.** A base that already contains the
   head triggers the merged auto-close. Covered by branch transport: bottom-up ordering means a
   parent branch always holds an ancestor of its child's head. If the pull request belongs to a
-  GitHub stack, jj-stack re-checks membership and removes it from that stack before changing any
-  base. In an ordinary `merge` it retargets the candidate to trunk immediately before asking
-  GitHub to merge it, passing the head commit it expects to find.
+  GitHub stack, jj-stack re-checks membership and dissolves that whole stack before changing any
+  base — GitHub offers no way to remove one member. In an ordinary `merge` it retargets the
+  candidate to trunk immediately before asking GitHub to merge it, passing the head commit it
+  expects to find.
 - **`update_pull_request(title|body)`.** Carries only changed fields and never `base` on a
   content-only refresh, so the previous entry governs every request that does carry one.
 - **`close_pull_request`.** Destructive by design. Covered by identity and mutation safety:
@@ -684,11 +695,11 @@ defense must either prove the destructive default does not apply or gain one bef
   mutation safety — a snapshot match plus expected state, base, and head SHA, re-read immediately
   before the request. Only a terminal merged result is success. A rejection stops there, with PRs
   below already merged.
-- **Creating a GitHub stack, appending to one, and removing members from one.** GitHub puts each
-  admitted pull request in exactly one stack. Covered by the membership rule, re-checked
-  immediately before the mutation; an incomplete removal stops before any branch or base change.
-  GitHub's mutation is the admission authority, and there is no fallback to comments after it
-  rejects one.
+- **Creating a GitHub stack, appending to one, and dissolving one.** GitHub puts each admitted
+  pull request in exactly one stack, and offers no way to remove a single member. Covered by the
+  membership rule, re-checked immediately before the mutation; an incomplete removal stops before
+  any branch or base change. GitHub's mutation is the admission authority, and there is no
+  fallback to comments after it rejects one.
 - **`convert_pull_request_to_draft`**, **`mark_pull_request_ready_for_review`.** Repo policy may
   dismiss approvals on draft conversion or trigger required CI on ready-for-review. Invoked only
   for `--draft=all` and `--open` respectively, never by default. New PRs are created directly as
