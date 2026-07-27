@@ -232,35 +232,3 @@ continues, matching how the surrounding authorization failures already behave. N
 `if not cleanup_current: return False` fallbacks were the vestige of exactly this skip, never
 wired up; the missing piece is the guarantee, not those returns.
 
-## scc miscounts a file after an apostrophe in a docstring
-
-_Benefit: medium — the complexity gate is treated as a design stop, so its numbers should not
-move for reasons unrelated to the code._
-
-`tools/check_complexity.py` measures code lines with `scc`. A single `'` inside a triple-quoted
-string desynchronizes scc's tokenizer, and it stops recognizing docstrings as comments and blank
-lines as blanks for the rest of that file. Reduced case, two files differing only by one
-apostrophe inside a `"""` docstring:
-
-```text
-plain.py   6 lines -> 1 blank, 1 comment, 4 code
-apos.py    6 lines -> 0 blank, 0 comment, 6 code
-```
-
-Measured impact, comparing the tree against a copy with apostrophes removed from docstrings only:
-
-```text
-src     19,887 -> 19,149   (738 phantom code lines)
-tests   18,714 -> 18,370   (344 phantom code lines)
-```
-
-Two consequences. The absolute totals overstate the code by roughly a thousand lines, which is
-harmless on its own because the limits were rebaselined against the same measurement. The real
-problem is instability: adding or removing one apostrophe in a docstring shifts a file's count by
-many lines, so an edit can appear to consume or free budget it did not touch. That matters most
-where headroom is smallest, which is currently the governed landing and recovery budget.
-
-Options, none yet chosen: report the defect upstream and pin a fixed scc version; count with a
-Python-aware tool instead; or have `check_complexity.py` normalize docstrings before measuring,
-which keeps the gate stable at the cost of measuring a transformed tree. Do not respond to a
-phantom delta by moving a limit.

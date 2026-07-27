@@ -85,10 +85,10 @@ and every fix — including your own proposed fixes:
   both old and new paths can decide or mutate the same fact, require the change to choose one.
 
 The checked-in limits in `complexity-budget.toml` are a measurable design stop. Reviewers must
-compare production, test, and total `scc` code-line counts, Ruff `C901` findings, and
+compare production, test, and total code-line counts, Ruff `C901` findings, and
 recovery-module size with those limits. A budget breach is a design finding. Moving the same
 policy into a helper, wrapper, or neighboring package does not count as simplification. CI runs
-`uv run tools/check_complexity.py`; run it locally when `scc` is available. Edits to
+`uv run tools/check_complexity.py`; run it locally when the pinned `tokei` is installed. Edits to
 `complexity-budget.toml`, the governed path list, or either pytest budget marker require the same
 scrutiny as an implementation change. The gate caps marked tests; reviewers remain responsible
 for marking every case in the bounded merge-and-recovery corpus.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the repository's complexity budgets."""
 
+import ast
 import json
 import os
 import shutil
@@ -12,6 +13,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUDGET = ROOT / "complexity-budget.toml"
+# Pinned because counters disagree: tokei 12 miscounts this tree's comment lines by one and its
+# code lines by nineteen, and the budgets below are baselined against one exact counter.
+TOKEI_VERSION = "14.0.0"
 
 
 def _run(
@@ -33,20 +37,46 @@ def _run(
     return result.stdout
 
 
+def _docstring_lines(path: Path) -> int:
+    """Count a Python file's docstring lines, which tokei reports as code.
+
+    Docstrings are documentation, so they must not consume a code budget; the budgets would
+    otherwise reward deleting them.
+    """
+
+    try:
+        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return 0
+    documented = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    total = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, documented) or not node.body:
+            continue
+        first = node.body[0]
+        if isinstance(first, ast.Expr) and isinstance(getattr(first.value, "value", None), str):
+            total += (first.end_lineno or first.lineno) - first.lineno + 1
+    return total
+
+
 def _code_lines(paths: Sequence[str]) -> int:
-    output = _run(("scc", "--format", "json", "--no-cocomo", "--no-complexity", *paths))
+    output = _run(("tokei", "--output", "json", *paths))
     try:
         languages = json.loads(output)
-        if not isinstance(languages, list) or any(
-            not isinstance(language, dict) or not isinstance(language.get("Code"), int)
-            for language in languages
-        ):
-            raise ValueError
-    except (json.JSONDecodeError, ValueError):
+        reports = [
+            (name, report)
+            for name, language in languages.items()
+            if name != "Total"
+            for report in language["reports"]
+        ]
+        total = sum(report["stats"]["code"] for _name, report in reports)
+    except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
         raise SystemExit(
-            f"Error: scc returned invalid JSON for {', '.join(paths)}:\n{output}"
+            f"Error: tokei returned invalid JSON for {', '.join(paths)}:\n{output}"
         ) from None
-    return sum(language["Code"] for language in languages)
+    return total - sum(
+        _docstring_lines(Path(report["name"])) for name, report in reports if name == "Python"
+    )
 
 
 def _c901(paths: Sequence[str]) -> int:
@@ -135,9 +165,16 @@ def _report(
 
 
 def main() -> int:
-    if shutil.which("scc") is None:
+    if shutil.which("tokei") is None:
         raise SystemExit(
-            "Error: scc is required. Install it, then rerun uv run tools/check_complexity.py."
+            f"Error: tokei {TOKEI_VERSION} is required. Install it, then rerun "
+            "uv run tools/check_complexity.py."
+        )
+    installed = _run(("tokei", "--version"))
+    if TOKEI_VERSION not in installed:
+        raise SystemExit(
+            f"Error: the budgets are baselined against tokei {TOKEI_VERSION}, but this is "
+            f"{installed.strip()}. Install the pinned version, then rerun."
         )
     budget = tomllib.loads(BUDGET.read_text(encoding="utf-8"))
     labels, paths, units = budget["labels"], budget["paths"], budget["units"]

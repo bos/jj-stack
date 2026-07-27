@@ -22,20 +22,12 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.25"
-          cache: false
-
-      - name: Install scc
+      - name: Install tokei
         env:
-          SCC_VERSION: v3.7.0
-        run: |
-          install_dir="$RUNNER_TEMP/scc-bin"
-          mkdir -p "$install_dir"
-          GOBIN="$install_dir" go install "github.com/boyter/scc/v3@$SCC_VERSION"
-          echo "$install_dir" >> "$GITHUB_PATH"
+          # Must match TOKEI_VERSION in tools/check_complexity.py; the budgets are baselined
+          # against this exact counter. 14.0.0 publishes no prebuilt binaries, so build it.
+          TOKEI_VERSION: 14.0.0
+        run: cargo install tokei --locked --version "$TOKEI_VERSION"
 
       - name: Install project environment
         run: uv sync --locked

@@ -170,3 +170,19 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
     assert "hidden.py" not in passing.out
     assert "Result: all 15 limits passed" in passing.out
     assert passing.err == ""
+
+
+def test_docstring_lines_are_counted_apart_from_code(tmp_path: Path, monkeypatch) -> None:
+    """Docstrings must not consume a code budget, and an apostrophe must not change the count."""
+
+    monkeypatch.setattr(complexity_script, "ROOT", tmp_path)
+    plain = tmp_path / "plain.py"
+    plain.write_text('def f() -> None:\n    """One.\n\n    Two.\n    """\n\n    x = 1\n')
+    apostrophe = tmp_path / "apostrophe.py"
+    apostrophe.write_text('def f() -> None:\n    """A stack\'s docstring."""\n\n    x = 1\n')
+    no_docstring = tmp_path / "bare.py"
+    no_docstring.write_text("def f() -> None:\n    x = 1\n")
+
+    assert complexity_script._docstring_lines(Path("plain.py")) == 4
+    assert complexity_script._docstring_lines(Path("apostrophe.py")) == 1
+    assert complexity_script._docstring_lines(Path("bare.py")) == 0
