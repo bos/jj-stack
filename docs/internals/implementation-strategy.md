@@ -247,6 +247,13 @@ Property families and their assertions live in [property-testing.md](property-te
 managed comments, falling back to REST pagination only for PRs whose first comment page
 is incomplete.
 
+Native group merge is `PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async`, whose body
+carries `merge_method` and the `sha` of the exact target PR head. An accepted request returns an
+operation UUID that the client polls to a terminal state. A concurrent `409` is decoded so a
+matching pending request can be distinguished from an unrelated conflict, but its UUID is never
+adopted, because the response body does not identify the target PR. The merge policy those
+requests serve is specified in [design.md](design.md).
+
 The client reports endpoint results but does not decide capability, stack topology, branch naming,
 native membership policy, or fallback behavior.
 

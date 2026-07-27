@@ -25,36 +25,14 @@ have defined behavior but no dedicated current scenario.
    through the UI or `gh`, and by GitHub itself: it auto-closes an open PR whose head
    becomes reachable from its base, closes PRs whose head branch is deleted, and records
    native stack transitions.
-4. **Tracking store** — separate versioned `ReviewIdentity` and `SubmittedBaseline` records
-   keyed by full `change_id`. Identity v2 holds host/repository, PR number, and canonical head
-   owner/ref; baseline v1 holds the exact submitted commit. Review creation, `relink`,
-   `submit --restart`, explicit local retirement, and verified cleanup may change identity.
-   A successful `submit`, or one that recognizes a completed push after interruption, changes
-   the baseline. The top-level v3 envelope also holds the cached native-stack capability by
-   repository; status observation never writes any of these records.
+4. **Tracking store** — the `ReviewIdentity` and `SubmittedBaseline` records described in
+   [design.md](design.md). Moved by the commands that design.md allows to change an identity or
+   advance a baseline; status observation never writes any of them.
 
-The `jj` DAG determines stack topology and content. The fetched trunk commit for the configured
-remote supplies ancestry evidence for the two landed rules in [design.md](design.md); ancestry
-alone does not authorize a mutation. GitHub determines PR identity, lifecycle, reviews,
-native-resource membership and transitions, and merge-result identity. Saved identity and baseline
-records may block a mutation when they disagree with current state, but cannot authorize one by
-themselves. Every mutation rechecks the relevant sources.
-
-## Healthy linkage
-
-For each submitted change, health is one chain of agreements:
-
-- the selected remote's ordinary Git fetch configuration excludes `refs/heads/review/*`, with no
-  effective jj `fetch-bookmarks` override
-- no complete managed review branch is imported as a persistent local bookmark
-- current configuration resolves to the saved host and repository
-- the identity's canonical head ref is unambiguous and its owner matches the live PR
-- the remote ref points at the submitted baseline, or at the exact current commit after an
-  interrupted push that `submit` may safely adopt when all saved identity fields match
-- GitHub reports the saved PR number on that exact head owner/ref
-
-`submit` re-derives titles, bodies, comments, and bases from current state. Those fields do not
-prove review identity. GitHub-owned draft state and reviews remain live observations.
+Which source is authoritative for what, and what a healthy link between them requires, are
+specified in [design.md](design.md) — this file does not restate them. What matters here is that
+all four move independently, so any pair can disagree, and every mutation rechecks the sources it
+depends on rather than trusting an earlier observation.
 
 ## Legal transitions worth modeling
 
@@ -117,26 +95,16 @@ saved tracking that still points at the closed PR.
   `ConflictedStackError` for local shape), so the harness asserts *which* check fired,
   not just the exit code — a stop for the wrong reason names the wrong repair path and
   must fail the model.
-- **Recheck before mutation.** Planning observations never authorize a later mutation. Reload the
-  configured repository, live PR identity/head/readiness, and relevant refs immediately before
-  each irreversible action; use an exact lease or expected-head guard.
+- **Recheck before mutation.** Planning observations never authorize a later mutation, per safety
+  rule 4 in [design.md](design.md).
 - **Inspection must still report.** `view` must produce a report or a targeted
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.
 
-Recovery stays explicit and narrow: `checkout` imports only the selected top remote ref through a
-fixed temporary ref and removes the import artifacts; `relink` reads the exact remote commit
-object without creating a ref; `submit --restart` creates new review identity; and
-`unstack --cleanup --pull-request` closes and cleans up each orphan it can verify.
-Plain `unstack` retains the exact identity and baseline after closing so later cleanup or
-`submit --restart` still has authority; `unstack --local` explicitly removes that pair without
-touching GitHub.
-Selected `sync` rebases one selected stack after proving that ancestors landed. For a rewritten
-native suffix, it transiently imports the freshly verified exact top branch, validates the whole
-active chain, adopts those commits, and removes the attachment. After fresh identity and head
-checks, `sync --all` may retarget and close landed PRs whose exact submitted commits are on trunk
-and remove tracking when no visible stack still needs it. Drift never triggers silent relinking
-or replacement PRs.
+Recovery is explicit and narrow, and drift never triggers silent relinking or replacement PRs.
+The commands that can reattach or retire review identity — `checkout`, `relink`,
+`submit --restart`, `unstack`, `sync`, and `sync --all` — are specified in
+[design.md](design.md).
 
 ## Why an executable model rather than TLA+/Lean
 

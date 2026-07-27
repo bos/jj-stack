@@ -232,3 +232,52 @@ continues, matching how the surrounding authorization failures already behave. N
 `if not cleanup_current: return False` fallbacks were the vestige of exactly this skip, never
 wired up; the missing piece is the guarantee, not those returns.
 
+
+## Delete `submit --restart`
+
+_Benefit: high — removes roughly 750 lines and one whole recovery concept, if the experiment
+below confirms the primitives already cover the case._
+
+`submit --restart` replaces unusable reviews for a selected stack while keeping the local
+changes. No commit message, doc, or test names the observed failure that made it necessary;
+`code-reviews.md` requires a reproduction, a live-API observation, or a user report before a
+defense earns code.
+
+The obvious decomposition already exists: `unstack --cleanup` closes the pull requests, deletes
+the review branches, and retires the tracking, after which plain `submit` recreates the stack
+from scratch under the ordinary generated names. The only thing `--restart` adds is surviving a
+branch-name collision when the old remote branch is still present — and that collision is
+self-inflicted. Names derive from the commit subject slug and the change ID, both stable across a
+restart, so a fresh submit resolves the old name and stops on the expected-absence rule. Deleting
+the old branch removes the collision and the need for a distinct name.
+
+The machinery that exists only to dodge that collision:
+
+- `_RESTART_MARKER_RE` and the `fresh-pr<n>` branch grammar (`review/branches.py:19,117-129`)
+- marker stripping in `_managed_branch_parts`, and the rule that a doubled marker is invalid
+  (`review/branches.py:131-147`)
+- the defense in `generate_review_branch` for a user subject that itself ends in `fresh-pr<n>`,
+  which appends `-change` (`review/branches.py:63`)
+- generation semantics: a later restart replaces the marker rather than accumulating one
+- staged in-memory identities plus a joint recheck and single compare-and-swap, so old tracking
+  stays authoritative until every replacement is proven
+- roughly 250 lines of production code, 500 of tests, and 62 references threaded through
+  `commands/submit/`
+
+The planner was introduced to be shared between `submit --restart` and a standalone repair
+command. That standalone command no longer exists, so the sharing that motivated the abstraction
+is gone.
+
+**The experiment that decides this.** Find a reachable state where `unstack --cleanup` cannot
+recover a stack and `submit --restart` can: a pull request that cannot be closed, a review branch
+that cannot be deleted, or a cleanup that fails closed on ambiguity while a restart would still
+be safe. Note that the last case argues *against* `--restart` rather than for it — if cleanup
+stops because the state is ambiguous, opening a replacement pull request alongside one in an
+unknown state is the guessed-linkage failure the safety rules exist to prevent.
+
+If no such state is found, delete `submit --restart`, the restart planner, the branch marker
+grammar and its parser, and their tests, and route the case through `unstack --cleanup` followed
+by `submit`. Update `design.md` and the recovery guidance in the user docs in the same change.
+
+Deleting it also removes one of the three senses in which this codebase currently uses the word
+"unstack", which is its own readability win.

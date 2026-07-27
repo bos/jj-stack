@@ -7,6 +7,8 @@ requests while keeping history easy to revise.
   Understand what stays in `jj` and what `jj-stack` owns on GitHub.
 - [Daily Workflow](daily-workflow.md)
   The normal author loop for submit, review, merge, sync, and cleanup.
+- [Writing PR Descriptions](description-helpers.md)
+  Overriding the derived title and body with files, an editor, or a helper program.
 - [Troubleshooting](troubleshooting.md)
   Common symptoms, likely causes, and the next command to run.
 - [JSON Output](json-output.md)

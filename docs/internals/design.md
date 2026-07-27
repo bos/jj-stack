@@ -4,32 +4,6 @@ Status: canonical product specification. This document is the sole behavioral au
 `jj-stack`. Implementation structure belongs in `implementation-strategy.md`; evidence policy
 belongs in the testing and review documents; deferred questions belong in `backlog.md`.
 
-## Safety rules, in priority order
-
-These rules are ordered. A lower rule never justifies weakening a higher one.
-
-1. Never lose, silently abandon, or unexpectedly publish local work.
-2. Never mutate a repository, remote ref, or pull request without exact current identity and the
-   applicable lease or expected-head guard.
-3. Never guess ambiguous linkage or silently adopt a replacement review.
-4. Merge only the exact snapshot submitted for review, and re-check its identity and head
-   immediately before every irreversible mutation.
-5. Default commands affect only selected review identities. Repository-wide mutation requires an
-   explicit command mode.
-6. Recovery removes or replaces the saved PR and branch identity and exact submitted commit only
-   through an explicit identity-changing command or after remote-result and dependent-stack checks
-   make removal safe. Leftover cleanup must not block unrelated useful work.
-7. Every fail-closed state and cleanup warning names a command the user can run next.
-
-The `jj` DAG is the only source of local topology and content truth. Only ancestry from the
-fetched trunk commit for the configured remote proves that reviewed work landed, under the
-exact-commit and merge-result rules below. GitHub is authoritative for PR identity, lifecycle,
-reviews, live native-resource membership and transitions, and merge-result identity. Local
-tracking stores only the repository, PR, and branch fields needed to avoid acting on a different
-review, plus the exact commit last submitted. The only additional durable policy fact is whether
-one local/GitHub repository pair supports native GitHub stacks. It never caches permission, stack
-topology, or merge-operation state.
-
 ## Summary
 
 `jj-stack` turns a linear chain of `jj` changes into a stack of GitHub pull requests
@@ -47,15 +21,39 @@ and the exact commit last sent for review. It also caches one boolean per local/
 pair for native stack support. Everything else is observed or derived. That keeps the tool feeling
 like an extension of `jj` rather than a parallel stack manager.
 
-## Recommended GitHub policy
+## Safety rules, in priority order
 
-The repository should protect trunk and allow the merge methods its maintainers intend to use.
-Review branches are transport branches, not alternate integration branches. Users should ask
-`jj-stack merge` to merge a reviewed path rather than merge an intermediate stacked PR directly.
+These rules are ordered. A lower rule never justifies weakening a higher one.
 
-`jj-stack` does not duplicate repository policy. It does not preflight approvals, checks,
-conflicts, merge queues, or auto-merge state across the repository. GitHub applies those rules to
-the requested native stack or ordinary PR mutation, and `jj-stack` reports the result.
+1. Never lose local work, abandon it silently, or publish it when the user did not ask.
+2. Never change a branch, pull request, or repository without first confirming it is the one you
+   think it is, and without a guard that fails the write if it moved underneath you.
+3. When linkage is ambiguous, stop. Never guess which pull request belongs to a change, and never
+   silently adopt one that has appeared in place of another.
+4. Merge only the exact commit that was reviewed, and re-confirm the pull request and its head
+   immediately before every irreversible step.
+5. A command touches only the stack it was asked for. Reaching further has to be asked for
+   explicitly.
+6. Never drop a saved link to a pull request until doing so is safe — either the user named it
+   for removal, or GitHub has confirmed the work landed and no other local stack still depends on
+   it. Cleanup left undone must never block unrelated work.
+7. Every stop and every warning names a command the user can run next.
+
+Three things can answer a question about the state of a review, and each is authoritative for a
+different set of questions:
+
+- the **`jj` DAG** — what changes exist locally, how they are related, and what they contain.
+- **GitHub** — everything about a pull request: whether it exists, its state, its reviews, which
+  native stack it belongs to, and what a merge produced. Whether reviewed work actually landed is
+  settled only by ancestry from the fetched trunk commit, under
+  [Landed evidence](#landed-evidence).
+- **local tracking** — which pull request and branch belong to a change, and the exact commit
+  last sent for review. Nothing else. It exists to stop a command acting on the wrong review, and
+  can never authorize one on its own.
+
+Local tracking holds one further fact: whether a given local repository and GitHub repository
+support native GitHub stacks. It caches no permissions, no stack shape, and nothing about an
+operation in progress.
 
 ## Design goals
 
@@ -65,6 +63,16 @@ the requested native stack or ordinary PR mutation, and `jj-stack` reports the r
 4. Keep branch names stable across rewrite-heavy review.
 5. Recompute as much as possible from `jj` state on every run.
 6. Keep any persisted state optional, minimal, and tool-owned.
+
+## Recommended GitHub policy
+
+The repository should protect trunk and allow the merge methods its maintainers intend to use.
+Review branches are transport branches, not alternate integration branches. Users should ask
+`jj-stack merge` to merge a reviewed path rather than merge an intermediate stacked PR directly.
+
+`jj-stack` does not duplicate repository policy. It does not preflight approvals, checks,
+conflicts, merge queues, or auto-merge state across the repository. GitHub applies those rules to
+the requested native stack or ordinary PR mutation, and `jj-stack` reports the result.
 
 ## Relevant `jj` constraints
 
@@ -102,20 +110,17 @@ maintaining its own competing notion of what is safe to review or rewrite.
 
 ### Review stack
 
-A stack is a linear chain of review changes from a chosen head back to `trunk()`.
+A stack is the linear first-parent chain from a chosen head back to the nearest commit also
+reachable from `trunk()`. That commit is the stack's base and is not itself part of the stack.
 
-Commands that operate on a stack validate only that one parent chain. Other visible
-children elsewhere in the DAG are separate stacks, not an automatic error.
+Commands validate only that one chain. Other visible children elsewhere in the DAG are separate
+stacks, not an error: if an ancestor on the chain has other reviewable children, those are
+separate PR chains, out of scope unless the command explicitly asks about more than one stack.
 
-`jj-stack` only supports linear stacks. It rejects (or asks for manual help with):
-
-- merge commits inside the chain
-- divergent changes
-- multiple reviewable parents
-
-If an ancestor on the chain has other reviewable children, those are separate PR chains
-and out of scope for the current command unless the command explicitly asks about more
-than one stack.
+`jj-stack` supports only linear stacks. Merge commits inside the chain, divergent changes,
+multiple reviewable parents, and unresolved conflicts are rejected rather than papered over with
+metadata. An immutable boundary reached as a non-first parent of a merge is exposed so recovery
+can diagnose the landed ancestry, but never published.
 
 `jj` can model all those shapes; GitHub's stacked-PR UX gets much harder once the unit
 is no longer a simple parent-child chain.
@@ -145,9 +150,9 @@ review/add-cache-index-ypvmkkuo
 
 The slug helps reviewers using the GitHub UI or plain Git. The `change_id` suffix keeps
 the name tied to the logical change without becoming noisy. Eight characters is fixed,
-readable, and effectively unique once combined with the slug. If two resolved names collide,
-`submit` stops; a never-submitted change can use a different subject to produce a different
-initial slug.
+readable, and effectively unique once combined with the slug. If two changes in a selection
+resolve to the same branch, `submit` stops before mutating anything; a never-submitted change can
+use a different subject to produce a different initial slug.
 
 The slug is only an input to the *initial* default name. Once a review is created, its branch is
 not automatically renamed when the commit subject changes — title churn must not cause branch
@@ -156,23 +161,15 @@ churn during review.
 In other words: generate once, then pin. For a tracked change, `ReviewIdentity.head_ref` is the
 only branch-name authority; ordinary commands never rename or replace it from discovery. For an
 untracked change, initial submit generates the default name. After an interrupted first submit,
-recovery may reuse exactly one matching remote branch only when its suffix, full change-ID commit
-header, expected target, and absence of an existing PR jointly prove it came from that attempt.
-Zero or multiple candidates cannot establish identity.
+recovery may adopt a matching remote branch only when exactly one candidate proves it came from
+that attempt; zero or several cannot establish identity.
 
-If two changes resolve to the same branch, `submit` stops before mutating anything.
-
-Ordinary fetches exclude `refs/heads/review/*` through the selected remote's Git refspec. An
-effective jj `remotes.<remote>.fetch-bookmarks` override would bypass that isolation, so commands
-stop and name the setting to unset. Any bookmark in the reserved namespace already imported
-locally also stops commands with explicit guidance to move any work aside, forget the bookmark,
-and export the updated jj view. The reservation and this check cover the same namespace on
-purpose: an untracked remote bookmark anywhere under `review/` makes its target immutable, so a
-name test narrower than the fetch exclusion would leave that state with no diagnostic. Every broad
-jj import or fetch that jj-stack performs repeats the check before its result is used. If such an
-operation exposes a reserved-namespace ref that existed only in the backing Git store, the same
-diagnostic stops the command before the bookmark can affect attachment or stack discovery. These
-are environment diagnostics, not a second source of branch identity.
+An untracked remote bookmark under `review/` would make its target immutable, so ordinary fetches
+exclude the whole namespace through the remote's Git refspec. Two environment states defeat that
+and stop commands with a named fix: an effective jj `remotes.<remote>.fetch-bookmarks` override,
+and a reserved-namespace bookmark already imported locally. `jj-stack` rechecks after every broad
+import or fetch it performs, before using the result. These are environment diagnostics, not a
+second source of branch identity.
 
 ### Review base
 
@@ -230,17 +227,20 @@ Tracking contains two distinct versioned records keyed by full `change_id`:
   head owner/ref
 - `SubmittedBaseline`: the last successfully submitted `commit_id` for that identity
 
-The identity's head ref is the pinned review branch name. No other field may act as a second
-branch-name authority. Only review creation, `relink`, `submit --restart`, checkout/bootstrap,
-`unstack --local`, or verified retirement after dependency checks may change an identity. Plain
-`unstack` retains the identity and baseline after closing the PR. Ordinary `submit` may update
-only `SubmittedBaseline`, after verifying that the live PR matches the saved
-`ReviewIdentity` and its head SHA equals the current local commit being recorded. `view` and
-`list` never change either record.
+Two checks against those records recur throughout this document. They are defined here and cited
+by name everywhere else:
 
-A live PR matches `ReviewIdentity` only when its GitHub host, repository, PR number, and head
-owner/ref equal the saved fields. A check for the exact reviewed snapshot additionally requires
-the live PR head SHA to equal `SubmittedBaseline.commit_id`.
+- **identity match** — the live PR's GitHub host, repository, PR number, and head owner/ref all
+  equal the saved `ReviewIdentity` fields.
+- **snapshot match** — an identity match whose live PR head SHA also equals
+  `SubmittedBaseline.commit_id`.
+
+Neither check authorizes a mutation on its own. Safety rule 4 requires the mutating command to
+re-read and recheck immediately before each irreversible action.
+
+The identity's head ref is the pinned review branch name; no other field may act as a second
+branch-name authority. Which commands may change an identity, and which may advance a baseline,
+is specified under [Identity and mutation safety](#identity-and-mutation-safety).
 
 PR lifecycle, draft state, review decision, URL, comments, readiness, merge result, submitted
 parent/stack pointers, landed state, and whether cleanup is safe are observed live or computed for
@@ -253,12 +253,8 @@ The first command that needs the distinction calls GitHub's stack-list endpoint 
 on success or `false` on a conclusive `404`. Other failures save nothing. There is no automatic or
 explicit redetection. Dry-run may probe but never saves the result.
 
-The commands that need the distinction are non-empty `submit`; `merge` and remote `unstack` with
-saved PR identities; cleanup before deleting a known PR branch; selected `sync` when terminal
-landed evidence or unexplained review-branch drift may involve native history; and `sync --all`
-before mutating an eligible review. A cached `false` uses navigation comments without another
-stack API read. A cached `true` never changes implementations mid-command: a required membership
-read that returns `404` fails without changing the cached value.
+A cached `false` uses navigation comments without another stack API read. A required membership
+read that returns `404` fails without changing a cached `true`.
 
 A change can be in one of two tracking states:
 
@@ -267,12 +263,28 @@ A change can be in one of two tracking states:
 - **tracked**: a `ReviewIdentity` record exists; the tool inspects the exact saved PR and
   branch. A complete submitted review also has a `SubmittedBaseline`.
 
-PR rediscovery is an explicit recovery flow. Plain `view` does not create identity for a
-never-tracked change, and ordinary commands never replace a missing, closed, moved, or ambiguous
-review automatically. They preserve the saved identity and name `relink` or `submit --restart`.
+PR rediscovery is an explicit recovery flow: ordinary commands never replace a missing, closed,
+moved, or ambiguous review automatically. They preserve the saved identity and name `relink` or
+`submit --restart`.
 
-User-authored settings such as reviewer or label preferences live in `jj` config, not in the
-tracking-state file.
+Identity and baseline stay separate records so that recording a new submitted commit cannot
+overwrite PR identity. Reads isolate individual absent, malformed, or obsolete records: one bad
+record is reported with `relink` or `submit --restart` guidance and does not poison independent
+useful work. An unreadable or unsupported top-level file blocks mutation, reports its exact path,
+and tells the user how to move it aside before re-adopting reviews through `checkout` or
+`relink`. There is no migration or automatic discard path.
+
+User-authored settings live in `jj` config under `[jj-stack]`, not in the tracking-state file:
+
+```toml
+[jj-stack]
+reviewers = ["octocat"]
+team_reviewers = ["platform"]
+labels = ["needs-review"]
+```
+
+`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. An
+unrecognized key under `[jj-stack]` is reported rather than ignored.
 
 Managed comments are derived output, not a source of truth. In a repository without native GitHub
 stack support, `submit` regenerates navigation comments from the current `jj` stack. In every
@@ -307,590 +319,228 @@ Repo defaults follow `jj`'s own precedence:
 That keeps `jj-stack` aligned with `jj`'s config model rather than inventing a parallel
 conditional-matching system.
 
-`<repo-id>` is derived from the canonical `.jj/repo` storage path. In the primary workspace,
-`.jj/repo` is that storage directory. In an additional workspace, `.jj/repo` is a path file
-pointing at the same directory; resolve its contents relative to the workspace's `.jj`
-directory before canonicalizing and hashing it. The path file itself is never a repository
-identity. That keeps state repo-scoped across workspaces without a separate bootstrap step and
-without writing any tool-specific file into the workspace.
-
-Reads treat a missing state file as empty state. Writes create the parent directory on
-demand and only fail if the filesystem refuses.
-
-Mutating commands take a repo-scoped advisory operation lock in that same state directory before
-reading or writing state. The lock serializes cross-command mutation; its companion file records
-the owning command, PID, and start time for diagnostics. `list` does not take the lock. Read-only
-inspection does not write tracking observations.
-
-The operation lock only serializes concurrent processes. Commands do not persist their planned
-selection, selected parent chain, progress phase, or remaining work. After an interruption, the
-next command rereads `jj`, the remote, and GitHub and computes what remains.
-
-## Submission algorithm
-
-Given a chosen head revision:
-
-1. Resolve the head. When the user runs `submit` with no `<revset>`, the head is `@-`.
-   `@` stays explicit user intent and is never selected by an omitted argument. Print the
-   selected head after the transient preparation status has cleared, so persistent output
-   starts on its own line.
-2. Follow first parents from the head to the nearest commit also reachable from `trunk()`. That
-   commit is normally the parent below the review stack. If it entered trunk as a non-first parent
-   of a merge, stack inspection exposes it so recovery can diagnose the landed ancestry; `submit`
-   rejects that immutable boundary rather than publishing it.
-3. Reject ambiguous shapes rather than papering over them with metadata. Also stop if any
-   change in the stack still has unresolved conflicts: `submit` must not push a
-   conflicted snapshot.
-4. Resolve each change's stable remote branch using the rules from "Pull request branch" above.
-5. Resolve the GitHub host and repository from the selected remote. Its fetch and push URLs may
-   differ, but must identify the same repository. For every tracked change, require the live PR
-   to match its saved `ReviewIdentity` before any mutation. A remote swap, repository retarget,
-   renamed head, moved branch, missing PR, or replacement PR fails closed with `relink` or
-   `submit --restart`; observation never rewrites identity.
-6. Verify the selected remote's actual review ref and the live PR head. The remote head is safe
-   only when it still equals the submitted baseline or already equals the current local commit
-   after an interrupted submit pushed it. Treat that push as complete only when the live PR
-   matches `ReviewIdentity` and its head SHA equals the current local commit. Any other target
-   stops before remote branch, GitHub, or tracking mutation.
-7. Look up GitHub PR state for those branches.
-   - if the saved PR link disagrees with what GitHub reports, stop and require an
-     explicit recovery flow rather than silently creating a replacement PR. This
-     check covers every change in the selected stack and completes before any remote branch or
-     GitHub mutation, so a mid-stack link failure cannot leave sibling changes half-submitted.
-   - by default, the PR title comes from the commit subject and the PR body from the
-     remaining commit description; if there is no body, fall back to the repository's
-     pull request template, and finally to the subject so the opening comment is not
-     blank
-   - the pull request template is the first existing file among
-     `.github/PULL_REQUEST_TEMPLATE.md`, `PULL_REQUEST_TEMPLATE.md`, and
-     `docs/PULL_REQUEST_TEMPLATE.md` (upper- or lower-case filename) under the workspace
-     root. An empty template counts as absent. Because the PR body is re-derived on
-     every submit, the template applies to updates the same way it applies to creation;
-     it never overrides a change description body or an explicit `--describe` /
-     `--describe-with` result.
-   - `submit --describe <change>=<file>` replaces one PR body with Markdown read from
-     `<file>`, while keeping the PR title from the change subject. The `<change>` selector
-     must resolve to exactly one change in the selected stack.
-   - `submit --describe stack=<file>` uses Markdown read from `<file>` as the head PR's
-     stack overview comment for a multi-change stack.
-   - `--describe` may be repeated. Relative file paths are resolved from the current
-     directory where `jj-stack` was invoked, not from the selected repository.
-   - `submit --describe-with <helper>` replaces that default by invoking the helper once
-     per change (`helper --pr <change_id>`), and once per stack
-     (`helper --stack <revset>`) for stack-level prose
-   - the per-stack invocation only fires when the stack contains more than one change;
-     its output becomes a stack overview comment on the head PR. It is not used as a
-     topology source.
-   - in repositories without native GitHub stack support, every PR in a multi-change stack gets
-     one navigation comment listing every PR top-to-bottom with a trunk line beneath the
-     bottom-most PR. The current PR's title is bold and marked "this PR"; the other titles link.
-     Native repositories do not classify, reject, create, update, or delete navigation comments,
-     including comments left from an earlier submission.
-   - when `helper --stack` returns non-empty content, the head PR also gets a single
-     overview comment containing the helper-generated stack prose.
-   - if a PR on the selected stack previously held an overview comment but is no
-     longer the stack's head (because the head moved or the stack shrank), that
-     overview comment is deleted as part of regeneration. The single-change case
-     below is a specialization of the same rule.
-   - for stack helpers, `submit` writes a temporary input file with the per-PR title/body
-     pairs and a compact diffstat for each PR, and points the helper at it via
-     `JJ_STACK_INPUT_FILE`. Helpers can summarize from PR-level metadata rather
-     than replaying the full patch history.
-   - helper output must be structured. Invalid output aborts `submit` before any local,
-     remote, or GitHub mutation.
-   - `submit --edit` opens the user's editor once with the planned title and body of
-     every PR in the selected stack, pre-filled from the defaults above (including any
-     `--describe` files), rendered top-to-bottom like `view`. The edited document
-     replaces those titles and bodies. Invalid edits — content before the first change
-     separator, an unknown, repeated, or missing change section, or a section with no
-     title line — abort `submit` before any local, remote, or GitHub mutation, as does
-     a non-zero editor exit. The editor is the one jj's `ui.editor` resolves to
-     (including its `$VISUAL`/`$EDITOR` fallbacks); `--edit` cannot be combined with
-     `--describe-with`, whose helper already owns description authoring.
-8. Resolve the cached native-stack capability, detecting it only when absent. When support is
-   enabled, read current repository membership and derive one executable action before local or
-   remote mutation:
-   - `none` when the active native membership already matches, or the final review has one PR and
-     overlaps no resource
-   - `create` when at least two final PRs overlap no resource
-   - `append` when one resource's active suffix is an exact ordered prefix and only new top
-     members remain
-   - `replace` for reorder, removal, insertion below the top, or any base mutation of a native
-     member. Re-read and unstack the resource's complete active suffix before changing branches
-     or bases; a retained historical merged prefix is valid.
-   Every active PR in an overlapping native GitHub stack must belong to the selected local parent
-   chain, and the selection may overlap only one resource it could still have to mutate. This is
-   one membership rule shared by `submit`, `merge`, selected `sync`, and `unstack`: it looks only
-   for active members the selection leaves out, so a selected review GitHub no longer lists as a
-   member never blocks, and a resource GitHub retains only for merged members is not an overlap to
-   resolve. An unselected active member or changed membership fails before mutation, naming the
-   `gh stack unstack` command that resolves it. A closed-unmerged review is rejected earlier, when
-   `submit` checks the pull request it discovered for that change.
-9. Treat proven landed ancestors as no longer reviewable. Build the complete desired remote-ref
-   set for the remaining changes, directly observe every current ref at the fetch URL, then
-   reobserve the whole set immediately before mutation. A tracked branch may move only from its
-   submitted baseline, its already-completed interrupted-submit target, or another exact target
-   proven by the recovery rules. A new branch requires expected absence. Any mismatch stops the
-   entire update rather than taking over the branch.
-   - treat topology changes as meaningful even when the diff is unchanged: if the parent review
-     change, remote target, or PR base changed, this is not a no-op
-   - before pushing rewritten review branches, protect existing open PRs from GitHub's
-     reachability-based close/merge behavior: for every open PR whose head ref is in
-     the planned push set, simulate the post-push commit IDs of head and base; if the
-     post-push head is reachable from the post-push base, first retarget that PR to
-     the resolved trunk branch so the push lands without GitHub seeing a head fully
-     contained in its base. The simulator resolves a base ref through the push set
-     first, then through a direct observation of the push remote. When neither is
-     available, the predictor skips that PR rather than guess; the post-submit closure
-     check below is the catch-all for anything the predictor cannot model
-   - send the complete changed-ref set in one direct `git push --atomic` to the push URL, with an
-     exact `force-with-lease` expectation for every ref. There is no sequential fallback,
-     persistent local review bookmark, or post-push fetch
-   - process PR creation and updates bottom-up after that atomic branch transition
-   - compute the GitHub base branch:
-     - the nearest still-open ancestor PR in the chain, if any
-     - otherwise the resolved trunk branch
-   - if an ancestor PR has merged but the local parentage still reflects the old review stack,
-     stop and point at selected `sync`; `submit` does not guess how rewritten merge results map
-     back to the local DAG
-   - create or update the PR for `head branch → base branch`
-   - creating a review writes its `ReviewIdentity` and `SubmittedBaseline` together
-   - updating a review advances only its baseline after the live PR matches the saved identity,
-     its head SHA equals the current local commit being recorded, and the push succeeded or an
-     interrupted push was recognized under step 6
-   - once `submit` finishes, render the stack top-to-bottom through the same native
-     `jj log` row formatting that `view` uses, with concise submit-result text
-     appended to the first line of each row, and the resolved trunk row beneath
-   - draft handling stays conservative:
-     - `submit --draft` / `submit --draft=new` opens new PRs as drafts
-     - `submit --draft=all` also returns existing published PRs to draft
-     - `submit --open` marks existing draft PRs ready for review and creates new PRs
-       as published
-     - plain `submit` preserves the draft state of already-open PRs
-     - plain `submit --draft` does not turn a published PR back into a draft
-   - `submit --re-request` asks GitHub to request review again from users whose latest
-     review on the PR is `APPROVED` or `CHANGES_REQUESTED`. It does not disturb
-     still-pending review requests.
-10. For native `create` or `append`, list repository stacks again and require the same action and
-    affected resource before applying one complete mutation. Creation sends the complete desired
-    membership; append sends only the new ordered top members. Supporting native stacks of 100 or
-    more reviews is out of scope: there is no batching, size-specific recovery, or local
-    size-policy check.
-11. Synchronize overview comments in every repository and navigation comments only when cached
-    native support is `false`, then run the existing unexpected-PR-closure verification.
-
-The bottom-up ordering matches stack dependency order, and the parent relation is read from the
-DAG, not from saved metadata. No command other than `submit` creates a PR or publishes a
-never-submitted change.
-
-Submission is allowed to have brief intermediate GitHub states, but they must preserve
-review identity. In particular, a rewritten stack must not leave an existing selected-stack
-PR pointing at a base branch that now contains that PR's head; GitHub can interpret that as
-merged and close the PR before `submit` finishes repairing the stack. If a submit is
-interrupted after the protective trunk retarget and before final PR sync, the result should
-be a repairable flat or partially restacked set of the same open PRs, not closed or replaced
-reviews.
-
-After all PR mutations and stack-comment work succeed, `submit` refetches the GitHub
-state of every PR that was open when the run began and fails the command if any of them
-are no longer open by the end. `submit` itself never closes or removes a PR on purpose,
-so an open→closed transition shows that GitHub's reachability-based
-auto-close fired in a way the pre-push predictor did not anticipate, and an open→missing
-transition means the PR was deleted or transferred during the run. The check is
-detection, not repair: it turns silent data loss into a loud error naming the affected
-PRs so the operator can reopen or restore them on GitHub. Defense-in-depth for the
-predictor, not a substitute.
-
-For a stack with exactly one change, `submit` behaves like a plain PR-submit flow: no stack helper
-invocation and no new navigation or overview comment. Repositories without native GitHub stack
-support remove older managed navigation and overview comments left from a larger selected stack.
-Native repositories leave navigation comments untouched and remove only an obsolete managed
-overview. After a successful live submit, the URL of the top of the stack is printed so the user
-can open it in a browser.
-
-There is no meaningful stack metadata to add when the stack has only one PR.
-
-## Recovery and repair
-
-When review identity is unclear, `jj-stack` is conservative.
-
-If `submit` cannot prove that a change still corresponds to the same review branch and
-PR, it stops with a targeted diagnostic rather than guessing. It does not silently open
-a new PR just because a saved link, branch, or GitHub state is missing or damaged.
-
-The recovery surface is explicit and narrow:
-
-- `jj-stack view --fetch [<revset>]` refreshes ordinary fetched repository state and directly
-  observes saved review branches before inspecting GitHub PR state. It reports the stack and
-  saved PR state without mutating GitHub or importing managed review branches
-- `jj-stack relink <pr> <revset>` is a repair command. It explicitly reattaches an
-  existing PR (and its same-repo head branch) to a specific `jj` change. It directly observes the
-  exact branch, reads the remote commit object's full change ID without creating a ref, and saves
-  the PR identity and exact remote target as the submitted baseline. Replacing any stale saved
-  baseline is what lets a later `submit` update the relinked review rather than rejecting that
-  branch or opening a replacement.
-- `jj-stack submit --restart <revset>` replaces stale or unusable reviews while keeping the
-  selected `jj` changes. It derives each replacement branch deterministically from the saved
-  head ref, old PR number, and change ID. It retains every old identity and baseline until the
-  whole selected replacement stack has passed a fresh joint check and can be saved in one write.
-
-Selector defaults are listed once under "CLI shape" below. The principle: lifecycle
-commands default to the stack headed by `@-`; `relink` requires one explicit `<revset>`; `@` is
-always explicit user intent and is never selected by an omitted argument.
-
-### `view`
-
-`jj-stack view [<revset> ...] [--pull-request <pr> ...]` shows the local stack(s) and
-any locally known review identity for them.
-
-It is local-first. If a change has never been locally attached to review, `view`
-reports it as not submitted and does not query GitHub for speculative PR matches based
-only on predicted branch names or remote observations. It does not create local tracking for a
-never-tracked change.
-
-`jj-stack view --fetch [<revset> ...] [--pull-request <pr> ...]` is the same command,
-but it refreshes ordinary fetched state and directly observes saved remote review refs before
-checking already-known GitHub PR state. Ordinary fetch continues to exclude `review/*`.
-
-When more than one selector is given, `view` inspects them in command-line order,
-suppresses exact duplicate stack reports, continues past selector-local resolution
-failures, and exits with the incomplete-report code if any individual stack would have
-done so. A single selector behaves like bare `view`: a failure that prevents any report
-propagates with its category code (for example, unsupported stack shape exits `2`)
-instead of degrading to the incomplete-report code, so the exit code for a drifted state
-does not depend on whether the selection was explicit.
-
-Fetched repository state can expose extra visible revisions for merged changes, so `view` does
-not insist that every visible revision still forms one supported review stack. It walks the
-parent chain, tolerates immutable or divergent side copies exposed through fetched history, and
-reports the stack revision for each logical change.
-If a merged PR still appears on the stack, `view` continues and surfaces that row as
-"cleanup needed" rather than calling the stack broken. If the local history no longer
-has any supported linear walk after refresh, `view` stops with a targeted diagnostic
-rather than a traceback or an unadorned subprocess error.
-
-Unlike `submit`, `view` may fall back to local-only output when the repo is not
-configured well enough to resolve a remote or GitHub target. Default output stays
-concise — one effective summary per change rather than dumping saved and remote
-diagnostics inline.
-
-With `--json`, `view` prints a structured version of that same per-change summary. The
-payload includes the selected stacks, their changes, saved review branch names, PR identity,
-and concise review status. It does not expose cache state, raw remote branch targets,
-or saved tracking records; command failures and incomplete inspection still use stderr
-and the process exit status. The machine-readable schema for the public output lives in
-[`docs/json-output.schema.json`](../json-output.schema.json).
-
-`view` may add a repo-level advisory for other tracked stacks when a tracked change's
-`SubmittedBaseline.commit_id` differs from its current commit. The advisory names the stack heads
-and points the user at running `view` on each, because the correct follow-up depends on the cause.
-Topology and stale comments alone do not trigger the advisory.
-
-The stack revisions and the footer row beneath them both render through the user's
-native `jj log` formatting; status-specific suffixes (PR state, etc.) are appended to
-the first rendered line. The footer row shows the stack's `base_parent` (the immediate
-parent of the bottom change), which may or may not be the resolved `trunk()`.
-
-When GitHub data is available, `view`:
-
-- distinguishes merged PRs from merely closed ones
-- surfaces a concise review-decision summary (approval, changes requested) for open PRs
-- renders open draft PRs differently from open published PRs
-- if GitHub is unreachable or misconfigured, reports that once at the repo level and
-  falls back to conservative per-change summaries from tracking data rather than claiming a
-  PR is absent. Because the output is incomplete, `view` exits with the incomplete-report
-  code
-- if it finds an ambiguous PR match, surfaces that inline and exits with the
-  incomplete-report code rather than silently calling the stack healthy
-- if a saved PR link existed but GitHub reports no PR for that branch, looks up the
-  saved PR number before rendering the result; if GitHub still cannot find a PR, it
-  surfaces the stale link inline and exits with the incomplete-report code without
-  clearing the saved PR identity
-- when the link is stale, closed, or ambiguous, prints a short repair advisory that
-  distinguishes reopening the same PR, relinking an open replacement, and running
-  `submit --restart` to create fresh PRs
-- when only saved PR identity is available, labels it as tracking data rather than implying a
-  live lifecycle result
-- does not inspect managed navigation or overview comments. Those comments are derived review
-  artifacts, and the commands that create or delete them own their validation.
-- never writes `ReviewIdentity` or `SubmittedBaseline`; live observations may enrich this report
-  but cannot change saved identity or authorize later mutation
-
-When `view` reports `cleanup needed`, it explains why in plain language:
-
-- a merged PR still appears on the local stack
-- descendant `submit` operations will keep following that old ancestry until the user
-  repairs it
-- the next command is the exact selected `jj-stack sync <change-id>`; add `--dry-run` first to
-  inspect the planned stack update before mutating local history
-
-User guidance names the command and its effect rather than exposing internal classifications of
-fetched copies and selected revisions.
-
-### `list`
-
-`jj-stack list [--fetch]` gives one repo-scoped summary row per locally known stack. It
-is local-first too: discover stacks from saved tracking plus any visible local
-descendants above those tracked changes; do not create tracking for remote-only state;
-do not speculate about GitHub-only stacks that have never been attached locally.
-
-The summary row identifies the stack by head `change_id`, shows stack size, gives a
-compact PR summary, and highlights unusual local states such as divergence, conflicts,
-or merged PRs needing cleanup. The text table shows the exact PR number for a single-PR
-stack and summarizes multi-PR stacks by count so long stacks do not crowd out the
-description column. If GitHub is unavailable or a saved PR link has gone stale, the row
-surfaces that and `list` exits with the incomplete-report code rather than reporting a
-healthy tracked stack from incomplete data.
-
-Like `view`, `list` may surface tracked stacks whose submitted state no longer
-matches the live DAG, naming the heads and pointing the user at `view` for the
-per-stack next step.
-
-`list` also surfaces orphaned PRs — saved tracking records whose change is no longer
-present in any current stack — as their own rows, separate from the live stacks. Each
-row names the PR, and one advisory after the table points at
-`unstack --cleanup --pull-request orphans` to attempt to close and clean up every orphan shown.
-The explicit single-PR closure path remains `--pull-request <pr>`. Without this surfacing, common
-workflows (squashing two reviewed changes by emptying one and abandoning it) would leave PRs open
-without the user noticing.
-
-With `--json`, `list` prints the same row model as the text table. Stack rows include
-their changes so clients can derive stack length, head change, and PR list directly
-from the structured changes. Orphaned PRs remain rows with `type: "orphan"` rather than
-a separate internal bucket. The same schema file covers both `view --json` and
-`list --json`.
-
-These commands are not sources of truth and do not reattach identity. They inspect a
-`jj`-derived stack after damage, cross-machine work, or manual edits on GitHub; explicit
-`checkout`, `relink`, or `submit --restart` own reattachment.
-
-### `checkout`
-
-`jj-stack checkout [--fetch] [--pull-request <pr> | --revset <revset>]` resolves one
-exact stack and sets up tracking for it. It does not mutate GitHub.
-
-`checkout` is the explicit recovery and bootstrap path for review state that already
-exists remotely. If a stack already has PRs on GitHub but local tracking is missing on
-this machine, `checkout` is what you run. Plain `view` does not do this implicitly.
-
-Selector handling stays unambiguous: a bare positional argument does not double as both
-revset and PR number, and omitting selector flags defaults to the stack headed by `@-`.
-
-`checkout --pick` is a third, interactive selector: it lists the locally tracked stacks
-(current stack first) numbered on standard output, reads one number from standard
-input, and then proceeds exactly as if that stack's head had been passed via
-`--revset`. The picker offers only stacks that already have local tracking — attaching a stack
-that exists only on GitHub still requires an explicit `--pull-request`. Empty, non-numeric, or
-out-of-range input fails closed with a usage error, and no tracked stacks at all is a targeted
-error pointing at `--pull-request`. The prompt happens before the operation lock is taken so an
-idle picker never blocks other commands.
-
-`checkout` sets up tracking, not workspace motion:
-
-- without `--fetch`, use only commits and PR-backed state already available locally
-- resolve from an explicit PR or an explicit local stack
-- for an explicit PR, require the configured repository, complete managed branch grammar, exact
-  PR base chain, and unique PR head claims to identify one stack
-- with `--fetch`, refresh ordinary repository state, directly observe the selected top review
-  ref, and import only that exact ref through a fixed temporary Git ref
-- verify the imported DAG against the exact PR chain and every PR's directly observed remote
-  target, then remove the temporary jj bookmark and Git ref before continuing
-- refresh the tracking entry only for that exact stack
-- when `--fetch` pulls in a remote-selected stack, print the fetched tip rather than
-  changing the workspace
-
-`checkout` does not:
-
-- rewrite commits
-- restack descendants
-- check out the fetched stack into the current workspace
-- open, close, or mutate PRs
-- delete local history
-- leave managed review bookmarks or temporary import refs behind
-
-Failure guidance stays specific:
-
-- if the PR head revision is unavailable locally, point the user at `checkout --fetch`
-- if the PR head branch is missing on the remote, cross-repo, or ambiguous, stop and
-  explain that the stack cannot be connected safely
-- if multiple PRs match the same head branch, point at `view --fetch` and `relink`
-- if any checked-out revision lacks an exact discovered remote branch, stop rather than inventing
-  a local match
-- before `--fetch` imports anything, read the selected PR head's change ID from the remote object
-  without creating a ref. If a visible local revision already holds that change at another
-  commit, stop and name `relink`, because importing would leave a divergent copy that no rerun can
-  remove. If the change is already divergent, name the revisions to reconcile instead
-- if the fetched stack shape is unsupported locally, point at selected `sync` only when the issue
-  is proven landed ancestry rather than remote identity
-- if `checkout` defaulted to the current stack and that stack has no matching PR, say so
-  rather than silently doing nothing
-- if a stale saved entry disagrees with a freshly fetched link, the fetched link wins
-  only when it is exact and unambiguous; otherwise stop and surface the conflicting
-  identities rather than partially overwriting
-
-`view --fetch` stays the read-only refresh path; `checkout` explicitly sets up local tracking.
-Selected `sync` updates one current stack, while `sync --all` is the separate explicit
-repository-wide recovery mode.
-
-### `sync`
-
-`jj-stack sync [--dry-run] [<revset>]` observes and updates one selected stack:
-
-1. Fetch the configured remote and resolve current trunk.
-2. Re-resolve the selected stack from the current DAG; never replay an earlier selection.
-3. Classify landed ancestors through the "Exact submitted commit on trunk" or "Selected PR's
-   rewritten merge result on trunk" rules below.
-4. Stop before rewriting if removing an ancestor would discard unpublished local work, if the
-   remaining changes are nonlinear, or if an unreviewed change sits between reviewed changes.
-5. Rebase only the selected remaining changes onto fetched trunk. When a native merge rewrote
-   the active suffix, transiently import its freshly verified exact top, validate the full active
-   change-ID and first-parent chain from trunk, adopt that chain, and rebase only trailing local
-   descendants onto it. Atomically advance the adopted suffix's baselines before the final branch
-   recheck so a later retry can distinguish those GitHub-reported snapshots from unpublished
-   edits. Trailing unreviewed work remains local and sibling stacks are untouched.
-6. Update only existing selected reviews. Never create a PR or publish a never-submitted change.
-7. Remove tracking for a landed change only after survivor updates succeed and no other visible
-   stack still needs it; otherwise report each dependent head and its exact selected `sync`
-   command.
-
-`sync` does not rebase onto newer trunk merely because trunk advanced; explicit `jj rebase` owns
-that workflow. With `--dry-run`, it prints the landed classification and any cleanup or rebase
-without applying them. When a rebase is required, `sync` cannot compute the later PR-update plan
-until the rebase has been applied.
-
-`jj-stack sync --all [--dry-run]` is the only repository-wide recovery mode. It fetches once,
-checks every locally tracked PR, and continues past absent, malformed, obsolete, or individually
-failing records. It may change only reviews whose exact submitted commit is on fetched trunk,
-whose live PR matches the saved `ReviewIdentity`, and whose live head SHA equals the submitted
-commit. After rechecking, it may retarget and close those landed PRs. It does not rewrite stacks,
-submit work, create PRs, or treat a rewritten merge result as permission to change more reviews.
-Tracking needed by visible stacks remains, and the command reports their exact selected `sync`
-follow-ups.
-
-Native resources retain merged members as a historical bottom prefix and non-historical members
-as an active suffix. Closed or draft active members remain affected survivors, but they are not
-merge candidates. Selected `sync` may accept survivor head and base changes reported by that same
-resource only while at least one complete tracked historical member validates the transition.
-This is bounded remote-result authority, not tree-equivalence evidence or permission to accept
-later drift. Global sync requires a native PR to report terminally merged before finalizing it and
-preserves tracked historical evidence while an active tracked suffix still needs selected sync.
-An exact native member commit merely appearing on trunk does not authorize `sync --all` to
-retarget and close the review.
-
-GitHub preserves jj's Git `change-id` header through both native and ordinary rebase merges, but
-not through squash merges. Selected `sync` uses the fetched result: a matching change ID is the
-landed successor; otherwise it retires the old local change without relabeling the landed commit
-or storing an alias.
-
-The selector and `--all` are mutually exclusive.
-
-### `unstack`
-
-`jj-stack unstack [--cleanup] [--dry-run]
-[--pull-request <pr|orphans> | <revset>]` ends review for one stack or an explicit set of
-orphaned pull requests.
-
-`unstack` is stack-first. It looks at the local stack, finds the open PRs the tool is
-already tracking there, and either runs or previews the actions needed to end review.
-
-In a native repository, remote unstacking must cover one resource's complete active suffix before
-closing its PRs. It freshly verifies the resource before mutation. GitHub may retain the
-historical merged prefix after removing that suffix; any unselected active member or incomplete
-removal fails closed. `unstack --local` never consults or changes native membership.
-
-`--pull-request <pr>` is usually an alternate selector for the local stack — it must
-resolve to one linked local change. The one exception is `unstack --cleanup
---pull-request <pr>` for an orphaned PR (one whose local change has been abandoned
-or otherwise dropped from every current stack): saved tracking is the only available
-identity, so `unstack` acts from the exact saved PR and branch fields and still fails
-closed if either is missing or ambiguous. Before deleting a branch, it verifies that
-the saved PR still uses the saved branch name on the configured GitHub repository, not
-just a same-named branch from another owner. A saved branch claimed by another tracked change is
-ambiguous; branch deletion in that state would silently take a branch out from under another
-review.
-
-`unstack --cleanup --pull-request orphans` selects every tracked PR whose local change is absent
-and which `list` reports as an orphan when the command begins. The `orphans` selector cannot be
-combined with a revset or `--local`. The command processes targets in pull-request-number order
-and applies the same exact PR-head and duplicate-claim checks used for one orphan. It closes a
-verified open PR and cleans a verified closed or merged PR. A blocked target remains tracked and,
-if open, remains open; other independently verified targets continue, and the command exits `1`
-if any target was blocked. A hard failure stops the batch with prior successful cleanup
-preserved. `--dry-run` performs the same selection and verification without closing PRs or
-deleting review artifacts.
-
-Without `--cleanup`, `unstack`:
-
-- closes the open PRs the tool is already tracking for the stack
-- skips already-merged or already-closed PRs rather than treating them as new close
-  targets
-- leaves remote PR branches in place
-- retains each exact `ReviewIdentity` and `SubmittedBaseline`, so later cleanup or
-  `submit --restart` can still prove what it is replacing
-
-With `--local`, `unstack` removes only the saved local tracking records for the selected
-stack: the identity and baseline pair is removed together. It does not close PRs, delete remote
-branches, or inspect GitHub. The local `jj` changes remain in place. This mode is for checkouts
-that should stop treating the stack as locally tracked while leaving the GitHub review stack
-alone. It cannot be combined with `--cleanup`.
-
-With `--cleanup`, `unstack` also performs conservative post-close cleanup for review
-artifacts the tool can verify belong to the stack:
-
-- delete remote PR branches on the configured remote, only when verified to belong to
-  the stack
-- delete managed navigation and overview comments belonging to the stack
-- remove the identity and baseline pair only when no same-repository open PR still names the
-  saved review branch as its base
-
-The exact eligibility and recheck rules are defined once under
-[Cleanup semantics](#cleanup-semantics). Selected cleanup works from the head toward the base, so
-a dry run may treat only earlier selected PRs in that order as closed. The real command observes
-GitHub again at each mutation boundary.
-
-`unstack` is idempotent:
-
-- rerunning `unstack` on an already-closed path succeeds as a no-op (or with a brief
-  "nothing to close")
-- rerunning `unstack --cleanup` after an earlier `unstack` performs only the remaining safe
-  cleanup, not another close
-
-### `submit --restart`
-
-`jj-stack submit --restart <revset>` replaces stale or unusable reviews for the selected stack
-while keeping the local changes. It requires existing complete tracking for every selected
-change.
-
-For each change it derives one retry-stable branch from the saved head ref, saved PR number, and
-full change ID:
-
-```text
-review/<original-stem>-fresh-pr<old-pr-number>-<short-change-id>
-```
-
-If the saved branch already has a terminal `fresh-pr<number>` marker, the new saved PR number
-replaces it rather than accumulating markers. A branch that does not match the fixed managed
-grammar and the selected change's suffix cannot authorize restart.
-
-Every old `ReviewIdentity` and `SubmittedBaseline` remains durable while the replacements are
-being created. Replacement identities are staged only in memory. After every PR, native-stack
-update, managed comment, and post-submit closure check succeeds, `submit --restart` jointly
-reobserves all replacement PRs and branches. Each one must still name the configured repository,
-unique owner/head ref, exact selected commit, planned base, and exact remote branch target. One
-compare-and-swap then replaces every selected identity/baseline pair in a single state-file write.
-
-An existing replacement branch is usable only when its remote target is absent or equals the
-exact selected commit. A unique open PR already using the deterministic replacement branch is
-recovered after an interrupted restart only when its repository, owner, head ref, head commit,
-base, and live remote target still equal the current plan. This is a narrow retry rule, not
-general PR discovery or implicit relinking. Any mismatch or ambiguous/terminal PR blocks the
-restart and directs the user to inspect it and use `relink` only when it is the intended review.
-
-Any failure before or during the final state write leaves every old pair in place. Rerunning the
-same restart recovers exact replacement candidates and does not create another generation of PRs.
-After a restart completes, a later explicit restart intentionally derives a new generation from
-the newly saved PR numbers. A dry run applies the same candidate classification but never
-mutates branches, PRs, comments, native membership, or tracking.
+State is repo-scoped, so every workspace for the same repo shares one location without a separate
+bootstrap step and without writing any tool-specific file into the workspace.
+
+Mutating commands serialize against each other through a repo-scoped advisory lock. Read-only
+commands do not take it and never write tracking observations.
+
+The lock only serializes concurrent processes. Commands do not persist their planned selection,
+selected parent chain, progress phase, or remaining work. After an interruption, the next command
+rereads `jj`, the remote, and GitHub and computes what remains.
+
+## Policies
+
+These are the rules commands obey. Each is the authority for its rule: where an earlier section
+introduces the same idea, it points here rather than restating it.
+
+### Selection
+
+Lifecycle commands act on one stack, headed by `@-` when no `<revset>` is given. `@` is always
+explicit user intent and is never chosen by an omitted argument. `relink` has no default at all —
+both its selectors are explicit.
+
+Three modes act beyond one stack, and each must be asked for explicitly: `sync --all`, which
+cannot be combined with a selector; `cleanup`, which sweeps every tracked record; and
+`unstack --cleanup --pull-request orphans`, which acts on every tracked pull request whose local
+change is gone. No default invocation of any command reaches beyond the selected stack.
+
+What a stack is, and which shapes are rejected, is defined under [Review stack](#review-stack).
+
+Ambiguity always fails closed, and every stop names a command that resolves it (safety rule 7).
+
+### Identity and mutation safety
+
+**identity match** and **snapshot match** are defined under
+[Stored in the tracking-state file](#stored-in-the-tracking-state-file).
+
+Before mutating anything, a command establishes the identity its mutation depends on for every
+change in the selection, so a mid-stack failure cannot leave siblings half-applied:
+
+- `submit` requires an identity match per tracked change, and requires each remote review ref to
+  hold either its submitted baseline or the current local commit left by an interrupted push —
+  that push counts as complete only on an identity match whose live PR head SHA equals the current
+  local commit.
+- `merge` requires more: current local commit and remote review ref both equal
+  `SubmittedBaseline.commit_id`, and the live PR is a snapshot match. Diff or tree equivalence is
+  never sufficient.
+- `sync --all` and `cleanup` require a snapshot match before retargeting, closing, or retiring.
+
+Safety rule 4 then requires re-reading those facts immediately before each irreversible action; a
+planning observation never authorizes a later mutation. A remote swap, repository retarget,
+renamed head, moved branch, missing PR, or replacement PR fails closed with `relink` or
+`submit --restart`.
+
+Observation never rewrites identity. Only review creation, `relink`, `submit --restart`,
+`checkout`, `unstack --local`, and cleanup that has passed its eligibility checks may change
+one.
+
+A `SubmittedBaseline` records the exact commit last sent for review, so only the commands that
+send or adopt one may advance it: `submit` after a successful push, `relink` from the observed
+remote target, `checkout` when it adopts an existing review, and selected `sync` when it adopts
+the commits GitHub produced by rewriting reviews that did not merge. `merge`, `sync --all`,
+`cleanup`, `view`, and `list` never do.
+
+### Landed evidence
+
+Two observations prove that reviewed work landed:
+
+- **exact submitted commit on trunk** — the baseline is an ancestor of fetched trunk and the live
+  PR is a snapshot match. A pull request in a GitHub stack must additionally report merged
+  before `sync` may act on it.
+- **selected PR's rewritten merge result on trunk** — the saved PR reports merged, its live
+  merge-result commit is an ancestor of fetched trunk, and its head remains the submitted commit.
+  This covers squash and rebase results.
+
+Selected `sync` may act on either. `sync --all` may act only on the first, because the second is
+selected-stack evidence and does not authorize repository-wide change. A PR merely reporting
+merged, or a merge result no longer reachable from fetched trunk, authorizes nothing: preserve
+local revisions, identity, and baseline, and name the `sync` to run once trunk is restored.
+
+Tracking for a landed change is removed only after the changes that did not land have been
+updated successfully and no other visible stack still needs it; otherwise every dependent head is
+named with its exact `sync`.
+
+GitHub preserves jj's `change-id` header through native and ordinary rebase merges but not squash
+merges. A matching change ID identifies the landed successor; otherwise the old local change is
+retired without relabeling the landed commit or storing an alias.
+
+### Native stack membership
+
+Where GitHub supports them natively, a **GitHub stack** is GitHub's own object: an ordered list
+of pull requests it manages as a group. Once a pull request in one has merged, GitHub keeps it in
+the list as history and it can no longer be moved. The unmerged ones above it are the only ones
+that can still be reordered, removed, or retargeted, and this document calls those **open
+members**. Whether a repository supports GitHub stacks at all is the cached boolean described
+under [Stored in the tracking-state file](#stored-in-the-tracking-state-file).
+
+**Membership rule.** Every open member of a GitHub stack the selection touches must belong to the
+selected local parent chain, and a selection may touch only one GitHub stack it could still have
+to change. The rule looks only for open members the selection leaves out, so a review GitHub no
+longer lists never blocks, and a GitHub stack holding nothing but merged pull requests is not in
+the way. An open member the user did not select, or membership that changed while the command was
+running, fails before any mutation and names `gh stack unstack`. `submit`, `merge`, selected
+`sync`, and `unstack` all apply this one rule and re-check it immediately before the mutation it
+authorizes.
+
+A GitHub merge may rewrite the open members above the ones it merged. Selected `sync` then adopts
+the exact commits GitHub produced rather than replaying the same diffs, and accepts the new heads
+and bases only while a merged pull request it still tracks confirms the transition — GitHub
+reporting what it just did, not an inference from matching trees.
+
+### Branch transport
+
+Review branches move in one `git push --atomic` to the push URL, with an exact `force-with-lease`
+per ref. There is no sequential fallback and no post-push fetch. A tracked branch may move only
+from its submitted baseline, or from the exact target an interrupted push already left there; a
+new branch requires expected absence, and any mismatch stops the whole update rather than taking
+over a branch. A topology change counts as a change even when the diff does not.
+
+PR work runs bottom-up after that transition, so a parent's branch always holds an ancestor of its
+child's head. Base is the nearest still-open ancestor PR, or trunk.
+
+Intermediate GitHub states are allowed but must preserve review identity: a rewritten stack must
+never leave a selected PR based on a branch that now contains its head, which GitHub reads as
+merged. An interrupt between the protective retarget and the final PR sync should leave a
+repairable flat or partly restacked set of the same open PRs, never closed or replaced reviews.
+
+### Derived artifacts
+
+Titles, bodies, navigation comments, and the stack overview comment are re-derived on every submit
+and are never a topology source; see [description helpers](../description-helpers.md). Managed
+comments are rediscovered by an unambiguous body marker, never by a stored comment ID, and
+ambiguity leaves the comment alone for later. Navigation comments exist only where GitHub has no
+native stacks. Draft state is never lost by accident, and plain `submit --draft` never
+un-publishes a PR.
+
+### Cleanup eligibility
+
+Cleanup removes only derived artifacts named by one complete identity and baseline pair: managed
+comments, remote review refs under an exact expected-target lease, and the records themselves.
+
+A record is eligible only when GitHub reports the exact saved PR closed or merged, no other
+tracked change claims its branch, and no open PR in the same repository — tracked, untracked, or
+orphaned — uses the saved head ref as its base. Local jj descendants do not substitute for that
+last check: descendant visibility authorizes selected `sync`, not deleting a GitHub branch. An
+an open member of a GitHub stack keeps its branch, while one GitHub retains only as merged
+history does not block otherwise authorized cleanup.
+
+The identity/baseline pair is retired only after all authorized artifact cleanup succeeds. Damaged
+or individually failing records are reported and skipped without blocking independent work, failed
+cleanup leaves safe leftovers, and every warning names the command that finishes the job.
+
+### Inspection
+
+`view` and `list` are read-only. Being read-only might not stop a command guessing, but we never
+guess: a change never attached to a review is reported as not submitted, rather than resolved by
+looking for a pull request on the branch name that change would have produced.
+
+They tolerate the history a fetch exposes rather than calling a stack broken: `view` walks past
+immutable or divergent side copies of merged changes, and a merged PR still on the stack becomes a
+`cleanup needed` row naming the exact selected `sync`. Only when no supported linear walk remains
+does `view` stop, with a targeted diagnostic rather than a traceback.
+
+Anything they cannot resolve is surfaced inline with the incomplete-report code. A report that
+cannot be produced at all keeps its own category code instead. `list` surfaces orphaned PRs as
+their own rows; without that, squashing two reviewed changes silently leaves a PR open.
+
+`view` and `submit` render stack rows through the user's native `jj log` formatting. `--json`
+output follows [`docs/json-output.schema.json`](../json-output.schema.json) and exposes no cache
+state, raw remote targets, or saved tracking records.
+
+## Commands
+
+What each is for and what it may change. The policies above constrain all of them.
+
+- **`submit`** — publishes the selected stack, and is the only command that creates a PR or
+  publishes a never-submitted change. After everything succeeds it refetches every PR that was
+  open at the start and fails loudly, naming them, if any is now closed or missing: detection,
+  not repair.
+- **`view`**, **`list`** — report; change nothing.
+- **`sync`** — reconciles one stack with what landed: rebases the changes that did not land onto
+  fetched trunk, updates their existing reviews, and drops the tracking for the ones that did.
+  Never creates a PR. Does not rebase merely because trunk advanced — `jj rebase` owns that. Stops
+  before rewriting if that would discard unpublished work, if the remainder is nonlinear, or if an
+  unreviewed change sits between reviewed ones.
+- **`sync --all`** — repository-wide and deliberately weaker. May only retarget and close reviews
+  proven landed by the first landed proof; never rewrites stacks, submits work, or creates PRs.
+  It continues past damaged records so one bad record cannot block the rest.
+- **`merge`** — the only command that asks GitHub to merge. It never pushes trunk and never
+  touches local history. Candidates are the contiguous open non-draft PRs from the bottom; the
+  first draft or closed-unmerged PR blocks it and everything above. `--pull-request` stops at the
+  change linked to that pull request, taking the candidate prefix through it rather than the whole
+  path. Pull requests in one GitHub stack merge as a single asynchronous group request; everything
+  else merges bottom-up through the ordinary API, stopping at the first rejection with PRs below
+  it already merged. Rebase merge is refused for more than one ordinary PR, because the first
+  rewrite invalidates the reviewed commit identity of the rest.
+- **`unstack`** — ends review: closes the open PRs it already tracks, retains their identities so
+  later cleanup or `submit --restart` can prove what it replaces, and with `--cleanup` also
+  removes verified artifacts. `--local` drops local tracking only, touching neither GitHub nor
+  local history. Rerunning it is always safe.
+- **`cleanup`** — repository-wide garbage collection under the eligibility policy. Never a
+  correctness prerequisite, never local-history repair.
+- **`checkout`** — adopts review state that already exists on GitHub. Sets up tracking only:
+  never rewrites commits, restacks descendants, moves the workspace, mutates PRs, or leaves
+  import artifacts behind. Before `--fetch` imports anything it reads the PR head's change ID
+  from the remote object without creating a ref; if a visible local revision already holds that
+  change at another commit it stops and names `relink`, because importing would leave a divergent
+  copy no rerun can remove.
+- **`relink`** — reattaches one known PR, and its same-repository head branch, to one change, for
+  a review whose identity the user knows but the tool cannot prove. It saves the PR identity and
+  the exact observed remote target as the baseline together; replacing a stale baseline is the
+  point, since that is what lets a later `submit` update the review instead of rejecting the
+  branch.
+- **`submit --restart`** — replaces unusable reviews while keeping the local changes. Each
+  replacement branch is `review/<original-stem>-fresh-pr<old-pr-number>-<short-change-id>`, the
+  second managed form and equally adoptable. Deriving it from durable facts is what lets a retry
+  recover the same candidates instead of creating another generation of PRs, and a later restart
+  replaces the marker rather than accumulating one. Every old identity stays authoritative until
+  the whole replacement stack passes one fresh joint check and is written in a single
+  compare-and-swap. [backlog.md](backlog.md) proposes deleting this command.
+- **`doctor`** — read-only setup and connectivity report, and the observation point for leftovers
+  from an interrupted `checkout --fetch` or `sync`. A failed check skips the checks that depend
+  on it, so one root cause yields one diagnosis.
+- **`completion`** — prints shell completion scripts; inspects nothing.
 
 ## Rewrite behavior
 
@@ -946,15 +596,15 @@ The same applies when one rewrite affects more than two stacks.
 Stacks the user has not yet resubmitted may still display old navigation or overview
 comments. That is expected — `submit` does not chase comments on stacks it isn't
 operating on, and `merge` does not block on stale state outside the selected stack.
-`view` and `list` surface those stacks via the submitted-state rule, naming their
-heads and directing the user at `view` for the per-stack next step.
+`view` and `list` surface those stacks by comparing each saved baseline against the current
+commit, naming their heads and directing the user at `view` for the per-stack next step.
 Orphaned PRs left behind by a cross-stack rewrite need an explicit
 `unstack --cleanup --pull-request <pr>`.
 
 Identity and baseline left after an interrupted command are safety checks, not instructions to
 resume the original selection. A later command acts on the current DAG and live remote state. It
 removes those records only after proving the remote result and that no visible stack still needs
-the link. Operation, selector, phase, and path are never recorded for recovery.
+the link.
 
 This is exactly the kind of rewrite-heavy flow `jj` is good at.
 
@@ -977,43 +627,14 @@ saved parent graph.
 Built-in `--help` and the user guide own command names, aliases, and exact parser syntax. This
 specification records only the enduring selection rules and effects of those commands.
 
-`completion` is auxiliary CLI glue. It prints shell completion scripts. It is not a
-review-state command and does not inspect the repo, the tracking-state file, or
-GitHub.
-
 Run with no subcommand, the executable behaves the same as `view` on the current stack.
+Selection defaults are specified under [Selection](#selection).
 
-Top-level help groups commands by intent. `--help` and `help` foreground the core
-review lifecycle (`submit`, `view`, `merge`, `unstack`) plus support commands
-(`cleanup`, `checkout`, `sync`, `doctor`). The repair command `relink` and shell-integration glue
-(`completion`) stay hidden by default and only appear in `jj-stack help --all`. The `help`
-command itself is hidden parser glue: `jj-stack help` is the same as
-`jj-stack --help`, and `jj-stack help <command>` is the same as
-`jj-stack <command> --help`. The default top-level help also keeps advanced global
-options (`--repository`, `--config`, `--config-file`, `--debug`, `--time-output`) out
-of view until `--all`.
-
-Long command help preserves paragraph breaks so multi-paragraph guidance stays
-readable.
-
-Target selection is conservative:
-
-- `submit`, `unstack`, `merge`, and selected `sync` default to the stack headed by `@-` when
-  `<revset>` is omitted
-- `submit --draft[=new|all]` and `submit --open` are mutually exclusive
-- `submit --edit` and `submit --describe-with` are mutually exclusive; `--edit` composes
-  with `--describe` by pre-filling the editor document from the resolved files
-- `submit --reviewers` and `submit --team-reviewers` override configured reviewer
-  defaults for the current invocation only. Passing either flag requests those reviewers
-  even when the selected pull requests are otherwise unchanged; omitted reviewers are not
-  removed
-- `submit --re-request` re-requests users whose latest review is `APPROVED` or
-  `CHANGES_REQUESTED`; pending review requests stay in place
-- `relink` requires one explicit `<revset>`
-- `sync --all` is mutually exclusive with a selector; plain `sync` defaults to `@-`
-- `checkout` accepts at most one explicit selector flag (`--pick`, `--pull-request`, or
-  `--revset`) and otherwise defaults to the current stack headed by `@-`
-- `view` may omit `<revset>` and inspects the current stack
+Three submit flags carry behavior the parser cannot express, so they are recorded here.
+`--reviewers` and `--team-reviewers` request those reviewers even when the pull requests are
+otherwise unchanged, and never remove reviewers they omit. `--re-request` likewise acts on an
+otherwise-unchanged pull request, asking again only for users whose latest review is `APPROVED`
+or `CHANGES_REQUESTED`; it adds requests and never cancels a pending one.
 
 ### Exit codes
 
@@ -1032,12 +653,9 @@ lock contention, stacked-PR feature unavailable) have no jj-stack analog.
 - `10` — `view` or `list` printed an incomplete report
 - `130` — interrupted
 
-Failure categories ride on the error types: `CliError` subclasses declare their category
-code, and a generic `CliError` that wraps a categorized adapter error (for example a
-GitHub client failure) inherits the adapter's code. `view` and `list` reserve the error
-codes for runs that cannot produce a report at all; a run that prints a degraded report
-exits with the incomplete-report code instead. The user-facing table lives in
-[docs/exit-codes.md](../exit-codes.md).
+`view` and `list` reserve the error codes for runs that cannot produce a report at all; a run that
+prints a degraded report exits with the incomplete-report code instead. The user-facing table
+lives in [docs/exit-codes.md](../exit-codes.md).
 
 Notable absences:
 
@@ -1048,307 +666,48 @@ Notable absences:
 
 ## GitHub mutation safety
 
-Every GitHub mutation the tool issues is enumerated below together with the
-destructive default action GitHub may take in response and the in-tool defense that
-prevents it. Any new mutation must be added to this list, and any without a
-documented defense must either prove the destructive default does not apply or add
-one before merging.
+Every GitHub mutation the tool issues is listed here with the destructive default GitHub may take
+in response and the policy that prevents it. Any new mutation must be added, and any without a
+defense must either prove the destructive default does not apply or gain one before merging.
 
-- **Push of review-branch refs** (one direct atomic Git push). When the push lands, GitHub
-  re-evaluates each open PR and auto-closes (as merged) any whose head ref is now contained in its
-  base ref. A reordered stack can make a stale stacked base contain a review-branch head it did
-  not contain before. Defense: `submit` first directly observes every ref, plans the complete
-  transition, and simulates the post-push commit IDs of every open PR's head and base refs. It
-  pre-retargets any at-risk PR to trunk, reobserves every ref immediately before mutation, then
-  sends one `git push --atomic` to the push URL with an exact per-ref lease. The normal post-push
-  PR sync restores the final stacked bases. As a defense-in-depth backstop for cases the predictor
-  cannot model, `submit` refetches PR states at the end and names any PR that transitioned from
-  open to closed or missing.
-
-- **Deletion of a remote review branch** (the same direct leased mutation transport). GitHub
-  closes any PR whose head ref points at the deleted branch. Defense: branch deletion is invoked
-  only by `cleanup` or `unstack --cleanup` after the exact
-  [cleanup checks](#cleanup-semantics), under an exact ref lease. A failed check keeps the branch
-  and identity/baseline pair.
-
-- **`update_pull_request(base=…)`**. Setting a PR base to a branch that already
-  contains the PR's head triggers GitHub's merged auto-close. Defense: in `submit`,
-  base is set bottom-up to the parent change's remote branch — an ancestor of the head,
-  not a descendant — and the head ref has already been pushed to its updated content.
-  A native member is unstacked under an exact fresh membership check before any base
-  change. In ordinary `merge`, a candidate is retargeted to trunk immediately before
-  its expected-head merge request.
-
-- **`update_pull_request(title|body)`**. The PATCH contains only fields whose values changed.
-  Content-only refresh never carries `base`; a real base change carries `base` and may carry
-  changed content in the same request. The previous bullet governs every request containing
-  `base`.
-
-- **`create_pull_request`**. Creating a PR with a base that already contains the
-  head would trigger an immediate merged auto-close. Defense: bottom-up creation
-  order means the parent's remote branch always reflects an ancestor of the new PR's
-  head before the child PR is created.
-
-- **`close_pull_request`**. Destructive by design. Defense: `unstack`, including the
-  `unstack --cleanup --pull-request <n>` orphan sub-mode, acts only on explicit user instruction.
-  Selected and global `sync` may close an exact landed review only after fetched-trunk ancestry
-  proves the submitted commit landed and a fresh read revalidates its saved identity and exact
-  submitted head.
-
-- **`merge_pull_request`**. Destructive by design: it permanently merges the PR's
-  head into its base branch. Defense: only invoked by `merge` for an ordinary PR on explicit user
-  selection. Immediately before each request, reload the repository and PR, verify that the live
-  PR matches `ReviewIdentity`, require its head SHA to equal
-  `SubmittedBaseline.commit_id`, require the expected state and base, and pass the expected head
-  SHA to GitHub. A rejection stops at that PR. Changes already accepted below it stay merged; the
-  command does not rewrite local history or review branches.
-
-- **Native stack create and append**. GitHub assigns each admitted PR to one resource. Defense:
-  immediately before either mutation, list repository stacks and verify again that every active
-  member of an overlapping native stack belongs to the selected local chain. Require the same
-  action and affected resource, then create the complete desired membership or append only the
-  ordered new top members. GitHub's mutation is the admission authority; there is no queue or
-  auto-merge preflight and no fallback to comments after rejection.
-
-- **Native stack unstack**. Removes active PRs from a native resource and can leave its historical
-  merged prefix. Defense: immediately before mutation, fetch the exact resource and require its
-  ordered membership to match the selected plan. Submission replacement and remote `unstack`
-  cover the resource's complete active suffix; an incomplete result stops before branch or PR-base
-  mutation.
-
-- **Native asynchronous merge**. Destructive by design: GitHub atomically merges a bottom prefix
-  and may rewrite active survivors. Defense: `merge` freshly verifies the identity, submitted
-  head, base, and branch of every active member, then sends one request for the selected target
-  with its exact head SHA. Only terminal `merged` is success. A terminal failure reports that
-  nothing merged. A `409` body is decoded for diagnosis but its operation UUID is never adopted,
-  because the response does not identify the target PR.
-
-- **`convert_pull_request_to_draft`**. Repo policy may dismiss approvals on draft
-  conversion. Defense: only invoked for an existing open PR when `--draft=all` is
-  passed, never as part of default `submit` behavior.
-
-- **`mark_pull_request_ready_for_review`**. Repo policy may trigger required-CI
-  runs and other ready-for-review workflows. Defense: only invoked when
-  `--open` is passed and the existing PR is currently a draft. New PRs are
-  created directly through `create_pull_request(draft=…)` and never round-trip
-  through this API.
-
-- **`add_labels`**, **`request_reviewers`**. Additive; no destructive default.
-
-- **`create_issue_comment`**, **`update_issue_comment`**. No destructive default.
-
-- **`delete_issue_comment`**. Deletes the targeted comment. Defense: every call
-  site first rediscovers the comment by its managed body marker and rejects multiple matches;
-  comment IDs are not tracking state. `submit`, `unstack`, cleanup, and explicit orphan cleanup
-  re-verify the marker before deletion. Ambiguity leaves harmless cleanup work for later.
-
-This list is the bar `submit`, `unstack`, `merge`, `cleanup`, and any future command
-must clear before introducing a new GitHub call.
-
-### Cleanup semantics
-
-`jj-stack cleanup` is conservative garbage collection, never a correctness prerequisite or a
-local-history repair command. Selected `sync` owns rebasing after landed ancestors.
-
-Cleanup may remove only derived artifacts named by one complete identity and baseline pair:
-
-- managed comments rediscovered by an unambiguous content marker
-- remote managed review refs under an exact expected-target lease
-- obsolete identity/baseline records only after no same-repository open PR uses the saved head
-  ref as its base
-
-Plain cleanup iterates complete tracked pairs and observes the exact saved PR number, repository,
-head owner, and head ref. It batches that observation first, then falls back to bounded
-one-record observations only when GitHub cannot return the batch. A matching closed or merged PR
-is eligible; a matching open review is preserved. An open orphan is reported but is not closed
-or cleaned by this repository-wide command. Missing PRs, lookup failures, identity mismatches,
-and duplicate head claims fail closed for that record without blocking independently observable
-records.
-
-Eligibility also requires that GitHub report no open PR in the same repository whose `base.ref`
-equals the saved `head_ref`. This check includes untracked and orphaned PRs. Local jj descendants
-do not replace it: descendant visibility is authority for selected `sync`, not for deleting a
-GitHub branch or retiring review tracking.
-
-Immediately before deleting a branch, cleanup reloads the exact saved PR, its unique head claim,
-and its open base dependents. In a native repository it also reads current membership: an active
-member keeps its branch, while a historical merged member does not block otherwise authorized
-cleanup merely because GitHub retains it in the resource. Comment deletion separately verifies
-its managed body marker. Cleanup then rereads the exact remote ref and deletes it only when it
-still equals the submitted commit, using that target as the lease. It repeats exact PR, claim,
-dependent, native-membership, and remote-absence checks before retiring the identity/baseline
-pair, and retires it only after all authorized artifact cleanup succeeds.
-
-Malformed, obsolete, absent, ambiguous, or individually failing records are reported and skipped
-without blocking independent cleanup work. Failed cleanup leaves safe leftovers and never changes
-whether a GitHub merge succeeded. Every warning names the selected `sync`, `relink`,
-`submit --restart`, explicit `unstack --cleanup`, or later `cleanup` command that can finish the
-work.
-
-`cleanup --dry-run` performs the same discovery and safety classification without mutation.
-
-### Merge lifecycle
-
-`jj-stack merge` is the only command that asks GitHub to merge reviewed changes. It never pushes
-trunk. Cached native-stack capability plus current membership chooses the GitHub API; there is no
-user-selectable transport.
-
-The command is mutate-by-default with `--dry-run` available:
-
-- without `--dry-run`, inspect the current local path and GitHub state, then ask GitHub to merge
-- with `--dry-run`, perform the same selection, capability resolution, and validation, but print
-  the planned API shape without mutation
-- `--pull-request <pr>` selects the bottom-anchored prefix through the linked local change while
-  still resolving the complete maximal reviewed path
-
-After any historical merged native prefix, candidates are the contiguous open, non-draft PRs from
-the bottom. The first draft or closed-unmerged PR blocks it and everything above it. With no
-explicit target, choose the highest candidate. An explicit PR chooses the candidate prefix through
-that PR. Approval, changes requested, checks, conflicts, mergeability, branch rules, queues, and
-auto-merge are not preflight gates; GitHub evaluates them for the requested mutation.
-
-Every affected change must identify one exact reviewed snapshot: its current local commit,
-`SubmittedBaseline`, remote review ref target, and live PR head SHA are equal, and the live PR
-matches `ReviewIdentity`. Diff or tree equivalence is insufficient. Any mismatch stops before
-mutation and points at `submit`; `merge` never refreshes review branches, advances a baseline,
-creates a PR, rewrites local history, or cleans up tracking.
-
-The merge method comes from `--merge-method <merge|squash|rebase>`. Without the flag, use the sole
-repository-enabled method. If several are enabled, stop and require an explicit choice.
-
-When the selected reviews belong to one active native GitHub resource, `merge` sends one
-asynchronous request for the selected bottom prefix:
-
-```text
-PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async
-```
-
-```json
-{
-  "merge_method": "merge | squash | rebase",
-  "sha": "<exact target PR head>"
-}
-```
-
-The command resolves every active resource member, including survivors above a partial target,
-because GitHub may retarget and rewrite them. Immediately before submitting, it reloads the exact
-resource and every member's identity, submitted head, branch, and base. The target SHA is GitHub's
-only caller-controlled freshness guard; lower members rely on the native group transaction rather
-than one request per PR.
-
-An accepted request returns a UUID and is polled to terminal state. Only terminal `merged` is
-success; the result reports the merged PRs and final trunk SHA. Terminal `failed` reports
-GitHub's reason and that nothing merged. A concurrent `409` is decoded to distinguish a matching
-pending request, but its UUID is never adopted because the body does not identify the target PR.
-Rerunning the same target and exact head after completion observes GitHub's terminal result.
-
-GitHub retains merged native members as a historical prefix and may rewrite an active suffix.
-That successful remote transition is reconciled later by selected `sync`; it is not an exit-1
-repair phase of `merge`. Native rebase merge may merge several PRs in one request because GitHub
-owns the complete transaction.
-
-A repository without native support uses GitHub's ordinary PR merge API bottom-up. A one-PR
-review in a native-capable repository also uses that API because GitHub creates no native
-resource. A multi-PR review in a native-capable repository with no resource is inconsistent
-submission state and points at `submit`; it does not fall back.
-
-For each ordinary candidate, immediately reload its identity, exact submitted head, state, branch,
-and base; retarget it to trunk when necessary; then call GitHub's merge API with the expected head
-SHA. Stop at the first rejection. PRs already merged below it remain merged and nothing above it
-is requested. Rebase merge is refused for more than one ordinary PR in a command because the
-first rewrite invalidates later reviewed commit identities.
-
-After any successful merge, the output points at selected `sync`. `sync` fetches GitHub's result,
-retires proven merged ancestors, rebases only selected survivors, and updates only reviews that
-already exist. It never resumes a merge request. An interrupted or partially successful ordinary
-merge is recovered by running selected `sync`, then rerunning the same explicit `merge` selection
-if more PRs should merge. No durable operation, rollback, compensation, or local merge repair is
-stored.
-
-Two observations prove merged work to sync:
-
-- **Exact submitted commit on trunk:** the baseline is an ancestor of fetched trunk, the live PR
-  matches `ReviewIdentity`, and its head remains the submitted commit. For a native member, the PR
-  must additionally report merged before finalization.
-- **Selected PR's rewritten merge result on trunk:** the exact saved PR reports merged, its live
-  merge-result commit is an ancestor of fetched trunk, and its head remains the submitted commit.
-  This selected-stack proof covers squash and rebase results without authorizing repository-wide
-  changes.
-
-A PR merely reporting merged, or a merge result no longer reachable from fetched trunk, permits no
-destructive action. Preserve local revisions, identity, and baseline, then report the exact
-selected `sync` needed after trunk is restored. Tracking is removed only after no visible
-dependent stack still needs the saved link; otherwise preserve it and name every dependent
-selected sync.
-
-When a native merge rewrites the active suffix, selected `sync` adopts GitHub's exact surviving
-commits instead of independently replaying the same diffs. It fetches the exact top into the fixed
-temporary Git ref, validates every raw Git change ID and first parent down to fetched trunk, then
-reobserves every active review branch immediately before importing the top into jj. It rebases
-only trailing local descendants onto that exact top, abandons the replaced local active copies,
-and atomically advances every adopted survivor baseline. It then reobserves the complete branch
-set before removing the temporary ref and bookmark. A branch move at that last check preserves
-the historical tracking and the adopted baseline, so retry can adopt the newer exact remote chain
-without mistaking the earlier GitHub-reported snapshot for unpublished local work. Historical
-tracking is retired only after the survivor update succeeds. The imported commits remain ordinary
-unbookmarked local history.
-
-Broader branch, comment, and stale-record removal remains the job of `cleanup`.
-
-## Tracking-state file format
-
-The file is JSON, validated through typed versioned models. TOML is reserved for human-authored
-config. The top-level schema keeps `ReviewIdentity` and `SubmittedBaseline` records separate so an
-observation or last-submitted-commit update cannot replace PR identity accidentally.
-
-Reads isolate individual absent, malformed, or obsolete records. One bad identity or baseline is
-reported with `relink` or `submit --restart` guidance and does not poison independent useful work.
-An unreadable or unsupported top-level file blocks mutation, reports its exact path, and tells the
-user how to move it aside before explicitly re-adopting reviews through `checkout` or `relink`.
-There is no migration or automatic discard path.
-
-Shape:
-
-```json
-{
-  "version": 3,
-  "review_identities": {
-    "<full-change-id>": {
-      "version": 2,
-      "github_host": "github.com",
-      "repository_owner": "octocat",
-      "repository_name": "example",
-      "pr_number": 123,
-      "head_owner": "octocat",
-      "head_ref": "review/add-cache-index-ypvmkkuo"
-    }
-  },
-  "stacked_pull_requests": {
-    "github.com/octocat/example": true
-  },
-  "submitted_baselines": {
-    "<full-change-id>": {
-      "version": 1,
-      "commit_id": "0123456789abcdef"
-    }
-  }
-}
-```
-
-`ReviewIdentity` records the repository, PR number, and head branch attached to a change;
-`SubmittedBaseline` records the exact commit last sent to that PR; `stacked_pull_requests` caches
-the one capability fact for a local/GitHub repository pair. PR state, review decisions, URLs,
-readiness, native membership, merge results, and cleanup eligibility are observed live. Managed
-comments are rediscovered by body marker, and stack topology is derived from the `jj` DAG.
-
-Config goes under `[jj-stack]` in the standard `jj` config scopes
-(`jj config edit --user|--repo|--workspace`), for example:
-
-```toml
-[jj-stack]
-reviewers = ["octocat"]
-labels = ["needs-review"]
-```
+- **Push of review-branch refs.** GitHub re-evaluates every open PR after a push and auto-closes,
+  as merged, any whose head ref is now contained in its base ref — which a reordered stack can
+  cause. This is the one defense with machinery of its own: before pushing, `submit` simulates the
+  post-push commit IDs of every open PR's head and base, and pre-retargets any at-risk PR to trunk
+  so the push never lands with a head contained in its base. The post-push PR sync restores the
+  stacked bases. The simulator resolves a base ref through the push set first, then through direct
+  observation of the push remote; when it can do neither it skips that PR rather than guess, and
+  `submit`'s closing open→closed check is the backstop for whatever it could not model.
+- **Deletion of a remote review branch.** GitHub closes any PR whose head ref points at it.
+  Covered by cleanup eligibility, under an exact ref lease; a failed check keeps both branch and
+  records.
+- **`update_pull_request(base=…)`**, **`create_pull_request`.** A base that already contains the
+  head triggers the merged auto-close. Covered by branch transport: bottom-up ordering means a
+  parent branch always holds an ancestor of its child's head. A pull request in a GitHub stack is
+  removed from it under a fresh membership check first; in ordinary `merge`, a candidate is
+  retargeted to trunk immediately before its expected-head request.
+- **`update_pull_request(title|body)`.** Carries only changed fields and never `base` on a
+  content-only refresh, so the previous entry governs every request that does carry one.
+- **`close_pull_request`.** Destructive by design. Covered by identity and mutation safety:
+  `unstack` acts only on explicit instruction, and either `sync` closes a review only on landed
+  evidence revalidated immediately before the call.
+- **`merge_pull_request`**, **native asynchronous merge.** Destructive by design; the native form
+  merges everything below the target and may rewrite what is above. Covered by identity and
+  mutation safety — a snapshot match plus expected state, base, and head SHA, re-read immediately
+  before the request. Only a terminal merged result is success. A rejection stops there, with PRs
+  below already merged.
+- **GitHub stack create, append, and unstack.** GitHub puts each admitted pull request in exactly
+  one stack. Covered by the membership rule, re-checked immediately before the mutation; an
+  incomplete removal stops before any branch or base change. GitHub's mutation is the admission
+  authority, and there is no fallback to comments after it rejects one.
+- **`convert_pull_request_to_draft`**, **`mark_pull_request_ready_for_review`.** Repo policy may
+  dismiss approvals on draft conversion or trigger required CI on ready-for-review. Invoked only
+  for `--draft=all` and `--open` respectively, never by default. New PRs are created directly as
+  draft or published and never round-trip through these.
+- **`delete_issue_comment`.** Covered by derived artifacts: rediscovery by body marker, with
+  multiple matches rejected.
+- **`add_labels`**, **`request_reviewers`**, **`create_issue_comment`**,
+  **`update_issue_comment`.** Additive; no destructive default.
 
 ## Current scope
 
@@ -1363,11 +722,9 @@ Supported:
 
 Unsupported:
 
-- merge commits inside the review chain
-- divergent changes
 - stacked reviews that cross repos or remotes
-- review-branch naming collisions caused by generated names
-- native stacks of 100 or more reviews; no batching or size-specific recovery is provided
+
+Which stack shapes are rejected is specified under [Review stack](#review-stack).
 
 ## Bottom line
 
