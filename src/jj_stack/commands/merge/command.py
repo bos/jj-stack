@@ -128,6 +128,13 @@ def _resolve_merge_target(
             for stack in stacks
             if resolved_revset in {revision.change_id for revision in stack.revisions}
         )
+        if not matching:
+            raise CliError(
+                t"PR #{pull_request_number} is linked to {ui.change_id(resolved_revset)}, "
+                t"which is not on any current review path.",
+                hint=t"Run {ui.cmd('jj-stack view')} to find where that change went, or "
+                t"{ui.cmd('jj-stack sync')} if it already merged.",
+            )
         if len(matching) != 1:
             raise CliError(
                 t"PR #{pull_request_number} belongs to more than one local review path.",

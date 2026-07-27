@@ -64,7 +64,9 @@ def build_native_merge_plan(
         )
         if resource.active_pull_request_numbers[: len(planned_numbers)] != planned_numbers:
             raise CliError(
-                t"GitHub stack #{resource.number} does not match the candidate prefix."
+                t"GitHub stack #{resource.number} does not match the candidate prefix.",
+                hint=t"Run {ui.cmd('jj-stack submit')} so the stack matches this path, "
+                t"then retry.",
             )
         return NativeMergePlan(resource, active, merge_plan.planned_revisions)
     historical = tuple(
@@ -119,7 +121,10 @@ async def execute_native_merge(
         reason = terminal.details.message or "GitHub did not provide a failure reason"
         return _result(execution, native, reason=t"GitHub reports nothing merged: {reason}")
     if terminal.status != "merged" or terminal.details.sha is None:
-        raise CliError("GitHub async merge completed without a final trunk commit.")
+        raise CliError(
+            "GitHub reported the native merge as merged without a final trunk commit.",
+            hint=t"Run {ui.cmd('jj-stack sync')} to reconcile whatever GitHub actually did.",
+        )
     return _result(
         execution,
         native,
@@ -164,7 +169,10 @@ async def _terminal(
 ) -> GithubAsyncMerge:
     operation_uuid = result.details.uuid
     if result.status == "pending" and operation_uuid is None:
-        raise CliError("GitHub accepted an async merge without an operation UUID.")
+        raise CliError(
+            "GitHub accepted the native merge without an operation ID to follow.",
+            hint=t"Run {ui.cmd('jj-stack sync')} to see whether the merge completed.",
+        )
     while result.status == "pending":
         result = await github.poll_stack_merge(
             operation_uuid=operation_uuid or "",

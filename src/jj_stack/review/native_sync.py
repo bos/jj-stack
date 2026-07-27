@@ -233,7 +233,12 @@ def _require_unedited_native_survivor(
 
 def _require_history(stack: GithubStack, tracked: set[int]) -> None:
     if not any(member.number in tracked for member in stack.historical_pull_requests):
-        raise CliError("A native head changed externally without tracked merged history.")
+        raise CliError(
+            t"GitHub stack #{stack.number} rewrote a review head, but no merged member of it "
+            t"is tracked here to prove that transition.",
+            hint=t"Inspect the stack with {ui.cmd('jj-stack view --fetch')}, then attach the "
+            t"merged review with {ui.cmd('jj-stack relink')} if it belongs to this repository.",
+        )
 
 
 def _historical_review(

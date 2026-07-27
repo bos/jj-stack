@@ -369,7 +369,8 @@ async def _require_unique_pull_request_head(
         raise CliError(
             t"Head branch {ui.bookmark(pull_request.head.ref)} does not uniquely identify "
             t"PR #{pull_request.number}.",
-            hint="Repair the ambiguous pull-request heads on GitHub, then retry.",
+            hint=t"Inspect them with {ui.cmd('jj-stack view --fetch')}, then attach the "
+            t"intended review with {ui.cmd('jj-stack relink')}.",
         )
 
 
@@ -388,7 +389,9 @@ def _save_checkout_tracking(
         revision.commit_id for revision in stack.revisions
     ):
         raise CliError(
-            "The selected pull-request chain does not exactly match the imported jj stack."
+            "The selected pull requests do not describe the stack that was just fetched.",
+            hint=t"Run {ui.cmd('jj-stack view --fetch')} to compare them, then submit or "
+            t"relink the reviews that should match this history.",
         )
     remote_targets = context.jj_client.list_remote_branches(
         remote=remote_name,
@@ -456,8 +459,11 @@ def _reject_duplicate_checkout_claims(
     combined.update(replacements)
     if duplicate_review_claim_change_ids(combined).intersection(replacements):
         raise CliError(
-            "Cannot attach pull requests because another saved change already claims "
-            "one of their pull request numbers or branches."
+            "Another saved change already claims one of those pull request numbers or "
+            "branches.",
+            hint=t"Run {ui.cmd('jj-stack list')} to find the claiming change, then drop its "
+            t"tracking with {ui.cmd('jj-stack unstack --local')} or clean it up with "
+            t"{ui.cmd('jj-stack cleanup')}.",
         )
 
 

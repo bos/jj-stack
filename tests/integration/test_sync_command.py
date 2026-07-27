@@ -222,7 +222,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     retry = capsys.readouterr()
 
     assert retry_exit_code == 1
-    assert "changed externally" in retry.err
+    assert "no merged member of it is tracked here" in retry.err
     assert state_store.load().submitted_baselines[survivor.change_id] == survivor_baseline
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
@@ -536,7 +536,7 @@ def test_sync_does_not_trust_active_native_head_drift_without_merged_history(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "changed externally" in captured.err
+    assert "no merged member of it is tracked here" in captured.err
     assert state_store.load().submitted_baselines[second.change_id] == baseline
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
