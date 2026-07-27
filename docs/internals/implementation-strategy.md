@@ -195,6 +195,12 @@ to the push URL. Each update carries an exact `force-with-lease` expectation, in
 absence for a new branch. There is no sequential fallback and no follow-up fetch. The auto-close
 predictor therefore evaluates the same one-step ref transition GitHub will observe.
 
+Two crash windows would otherwise strand a stack behind that lease. A tracked branch may also move
+from the exact target an interrupted push already left there. An untracked change whose branch is
+already on the remote — a first submit that pushed and then failed before recording anything — is
+adopted only when exactly one candidate carries a commit whose `change-id` header is that change;
+none, or more than one, is ambiguous and fails closed.
+
 ### Planning rule
 
 Planning is a layering rule rather than a separate package. Shared classification lives under
