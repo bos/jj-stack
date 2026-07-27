@@ -50,9 +50,8 @@ from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
-from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import (
-    GithubRepoAddress,
     require_github_repo,
     resolve_trunk_branch,
 )
@@ -68,7 +67,6 @@ from jj_stack.review.branches import (
     review_branch_glob,
     review_branch_matches_change,
 )
-from jj_stack.review.observation import observe_reviews
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
@@ -123,7 +121,6 @@ def submit(
     open_: bool,
     re_request: bool,
     repository: Path | None,
-    restart: bool,
     reviewers: Sequence[str] | None,
     revset: str | None,
     team_reviewers: Sequence[str] | None,
@@ -145,7 +142,6 @@ def submit(
         labels=labels,
         open_=open_,
         re_request=re_request,
-        restart=restart,
         reviewers=reviewers,
         revset=revset,
         team_reviewers=team_reviewers,
@@ -202,7 +198,6 @@ def _submit_options_from_cli(
     labels: Sequence[str] | None,
     open_: bool,
     re_request: bool,
-    restart: bool,
     reviewers: Sequence[str] | None,
     revset: str | None,
     team_reviewers: Sequence[str] | None,
@@ -226,7 +221,6 @@ def _submit_options_from_cli(
         existing_only=False,
         labels=parse_comma_separated_flag_values(labels),
         re_request=re_request,
-        restart=restart,
         reviewers=parse_comma_separated_flag_values(reviewers),
         revset=selected_revset,
         team_reviewers=parse_comma_separated_flag_values(team_reviewers),
@@ -321,17 +315,13 @@ def _recover_interrupted_first_submissions(
     client: JjClient,
     remote: GitRemote,
     resolutions: tuple[ResolvedReviewBranch, ...],
-    restarted_change_ids: frozenset[str],
     state_identities: Mapping[str, ReviewIdentity],
 ) -> tuple[ResolvedReviewBranch, ...]:
     """Reuse only one suffix candidate whose Git header proves the full change ID."""
 
     candidates_by_change: dict[str, dict[str, str]] = {}
     unresolved = tuple(
-        resolution
-        for resolution in resolutions
-        if resolution.change_id not in state_identities
-        and resolution.change_id not in restarted_change_ids
+        resolution for resolution in resolutions if resolution.change_id not in state_identities
     )
     if not unresolved:
         return resolutions
@@ -386,127 +376,6 @@ def _recover_interrupted_first_submissions(
     )
     ensure_unique_review_branches(recovered)
     return recovered
-
-
-def _validate_restart_recovery_candidates(
-    *,
-    head_owner: str,
-    pending_syncs: tuple[PendingPullRequestSync, ...],
-    remote_targets: Mapping[str, str],
-    restarted_change_ids: frozenset[str],
-) -> None:
-    """Accept only exact deterministic replacement PRs from an interrupted restart."""
-
-    for pending in pending_syncs:
-        prepared = pending.prepared
-        change_id = prepared.revision.change_id
-        pull_request = pending.discovered_pull_request
-        if change_id not in restarted_change_ids:
-            continue
-        remote_target = remote_targets.get(prepared.branch)
-        if remote_target not in {None, prepared.revision.commit_id}:
-            raise CliError(
-                t"Cannot restart {ui.change_id(change_id)} because replacement branch "
-                t"{ui.bookmark(prepared.branch)} points to another commit.",
-                hint="Inspect or remove the conflicting branch, then retry the restart.",
-            )
-        if pull_request is None:
-            continue
-        exact_head = (
-            pull_request.head.ref == prepared.branch
-            and pull_request.head.label == f"{head_owner}:{prepared.branch}"
-            and pull_request.head.sha == prepared.revision.commit_id
-        )
-        if (
-            exact_head
-            and pull_request.base.ref == pending.base_branch
-            and remote_target == prepared.revision.commit_id
-        ):
-            continue
-        raise CliError(
-            t"Cannot recover the restart of {ui.change_id(change_id)} from "
-            t"PR #{pull_request.number} because its head commit, base, or remote branch changed.",
-            hint=t"Inspect PR #{pull_request.number}, then adopt it with "
-            t"{ui.cmd(f'relink {pull_request.number} {change_id}')} if it is the intended "
-            t"replacement; otherwise resolve the conflicting PR or branch and retry.",
-        )
-
-
-async def _commit_restart_tracking(
-    *,
-    context: CommandContext,
-    github_client: GithubClient,
-    github_repository: GithubRepoAddress,
-    mutation_run: SubmitMutationRun,
-    pending_syncs: tuple[PendingPullRequestSync, ...],
-    remote: GitRemote,
-    trunk_branch: str,
-) -> None:
-    """Freshly authorize every replacement, then save all pairs together."""
-
-    if mutation_run.dry_run or not mutation_run.restarted_reviews:
-        return
-    replacements = mutation_run.restart_submissions
-    identities: dict[str, ReviewIdentity] = {
-        change_id: identity for change_id, (identity, _baseline) in replacements.items()
-    }
-    try:
-        observation = await observe_reviews(
-            change_ids=tuple(mutation_run.restarted_reviews),
-            context=context,
-            github_client=github_client,
-            identity_overrides=identities,
-            remote_name=remote.name,
-            trunk_branch=trunk_branch,
-        )
-    except GithubClientError as error:
-        raise CliError(
-            "Could not verify replacement reviews after restarting the stack"
-        ) from error
-
-    repository_key = github_repository.repository_key
-    repository_current = (
-        observation.remote == remote
-        and observation.configured_repository is not None
-        and observation.configured_repository.repository_key == repository_key
-        and observation.repository.repository_key == repository_key
-        and observation.github_repository is not None
-        and observation.github_repository.full_name.casefold()
-        == github_repository.full_name.casefold()
-    )
-    pending_by_change = {
-        pending.prepared.revision.change_id: pending for pending in pending_syncs
-    }
-    for change_id, (identity, baseline) in replacements.items():
-        pending = pending_by_change[change_id]
-        review = observation.reviews[change_id]
-        pull_request = (
-            review.pull_request.normalize_state() if review.pull_request is not None else None
-        )
-        exact = (
-            repository_current
-            and identity.repository_key == repository_key
-            and change_id not in observation.duplicate_claim_change_ids
-            and review.identity == identity
-            and review.local_revision == pending.prepared.revision
-            and pull_request is not None
-            and identity.matches_pull_request(pull_request)
-            and tuple(item.number for item in review.head_pull_requests) == (identity.pr_number,)
-            and pull_request.state == "open"
-            and pull_request.head.sha == pending.prepared.revision.commit_id
-            and pull_request.base.ref == pending.base_branch
-            and baseline.commit_id == pending.prepared.revision.commit_id
-            and review.remote_review_target == pending.prepared.revision.commit_id
-        )
-        if not exact:
-            raise CliError(
-                t"Cannot save the restarted review for {ui.change_id(change_id)} because "
-                t"its local change, remote branch, or GitHub pull request changed.",
-                hint=t"Inspect PR #{identity.pr_number}, then adopt it with "
-                t"{ui.cmd(f'relink {identity.pr_number} {change_id}')} if it is the intended "
-                t"replacement; otherwise resolve the drift and rerun the same restart.",
-            )
-    mutation_run.commit_restart_submissions()
 
 
 async def run_submit_async(
@@ -571,7 +440,6 @@ async def run_submit_async(
         client=client,
         remote=remote,
         resolutions=prepared_inputs.branch_resolutions,
-        restarted_change_ids=prepared_inputs.restarted_change_ids,
         state_identities=state.review_identities,
     )
     remote_targets = client.list_remote_branches(
@@ -589,9 +457,6 @@ async def run_submit_async(
         state_store.require_writable()
     mutation_run = SubmitMutationRun(
         dry_run=dry_run,
-        restarted_reviews={
-            restarted.change_id: restarted for restarted in prepared_inputs.restarted_reviews
-        },
         state=state,
         state_store=state_store,
     )
@@ -632,25 +497,9 @@ async def run_submit_async(
             prepared_revisions=prepared_revisions,
             trunk_branch=trunk_branch,
         )
-        restart_branches = tuple(
-            pending.prepared.branch
-            for pending in pending_syncs
-            if pending.prepared.revision.change_id in prepared_inputs.restarted_change_ids
-        )
-        _validate_restart_recovery_candidates(
-            head_owner=github_repository.owner,
-            pending_syncs=pending_syncs,
-            remote_targets={
-                branch: remote_targets[branch]
-                for branch in restart_branches
-                if branch in remote_targets
-            },
-            restarted_change_ids=prepared_inputs.restarted_change_ids,
-        )
         ensure_pull_request_syncs_are_safe(
             options=options,
             pending_syncs=pending_syncs,
-            restarted_change_ids=prepared_inputs.restarted_change_ids,
             state=mutation_run.state,
         )
         pushes_review_branches = any(
@@ -688,11 +537,6 @@ async def run_submit_async(
         )
         native_plan = None
         if stack_support.supported:
-            retiring_pull_numbers = tuple(
-                restarted.identity.pr_number
-                for restarted in prepared_inputs.restarted_reviews
-                if restarted.identity.repository_key == github_repository.repository_key
-            )
             desired_pull_numbers = tuple(
                 pending.discovered_pull_request.number
                 if pending.discovered_pull_request is not None
@@ -700,7 +544,7 @@ async def run_submit_async(
                 for pending in pending_syncs
             )
             observed_stacks = stack_support.observed_stacks
-            if observed_stacks is None and (retiring_pull_numbers or any(desired_pull_numbers)):
+            if observed_stacks is None and any(desired_pull_numbers):
                 try:
                     observed_stacks = await github_client.list_stacks()
                 except GithubClientError as error:
@@ -716,7 +560,6 @@ async def run_submit_async(
                         pull_request.base.ref != pending.base_branch or pending in retarget_syncs
                     )
                 },
-                retiring_pull_numbers=retiring_pull_numbers,
             )
             if native_plan.action == "replace" and not dry_run:
                 assert (native_stack := native_plan.affected_stack) is not None
@@ -791,15 +634,6 @@ async def run_submit_async(
             await auto_close.verify_no_unexpected_pull_request_closures(
                 discovered_pull_requests=discovered_pull_requests,
                 github_client=github_client,
-            )
-            await _commit_restart_tracking(
-                context=context,
-                github_client=github_client,
-                github_repository=github_repository,
-                mutation_run=mutation_run,
-                pending_syncs=pending_syncs,
-                remote=remote,
-                trunk_branch=trunk_branch,
             )
 
     return _build_submit_result(

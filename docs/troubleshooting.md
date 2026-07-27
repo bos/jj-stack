@@ -70,16 +70,16 @@ If a change shows `submitted, no PR found for branch`, `jj-stack` has tracking
 for a previous submit, but GitHub did not report a PR for the current review
 branch. Run `jj-stack view --fetch <change>` first. If the PR is still open
 under a different branch or tracking record, use `jj-stack relink <pr> <change>`.
-If no open PR exists and you want fresh PRs, run:
+If no open PR exists and you want to start the review over, end the old one and submit again:
 
 ```bash
-jj-stack submit --restart <stack-head>
+jj-stack unstack --cleanup <stack-head>
+jj-stack submit <stack-head>
 ```
 
-`--restart` requires complete tracking for every selected change. It keeps all old tracking until
-the whole replacement stack succeeds. If the command is interrupted after creating some PRs,
-rerun the same command with the same stack head; `jj-stack` reuses only replacement PRs whose
-branch, commit, and base still exactly match the plan.
+`unstack --cleanup` closes the tracked PRs, deletes their review branches, and removes the
+tracking. `submit` then opens fresh PRs from scratch. Preview the first step with `--dry-run` if
+you want to see what it will remove.
 
 If GitHub reports a remembered PR as closed or merged, decide what outcome you
 want before choosing a command:
@@ -88,9 +88,9 @@ want before choosing a command:
   view --fetch <change>`.
 - To attach a different open PR to the change, use `jj-stack relink <pr>
   <change>`.
-- To abandon the old review and make fresh PRs, run `jj-stack submit
-  --restart <stack-head>`. `relink` is not the right command for that case
-  because it attaches an existing open PR.
+- To abandon the old review and make fresh PRs, run `jj-stack unstack
+  --cleanup <stack-head>` and then `jj-stack submit <stack-head>`. `relink` is
+  not the right command for that case because it attaches an existing open PR.
 
 ## Lower changes merged elsewhere and the rest of your stack needs rebasing
 
@@ -358,8 +358,6 @@ each time.
 
 - `submit`: preview with `jj-stack submit --dry-run <head-change-id>`, then run
   `jj-stack submit <head-change-id>`.
-- `submit --restart`: rerun `jj-stack submit --restart <head-change-id>`. Exact replacement PRs
-  from the interrupted run are reused; the old tracking remains until the whole stack succeeds.
 - `unstack` or `unstack --cleanup`: add `--dry-run` to the same explicit command, inspect it,
   then rerun without `--dry-run`.
 - `sync`: preview with `jj-stack sync --dry-run <head-change-id>`, then run
@@ -389,6 +387,3 @@ remains, use `jj-stack list` to find the orphaned PR and then
 `jj-stack list`, preview `jj-stack unstack --cleanup --pull-request orphans --dry-run`, then
 run it again without `--dry-run`.
 
-This backout does not apply to an interrupted `submit --restart`: its replacement PRs are not
-tracked until the whole restart succeeds, so `unstack` would still select the old reviews. Rerun
-the same restart instead.

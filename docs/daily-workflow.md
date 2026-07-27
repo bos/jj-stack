@@ -259,8 +259,8 @@ jj-stack unstack --pull-request 7
 ```
 
 Plain `unstack` closes the PRs but retains their exact tracking and submitted commits. That
-information prevents a later `submit` from silently reusing a closed review and lets
-`cleanup` or `submit --restart` verify what it is acting on.
+information prevents a later `submit` from silently reusing a closed review and lets `cleanup`
+verify what it is acting on.
 
 Use `--cleanup` when you also want to remove review branches, comments, and tracking that
 `jj-stack` can verify are safe to delete after the PRs close.
@@ -338,9 +338,6 @@ Then choose the recovery command based on what was interrupted:
 jj-stack submit <head-change-id>
 jj-stack unstack <head-change-id>
 
-# interrupted submit --restart: keep the flag and the same stack head
-jj-stack submit --restart <head-change-id>
-
 # if the interrupted command was unstack --cleanup, keep that explicit option
 jj-stack unstack --cleanup <head-change-id>
 
@@ -358,8 +355,7 @@ jj-stack merge <head-change-id>
 
 Use explicit selectors after a failure, not a naked command that falls back to
 the default stack. If you want to undo review work that was partially created,
-use `unstack --cleanup` on the stack you want to close and clean up. This does not apply to an
-interrupted `submit --restart`: `unstack` still selects the old reviews, so rerun the same
-restart instead.
+use `unstack --cleanup` on the stack you want to close and clean up. That is also how you start
+a review over from scratch: close and clean up the old PRs, then `submit` again.
 
 See the [troubleshooting guide](troubleshooting.md) for more recovery scenarios.

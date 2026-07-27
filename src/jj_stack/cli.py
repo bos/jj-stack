@@ -285,15 +285,6 @@ def build_parser() -> ArgumentParser:
             "pull request approved it or requested changes"
         ),
     )
-    add_help_argument(
-        submit_parser,
-        "--restart",
-        action="store_true",
-        help=(
-            "Create fresh PRs for selected changes without closing the old PRs; replace local "
-            "tracking only after the whole replacement stack succeeds"
-        ),
-    )
     view_parser = _add_revision_command(
         subcommands,
         command="view",

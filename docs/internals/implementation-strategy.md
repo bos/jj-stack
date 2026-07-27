@@ -338,8 +338,7 @@ rather than changing them during inspection. The command behavior is specified i
 Orphan cleanup lives in its own command module because it begins from saved identity rather than
 a selected live stack. `review/observation.py` is the single policy-free batch source for saved
 identity and baseline pairs, exact PR numbers, unique head claims, and open base-ref dependents.
-It can overlay staged restart identities for a final joint observation without changing the
-durable state or creating a second exact-PR resolution path.
+It does not create a second exact-PR resolution path.
 
 Ordinary close, selected cleanup, orphan cleanup, sync, and merge request only the facts their
 mutation boundary needs; `_close_actions.py` applies the shared exact-link and dependent-PR
@@ -353,13 +352,6 @@ observed stack head-to-base. A dry run may omit only dependents that an earlier 
 would close; actual cleanup never omits a live dependent. Local jj descendants remain
 selected-sync evidence, not cleanup authority. Shared code supplies observation and artifact
 mutation without a second eligibility policy.
-
-`submit --restart` keeps the old complete pairs authoritative throughout remote and GitHub work.
-Successful replacement results remain in memory until the canonical observer freshly verifies
-the whole selected replacement stack. The state store compares every old pair, then replaces all
-selected pairs in one atomic write. An interrupted retry may reuse only the unique open PR for
-the deterministic replacement branch when its head commit, planned base, and live remote target
-are still exact; no marker, prefix, journal, or per-review checkpoint authorizes recovery.
 
 ## Data model
 
@@ -567,7 +559,6 @@ We distinguish between:
 When possible, diagnostics point to the exact recovery action:
 
 - `jj-stack view --fetch`
-- `jj-stack submit --restart`
 - `jj-stack relink`
 - `jj-stack unstack`
 - `jj rebase`

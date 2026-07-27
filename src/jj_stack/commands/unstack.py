@@ -1,7 +1,7 @@
 """End review for a stack without changing its local jj changes.
 
 With no mode flag, `unstack` closes the tracked open pull requests but keeps their review
-branches and tracking so cleanup or `submit --restart` remains safe. Passing `--cleanup` also
+branches and tracking so later cleanup remains safe. Passing `--cleanup` also
 removes review branches, comments, and tracking that `jj-stack` can verify are safe to delete.
 Use `--pull-request` to close by PR number or URL.
 

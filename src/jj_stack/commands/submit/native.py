@@ -27,13 +27,12 @@ def plan_native_stack(
     desired: tuple[int | None, ...],
     observed_stacks: Sequence[GithubStack],
     pull_numbers_requiring_base_update: Set[int],
-    retiring_pull_numbers: Sequence[int] = (),
 ) -> NativeStackPlan:
     known_desired = tuple(number for number in desired if number is not None)
     if len(set(known_desired)) != len(known_desired):
         raise CliError("Selected changes resolve to the same pull request more than once.")
 
-    selected = set(known_desired).union(retiring_pull_numbers)
+    selected = set(known_desired)
     stack = selected_native_stack(selected_pull_numbers=selected, stacks=observed_stacks)
     if stack is None or selected.isdisjoint(stack.active_pull_request_numbers):
         return NativeStackPlan("none" if len(desired) < 2 else "create")

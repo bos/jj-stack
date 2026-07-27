@@ -8,7 +8,6 @@ from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.resolution import select_submit_remote
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import resolve_review_branches
-from jj_stack.review.restart import RestartedReview, restart_state_for_stack
 
 from .descriptions import resolve_generated_descriptions
 from .models import (
@@ -38,26 +37,9 @@ def prepare_submit_inputs(
                 t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
                 hint=t"Repair it with {ui.cmd('relink')} before submitting the review.",
             )
-    restarted_change_ids: frozenset[str] = frozenset()
-    restarted_reviews: tuple[RestartedReview, ...] = ()
-    forced_branches: dict[str, str] = {}
-    if options.restart:
-        restart_result = restart_state_for_stack(
-            stack=stack,
-            state=state,
-        )
-        state = restart_result.state
-        restarted_reviews = restart_result.restarted
-        restarted_change_ids = frozenset(
-            restarted.change_id for restarted in restart_result.restarted
-        )
-        forced_branches = {
-            restarted.change_id: restarted.new_branch for restarted in restart_result.restarted
-        }
     branch_resolutions = resolve_review_branches(
         revisions=stack.revisions,
         review_identities=state.review_identities,
-        overrides=forced_branches,
     )
     preflight_conflicted_revisions(stack.revisions)
     preflight_private_commits(client, stack.revisions)
@@ -78,8 +60,6 @@ def prepare_submit_inputs(
         generated_pull_request_descriptions=generated_pull_request_descriptions,
         generated_stack_description=generated_stack_description,
         remote=remote,
-        restarted_change_ids=restarted_change_ids,
-        restarted_reviews=restarted_reviews,
         stack=stack,
         state=state,
     )

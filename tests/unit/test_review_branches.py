@@ -12,7 +12,6 @@ from jj_stack.review.branches import (
     ensure_unique_review_branches,
     generate_review_branch,
     resolve_review_branches,
-    restarted_review_branch,
     review_branch_matches_change,
 )
 
@@ -36,13 +35,10 @@ def test_generate_review_branch_falls_back_for_blank_subject() -> None:
     ("branch", "matches"),
     (
         ("review/cache-fix-zvlywqkx", True),
-        ("review/cache-fix-fresh-pr42-zvlywqkx", True),
         ("team/cache-fix-zvlywqkx", False),
         ("review/cache_fix-zvlywqkx", False),
         ("review/cache-fix-abcdefgh", False),
         ("review/-zvlywqkx", False),
-        ("review/fresh-pr17-zvlywqkx", False),
-        ("review/cache-fix-fresh-pr17-fresh-pr18-zvlywqkx", False),
     ),
 )
 def test_review_branch_matcher_enforces_managed_grammar(
@@ -50,26 +46,6 @@ def test_review_branch_matcher_enforces_managed_grammar(
     matches: bool,
 ) -> None:
     assert review_branch_matches_change(branch, "zvlywqkxtmnpqrstu") is matches
-
-
-def test_restarted_review_branch_replaces_prior_marker() -> None:
-    assert (
-        restarted_review_branch(
-            change_id="zvlywqkxtmnpqrstu",
-            previous_branch="review/cache-fix-fresh-pr42-zvlywqkx",
-            previous_pull_request=57,
-        )
-        == "review/cache-fix-fresh-pr57-zvlywqkx"
-    )
-
-
-def test_generate_review_branch_disambiguates_reserved_restart_marker() -> None:
-    revision = _revision(
-        change_id="zvlywqkxtmnpqrstu",
-        description="fresh pr42\n",
-    )
-
-    assert generate_review_branch(revision) == "review/fresh-pr42-change-zvlywqkx"
 
 
 def test_review_branch_resolution_keeps_saved_branch_stable_after_subject_change() -> None:

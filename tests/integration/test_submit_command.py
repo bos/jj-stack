@@ -311,28 +311,33 @@ def test_submit_native_preflight_failures_recover_without_persisted_phase(
 
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     assert "Could not inspect native GitHub stack membership" in capsys.readouterr().err
+
+    # Reordering the stack makes the desired membership differ from the live one, so submit
+    # must unstack the resource before it can move any branch or base.
     failure = "unstack"
-    head_change_id = JjClient(repo).discover_review_stack().head.change_id
-    assert run_main(repo, config_path, "submit", "--dry-run", "--restart", head_change_id) == 0
+    original = JjClient(repo).discover_review_stack()
+    run_command(
+        ["jj", "rebase", "-r", original.revisions[0].change_id, "-A", original.head.change_id],
+        repo,
+    )
+    reordered_head = JjClient(repo).discover_review_stack().head.change_id
+    state_before = ReviewStateStore.for_repo(repo).load()
+    remote_before = remote_refs(fake_repo.git_dir)
+
+    assert run_main(repo, config_path, "submit", "--dry-run", reordered_head) == 0
     assert fake_repo.native_stacks == {1: (1, 2)}
-    assert run_main(repo, config_path, "submit", "--restart", head_change_id) == EXIT_GITHUB
+    assert run_main(repo, config_path, "submit", reordered_head) == EXIT_GITHUB
 
     assert ReviewStateStore.for_repo(repo).load() == state_before
     assert remote_refs(fake_repo.git_dir) == remote_before
     assert fake_repo.native_stacks == {}
 
-    bottom_change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
     failure = "none"
-    fake_repo.native_stacks = {2: (1,)}
-    fake_repo.pull_requests[1].is_queued = True
-    assert run_main(repo, config_path, "submit", bottom_change_id) == 0
-    fake_repo.pull_requests[1].is_queued = False
-
-    assert run_main(repo, config_path, "submit", "--restart", head_change_id) == 0
-    restarted = ReviewStateStore.for_repo(repo).load()
-
-    assert {identity.pr_number for identity in restarted.review_identities.values()} == {3, 4}
-    assert fake_repo.native_stacks == {2: (3, 4)}
+    assert run_main(repo, config_path, "submit", reordered_head) == 0
+    assert ReviewStateStore.for_repo(repo).load().review_identities.keys() == (
+        state_before.review_identities.keys()
+    )
+    assert fake_repo.native_stacks == {2: (2, 1)}
 
 
 def test_submit_opens_new_pr_when_middle_change_is_split_in_two(

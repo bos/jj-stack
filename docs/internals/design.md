@@ -70,13 +70,17 @@ The repository should protect trunk and allow the merge methods its maintainers 
 Review branches are transport branches, not alternate integration branches. Users should ask
 `jj-stack merge` to merge a reviewed path rather than merge an intermediate stacked PR directly.
 
+FIXME: the above isn't really true. We must thrive if github does server-side automerge behind
+our backs, or a user initiates a merge through the github UI (I believe these are
+indistinguishable).
+
 `jj-stack` does not duplicate repository policy. It does not preflight approvals, checks,
 conflicts, merge queues, or auto-merge state across the repository. GitHub applies those rules to
 the requested native stack or ordinary PR mutation, and `jj-stack` reports the result.
 
-## Relevant `jj` constraints
+## Relevant `jj` and Git constraints
 
-A few `jj` properties drive this design:
+A few `jj` and Git properties drive this design:
 
 - GitHub review is still branch-based. Even in a `jj` workflow, GitHub wants a head branch
   and a base branch per PR.
@@ -84,8 +88,10 @@ A few `jj` properties drive this design:
   mutate exact remote refs while local topology remains entirely in the DAG.
 - Ordinary jj bookmarks still behave normally. `jj-stack` reserves `review/*` for its remote-only
   transport branches and rejects locally imported names in that namespace.
-- `change_id` is the durable logical identity of a change across rewrites. The commit ID
+- `change_id` is the durable logical identity of a change across rewrites. The Git commit ID
   is not.
+- Notably, `change_id` seems to survive a GitHub rebase merge, which is a nice property for us.
+  It appears to be obliterated by a squash merge.
 - Both `jj-lib` and the CLI are moving integration surfaces; this tool keeps its
   assumptions narrow.
 - `jj`'s internal storage is not an extension API; the tool does not write into `.jj/`
@@ -118,12 +124,12 @@ stacks, not an error: if an ancestor on the chain has other reviewable children,
 separate PR chains, out of scope unless the command explicitly asks about more than one stack.
 
 `jj-stack` supports only linear stacks. Merge commits inside the chain, divergent changes,
-multiple reviewable parents, and unresolved conflicts are rejected rather than papered over with
-metadata. An immutable boundary reached as a non-first parent of a merge is exposed so recovery
-can diagnose the landed ancestry, but never published.
+multiple reviewable parents, and unresolved conflicts are rejected for simplicity. An immutable
+boundary reached as a non-first parent of a merge is exposed so recovery can diagnose the landed
+ancestry, but never published.
 
-`jj` can model all those shapes; GitHub's stacked-PR UX gets much harder once the unit
-is no longer a simple parent-child chain.
+`jj` *can* model all those shapes, but the UX complexity and mental gymnastics that would be
+required make them not worth supporting in `jj-stack`.
 
 ### Pull request branch
 
@@ -264,15 +270,15 @@ A change can be in one of two tracking states:
   branch. A complete submitted review also has a `SubmittedBaseline`.
 
 PR rediscovery is an explicit recovery flow: ordinary commands never replace a missing, closed,
-moved, or ambiguous review automatically. They preserve the saved identity and name `relink` or
-`submit --restart`.
+moved, or ambiguous review automatically. They preserve the saved identity and name `relink`, or
+`unstack --cleanup` followed by a fresh `submit`.
 
 Identity and baseline stay separate records so that recording a new submitted commit cannot
 overwrite PR identity. Reads isolate individual absent, malformed, or obsolete records: one bad
-record is reported with `relink` or `submit --restart` guidance and does not poison independent
-useful work. An unreadable or unsupported top-level file blocks mutation, reports its exact path,
-and tells the user how to move it aside before re-adopting reviews through `checkout` or
-`relink`. There is no migration or automatic discard path.
+record is reported with `relink` guidance and does not poison independent useful work. An
+unreadable or unsupported top-level file blocks mutation, reports its exact path, and tells the
+user how to move it aside before re-adopting reviews through `checkout` or `relink`. There is no
+migration or automatic discard path.
 
 User-authored settings live in `jj` config under `[jj-stack]`, not in the tracking-state file:
 
@@ -368,12 +374,11 @@ change in the selection, so a mid-stack failure cannot leave siblings half-appli
 
 Safety rule 4 then requires re-reading those facts immediately before each irreversible action; a
 planning observation never authorizes a later mutation. A remote swap, repository retarget,
-renamed head, moved branch, missing PR, or replacement PR fails closed with `relink` or
-`submit --restart`.
+renamed head, moved branch, missing PR, or replacement PR fails closed, naming `relink` or
+`unstack --cleanup` followed by a fresh `submit`.
 
-Observation never rewrites identity. Only review creation, `relink`, `submit --restart`,
-`checkout`, `unstack --local`, and cleanup that has passed its eligibility checks may change
-one.
+Observation never rewrites identity. Only review creation, `relink`, `checkout`,
+`unstack --local`, and cleanup that has passed its eligibility checks may change one.
 
 A `SubmittedBaseline` records the exact commit last sent for review, so only the commands that
 send or adopt one may advance it: `submit` after a successful push, `relink` from the observed
@@ -514,9 +519,10 @@ What each is for and what it may change. The policies above constrain all of the
   it already merged. Rebase merge is refused for more than one ordinary PR, because the first
   rewrite invalidates the reviewed commit identity of the rest.
 - **`unstack`** — ends review: closes the open PRs it already tracks, retains their identities so
-  later cleanup or `submit --restart` can prove what it replaces, and with `--cleanup` also
-  removes verified artifacts. `--local` drops local tracking only, touching neither GitHub nor
-  local history. Rerunning it is always safe.
+  later cleanup can prove what it is acting on, and with `--cleanup` also removes verified
+  artifacts. Closing and cleaning up a review is also how a stack is started over: `submit`
+  afterwards opens fresh pull requests under the ordinary generated names. `--local` drops local
+  tracking only, touching neither GitHub nor local history. Rerunning it is always safe.
 - **`cleanup`** — repository-wide garbage collection under the eligibility policy. Never a
   correctness prerequisite, never local-history repair.
 - **`checkout`** — adopts review state that already exists on GitHub. Sets up tracking only:
@@ -530,13 +536,6 @@ What each is for and what it may change. The policies above constrain all of the
   the exact observed remote target as the baseline together; replacing a stale baseline is the
   point, since that is what lets a later `submit` update the review instead of rejecting the
   branch.
-- **`submit --restart`** — replaces unusable reviews while keeping the local changes. Each
-  replacement branch is `review/<original-stem>-fresh-pr<old-pr-number>-<short-change-id>`, the
-  second managed form and equally adoptable. Deriving it from durable facts is what lets a retry
-  recover the same candidates instead of creating another generation of PRs, and a later restart
-  replaces the marker rather than accumulating one. Every old identity stays authoritative until
-  the whole replacement stack passes one fresh joint check and is written in a single
-  compare-and-swap. [backlog.md](backlog.md) proposes deleting this command.
 - **`doctor`** — read-only setup and connectivity report, and the observation point for leftovers
   from an interrupted `checkout --fetch` or `sync`. A failed check skips the checks that depend
   on it, so one root cause yields one diagnosis.

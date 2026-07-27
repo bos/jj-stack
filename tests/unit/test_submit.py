@@ -13,14 +13,10 @@ from jj_stack.commands.submit.auto_close import (
 )
 from jj_stack.commands.submit.command import (
     _resolve_submit_options,
-    _validate_restart_recovery_candidates,
 )
 from jj_stack.commands.submit.inputs import preflight_private_commits
 from jj_stack.commands.submit.models import (
-    GeneratedDescription,
-    PendingPullRequestSync,
     PreparedSubmitRevision,
-    SubmitMutationRun,
     SubmitOptions,
 )
 from jj_stack.commands.submit.pull_requests import (
@@ -42,8 +38,6 @@ from jj_stack.models.github import (
 from jj_stack.models.review_state import ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import ResolvedReviewBranch
-from jj_stack.review.restart import RestartedReview
-from jj_stack.state.store import ReviewStateStore
 from tests.support.review_state import make_review_identity
 from tests.support.revision_helpers import make_revision
 
@@ -162,93 +156,6 @@ def test_pull_request_link_rejects_remote_and_pr_head_mismatch() -> None:
         )
 
 
-def test_restart_recovery_rejects_a_changed_remote_branch() -> None:
-    prepared = _prepared_revision(
-        branch="review/feature-fresh-pr17-abcdefgh",
-        change_id="abcdefghijk",
-        commit_id="new-commit",
-    )
-    pull_request = _github_pull_request(
-        number=18,
-        branch=prepared.branch,
-        head_sha=prepared.revision.commit_id,
-    )
-
-    with pytest.raises(CliError, match="replacement branch"):
-        _validate_restart_recovery_candidates(
-            head_owner="octo-org",
-            pending_syncs=(
-                PendingPullRequestSync(
-                    base_branch="main",
-                    discovered_pull_request=pull_request,
-                    generated_description=GeneratedDescription(title="feature", body=""),
-                    parent_change_id=None,
-                    prepared=prepared,
-                    stack_head_change_id=prepared.revision.change_id,
-                ),
-            ),
-            remote_targets={prepared.branch: "external-commit"},
-            restarted_change_ids=frozenset({prepared.revision.change_id}),
-        )
-
-
-def test_restart_submission_replaces_the_exact_saved_pair_only_after_staging() -> None:
-    change_id = "abcdefghijk"
-    old_identity = make_review_identity(
-        head_ref="review/feature-abcdefgh",
-        pr_number=17,
-    )
-    old_baseline = SubmittedBaseline(commit_id="old-commit")
-    new_identity = make_review_identity(
-        head_ref="review/feature-fresh-pr17-abcdefgh",
-        pr_number=18,
-    )
-    new_baseline = SubmittedBaseline(commit_id="new-commit")
-    replacement_state = ReviewState(
-        review_identities={change_id: new_identity},
-        submitted_baselines={change_id: new_baseline},
-    )
-    calls: list[dict[str, object]] = []
-
-    class RecordingStore:
-        def relink_reviews(self, **kwargs):
-            calls.append(kwargs)
-            return replacement_state
-
-    restarted = RestartedReview(
-        baseline=old_baseline,
-        change_id=change_id,
-        identity=old_identity,
-        new_branch=new_identity.head_ref,
-    )
-    run = SubmitMutationRun(
-        dry_run=False,
-        restarted_reviews={change_id: restarted},
-        state=ReviewState(
-            review_identities={change_id: old_identity},
-            submitted_baselines={change_id: old_baseline},
-        ),
-        state_store=cast(ReviewStateStore, RecordingStore()),
-    )
-
-    run.record_submission(
-        baseline=new_baseline,
-        change_id=change_id,
-        identity=new_identity,
-    )
-    assert calls == []
-
-    run.commit_restart_submissions()
-
-    assert calls == [
-        {
-            "expected": {change_id: (old_identity, old_baseline)},
-            "replacements": {change_id: (new_identity, new_baseline)},
-        }
-    ]
-    assert run.state == replacement_state
-
-
 def test_preflight_private_commits_rejects_blocked_revision() -> None:
     private = make_revision(
         commit_id="head",
@@ -357,7 +264,6 @@ def _submit_options() -> SubmitOptions:
         existing_only=False,
         labels=None,
         re_request=False,
-        restart=False,
         reviewers=None,
         revset="@",
         team_reviewers=None,

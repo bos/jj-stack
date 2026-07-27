@@ -313,7 +313,7 @@ def _validated_member_pull_request(
     ):
         raise CliError(
             t"Native member PR #{member.number} no longer matches its saved review identity.",
-            hint=t"Reattach it with {ui.cmd('jj-stack relink')}, or replace it with "
-            t"{ui.cmd('jj-stack submit --restart')}.",
+            hint=t"Reattach it with {ui.cmd('jj-stack relink')}, or end the review with "
+            t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
         )
     return pull_request

@@ -416,7 +416,6 @@ def _sync_submit_options(*, dry_run: bool, revset: str) -> SubmitOptions:
         existing_only=True,
         labels=None,
         re_request=False,
-        restart=False,
         reviewers=None,
         revset=revset,
         team_reviewers=None,

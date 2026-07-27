@@ -277,7 +277,7 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     assert exit_code == 1
     unwrapped = " ".join(captured.err.split())
     assert "PR #2" in unwrapped and "is closed, so sync cannot update that review" in unwrapped
-    assert f"jj-stack submit --restart {survivor.change_id}" in unwrapped
+    assert "jj-stack unstack --cleanup" in unwrapped
     assert JjClient(repo).resolve_revision(landed.change_id).commit_id == landed.commit_id
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == survivor.commit_id
     assert state_store.load() == state_before

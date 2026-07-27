@@ -49,7 +49,6 @@ def ensure_pull_request_syncs_are_safe(
     *,
     options: SubmitOptions,
     pending_syncs: Sequence[PendingPullRequestSync],
-    restarted_change_ids: frozenset[str] = frozenset(),
     state: ReviewState,
 ) -> None:
     """Verify every planned PR sync before any mutation.
@@ -65,15 +64,14 @@ def ensure_pull_request_syncs_are_safe(
         change_id = prepared_revision.revision.change_id
         review_identity = state.review_identities.get(change_id)
         submitted_baseline = state.submitted_baselines.get(change_id)
-        if change_id not in restarted_change_ids:
-            _ensure_pull_request_link_is_consistent(
-                branch=prepared_revision.branch,
-                change_id=change_id,
-                discovered_pull_request=pending_sync.discovered_pull_request,
-                expected_remote_target=prepared_revision.expected_remote_target,
-                review_identity=review_identity,
-                submitted_baseline=submitted_baseline,
-            )
+        _ensure_pull_request_link_is_consistent(
+            branch=prepared_revision.branch,
+            change_id=change_id,
+            discovered_pull_request=pending_sync.discovered_pull_request,
+            expected_remote_target=prepared_revision.expected_remote_target,
+            review_identity=review_identity,
+            submitted_baseline=submitted_baseline,
+        )
         pull_request = pending_sync.discovered_pull_request
         if options.existing_only and (
             review_identity is None or submitted_baseline is None or pull_request is None

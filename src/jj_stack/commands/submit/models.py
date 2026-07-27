@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from jj_stack.jj.client import JjClient
@@ -11,7 +11,6 @@ from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import ResolvedReviewBranch
-from jj_stack.review.restart import RestartedReview
 from jj_stack.state.store import ReviewStateStore
 
 PullRequestAction = Literal["created", "unchanged", "updated"]
@@ -31,7 +30,6 @@ class SubmitOptions:
     existing_only: bool
     labels: list[str] | None
     re_request: bool
-    restart: bool
     reviewers: list[str] | None
     revset: str | None
     team_reviewers: list[str] | None
@@ -120,8 +118,6 @@ class PreparedSubmitInputs:
     generated_pull_request_descriptions: dict[str, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
     remote: GitRemote
-    restarted_change_ids: frozenset[str]
-    restarted_reviews: tuple[RestartedReview, ...]
     stack: LocalStack
     state: ReviewState
 
@@ -131,12 +127,8 @@ class SubmitMutationRun:
     """Mutable submit state shared by mutation phases."""
 
     dry_run: bool
-    restarted_reviews: dict[str, RestartedReview]
     state: ReviewState
     state_store: ReviewStateStore
-    restart_submissions: dict[str, tuple[ReviewIdentity, SubmittedBaseline]] = field(
-        default_factory=dict
-    )
 
     def record_submission(
         self,
@@ -148,10 +140,6 @@ class SubmitMutationRun:
         """Save one GitHub-acknowledged review snapshot."""
 
         if self.dry_run:
-            return
-        restarted = self.restarted_reviews.get(change_id)
-        if restarted is not None:
-            self.restart_submissions[change_id] = identity, baseline
             return
         expected_identity = self.state.review_identities.get(change_id)
         expected_baseline = self.state.submitted_baselines.get(change_id)
@@ -172,22 +160,6 @@ class SubmitMutationRun:
             expected_baseline=expected_baseline,
             identity=identity,
             baseline=baseline,
-        )
-
-    def commit_restart_submissions(self) -> None:
-        """Replace every restarted tracking pair in one final state write."""
-
-        if self.dry_run or not self.restarted_reviews:
-            return
-        expected = {
-            change_id: (restarted.identity, restarted.baseline)
-            for change_id, restarted in self.restarted_reviews.items()
-        }
-        if self.restart_submissions.keys() != expected.keys():
-            raise AssertionError("Restart completed without every replacement review.")
-        self.state = self.state_store.relink_reviews(
-            expected=expected,
-            replacements=self.restart_submissions,
         )
 
 

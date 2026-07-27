@@ -103,7 +103,7 @@ saved tracking that still points at the closed PR.
 
 Recovery is explicit and narrow, and drift never triggers silent relinking or replacement PRs.
 The commands that can reattach or retire review identity — `checkout`, `relink`,
-`submit --restart`, `unstack`, `sync`, and `sync --all` — are specified in
+`unstack`, `sync`, and `sync --all` — are specified in
 [design.md](design.md).
 
 ## Why an executable model rather than TLA+/Lean

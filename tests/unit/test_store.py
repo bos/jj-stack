@@ -83,7 +83,7 @@ def test_store_returns_schema_three_defaults_when_file_is_missing(tmp_path: Path
     assert state.version == 3
 
 
-def test_atomic_restart_relink_failure_preserves_original_pair(
+def test_atomic_relink_failure_preserves_original_pair(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -108,7 +108,7 @@ def test_atomic_restart_relink_failure_preserves_original_pair(
                 repository_name=identity.repository_name,
                 pr_number=18,
                 head_owner=identity.head_owner,
-                head_ref="review/change-fresh-pr17-abcdefgh",
+                head_ref="review/renamed-change-abcdefgh",
             ),
             baseline=SubmittedBaseline(commit_id="def456"),
         )

@@ -598,7 +598,7 @@ def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
     assert exit_code == EXIT_INCOMPLETE
     assert "Missing GitHub PR" in captured.out
     assert "remembered PR #1" in captured.out
-    assert_output_contains(captured.out, "jj-stack submit --restart")
+    assert_output_contains(captured.out, "jj-stack unstack --cleanup")
     assert change_id in captured.out
     assert refreshed_state.review_identities[change_id].pr_number == 1
 
