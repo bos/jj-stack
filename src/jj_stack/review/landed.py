@@ -19,6 +19,7 @@ from .landed_evidence import (
     classify_commit_ancestries,
     classify_exact_snapshot,
     collect_landed_evidence,
+    holds_unpublished_edit,
 )
 from .observation import RepositoryObservation, observe_reviews
 
@@ -250,9 +251,11 @@ async def _retirement_authority_error(
         (candidate.change_id,)
     ).get(candidate.change_id, ())
     if any(
-        revision.commit_id != candidate.submitted_baseline.commit_id
+        holds_unpublished_edit(
+            published_commit_ids=(candidate.submitted_baseline.commit_id,),
+            revision=revision,
+        )
         for revision in local_revisions
-        if not revision.immutable
     ):
         return t"{ui.change_id(candidate.change_id)} has unpublished local edits"
     observation, reason = await observe_landed_candidate(candidate, finalizer)

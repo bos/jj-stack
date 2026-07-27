@@ -13,6 +13,7 @@ from jj_stack.review.landed_evidence import (
     LandedReviewCandidate,
     candidate_for_change,
     collect_landed_evidence,
+    holds_unpublished_edit,
 )
 from jj_stack.review.native_sync import (
     NativeSurvivorReview,
@@ -267,10 +268,9 @@ def _require_no_landed_local_edits(
     landed: tuple[SelectedLanded, ...],
 ) -> None:
     for item in landed:
-        if (
-            item.revision is not None
-            and not item.revision.immutable
-            and item.revision.commit_id != item.candidate.submitted_baseline.commit_id
+        if holds_unpublished_edit(
+            published_commit_ids=(item.candidate.submitted_baseline.commit_id,),
+            revision=item.revision,
         ):
             raise CliError(
                 t"Cannot remove merged {ui.change_id(item.candidate.change_id)} because it has "

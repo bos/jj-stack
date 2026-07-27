@@ -10,6 +10,7 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.models.stack import LocalRevision
 from jj_stack.ui import Message
 
 CommitAncestry = Literal["not_on_trunk", "on_trunk", "unresolved"]
@@ -56,6 +57,26 @@ class RewrittenResultEvidence:
     state: RewrittenResultState
     merge_commit_id: str | None = None
     reason: Message | None = None
+
+
+def holds_unpublished_edit(
+    *,
+    published_commit_ids: tuple[str, ...],
+    revision: LocalRevision | None,
+) -> bool:
+    """Whether a local revision holds work that was never sent for review.
+
+    This is the only authority for that question, because acting on a wrong answer destroys
+    local work. An absent revision has nothing to lose and an immutable one cannot have been
+    edited locally. The published set is normally just the submitted baseline; adopting a
+    native survivor also counts the exact commit GitHub reported for it.
+    """
+
+    return (
+        revision is not None
+        and not revision.immutable
+        and revision.commit_id not in published_commit_ids
+    )
 
 
 def candidate_for_change(state: ReviewState, change_id: str) -> LandedReviewCandidate | None:

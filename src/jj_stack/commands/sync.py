@@ -33,7 +33,7 @@ from jj_stack.review.landed import (
     render_landed_results,
     retire_landed_reviews,
 )
-from jj_stack.review.landed_evidence import LandedReviewCandidate
+from jj_stack.review.landed_evidence import LandedReviewCandidate, holds_unpublished_edit
 from jj_stack.review.native_sync import resolve_selected_native_observation
 from jj_stack.review.observation import (
     RepositoryObservation,
@@ -296,7 +296,12 @@ async def _apply_selected_plan(
                 for landed in plan.landed
                 if landed.revision is not None
                 and not landed.revision.immutable
-                and landed.revision.commit_id == landed.candidate.submitted_baseline.commit_id
+                # Convergence already refused these, but ask the one authority again here:
+                # this is the step that actually discards commits.
+                and not holds_unpublished_edit(
+                    published_commit_ids=(landed.candidate.submitted_baseline.commit_id,),
+                    revision=landed.revision,
+                )
                 and retirement_blocker(landed.candidate) is None
             )
             if abandoned:

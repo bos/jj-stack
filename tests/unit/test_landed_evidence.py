@@ -5,11 +5,13 @@ import pytest
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
+from jj_stack.models.stack import LocalRevision
 from jj_stack.review.landed import LandedReviewResult, landed_exit_code
 from jj_stack.review.landed_evidence import (
     LandedReviewCandidate,
     classify_exact_snapshot,
     classify_rewritten_result,
+    holds_unpublished_edit,
 )
 
 
@@ -158,3 +160,43 @@ def test_landed_exit_code_separates_a_deliberate_skip_from_a_failed_write() -> N
     assert landed_exit_code(base=0, results=(preserved,)) == 0
     assert landed_exit_code(base=1, results=(preserved,)) == 1
     assert landed_exit_code(base=0, results=(failed,)) == 1
+
+
+def _revision(*, commit_id: str, immutable: bool = False) -> LocalRevision:
+    return LocalRevision(
+        change_id="change-1",
+        commit_id=commit_id,
+        current_working_copy=False,
+        description="feature",
+        divergent=False,
+        empty=False,
+        hidden=False,
+        immutable=immutable,
+        parents=("parent-1",),
+    )
+
+
+def test_unpublished_edit_authority_covers_every_shape_its_callers_pass() -> None:
+    """One wrong answer here destroys local work, so pin all four call shapes."""
+
+    published = ("submitted-1",)
+
+    assert not holds_unpublished_edit(published_commit_ids=published, revision=None)
+    assert not holds_unpublished_edit(
+        published_commit_ids=published,
+        revision=_revision(commit_id="submitted-1"),
+    )
+    assert holds_unpublished_edit(
+        published_commit_ids=published,
+        revision=_revision(commit_id="edited-locally"),
+    )
+    # An immutable revision cannot hold a local edit, whatever its commit.
+    assert not holds_unpublished_edit(
+        published_commit_ids=published,
+        revision=_revision(commit_id="edited-locally", immutable=True),
+    )
+    # Adopting a native survivor also counts the commit GitHub reported for it.
+    assert not holds_unpublished_edit(
+        published_commit_ids=("submitted-1", "github-rewrote-this"),
+        revision=_revision(commit_id="github-rewrote-this"),
+    )

@@ -18,6 +18,7 @@ from jj_stack.review.landed_evidence import (
     LandedReviewCandidate,
     candidate_for_change,
     collect_landed_evidence,
+    holds_unpublished_edit,
 )
 
 
@@ -197,8 +198,14 @@ def build_selected_native_sync(
             continue
         if selected_by_change_id[candidate.change_id].immutable:
             raise CliError(t"Native member PR #{member.number} is not terminally merged.")
-        local_revision = selected_by_change_id[candidate.change_id]
-        _require_unedited_native_survivor(candidate, local_revision, member)
+        if holds_unpublished_edit(
+            published_commit_ids=(candidate.submitted_baseline.commit_id, member.head.sha),
+            revision=selected_by_change_id[candidate.change_id],
+        ):
+            raise CliError(
+                t"Cannot sync {ui.change_id(candidate.change_id)} because it has unpublished "
+                t"local edits since submit."
+            )
         observed = observation.reviews[candidate.change_id]
         # A closed or draft active member is still an affected survivor; only its branch has
         # to match here. Convergence decides which surviving reviews can still be updated.
@@ -216,19 +223,6 @@ def build_selected_native_sync(
             )
         )
     return tuple(historical), tuple(survivors)
-
-
-def _require_unedited_native_survivor(
-    candidate: LandedReviewCandidate,
-    local_revision: LocalRevision,
-    member: GithubStackPullRequest,
-) -> None:
-    if local_revision.commit_id in (candidate.submitted_baseline.commit_id, member.head.sha):
-        return
-    raise CliError(
-        t"Cannot sync {ui.change_id(candidate.change_id)} because it has unpublished local edits "
-        t"since submit."
-    )
 
 
 def _require_history(stack: GithubStack, tracked: set[int]) -> None:
