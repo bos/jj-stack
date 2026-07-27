@@ -41,7 +41,7 @@ def test_duplicate_claim_facts_are_scoped_to_one_repository() -> None:
     ) == frozenset({"saved", "duplicate"})
 
 
-def test_local_cleanup_observations_keep_current_commit_outside_supported_stacks(
+def test_local_cleanup_observations_flag_changes_outside_supported_stacks(
     monkeypatch,
 ) -> None:
     live_revision = make_revision(

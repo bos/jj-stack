@@ -11,7 +11,7 @@ from jj_stack.review.discovery import discover_stacks_from_revisions
 
 @dataclass(frozen=True, slots=True)
 class LocalCleanupObservation:
-    """Current local target and staleness for one tracked change."""
+    """Why one tracked change is stale locally, if it is."""
 
     stale_reason: str | None
 

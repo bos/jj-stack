@@ -37,7 +37,6 @@ def github_stack(
                         "2026-07-23T12:00:00Z" if pull_number in historical_pull_numbers else None
                     ),
                     "number": pull_number,
-                    "state": ("closed" if pull_number in historical_pull_numbers else "open"),
                 }
                 for pull_number in pull_numbers
             ],

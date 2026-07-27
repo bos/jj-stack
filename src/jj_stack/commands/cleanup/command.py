@@ -441,7 +441,7 @@ async def _apply_tracked_review_cleanup(
     prepared_cleanup: PreparedCleanup,
     record_action: Callable[[CleanupAction], None],
     remote_name: str,
-) -> bool:
+) -> None:
     """Apply an authorized branch/comment cleanup and retire the exact pair."""
 
     identity = prepared_change.review_identity
@@ -465,7 +465,7 @@ async def _apply_tracked_review_cleanup(
     for action in comment_actions:
         record_action(_cleanup_action(action))
     if not comments_current:
-        return False
+        return
     if not prepared_cleanup.dry_run:
         blocker = await authorize_current_review_cleanup(
             change_id=prepared_change.change_id,
@@ -478,7 +478,7 @@ async def _apply_tracked_review_cleanup(
         )
         if blocker is not None:
             record_action(_cleanup_action(blocker))
-            return False
+            return
     reason = (
         f" ({prepared_change.stale_reason})" if prepared_change.stale_reason is not None else ""
     )
@@ -496,7 +496,6 @@ async def _apply_tracked_review_cleanup(
             expected_baseline=baseline,
         )
         record_action(action)
-    return True
 
 
 def _cleanup_action(action: CloseAction) -> CleanupAction:

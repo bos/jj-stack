@@ -10,7 +10,7 @@ from jj_stack.errors import EXIT_USAGE, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.state.store import ReviewStateError, ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
     commit_file,
@@ -127,13 +127,11 @@ def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.pull_requests[2].is_draft = True
     landed, top = JjClient(repo).discover_review_stack().revisions
-    assert run_main(repo, config_path, "merge") == 0
-    capsys.readouterr()
+    _merge_pull_request(fake_repo, 1)
 
     def fail_retire(*_args: object, **_kwargs: object) -> None:
-        raise OSError("state file is read-only")
+        raise ReviewStateError("Could not write jj-stack data file /x/state.json")
 
     monkeypatch.setattr(ReviewStateStore, "retire_review", fail_retire)
 
@@ -144,6 +142,8 @@ def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
     unwrapped = " ".join(captured.out.split())
     assert "could not remove tracking" in unwrapped
     assert "jj-stack cleanup" in unwrapped
+    # The store's own hint must not be spliced into this line.
+    assert "Move the file aside" not in unwrapped
     assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
@@ -157,15 +157,13 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     (landed,) = JjClient(repo).discover_review_stack().revisions
-    # Global recovery acts only on an exact submitted commit reachable from trunk. The fake's
-    # merge endpoint always squashes, so land the exact commit on trunk directly instead.
-    update_remote_ref(fake_repo, branch="main", target=landed.commit_id)
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[1].merged_at = "2026-07-26T12:00:00Z"
+    # Global recovery acts only on an exact submitted commit reachable from trunk, which a
+    # merge commit produces and the merge endpoint's squash does not.
+    fake_repo.apply_native_merge_commit((fake_repo.pull_requests[1],))
     capsys.readouterr()
 
     def fail_retire(*_args: object, **_kwargs: object) -> None:
-        raise OSError("state file is read-only")
+        raise ReviewStateError("Could not write jj-stack data file /x/state.json")
 
     monkeypatch.setattr(ReviewStateStore, "retire_review", fail_retire)
 

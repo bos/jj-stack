@@ -5,6 +5,7 @@ import pytest
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
+from jj_stack.review.landed import LandedReviewResult, landed_exit_code
 from jj_stack.review.landed_evidence import (
     LandedReviewCandidate,
     classify_exact_snapshot,
@@ -137,3 +138,23 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
         )
 
         assert result.state == expected
+
+
+def test_landed_exit_code_separates_a_deliberate_skip_from_a_failed_write() -> None:
+    """Tracking a dependent stack still needs is preserved on purpose, not a failure."""
+
+    candidate = _candidate()
+    preserved = LandedReviewResult(
+        candidate=candidate,
+        outcome="finalized",
+        retirement_skip_reason="another local stack still depends on it",
+    )
+    failed = LandedReviewResult(
+        candidate=candidate,
+        outcome="finalized",
+        retirement_failure="state file is read-only",
+    )
+
+    assert landed_exit_code(base=0, results=(preserved,)) == 0
+    assert landed_exit_code(base=1, results=(preserved,)) == 1
+    assert landed_exit_code(base=0, results=(failed,)) == 1

@@ -12,7 +12,6 @@ def _stack(
     number: int,
     *pull_numbers: int,
     historical: tuple[int, ...] = (),
-    closed: tuple[int, ...] = (),
 ) -> GithubStack:
     return GithubStack(
         number=number,
@@ -24,9 +23,6 @@ def _stack(
                 },
                 "merged_at": ("2026-07-23T12:00:00Z" if pull_number in historical else None),
                 "number": pull_number,
-                "state": (
-                    "closed" if pull_number in historical or pull_number in closed else "open"
-                ),
             }
             for pull_number in pull_numbers
         ),
@@ -118,7 +114,7 @@ def test_native_stack_plan_classifies_selected_membership(
         ),
         (
             (2,),
-            (_stack(7, 1, 2, 9, historical=(1,), closed=(9,)),),
+            (_stack(7, 1, 2, 9, historical=(1,)),),
             ("#7", "outside"),
             ("gh stack unstack 7",),
         ),

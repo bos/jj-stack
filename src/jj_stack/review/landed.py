@@ -7,7 +7,7 @@ from typing import Literal
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, error_message
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
@@ -32,9 +32,7 @@ class LandedReviewResult:
     retired_tracking: bool = False
     skip_reason: Message | None = None
     retirement_skip_reason: Message | None = None
-    # Set only when retirement was authorized and the durable write then failed. Preserving
-    # tracking a dependent stack still needs is ordinary operation, not a failure.
-    retirement_failed: bool = False
+    retirement_failure: Message | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,11 +237,7 @@ async def retire_landed_reviews(
                     expected_baseline=candidate.submitted_baseline,
                 )
             except (OSError, RuntimeError, ValueError) as error:
-                results[index] = replace(
-                    result,
-                    retirement_skip_reason=str(error),
-                    retirement_failed=True,
-                )
+                results[index] = replace(result, retirement_failure=error_message(error))
                 continue
         results[index] = replace(
             result,
@@ -296,7 +290,7 @@ def landed_exit_code(*, base: int, results: Sequence[LandedReviewResult]) -> int
     scripted caller has to be able to see.
     """
 
-    return 1 if any(result.retirement_failed for result in results) else base
+    return 1 if any(result.retirement_failure is not None for result in results) else base
 
 
 def render_landed_results(
@@ -323,10 +317,10 @@ def render_landed_results(
             console.output(t"  {marker} finish merged PR #{candidate.review_identity.pr_number}")
         if result.retired_tracking:
             console.output(t"  {marker} remove tracking for {ui.change_id(candidate.change_id)}")
-        elif result.retirement_failed:
+        elif result.retirement_failure is not None:
             console.output(
                 t"  ✗ could not remove tracking for {ui.change_id(candidate.change_id)}: "
-                t"{result.retirement_skip_reason}. Retry with "
+                t"{result.retirement_failure}. Resolve that, then run "
                 t"{ui.cmd('jj-stack cleanup')}."
             )
         elif result.retirement_skip_reason is not None:
