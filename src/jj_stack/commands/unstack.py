@@ -1044,7 +1044,7 @@ def _close_revision_preflight_error(
         return CloseAction(
             kind="close",
             body=t"cannot close {revision_label} because GitHub no longer reports a pull "
-            t"request for its branch; run {ui.cmd('view --fetch')} or "
+            t"request for its branch; run {ui.cmd('view')} or "
             t"{ui.cmd('relink')} before retrying",
             status="blocked",
         )

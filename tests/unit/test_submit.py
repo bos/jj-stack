@@ -132,6 +132,22 @@ def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
             change_id="abcdefghijk",
             discovered_pull_request=None,
             expected_remote_target="commit-17",
+            repository_key=("octo-org", "stacked-review"),
+            review_identity=identity,
+            submitted_baseline=SubmittedBaseline(commit_id="commit-17"),
+        )
+
+
+def test_pull_request_link_rejects_a_saved_review_from_another_repository() -> None:
+    identity = make_review_identity(head_ref="review/foo-abcdefgh", pr_number=17)
+
+    with pytest.raises(CliError, match="belongs to a different GitHub repository"):
+        _ensure_pull_request_link_is_consistent(
+            branch=identity.head_ref,
+            change_id="abcdefghijk",
+            discovered_pull_request=None,
+            expected_remote_target="commit-17",
+            repository_key=("octo-org", "other-repo"),
             review_identity=identity,
             submitted_baseline=SubmittedBaseline(commit_id="commit-17"),
         )
@@ -151,6 +167,7 @@ def test_pull_request_link_rejects_remote_and_pr_head_mismatch() -> None:
             change_id="abcdefghijk",
             discovered_pull_request=pull_request,
             expected_remote_target="remote-commit",
+            repository_key=("octo-org", "stacked-review"),
             review_identity=identity,
             submitted_baseline=SubmittedBaseline(commit_id="remote-commit"),
         )

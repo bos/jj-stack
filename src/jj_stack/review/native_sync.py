@@ -204,7 +204,7 @@ def build_selected_native_sync(
         if selected_by_change_id[candidate.change_id].immutable:
             raise CliError(
                 t"Native member PR #{member.number} is not terminally merged.",
-                hint=t"Check GitHub's result with {ui.cmd('jj-stack view --fetch')}, then "
+                hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then "
                 t"rerun sync once it reports the merge.",
             )
         if holds_unpublished_edit(
@@ -242,7 +242,7 @@ def _require_history(stack: GithubStack, tracked: set[int]) -> None:
         raise CliError(
             t"GitHub stack #{stack.number} rewrote a review head, but no merged member of it "
             t"is tracked here to prove that transition.",
-            hint=t"Inspect the stack with {ui.cmd('jj-stack view --fetch')}, then attach the "
+            hint=t"Inspect the stack with {ui.cmd('jj-stack view')}, then attach the "
             t"merged review with {ui.cmd('jj-stack relink')} if it belongs to this repository.",
         )
 
@@ -260,13 +260,13 @@ def _historical_review(
     if member.head.sha != candidate.submitted_baseline.commit_id:
         raise CliError(
             t"Historical native member PR #{member.number} no longer reports its submitted head.",
-            hint=t"Inspect it with {ui.cmd('jj-stack view --fetch')}, then reattach the "
+            hint=t"Inspect it with {ui.cmd('jj-stack view')}, then reattach the "
             t"intended review with {ui.cmd('jj-stack relink')}.",
         )
     if pull_request.normalize_state().state != "merged":
         raise CliError(
             t"Native member PR #{member.number} is not terminally merged.",
-            hint=t"Check GitHub's result with {ui.cmd('jj-stack view --fetch')}, then rerun "
+            hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then rerun "
             t"sync once it reports the merge.",
         )
     exact, rewritten = collect_landed_evidence(

@@ -191,7 +191,7 @@ def status_preparation_cli_error(error: UnsupportedStackError) -> CliError:
             hint=(
                 t"Inspect the divergent revisions with {ui.cmd('jj log -r')} "
                 t"{ui.revset(f'change_id({error.change_id})')} and reconcile them "
-                t"before retrying. This can happen after {ui.cmd('jj-stack view --fetch')} "
+                t"before retrying. This can happen after {ui.cmd('jj-stack view')} "
                 t"or another fetch refreshes rewritten changes already merged into trunk."
             ),
         )

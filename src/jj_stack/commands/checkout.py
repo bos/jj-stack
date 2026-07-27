@@ -369,7 +369,7 @@ async def _require_unique_pull_request_head(
         raise CliError(
             t"Head branch {ui.bookmark(pull_request.head.ref)} does not uniquely identify "
             t"PR #{pull_request.number}.",
-            hint=t"Inspect them with {ui.cmd('jj-stack view --fetch')}, then attach the "
+            hint=t"Inspect them with {ui.cmd('jj-stack view')}, then attach the "
             t"intended review with {ui.cmd('jj-stack relink')}.",
         )
 
@@ -390,7 +390,7 @@ def _save_checkout_tracking(
     ):
         raise CliError(
             "The selected pull requests do not describe the stack that was just fetched.",
-            hint=t"Run {ui.cmd('jj-stack view --fetch')} to compare them, then submit or "
+            hint=t"Run {ui.cmd('jj-stack view')} to compare them, then submit or "
             t"relink the reviews that should match this history.",
         )
     remote_targets = context.jj_client.list_remote_branches(

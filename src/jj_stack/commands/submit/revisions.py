@@ -60,7 +60,7 @@ def prepare_submit_revisions(
                     t"unexpected commit.",
                     condition="remote_branch_moved",
                     hint=(
-                        t"Inspect it with {ui.cmd('view --fetch')} and repair the review "
+                        t"Inspect it with {ui.cmd('view')} and repair the review "
                         t"before submitting again."
                     ),
                 )

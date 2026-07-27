@@ -49,6 +49,7 @@ def ensure_pull_request_syncs_are_safe(
     *,
     options: SubmitOptions,
     pending_syncs: Sequence[PendingPullRequestSync],
+    repository_key: tuple[str, str],
     state: ReviewState,
 ) -> None:
     """Verify every planned PR sync before any mutation.
@@ -69,6 +70,7 @@ def ensure_pull_request_syncs_are_safe(
             change_id=change_id,
             discovered_pull_request=pending_sync.discovered_pull_request,
             expected_remote_target=prepared_revision.expected_remote_target,
+            repository_key=repository_key,
             review_identity=review_identity,
             submitted_baseline=submitted_baseline,
         )
@@ -316,7 +318,7 @@ def _select_discovered_pull_request(
             t"GitHub reports multiple pull requests for head branch {ui.bookmark(head_label)}.",
             condition="pull_request_ambiguous",
             hint=(
-                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -329,7 +331,7 @@ def _select_discovered_pull_request(
             t"{ui.bookmark(head_label)} in state {pull_request.state}.",
             condition="pull_request_not_open",
             hint=(
-                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -342,6 +344,7 @@ def _ensure_pull_request_link_is_consistent(
     change_id: str,
     discovered_pull_request: GithubPullRequest | None,
     expected_remote_target: str | None,
+    repository_key: tuple[str, str],
     review_identity: ReviewIdentity | None,
     submitted_baseline: SubmittedBaseline | None,
 ) -> None:
@@ -365,6 +368,16 @@ def _ensure_pull_request_link_is_consistent(
             t"Saved PR tracking for {ui.change_id(change_id)} has no last submitted commit.",
             hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
         )
+    if review_identity.repository_key != repository_key:
+        raise DriftError(
+            t"Saved PR tracking for {ui.change_id(change_id)} belongs to a different GitHub "
+            t"repository than the one this remote resolves to.",
+            condition="saved_pull_request_mismatch",
+            hint=(
+                t"Point the remote back at that repository, or reattach the change with "
+                t"{ui.cmd('relink')} before submitting again."
+            ),
+        )
     if review_identity.head_ref != branch:
         raise DriftError(
             t"Saved PR tracking for {ui.change_id(change_id)} names branch "
@@ -378,7 +391,7 @@ def _ensure_pull_request_link_is_consistent(
             t"but GitHub no longer reports a PR for that head branch.",
             condition="saved_pull_request_missing",
             hint=(
-                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -389,7 +402,7 @@ def _ensure_pull_request_link_is_consistent(
             t"(#{discovered_pull_request.number}).",
             condition="saved_pull_request_mismatch",
             hint=(
-                t"Inspect the PR link with {ui.cmd('view --fetch')} and repair it "
+                t"Inspect the PR link with {ui.cmd('view')} and repair it "
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
@@ -408,7 +421,7 @@ def _ensure_pull_request_link_is_consistent(
             t"Pull request #{review_identity.pr_number} and its remote branch no longer "
             t"identify the same commit.",
             condition="remote_branch_moved",
-            hint=t"Inspect it with {ui.cmd('view --fetch')} before submitting again.",
+            hint=t"Inspect it with {ui.cmd('view')} before submitting again.",
         )
 
 

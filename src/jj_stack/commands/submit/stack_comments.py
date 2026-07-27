@@ -189,7 +189,7 @@ def _discover_managed_comment(
             t"GitHub reports multiple jj-stack {stack_comment_label(kind)}s for the same "
             t"pull request: {comment_ids}.",
             hint=(
-                t"Inspect the PR link with {ui.cmd('view --fetch')} or delete the "
+                t"Inspect the PR link with {ui.cmd('view')} or delete the "
                 t"extra {stack_comment_label(kind)}s before submitting again."
             ),
         )

@@ -8,7 +8,7 @@ one or more revsets and `--pull-request` selectors to inspect several stacks in 
 
 Common examples: `jj-stack view` inspects the stack ending at `@-`;
 `jj-stack view --pull-request 123` finds the local stack for one linked PR; and
-`jj-stack view --fetch <head-change-id>` checks current review branches before reporting.
+`jj-stack view <head-change-id>` checks current review branches before reporting.
 """
 
 from __future__ import annotations

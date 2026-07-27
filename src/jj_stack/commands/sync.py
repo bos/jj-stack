@@ -147,7 +147,7 @@ async def _run_selected_convergence(
         if error is not None:
             raise CliError(
                 error,
-                hint=t"Inspect the stack with {ui.cmd('jj-stack view --fetch')}, then repair it "
+                hint=t"Inspect the stack with {ui.cmd('jj-stack view')}, then repair it "
                 t"with {ui.cmd('jj-stack relink')} or republish it with "
                 t"{ui.cmd('jj-stack submit')}.",
             )

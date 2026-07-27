@@ -171,7 +171,7 @@ def _selected_landed_kind(
     if observed.identity != candidate.review_identity:
         raise CliError(
             t"Saved PR tracking changed for {ui.change_id(candidate.change_id)}.",
-            hint=t"Inspect it with {ui.cmd('jj-stack view --fetch')}, then reattach the intended "
+            hint=t"Inspect it with {ui.cmd('jj-stack view')}, then reattach the intended "
             t"review with {ui.cmd('jj-stack relink')}.",
         )
     if candidate.change_id in observation.duplicate_claim_change_ids:
@@ -184,7 +184,7 @@ def _selected_landed_kind(
     if pull_request is None:
         raise CliError(
             t"GitHub no longer reports PR #{candidate.review_identity.pr_number}.",
-            hint=t"Confirm it with {ui.cmd('jj-stack view --fetch')}, then reattach an open "
+            hint=t"Confirm it with {ui.cmd('jj-stack view')}, then reattach an open "
             t"replacement with {ui.cmd('jj-stack relink')}, or end the review with "
             t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
         )

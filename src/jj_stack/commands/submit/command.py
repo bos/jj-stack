@@ -500,6 +500,7 @@ async def run_submit_async(
         ensure_pull_request_syncs_are_safe(
             options=options,
             pending_syncs=pending_syncs,
+            repository_key=github_repository.repository_key,
             state=mutation_run.state,
         )
         pushes_review_branches = any(

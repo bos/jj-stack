@@ -182,7 +182,7 @@ def _check_review_fetch_isolation(
             "fail",
             (
                 error_message(error),
-                t" Apply it by running {ui.cmd('jj-stack view --fetch')} once.",
+                t" Any jj-stack command that touches the remote will apply it.",
             ),
         )
     except CliError as error:

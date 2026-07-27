@@ -184,10 +184,10 @@ The GitHub base branch for a review change is:
 - the parent review change's remote branch, if the parent is also being reviewed
 - otherwise the trunk branch
 
-This is where GitHub still imposes a branch model on top of `jj`. `trunk()` defines the
-stack boundary in commit space, but it does not by itself give GitHub a base-branch name.
-For GitHub operations the tool has to resolve trunk to one concrete remote bookmark on
-the chosen remote, e.g. `main@origin`.
+This is where GitHub imposes Git's branch model on us. `trunk()` defines the stack boundary in
+commit space, but it does not by itself give GitHub a base-branch name. For GitHub operations
+the tool has to resolve trunk to one concrete remote bookmark on the chosen remote, e.g.
+`main@origin`.
 
 The trunk base must be one of:
 
