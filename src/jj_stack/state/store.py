@@ -75,7 +75,6 @@ class ReviewStateStore:
 
         return cls(resolve_state_path(repo_root), issue_reporter=issue_reporter)
 
-
     def require_writable(self) -> Path:
         """Ensure the data directory can be created and written, then return it."""
 

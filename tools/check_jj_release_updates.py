@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
 
 def read_tested_versions(ci_workflow: Path) -> list[str]:
     workflow_text = ci_workflow.read_text(encoding="utf-8")
-    match = re.search(r'jj-version:\s*\[(.*?)\]', workflow_text)
+    match = re.search(r"jj-version:\s*\[(.*?)\]", workflow_text)
     if match is None:
         raise SystemExit(f"Could not find jj-version matrix in {ci_workflow}")
 
@@ -82,11 +82,7 @@ def find_open_issue(repository: str, token: str) -> dict | None:
         token=token,
     )
     return next(
-        (
-            item
-            for item in search.get("items", [])
-            if item.get("title") == ISSUE_TITLE
-        ),
+        (item for item in search.get("items", []) if item.get("title") == ISSUE_TITLE),
         None,
     )
 
@@ -168,10 +164,7 @@ def main() -> int:
             f"CI matrix: {tested_display}."
         )
     else:
-        print(
-            f"Latest jj release {latest_version} is not in the CI matrix: "
-            f"{tested_display}."
-        )
+        print(f"Latest jj release {latest_version} is not in the CI matrix: {tested_display}.")
 
     if not args.write_issues:
         return 0 if latest_version in tested_versions else 1
@@ -179,9 +172,7 @@ def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     repository = os.environ.get("REPOSITORY")
     if not token or not repository:
-        raise SystemExit(
-            "--write-issues requires GITHUB_TOKEN and REPOSITORY in the environment"
-        )
+        raise SystemExit("--write-issues requires GITHUB_TOKEN and REPOSITORY in the environment")
     sync_issue_state(
         repository=repository,
         token=token,

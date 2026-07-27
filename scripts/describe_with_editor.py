@@ -71,7 +71,7 @@ def generated_stack_context_lines() -> list[str] | None:
         return None
     try:
         payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError, json.JSONDecodeError, OSError:
         return None
     revisions = payload.get("revisions")
     if not isinstance(revisions, list):

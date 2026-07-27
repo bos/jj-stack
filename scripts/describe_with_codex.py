@@ -43,6 +43,7 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -98,7 +99,7 @@ def generated_stack_context() -> str | None:
         return None
     try:
         payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError, json.JSONDecodeError, OSError:
         return None
     revisions = payload.get("revisions")
     if not isinstance(revisions, list):
@@ -204,9 +205,7 @@ def stack_commit_count(revset: str) -> int:
 def build_prompt(mode: str, revset: str, context: str) -> str:
     if mode == "pr":
         task = "Write a GitHub pull request title and body for a human reviewer."
-        extra_guidance = (
-            "- Optimize for a reviewer who wants to understand one change quickly."
-        )
+        extra_guidance = "- Optimize for a reviewer who wants to understand one change quickly."
     else:
         task = "Write a GitHub stack summary for a human reviewer."
         commit_count = stack_commit_count(revset)

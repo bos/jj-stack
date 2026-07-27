@@ -459,8 +459,7 @@ def _reject_duplicate_checkout_claims(
     combined.update(replacements)
     if duplicate_review_claim_change_ids(combined).intersection(replacements):
         raise CliError(
-            "Another saved change already claims one of those pull request numbers or "
-            "branches.",
+            "Another saved change already claims one of those pull request numbers or branches.",
             hint=t"Run {ui.cmd('jj-stack list')} to find the claiming change, then drop its "
             t"tracking with {ui.cmd('jj-stack unstack --local')} or clean it up with "
             t"{ui.cmd('jj-stack cleanup')}.",

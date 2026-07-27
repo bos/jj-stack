@@ -10,6 +10,7 @@ from pathlib import Path
 
 if sys.platform != "win32":
     import readline
+
     readline.set_history_length(1000)
 
 
@@ -59,7 +60,7 @@ def stack_defaults(revset: str) -> tuple[str, str]:
         f"trunk()::{revset} & visible() & mutable()",
         "--no-graph",
         "-T",
-        "description.first_line() ++ \"\\n\"",
+        'description.first_line() ++ "\\n"',
     )
     changes = [line.strip() for line in summaries.splitlines() if line.strip()]
     title = "Stack summary"

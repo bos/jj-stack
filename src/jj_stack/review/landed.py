@@ -78,9 +78,7 @@ async def _finalize_review(
     if pull_request.state != "open":
         return LandedReviewResult(candidate=candidate, outcome="already_terminal")
     if not finalizer.dry_run:
-        console.output(
-            t"Finalizing PR #{pull_request.number} for {candidate.change_id}..."
-        )
+        console.output(t"Finalizing PR #{pull_request.number} for {candidate.change_id}...")
         pull_request, reason = await _finalize_open_review(
             candidate=candidate,
             finalizer=finalizer,

@@ -46,7 +46,7 @@ def _docstring_lines(path: Path) -> int:
 
     try:
         tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
+    except OSError, SyntaxError:
         return 0
     documented = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
     total = 0
@@ -70,7 +70,7 @@ def _code_lines(paths: Sequence[str]) -> int:
             for report in language["reports"]
         ]
         total = sum(report["stats"]["code"] for _name, report in reports)
-    except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
+    except json.JSONDecodeError, AttributeError, KeyError, TypeError:
         raise SystemExit(
             f"Error: tokei returned invalid JSON for {', '.join(paths)}:\n{output}"
         ) from None
@@ -194,9 +194,7 @@ def main() -> int:
         path
         for relative in paths["governed"]
         for path in (
-            (ROOT / relative).rglob("*.py")
-            if (ROOT / relative).is_dir()
-            else (ROOT / relative,)
+            (ROOT / relative).rglob("*.py") if (ROOT / relative).is_dir() else (ROOT / relative,)
         )
     )
     module_lines = {

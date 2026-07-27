@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Literal
 
 REPO_ROOT = Path(__file__).resolve().parent
-VENV_PYTHON = REPO_ROOT / ".venv" / (
-    Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+VENV_PYTHON = (
+    REPO_ROOT / ".venv" / (Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python"))
 )
 PytestJobs = int | Literal["auto"]
 _FRAGILE_TEST_OUTPUT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -76,6 +76,7 @@ def _build_checks(
         )
     return (
         ("ruff", ("-m", "ruff", "check")),
+        ("ruff-format", ("-m", "ruff", "format", "--check")),
         ("pyrefly", ("-m", "pyrefly", "check")),
         (
             "pyrefly-windows",
@@ -120,9 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        pytest_jobs = (
-            None if args.pytest_jobs is None else _parse_pytest_jobs(args.pytest_jobs)
-        )
+        pytest_jobs = None if args.pytest_jobs is None else _parse_pytest_jobs(args.pytest_jobs)
     except ValueError as error:
         parser.error(str(error))
     ensure_project_environment()
