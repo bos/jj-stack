@@ -83,21 +83,27 @@ def authorize_tracked_review(
     if (observed.identity, observed.baseline) != (review_identity, submitted_baseline):
         kind = "tracking"
         reason = (
-            t"tracking for {ui.change_id(change_id)} changed during this operation; "
-            t"reload and retry"
+            t"tracking for {ui.change_id(change_id)} changed while this command ran; "
+            t"rerun the same command"
         )
     elif review_identity.repository_key != observation.repository.repository_key:
         reason = (
             t"cannot inspect saved PR #{pull_request_number} because it belongs to a "
-            t"different GitHub repository"
+            t"different GitHub repository; point the remote back at it, or reattach the "
+            t"change with {ui.cmd('jj-stack relink')}"
         )
     elif change_id in observation.duplicate_claim_change_ids:
         reason = (
             t"cannot inspect saved PR #{pull_request_number} because multiple tracked changes "
-            t"claim its PR number or branch"
+            t"claim its PR number or branch; find them with {ui.cmd('jj-stack list')} and drop "
+            t"the wrong one with {ui.cmd('jj-stack unstack --local')}"
         )
     elif pull_request is None:
-        reason = t"PR #{pull_request_number} is no longer on GitHub"
+        reason = (
+            t"PR #{pull_request_number} is no longer on GitHub; attach a replacement with "
+            t"{ui.cmd('jj-stack relink')}, or drop the tracking with "
+            t"{ui.cmd('jj-stack unstack --local')}"
+        )
     else:
         pull_request = pull_request.normalize_state()
     if reason is None:

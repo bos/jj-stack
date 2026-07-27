@@ -683,7 +683,6 @@ def _default_view_handler(args: Namespace) -> int:
         cli_args=args.cli_args,
         debug=args.debug,
         as_json=False,
-        fetch=False,
         pull_request=None,
         repository=args.repository,
         revset=None,

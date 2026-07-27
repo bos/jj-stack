@@ -1429,7 +1429,7 @@ def test_submit_fails_closed_when_cached_pull_request_is_missing_on_github(
 
     assert exit_code == 1
     assert "Saved pull request link exists" in captured.err
-    assert "view --fetch" in captured.err
+    assert "view" in captured.err
     assert "relink" in captured.err
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
@@ -1533,7 +1533,7 @@ def test_submit_fails_closed_when_github_reports_multiple_pull_requests(
 
     assert exit_code == 1
     assert "multiple pull requests" in captured.err
-    assert "view --fetch" in captured.err
+    assert "view" in captured.err
     assert "relink" in captured.err
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target

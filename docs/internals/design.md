@@ -211,7 +211,7 @@ If `jj` reports that a workspace is stale, the command stops and tells the user 
 
 ### Derived from `jj` every time
 
-These need no tool-owned state:
+These do not need tool-owned state:
 
 - stack topology
 - parent-child relationships
@@ -259,17 +259,18 @@ A change can be in one of two tracking states:
 - **tracked**: a `ReviewIdentity` record exists; the tool inspects the exact saved PR and
   branch. A complete submitted review also has a `SubmittedBaseline`.
 
-PR rediscovery is an explicit recovery flow: ordinary commands never replace a missing, closed,
-moved, or ambiguous review automatically. They preserve the saved identity and name `relink`, or
-`unstack --cleanup` followed by a fresh `submit`.
+Commands never replace a missing, closed, moved, or ambiguous PR automatically. They leave
+things untouched and suggest use of `relink`, or `unstack --cleanup` followed by a fresh
+`submit`.
 
 Recording a new submitted commit cannot overwrite PR identity: every write goes through a
 compare-and-swap that fails if the identity changed underneath it. Reads isolate individual
-absent, malformed, or obsolete records: one bad record is reported on its own, telling the user to
-repair it with `relink`, and the other records stay usable. An unreadable or unsupported top-level
+absent, malformed, or obsolete records: a bad record is reported on its own, telling the user to
+repair it with `relink`, while other records stay usable. An unreadable or unsupported top-level
 file blocks every command that loads tracking state, reports its exact path, and tells the user
-how to move it aside before re-adopting reviews through `checkout` or `relink`. There is no
-migration or automatic discard path.
+how to move it aside before re-adopting reviews through `checkout` or `relink`.
+
+## User settings
 
 User-authored settings live in `jj` config under `[jj-stack]`, not in the tracking-state file:
 
@@ -280,9 +281,8 @@ team_reviewers = ["platform"]
 labels = ["needs-review"]
 ```
 
-`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. A key
-that looks like a typo of a known one is rejected with a suggestion; an unrelated key is
-ignored.
+`submit --reviewers`, `--team-reviewers`, and `--label` override these for one invocation. A
+typo of a known key is rejected with a suggestion; unrelated keys are ignored.
 
 Managed comments are derived output, not a source of truth. In a repository without native GitHub
 stack support, `submit` regenerates navigation comments from the current `jj` stack. In every
@@ -292,16 +292,9 @@ comments the tool previously wrote, but `view` does not inspect issue comments.
 
 ## Storage strategy
 
-Do not write into `jj` internals (`.jj/repo/store/extra/`, the view/op store, private
-ref namespaces). Those are tempting but tie the tool to storage details `jj` keeps
-flexible.
-
-Do not store config or tracking state in the working tree. Tracked workspace files are
-the wrong default for both:
-
-- config in the working tree looks like project-shared policy and is too easy to commit
-- tracking state in the working tree dirties the `jj` working copy and perturbs the
-  history the tool is supposed to map to GitHub
+Do not write into `jj` internals (`.jj/repo/store/extra/`, the view/op store, private ref
+namespaces). Those would tie the tool to `jj`-internal storage details. Do not store config or
+tracking state in the working tree.
 
 So storage splits in two:
 
@@ -322,6 +315,8 @@ bootstrap step and without writing any tool-specific file into the workspace.
 
 Mutating commands serialize against each other through a repo-scoped advisory lock. Read-only
 commands do not take it and never write tracking observations.
+
+## Concurrency
 
 The lock only serializes concurrent processes. Commands do not persist their planned selection,
 selected parent chain, progress phase, or remaining work. After an interruption, the next command
@@ -473,12 +468,11 @@ cleanup leaves safe leftovers, and every warning names the command that finishes
 
 ### Inspection
 
-`view` and `list` change no review state — no pull request, no branch, no tracking record.
-`--fetch` is not inert, though: it rewrites the remote's fetch refspec to exclude `review/*` if
-that is not already in place, and runs an ordinary `jj git fetch`, which snapshots the working
-copy. Neither command guesses: a change never attached to a review is reported as not submitted,
-rather than resolved by looking for a pull request on the branch name that change would have
-produced.
+`view` and `list` are read-only: they change nothing, locally or on GitHub. Both always observe
+the saved review branches directly on the remote and always ask GitHub for pull request state, so
+neither needs a fetch of its own — `jj git fetch` first if your trunk is stale. Neither guesses: a
+change never attached to a review is reported as not submitted, rather than resolved by looking
+for a pull request on the branch name that change would have produced.
 
 They tolerate the history a fetch exposes rather than calling a stack broken: `view` walks past
 immutable or divergent side copies of merged changes, and a merged PR still on the stack becomes a

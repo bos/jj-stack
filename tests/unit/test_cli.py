@@ -85,7 +85,7 @@ def test_main_renders_cli_error_hint_on_separate_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def fake_view(**kwargs) -> int:
-        raise CliError("Problem at trunk.", hint="Run view --fetch and retry.")
+        raise CliError("Problem at trunk.", hint="Run view and retry.")
 
     monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
 
@@ -95,7 +95,7 @@ def test_main_renders_cli_error_hint_on_separate_line(
     assert exit_code == 1
     err_lines = captured.err.splitlines()
     assert err_lines[0] == "Error: Problem at trunk."
-    assert "Hint: Run view --fetch and retry." in err_lines
+    assert "Hint: Run view and retry." in err_lines
 
 
 @pytest.mark.parametrize("command", ["view", "status", "st", "v"])

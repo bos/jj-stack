@@ -182,7 +182,8 @@ def _check_review_fetch_isolation(
             "fail",
             (
                 error_message(error),
-                t" Any jj-stack command that touches the remote will apply it.",
+                t" {ui.cmd('jj-stack submit')}, or any other command that contacts the "
+                t"remote, applies it.",
             ),
         )
     except CliError as error:

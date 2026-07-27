@@ -57,18 +57,20 @@ Possible causes:
 What to do:
 
 ```bash
-jj-stack view --fetch
+jj git fetch
+jj-stack view
 ```
 
-`view` already checks live GitHub state when GitHub is reachable. `view --fetch` also refreshes
-ordinary fetched repository state and directly observes each saved review branch. Ordinary fetch
-excludes `review/*` — `jj-stack` adds that exclusion to the remote's Git fetch configuration the
-first time it needs the remote, and says so — which is why this read-only refresh does not
-import the review branches as persistent bookmarks. See the README for how to undo it.
+`view` always checks live GitHub state when GitHub is reachable, and always observes each saved
+review branch directly on the remote — you only need the fetch to bring your local trunk up to
+date. Ordinary fetch excludes `review/*`: `jj-stack` adds that exclusion to the remote's Git
+fetch configuration the first time it needs the remote, and says so, which is what keeps the
+review branches from being imported as persistent bookmarks. See the README for how to undo
+it.
 
 If a change shows `submitted, no PR found for branch`, `jj-stack` has tracking
 for a previous submit, but GitHub did not report a PR for the current review
-branch. Run `jj-stack view --fetch <change>` first. If the PR is still open
+branch. Run `jj-stack view <change>` first. If the PR is still open
 under a different branch or tracking record, use `jj-stack relink <pr> <change>`.
 If no open PR exists and you want to start the review over, end the old one and submit again:
 
@@ -85,7 +87,7 @@ If GitHub reports a remembered PR as closed or merged, decide what outcome you
 want before choosing a command:
 
 - To keep reviewing the same PR, reopen it on GitHub and rerun `jj-stack
-  view --fetch <change>`.
+  view <change>`.
 - To attach a different open PR to the change, use `jj-stack relink <pr>
   <change>`.
 - To abandon the old review and make fresh PRs, run `jj-stack unstack

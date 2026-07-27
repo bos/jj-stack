@@ -563,7 +563,7 @@ We distinguish between:
 
 When possible, diagnostics point to the exact recovery action:
 
-- `jj-stack view --fetch`
+- `jj-stack view`
 - `jj-stack relink`
 - `jj-stack unstack`
 - `jj rebase`

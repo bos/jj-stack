@@ -96,7 +96,7 @@ def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
     output = " ".join(capsys.readouterr().out.split())
 
     assert exit_code == 1
-    assert "jj-stack view --fetch" in output
+    assert "jj-stack submit" in output
     assert "without --dry-run" not in output
 
 
