@@ -62,7 +62,7 @@ def github_observation_blocker() -> CloseAction:
     )
 
 
-def authorize_tracked_review(
+def check_tracked_review(
     *,
     allowed_states: frozenset[str],
     change_id: str,
@@ -73,7 +73,7 @@ def authorize_tracked_review(
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
 ) -> tuple[GithubPullRequest | None, CloseAction | None]:
-    """Authorize one exact unchanged review from shared policy-free facts."""
+    """Check one exact unchanged review against shared observations."""
 
     observed = observation.reviews[change_id]
     pull_request_number = review_identity.pr_number
@@ -155,7 +155,7 @@ def authorize_tracked_review(
     )
 
 
-async def authorize_current_tracked_pull_request(
+async def check_current_tracked_pull_request(
     *,
     allowed_states: frozenset[str],
     change_id: str,
@@ -166,7 +166,7 @@ async def authorize_current_tracked_pull_request(
     state_store: ReviewStateStore,
     submitted_baseline: SubmittedBaseline,
 ) -> tuple[GithubPullRequest | None, CloseAction | None]:
-    """Authorize one unchanged tracking pair with all saved claims in context."""
+    """Check one unchanged tracking pair with all saved claims in context."""
 
     try:
         observation = await observe_reviews(
@@ -177,7 +177,7 @@ async def authorize_current_tracked_pull_request(
         )
     except GithubClientError:
         return None, github_observation_blocker()
-    return authorize_tracked_review(
+    return check_tracked_review(
         allowed_states=allowed_states,
         change_id=change_id,
         observation=observation,
@@ -199,13 +199,13 @@ async def close_current_tracked_pull_request(
     submitted_baseline: SubmittedBaseline,
     target_label: Message,
 ) -> tuple[GithubPullRequest | None, CloseAction | None]:
-    """Close a freshly authorized open PR, or accept an already-ended PR."""
+    """Close a freshly checked open PR, or accept an already-ended PR."""
 
     if dry_run:
         pull_request = observed_pull_request
         blocker = None
     else:
-        pull_request, blocker = await authorize_current_tracked_pull_request(
+        pull_request, blocker = await check_current_tracked_pull_request(
             allowed_states=frozenset({"open", "closed", "merged"}),
             change_id=change_id,
             github_client=github_client,
@@ -220,7 +220,7 @@ async def close_current_tracked_pull_request(
     if pull_request.state in {"closed", "merged"}:
         return pull_request, None
     if pull_request.state != "open":
-        raise AssertionError("Tracked close authorization returned an unexpected lifecycle.")
+        raise AssertionError("Tracked close check returned an unexpected lifecycle.")
     if not dry_run:
         await github_client.close_pull_request(pull_number=pull_request.number)
     return (
@@ -313,7 +313,7 @@ async def apply_managed_comment_cleanup(
             continue
         deleted = True
         if not dry_run:
-            _pull_request, blocker = await authorize_current_tracked_pull_request(
+            _pull_request, blocker = await check_current_tracked_pull_request(
                 allowed_states=frozenset({"closed", "merged"}),
                 change_id=change_id,
                 github_client=github_client,
@@ -456,9 +456,9 @@ def plan_review_cleanup(
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
 ) -> tuple[GithubPullRequest | None, ReviewRefUpdate | None, CloseAction | None]:
-    """Authorize exact cleanup facts and derive at most one leased ref deletion."""
+    """Check exact cleanup facts and derive at most one leased ref deletion."""
 
-    pull_request, blocker = authorize_tracked_review(
+    pull_request, blocker = check_tracked_review(
         allowed_states=allowed_states,
         change_id=change_id,
         observation=observation,
@@ -540,7 +540,7 @@ async def native_stack_cleanup_blocker(
     return None
 
 
-async def authorize_current_review_cleanup(
+async def check_current_review_cleanup(
     *,
     change_id: str,
     context: CommandContext,
@@ -551,7 +551,7 @@ async def authorize_current_review_cleanup(
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
 ) -> CloseAction | None:
-    """Authorize one review cleanup against every fresh remote authority."""
+    """Check one review cleanup against current remote state."""
 
     current_update, blocker = await prepare_current_review_cleanup(
         allowed_states=frozenset({"closed", "merged"}),
@@ -586,7 +586,7 @@ async def prepare_current_review_cleanup(
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
 ) -> tuple[ReviewRefUpdate | None, CloseAction | None]:
-    """Freshly authorize one cleanup and derive its exact leased ref deletion."""
+    """Recheck one cleanup and derive its exact leased ref deletion."""
 
     try:
         observation = await observe_reviews(
@@ -625,7 +625,7 @@ def apply_remote_branch_cleanup(
     remote_name: str,
     update: ReviewRefUpdate | None,
 ) -> None:
-    """Execute one pre-authorized remote branch deletion with an exact lease.
+    """Execute one prechecked remote branch deletion with an exact lease.
 
     A rejected lease raises, so there is no failure for callers to branch on.
     """

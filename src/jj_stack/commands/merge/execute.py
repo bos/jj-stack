@@ -1,8 +1,8 @@
 """Apply ordinary pull-request merges for one selected review path.
 
-Each mutation is authorized from fresh local, remote, and GitHub observations. GitHub moves
-trunk; this command does not rewrite local history or retire review tracking. A later selected
-`sync` observes and reconciles whatever GitHub accepted.
+Each mutation rechecks fresh local, remote, and GitHub observations. GitHub moves trunk; this
+command does not rewrite local history or retire review tracking. A later selected `sync`
+observes and reconciles whatever GitHub accepted.
 """
 
 from __future__ import annotations

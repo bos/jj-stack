@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 
 from jj_stack.cli import build_parser, main
-from jj_stack.commands.merge.authority import merge_authority_error
 from jj_stack.commands.merge.command import _resolve_merge_method
 from jj_stack.commands.merge.models import MergePlan, MergeRevision
 from jj_stack.commands.merge.plan import validate_merge_plan_method
+from jj_stack.commands.merge.preconditions import merge_precondition_error
 from jj_stack.errors import EXIT_USAGE, CliError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.git import GitRemote
@@ -130,7 +130,7 @@ def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
 
 
 @pytest.mark.landing_recovery
-def test_merge_authority_rejects_repository_drift() -> None:
+def test_merge_preconditions_reject_repository_drift() -> None:
     expected_repository = GithubRepoAddress(
         owner="acme",
         repo="widgets",
@@ -159,7 +159,7 @@ def test_merge_authority_rejects_repository_drift() -> None:
     )
 
     assert (
-        merge_authority_error(
+        merge_precondition_error(
             expected_bases={},
             expected_repository=expected_repository,
             expected_trunk_branch="main",

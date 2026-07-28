@@ -173,7 +173,7 @@ def _revision(*, commit_id: str, immutable: bool = False) -> LocalRevision:
     )
 
 
-def test_unpublished_edit_authority_covers_every_shape_its_callers_pass() -> None:
+def test_unpublished_edit_check_covers_every_shape_its_callers_pass() -> None:
     """One wrong answer here destroys local work, so pin all four call shapes."""
 
     published = ("submitted-1",)

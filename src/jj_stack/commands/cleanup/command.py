@@ -27,8 +27,8 @@ from jj_stack.commands._close_actions import (
     ManagedCommentLookup,
     apply_managed_comment_cleanup,
     apply_remote_branch_cleanup,
-    authorize_current_review_cleanup,
-    authorize_tracked_review,
+    check_current_review_cleanup,
+    check_tracked_review,
     find_managed_comments,
     native_stack_cleanup_blocker,
     plan_review_cleanup,
@@ -318,12 +318,12 @@ async def _cleanup_tracked_review(
     """Plan and apply cleanup for one exact closed review."""
 
     identity = prepared_change.review_identity
-    open_review, update, authorization_action = _review_cleanup_update(
+    open_review, update, blocker_action = _review_cleanup_update(
         observation=initial_observation,
         prepared_change=prepared_change,
     )
-    if authorization_action is not None:
-        record_action(authorization_action)
+    if blocker_action is not None:
+        record_action(blocker_action)
         return
     if open_review:
         if prepared_change.stale_reason is not None:
@@ -352,7 +352,7 @@ async def _cleanup_tracked_review(
     if comment_lookups is None:
         return
     if not prepared_cleanup.dry_run:
-        mutation_blocker = await authorize_current_review_cleanup(
+        mutation_blocker = await check_current_review_cleanup(
             change_id=prepared_change.change_id,
             context=prepared_cleanup.context,
             expected_update=update,
@@ -380,10 +380,10 @@ def _review_cleanup_update(
     observation: RepositoryObservation,
     prepared_change: PreparedCleanupChange,
 ) -> tuple[bool, ReviewRefUpdate | None, CleanupAction | None]:
-    """Authorize the exact review and derive its remote branch deletion."""
+    """Check the exact review and derive its remote branch deletion."""
 
     identity = prepared_change.review_identity
-    pull_request, blocker = authorize_tracked_review(
+    pull_request, blocker = check_tracked_review(
         allowed_states=frozenset({"open", "closed", "merged"}),
         change_id=prepared_change.change_id,
         observation=observation,
@@ -442,7 +442,7 @@ async def _apply_tracked_review_cleanup(
     record_action: Callable[[CleanupAction], None],
     remote_name: str,
 ) -> None:
-    """Apply an authorized branch/comment cleanup and retire the exact pair."""
+    """Apply a checked branch/comment cleanup and retire the exact pair."""
 
     identity = prepared_change.review_identity
     baseline = prepared_change.submitted_baseline
@@ -467,7 +467,7 @@ async def _apply_tracked_review_cleanup(
     if not comments_current:
         return
     if not prepared_cleanup.dry_run:
-        blocker = await authorize_current_review_cleanup(
+        blocker = await check_current_review_cleanup(
             change_id=prepared_change.change_id,
             context=prepared_cleanup.context,
             expected_update=None,

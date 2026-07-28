@@ -15,8 +15,8 @@ from jj_stack.review.landed_evidence import LandedReviewCandidate, collect_lande
 from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import Message
 
-from .authority import merge_authority_error
 from .models import MergeAction, MergeRevision
+from .preconditions import merge_precondition_error
 
 
 async def merge_pull_request(
@@ -110,7 +110,7 @@ async def _fresh(
         )
     except (CliError, GithubClientError, JjCommandError) as error:
         return None, str(error)
-    error = merge_authority_error(
+    error = merge_precondition_error(
         expected_bases={revision.change_id: bases},
         expected_repository=github.repository,
         expected_trunk_branch=trunk_branch,

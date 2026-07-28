@@ -42,7 +42,7 @@ from jj_stack.state.operation_lock import acquire_operation_lock
 
 from .execute import execute_merge_plan
 from .models import MergeExecutionInputs, MergeResult, PreparedMerge
-from .native import authorize_native_merge, build_native_merge_plan, execute_native_merge
+from .native import build_native_merge_plan, check_native_merge, execute_native_merge
 from .plan import build_merge_plan, validate_merge_plan_method
 from .render import print_merge_result
 
@@ -281,7 +281,7 @@ async def _stream_merge_async(
         )
         if prepared_merge.dry_run:
             if native is not None:
-                await authorize_native_merge(execution, github_client, native)
+                await check_native_merge(execution, github_client, native)
                 return execution.result(actions=(native.action(resolved_merge_method),))
             return execution.result(actions=plan.planned_actions())
         if native is not None:

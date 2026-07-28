@@ -13,8 +13,8 @@ from jj_stack.commands._close_actions import (
     ManagedCommentLookup,
     apply_managed_comment_cleanup,
     apply_remote_branch_cleanup,
-    authorize_current_review_cleanup,
-    authorize_current_tracked_pull_request,
+    check_current_review_cleanup,
+    check_current_tracked_pull_request,
     close_current_tracked_pull_request,
     emit_close_actions,
     find_managed_comments,
@@ -264,7 +264,7 @@ async def _mutate_orphan_close(
     recorder: ActionRecorder[CloseAction],
     run: _OrphanCloseRun,
 ) -> None:
-    """Apply the preflighted orphan mutations in their authorization order."""
+    """Apply the preflighted orphan mutations in dependency order."""
 
     pull_request = await _dissolve_orphan_native_stack(
         github_client=github_client,
@@ -316,13 +316,13 @@ async def _dissolve_orphan_native_stack(
     recorder: ActionRecorder[CloseAction],
     run: _OrphanCloseRun,
 ) -> GithubPullRequest | None:
-    """Freshly authorize and dissolve native membership when orphan cleanup needs it."""
+    """Recheck and dissolve native membership when orphan cleanup needs it."""
 
     if run.dry_run:
         pull_request = prepared.initial_pull_request
         blocked_action = None
     else:
-        pull_request, blocked_action = await authorize_current_tracked_pull_request(
+        pull_request, blocked_action = await check_current_tracked_pull_request(
             allowed_states=frozenset({"open", "closed", "merged"}),
             change_id=prepared.change_id,
             github_client=github_client,
@@ -343,7 +343,7 @@ async def _dissolve_orphan_native_stack(
     )
     try:
         native_stack = (
-            await selection.authorize_exact_active_suffix(persist=False)
+            await selection.recheck_active_suffix(persist=False)
             if run.dry_run
             else await selection.dissolve_exact()
         )
@@ -368,10 +368,10 @@ async def _cleanup_orphan_artifacts(
     recorder: ActionRecorder[CloseAction],
     run: _OrphanCloseRun,
 ) -> None:
-    """Delete the exact branch artifacts, then retire the authorized pair."""
+    """Delete the exact branch artifacts, then retire the checked pair."""
 
     if not run.dry_run:
-        blocked_action = await authorize_current_review_cleanup(
+        blocked_action = await check_current_review_cleanup(
             change_id=prepared.change_id,
             context=run.context,
             expected_update=prepared.branch_update,
@@ -394,7 +394,7 @@ async def _cleanup_orphan_artifacts(
         update=prepared.branch_update,
     )
     if not run.dry_run:
-        blocked_action = await authorize_current_review_cleanup(
+        blocked_action = await check_current_review_cleanup(
             change_id=prepared.change_id,
             context=run.context,
             expected_update=None,

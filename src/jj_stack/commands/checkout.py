@@ -218,7 +218,7 @@ async def _checkout_pull_request_stack(
             )
             stack = _discover_checkout_stack(client=client, revision=top_head_sha)
 
-        # Only the chain read after this re-read authorizes the tracking write below.
+        # Only the chain read after this re-read is used for the tracking write below.
         fresh_top = await _load_pull_request(
             github_client=github_client,
             pull_number=pull_number,

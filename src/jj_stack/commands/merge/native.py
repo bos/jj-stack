@@ -13,8 +13,8 @@ from jj_stack.models.github import GithubAsyncMerge, GithubStack
 from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import Message
 
-from .authority import merge_authority_error
 from .models import MergeAction, MergeExecutionInputs, MergePlan, MergeResult, MergeRevision
+from .preconditions import merge_precondition_error
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +90,7 @@ async def execute_native_merge(
     merge_method: str,
     native: NativeMergePlan,
 ) -> MergeResult:
-    await authorize_native_merge(execution, github, native)
+    await check_native_merge(execution, github, native)
     try:
         submission = await github.submit_stack_merge(
             expected_head_sha=native.target.commit_id,
@@ -134,7 +134,7 @@ async def execute_native_merge(
     )
 
 
-async def authorize_native_merge(
+async def check_native_merge(
     execution: MergeExecutionInputs,
     github: GithubClient,
     native: NativeMergePlan,
@@ -149,7 +149,7 @@ async def authorize_native_merge(
         remote_name=execution.remote_name,
         trunk_branch=execution.trunk_branch,
     )
-    error = merge_authority_error(
+    error = merge_precondition_error(
         inactive_allowed=frozenset(revision.change_id for revision in inactive),
         expected_bases={revision.change_id: (revision.base_ref,) for revision in revisions},
         expected_repository=github.repository,

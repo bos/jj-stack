@@ -20,11 +20,10 @@ def selected_native_stack(
 ) -> GithubStack | None:
     """Return the one native GitHub stack the selected pull requests belong to.
 
-    This is the only authority for that question. The selection may overlap at most one
-    resource, and every active member of that resource must be selected; a merged prefix
-    GitHub retains is always valid, so a resource the selection only touches through merged
-    members is still returned for callers that reconcile them. Callers that mutate a
-    resource separately require a selected review to still be an active member.
+    The selection may overlap at most one resource, and every active member of that resource
+    must be selected. A merged prefix GitHub retains is always valid, so a resource the selection
+    touches only through merged members is still returned for callers that reconcile them.
+    Callers that mutate a resource separately require a selected review to remain active.
     """
 
     selected = set(selected_pull_numbers)
@@ -143,7 +142,7 @@ class GithubStackSelection:
     ) -> GithubStack | None:
         """Dissolve one exact selected resource before mutating its pull requests."""
 
-        current = await self.authorize_exact_active_suffix(observed=observed)
+        current = await self.recheck_active_suffix(observed=observed)
         if current is None:
             return None
         try:
@@ -162,13 +161,13 @@ class GithubStackSelection:
             )
         return current
 
-    async def authorize_exact_active_suffix(
+    async def recheck_active_suffix(
         self,
         *,
         observed: tuple[GithubStack, ...] | None = None,
         persist: bool = True,
     ) -> GithubStack | None:
-        """Return the freshly authorized resource holding the selection's active reviews."""
+        """Return the current resource after confirming its active membership."""
 
         stacks = observed if observed is not None else await self.active_stacks(persist=persist)
         if not stacks:

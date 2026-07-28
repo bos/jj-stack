@@ -208,11 +208,11 @@ async def retire_landed_reviews(
 
     context = finalizer.command
 
-    async def current_retirement_error(
+    async def current_retirement_blocker(
         candidate: LandedReviewCandidate,
     ) -> Message | None:
         blocker = retirement_blocker(candidate) if retirement_blocker is not None else None
-        return blocker or await _retirement_authority_error(
+        return blocker or await _fresh_retirement_blocker(
             candidate=candidate,
             evidence_kind=evidence[candidate.change_id],
             finalizer=finalizer,
@@ -223,7 +223,7 @@ async def retire_landed_reviews(
     active_results = filter(lambda item: item[1].outcome != "skipped", enumerate(results))
     for index, result in active_results:
         candidate = result.candidate
-        reason = await current_retirement_error(candidate)
+        reason = await current_retirement_blocker(candidate)
         if reason is not None:
             results[index] = replace(result, retirement_skip_reason=reason)
             continue
@@ -244,7 +244,7 @@ async def retire_landed_reviews(
     return tuple(results)
 
 
-async def _retirement_authority_error(
+async def _fresh_retirement_blocker(
     *,
     candidate: LandedReviewCandidate,
     evidence_kind: LandedEvidenceKind,
@@ -286,8 +286,8 @@ def landed_exit_code(*, base: int, results: Sequence[LandedReviewResult]) -> int
     """Fold a failed tracking removal into a command's exit status.
 
     Preserving tracking a dependent stack still needs is ordinary operation and leaves the
-    base status alone; a durable write that was authorized and then failed is a failure a
-    scripted caller has to be able to see.
+    base status alone; a durable write that passed its checks and then failed is a failure
+    a scripted caller has to be able to see.
     """
 
     return 1 if any(result.retirement_failure is not None for result in results) else base

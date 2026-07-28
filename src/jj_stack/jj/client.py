@@ -43,7 +43,7 @@ _CONFIG_ORIGIN_TEMPLATE = r'json(source) ++ "\t" ++ json(path) ++ "\n"'
 
 
 def _review_fetch_refspec() -> str:
-    """Derive the fetch exclusion lazily from the review-branch policy authority."""
+    """Derive the fetch exclusion lazily from the review-branch policy."""
 
     from jj_stack.review.branches import review_branch_glob
 

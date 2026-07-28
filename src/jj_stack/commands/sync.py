@@ -294,7 +294,7 @@ async def _apply_selected_plan(
                 for landed in plan.landed
                 if landed.revision is not None
                 and not landed.revision.immutable
-                # Convergence already refused these, but ask the one authority again here:
+                # Convergence already refused these, but repeat the work-loss check here because
                 # this is the step that actually discards commits.
                 and not holds_unpublished_edit(
                     published_commit_ids=(landed.candidate.submitted_baseline.commit_id,),

@@ -17,7 +17,7 @@ class NativeStackPlan:
     affected_stack: GithubStack | None = None
 
     @property
-    def authorization_key(self) -> tuple[str, tuple[int, tuple[int, ...]] | None]:
+    def membership_key(self) -> tuple[str, tuple[int, tuple[int, ...]] | None]:
         stack = self.affected_stack
         return self.action, None if stack is None else (stack.number, stack.pull_request_numbers)
 
@@ -67,14 +67,14 @@ async def apply_native_stack_plan(
         return
     assert plan.action != "replace"
     try:
-        authorized = plan_native_stack(
+        current_plan = plan_native_stack(
             desired=pull_numbers,
             observed_stacks=await github_client.list_stacks(),
             pull_numbers_requiring_base_update=frozenset(),
         )
-        if authorized.authorization_key != plan.authorization_key:
+        if current_plan.membership_key != plan.membership_key:
             raise _membership_error("Native GitHub stack membership changed during submit.")
-        stack = authorized.affected_stack
+        stack = current_plan.affected_stack
         if stack is None:
             updated = await github_client.create_stack(pull_numbers=pull_numbers)
             expected_number = updated.number

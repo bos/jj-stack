@@ -66,10 +66,10 @@ def holds_unpublished_edit(
 ) -> bool:
     """Whether a local revision holds work that was never sent for review.
 
-    This is the only authority for that question, because acting on a wrong answer destroys
-    local work. An absent revision has nothing to lose and an immutable one cannot have been
-    edited locally. The published set is normally just the submitted baseline; adopting a
-    native survivor also counts the exact commit GitHub reported for it.
+    Every caller uses this check because acting on a wrong answer destroys local work. An
+    absent revision has nothing to lose and an immutable one cannot have been edited locally.
+    The published set is normally just the submitted baseline; adopting a native survivor
+    also counts the exact commit GitHub reported for it.
     """
 
     return (

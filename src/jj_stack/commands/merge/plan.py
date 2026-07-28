@@ -11,8 +11,8 @@ from jj_stack.review.landed_evidence import candidate_for_change
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.ui import Message
 
-from .authority import merge_authority_error
 from .models import MergeAction, MergePlan, MergeRevision
+from .preconditions import merge_precondition_error
 
 
 def build_merge_plan(
@@ -33,7 +33,7 @@ def build_merge_plan(
         if revision is None:
             boundary = _boundary(local, t"run {ui.cmd('relink')} before merging")
             break
-        error = merge_authority_error(
+        error = merge_precondition_error(
             expected_bases={},
             expected_repository=repository,
             expected_trunk_branch=trunk_branch,

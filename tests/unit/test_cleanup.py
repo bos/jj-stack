@@ -81,7 +81,7 @@ def test_local_cleanup_observations_flag_changes_outside_supported_stacks(
     )
 
 
-def test_cleanup_authorizes_only_the_exact_closed_review_branch_and_lease() -> None:
+def test_cleanup_accepts_only_the_exact_closed_review_branch_and_lease() -> None:
     pull_request, update, blocker = plan_review_cleanup(
         allowed_states=frozenset({"closed", "merged"}),
         change_id=CHANGE_ID,

@@ -32,8 +32,8 @@ from jj_stack.commands._close_actions import (
     CloseActionBody,
     apply_managed_comment_cleanup,
     apply_remote_branch_cleanup,
-    authorize_current_review_cleanup,
-    authorize_tracked_review,
+    check_current_review_cleanup,
+    check_tracked_review,
     close_current_tracked_pull_request,
     emit_close_actions,
     find_managed_comments as _find_managed_comments,
@@ -800,9 +800,7 @@ async def _stream_close_async(
                 blocked = True
             else:
                 native_stack = (
-                    await selection.authorize_exact_active_suffix(
-                        observed=native_stacks, persist=False
-                    )
+                    await selection.recheck_active_suffix(observed=native_stacks, persist=False)
                     if prepared_close.dry_run
                     else await selection.dissolve_exact(observed=native_stacks)
                 )
@@ -844,7 +842,7 @@ def _inspected_close_has_no_work(*, revisions: tuple[ReviewStatusRevision, ...])
 
     Both plain close and cleanup only act on changes jj-stack tracks: closing
     a saved pull request or deleting its remote branch. Neither action is
-    authorized for a change without review identity, so either variant is a
+    possible for a change without review identity, so either variant is a
     true no-op on such a stack.
     """
 
@@ -883,14 +881,14 @@ def _selected_observation_blocker(
     revisions: tuple[ReviewStatusRevision, ...],
     run: _CloseMutationRun,
 ) -> CloseAction | None:
-    """Authorize every selected tracked PR from one batch observation."""
+    """Check every selected tracked PR from one batch observation."""
 
     for revision in revisions:
         identity = run.review_identities.get(revision.change_id)
         baseline = run.current_state.submitted_baselines.get(revision.change_id)
         if identity is None or baseline is None:
             continue
-        _pull_request, blocker = authorize_tracked_review(
+        _pull_request, blocker = check_tracked_review(
             allowed_states=frozenset({"open", "closed", "merged"}),
             change_id=revision.change_id,
             observation=observation,
@@ -962,7 +960,7 @@ async def _process_close_revision(
     if not cleanup_succeeded:
         return True
     if not run.dry_run:
-        blocker = await authorize_current_review_cleanup(
+        blocker = await check_current_review_cleanup(
             change_id=revision.change_id,
             context=run.prepared_close.context,
             expected_update=None,

@@ -1,4 +1,4 @@
-"""Fresh policy-free facts used to authorize review mutations."""
+"""Fresh review observations used to check mutations."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from jj_stack.state.store import ReviewStateStore
 
 @dataclass(frozen=True, slots=True)
 class ReviewObservation:
-    """Fresh facts for one change ID; no field is an authorization decision."""
+    """Fresh facts for one change ID; no field decides whether a mutation is safe."""
 
     baseline: SubmittedBaseline | None
     head_pull_requests: tuple[GithubPullRequest, ...]
@@ -73,7 +73,7 @@ async def observe_reviews(
     state_store: ReviewStateStore | None = None,
     trunk_branch: str | None = None,
 ) -> RepositoryObservation:
-    """Reload policy-free facts needed by an immediately following mutation."""
+    """Reload observations needed by an immediately following mutation."""
 
     remotes = () if context is None else context.jj_client.list_git_remotes()
     remote = next((item for item in remotes if item.name == remote_name), None)

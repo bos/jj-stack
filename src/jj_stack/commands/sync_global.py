@@ -113,7 +113,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
                 )
                 or had_failure
             )
-        authorized_exact, terminal_required = _authorize_exact_candidates(
+        eligible_exact, terminal_required = _eligible_exact_candidates(
             candidates=exact_candidates,
             native_stacks=native_stacks,
             pull_requests=pull_requests,
@@ -123,7 +123,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
                 if identity.repository_key == target.repository.repository_key
             ),
         )
-        had_failure = had_failure or len(authorized_exact) != len(exact_candidates)
+        had_failure = had_failure or len(eligible_exact) != len(exact_candidates)
         finalizer = FinalizationContext(
             command=context,
             dry_run=dry_run,
@@ -133,12 +133,12 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             trunk_commit_id=trunk.commit_id,
         )
         results = await finalize_landed_reviews(
-            candidates=authorized_exact,
+            candidates=eligible_exact,
             finalizer=finalizer,
             skip_finalization=terminal_required,
         )
         results = await retire_landed_reviews(
-            evidence={candidate.change_id: "exact" for candidate in authorized_exact},
+            evidence={candidate.change_id: "exact" for candidate in eligible_exact},
             finalization_results=results,
             finalizer=finalizer,
             terminal_required=terminal_required,
@@ -148,20 +148,20 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
     return landed_exit_code(base=1 if blocked else 0, results=results)
 
 
-def _authorize_exact_candidates(
+def _eligible_exact_candidates(
     candidates: tuple[LandedReviewCandidate, ...],
     native_stacks: tuple[GithubStack, ...],
     pull_requests: dict[int, GithubPullRequest | GithubClientError | None],
     tracked_pull_numbers: frozenset[int],
 ) -> tuple[tuple[LandedReviewCandidate, ...], frozenset[str]]:
     members = [member for stack in native_stacks for member in stack.pull_requests]
-    authorized: list[LandedReviewCandidate] = []
+    eligible: list[LandedReviewCandidate] = []
     terminal_required: set[str] = set()
     for candidate in candidates:
         number = candidate.review_identity.pr_number
         matching = [member for member in members if member.number == number]
         if not matching:
-            authorized.append(candidate)
+            eligible.append(candidate)
             continue
         pull_request = pull_requests.get(number)
         if (
@@ -181,9 +181,9 @@ def _authorize_exact_candidates(
                 t"membership, or has tracked active members",
             )
             continue
-        authorized.append(candidate)
+        eligible.append(candidate)
         terminal_required.add(candidate.change_id)
-    return tuple(authorized), frozenset(terminal_required)
+    return tuple(eligible), frozenset(terminal_required)
 
 
 def _report_global_nonexact_candidate(

@@ -1,4 +1,4 @@
-"""Thin merge policy over fresh, policy-free review observations."""
+"""Merge preconditions checked against fresh review observations."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.review.observation import RepositoryObservation, ReviewObservation
 
 
-def merge_authority_error(
+def merge_precondition_error(
     *,
     expected_bases: Mapping[str, tuple[str, ...]],
     expected_repository: GithubRepoAddress,
@@ -20,7 +20,7 @@ def merge_authority_error(
     revisions: tuple[MergeRevision, ...],
     inactive_allowed: frozenset[str] = frozenset(),
 ) -> str | None:
-    """Explain why fresh facts do not authorize one immediately following mutation."""
+    """Explain why fresh facts do not permit the next mutation."""
 
     remote = observation.remote
     if remote is None or remote.name != remote_name:
@@ -43,7 +43,7 @@ def merge_authority_error(
         return "the live trunk ref moved after planning"
 
     for revision in revisions:
-        error = _review_authority_error(
+        error = _review_precondition_error(
             expected_bases=expected_bases.get(revision.change_id, ()),
             expected_repository=expected_repository,
             observed=observation.reviews[revision.change_id],
@@ -55,7 +55,7 @@ def merge_authority_error(
     return None
 
 
-def _review_authority_error(
+def _review_precondition_error(
     *,
     expected_bases: tuple[str, ...],
     expected_repository: GithubRepoAddress,
