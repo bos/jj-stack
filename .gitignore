@@ -3,9 +3,7 @@ __pycache__/
 .claude/
 htmlcov/
 .pytest_cache/
-.roam/index.db
-.roam/index.db-shm
-.roam/index.db-wal
+.roam/
 .ruff_cache/
 .ty_cache/
 .uv-cache/
