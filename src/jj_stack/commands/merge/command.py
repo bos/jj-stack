@@ -29,7 +29,7 @@ from jj_stack.errors import CliError, DriftError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import resolve_trunk_branch
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepository
 from jj_stack.review.discovery import discover_stacks_from_revisions
 from jj_stack.review.observation import RepositoryObservation, observe_reviews

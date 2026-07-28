@@ -56,7 +56,8 @@ from jj_stack.github.resolution import (
     resolve_github_target,
 )
 from jj_stack.github.stack_comments import stack_comment_label
-from jj_stack.jj.client import JjCliArgs, JjClient
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.branches import review_branch_matches_change

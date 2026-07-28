@@ -68,7 +68,7 @@ Two local-`jj` mechanics deserve emphasis because they are how *remote* actions 
 the *local* stack:
 
 - **Fetch-induced immutability.** `jj`'s default `immutable_heads()` includes untracked remote
-  bookmarks. Managed `review/*` branches are excluded from ordinary fetch, but another foreign
+  bookmarks. Managed review branches are excluded from ordinary fetch, but another foreign
   branch that points at a stack commit can still make that commit — and its ancestors —
   immutable, so the stack is no longer reviewable.
 - **Fetch-induced divergence.** If the foreign branch points at a commit that a local

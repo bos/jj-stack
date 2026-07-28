@@ -9,7 +9,7 @@ import subprocess
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -23,8 +23,17 @@ from jj_stack.errors import (
     ErrorMessage,
     UsageError,
 )
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.review.branches import (
+    review_branch_glob,
+    review_branch_ref,
+    review_fetch_refspec,
+    review_namespace,
+)
+
+TEMP_BOOKMARK_PREFIX = "jj-stack-tmp"
 
 _COMMIT_TEMPLATE = (
     r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '
@@ -37,25 +46,9 @@ _COMMIT_TEMPLATE = (
 )
 _SCAN_TEMPLATE_PREFIX = _COMMIT_TEMPLATE.removesuffix(r'"\n"') + r'"\t" ++ '
 _BOOKMARK_TEMPLATE = r'json(self) ++ "\n"'
-_REVIEW_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
+_REVIEW_TEMP_BOOKMARK = f"{TEMP_BOOKMARK_PREFIX}/checkout"
 _REVIEW_TEMP_REF = f"refs/heads/{_REVIEW_TEMP_BOOKMARK}"
 _CONFIG_ORIGIN_TEMPLATE = r'json(source) ++ "\t" ++ json(path) ++ "\n"'
-
-
-def _review_fetch_refspec() -> str:
-    """Derive the fetch exclusion lazily from the review-branch policy."""
-
-    from jj_stack.review.branches import review_branch_glob
-
-    return f"^refs/heads/{review_branch_glob()}"
-
-
-def _review_namespace() -> str:
-    """Return the reserved namespace lazily to avoid a formatting/client import cycle."""
-
-    from jj_stack.review.branches import REVIEW_BRANCH_PREFIX
-
-    return f"{REVIEW_BRANCH_PREFIX}/"
 
 
 class JjCommandError(CliError):
@@ -72,7 +65,6 @@ class ReviewFetchIsolation:
     status: ReviewFetchIsolationStatus
     remote: str
     existing_count: int = 0
-    refspec: str = field(default_factory=_review_fetch_refspec)
 
 
 class ReviewFetchIsolationRequired(CliError):
@@ -82,8 +74,8 @@ class ReviewFetchIsolationRequired(CliError):
         self.isolation = isolation
         change = "adding" if isolation.existing_count == 0 else "normalizing"
         super().__init__(
-            t"Dry run would reserve {ui.bookmark(_review_namespace())} for jj-stack by "
-            t"{change} {ui.code(isolation.refspec)} in remote "
+            t"Dry run would reserve {ui.bookmark(review_namespace())} for jj-stack by "
+            t"{change} {ui.code(review_fetch_refspec())} in remote "
             t"{ui.bookmark(isolation.remote)}'s Git fetch refspecs.",
             hint="Run the command without --dry-run once to apply this local configuration.",
         )
@@ -167,24 +159,6 @@ class _NativeRevision(Protocol):
 
 CliColorMode = Literal["always", "auto", "debug", "never"]
 JjColorWhen = Literal["always", "debug", "never"]
-
-
-@dataclass(slots=True, frozen=True)
-class JjCliArgs:
-    """Global `jj` CLI overrides that flow to every jj invocation.
-
-    Mirrors jj's own `--config NAME=VALUE` and `--config-file PATH` options so
-    that a single value object carries the user's intent from the CLI down to
-    every subprocess call. The argv is stored as one ordered tuple so the
-    interleaving between `--config` and `--config-file` is preserved — jj
-    applies later overrides on top of earlier ones, and a file listed after
-    an inline value wins over it.
-    """
-
-    argv: tuple[str, ...] = ()
-
-    def to_argv(self) -> tuple[str, ...]:
-        return self.argv
 
 
 _NO_CLI_ARGS = JjCliArgs()
@@ -906,7 +880,7 @@ class JjClient:
             raise CliError(
                 t"Effective jj setting {ui.code(override_key)} from {origin} overrides "
                 t"Git fetch refspecs, so jj-stack cannot keep "
-                t"{ui.bookmark(_review_namespace())} remote-only.",
+                t"{ui.bookmark(review_namespace())} remote-only.",
                 hint=hint,
             )
 
@@ -914,8 +888,8 @@ class JjClient:
 
         config_key = f"remote.{remote}.fetch"
         configured = self._git_fetch_refspecs(remote)
-        review_fetch_refspec = _review_fetch_refspec()
-        count = configured.count(review_fetch_refspec)
+        refspec = review_fetch_refspec()
+        count = configured.count(refspec)
         if count == 1:
             return ReviewFetchIsolation(
                 status="ready",
@@ -952,13 +926,13 @@ class JjClient:
                 "--fixed-value",
                 "--replace-all",
                 config_key,
-                review_fetch_refspec,
-                review_fetch_refspec,
+                refspec,
+                refspec,
             )
         )
         updated = self._git_fetch_refspecs(remote)
         retained_default = bool(configured) or updated.count(default_fetch_refspec) == 1
-        if updated.count(review_fetch_refspec) != 1 or not retained_default:
+        if updated.count(refspec) != 1 or not retained_default:
             raise JjCommandError(
                 t"Git fetch configuration for remote {ui.bookmark(remote)} did not retain "
                 t"the required positive and negative refspecs."
@@ -979,11 +953,11 @@ class JjClient:
         )
         export = ui.cmd("jj git export")
         raise CliError(
-            t"Bookmarks in the reserved {ui.bookmark(_review_namespace())} namespace are "
+            t"Bookmarks in the reserved {ui.bookmark(review_namespace())} namespace are "
             t"imported locally: {ui.join(ui.bookmark, imported)}.",
             hint=(
                 t"Move any work you need to keep to names outside "
-                t"{ui.bookmark(_review_namespace())}, run {forget}, then run {export}. "
+                t"{ui.bookmark(review_namespace())}, run {forget}, then run {export}. "
                 t"Then retry the command."
             ),
         )
@@ -995,8 +969,6 @@ class JjClient:
         too. An untracked remote bookmark here would make its target immutable, and a narrower
         name test would leave that with no diagnostic.
         """
-
-        from jj_stack.review.branches import review_branch_glob
 
         stdout = self._run_jj(
             (
@@ -1058,7 +1030,7 @@ class JjClient:
         Remote targets are rechecked immediately before jj import and after a successful yield.
         """
 
-        ref = _review_ref(branch)
+        ref = review_branch_ref(branch)
         chain = tuple(expected_chain)
         if chain and (
             expected_parent_commit_id is None
@@ -1124,7 +1096,12 @@ class JjClient:
         finally:
             self._clear_review_temp_ref()
 
-    def read_remote_git_change_id(self, *, remote: str, commit_id: str) -> str | None:
+    def read_remote_git_change_id(
+        self,
+        *,
+        remote: str,
+        commit_id: str,
+    ) -> str | None:
         """Fetch and inspect one exact remote Git object without creating a ref."""
 
         if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", commit_id) is None:
@@ -1227,7 +1204,7 @@ class JjClient:
     ) -> None:
         observed = self._list_remote_branches_at_url(
             fetch_url=fetch_url,
-            patterns=tuple(_review_ref(branch) for branch in expected_targets),
+            patterns=tuple(review_branch_ref(branch) for branch in expected_targets),
         )
         for branch, expected_target in expected_targets.items():
             actual_target = observed.get(branch)
@@ -1256,7 +1233,7 @@ class JjClient:
         branches = tuple(update.branch for update in ordered_updates)
         if len(set(branches)) != len(branches):
             raise ValueError("remote review-ref update set contains duplicate branches")
-        refs = tuple(_review_ref(branch) for branch in branches)
+        refs = tuple(review_branch_ref(branch) for branch in branches)
         if any(
             update.expected_target is None and update.desired_target is None
             for update in ordered_updates
@@ -1586,16 +1563,6 @@ _HTTP_URL_AUTHORITY_PATTERN = re.compile(
 
 def _is_missing_revision_error(message: str) -> bool:
     return "Revision `" in message and "doesn't exist" in message
-
-
-def _review_ref(branch: str) -> str:
-    """Return the full Git ref for one managed jj-stack review branch."""
-
-    from jj_stack.review.branches import is_managed_review_branch
-
-    if not is_managed_review_branch(branch):
-        raise ValueError(f"not a managed jj-stack review branch: {branch!r}")
-    return f"refs/heads/{branch}"
 
 
 def _unwrap_command_error_message(message: str) -> str:

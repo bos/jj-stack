@@ -35,9 +35,9 @@ trunk() <- A <- B <- C
 `A`, `B`, and `C` are review changes, and `C` is the selected head. On GitHub they become:
 
 ```text
-PR for C: head review/C, base review/B
-PR for B: head review/B, base review/A
-PR for A: head review/A, base trunk
+PR for C: head jj-stack/C, base jj-stack/B
+PR for B: head jj-stack/B, base jj-stack/A
+PR for A: head jj-stack/A, base trunk
 ```
 
 The actual branch names include a subject slug and change-ID suffix, but those names are only
@@ -120,13 +120,13 @@ branches live on the remote only and remain outside the local `jj` view.
 The initial name is:
 
 ```text
-review/<slug-from-subject>-<change_id.short(8)>
+<branch-prefix>/<slug-from-subject>-<change_id.short(8)>
 ```
 
-For example:
+For example, with the default prefix:
 
 ```text
-review/add-cache-index-ypvmkkuo
+jj-stack/add-cache-index-ypvmkkuo
 ```
 
 The slug is lowercase ASCII derived from the first description line. The change-ID suffix ties
@@ -148,18 +148,19 @@ operations, the tool resolves it to one concrete remote bookmark on the selected
 bookmark on that remote whose target is `trunk()`. If `trunk()` falls back to `root()` or cannot
 be mapped to exactly one such bookmark, `submit` stops rather than guessing.
 
-### The reserved `review/` branch namespace
+### The reserved branch namespace
 
-`jj-stack` reserves the fixed `review/` namespace for its managed branches. Ordinary `jj`
-bookmarks outside that namespace behave normally.
+A repository reserves exactly one branch namespace for `jj-stack`'s managed branches, named by
+`branch_prefix` — one lowercase path segment, `jj-stack` by default. Ordinary `jj` bookmarks
+outside that namespace behave normally.
 
 The namespace has to stay out of the local `jj` view. `jj`'s default `immutable_heads()` counts
-untracked remote bookmarks as immutable, so an ordinary fetch of `review/*` would make every
+untracked remote bookmarks as immutable, so an ordinary fetch of the namespace would make every
 review branch target immutable, which takes the changes it points at out of review. `jj-stack`
 therefore excludes the whole namespace from the remote's fetch configuration.
 
-Before fetching or mutating reviews, `jj-stack` stops if a `review/` bookmark has reached the
-local `jj` view and names the repair. Plain `view` and `list` do not run this preflight.
+Before fetching or mutating reviews, `jj-stack` stops if a bookmark in the namespace has reached
+the local `jj` view and names the repair. Plain `view` and `list` do not run this preflight.
 
 ### GitHub stack objects
 
@@ -308,6 +309,7 @@ workspace precedence:
 
 ```toml
 [jj-stack]
+branch_prefix = "jj-stack"
 reviewers = ["octocat"]
 team_reviewers = ["platform"]
 labels = ["needs-review"]

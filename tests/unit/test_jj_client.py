@@ -946,22 +946,22 @@ def test_list_remote_branches_resolves_jj_remote_name_to_fetch_url(
             "ls-remote",
             "--refs",
             "https://github.test/octo-org/repo.git",
-            "refs/heads/review/feat",
+            "refs/heads/jj-stack/feat",
         ):
             return subprocess.CompletedProcess(
                 command,
                 0,
-                stdout="abc123\trefs/heads/review/feat\n",
+                stdout="abc123\trefs/heads/jj-stack/feat\n",
                 stderr="",
             )
         raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
     result = JjClient(Path("/repo")).list_remote_branches(
-        remote="origin", patterns=("refs/heads/review/feat",)
+        remote="origin", patterns=("refs/heads/jj-stack/feat",)
     )
 
-    assert result == {"review/feat": "abc123"}
+    assert result == {"jj-stack/feat": "abc123"}
     assert seen_commands == [
         ("jj", "--ignore-working-copy", "git", "remote", "list"),
         ("jj", "--ignore-working-copy", "git", "root"),
@@ -972,7 +972,7 @@ def test_list_remote_branches_resolves_jj_remote_name_to_fetch_url(
             "ls-remote",
             "--refs",
             "https://github.test/octo-org/repo.git",
-            "refs/heads/review/feat",
+            "refs/heads/jj-stack/feat",
         ),
     ]
 
@@ -990,7 +990,7 @@ def test_list_remote_branches_rejects_an_unconfigured_remote(
     with pytest.raises(JjCommandError, match="missing.*not configured"):
         JjClient(Path("/repo")).list_remote_branches(
             remote="missing",
-            patterns=("refs/heads/review/feat",),
+            patterns=("refs/heads/jj-stack/feat",),
         )
 
     assert seen_commands == [("jj", "--ignore-working-copy", "git", "remote", "list")]
@@ -1028,7 +1028,7 @@ def test_remote_failure_redacts_http_userinfo_without_changing_subprocess_argv(
             "ls-remote",
             "--refs",
             remote_url,
-            "refs/heads/review/feat",
+            "refs/heads/jj-stack/feat",
         ):
             return subprocess.CompletedProcess(
                 command,
@@ -1043,7 +1043,7 @@ def test_remote_failure_redacts_http_userinfo_without_changing_subprocess_argv(
     with pytest.raises(JjCommandError) as raised:
         JjClient(Path("/repo")).list_remote_branches(
             remote="origin",
-            patterns=("refs/heads/review/feat",),
+            patterns=("refs/heads/jj-stack/feat",),
         )
 
     rendered = str(raised.value)
@@ -1108,7 +1108,7 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
 def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    review_refspec = "^refs/heads/review/*"
+    review_refspec = "^refs/heads/jj-stack/*"
     positive_refspec = "+refs/heads/*:refs/remotes/origin/*"
     seen_commands: list[tuple[str, ...]] = []
     events: list[str] = []
@@ -1233,9 +1233,9 @@ def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = (
-        json.dumps({"name": "review/not-managed", "target": ["one"]})
+        json.dumps({"name": "jj-stack/not-managed", "target": ["one"]})
         + "\n"
-        + json.dumps({"name": "review/feature-abcdefgh", "target": ["two"]})
+        + json.dumps({"name": "jj-stack/feature-abcdefgh", "target": ["two"]})
         + "\n"
     )
 
@@ -1245,8 +1245,8 @@ def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
     monkeypatch.setattr(subprocess, "run", runner)
 
     assert JjClient(Path("/repo")).list_imported_review_bookmarks() == (
-        "review/feature-abcdefgh",
-        "review/not-managed",
+        "jj-stack/feature-abcdefgh",
+        "jj-stack/not-managed",
     )
 
 
@@ -1255,8 +1255,8 @@ def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
     observed_target = "old"
-    old_branch = "review/old-aaaaaaaa"
-    new_branch = "review/new-bbbbbbbb"
+    old_branch = "jj-stack/old-aaaaaaaa"
+    new_branch = "jj-stack/new-bbbbbbbb"
     old_ref = f"refs/heads/{old_branch}"
     new_ref = f"refs/heads/{new_branch}"
 
@@ -1278,7 +1278,7 @@ def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects
             return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
         if invocation[-3:] == ("config", "--get-all", "remote.origin.fetch"):
             return subprocess.CompletedProcess(
-                command, 0, stdout="^refs/heads/review/*\n", stderr=""
+                command, 0, stdout="^refs/heads/jj-stack/*\n", stderr=""
             )
         if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
             return subprocess.CompletedProcess(
@@ -1376,7 +1376,7 @@ def test_remote_change_id_inspection_fetches_an_object_without_creating_a_ref(
             return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
         if invocation[-3:] == ("config", "--get-all", "remote.origin.fetch"):
             return subprocess.CompletedProcess(
-                command, 0, stdout="^refs/heads/review/*\n", stderr=""
+                command, 0, stdout="^refs/heads/jj-stack/*\n", stderr=""
             )
         if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
             return subprocess.CompletedProcess(

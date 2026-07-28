@@ -57,7 +57,7 @@ def test_checkout_without_fetch_rejects_an_imported_review_bookmark(
 
     assert _main(repo, config_path, "checkout", "--pull-request", "1") == 1
 
-    assert "reserved review/ namespace are imported locally" in capsys.readouterr().err
+    assert "reserved jj-stack/ namespace are imported locally" in capsys.readouterr().err
     assert state_store.load().review_identities == {}
     assert JjClient(repo).list_imported_review_bookmarks() == (identity.head_ref,)
 

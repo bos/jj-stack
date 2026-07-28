@@ -23,14 +23,15 @@ from jj_stack.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
-from jj_stack.jj.client import JjCliArgs, JjClient, UnsupportedStackError
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import JjClient, UnsupportedStackError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import (
-    is_managed_review_branch,
-    review_branch_glob,
+    is_review_branch,
     review_branch_matches_change,
+    review_namespace,
 )
 from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.observation import duplicate_review_claim_change_ids
@@ -265,7 +266,10 @@ def _reject_locally_rewritten_change(
     would instead give that shared primitive a second policy path.
     """
 
-    change_id = client.read_remote_git_change_id(remote=remote_name, commit_id=head_sha)
+    change_id = client.read_remote_git_change_id(
+        remote=remote_name,
+        commit_id=head_sha,
+    )
     if change_id is None:
         return
     # `change_id()` rather than an exact symbol: it tolerates a change that is already
@@ -324,7 +328,7 @@ async def _load_pull_request_chain(
     top_down = [top]
     seen = {top.head.ref}
     base = top.base.ref
-    while is_managed_review_branch(base):
+    while is_review_branch(base):
         if base in seen:
             raise CliError("Pull-request base branches form a cycle.")
         seen.add(base)
@@ -477,11 +481,11 @@ def _validate_same_repository_managed_pull_request(
             t"{ui.bookmark(pull_request.head.label or pull_request.head.ref)} does not "
             t"belong to {repository.full_name}."
         )
-    if not is_managed_review_branch(pull_request.head.ref):
+    if not is_review_branch(pull_request.head.ref):
         raise CliError(
             t"Pull request #{pull_request.number} head "
-            t"{ui.bookmark(pull_request.head.ref)} does not match the managed "
-            t"{ui.bookmark(review_branch_glob())} naming scheme."
+            t"{ui.bookmark(pull_request.head.ref)} is not in the reserved "
+            t"{ui.bookmark(review_namespace())} namespace."
         )
 
 

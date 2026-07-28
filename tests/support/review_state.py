@@ -8,7 +8,7 @@ from jj_stack.models.review_state import ReviewIdentity
 def make_review_identity(
     *,
     head_owner: str = "octo-org",
-    head_ref: str = "review/example-abcdefgh",
+    head_ref: str = "jj-stack/example-abcdefgh",
     pr_number: int = 1,
     repository_name: str = "stacked-review",
     repository_owner: str = "octo-org",

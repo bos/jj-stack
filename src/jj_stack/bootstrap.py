@@ -12,8 +12,12 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.config import AppConfig, load_config
 from jj_stack.errors import CliError
-from jj_stack.jj.client import JjCliArgs, JjClient
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewStateRecordIssue
+from jj_stack.review.branches import (
+    install_review_namespace,
+)
 from jj_stack.state.store import ReviewStateStore
 
 _MINIMUM_JJ_VERSION = (0, 43, 0)
@@ -32,8 +36,6 @@ class _ElapsedFormatter(logging.Formatter):
         base = super().format(record)
         if not time_output_active:
             return base
-        from jj_stack import console
-
         elapsed = time.perf_counter() - APP_START
         return console.style_time_prefix(f"[{elapsed:0.6f}] ") + base
 
@@ -73,6 +75,7 @@ def bootstrap_context(
     jj_client = JjClient(repo_root, cli_args=cli_args)
     config = load_config(jj_client=jj_client)
     configure_logging(debug=debug, configured_level=config.logging.level)
+    install_review_namespace(config.branch_prefix)
 
     return CommandContext(
         config=config,

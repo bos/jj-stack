@@ -55,7 +55,8 @@ from jj_stack.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
 )
-from jj_stack.jj.client import JjCliArgs, JjClient, ReviewRefUpdate
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity
@@ -352,7 +353,10 @@ def _recover_interrupted_first_submissions(
             )
         branch, target = next(iter(candidates.items()))
         if (
-            client.read_remote_git_change_id(remote=remote.name, commit_id=target)
+            client.read_remote_git_change_id(
+                remote=remote.name,
+                commit_id=target,
+            )
             != resolution.change_id
         ):
             raise CliError(

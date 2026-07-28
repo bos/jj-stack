@@ -33,9 +33,13 @@ from jj_stack.github.resolution import (
     parse_github_repo,
     select_submit_remote,
 )
-from jj_stack.jj.client import JjCliArgs, ReviewFetchIsolationRequired
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import ReviewFetchIsolationRequired
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
+from jj_stack.review.branches import (
+    review_fetch_refspec,
+)
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
@@ -207,7 +211,7 @@ def _check_review_fetch_isolation(
     return CheckResult(
         "review branch fetch",
         "fixed" if isolation.status == "applied" else "ok",
-        t"exactly one {ui.code(isolation.refspec)} exclusion",
+        t"exactly one {ui.code(review_fetch_refspec())} exclusion",
     )
 
 

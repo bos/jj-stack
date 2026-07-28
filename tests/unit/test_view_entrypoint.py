@@ -8,7 +8,7 @@ import pytest
 import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
 from jj_stack.errors import EXIT_INCOMPLETE
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.review_state import ReviewState
 
 from .entrypoint_test_helpers import patch_bootstrap

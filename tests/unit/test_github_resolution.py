@@ -152,7 +152,7 @@ def test_resolve_trunk_branch_falls_back_to_unique_non_review_remote_branch() ->
     client = _RemoteBranchClient(
         {
             "main": "trunk123",
-            "review/feature-abcdefgh": "trunk123",
+            "jj-stack/feature-abcdefgh": "trunk123",
         }
     )
 

@@ -195,8 +195,8 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
             nonlocal fresh_boundary_lookups
             if self.native_observed:
                 fresh_boundary_lookups += 1
-                fake_repo.pull_requests[1].head_ref = "review/moved-aaaaaaaa"
-                fake_repo.pull_requests[1].head_label = "octo-org:review/moved-aaaaaaaa"
+                fake_repo.pull_requests[1].head_ref = "jj-stack/moved-aaaaaaaa"
+                fake_repo.pull_requests[1].head_label = "octo-org:jj-stack/moved-aaaaaaaa"
             return await super().get_pull_requests_by_numbers(pull_numbers=pull_numbers)
 
         async def unstack(self, *, stack_number):
@@ -356,7 +356,7 @@ def test_unstack_cleanup_pull_request_without_saved_record_reports_open_pr_not_t
     pull_request = fake_repo.create_pull_request(
         base_ref="main",
         body="",
-        head_ref="review/untracked",
+        head_ref="jj-stack/untracked",
         title="untracked",
     )
 
@@ -440,7 +440,7 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
     assert "Nothing to close on the selected stack." in dry_run_captured.out
     assert "Nothing to close on the selected stack." in close_captured.out
     assert "Nothing to close on the selected stack." in cleanup_captured.out
-    assert "Reserved review/" not in cleanup_captured.out
+    assert "Reserved jj-stack/" not in cleanup_captured.out
     assert state_store.load() == initial_state
     assert fetch_calls == []
     assert (

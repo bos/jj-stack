@@ -10,7 +10,7 @@ from pathlib import Path
 
 from rich.style import Style
 
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.cli_args import JjCliArgs
 
 _JJ_COLORS_TEMPLATE = r'name ++ "\0" ++ json(value) ++ "\n"'
 _JJ_STYLE_ATTRIBUTES = frozenset({"bg", "bold", "dim", "fg", "italic", "reverse", "underline"})

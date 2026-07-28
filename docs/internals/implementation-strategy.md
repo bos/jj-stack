@@ -179,7 +179,7 @@ configured fetch URL; leased mutation uses the configured push URL. No raw Git c
 a configured remote name, and the same boundary works for colocated and non-colocated
 repositories.
 
-Ordinary fetch installs a negative Git refspec for `refs/heads/review/*` and rejects an effective
+Ordinary fetch installs a negative Git refspec for the reserved namespace and rejects an effective
 jj `fetch-bookmarks` override that would bypass it. Every broad jj import or fetch that jj-stack
 performs immediately rechecks for imported managed review bookmarks before callers consume its
 result. Recovery ends with `jj git export`, so forgetting an imported bookmark also removes its
@@ -267,6 +267,9 @@ native membership policy, or fallback behavior.
 ### Config and tracking state
 
 - config lives in `jj`'s config scopes under the `jj-stack` namespace
+- `branch_prefix` names the one reserved branch namespace. `review/namespace.py` resolves it once
+  during bootstrap and is read wherever it is needed; it depends on nothing else in the package,
+  so `jj/client.py` can name the reservation without importing the policy above it
 - repo-specific defaults use `jj`'s built-in user/repo/workspace precedence
 - we do not duplicate `jj`'s config resolution in Python: reads go through
   `jj config list 'jj-stack'`, which inherits user/repo/workspace precedence plus

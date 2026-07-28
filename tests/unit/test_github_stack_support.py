@@ -42,13 +42,13 @@ def test_stack_support_caches_supported_repository_without_reprobing(
                     "number": 3,
                     "pull_requests": [
                         {
-                            "head": {"ref": "review/seven", "sha": "head-seven"},
+                            "head": {"ref": "jj-stack/seven", "sha": "head-seven"},
                             "merged_at": None,
                             "number": 7,
                             "state": "open",
                         },
                         {
-                            "head": {"ref": "review/eight", "sha": "head-eight"},
+                            "head": {"ref": "jj-stack/eight", "sha": "head-eight"},
                             "merged_at": None,
                             "number": 8,
                             "state": "open",

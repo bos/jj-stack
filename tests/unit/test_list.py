@@ -18,7 +18,7 @@ from jj_stack.review.discovery import (
 
 def test_orphan_hint_is_emitted_once_for_all_rows(monkeypatch) -> None:
     row = OrphanRow(
-        branch="review/orphan-aaaaaaaa",
+        branch="jj-stack/orphan-aaaaaaaa",
         change_id="a" * 32,
         pull_request={"number": 1},
         review="orphan",
@@ -55,7 +55,9 @@ def _revision(
     )
 
 
-def _identity(*, bookmark: str = "review/feature-abcdefgh", pr_number: int = 1) -> ReviewIdentity:
+def _identity(
+    *, bookmark: str = "jj-stack/feature-abcdefgh", pr_number: int = 1
+) -> ReviewIdentity:
     return ReviewIdentity(
         repository_owner="octo-org",
         repository_name="repo",

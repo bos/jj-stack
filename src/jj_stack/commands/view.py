@@ -25,7 +25,6 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._json_status import review_change_json
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
-from jj_stack.config import RepoConfig
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, error_message
 from jj_stack.formatting import (
     NativeRevision,
@@ -38,10 +37,14 @@ from jj_stack.github.error_messages import (
     github_unavailable_message,
     remote_unavailable_message,
 )
-from jj_stack.jj.client import JjCliArgs, UnsupportedStackError
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import UnsupportedStackError
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.branches import is_review_branch, review_branch_glob
+from jj_stack.review.branches import (
+    is_review_branch,
+    review_branch_glob,
+)
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
@@ -514,7 +517,11 @@ def _render_prepared_status(
             prerendered_blocks=prerendered_blocks,
         )
     )
-    _emit_lines(render_status_advisory_lines(config=context.config, result=result))
+    _emit_lines(
+        render_status_advisory_lines(
+            result=result,
+        )
+    )
 
     return EXIT_INCOMPLETE if result.incomplete else 0
 
@@ -694,7 +701,6 @@ def _render_submitted_section_title(revisions: tuple) -> str:
 
 def render_status_advisory_lines(
     *,
-    config: RepoConfig,
     result: StatusResult,
 ) -> tuple[ui.Renderable, ...]:
     """Render any advisories that follow the status stack output."""

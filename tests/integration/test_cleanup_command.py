@@ -39,7 +39,9 @@ def test_cleanup_retires_closed_review_after_local_change_is_abandoned(
     assert exit_code == 0
     assert "remove tracking for" in captured.out
     assert change_id not in ReviewStateStore.for_repo(repo).load().review_identities
-    assert not any(ref.startswith("refs/heads/review/") for ref in remote_refs(fake_repo.git_dir))
+    assert not any(
+        ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)
+    )
 
 
 def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(

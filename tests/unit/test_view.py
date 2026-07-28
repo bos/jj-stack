@@ -7,7 +7,6 @@ from typing import cast
 import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
 import jj_stack.ui as ui_module
-from jj_stack.config import RepoConfig
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.review.status import (
@@ -107,7 +106,6 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
                     submitted_state_disagreements=(),
                 ),
             ),
-            config=RepoConfig(),
         )
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
@@ -136,7 +134,6 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
                     ),
                 ),
             ),
-            config=RepoConfig(),
         )
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
@@ -166,7 +163,6 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_end_review() -> None:
                     submitted_state_disagreements=(),
                 ),
             ),
-            config=RepoConfig(),
         )
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
@@ -182,7 +178,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_end_review() -> None:
 def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
     revision = _status_revision(
         review_identity=_identity(
-            branch="review/feature-8-abcdefgh",
+            branch="jj-stack/feature-8-abcdefgh",
             pr_number=42,
         ),
         change_id="abcdefgh1234",
@@ -202,7 +198,6 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
                     submitted_state_disagreements=(),
                 ),
             ),
-            config=RepoConfig(),
         )
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
@@ -217,9 +212,9 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
 
 def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
     revision = _status_revision(
-        branch="review/feature-8-abcdefgh",
+        branch="jj-stack/feature-8-abcdefgh",
         review_identity=_identity(
-            branch="review/feature-8-abcdefgh",
+            branch="jj-stack/feature-8-abcdefgh",
             pr_number=8,
         ),
         change_id="abcdefgh1234",
@@ -255,9 +250,9 @@ def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
 
 def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() -> None:
     revision = _status_revision(
-        branch="review/feature-7-abcdefgh",
+        branch="jj-stack/feature-7-abcdefgh",
         review_identity=_identity(
-            branch="review/feature-7-abcdefgh",
+            branch="jj-stack/feature-7-abcdefgh",
             pr_number=7,
         ),
         change_id="abcdefgh1234",
@@ -298,9 +293,9 @@ def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() ->
 
 def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
     revision = _status_revision(
-        branch="review/feature-1-abcdefgh",
+        branch="jj-stack/feature-1-abcdefgh",
         review_identity=_identity(
-            branch="review/feature-1-abcdefgh",
+            branch="jj-stack/feature-1-abcdefgh",
             pr_number=1,
         ),
         change_id="abcdefgh1234",

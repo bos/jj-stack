@@ -191,36 +191,6 @@ runs after it, and only the chain read that follows the import is used for the t
 pre-import walk would therefore either duplicate those requests or move the required read
 earlier. Decide which before implementing.
 
-## Default the reserved review branch namespace to `jj-stack/` and make it configurable
-
-_Benefit: medium — `review/` is a plausible name for a user's own branches, and the whole
-namespace is reserved, so a collision costs the user a branch that silently stops updating._
-
-Default to `jj-stack/`, and make the namespace a `branch_prefix` key in the `[jj-stack]` config
-table. One namespace stays reserved per repository; only its name becomes a setting. It was
-configurable once, as `bookmark_prefix`, and `ktvyqsuvuuvw` was right to collapse the alternate
-policies around it but wrong to hardcode the name. Validate non-empty, no `/`, otherwise the slug
-charset of generated names, and no overlap with `jj-stack-tmp/`.
-
-Two things to do first, both worth doing anyway:
-
-- `state/store.py` currently requires a saved `head_ref` to start with `review/` and to carry a
-  slug stem, on top of the short change-ID suffix that ties the record to its change. Only the
-  suffix earns anything there: `checkout` and `relink` already refuse a PR head that is not a
-  managed name, and `submit` generates the names, so the store is a second enforcement point for a
-  naming rule it does not own. Narrow it to the suffix, or a prefix change invalidates every live
-  record.
-- `load_config` takes a `JjClient`, so the client cannot hold resolved config, and `jj/client.py`
-  reaches the prefix through lazy imports with `ReviewFetchIsolation.refspec` defaulting from a
-  factory. Passing the namespace in as an argument replaces both and drops the import cycle they
-  work around.
-
-The rest is mechanical: hardcoded `review/` across the tests, plus `design.md` (which calls the
-namespace fixed, and whose settings block gains the key), `mental-model.md`,
-`troubleshooting.md`, and `json-output.md`.
-
-No migration or compatibility shim should be written for this; the project has no such burden.
-
 ## Plain cleanup aborts on one record's lease rejection
 
 _Benefit: medium — one unrelated review branch moving on the remote currently stops cleanup for

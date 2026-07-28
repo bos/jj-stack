@@ -51,7 +51,7 @@ def test_list_json_reports_public_stack_rows(
 
     change = row["changes"][0]
     assert change["change_id"] == change_id
-    assert change["branch"].startswith("review/feature-1-")
+    assert change["branch"].startswith("jj-stack/feature-1-")
     assert change["pull_request"]["number"] == 1
     assert change["status"] == "open"
     assert "head_change_id" not in row
@@ -349,7 +349,7 @@ def test_list_batches_remote_and_github_lookup_across_repo_stacks(
     assert CountingGithubClient.review_decision_calls == []
     assert len(remote_branch_calls) == 1
     assert len(remote_branch_calls[0]) == 2
-    assert all(pattern.startswith("refs/heads/review/") for pattern in remote_branch_calls[0])
+    assert all(pattern.startswith("refs/heads/jj-stack/") for pattern in remote_branch_calls[0])
 
 
 def test_list_reports_no_stacks_when_state_is_empty(

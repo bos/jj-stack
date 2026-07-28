@@ -314,7 +314,7 @@ def _build_manual_pr_template(template_root: Path) -> None:
     commit_file(repo, "feature 1", "feature-1.txt")
     revision = JjClient(repo).discover_review_stack().head
     change_id = revision.change_id
-    manual_bookmark = f"review/manual-feature-{short_change_id(change_id)}"
+    manual_bookmark = f"jj-stack/manual-feature-{short_change_id(change_id)}"
     JjClient(repo).mutate_remote_review_refs(
         remote="origin",
         updates=(

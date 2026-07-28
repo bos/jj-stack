@@ -30,7 +30,7 @@ def github_stack(
             "pull_requests": [
                 {
                     "head": {
-                        "ref": f"review/pull-{pull_number}",
+                        "ref": f"jj-stack/pull-{pull_number}",
                         "sha": f"head-{pull_number}",
                     },
                     "merged_at": (
@@ -1391,7 +1391,7 @@ def _stack_pull_request_payload(
     pull_request = repository.pull_requests.get(pull_number)
     if pull_request is None:
         return {
-            "head": {"ref": f"review/pull-{pull_number}", "sha": f"head-{pull_number}"},
+            "head": {"ref": f"jj-stack/pull-{pull_number}", "sha": f"head-{pull_number}"},
             "merged_at": None,
             "number": pull_number,
             "state": "open",

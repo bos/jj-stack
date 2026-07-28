@@ -589,7 +589,7 @@ def test_submit_uses_readable_review_branch_names(
 
     for revision, subject in zip(stack.revisions, ("feature-1", "feature-2"), strict=True):
         branch = state.review_identities[revision.change_id].head_ref
-        assert branch == f"review/{subject}-{revision.change_id[:8]}"
+        assert branch == f"jj-stack/{subject}-{revision.change_id[:8]}"
         assert f"refs/heads/{branch}" in remote_refs(fake_repo.git_dir)
 
 
@@ -1722,7 +1722,7 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
     pushed_review_refs = {
         ref: target
         for ref, target in remote_refs(fake_repo.git_dir).items()
-        if ref.startswith("refs/heads/review/")
+        if ref.startswith("refs/heads/jj-stack/")
     }
     assert len(pushed_review_refs) == 2
     assert set(pushed_review_refs.values()) == {

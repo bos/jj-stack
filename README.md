@@ -59,21 +59,27 @@ jj-stack
 
 (This is a synonym for `jj-stack view`.)
 
-`jj-stack` reserves the `review/` branch namespace for the branches it pushes, and keeps them off
-your local bookmark view. The first command that needs the remote adds one exclusion to that
+`jj-stack` reserves the `jj-stack/` branch namespace for the branches it pushes, and keeps them
+off your local bookmark view. The first command that needs the remote adds one exclusion to that
 remote's Git fetch configuration and tells you it did:
 
 ```text
-Reserved review/ for jj-stack and added fetch exclusion ^refs/heads/review/*.
+Reserved jj-stack/ for jj-stack and added fetch exclusion ^refs/heads/jj-stack/*.
 ```
 
-After that, neither `jj git fetch` nor `git fetch` brings `review/*` branches into this repo. Do
-not keep your own branches under `review/`. To undo the reservation, remove that one line from the
-Git repository backing `jj`:
+After that, neither `jj git fetch` nor `git fetch` brings `jj-stack/*` branches into this repo. Do
+not keep your own branches under `jj-stack/`. To undo the reservation, remove that one line from
+the Git repository backing `jj`:
 
 ```bash
 git --git-dir "$(jj git root)" config --unset --fixed-value \
-  remote.origin.fetch '^refs/heads/review/*'
+  remote.origin.fetch '^refs/heads/jj-stack/*'
+```
+
+To reserve a different namespace instead, set `branch_prefix` before your first submit:
+
+```bash
+jj config set --repo jj-stack.branch_prefix my-reviews
 ```
 
 ### Two-minute first run
@@ -108,7 +114,7 @@ For a multi-change stack, you can use `--describe stack=stack-overview.md` to ad
 description of the entire stack to the head PR. This is very helpful to orient a reviewer.
 
 On first submit, `jj-stack` creates one stable, readable GitHub review branch per change, such as
-`review/add-the-api-qpvuntsm`. The branches stay on the Git remote rather than appearing as
+`jj-stack/add-the-api-qpvuntsm`. The branches stay on the Git remote rather than appearing as
 persistent bookmarks in your local `jj` view.
 
 Inspect your stack again:
@@ -143,10 +149,10 @@ On GitHub:
 For example:
 
 ```text
-review/add-ui-...        -> PR #3 (base: review/add-api-...)
-review/add-api-...       -> PR #2 (base: review/refactor-model-...)
-review/refactor-model... -> PR #1 (base: main)
-main                     -> trunk
+jj-stack/add-ui-...        -> PR #3 (base: jj-stack/add-api-...)
+jj-stack/add-api-...       -> PR #2 (base: jj-stack/refactor-model-...)
+jj-stack/refactor-model... -> PR #1 (base: main)
+main                       -> trunk
 ```
 
 When you rewrite an intermediate change in `jj`, `jj-stack` updates the matching review branch

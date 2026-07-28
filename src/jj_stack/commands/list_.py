@@ -32,7 +32,8 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
-from jj_stack.jj.client import JjCliArgs, JjClient
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.change_status import (

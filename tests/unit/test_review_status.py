@@ -81,12 +81,12 @@ def test_prepare_status_observes_only_exact_saved_review_branches() -> None:
     )
     state = ReviewState(
         review_identities={
-            first.change_id: _identity(head_ref="review/feature-1-aaaaaaaa"),
+            first.change_id: _identity(head_ref="jj-stack/feature-1-aaaaaaaa"),
         }
     )
     client = _PrepareStatusClient(
         _stack_for_status(first, second),
-        remote_targets={"review/feature-1-aaaaaaaa": first.commit_id},
+        remote_targets={"jj-stack/feature-1-aaaaaaaa": first.commit_id},
     )
 
     prepared = prepare_status(
@@ -94,10 +94,10 @@ def test_prepare_status_observes_only_exact_saved_review_branches() -> None:
         revset=None,
     )
 
-    assert client.list_calls == [("refs/heads/review/feature-1-aaaaaaaa",)]
-    assert prepared.prepared.status_revisions[0].branch == "review/feature-1-aaaaaaaa"
+    assert client.list_calls == [("refs/heads/jj-stack/feature-1-aaaaaaaa",)]
+    assert prepared.prepared.status_revisions[0].branch == "jj-stack/feature-1-aaaaaaaa"
     assert prepared.prepared.status_revisions[1].branch is None
-    assert prepared.prepared.remote_targets == {"review/feature-1-aaaaaaaa": first.commit_id}
+    assert prepared.prepared.remote_targets == {"jj-stack/feature-1-aaaaaaaa": first.commit_id}
 
 
 def test_prepare_status_reloads_saved_branch_after_fetch() -> None:
@@ -107,16 +107,16 @@ def test_prepare_status_reloads_saved_branch_after_fetch() -> None:
         change_id="aaaaaaaa1234",
     )
     stale_state = ReviewState(
-        review_identities={revision.change_id: _identity(head_ref="review/stale", pr_number=1)}
+        review_identities={revision.change_id: _identity(head_ref="jj-stack/stale", pr_number=1)}
     )
     refreshed_state = ReviewState(
         review_identities={
-            revision.change_id: _identity(head_ref="review/refreshed", pr_number=2)
+            revision.change_id: _identity(head_ref="jj-stack/refreshed", pr_number=2)
         }
     )
     client = _PrepareStatusClient(
         _stack_for_status(revision),
-        remote_targets={"review/refreshed": revision.commit_id},
+        remote_targets={"jj-stack/refreshed": revision.commit_id},
     )
     state_store = _StateStoreStub(stale_state, refreshed_state)
 
@@ -128,8 +128,8 @@ def test_prepare_status_reloads_saved_branch_after_fetch() -> None:
 
     assert state_store.loads == 2
     assert client.fetches == ["origin"]
-    assert client.list_calls == [("refs/heads/review/refreshed",)]
-    assert prepared.prepared.status_revisions[0].branch == "review/refreshed"
+    assert client.list_calls == [("refs/heads/jj-stack/refreshed",)]
+    assert prepared.prepared.status_revisions[0].branch == "jj-stack/refreshed"
 
 
 def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) -> None:
@@ -141,14 +141,14 @@ def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) 
     state = ReviewState(
         review_identities={
             revision.change_id: _identity(
-                head_ref="review/feature-1-aaaaaaaa",
+                head_ref="jj-stack/feature-1-aaaaaaaa",
                 pr_number=1,
             )
         }
     )
     client = _PrepareStatusClient(
         _stack_for_status(revision),
-        remote_targets={"review/feature-1-aaaaaaaa": revision.commit_id},
+        remote_targets={"jj-stack/feature-1-aaaaaaaa": revision.commit_id},
     )
     prepared = prepare_stack_for_status(
         context=_context(client=client, state=state),
@@ -187,7 +187,7 @@ def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) 
     assert streamed == [(revision.change_id, False)]
     assert result.github_error == "GitHub lookup failed"
     assert result.incomplete is True
-    assert result.revisions[0].branch == "review/feature-1-aaaaaaaa"
+    assert result.revisions[0].branch == "jj-stack/feature-1-aaaaaaaa"
     assert result.revisions[0].remote_target == revision.commit_id
 
 
@@ -199,18 +199,18 @@ def test_pull_request_lookup_falls_back_to_exact_remembered_pr_number() -> None:
         )
 
         async def get_pull_requests_by_head_refs(self, *, head_refs):
-            assert head_refs == ("review/old-branch",)
-            return {"review/old-branch": ()}
+            assert head_refs == ("jj-stack/old-branch",)
+            return {"jj-stack/old-branch": ()}
 
         async def get_pull_requests_by_numbers(self, *, pull_numbers):
             assert pull_numbers == (7,)
             return {
                 7: GithubPullRequest.model_validate(
                     {
-                        "base": {"ref": "review/base"},
+                        "base": {"ref": "jj-stack/base"},
                         "head": {
-                            "label": "octo-org:review/old-branch",
-                            "ref": "review/old-branch",
+                            "label": "octo-org:jj-stack/old-branch",
+                            "ref": "jj-stack/old-branch",
                         },
                         "html_url": "https://github.test/octo-org/stacked-review/pull/7",
                         "merged_at": "2026-03-16T12:00:00Z",
@@ -222,9 +222,9 @@ def test_pull_request_lookup_falls_back_to_exact_remembered_pr_number() -> None:
             }
 
     prepared_revision = SimpleNamespace(
-        branch="review/old-branch",
+        branch="jj-stack/old-branch",
         review_identity=_identity(
-            head_ref="review/old-branch",
+            head_ref="jj-stack/old-branch",
             pr_number=7,
         ),
     )
@@ -236,7 +236,7 @@ def test_pull_request_lookup_falls_back_to_exact_remembered_pr_number() -> None:
         )
     )
 
-    lookup = lookups["review/old-branch"]
+    lookup = lookups["jj-stack/old-branch"]
     assert lookup.source == "remembered"
     assert lookup.state == "closed"
     assert lookup.pull_request is not None
@@ -246,12 +246,12 @@ def test_pull_request_lookup_falls_back_to_exact_remembered_pr_number() -> None:
 
 def test_pull_request_lookup_ignores_draft_review_decision() -> None:
     lookup = status_module._pull_request_lookup_from_discovered(
-        head_label="octo-org:review/draft",
+        head_label="octo-org:jj-stack/draft",
         pull_requests=(
             GithubPullRequest(
                 base={"ref": "main"},
                 draft=True,
-                head={"ref": "review/draft"},
+                head={"ref": "jj-stack/draft"},
                 html_url="https://github.test/octo-org/stacked-review/pull/3",
                 number=3,
                 review_decision="approved",
@@ -283,7 +283,7 @@ def _github_target() -> GithubTarget:
 
 def _identity(
     *,
-    head_ref: str = "review/change",
+    head_ref: str = "jj-stack/change",
     pr_number: int = 1,
 ) -> ReviewIdentity:
     return ReviewIdentity(

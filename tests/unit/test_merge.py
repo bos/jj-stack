@@ -110,7 +110,7 @@ def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
             change_id=f"change-{number}",
             commit_id=f"commit-{number}",
             identity=make_review_identity(
-                head_ref=f"review/feature-{number}",
+                head_ref=f"jj-stack/feature-{number}",
                 pr_number=number,
             ),
             subject=f"feature {number}",

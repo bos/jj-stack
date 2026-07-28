@@ -75,7 +75,7 @@ class _GithubClientStub:
 
 
 def _pull_request(*, head_owner: str, state: str) -> GithubPullRequest:
-    branch = "review/manual-feature-feature1"
+    branch = "jj-stack/manual-feature-feature1"
     return GithubPullRequest(
         base=GithubBranchRef(label="octo-org:main", ref="main"),
         head=GithubBranchRef(
@@ -96,5 +96,5 @@ def _identity(*, pr_number: int) -> ReviewIdentity:
         repository_name="stacked-review",
         pr_number=pr_number,
         head_owner="octo-org",
-        head_ref="review/manual-feature-feature1",
+        head_ref="jj-stack/manual-feature-feature1",
     )

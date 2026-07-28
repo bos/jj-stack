@@ -9,10 +9,12 @@ from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import (
     ResolvedReviewBranch,
+    configured_review_namespace,
     ensure_unique_review_branches,
     generate_review_branch,
     resolve_review_branches,
     review_branch_matches_change,
+    review_namespace,
 )
 
 
@@ -22,26 +24,32 @@ def test_generate_review_branch_normalizes_subject() -> None:
         description="Fix cache invalidation!!!\n\nBody text.\n",
     )
 
-    assert generate_review_branch(revision) == "review/fix-cache-invalidation-zvlywqkx"
+    branch = generate_review_branch(revision)
+
+    assert branch == "jj-stack/fix-cache-invalidation-zvlywqkx"
 
 
 def test_generate_review_branch_falls_back_for_blank_subject() -> None:
     revision = _revision(change_id="abcdefghijklmno", description="\n")
 
-    assert generate_review_branch(revision) == "review/change-abcdefgh"
+    branch = generate_review_branch(revision)
+
+    assert branch == "jj-stack/change-abcdefgh"
 
 
 @pytest.mark.parametrize(
     ("branch", "matches"),
     (
-        ("review/cache-fix-zvlywqkx", True),
-        ("team/cache-fix-zvlywqkx", False),
-        ("review/cache_fix-zvlywqkx", False),
-        ("review/cache-fix-abcdefgh", False),
-        ("review/-zvlywqkx", False),
+        ("jj-stack/cache-fix-zvlywqkx", True),
+        # The suffix ties a branch to its change; the rest of the name is not the matcher's
+        # business, so a readable stem may hold anything and any namespace may carry the tie.
+        ("jj-stack/cache_fix-zvlywqkx", True),
+        ("team/cache-fix-zvlywqkx", True),
+        ("jj-stack/cache-fix-abcdefgh", False),
+        ("jj-stack/cache-fix-zvlywqkxtmnpqrstu", False),
     ),
 )
-def test_review_branch_matcher_enforces_managed_grammar(
+def test_review_branch_matcher_ties_a_branch_to_one_change(
     branch: str,
     matches: bool,
 ) -> None:
@@ -50,7 +58,7 @@ def test_review_branch_matcher_enforces_managed_grammar(
 
 def test_review_branch_resolution_keeps_saved_branch_stable_after_subject_change() -> None:
     identities = {
-        "zvlywqkxtmnpqrstu": _identity(head_ref="review/fix-cache-invalidation-zvlywqkx")
+        "zvlywqkxtmnpqrstu": _identity(head_ref="jj-stack/fix-cache-invalidation-zvlywqkx")
     }
     renamed_revision = _revision(
         change_id="zvlywqkxtmnpqrstu",
@@ -62,17 +70,17 @@ def test_review_branch_resolution_keeps_saved_branch_stable_after_subject_change
         review_identities=identities,
     )
 
-    assert resolutions[0].branch == "review/fix-cache-invalidation-zvlywqkx"
+    assert resolutions[0].branch == "jj-stack/fix-cache-invalidation-zvlywqkx"
 
 
 def test_review_branch_resolution_rejects_multiple_changes_on_same_branch() -> None:
     resolutions = (
         ResolvedReviewBranch(
-            branch="review/shared-abcdefgh",
+            branch="jj-stack/shared-abcdefgh",
             change_id="abcdefghijklmno",
         ),
         ResolvedReviewBranch(
-            branch="review/shared-abcdefgh",
+            branch="jj-stack/shared-abcdefgh",
             change_id="qrstuvwxyzabcde",
         ),
     )
@@ -103,3 +111,13 @@ def _revision(*, change_id: str, description: str) -> LocalRevision:
         immutable=False,
         parents=("parent",),
     )
+
+
+def test_reading_the_namespace_before_bootstrap_installs_it_fails_loudly() -> None:
+    """A default here would let a wrong prefix name someone else's branches for a force-push."""
+
+    with (
+        configured_review_namespace(None),
+        pytest.raises(RuntimeError, match="before bootstrap"),
+    ):
+        review_namespace()

@@ -20,7 +20,7 @@ Stack changes use this shape:
 ```json
 {
   "change_id": "zvlyxwvksmry...",
-  "branch": "review/add-json-output-zvlyxwvk",
+  "branch": "jj-stack/add-json-output-zvlyxwvk",
   "subject": "add json output",
   "status": "open",
   "pull_request": {
@@ -70,7 +70,7 @@ Known change statuses are:
       "changes": [
         {
           "change_id": "zvlyxwvksmry...",
-          "branch": "review/add-json-output-zvlyxwvk",
+          "branch": "jj-stack/add-json-output-zvlyxwvk",
           "subject": "add json output",
           "status": "open",
           "pull_request": {
@@ -104,7 +104,7 @@ the `changes` array.
       "changes": [
         {
           "change_id": "zvlyxwvksmry...",
-          "branch": "review/add-json-output-zvlyxwvk",
+          "branch": "jj-stack/add-json-output-zvlyxwvk",
           "subject": "add json output",
           "status": "open",
           "pull_request": {
@@ -117,7 +117,7 @@ the `changes` array.
     {
       "type": "orphan",
       "change_id": "kkkkkkkkkkkk...",
-      "branch": "review/old-change-kkkkkkkk",
+      "branch": "jj-stack/old-change-kkkkkkkk",
       "subject": "local change missing",
       "status": "orphan",
       "pull_request": {

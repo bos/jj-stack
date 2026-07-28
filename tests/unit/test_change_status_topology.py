@@ -45,7 +45,7 @@ def _identity(
         repository_name="stacked-review",
         pr_number=pr_number,
         head_owner="octo-org",
-        head_ref="review/example-changeaa",
+        head_ref="jj-stack/example-changeaa",
     )
 
 

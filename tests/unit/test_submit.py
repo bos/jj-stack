@@ -52,7 +52,7 @@ def test_prepare_submit_revisions_rejects_saved_remote_branch_drift() -> None:
         description="feature\n",
     )
     identity = make_review_identity(
-        head_ref="review/feature-abcdefgh",
+        head_ref="jj-stack/feature-abcdefgh",
         pr_number=17,
     )
 
@@ -82,7 +82,7 @@ def test_prepare_submit_revisions_rejects_unclaimed_existing_branch() -> None:
         change_id="abcdefghijk",
         description="feature\n",
     )
-    branch = "review/feature-abcdefgh"
+    branch = "jj-stack/feature-abcdefgh"
 
     with pytest.raises(CliError, match="already exists"):
         prepare_submit_revisions(
@@ -105,7 +105,7 @@ def test_prepare_submit_revisions_requires_recovered_branch_lease_to_stay_exact(
         change_id="abcdefghijk",
         description="feature\n",
     )
-    branch = "review/older-title-abcdefgh"
+    branch = "jj-stack/older-title-abcdefgh"
 
     with pytest.raises(CliError, match="changed during submission"):
         prepare_submit_revisions(
@@ -124,7 +124,7 @@ def test_prepare_submit_revisions_requires_recovered_branch_lease_to_stay_exact(
 
 
 def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
-    identity = make_review_identity(head_ref="review/foo-abcdefgh", pr_number=17)
+    identity = make_review_identity(head_ref="jj-stack/foo-abcdefgh", pr_number=17)
 
     with pytest.raises(CliError, match="GitHub no longer reports a PR"):
         _ensure_pull_request_link_is_consistent(
@@ -139,7 +139,7 @@ def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
 
 
 def test_pull_request_link_rejects_a_saved_review_from_another_repository() -> None:
-    identity = make_review_identity(head_ref="review/foo-abcdefgh", pr_number=17)
+    identity = make_review_identity(head_ref="jj-stack/foo-abcdefgh", pr_number=17)
 
     with pytest.raises(CliError, match="belongs to a different GitHub repository"):
         _ensure_pull_request_link_is_consistent(
@@ -154,7 +154,7 @@ def test_pull_request_link_rejects_a_saved_review_from_another_repository() -> N
 
 
 def test_pull_request_link_rejects_remote_and_pr_head_mismatch() -> None:
-    identity = make_review_identity(head_ref="review/foo-abcdefgh", pr_number=17)
+    identity = make_review_identity(head_ref="jj-stack/foo-abcdefgh", pr_number=17)
     pull_request = _github_pull_request(
         number=17,
         branch=identity.head_ref,
@@ -209,7 +209,7 @@ def test_discovered_pull_request_must_be_unique_and_open(
     )
     with pytest.raises(CliError, match=message):
         _select_discovered_pull_request(
-            head_label="octo-org:review/foo",
+            head_label="octo-org:jj-stack/foo",
             pull_requests=pull_requests,
         )
 
@@ -239,7 +239,7 @@ def test_submit_detects_pull_request_that_is_no_longer_open(
     with pytest.raises(CliError):
         asyncio.run(
             verify_no_unexpected_pull_request_closures(
-                discovered_pull_requests={"review/foo": _github_pull_request(number=2)},
+                discovered_pull_requests={"jj-stack/foo": _github_pull_request(number=2)},
                 github_client=cast(GithubClient, client),
             )
         )
@@ -346,7 +346,7 @@ class _RefetchPullRequestsClient:
 def _github_pull_request(
     number: int,
     *,
-    branch: str = "review/foo",
+    branch: str = "jj-stack/foo",
     head_sha: str = "head-commit",
     state: str = "open",
 ) -> GithubPullRequest:

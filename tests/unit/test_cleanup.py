@@ -20,7 +20,7 @@ from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
 CHANGE_ID = "aaaaaaaaabcdefgh"
-BRANCH = "review/feature-aaaaaaaa"
+BRANCH = "jj-stack/feature-aaaaaaaa"
 _BASELINE = SubmittedBaseline(commit_id="saved-remote")
 _REMOTE_URL = "git@github.com:octo-org/stacked-review.git"
 _REMOTE = GitRemote(name="origin", fetch_url=_REMOTE_URL, push_url=_REMOTE_URL)

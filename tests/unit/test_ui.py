@@ -107,16 +107,16 @@ def test_rich_text_renders_template_semantics(
         repository=repository,
     ):
         text = console_module.rich_text(
-            t"delete {ui_module.bookmark('review/feature-aaaaaaaa')} for "
+            t"delete {ui_module.bookmark('jj-stack/feature-aaaaaaaa')} for "
             t"{ui_module.change_id('aaaa1111bbbb2222')}"
         )
 
-    assert text.plain == "delete review/feature-aaaaaaaa for aaaa1111"
+    assert text.plain == "delete jj-stack/feature-aaaaaaaa for aaaa1111"
     assert text.spans[0].start == 7
-    assert text.spans[0].end == 30
+    assert text.spans[0].end == 32
     assert text.spans[0].style == _style_cls()(color="green")
-    assert text.spans[1].start == 35
-    assert text.spans[1].end == 43
+    assert text.spans[1].start == 37
+    assert text.spans[1].end == 45
     assert text.spans[1].style == _style_cls()(color="color(81)", bold=True)
 
 
@@ -125,8 +125,8 @@ def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
 ) -> None:
     repository = Path.cwd()
     stdout = 'colors.local_bookmarks\0"green"\n'
-    first = "review/fix-one-aaaaaaaa"
-    second = "review/fix-two-bbbbbbbb"
+    first = "jj-stack/fix-one-aaaaaaaa"
+    second = "jj-stack/fix-two-bbbbbbbb"
     expected = f"matches: {first}, {second}."
 
     def fake_run(command, **kwargs):

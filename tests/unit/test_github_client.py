@@ -136,7 +136,7 @@ def test_github_client_sends_only_supplied_pull_request_updates(
             json={
                 "base": {"ref": base or "old-base"},
                 "body": body or "",
-                "head": {"ref": "review/feature"},
+                "head": {"ref": "jj-stack/feature"},
                 "html_url": "https://github.test/octo-org/stacked-review/pull/7",
                 "number": 7,
                 "state": "open",
@@ -173,7 +173,7 @@ def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None
                 "number": 3,
                 "pull_requests": [
                     {
-                        "head": {"ref": "review/eight", "sha": "head-eight"},
+                        "head": {"ref": "jj-stack/eight", "sha": "head-eight"},
                         "merged_at": None,
                         "number": 8,
                         "state": "open",
@@ -200,7 +200,7 @@ def test_github_client_paginates_stack_list() -> None:
             "number": number,
             "pull_requests": [
                 {
-                    "head": {"ref": f"review/{pull_number}", "sha": f"head-{pull_number}"},
+                    "head": {"ref": f"jj-stack/{pull_number}", "sha": f"head-{pull_number}"},
                     "merged_at": None,
                     "number": pull_number,
                     "state": "open",
@@ -240,7 +240,7 @@ def test_github_client_paginates_pull_request_list() -> None:
                 json=[
                     {
                         "base": {"label": "octo-org/stacked-review:main", "ref": "main"},
-                        "head": {"label": "octo-org:review/two", "ref": "review/two"},
+                        "head": {"label": "octo-org:jj-stack/two", "ref": "jj-stack/two"},
                         "html_url": "https://github.test/octo-org/stacked-review/pull/2",
                         "merged_at": None,
                         "number": 2,
@@ -261,7 +261,7 @@ def test_github_client_paginates_pull_request_list() -> None:
             json=[
                 {
                     "base": {"label": "octo-org/stacked-review:main", "ref": "main"},
-                    "head": {"label": "octo-org:review/one", "ref": "review/one"},
+                    "head": {"label": "octo-org:jj-stack/one", "ref": "jj-stack/one"},
                     "html_url": "https://github.test/octo-org/stacked-review/pull/1",
                     "merged_at": None,
                     "number": 1,
@@ -275,7 +275,7 @@ def test_github_client_paginates_pull_request_list() -> None:
     async def run_test() -> tuple[int, int]:
         async with _github_client(handler) as client:
             pull_requests = await client.list_pull_requests(
-                head="octo-org:review/one",
+                head="octo-org:jj-stack/one",
             )
         return pull_requests[0].number, pull_requests[1].number
 
@@ -305,7 +305,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
                             "autoMergeRequest": None,
                             "baseRefName": "main",
                             "body": "body 7",
-                            "headRefName": "review/seven",
+                            "headRefName": "jj-stack/seven",
                             "headRepositoryOwner": {"login": "octo-org"},
                             "mergeQueueEntry": None,
                             "mergedAt": None,
@@ -316,9 +316,9 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
                         },
                         "pr_9": {
                             "autoMergeRequest": None,
-                            "baseRefName": "review/base",
+                            "baseRefName": "jj-stack/base",
                             "body": None,
-                            "headRefName": "review/nine",
+                            "headRefName": "jj-stack/nine",
                             "headRepositoryOwner": {"login": "octo-org"},
                             "mergeQueueEntry": None,
                             "mergedAt": "2026-03-16T12:00:00Z",
@@ -351,9 +351,9 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
         )
 
     assert asyncio.run(run_test()) == (
-        "review/seven",
+        "jj-stack/seven",
         "closed",
-        "octo-org:review/seven",
+        "octo-org:jj-stack/seven",
         True,
     )
     assert request_sizes == [25, 2]
@@ -379,7 +379,7 @@ def test_github_client_bounds_independent_pull_request_fallbacks() -> None:
                     return GithubPullRequest.model_validate({})
                 return GithubPullRequest(
                     base={"ref": "main"},
-                    head={"ref": f"review/{pull_number}"},
+                    head={"ref": f"jj-stack/{pull_number}"},
                     html_url=f"https://github.test/pull/{pull_number}",
                     number=pull_number,
                     state="open",
@@ -442,7 +442,7 @@ def test_github_client_rejects_incomplete_pull_request_connection(
     async def run_test() -> None:
         async with _github_client(handler) as client:
             await client.get_open_pull_requests_by_base_refs(
-                base_refs=("review/seven",),
+                base_refs=("jj-stack/seven",),
             )
 
     with pytest.raises(GithubClientError, match="invalid connection payload"):
@@ -454,8 +454,8 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
         assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-review"}
-        assert 'headRefName: "review/seven"' in payload["query"]
-        assert 'headRefName: "review/nine"' in payload["query"]
+        assert 'headRefName: "jj-stack/seven"' in payload["query"]
+        assert 'headRefName: "jj-stack/nine"' in payload["query"]
         assert "headRepositoryOwner" in payload["query"]
         assert "reviewDecision" in payload["query"]
         assert "states: [OPEN, CLOSED, MERGED]" in payload["query"]
@@ -467,9 +467,9 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
                         "head_0": {
                             "nodes": [
                                 {
-                                    "baseRefName": "review/base",
+                                    "baseRefName": "jj-stack/base",
                                     "body": None,
-                                    "headRefName": "review/nine",
+                                    "headRefName": "jj-stack/nine",
                                     "headRepositoryOwner": {"login": "octo-org"},
                                     "mergedAt": "2026-03-16T12:00:00Z",
                                     "number": 9,
@@ -484,7 +484,7 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
                                 {
                                     "baseRefName": "main",
                                     "body": "body 7",
-                                    "headRefName": "review/seven",
+                                    "headRefName": "jj-stack/seven",
                                     "headRepositoryOwner": {"login": "octo-org"},
                                     "mergedAt": None,
                                     "number": 7,
@@ -504,10 +504,10 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
     async def run_test() -> tuple[str, str, str | None, str | None]:
         async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_head_refs(
-                head_refs=("review/seven", "review/nine"),
+                head_refs=("jj-stack/seven", "jj-stack/nine"),
             )
-        pull_request_7 = pull_requests["review/seven"][0]
-        pull_request_9 = pull_requests["review/nine"][0]
+        pull_request_7 = pull_requests["jj-stack/seven"][0]
+        pull_request_9 = pull_requests["jj-stack/nine"][0]
         return (
             pull_request_7.head.ref,
             pull_request_9.state,
@@ -516,9 +516,9 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
         )
 
     assert asyncio.run(run_test()) == (
-        "review/seven",
+        "jj-stack/seven",
         "merged",
-        "octo-org:review/seven",
+        "octo-org:jj-stack/seven",
         "approved",
     )
 
@@ -634,7 +634,7 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
                                 {
                                     "baseRefName": "main",
                                     "body": "forked",
-                                    "headRefName": "review/seven",
+                                    "headRefName": "jj-stack/seven",
                                     "headRepositoryOwner": {"login": "fork-user"},
                                     "mergedAt": None,
                                     "number": 6,
@@ -645,7 +645,7 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
                                 {
                                     "baseRefName": "main",
                                     "body": "local",
-                                    "headRefName": "review/seven",
+                                    "headRefName": "jj-stack/seven",
                                     "headRepositoryOwner": {"login": "octo-org"},
                                     "mergedAt": None,
                                     "number": 7,
@@ -664,9 +664,9 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
     async def run_test() -> list[int]:
         async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_head_refs(
-                head_refs=("review/seven",),
+                head_refs=("jj-stack/seven",),
             )
-        return [pull_request.number for pull_request in pull_requests["review/seven"]]
+        return [pull_request.number for pull_request in pull_requests["jj-stack/seven"]]
 
     assert asyncio.run(run_test()) == [7]
 

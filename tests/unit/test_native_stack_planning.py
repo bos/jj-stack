@@ -18,7 +18,7 @@ def _stack(
         pull_requests=tuple(
             {
                 "head": {
-                    "ref": f"review/pull-{pull_number}",
+                    "ref": f"jj-stack/pull-{pull_number}",
                     "sha": f"head-{pull_number}",
                 },
                 "merged_at": ("2026-07-23T12:00:00Z" if pull_number in historical else None),

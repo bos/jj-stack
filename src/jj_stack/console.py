@@ -45,7 +45,7 @@ from rich.table import Table
 from rich.text import Text
 
 import jj_stack.ui as ui
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.colors import SemanticStyles, load_semantic_styles
 
 _NO_CLI_ARGS = JjCliArgs()

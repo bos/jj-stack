@@ -56,7 +56,7 @@ def test_resolve_orphaned_pull_request_uses_supported_stack_membership() -> None
     state = ReviewState(
         review_identities={
             "change-1": _identity(
-                head_ref="review/change-1",
+                head_ref="jj-stack/change-1",
                 pr_number=17,
             )
         }
@@ -108,7 +108,7 @@ _REPO_ROOT = Path(__file__).resolve().parent
 
 def _identity(
     *,
-    head_ref: str = "review/change",
+    head_ref: str = "jj-stack/change",
     pr_number: int,
 ) -> ReviewIdentity:
     return ReviewIdentity(

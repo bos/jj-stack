@@ -13,7 +13,7 @@ def _pull_request(*, draft: bool = False, state: str = "open") -> GithubPullRequ
     return GithubPullRequest(
         base=GithubBranchRef(ref="main"),
         draft=draft,
-        head=GithubBranchRef(ref="review/change"),
+        head=GithubBranchRef(ref="jj-stack/change"),
         html_url="https://github.test/octo/repo/pull/1",
         merged_at=merged_at,
         number=1,
@@ -28,7 +28,7 @@ def _identity(*, pr_number: int = 1) -> ReviewIdentity:
         repository_name="stacked-review",
         pr_number=pr_number,
         head_owner="octo-org",
-        head_ref="review/change",
+        head_ref="jj-stack/change",
     )
 
 

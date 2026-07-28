@@ -28,7 +28,7 @@ def _identity(
         repository_name="example",
         pr_number=pr_number,
         head_owner="octocat",
-        head_ref=f"review/change-{change_id[:8]}",
+        head_ref=f"jj-stack/change-{change_id[:8]}",
     )
 
 
@@ -106,7 +106,7 @@ def test_atomic_relink_failure_preserves_original_pair(
                 repository_name=identity.repository_name,
                 pr_number=18,
                 head_owner=identity.head_owner,
-                head_ref="review/renamed-change-abcdefgh",
+                head_ref="jj-stack/renamed-change-abcdefgh",
             ),
             baseline=SubmittedBaseline(commit_id="def456"),
         )

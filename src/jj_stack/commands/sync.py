@@ -17,7 +17,8 @@ from jj_stack.commands.sync_global import run_global_recovery
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
-from jj_stack.jj.client import JjCliArgs, UnsupportedStackError
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import UnsupportedStackError
 from jj_stack.models.review_state import SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.convergence import (

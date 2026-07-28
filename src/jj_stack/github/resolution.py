@@ -10,7 +10,9 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
-from jj_stack.review.branches import is_review_branch
+from jj_stack.review.branches import (
+    is_review_branch,
+)
 
 if TYPE_CHECKING:
     from jj_stack.jj.client import JjClient

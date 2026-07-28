@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import difflib
 import logging
+import re
 import tomllib
 from collections.abc import Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from jj_stack.errors import CliError
-from jj_stack.jj.client import JjClient, JjCommandError
+from jj_stack.jj.client import TEMP_BOOKMARK_PREFIX, JjClient, JjCommandError
 
 CONFIG_SECTION = "jj-stack"
+DEFAULT_BRANCH_PREFIX = "jj-stack"
 _TYPO_CUTOFF = 0.75
+_BRANCH_PREFIX_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 class RepoConfig(BaseModel):
@@ -21,9 +24,25 @@ class RepoConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    branch_prefix: str = DEFAULT_BRANCH_PREFIX
     labels: list[str] = Field(default_factory=list)
     reviewers: list[str] = Field(default_factory=list)
     team_reviewers: list[str] = Field(default_factory=list)
+
+    @field_validator("branch_prefix")
+    @classmethod
+    def _validate_branch_prefix(cls, value: str) -> str:
+        if _BRANCH_PREFIX_RE.fullmatch(value) is None:
+            raise ValueError(
+                f"Invalid branch prefix {value}. Expected lowercase letters, digits, and "
+                "single dashes, naming one path segment."
+            )
+        if value == TEMP_BOOKMARK_PREFIX:
+            raise ValueError(
+                f"Invalid branch prefix {value}. jj-stack already uses that namespace for "
+                "temporary bookmarks."
+            )
+        return value
 
 
 class LoggingConfig(BaseModel):

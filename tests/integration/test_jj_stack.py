@@ -79,7 +79,7 @@ def test_stale_raw_review_ref_is_rejected_after_broad_operations(
     commit_file(repo, "feature", "feature.txt")
     commit_id = _commit_id(repo, "@-")
     change_id = _change_id(repo, "@-")
-    branch = f"review/feature-{change_id[:8]}"
+    branch = f"jj-stack/feature-{change_id[:8]}"
     run_command(["jj", "git", "remote", "add", "origin", str(remote)], repo)
     run_command(["jj", "bookmark", "create", branch, "-r", "@-"], repo)
     run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", branch], repo)
@@ -157,8 +157,8 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     run_command(["jj", "bookmark", "create", "seed", "-r", "@--"], repo)
     run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "seed"], repo)
     old_change_id = _change_id(repo, "@--")
-    branch = f"review/foundation-{old_change_id[:8]}"
-    created_branch = f"review/created-{new_change_id[:8]}"
+    branch = f"jj-stack/foundation-{old_change_id[:8]}"
+    created_branch = f"jj-stack/created-{new_change_id[:8]}"
     run_command(
         [
             "git",
@@ -184,7 +184,7 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     commit_file(publisher, "remote only", "remote-only.txt")
     remote_only_commit = _commit_id(publisher, "@-")
     remote_only_change = _change_id(publisher, "@-")
-    recovery_branch = f"review/recovery-{remote_only_change[:8]}"
+    recovery_branch = f"jj-stack/recovery-{remote_only_change[:8]}"
     run_command(["jj", "git", "remote", "add", "origin", str(remote)], publisher)
     run_command(
         ["jj", "bookmark", "create", recovery_branch, "-r", "@-"],

@@ -75,7 +75,7 @@ def test_doctor_reports_imported_review_bookmark_recovery_command(
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
-    branch = "review/feature-abcdefgh"
+    branch = "jj-stack/feature-abcdefgh"
     run_command(["jj", "bookmark", "create", branch, "-r", "@"], repo)
 
     exit_code = run_main(repo, config_path, "doctor")

@@ -15,13 +15,13 @@ from jj_stack.commands.unstack import (
 from jj_stack.errors import UsageError
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.change_status import ReviewChangeStatus
 from jj_stack.review.status import ReviewStatusRevision
 
 CHANGE_ID = "aaaaaaaaaaaaaaaa"
-BRANCH = "review/feature-aaaaaaaa"
+BRANCH = "jj-stack/feature-aaaaaaaa"
 
 
 def test_unstack_rejects_orphans_without_cleanup_before_bootstrap(monkeypatch) -> None:
@@ -91,7 +91,7 @@ def test_unstack_blocks_saved_identity_from_another_repository() -> None:
 
 
 def test_selected_cleanup_rejects_saved_branch_that_does_not_match_change() -> None:
-    identity = _review_identity().model_copy(update={"head_ref": "review/different-bbbbbbbb"})
+    identity = _review_identity().model_copy(update={"head_ref": "jj-stack/different-bbbbbbbb"})
     revision = replace(_stub_revision(), review_identity=identity)
     action = _close_revision_preflight_error(
         change_status=ReviewChangeStatus(

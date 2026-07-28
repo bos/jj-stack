@@ -42,7 +42,8 @@ from jj_stack.github.resolution import (
     resolve_github_target,
 )
 from jj_stack.github.stack_comments import stack_comment_label
-from jj_stack.jj.client import JjCliArgs, ReviewRefUpdate
+from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.client import ReviewRefUpdate
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.observation import (
     RepositoryObservation,

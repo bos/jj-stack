@@ -23,7 +23,7 @@ def _candidate() -> LandedReviewCandidate:
             repository_name="stacked-review",
             pr_number=1,
             head_owner="octo-org",
-            head_ref="review/change-1",
+            head_ref="jj-stack/change-1",
         ),
         submitted_baseline=SubmittedBaseline(commit_id="submitted-1"),
     )
@@ -33,8 +33,8 @@ def _pull_request(**updates: object) -> GithubPullRequest:
     pull_request = GithubPullRequest(
         base=GithubBranchRef(ref="main"),
         head=GithubBranchRef(
-            label="octo-org:review/change-1",
-            ref="review/change-1",
+            label="octo-org:jj-stack/change-1",
+            ref="jj-stack/change-1",
             sha="submitted-1",
         ),
         html_url="https://github.test/octo-org/stacked-review/pull/1",
@@ -63,8 +63,8 @@ def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
             "on_trunk",
             _pull_request(
                 head=GithubBranchRef(
-                    label="octo-org:review/change-1",
-                    ref="review/change-1",
+                    label="octo-org:jj-stack/change-1",
+                    ref="jj-stack/change-1",
                     sha="other",
                 )
             ),

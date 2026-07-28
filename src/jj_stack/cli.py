@@ -55,7 +55,7 @@ from jj_stack.errors import (
     error_message,
     resolve_exit_code,
 )
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.cli_args import JjCliArgs
 
 logger = logging.getLogger(__name__)
 _COLOR_CHOICES: tuple[RequestedColorMode, ...] = ("always", "never", "debug", "auto")

@@ -62,7 +62,7 @@ def test_view_json_reports_public_stack_status(
         "subject",
     }
     assert revision["change_id"] == change_id
-    assert revision["branch"].startswith("review/feature-1-")
+    assert revision["branch"].startswith("jj-stack/feature-1-")
     assert revision["status"] == "open"
     assert revision["subject"] == "feature 1"
     assert revision["pull_request"]["number"] == 1

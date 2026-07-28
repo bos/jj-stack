@@ -63,7 +63,8 @@ jj-stack view
 
 `view` always checks live GitHub state when GitHub is reachable, and always observes each saved
 review branch directly on the remote — you only need the fetch to bring your local trunk up to
-date. Ordinary fetch excludes `review/*`: `jj-stack` adds that exclusion to the remote's Git
+date. Ordinary fetch excludes the review branches: `jj-stack` adds that exclusion to the
+remote's Git
 fetch configuration the first time it needs the remote, and says so, which is what keeps the
 review branches from being imported as persistent bookmarks. See the README for how to undo
 it.
@@ -290,14 +291,14 @@ run plain `cleanup` to apply the listed actions.
 
 ## A command reports an imported review bookmark
 
-`jj-stack` reserves the whole `review/` namespace and its fetches exclude it. This diagnostic
-means a manual or non-isolated fetch imported a bookmark from that namespace, or a leftover
-backing Git ref was exposed during a `jj-stack` operation. Such a bookmark can make a review
-change immutable or ambiguous, which is why any name under `review/` is reported and not only the
-names `jj-stack` generates.
+`jj-stack` reserves one whole branch namespace — `jj-stack/` unless you set `branch_prefix` —
+and its fetches exclude it. This diagnostic means a manual or non-isolated fetch imported a
+bookmark from that namespace, or a leftover backing Git ref was exposed during a `jj-stack`
+operation. Such a bookmark can make a review change immutable or ambiguous, which is why any name
+in the namespace is reported and not only the names `jj-stack` generates.
 
-Move any local work to a bookmark outside `review/`, then forget the imported bookmark with the
-exact `jj bookmark forget --include-remotes <review/...>` command from the diagnostic. Run the
+Move any local work to a bookmark outside the namespace, then forget the imported bookmark with
+the exact `jj bookmark forget --include-remotes ...` command from the diagnostic. Run the
 printed `jj git export` command next so the backing Git ref is also removed, then rerun
 `jj-stack`.
 

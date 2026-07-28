@@ -14,10 +14,14 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
 from jj_stack.github.resolution import require_github_repo, select_submit_remote
-from jj_stack.jj.client import JjCliArgs
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.review.branches import review_branch_glob, review_branch_matches_change
+from jj_stack.review.branches import (
+    is_review_branch,
+    review_branch_glob,
+    review_branch_matches_change,
+)
 from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.review.selection import resolve_selected_revset
 from jj_stack.state.operation_lock import acquire_operation_lock
@@ -208,7 +212,10 @@ async def _load_exact_relink_pull_request(
         raise CliError(
             t"Head branch {ui.bookmark(branch)} does not uniquely identify PR #{pull_number}."
         )
-    if not review_branch_matches_change(branch, change_id):
+    if not is_review_branch(branch) or not review_branch_matches_change(
+        branch,
+        change_id,
+    ):
         raise CliError(
             t"Pull request #{pull_number} head {ui.bookmark(branch)} does not match "
             t"change {ui.change_id(change_id)} under {ui.bookmark(review_branch_glob())}."
