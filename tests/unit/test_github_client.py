@@ -231,57 +231,6 @@ def test_github_client_paginates_stack_list() -> None:
     assert asyncio.run(run_test()) == (1, 2)
 
 
-def test_github_client_paginates_pull_request_list() -> None:
-    def handler(request: httpxyz.Request) -> httpxyz.Response:
-        assert request.url.path == "/repos/octo-org/stacked-review/pulls"
-        if request.url.params.get("page") == "2":
-            return httpxyz.Response(
-                200,
-                json=[
-                    {
-                        "base": {"label": "octo-org/stacked-review:main", "ref": "main"},
-                        "head": {"label": "octo-org:jj-stack/two", "ref": "jj-stack/two"},
-                        "html_url": "https://github.test/octo-org/stacked-review/pull/2",
-                        "merged_at": None,
-                        "number": 2,
-                        "state": "open",
-                        "title": "two",
-                    }
-                ],
-                request=request,
-            )
-        return httpxyz.Response(
-            200,
-            headers={
-                "Link": (
-                    "<https://api.github.test/repos/octo-org/stacked-review/pulls?page=2>; "
-                    'rel="next"'
-                )
-            },
-            json=[
-                {
-                    "base": {"label": "octo-org/stacked-review:main", "ref": "main"},
-                    "head": {"label": "octo-org:jj-stack/one", "ref": "jj-stack/one"},
-                    "html_url": "https://github.test/octo-org/stacked-review/pull/1",
-                    "merged_at": None,
-                    "number": 1,
-                    "state": "open",
-                    "title": "one",
-                }
-            ],
-            request=request,
-        )
-
-    async def run_test() -> tuple[int, int]:
-        async with _github_client(handler) as client:
-            pull_requests = await client.list_pull_requests(
-                head="octo-org:jj-stack/one",
-            )
-        return pull_requests[0].number, pull_requests[1].number
-
-    assert asyncio.run(run_test()) == (1, 2)
-
-
 def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> None:
     request_sizes: list[int] = []
 
@@ -521,59 +470,6 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
         "octo-org:jj-stack/seven",
         "approved",
     )
-
-
-def test_github_client_batches_review_decision_lookup_with_graphql() -> None:
-    def handler(request: httpxyz.Request) -> httpxyz.Response:
-        assert request.url.path == "/graphql"
-        payload = json.loads(request.content.decode("utf-8"))
-        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-review"}
-        assert "pr_7: pullRequest(number: 7)" in payload["query"]
-        assert "pr_9: pullRequest(number: 9)" in payload["query"]
-        assert "latestOpinionatedReviews" in payload["query"]
-        return httpxyz.Response(
-            200,
-            json={
-                "data": {
-                    "repository": {
-                        "pr_7": {
-                            "latestOpinionatedReviews": {
-                                "nodes": [
-                                    {
-                                        "author": {"login": "reviewer-1"},
-                                        "state": "APPROVED",
-                                    },
-                                    {
-                                        "author": {"login": "reviewer-2"},
-                                        "state": "CHANGES_REQUESTED",
-                                    },
-                                ]
-                            }
-                        },
-                        "pr_9": {
-                            "latestOpinionatedReviews": {
-                                "nodes": [
-                                    {
-                                        "author": {"login": "reviewer-3"},
-                                        "state": "DISMISSED",
-                                    }
-                                ]
-                            }
-                        },
-                    }
-                }
-            },
-            request=request,
-        )
-
-    async def run_test() -> tuple[str | None, str | None]:
-        async with _github_client(handler) as client:
-            decisions = await client.get_review_decisions_by_pull_request_numbers(
-                pull_numbers=(7, 9),
-            )
-        return decisions[7], decisions[9]
-
-    assert asyncio.run(run_test()) == ("changes_requested", None)
 
 
 def test_github_client_loads_issue_comments_with_graphql() -> None:

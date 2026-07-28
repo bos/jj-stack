@@ -23,7 +23,6 @@ from jj_stack.models.github import (
     GithubIssueComment,
     GithubPullRequest,
     GithubPullRequestReview,
-    GithubPullRequestReviewUser,
     GithubRepository,
     GithubStack,
 )
@@ -102,15 +101,6 @@ class _GraphqlPullRequestConnection(BaseModel):
     nodes: tuple[GithubPullRequest, ...]
 
 
-class _GraphqlReview(BaseModel):
-    author: GithubPullRequestReviewUser | None = None
-    state: str
-
-
-class _GraphqlReviewConnection(BaseModel):
-    nodes: tuple[_GraphqlReview, ...] | None = None
-
-
 class _GraphqlPageInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -120,13 +110,6 @@ class _GraphqlPageInfo(BaseModel):
 class _GraphqlIssueCommentConnection(BaseModel):
     nodes: tuple[GithubIssueComment | None, ...] | None = None
     page_info: _GraphqlPageInfo | None = Field(default=None, alias="pageInfo")
-
-
-class _GraphqlReviewDecisionPullRequest(BaseModel):
-    latest_opinionated_reviews: _GraphqlReviewConnection | None = Field(
-        default=None,
-        alias="latestOpinionatedReviews",
-    )
 
 
 class _GraphqlIssueCommentsPullRequest(BaseModel):
@@ -219,19 +202,6 @@ class GithubClient:
             self._expect_json_payload(response, response_name="unstack"),
             response_name="unstack",
         )
-
-    async def list_pull_requests(
-        self,
-        *,
-        head: str,
-        state: str = "all",
-    ) -> tuple[GithubPullRequest, ...]:
-        payload = await self._get_paginated_json_array(
-            f"{self._repo_path}/pulls",
-            params={"head": head, "state": state},
-            response_name="pull request list",
-        )
-        return tuple(GithubPullRequest.model_validate(item) for item in payload)
 
     async def get_pull_request(
         self,
@@ -361,37 +331,6 @@ class GithubClient:
                 )
         return results
 
-    async def get_review_decisions_by_pull_request_numbers(
-        self,
-        *,
-        pull_numbers: Sequence[int],
-    ) -> dict[int, str | None]:
-        numbers = sorted(set(pull_numbers))
-        if not numbers:
-            return {}
-
-        results: dict[int, str | None] = {}
-        for chunk in _chunked(numbers, size=_GRAPHQL_PULL_REQUEST_BATCH_SIZE):
-            query = _pull_request_review_decisions_query(chunk)
-            payload = await self._graphql_query(
-                query,
-                variables=self._repository_variables,
-                response_name="pull request review decision lookup",
-            )
-            repository = _graphql_repository_payload(
-                payload,
-                response_name="pull request review decision lookup",
-            )
-            for number in chunk:
-                alias = f"pr_{number}"
-                raw_pull_request = repository.get(alias)
-                results[number] = _review_decision_from_graphql(
-                    alias=alias,
-                    raw_pull_request=raw_pull_request,
-                    response_name="pull request review decision lookup",
-                )
-        return results
-
     async def create_pull_request(
         self,
         *,
@@ -497,17 +436,6 @@ class GithubClient:
             "PATCH",
             f"{self._repo_path}/issues/comments/{comment_id}",
             json={"body": body},
-        )
-        return GithubIssueComment.model_validate(self._expect_success(response))
-
-    async def get_issue_comment(
-        self,
-        *,
-        comment_id: int,
-    ) -> GithubIssueComment:
-        response = await self._request(
-            "GET",
-            f"{self._repo_path}/issues/comments/{comment_id}",
         )
         return GithubIssueComment.model_validate(self._expect_success(response))
 
@@ -942,30 +870,6 @@ def _pull_requests_by_ref_query(aliases: dict[str, str], *, base: bool) -> str:
     )
 
 
-def _pull_request_review_decisions_query(numbers: Sequence[int]) -> str:
-    selections = "\n\n".join(
-        _graphql_document(
-            f"""
-            pr_{number}: pullRequest(number: {number}) {{
-              latestOpinionatedReviews(first: 100) {{
-                nodes {{
-                  state
-                  author {{
-                    login
-                  }}
-                }}
-              }}
-            }}
-            """
-        ).strip()
-        for number in numbers
-    )
-    return _repository_graphql_query(
-        operation_name="PullRequestReviewDecisions",
-        selections=selections,
-    )
-
-
 def _pull_request_issue_comments_query(numbers: Sequence[int]) -> str:
     selections = "\n\n".join(
         _graphql_document(
@@ -1110,41 +1014,6 @@ def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
         ),
         repository=repository,
     )
-
-
-def _review_decision_from_graphql(
-    *,
-    alias: str,
-    raw_pull_request: object,
-    response_name: str,
-) -> str | None:
-    if raw_pull_request is None:
-        return None
-    parsed = _validate_graphql_model(
-        raw_pull_request,
-        model=_GraphqlReviewDecisionPullRequest,
-        error_message=(
-            f"GitHub {response_name} response had invalid pull request payload for {alias}."
-        ),
-    )
-    latest_reviews = parsed.latest_opinionated_reviews
-    if latest_reviews is None or latest_reviews.nodes is None:
-        return None
-
-    review_states: set[str] = set()
-    for review in latest_reviews.nodes:
-        if review.author is None:
-            continue
-        normalized_state = review.state.upper()
-        if normalized_state not in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
-            continue
-        review_states.add(normalized_state)
-
-    if "CHANGES_REQUESTED" in review_states:
-        return "changes_requested"
-    if "APPROVED" in review_states:
-        return "approved"
-    return None
 
 
 def _issue_comments_from_graphql(

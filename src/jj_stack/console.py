@@ -460,12 +460,6 @@ def rich_text(
     return rendered
 
 
-def ansi_text(text: str) -> Text:
-    """Decode ANSI-styled text into a Rich `Text` renderable."""
-
-    return Text.from_ansi(text)
-
-
 def style_time_prefix(text: str) -> str:
     """Style the `--time-output` prefix using the active semantic theme."""
 
@@ -482,7 +476,7 @@ def style_time_prefix(text: str) -> str:
 
 def _coerce_renderable(value: ConsoleObject) -> RenderableType:
     if isinstance(value, str) and "\x1b[" in value:
-        return ansi_text(value)
+        return Text.from_ansi(value)
     if isinstance(value, ui.StatusBadge):
         return _render_status_badge(value)
     if isinstance(value, ui.PrefixedLine):

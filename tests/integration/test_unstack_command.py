@@ -519,12 +519,6 @@ def test_unstack_apply_reports_blocked_when_github_is_unavailable(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def list_pull_requests(self, *, head, state="all"):
-            raise GithubClientError("Connection refused")
-
-        async def list_pull_requests_by_head_refs(self, *, head_refs):
-            raise GithubClientError("Connection refused")
-
         async def get_pull_requests_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 

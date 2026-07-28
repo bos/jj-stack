@@ -36,6 +36,7 @@ from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalStack
+from jj_stack.review.branches import duplicate_review_branch_claims
 from jj_stack.review.change_status import (
     OrphanedRecord,
     ReviewChangeStatus,
@@ -587,20 +588,12 @@ def _format_pull_request_summary(numbers: tuple[int, ...]) -> str:
 def _ensure_unique_repo_branches(
     prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
 ) -> None:
-    branches_to_changes: dict[str, list[str]] = {}
-    for item in prepared_discovered:
-        for prepared_revision in item.prepared.status_revisions:
-            branch = prepared_revision.branch
-            if branch is not None:
-                branches_to_changes.setdefault(branch, []).append(
-                    prepared_revision.revision.change_id
-                )
-
-    duplicates = {
-        branch: sorted(set(change_ids))
-        for branch, change_ids in branches_to_changes.items()
-        if len(set(change_ids)) > 1
-    }
+    duplicates = duplicate_review_branch_claims(
+        (prepared_revision.branch, prepared_revision.revision.change_id)
+        for item in prepared_discovered
+        for prepared_revision in item.prepared.status_revisions
+        if prepared_revision.branch is not None
+    )
     if not duplicates:
         return
 

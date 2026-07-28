@@ -90,6 +90,22 @@ def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
 @pytest.mark.landing_recovery
 def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
     rows = (
+        (
+            _pull_request(head=GithubBranchRef(ref="other", sha="submitted-1")),
+            None,
+            "identity_mismatch",
+        ),
+        (
+            _pull_request(
+                head=GithubBranchRef(
+                    label="octo-org:jj-stack/change-1",
+                    ref="jj-stack/change-1",
+                    sha="other",
+                )
+            ),
+            None,
+            "head_mismatch",
+        ),
         (_pull_request(), None, "not_merged"),
         (
             _pull_request(state="closed", merged_at="2026-07-21T12:00:00Z"),

@@ -398,7 +398,6 @@ async def run_submit_async(
         prepared_inputs = prepare_submit_inputs(
             context=context,
             options=options,
-            resolved_options=resolved_options,
         )
     if on_prepared is not None:
         on_prepared(

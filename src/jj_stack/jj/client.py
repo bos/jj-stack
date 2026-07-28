@@ -461,23 +461,6 @@ class JjClient:
                 matching_commit_ids.add(revision.commit_id)
         return matching_commit_ids
 
-    def query_ancestor_revisions(
-        self,
-        commit_ids: Sequence[str],
-    ) -> tuple[LocalRevision, ...]:
-        """Return ancestors for the supplied commits, including the commits themselves."""
-
-        ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
-        if not ordered_commit_ids:
-            return ()
-
-        revisions_by_commit_id: dict[str, LocalRevision] = {}
-        for chunk in _chunked(ordered_commit_ids):
-            revisions = self._query_revisions(f"::{_union_revset_symbols(chunk)}")
-            for revision in revisions:
-                revisions_by_commit_id.setdefault(revision.commit_id, revision)
-        return tuple(revisions_by_commit_id.values())
-
     def query_descendant_revisions(
         self,
         commit_ids: Sequence[str],
@@ -518,35 +501,6 @@ class JjClient:
         )
         revisions = self._query_revisions(terms)
         return {revision.commit_id for revision in revisions}
-
-    def query_children_by_parent_for_commit_ids(
-        self,
-        commit_ids: Sequence[str],
-    ) -> dict[str, tuple[LocalRevision, ...]]:
-        """Return visible children grouped by parent for the ancestors of the supplied commits."""
-
-        ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
-        if not ordered_commit_ids:
-            return {}
-
-        grouped: dict[str, dict[str, LocalRevision]] = {}
-        for chunk in _chunked(ordered_commit_ids):
-            children_by_parent = self._query_children_by_parent(
-                f"children(::{_union_revset_symbols(chunk)})"
-            )
-            for parent_commit_id, children in children_by_parent.items():
-                parent_group = grouped.setdefault(parent_commit_id, {})
-                for child in children:
-                    parent_group.setdefault(child.commit_id, child)
-        return {
-            parent_commit_id: tuple(children.values())
-            for parent_commit_id, children in grouped.items()
-        }
-
-    def _resolve_trunk(self) -> LocalRevision:
-        """Resolve `trunk()` and reject the implicit root fallback."""
-
-        return self._validate_trunk(self.resolve_revision("trunk()"))
 
     def _validate_trunk(self, trunk: LocalRevision | None) -> LocalRevision:
         """Reject missing-trunk and implicit-root-fallback resolutions."""
@@ -627,19 +581,6 @@ class JjClient:
             )
 
         return self._validate_trunk(trunk), selected[0]
-
-    def _query_children_by_parent(
-        self,
-        revset: str,
-    ) -> dict[str, tuple[LocalRevision, ...]]:
-        revisions = self._query_revisions(revset)
-        grouped: dict[str, list[LocalRevision]] = {}
-        for revision in revisions:
-            for parent_commit_id in revision.parents:
-                grouped.setdefault(parent_commit_id, []).append(revision)
-        return {
-            parent_commit_id: tuple(children) for parent_commit_id, children in grouped.items()
-        }
 
     def _is_trunk_side_parent(
         self,

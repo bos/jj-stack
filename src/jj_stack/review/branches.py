@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 import jj_stack.ui as ui
@@ -76,12 +75,9 @@ def resolve_review_branches(
 def ensure_unique_review_branches(
     resolutions: tuple[ResolvedReviewBranch, ...],
 ) -> None:
-    claims: dict[str, list[str]] = {}
-    for resolution in resolutions:
-        claims.setdefault(resolution.branch, []).append(resolution.change_id)
-    duplicates = {
-        branch: change_ids for branch, change_ids in claims.items() if len(change_ids) > 1
-    }
+    duplicates = duplicate_review_branch_claims(
+        (resolution.branch, resolution.change_id) for resolution in resolutions
+    )
     if not duplicates:
         return
     collisions = ui.join(
@@ -92,6 +88,21 @@ def ensure_unique_review_branches(
         t"Selected stack resolves multiple changes to the same branch: {collisions}.",
         hint="Change an untracked change's subject or repair the saved review links.",
     )
+
+
+def duplicate_review_branch_claims(
+    claims: Iterable[tuple[str, str]],
+) -> dict[str, tuple[str, ...]]:
+    """Return branches claimed by more than one distinct change."""
+
+    change_ids_by_branch: dict[str, set[str]] = {}
+    for branch, change_id in claims:
+        change_ids_by_branch.setdefault(branch, set()).add(change_id)
+    return {
+        branch: tuple(sorted(change_ids))
+        for branch, change_ids in change_ids_by_branch.items()
+        if len(change_ids) > 1
+    }
 
 
 _prefix: str | None = None
@@ -107,19 +118,6 @@ def install_review_namespace(prefix: str) -> None:
 
     global _prefix
     _prefix = prefix
-
-
-@contextmanager
-def configured_review_namespace(prefix: str | None) -> Iterator[None]:
-    """Scope the reserved namespace, restoring the previous one; `None` leaves it uninstalled."""
-
-    global _prefix
-    previous = _prefix
-    _prefix = prefix
-    try:
-        yield
-    finally:
-        _prefix = previous
 
 
 def review_namespace() -> str:

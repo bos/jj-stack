@@ -13,7 +13,6 @@ from .descriptions import resolve_generated_descriptions
 from .models import (
     PreparedSubmitInputs,
     PrivateCommitFinder,
-    ResolvedSubmitOptions,
     SubmitOptions,
 )
 
@@ -22,7 +21,6 @@ def prepare_submit_inputs(
     *,
     context: CommandContext,
     options: SubmitOptions,
-    resolved_options: ResolvedSubmitOptions,
 ) -> PreparedSubmitInputs:
     """Load local submit state before any GitHub mutation begins."""
 

@@ -695,13 +695,6 @@ class FakeGithubRepository:
                     return comment
         return None
 
-    def get_issue_comment(self, *, comment_id: int) -> FakeGithubIssueComment | None:
-        for comments in self.issue_comments.values():
-            for comment in comments:
-                if comment.id == comment_id:
-                    return comment
-        return None
-
     def delete_issue_comment(self, *, comment_id: int) -> bool:
         for issue_number, comments in self.issue_comments.items():
             for index, comment in enumerate(comments):
@@ -920,30 +913,6 @@ def _register_graphql_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
 
 def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
     """Register pull-request, issue, label, and review routes."""
-
-    @app.get("/repos/{owner}/{repo}/pulls")
-    async def list_pull_requests(
-        owner: str,
-        repo: str,
-        head: str | None = None,
-        state: str = "open",
-    ) -> list[dict[str, object]]:
-        repository = _get_repository(fake_state, owner, repo)
-        requested_state = state or "open"
-        pull_requests = list(repository.pull_requests.values())
-        repository.refresh_pull_requests(pull_requests)
-        if head is not None:
-            pull_requests = [
-                candidate for candidate in pull_requests if candidate.head_label == head
-            ]
-        if requested_state != "all":
-            pull_requests = [
-                candidate for candidate in pull_requests if candidate.state == requested_state
-            ]
-        return [
-            pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
-            for pull_request in sorted(pull_requests, key=lambda candidate: candidate.number)
-        ]
 
     @app.post("/repos/{owner}/{repo}/pulls", status_code=201)
     async def create_pull_request(
@@ -1252,18 +1221,6 @@ def _register_issue_comment_routes(app: FastAPI, fake_state: FakeGithubState) ->
             body=_require_string(payload, "body"),
             comment_id=comment_id,
         )
-        if comment is None:
-            raise HTTPException(status_code=404, detail="Not Found")
-        return comment.to_payload(repository=repository, web_origin=fake_state.web_origin)
-
-    @app.get("/repos/{owner}/{repo}/issues/comments/{comment_id}")
-    async def get_issue_comment(
-        owner: str,
-        repo: str,
-        comment_id: int,
-    ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        comment = repository.get_issue_comment(comment_id=comment_id)
         if comment is None:
             raise HTTPException(status_code=404, detail="Not Found")
         return comment.to_payload(repository=repository, web_origin=fake_state.web_origin)
@@ -1629,7 +1586,6 @@ def _graphql_repository_payload(
         raise HTTPException(status_code=422, detail="Unsupported GraphQL query.")
 
     payload: dict[str, object] = {}
-    include_latest_opinionated_reviews = "latestOpinionatedReviews" in query
     requested_pull_requests = [
         pull_request
         for _alias, pull_number in pull_request_number_queries
@@ -1647,10 +1603,6 @@ def _graphql_repository_payload(
             web_origin=web_origin,
             refreshed=True,
         )
-        if include_latest_opinionated_reviews:
-            graphql_payload["latestOpinionatedReviews"] = {
-                "nodes": _latest_opinionated_review_payloads(repository, pull_number)
-            }
         if "comments(" in query:
             graphql_payload["comments"] = {
                 "nodes": [

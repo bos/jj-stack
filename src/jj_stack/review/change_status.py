@@ -127,40 +127,6 @@ def classify_review_change(
     )
 
 
-def classify_review_change_without_pull_request(
-    *,
-    commit_id: str | None,
-    local: LocalReviewState = "present",
-    remote_target: str | None,
-    review_identity: ReviewIdentity | None = None,
-) -> ReviewChangeStatus:
-    """Classify review state when pull request data was not loaded."""
-
-    return classify_review_change(
-        commit_id=commit_id,
-        local=local,
-        pull_request_lookup=None,
-        remote_target=remote_target,
-        review_identity=review_identity,
-    )
-
-
-def classify_saved_review_identity(
-    review_identity: ReviewIdentity | None,
-    *,
-    local: LocalReviewState = "missing",
-) -> ReviewChangeStatus:
-    """Classify one saved identity when live remote or PR data is not loaded."""
-
-    return classify_review_change(
-        commit_id=None,
-        local=local,
-        pull_request_lookup=None,
-        remote_target=None,
-        review_identity=review_identity,
-    )
-
-
 def enumerate_orphaned_records(
     state: ReviewState,
     local_stacks: Sequence[LocalStack],

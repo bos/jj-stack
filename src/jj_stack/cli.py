@@ -1053,10 +1053,6 @@ def _extract_config_overrides(argv: Sequence[str]) -> tuple[JjCliArgs, list[str]
     return JjCliArgs(argv=tuple(parts)), remaining
 
 
-def _global_cli_args(args: Namespace) -> JjCliArgs:
-    return args.cli_args
-
-
 def _forward_handler(
     function: Callable[..., int],
     *fallback_arg_names: str,
@@ -1077,7 +1073,7 @@ def _forward_handler(
     for name in parameter_names:
         parameter_sources[name] = arg_sources.get(
             name,
-            _global_cli_args if name == "cli_args" else name,
+            name,
         )
 
     def handler(args: Namespace) -> int:

@@ -304,21 +304,10 @@ def test_list_batches_remote_and_github_lookup_across_repo_stacks(
 
     class CountingGithubClient(GithubClient):
         pull_request_lookup_calls: ClassVar[list[tuple[str, ...]]] = []
-        review_decision_calls: ClassVar[list[tuple[int, ...]]] = []
 
         async def get_pull_requests_by_head_refs(self, *, head_refs):
             self.pull_request_lookup_calls.append(tuple(sorted(head_refs)))
             return await super().get_pull_requests_by_head_refs(head_refs=head_refs)
-
-        async def get_review_decisions_by_pull_request_numbers(
-            self,
-            *,
-            pull_numbers,
-        ):
-            self.review_decision_calls.append(tuple(sorted(pull_numbers)))
-            return await super().get_review_decisions_by_pull_request_numbers(
-                pull_numbers=pull_numbers,
-            )
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
     patch_github_client_builders(
@@ -346,7 +335,6 @@ def test_list_batches_remote_and_github_lookup_across_repo_stacks(
     assert "1 change" in captured.out
     assert len(CountingGithubClient.pull_request_lookup_calls) == 1
     assert len(CountingGithubClient.pull_request_lookup_calls[0]) == 2
-    assert CountingGithubClient.review_decision_calls == []
     assert len(remote_branch_calls) == 1
     assert len(remote_branch_calls[0]) == 2
     assert all(pattern.startswith("refs/heads/jj-stack/") for pattern in remote_branch_calls[0])

@@ -12,7 +12,6 @@ type ErrorHint = Message
 # Process exit codes. Codes 2-6 carry the same meanings as the matching
 # `gh stack` exit codes so scripted callers can treat the two tools alike;
 # 7-9 are reserved because their `gh stack` meanings have no jj-stack analog.
-EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 EXIT_NO_STACK = 2
 EXIT_CONFLICTS = 3

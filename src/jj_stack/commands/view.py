@@ -40,7 +40,7 @@ from jj_stack.github.error_messages import (
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import UnsupportedStackError
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
-from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.models.stack import LocalStack
 from jj_stack.review.branches import (
     is_review_branch,
     review_branch_glob,
@@ -144,7 +144,6 @@ def _run_status(
             console.output(json.dumps(_view_json_payload(stacks=(rendered,)), indent=2))
             return EXIT_INCOMPLETE if incomplete else 0
         exit_code = _render_prepared_status(
-            context=context,
             prepared_status=prepared_status,
             verbose=verbose,
         )
@@ -219,7 +218,6 @@ def _run_status(
         exit_code = max(
             exit_code,
             _render_prepared_status(
-                context=context,
                 prepared_status=prepared_status,
                 verbose=verbose,
             ),
@@ -426,38 +424,27 @@ def _json_status_result(
     selector: ViewSelector | None,
 ) -> dict[str, object]:
     stack_model = prepared_status.prepared.stack
-    local_revisions_by_change_id = {
-        revision.change_id: revision for revision in stack_model.revisions
+    current_change_ids = {
+        revision.change_id for revision in stack_model.revisions if revision.current_working_copy
     }
     stack: dict[str, object] = {
         "changes": [
             review_change_json(
                 revision,
-                current=_is_current_json_change(
-                    local_revisions_by_change_id.get(revision.change_id)
-                ),
+                current=revision.change_id in current_change_ids,
             )
             for revision in result.revisions
         ],
     }
     if selector is not None:
-        stack["selector"] = _json_selector(selector)
+        stack["selector"] = (
+            f"PR {selector.value}" if selector.kind == "pull_request" else selector.value
+        )
     return stack
-
-
-def _is_current_json_change(revision: LocalRevision | None) -> bool:
-    return False if revision is None else revision.current_working_copy
-
-
-def _json_selector(selector: ViewSelector) -> str:
-    if selector.kind == "pull_request":
-        return f"PR {selector.value}"
-    return selector.value
 
 
 def _render_prepared_status(
     *,
-    context: CommandContext,
     prepared_status: PreparedStatus,
     verbose: bool,
 ) -> int:
@@ -566,7 +553,6 @@ def render_status_summary_lines(
             client=client,
             github_available=github_available,
             show_status=False,
-            verbose=verbose,
             prerendered_blocks=prerendered_blocks,
         ),
     )
@@ -585,7 +571,6 @@ def render_status_summary_lines(
             client=client,
             github_available=github_available,
             show_status=True,
-            verbose=verbose,
             prerendered_blocks=prerendered_blocks,
         ),
     )
@@ -1001,7 +986,6 @@ def _render_summary_revision_lines(
     client,
     github_available: bool,
     show_status: bool,
-    verbose: bool,
     prerendered_blocks: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[str, ...]:
     """Render one revision inside a submitted or unsubmitted summary section."""

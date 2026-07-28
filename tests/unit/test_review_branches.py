@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+import jj_stack.review.branches as review_branches
 from jj_stack.errors import CliError
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import (
     ResolvedReviewBranch,
-    configured_review_namespace,
     ensure_unique_review_branches,
     generate_review_branch,
     resolve_review_branches,
@@ -113,11 +113,11 @@ def _revision(*, change_id: str, description: str) -> LocalRevision:
     )
 
 
-def test_reading_the_namespace_before_bootstrap_installs_it_fails_loudly() -> None:
+def test_reading_the_namespace_before_bootstrap_installs_it_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A default here would let a wrong prefix name someone else's branches for a force-push."""
 
-    with (
-        configured_review_namespace(None),
-        pytest.raises(RuntimeError, match="before bootstrap"),
-    ):
+    monkeypatch.setattr(review_branches, "_prefix", None)
+    with pytest.raises(RuntimeError, match="before bootstrap"):
         review_namespace()

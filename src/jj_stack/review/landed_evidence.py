@@ -31,6 +31,7 @@ RewrittenResultState = Literal[
     "not_merged",
 ]
 LandedEvidenceKind = Literal["exact", "rewritten"]
+SnapshotMismatchState = Literal["head_mismatch", "identity_mismatch"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,14 +135,10 @@ def classify_exact_snapshot(
 
     if ancestry != "on_trunk":
         return ExactSnapshotEvidence(state=ancestry)
-    mismatch = _identity_mismatch(candidate, pull_request, repository)
+    mismatch = _snapshot_mismatch(candidate, pull_request, repository)
     if mismatch is not None:
-        return ExactSnapshotEvidence(state="identity_mismatch", reason=mismatch)
-    if pull_request.head.sha != candidate.submitted_baseline.commit_id:
-        return ExactSnapshotEvidence(
-            state="head_mismatch",
-            reason=t"PR #{pull_request.number} no longer reports the submitted head",
-        )
+        state, reason = mismatch
+        return ExactSnapshotEvidence(state=state, reason=reason)
     return ExactSnapshotEvidence(state="landed")
 
 
@@ -154,14 +151,10 @@ def classify_rewritten_result(
 ) -> RewrittenResultEvidence:
     """Classify merge-result evidence for one currently selected review."""
 
-    mismatch = _identity_mismatch(candidate, pull_request, repository)
+    mismatch = _snapshot_mismatch(candidate, pull_request, repository)
     if mismatch is not None:
-        return RewrittenResultEvidence(state="identity_mismatch", reason=mismatch)
-    if pull_request.head.sha != candidate.submitted_baseline.commit_id:
-        return RewrittenResultEvidence(
-            state="head_mismatch",
-            reason=t"PR #{pull_request.number} no longer reports the submitted head",
-        )
+        state, reason = mismatch
+        return RewrittenResultEvidence(state=state, reason=reason)
     if pull_request.normalize_state().state != "merged":
         return RewrittenResultEvidence(state="not_merged")
     merge_commit_id = pull_request.merge_commit_sha
@@ -215,17 +208,22 @@ def collect_landed_evidence(
     return exact, rewritten
 
 
-def _identity_mismatch(
+def _snapshot_mismatch(
     candidate: LandedReviewCandidate,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
-) -> Message | None:
+) -> tuple[SnapshotMismatchState, Message] | None:
     identity = candidate.review_identity
     if identity.repository_key != repository.repository_key or not identity.matches_pull_request(
         pull_request
     ):
-        return (
+        return "identity_mismatch", (
             t"PR #{pull_request.number} no longer matches the pull request recorded for "
             t"{ui.change_id(candidate.change_id)}"
+        )
+    if pull_request.head.sha != candidate.submitted_baseline.commit_id:
+        return (
+            "head_mismatch",
+            t"PR #{pull_request.number} no longer reports the submitted head",
         )
     return None
