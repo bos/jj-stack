@@ -238,3 +238,50 @@ Options, cheapest first:
 The first two keep detection explicit, which matches how the rest of the tool treats
 capability. The third reintroduces automatic probing and should not be chosen without an
 observed case where the explicit paths were not enough.
+
+## `merge` refuses a stack that is not on the current trunk
+
+_Benefit: high — affects every merge attempt made after anyone else lands work on trunk, which
+is the normal case in a busy repository._
+
+`merge` fetches, then stops when the selected stack's base parent is not the fetched trunk commit
+(`commands/merge/command.py`), reporting `Selected stack is not based on the current trunk()`.
+Live experiments against a real repository show GitHub does not need this:
+
+- With the stack based on an older trunk, GitHub reported the bottom PR `MERGEABLE` / `CLEAN`.
+- Issuing the exact request `merge` had planned — the async native stack merge on the top PR with
+  the expected head commit — returned `status: merged` and landed both PRs.
+
+The guard also costs more than the merge it prevents. Its hint names only
+`jj rebase -s <bottom> -d 'trunk()'`; that rewrite changes the commit ID, so the next `merge`
+stops again on the exact-submitted-commit check and demands `submit`, which force-pushes the
+review branch of an already-reviewed PR. The observed sequence is rebase, blocked merge, submit,
+merge.
+
+This contradicts the merge section of `design.md`, which says `jj-stack` does not preflight
+approvals, checks, conflicts, or repository policy and lets GitHub apply those rules. The
+condition is also untested: `stack_not_on_trunk` appears only in its `DriftCondition` literal and
+its raise site.
+
+Proposed resolution: delete the trunk-position check and keep the case it was reaching for — a
+reviewed ancestor GitHub already merged — driven by the PR state the error handler already
+inspects, reported with the `sync` command to run. Removing a documented stop is a spec event, so
+amend the merge section in the same change.
+
+## `sync` strands a review branch that `cleanup` can no longer remove
+
+_Benefit: medium — leaves branches in the reserved namespace with no supported way to delete
+them._
+
+Observed on a real repository with a single-change stack whose PR had merged. `jj-stack sync
+<head>` reported `remove tracking for <change>` but left `jj-stack/<slug>-<change>` on the remote.
+`cleanup` then reported `No cleanup actions needed` and `list` reported `No stacks`, because
+cleanup verifies branches through the saved tracking that `sync` had just removed. The branch had
+to be deleted outside `jj-stack`.
+
+`README.md` says `sync` cleans up a merged PR when no PR above still needs its review branch, and
+`docs/troubleshooting.md` sends users to `sync` then `cleanup` for exactly this symptom, so both
+the behavior and the docs are wrong about one of the two commands owning the deletion.
+
+Decide which command deletes the branch and make the other one's docs match. Retiring tracking
+before the branch it identifies is deleted is the ordering that produces the leak.
