@@ -9,21 +9,11 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.models.stack import LocalRevision
+from jj_stack.models.review_state import TrackedReview
 from jj_stack.ui import Message
 
 CommitAncestry = Literal["not_on_trunk", "on_trunk", "unresolved"]
 LandedEvidenceKind = Literal["exact", "rewritten"]
-
-
-@dataclass(frozen=True, slots=True)
-class LandedReviewCandidate:
-    """One complete tracked review considered for landed handling."""
-
-    change_id: str
-    review_identity: ReviewIdentity
-    submitted_baseline: SubmittedBaseline
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,50 +51,6 @@ class TrunkEvidence:
         )
 
 
-def holds_unpublished_edit(
-    *,
-    published_commit_ids: tuple[str, ...],
-    revision: LocalRevision | None,
-) -> bool:
-    """Whether a local revision holds work that was never sent for review.
-
-    Every caller uses this check because acting on a wrong answer destroys local work. An
-    absent revision has nothing to lose and an immutable one cannot have been edited locally.
-    The published set is normally just the submitted baseline; adopting a native survivor
-    also counts the exact commit GitHub reported for it.
-    """
-
-    return (
-        revision is not None
-        and not revision.immutable
-        and revision.commit_id not in published_commit_ids
-    )
-
-
-def candidate_for_change(state: ReviewState, change_id: str) -> LandedReviewCandidate | None:
-    """Return one complete active saved review, if present."""
-
-    identity = state.review_identities.get(change_id)
-    baseline = state.submitted_baselines.get(change_id)
-    if identity is None or baseline is None:
-        return None
-    return LandedReviewCandidate(
-        change_id=change_id,
-        review_identity=identity,
-        submitted_baseline=baseline,
-    )
-
-
-def complete_review_candidates(state: ReviewState) -> tuple[LandedReviewCandidate, ...]:
-    """Return complete active saved reviews in stable change-ID order."""
-
-    return tuple(
-        candidate
-        for change_id in sorted(state.review_identities)
-        if (candidate := candidate_for_change(state, change_id)) is not None
-    )
-
-
 def classify_commit_ancestries(
     *,
     commit_ids: tuple[str | None, ...],
@@ -128,7 +74,7 @@ def classify_commit_ancestries(
 def classify_exact_snapshot(
     *,
     ancestry: CommitAncestry,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
 ) -> TrunkEvidence:
@@ -146,7 +92,7 @@ def classify_exact_snapshot(
 
 def classify_rewritten_result(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     merge_result_ancestry: CommitAncestry | None,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
@@ -181,7 +127,7 @@ def classify_rewritten_result(
 
 def collect_landed_evidence(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     context: CommandContext,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
@@ -216,7 +162,7 @@ def _ancestry_reason(ancestry: CommitAncestry, commit_id: str) -> Message:
 
 
 def _snapshot_mismatch(
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
 ) -> Message | None:

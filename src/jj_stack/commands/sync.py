@@ -49,7 +49,7 @@ from jj_stack.review.landed import (
     render_landed_results,
     retire_landed_reviews,
 )
-from jj_stack.review.landed_evidence import LandedReviewCandidate, holds_unpublished_edit
+from jj_stack.review.landed_evidence import TrackedReview
 from jj_stack.review.native_sync import resolve_selected_native_observation
 from jj_stack.review.observation import (
     RepositoryObservation,
@@ -238,7 +238,7 @@ async def _apply_selected_plan(
         tuple(revision.commit_id for revision in plan.survivors) if plan.landed else ()
     )
 
-    def retirement_blocker(candidate: LandedReviewCandidate) -> Message | None:
+    def retirement_blocker(candidate: TrackedReview) -> Message | None:
         return rewritten_retirement_blocker(
             candidate=candidate,
             context=context,
@@ -313,9 +313,11 @@ async def _apply_selected_plan(
                 and not landed.revision.immutable
                 # Convergence already refused these, but repeat the work-loss check here because
                 # this is the step that actually discards commits.
-                and not holds_unpublished_edit(
-                    published_commit_ids=(landed.candidate.submitted_baseline.commit_id,),
-                    revision=landed.revision,
+                and not (
+                    landed.revision is not None
+                    and landed.revision.holds_unpublished_edit(
+                        (landed.candidate.submitted_baseline.commit_id,)
+                    )
                 )
                 and retirement_blocker(landed.candidate) is None
             )

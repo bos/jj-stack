@@ -8,7 +8,6 @@ from jj_stack.formatting import short_change_id
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.landed_evidence import candidate_for_change
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.ui import Message
 
@@ -102,7 +101,7 @@ def _reviewed_revision(
     revision: LocalRevision,
     state: ReviewState,
 ) -> MergeRevision | None:
-    candidate = candidate_for_change(state, revision.change_id)
+    candidate = state.tracked_review(revision.change_id)
     pull_request = observation.reviews[revision.change_id].pull_request
     if candidate is None or pull_request is None:
         return None

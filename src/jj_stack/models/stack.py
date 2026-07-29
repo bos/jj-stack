@@ -35,6 +35,17 @@ class LocalRevision(BaseModel):
 
         return self.current_working_copy or bool(self.working_copy_workspaces)
 
+    def holds_unpublished_edit(self, published_commit_ids: tuple[str, ...]) -> bool:
+        """Whether this revision holds work that was never sent for review.
+
+        Callers check this because acting on a wrong answer destroys local work. An immutable
+        revision cannot have been edited locally. The published set is normally just the
+        submitted baseline; adopting a GitHub-stack survivor also counts the exact commit
+        GitHub reported for it.
+        """
+
+        return not self.immutable and self.commit_id not in published_commit_ids
+
     def is_reviewable(
         self,
         *,

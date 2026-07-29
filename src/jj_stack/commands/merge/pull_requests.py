@@ -12,7 +12,7 @@ from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import SubmittedBaseline
 from jj_stack.review.landed import FinalizationContext, observe_landed_candidate
-from jj_stack.review.landed_evidence import LandedReviewCandidate, collect_landed_evidence
+from jj_stack.review.landed_evidence import TrackedReview, collect_landed_evidence
 from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import Message
 
@@ -159,7 +159,7 @@ async def _landed(
         trunk_commit_id = context.jj_client.resolve_revision("trunk()").commit_id
     except CliError, GithubClientError, JjCommandError:
         return False
-    candidate = LandedReviewCandidate(
+    candidate = TrackedReview(
         change_id=revision.change_id,
         review_identity=revision.identity,
         submitted_baseline=SubmittedBaseline(commit_id=revision.commit_id),

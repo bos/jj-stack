@@ -19,10 +19,9 @@ from jj_stack.review.landed import (
 )
 from jj_stack.review.landed_evidence import (
     CommitAncestry,
-    LandedReviewCandidate,
+    TrackedReview,
     classify_commit_ancestries,
     classify_rewritten_result,
-    complete_review_candidates,
 )
 from jj_stack.review.native_sync import observe_native_stacks
 from jj_stack.review.observation import duplicate_review_claim_change_ids
@@ -56,7 +55,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             t"Skip {ui.change_id(issue.change_id)}: its saved {component} {condition}; "
             t"repair the tracking with {ui.cmd('relink')}."
         )
-    all_candidates = complete_review_candidates(state)
+    all_candidates = state.tracked_reviews()
     duplicate_change_ids = duplicate_review_claim_change_ids(state.review_identities)
     ancestry_by_commit_id = classify_commit_ancestries(
         commit_ids=tuple(candidate.submitted_baseline.commit_id for candidate in all_candidates),
@@ -149,13 +148,13 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
 
 
 def _eligible_exact_candidates(
-    candidates: tuple[LandedReviewCandidate, ...],
+    candidates: tuple[TrackedReview, ...],
     native_stacks: tuple[GithubStack, ...],
     pull_requests: dict[int, GithubPullRequest | GithubClientError | None],
     tracked_pull_numbers: frozenset[int],
-) -> tuple[tuple[LandedReviewCandidate, ...], frozenset[str]]:
+) -> tuple[tuple[TrackedReview, ...], frozenset[str]]:
     members = [member for stack in native_stacks for member in stack.pull_requests]
-    eligible: list[LandedReviewCandidate] = []
+    eligible: list[TrackedReview] = []
     terminal_required: set[str] = set()
     for candidate in candidates:
         number = candidate.review_identity.pr_number
@@ -189,7 +188,7 @@ def _eligible_exact_candidates(
 def _report_global_nonexact_candidate(
     *,
     ancestry: CommitAncestry,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     context: CommandContext,
     duplicate: bool,
     merge_ancestry: dict[str, CommitAncestry],
@@ -239,6 +238,6 @@ def _report_global_nonexact_candidate(
     return False
 
 
-def _warn_global_preserved(candidate: LandedReviewCandidate, reason: Message) -> bool:
+def _warn_global_preserved(candidate: TrackedReview, reason: Message) -> bool:
     console.warning(t"Leave {ui.change_id(candidate.change_id)} tracked: {reason}.")
     return True

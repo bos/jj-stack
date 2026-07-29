@@ -10,10 +10,8 @@ from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.landed_evidence import (
     LandedEvidenceKind,
-    LandedReviewCandidate,
-    candidate_for_change,
+    TrackedReview,
     collect_landed_evidence,
-    holds_unpublished_edit,
 )
 from jj_stack.review.native_sync import (
     NativeSurvivorReview,
@@ -26,7 +24,7 @@ from jj_stack.ui import Message
 
 @dataclass(frozen=True, slots=True)
 class SelectedLanded:
-    candidate: LandedReviewCandidate
+    candidate: TrackedReview
     evidence_kind: LandedEvidenceKind
     native: bool
     revision: LocalRevision | None
@@ -76,7 +74,7 @@ def build_selected_convergence_plan(
         lambda item: item.change_id not in native_historical,
         selected,
     ):
-        candidate = candidate_for_change(state, revision.change_id)
+        candidate = state.tracked_review(revision.change_id)
         evidence_kind = (
             None
             if candidate is None or revision.change_id in native_survivors
@@ -111,7 +109,7 @@ def build_selected_convergence_plan(
     reviewed: list[LocalRevision] = []
     saw_unreviewed = False
     for revision in survivors:
-        candidate = candidate_for_change(state, revision.change_id)
+        candidate = state.tracked_review(revision.change_id)
         if candidate is None:
             saw_unreviewed = True
             continue
@@ -161,7 +159,7 @@ def build_selected_convergence_plan(
 
 def _selected_landed_kind(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     context: CommandContext,
     observation: RepositoryObservation,
     repository: GithubRepoAddress,
@@ -260,7 +258,7 @@ def _validate_rebase_scope(
 
 def rewritten_retirement_blocker(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     context: CommandContext,
     plan: SelectedConvergencePlan,
 ) -> Message | None:
@@ -287,9 +285,8 @@ def _require_no_landed_local_edits(
     landed: tuple[SelectedLanded, ...],
 ) -> None:
     for item in landed:
-        if holds_unpublished_edit(
-            published_commit_ids=(item.candidate.submitted_baseline.commit_id,),
-            revision=item.revision,
+        if item.revision is not None and item.revision.holds_unpublished_edit(
+            (item.candidate.submitted_baseline.commit_id,)
         ):
             raise CliError(
                 t"Cannot remove merged {ui.change_id(item.candidate.change_id)} because it has "

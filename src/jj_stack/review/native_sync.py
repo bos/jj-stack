@@ -15,23 +15,21 @@ from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.landed_evidence import (
     LandedEvidenceKind,
-    LandedReviewCandidate,
-    candidate_for_change,
+    TrackedReview,
     collect_landed_evidence,
-    holds_unpublished_edit,
 )
 
 
 @dataclass(frozen=True, slots=True)
 class NativeHistoricalReview:
-    candidate: LandedReviewCandidate
+    candidate: TrackedReview
     evidence_kind: LandedEvidenceKind
     revision: LocalRevision | None
 
 
 @dataclass(frozen=True, slots=True)
 class NativeSurvivorReview:
-    candidate: LandedReviewCandidate
+    candidate: TrackedReview
     remote_head_commit_id: str
 
 
@@ -78,7 +76,7 @@ async def resolve_selected_native_observation(
     selected_change_ids = {revision.change_id for revision in selected}
     has_unselected_tracking = any(
         change_id not in selected_change_ids
-        and (candidate := candidate_for_change(state, change_id)) is not None
+        and (candidate := state.tracked_review(change_id)) is not None
         and candidate.review_identity.repository_key == repository.repository_key
         for change_id in state.review_identities
     )
@@ -145,13 +143,13 @@ def build_selected_native_sync(
     candidates_by_pull = {
         candidate.review_identity.pr_number: candidate
         for change_id in state.review_identities
-        if (candidate := candidate_for_change(state, change_id)) is not None
+        if (candidate := state.tracked_review(change_id)) is not None
         and candidate.review_identity.repository_key == repository.repository_key
     }
     selected_candidates = tuple(
         candidate
         for revision in selected
-        if (candidate := candidate_for_change(state, revision.change_id)) is not None
+        if (candidate := state.tracked_review(revision.change_id)) is not None
     )
     selected_pull_numbers = {
         candidate.review_identity.pr_number for candidate in selected_candidates
@@ -207,9 +205,8 @@ def build_selected_native_sync(
                 hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then "
                 t"rerun sync once it reports the merge.",
             )
-        if holds_unpublished_edit(
-            published_commit_ids=(candidate.submitted_baseline.commit_id, member.head.sha),
-            revision=selected_by_change_id[candidate.change_id],
+        if selected_by_change_id[candidate.change_id].holds_unpublished_edit(
+            (candidate.submitted_baseline.commit_id, member.head.sha)
         ):
             raise CliError(
                 t"Cannot sync {ui.change_id(candidate.change_id)} because it has unpublished "
@@ -249,7 +246,7 @@ def _require_history(stack: GithubStack, tracked: set[int]) -> None:
 
 def _historical_review(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     context: CommandContext,
     member: GithubStackPullRequest,
     pull_request: GithubPullRequest,
@@ -295,7 +292,7 @@ def _historical_review(
 
 def _validated_member_pull_request(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     member: GithubStackPullRequest,
     observation: review_observation.RepositoryObservation,
 ) -> GithubPullRequest:

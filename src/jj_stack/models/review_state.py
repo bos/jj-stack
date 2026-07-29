@@ -81,3 +81,39 @@ class ReviewState(BaseModel):
         """Return isolated record problems for one exact change ID."""
 
         return tuple(issue for issue in self.record_issues if issue.change_id == change_id)
+
+    def tracked_review(self, change_id: str) -> TrackedReview | None:
+        """Return one tracked review, or None when either record is absent."""
+
+        identity = self.review_identities.get(change_id)
+        baseline = self.submitted_baselines.get(change_id)
+        if identity is None or baseline is None:
+            return None
+        return TrackedReview(
+            change_id=change_id,
+            review_identity=identity,
+            submitted_baseline=baseline,
+        )
+
+    def tracked_reviews(self) -> tuple[TrackedReview, ...]:
+        """Return every tracked review in stable change-ID order."""
+
+        return tuple(
+            review
+            for change_id in sorted(self.review_identities)
+            if (review := self.tracked_review(change_id)) is not None
+        )
+
+
+class TrackedReview(BaseModel):
+    """One change whose review is tracked by both of its records.
+
+    Commands act on a review only when its identity and its submitted baseline are both present,
+    so this pairs them once instead of each caller re-checking for the halves.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    change_id: str
+    review_identity: ReviewIdentity
+    submitted_baseline: SubmittedBaseline

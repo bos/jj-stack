@@ -1,3 +1,10 @@
+"""Finish reviews whose work is proven to be on trunk, then stop tracking them.
+
+Finishing and untracking are kept separate: a pull request GitHub has ended is finished for good,
+while its tracking has to survive until nothing else needs it. Each step rechecks the evidence
+against live GitHub and trunk immediately before it acts.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -15,11 +22,10 @@ from jj_stack.ui import Message
 
 from .landed_evidence import (
     LandedEvidenceKind,
-    LandedReviewCandidate,
+    TrackedReview,
     classify_commit_ancestries,
     classify_exact_snapshot,
     collect_landed_evidence,
-    holds_unpublished_edit,
 )
 from .observation import RepositoryObservation, observe_reviews
 
@@ -28,7 +34,7 @@ LandedReviewOutcome = Literal["finalized", "already_terminal", "skipped"]
 
 @dataclass(frozen=True, slots=True)
 class LandedReviewResult:
-    candidate: LandedReviewCandidate
+    candidate: TrackedReview
     outcome: LandedReviewOutcome
     retired_tracking: bool = False
     skip_reason: Message | None = None
@@ -48,7 +54,7 @@ class FinalizationContext:
 
 async def finalize_landed_reviews(
     *,
-    candidates: tuple[LandedReviewCandidate, ...],
+    candidates: tuple[TrackedReview, ...],
     finalizer: FinalizationContext,
     skip_finalization: frozenset[str] = frozenset(),
 ) -> tuple[LandedReviewResult, ...]:
@@ -69,7 +75,7 @@ async def finalize_landed_reviews(
 
 
 async def _finalize_review(
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     finalizer: FinalizationContext,
 ) -> LandedReviewResult:
     pull_request, reason = await _observe_exact_candidate(candidate, finalizer)
@@ -91,7 +97,7 @@ async def _finalize_review(
 
 async def _finalize_open_review(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     finalizer: FinalizationContext,
     pull_request: GithubPullRequest,
 ) -> tuple[GithubPullRequest | None, Message | None]:
@@ -126,7 +132,7 @@ async def _finalize_open_review(
 
 
 async def _observe_exact_candidate(
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     finalizer: FinalizationContext,
 ) -> tuple[GithubPullRequest | None, Message | None]:
     observation, reason = await observe_landed_candidate(candidate, finalizer)
@@ -159,7 +165,7 @@ async def _observe_exact_candidate(
 
 
 async def observe_landed_candidate(
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     finalizer: FinalizationContext,
 ) -> tuple[RepositoryObservation | None, Message | None]:
     try:
@@ -201,7 +207,7 @@ async def retire_landed_reviews(
     evidence: dict[str, LandedEvidenceKind],
     finalization_results: tuple[LandedReviewResult, ...],
     finalizer: FinalizationContext,
-    retirement_blocker: Callable[[LandedReviewCandidate], Message | None] | None = None,
+    retirement_blocker: Callable[[TrackedReview], Message | None] | None = None,
     terminal_required: frozenset[str] = frozenset(),
 ) -> tuple[LandedReviewResult, ...]:
     """Retire links independently after remote finalization has reached a terminal state."""
@@ -209,7 +215,7 @@ async def retire_landed_reviews(
     context = finalizer.command
 
     async def current_retirement_blocker(
-        candidate: LandedReviewCandidate,
+        candidate: TrackedReview,
     ) -> Message | None:
         blocker = retirement_blocker(candidate) if retirement_blocker is not None else None
         return blocker or await _fresh_retirement_blocker(
@@ -246,7 +252,7 @@ async def retire_landed_reviews(
 
 async def _fresh_retirement_blocker(
     *,
-    candidate: LandedReviewCandidate,
+    candidate: TrackedReview,
     evidence_kind: LandedEvidenceKind,
     finalizer: FinalizationContext,
     terminal_required: bool,
@@ -255,10 +261,7 @@ async def _fresh_retirement_blocker(
         (candidate.change_id,)
     ).get(candidate.change_id, ())
     if any(
-        holds_unpublished_edit(
-            published_commit_ids=(candidate.submitted_baseline.commit_id,),
-            revision=revision,
-        )
+        revision.holds_unpublished_edit((candidate.submitted_baseline.commit_id,))
         for revision in local_revisions
     ):
         return t"{ui.change_id(candidate.change_id)} has unpublished local edits"

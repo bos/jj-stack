@@ -8,15 +8,14 @@ from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.landed import LandedReviewResult, landed_exit_code
 from jj_stack.review.landed_evidence import (
-    LandedReviewCandidate,
+    TrackedReview,
     classify_exact_snapshot,
     classify_rewritten_result,
-    holds_unpublished_edit,
 )
 
 
-def _candidate() -> LandedReviewCandidate:
-    return LandedReviewCandidate(
+def _candidate() -> TrackedReview:
+    return TrackedReview(
         change_id="change-1",
         review_identity=ReviewIdentity(
             repository_owner="octo-org",
@@ -196,26 +195,17 @@ def _revision(*, commit_id: str, immutable: bool = False) -> LocalRevision:
 
 
 def test_unpublished_edit_check_covers_every_shape_its_callers_pass() -> None:
-    """One wrong answer here destroys local work, so pin all four call shapes."""
+    """One wrong answer here destroys local work, so pin every shape callers pass."""
 
     published = ("submitted-1",)
 
-    assert not holds_unpublished_edit(published_commit_ids=published, revision=None)
-    assert not holds_unpublished_edit(
-        published_commit_ids=published,
-        revision=_revision(commit_id="submitted-1"),
-    )
-    assert holds_unpublished_edit(
-        published_commit_ids=published,
-        revision=_revision(commit_id="edited-locally"),
-    )
+    assert not _revision(commit_id="submitted-1").holds_unpublished_edit(published)
+    assert _revision(commit_id="edited-locally").holds_unpublished_edit(published)
     # An immutable revision cannot hold a local edit, whatever its commit.
-    assert not holds_unpublished_edit(
-        published_commit_ids=published,
-        revision=_revision(commit_id="edited-locally", immutable=True),
+    assert not _revision(commit_id="edited-locally", immutable=True).holds_unpublished_edit(
+        published
     )
-    # Adopting a native survivor also counts the commit GitHub reported for it.
-    assert not holds_unpublished_edit(
-        published_commit_ids=("submitted-1", "github-rewrote-this"),
-        revision=_revision(commit_id="github-rewrote-this"),
+    # Adopting a GitHub-stack survivor also counts the commit GitHub reported for it.
+    assert not _revision(commit_id="github-rewrote-this").holds_unpublished_edit(
+        ("submitted-1", "github-rewrote-this")
     )
