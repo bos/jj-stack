@@ -160,6 +160,34 @@ def collect_trunk_evidence(
     return exact, rewritten
 
 
+def proven_kind(
+    *,
+    candidate: TrackedReview,
+    context: CommandContext,
+    pull_request: GithubPullRequest,
+    repository: GithubRepoAddress,
+    trunk_commit_id: str,
+) -> tuple[TrunkEvidenceKind | None, Message]:
+    """Return which route proves the work is on trunk, plus why none of them did.
+
+    Both sync paths ask this and then decide for themselves whether an unproven answer is fatal,
+    so the routes are ranked here rather than in each of them.
+    """
+
+    exact, rewritten = collect_trunk_evidence(
+        candidate=candidate,
+        context=context,
+        pull_request=pull_request,
+        repository=repository,
+        trunk_commit_id=trunk_commit_id,
+    )
+    if exact.on_trunk:
+        return "exact", ""
+    if rewritten.on_trunk:
+        return "rewritten", ""
+    return None, rewritten.reason or exact.reason or "no merge result is on fetched trunk"
+
+
 def _ancestry_reason(ancestry: CommitAncestry, commit_id: str) -> Message:
     if ancestry == "unresolved":
         return t"the submitted commit {ui.commit_id(commit_id)} is unavailable locally"

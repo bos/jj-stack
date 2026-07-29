@@ -16,7 +16,7 @@ from jj_stack.models.stack import LocalRevision
 from jj_stack.review.trunk_evidence import (
     TrackedReview,
     TrunkEvidenceKind,
-    collect_trunk_evidence,
+    proven_kind,
 )
 
 
@@ -266,19 +266,14 @@ def _historical_review(
             hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then rerun "
             t"sync once it reports the merge.",
         )
-    exact, rewritten = collect_trunk_evidence(
+    evidence_kind, reason = proven_kind(
         candidate=candidate,
         context=context,
         pull_request=pull_request,
         repository=repository,
         trunk_commit_id=trunk_commit_id,
     )
-    if exact.on_trunk:
-        evidence_kind = "exact"
-    elif rewritten.on_trunk:
-        evidence_kind = "rewritten"
-    else:
-        reason = rewritten.reason or exact.reason or "no merge result is on fetched trunk"
+    if evidence_kind is None:
         raise CliError(
             t"Cannot retire native member PR #{member.number}: {reason}.",
             hint=t"Make GitHub's merge result reachable from trunk, then rerun sync.",

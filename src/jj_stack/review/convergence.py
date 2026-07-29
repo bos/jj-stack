@@ -17,7 +17,7 @@ from jj_stack.review.status import PreparedStatus
 from jj_stack.review.trunk_evidence import (
     TrackedReview,
     TrunkEvidenceKind,
-    collect_trunk_evidence,
+    proven_kind,
 )
 from jj_stack.ui import Message
 
@@ -186,28 +186,19 @@ def _trunk_evidence_kind_for(
             t"replacement with {ui.cmd('jj-stack relink')}, or end the review with "
             t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
         )
-    exact, rewritten = collect_trunk_evidence(
+    evidence_kind, reason = proven_kind(
         candidate=candidate,
         context=context,
         pull_request=pull_request,
         repository=repository,
         trunk_commit_id=trunk_commit_id,
     )
-    if exact.on_trunk:
-        return "exact"
-    if rewritten.on_trunk:
-        return "rewritten"
-    if pull_request.normalize_state().state in {"closed", "merged"}:
-        reason = (
-            rewritten.reason
-            or exact.reason
-            or "neither its submitted commit nor GitHub's merge commit is on trunk"
-        )
+    if evidence_kind is None and pull_request.normalize_state().state in {"closed", "merged"}:
         raise CliError(
             t"Cannot remove {ui.change_id(candidate.change_id)}: {reason}.",
             hint="Make GitHub's reported merge commit reachable from trunk, then rerun sync.",
         )
-    return None
+    return evidence_kind
 
 
 def _validate_rebase_scope(
