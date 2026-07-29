@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tomllib
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -227,10 +228,38 @@ def _resolve_editor_command(jj_client: JjClient) -> list[str]:
 
 
 def _split_editor_command(command: str) -> list[str]:
+    argv = _editor_command_from_toml_array(command)
+    if argv is not None:
+        return argv
     parts = shlex.split(command, posix=os.name != "nt")
     if os.name != "nt":
         return parts
     return [_strip_surrounding_quotes(part) for part in parts]
+
+
+def _editor_command_from_toml_array(command: str) -> list[str] | None:
+    """Return the argv for a list-valued `ui.editor`, or None when it is a plain string.
+
+    `jj` accepts either form and `jj config get` prints a list back as its TOML text, so
+    splitting that text as a shell word would look for an editor named `[code,--wait]`.
+    """
+
+    if not command.startswith("["):
+        return None
+    try:
+        parsed = tomllib.loads(f"editor = {command}")
+    except tomllib.TOMLDecodeError:
+        return None
+    value = parsed["editor"]
+    if not isinstance(value, list):
+        return None
+    argv: list[str] = []
+    for part in value:
+        if not isinstance(part, str):
+            return None
+        if part:
+            argv.append(part)
+    return argv or None
 
 
 def _strip_surrounding_quotes(text: str) -> str:

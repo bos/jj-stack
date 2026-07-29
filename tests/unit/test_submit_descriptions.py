@@ -167,6 +167,19 @@ def test_windows_editor_command_preserves_backslashes(monkeypatch) -> None:
     ]
 
 
+def test_list_valued_jj_editor_config_is_split_as_arguments_not_one_filename() -> None:
+    """`jj` accepts a list for `ui.editor` and `jj config get` prints it back as TOML text.
+
+    Splitting that text as a shell word looked for an editor named `[code,--wait]`, so `--edit`
+    was unusable for anyone configuring their editor that way.
+    """
+
+    assert _split_editor_command('["code","--wait"]') == ["code", "--wait"]
+    assert _split_editor_command('[ "emacsclient", "-nw" ]') == ["emacsclient", "-nw"]
+    # A path that merely contains brackets is still one filename.
+    assert _split_editor_command("/usr/bin/editor[1]") == ["/usr/bin/editor[1]"]
+
+
 def _isolate_editor_environment(monkeypatch, tmp_path: Path) -> None:
     jj_config = tmp_path / "jj-config.toml"
     jj_config.write_text("", encoding="utf-8")
