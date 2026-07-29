@@ -13,8 +13,9 @@ description: >
 `jj-stack` sends a linear chain of local `jj` changes to GitHub as dependent
 pull requests. Division of labor: `jj` edits the local stack; `jj-stack` owns
 its GitHub review state (review branches, PRs, merging, cleanup). Stable
-`review/<subject-slug>-<eight-character-change-id>` branches stay on the
-selected Git remote and do not become persistent local bookmarks.
+`jj-stack/<subject-slug>-<eight-character-change-id>` branches stay on the
+selected Git remote and do not become persistent local bookmarks. The
+`jj-stack` prefix is the default; a repo may set `jj-stack.branch_prefix`.
 
 ## Resolving the command
 
@@ -39,8 +40,8 @@ command they use before any direct GitHub mutation.
    hand. Use `gh stack` only for the exact resource-dissolution repair
    described below.
 2. **Check tracking before the first `gh` or API write in a repo.** Run
-   `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json
-   --fetch` for one PR. A matching PR or `branch` field proves tracking; a bare
+   `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json`
+   for one PR. A matching PR or `branch` field proves tracking; a bare
    change with `status: unsubmitted` does not. Absence does not prove a GitHub
    PR is unmanaged after local tracking loss: run
    `checkout --pull-request <pr> --fetch` and inspect again. Cache the answer
@@ -56,7 +57,8 @@ command they use before any direct GitHub mutation.
    `cleanup`, or `unstack`, and preview with `--dry-run` whenever the next
    step is uncertain.
 5. **Select explicitly after anything ambiguous.** `submit` defaults to the
-   current stack head (`@-`). After an interrupted command, or in a
+   stack ending at `@` when the working-copy change is described and nonempty,
+   otherwise `@-`. After an interrupted command, or in a
    multi-stack repo, pass a change ID, revset, or `--pull-request` selector.
    Prefer change IDs in user-facing summaries; use commit IDs only when a
    concrete immutable snapshot matters.
@@ -115,26 +117,24 @@ multiple desired local paths; run it, then submit each path separately.
   commits and saves tracking without moving the working copy, rewriting
   existing changes, or touching GitHub), or
   `relink <pr> <revset>` for one PR/change link.
-- **Fresh PRs for the same local changes:** `submit --restart --dry-run
-  <revset>`, then `submit --restart <revset>`. Replacement branches preserve
-  the readable original name, add `fresh-pr<old-pr-number>`, and keep the
-  short change ID suffix. If submission stops, rerun the same command: exact
-  replacement PRs are reused, and all old tracking remains until the whole
-  selected replacement stack succeeds.
+- **Fresh PRs for the same local changes:** retire the old review first with
+  `unstack --cleanup --dry-run <revset>` then `unstack --cleanup <revset>`,
+  and then `submit <revset>`. There is no restart flag; submitting without
+  retiring the old review reuses the existing PRs.
 
 If a direct GitHub mutation already happened, do not rebuild changes or PRs
-by hand. Inspect with `list --fetch --json`, `view --pull-request <pr> --json
---fetch`, and `doctor`, then choose `checkout`, `relink`, `submit --restart`,
-or `unstack` from what you see.
+by hand. Inspect with `list --json`, `view --pull-request <pr> --json`, and
+`doctor`, then choose `checkout`, `relink`, `submit`, or `unstack` from what
+you see.
 
 ## Everyday flow
 
 1. Build or revise the stack with `jj`. Each change is one reviewable PR:
    put a dependency in the same change or a lower one, and unrelated work in
    a separate stack.
-2. Confirm the shape with `view` (`--json` for machine-readable output,
-   `--fetch` to fetch ordinary remote state and check current review branches);
-   `list` shows the repo-wide inventory.
+2. Confirm the shape with `view` (`--json` for machine-readable output; it
+   reads GitHub but does not fetch, so run `jj git fetch` first when local
+   trunk may be behind); `list` shows the repo-wide inventory.
 3. `submit --dry-run`, then `submit` to create or refresh PRs. Add
    `--re-request` only when the user wants previous reviewers asked again.
 4. Apply review feedback in the change it belongs to: edit the lower `jj`

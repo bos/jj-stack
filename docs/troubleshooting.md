@@ -69,20 +69,25 @@ fetch configuration the first time it needs the remote, and says so, which is wh
 review branches from being imported as persistent bookmarks. See the README for how to undo
 it.
 
-If a change shows `submitted, no PR found for branch`, `jj-stack` has tracking
-for a previous submit, but GitHub did not report a PR for the current review
-branch. Run `jj-stack view <change>` first. If the PR is still open
-under a different branch or tracking record, use `jj-stack relink <pr> <change>`.
-If no open PR exists and you want to start the review over, end the old one and submit again:
+If a change shows `saved PR #<n>, no PR found for branch`, `jj-stack` remembers submitting that
+change, but GitHub no longer reports pull request `#<n>` at all — it was deleted, the number is
+wrong, or the repository moved. Run `jj-stack view <change-id>` first to confirm.
+
+To start the review over, forget the local tracking and submit again:
 
 ```bash
-jj-stack unstack --cleanup <stack-head>
-jj-stack submit <stack-head>
+jj-stack unstack --local <head-change-id>
+jj-stack submit <head-change-id>
 ```
 
-`unstack --cleanup` closes the tracked PRs, deletes their review branches, and removes the
-tracking. `submit` then opens fresh PRs from scratch. Preview the first step with `--dry-run` if
-you want to see what it will remove.
+`unstack --local` only removes this repository's record of the PR and its last submitted commit;
+it contacts neither GitHub nor the remote, which is what makes it work when the PR is gone.
+`submit` then opens a fresh PR. `unstack --cleanup` is not the command here: it tries to close the
+PR first, and stops on this change because GitHub no longer reports one.
+
+If the change instead shows `remembered PR #<n>`, the PR does still exist. `view` prints an
+advisory when it has moved to another head branch, and `jj-stack relink <pr> <change-id>` points
+the change at it.
 
 If GitHub reports a remembered PR as closed or merged, decide what outcome you
 want before choosing a command:

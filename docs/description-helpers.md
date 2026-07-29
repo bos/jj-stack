@@ -76,8 +76,9 @@ Replaces the defaults by invoking your program two ways:
 
 - `helper --pr <change_id>` runs once per change, and supplies that PR's title and body.
 - `helper --stack <revset>` runs once for the stack, only when it holds more than one change, and
-  supplies the stack overview comment on the head PR. If it returns nothing, no overview comment
-  is written.
+  supplies the stack overview comment on the head PR. To write no overview comment, return empty
+  `title` and `body` fields; any existing overview comment is then removed. Printing nothing at
+  all aborts the submit.
 
 ### Helper input
 

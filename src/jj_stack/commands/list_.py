@@ -4,10 +4,11 @@ Shows one row per locally known stack, including the head change ID, stack size,
 and description of the head change. It does not discover stacks that exist only on GitHub.
 
 It also shows orphaned PRs: tracked PRs whose local change is no longer part of any current
-stack. Close any open PRs and clean up every verified orphan shown with
+stack. Close and clean up every orphan it lists with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
-`--fetch` fetches ordinary remote state and checks current review branches before reporting.
+It reads pull request state from GitHub but does not fetch, so run `jj git fetch` first when your
+local trunk may be behind.
 """
 
 from __future__ import annotations

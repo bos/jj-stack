@@ -3,13 +3,13 @@
 By default it summarizes the submitted and unsubmitted changes in each selected stack;
 `--verbose` expands those summaries.
 
-`--fetch` fetches ordinary remote state and checks current review branches before reporting. Use
-one or more revsets and `--pull-request` selectors to inspect several stacks in one run.
+It reads pull request state from GitHub but does not fetch, so run `jj git fetch` first when your
+local trunk may be behind. Mix revsets and repeated `--pull-request` values to inspect several
+stacks in one run.
 
-Common examples: `jj-stack view` inspects the current described, nonempty working-copy change,
-or the completed change below it when the working copy is empty or undescribed;
-`jj-stack view --pull-request 123` finds the local stack for one linked PR; and
-`jj-stack view <head-change-id>` checks current review branches before reporting.
+Common examples: `jj-stack view` inspects the stack ending at `@` when the working-copy change is
+described and nonempty, otherwise `@-`; `jj-stack view --pull-request 123` finds the local stack
+for one linked PR; and `jj-stack view <head-change-id>` selects another stack explicitly.
 """
 
 from __future__ import annotations

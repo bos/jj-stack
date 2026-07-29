@@ -14,19 +14,18 @@ keep the matching GitHub PR stack up to date.
 - Python 3.14 or newer
 - `uv`
 - `jj` 0.43.0 or newer
-- GitHub authentication via `gh auth login`, `GH_TOKEN`, or `GITHUB_TOKEN`
+- GitHub authentication
 
 ### Install
 
-```bash
-uv tool install jj-stack
-```
-
-To upgrade later:
+`jj-stack` has not been released to PyPI yet, so install it from the repository:
 
 ```bash
-uv tool upgrade jj-stack
+uv tool install git+https://github.com/bos/jj-stack
 ```
+
+To upgrade later, rerun that command with `--force`. After the first release,
+`uv tool install jj-stack` and `uv tool upgrade jj-stack` will work instead.
 
 If `jj-stack` is not on your shell `PATH`, run:
 
@@ -51,6 +50,15 @@ The happy path is a local `jj` stack that is ready to become a set of GitHub PRs
 - the changes you want to submit are visible and mutable in `jj`
 - GitHub authentication works from this shell
 
+`jj-stack doctor` checks every one of those, plus the branch-namespace reservation described
+below, and names a fix for anything it finds. Run it once in a new repo:
+
+```bash
+jj-stack doctor --fix
+```
+
+Without `--fix` it only reports.
+
 It's easy to learn what `jj-stack` will do. Inspect first:
 
 ```bash
@@ -60,12 +68,15 @@ jj-stack
 (This is a synonym for `jj-stack view`.)
 
 `jj-stack` reserves the `jj-stack/` branch namespace for the branches it pushes, and keeps them
-off your local bookmark view. The first command that needs the remote adds one exclusion to that
-remote's Git fetch configuration and tells you it did:
+off your local bookmark view. `doctor --fix` sets this up; otherwise the first command that
+changes anything does it and tells you so:
 
 ```text
 Reserved jj-stack/ for jj-stack and added fetch exclusion ^refs/heads/jj-stack/*.
 ```
+
+A `--dry-run` will not set this up: it reports that the reservation is needed and stops, so make
+the reservation with `doctor --fix` before previewing anything.
 
 After that, neither `jj git fetch` nor `git fetch` brings `jj-stack/*` branches into this repo. Do
 not keep your own branches under `jj-stack/`. To undo the reservation, remove that one line from
