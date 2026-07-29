@@ -437,6 +437,12 @@ Without a GitHub stack, PRs merge bottom-up through the ordinary API. A rejectio
 sequence, leaving any lower PRs already merged. Rebase merge is refused for more than one
 ordinary PR because the first rewrite invalidates the reviewed commit identity of the rest.
 
+The merge method comes from `--merge-method`, otherwise from `merge_method` in repository
+configuration, otherwise from the repository's only allowed method. GitHub reports which methods a
+repository allows but never which to prefer, so a repository allowing several with none configured
+stops rather than choosing one. A configured method the repository does not allow is refused by
+name before any request goes out.
+
 Immediately before each ordinary merge, `jj-stack` retargets the candidate to trunk and passes
 the exact expected head commit.
 
@@ -446,10 +452,6 @@ request whose base is behind unless it conflicts, so whether the merge is possib
 answer to give. Each candidate is retargeted to the trunk branch by name and sent with its
 expected head commit, so no step depends on which commit trunk points at, and no local fetch is
 needed between merges: every remote fact a later candidate depends on is read live.
-
-Refusing locally also cost more than the merge it prevented: the rebase it demanded changed every
-commit ID, which then failed the exact-submitted-commit rule and forced a force-push of an
-already-reviewed branch.
 
 A reviewed change GitHub already merged is still a stop, decided from the pull request's own
 reported state rather than from trunk position. That boundary names `sync`, because the local

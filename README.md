@@ -282,22 +282,28 @@ setting.
 For most use, `jj-stack` needs no configuration. It reads repository and change information
 through `jj`, and reads review state from GitHub.
 
-Repo-level config can be helpful for defaults such as reviewers and labels:
+Repo-level defaults save repeating the same flags. Set them with `jj config edit --repo`:
 
 ```toml
 [jj-stack]
 reviewers = ["octocat"]
-team_reviewers = ["octo-org/reviewers"]
+team_reviewers = ["reviewers"]
 labels = ["needs-review"]
 merge_method = "squash"
 ```
 
-Set `merge_method` when the repository allows more than one. GitHub reports which methods it
-allows but not which one you want, so without this `jj-stack merge` asks you to pass
-`--merge-method` every time.
+- `reviewers` are GitHub usernames, and `team_reviewers` are team slugs as GitHub spells them,
+  without the organization prefix.
+- `merge_method` is `merge`, `rebase`, or `squash`. Set it when the repository allows more than
+  one: GitHub reports which methods it allows but not which one you want, so without it
+  `jj-stack merge` asks you to pass `--merge-method` every time. A method the repository does not
+  allow is refused before anything is sent to GitHub.
+- `branch_prefix` names the reserved branch namespace, described under
+  [Before your first submit](#before-your-first-submit).
 
-`jj-stack submit` can override those defaults with `--reviewers`, `--team-reviewers`,
-and `--label`.
+`jj-stack submit` can override the reviewer and label defaults with `--reviewers`,
+`--team-reviewers`, and `--label`, and `jj-stack merge` overrides `merge_method` with
+`--merge-method`.
 
 Passing `--reviewers` or `--team-reviewers` also applies those review requests when the pull
 requests are otherwise unchanged. Existing reviewers that are omitted are left in place.
