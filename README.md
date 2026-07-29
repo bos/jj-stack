@@ -223,7 +223,8 @@ The status output will show whether the next step is `jj-stack submit` or
 `jj-stack sync <head-change-id>`.
 
 If `list` shows an `orphan` row, tracking remains for a PR whose local change is no longer part of
-any current stack. When you are ready to close it if needed and clean up its verified artifacts:
+any current stack. To close it and remove the review branch, stack comments, and local tracking
+it left behind:
 
 ```bash
 jj-stack unstack --cleanup --pull-request <pr> --dry-run

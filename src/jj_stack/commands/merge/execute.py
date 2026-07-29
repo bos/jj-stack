@@ -1,7 +1,7 @@
 """Apply ordinary pull-request merges for one selected review path.
 
 Each mutation rechecks fresh local, remote, and GitHub observations. GitHub moves trunk; this
-command does not rewrite local history or retire review tracking. A later selected `sync`
+command does not rewrite local history or retire review tracking. A later `sync` on the stack
 observes and reconciles whatever GitHub accepted.
 """
 

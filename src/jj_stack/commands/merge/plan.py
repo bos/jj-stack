@@ -64,7 +64,13 @@ def build_merge_plan(
         )
         candidates = candidates[:target]
         boundary = (
-            None if target else boundary or "the selected PR is not in the merge candidate prefix"
+            None
+            if target
+            else boundary
+            or (
+                "the selected PR is above the changes that can merge right now; run "
+                "jj-stack view to see which PRs at the bottom of the stack are ready"
+            )
         )
     action = (
         MergeAction(

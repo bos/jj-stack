@@ -141,7 +141,7 @@ you see.
    change, let descendants rebase, then `view` and `submit`. Do not patch a
    higher change to avoid touching a lower one.
 5. When bottom changes are ready, `merge --dry-run`, then `merge`, followed
-   by the printed selected `sync`.
+   by the printed `sync <head-change-id>`.
 6. If `trunk()` merely advanced, use plain `jj rebase`. `sync` is for
    ancestors already merged on GitHub under exact or rewritten commit IDs.
 
@@ -159,7 +159,7 @@ that is incomplete or needs attention (the output is still valid — read it);
 - `merge` rejected by GitHub: read the reported check, conflict, queue,
   policy, or access reason, fix it, and rerun the same explicit
   command. A native terminal failure merges nothing. If ordinary bottom-up
-  merging accepted lower PRs first, run selected `sync` before retrying the
+  merging accepted lower PRs first, run `sync <head-change-id>` before retrying the
   remainder. A matching request already pending should be allowed to finish,
   then observed by rerunning the same target and method.
 - Interrupted command: `view`, then rerun with an explicit change ID, revset,

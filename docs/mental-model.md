@@ -27,8 +27,8 @@ Each review branch is named `<prefix>/<subject-slug>-<short-change-id>`, where `
 purpose; the suffix ties the name to its stable change ID. The branches stay on the Git remote, so
 they do not clutter local `jj` bookmark output. `jj-stack` creates them for
 review and can remove them later during `jj-stack unstack --cleanup` or `jj-stack cleanup`.
-Merging itself does not rewrite local history or remove review state; selected `sync` reconciles
-GitHub's result first.
+Merging itself does not rewrite local history or remove review state. Run
+`jj-stack sync <head-change-id>` afterward to bring local history in line with what GitHub did.
 
 ## Stack structure
 
@@ -61,8 +61,8 @@ request." `jj-stack` creates review branches only because GitHub requires them. 
 a transport layer; the main authoring model is still local `jj` history.
 
 When GitHub provides its stacked-PR feature, `jj-stack` registers the ordered PRs there. Otherwise
-it shows the same navigation through managed PR comments. Native membership remains derived
-GitHub state: the local DAG still decides which changes belong together.
+it shows the same navigation through PR comments it manages. Either way the local DAG decides
+which changes belong together; the grouping on GitHub follows from it.
 
 Commands follow the selected change's parent chain. A reviewed change can be a common ancestor of
 several local paths; operating on one path leaves its siblings alone. The only extra constraint
@@ -77,4 +77,4 @@ When in doubt:
 - use `jj-stack view` to inspect the matching GitHub PR stack
 - use `jj-stack submit` to refresh that PR stack
 - use `jj-stack merge` to ask GitHub to merge the reviewed bottom changes
-- use selected `jj-stack sync` afterward to reconcile local history
+- use `jj-stack sync <head-change-id>` afterward to bring local history in line

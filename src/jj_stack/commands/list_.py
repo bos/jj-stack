@@ -1,4 +1,4 @@
-"""List review stacks connected in this local repository.
+"""List the review stacks jj-stack is tracking in this local repository.
 
 Shows one row per locally known stack, including the head change ID, stack size, review state,
 and description of the head change. It does not discover stacks that exist only on GitHub.
@@ -56,7 +56,7 @@ from jj_stack.review.status import (
     prepare_stack_for_status,
 )
 
-HELP = "List review stacks connected in this repository"
+HELP = "List the review stacks jj-stack is tracking in this repository"
 
 
 @dataclass(frozen=True, slots=True)

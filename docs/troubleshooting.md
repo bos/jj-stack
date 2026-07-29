@@ -115,8 +115,8 @@ What to do:
 jj-stack sync <head-change-id>
 ```
 
-Selected `sync` verifies which lower PRs GitHub merged, rebases the selected remaining changes
-above the current `trunk()`, and updates only PRs that already exist for them. Use
+`jj-stack sync <head-change-id>` verifies which lower PRs GitHub merged, rebases the remaining
+changes above the current `trunk()`, and updates only PRs that already exist for them. Use
 `jj-stack sync --dry-run <head-change-id>` first to preview merged changes and any cleanup or
 rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
 When a native merge rewrote the PRs that remain open, `sync` adopts those exact reviewed commits
@@ -169,9 +169,9 @@ Use the head change ID printed in the warning. To inspect first, run:
 jj-stack view <head-change-id>
 ```
 
-Status identifies tracked changes whose current commits no longer match the last successful
-submit. `submit` refreshes that stack's PR branches and base branches on GitHub so reviewers see
-the current local stack.
+`view` and `list` compare each tracked change against the commit last submitted for it, and name
+the ones that no longer match. `submit` refreshes that stack's PR branches and base branches on
+GitHub so reviewers see the current local stack.
 
 ## `merge` says the local change differs from what reviewers approved
 
@@ -216,7 +216,8 @@ What to do:
   merged before a later one is rejected; run `jj-stack sync <head-change-id>`, then retry
   `jj-stack merge <head-change-id>` if you still want the remainder.
 - `jj-stack` does not enqueue merge-queue work. If repository policy requires a queue, use the
-  repository's supported queue workflow, then run selected `sync` after GitHub merges the work.
+  repository's supported queue workflow, then run `jj-stack sync <head-change-id>` once GitHub
+  merges the work.
 - An access-denied response is a permissions problem. Fix repository permissions before retrying.
 
 ## PRs for this stack exist on GitHub but `jj-stack` doesn't know about them
@@ -278,9 +279,9 @@ gh extension install github/gh-stack
 Possible causes:
 
 - your `unstack` succeeded, but the follow-up cleanup hasn't run yet
-- GitHub merged the PRs, but selected `sync` or later cleanup has not run yet
+- GitHub merged the PRs, but `jj-stack sync` or a later `cleanup` has not run yet
 - another visible stack still needs the saved review link
-- something prevented conservative cleanup from proving that an artifact is safe to remove
+- `cleanup` could not confirm that a branch or comment is unused, so it left it alone and said so
 
 What to do:
 
@@ -290,8 +291,8 @@ jj-stack cleanup --dry-run # optional
 jj-stack cleanup
 ```
 
-Run selected `sync` first when merged ancestors still appear in the local stack. Use
-`cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then
+Run `jj-stack sync <head-change-id>` first when merged changes still appear in the local stack.
+Use `cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then
 run plain `cleanup` to apply the listed actions.
 
 ## A command reports an imported review bookmark

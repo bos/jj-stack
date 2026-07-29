@@ -392,7 +392,7 @@ def build_parser() -> ArgumentParser:
     unstack_parser.add_argument(
         "--cleanup",
         action="store_true",
-        help="Also delete verified jj-stack-managed review branches, comments, and tracking",
+        help="Also delete each closed pull request's review branch, stack comments, and tracking",
     )
     unstack_parser.add_argument(
         "--local",
@@ -453,8 +453,8 @@ def build_parser() -> ArgumentParser:
         "--all",
         action="store_true",
         help=(
-            "Clean up every locally tracked PR whose exact last-submitted commit is already on "
-            "trunk; do not rebase stacks"
+            "Across all stacks, clean up tracking for every pull request whose submitted commit "
+            "is already on trunk; never rebases or changes local commits"
         ),
     )
 

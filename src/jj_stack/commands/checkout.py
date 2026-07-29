@@ -135,7 +135,7 @@ def _checkout_saved_stack(
     )
     if incomplete:
         raise CliError(
-            t"The selected stack has changes without exact saved pull-request tracking: "
+            t"jj-stack has no saved pull request for some changes in this stack: "
             t"{ui.join(ui.change_id, (revision.change_id for revision in incomplete))}.",
             hint=t"Attach it with {ui.cmd('checkout --pull-request PR --fetch')}.",
         )

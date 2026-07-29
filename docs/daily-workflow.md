@@ -238,8 +238,9 @@ repository with GitHub stack support. Merging several ordinary PRs with `rebase`
 in one command because the first rewrite invalidates the later reviewed commit identities.
 
 `merge` does not rewrite local history, refresh surviving PRs, or remove tracking. After GitHub
-merges anything, run the selected `sync` command printed in the result. If an identical stack
-request is already pending, wait and rerun the same explicit `merge` command; once GitHub
+merges anything, run the `jj-stack sync <head-change-id>` command printed in the result. If an
+identical stack request is already pending, wait and rerun the same explicit `merge` command; once
+GitHub
 finishes, the retry observes the completed result.
 
 ## 7. Update a stack after GitHub merged lower PRs
@@ -339,8 +340,8 @@ local path.
 If `jj-stack list` says another tracked stack changed since its last submit, either run
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
 `jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another
-stack when that stack is built on top of a change in the stack you are inspecting. Status calls
-out which tracked changes no longer match their last submitted commits and whether
+stack when that stack is built on top of a change in the stack you are inspecting. `view` also
+calls out which tracked changes no longer match their last submitted commits, and whether
 `jj-stack sync <head-change-id>` is needed first.
 
 ## Short version
