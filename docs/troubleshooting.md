@@ -175,18 +175,19 @@ jj-stack view <head-change-id>
 the ones that no longer match. `submit` refreshes that stack's PR branches and base branches on
 GitHub so reviewers see the current local stack.
 
-## `merge` stops because the change, branch, and PR do not identify the same commit
+## `merge` stops because the change, its submitted commit, and its branch differ
 
 Possible causes:
 
-- you submitted a change, it got reviewed and approved, and meanwhile you rewrote it in a way
-  that changed its diff
-- the PR branch on GitHub still shows the older reviewed content
+- you rewrote the change after submitting it, so the local commit no longer matches the one sent
+  for review
+- the review branch on the remote was moved, or a submit did not finish, so it no longer holds the
+  commit recorded for that change
 
 What to do:
 
 ```bash
-jj-stack submit
+jj-stack submit <head-change-id>
 ```
 
 If you want to notify prior reviewers again after updating the PR, follow with:
@@ -194,6 +195,10 @@ If you want to notify prior reviewers again after updating the PR, follow with:
 ```bash
 jj-stack submit --re-request
 ```
+
+GitHub reports the related case separately. If the pull request's head moved on GitHub while the
+merge was in flight, `merge` says the PR head changed and names the same `submit` command; nothing
+local has to change first.
 
 A pure rebase with the same diff still changes the reviewed commit identity. Rerun `submit` so
 the review branch, PR, and `jj-stack` tracking all name that exact commit before merging.

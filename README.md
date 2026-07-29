@@ -287,6 +287,7 @@ Repo-level config can be helpful for defaults such as reviewers and labels:
 ```toml
 [jj-stack]
 reviewers = ["octocat"]
+team_reviewers = ["octo-org/reviewers"]
 labels = ["needs-review"]
 merge_method = "squash"
 ```
