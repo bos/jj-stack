@@ -587,6 +587,12 @@ A per-change lookup failure marks only that row unresolved and produces an incom
 failure before any rows can be built returns its own exit code. `list` includes orphaned PRs as
 separate rows.
 
+`view` and `list` decide incompleteness from one shared per-change rule: an unmerged divergent
+change, an ambiguous PR, a failed PR lookup, or a saved PR link the branch no longer resolves.
+One repository therefore cannot report complete from one command and incomplete from the other.
+Because a divergent change has several visible copies, every change-ID query selects all of them
+rather than resolving a bare change-ID symbol, which `jj` rejects as ambiguous.
+
 `view` and `submit` render stack rows through the user's native `jj log` formatting. `--json`
 follows [`docs/json-output.schema.json`](../json-output.schema.json) and exposes no cache state,
 raw remote targets, or tracking records.

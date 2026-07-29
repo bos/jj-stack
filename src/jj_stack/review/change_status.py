@@ -66,6 +66,21 @@ class ReviewChangeStatus:
 
         return self.pr_lifecycle == "missing" and self.saved_review_identity
 
+    @property
+    def makes_report_incomplete(self) -> bool:
+        """Whether this change stops `view` and `list` from reporting it completely.
+
+        Both report commands share this rule so the same repository cannot yield a complete
+        report from one and an incomplete report from the other.
+        """
+
+        return (
+            (self.local == "divergent" and self.pr_lifecycle != "merged")
+            or self.pr_lifecycle == "ambiguous"
+            or self.has_pull_request_lookup_failure
+            or self.has_stale_pull_request_link
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class OrphanedRecord:

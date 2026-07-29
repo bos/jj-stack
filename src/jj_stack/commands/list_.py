@@ -509,12 +509,7 @@ def _status_is_incomplete(
 ) -> bool:
     if github_error is not None or remote_error is not None:
         return True
-    return any(
-        status.has_stale_pull_request_link
-        or status.has_pull_request_lookup_failure
-        or status.pr_lifecycle == "ambiguous"
-        for status in statuses
-    )
+    return any(status.makes_report_incomplete for status in statuses)
 
 
 def _pull_request_numbers_from_revisions(

@@ -367,7 +367,7 @@ class JjClient:
             change_id: [] for change_id in ordered_change_ids
         }
         for chunk in _chunked(ordered_change_ids):
-            revisions = self._query_revisions(_present_symbols_revset(chunk))
+            revisions = self._query_revisions(_change_ids_revset(chunk))
             for revision in revisions:
                 grouped.setdefault(revision.change_id, []).append(revision)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
@@ -387,7 +387,7 @@ class JjClient:
         ancestor_revset = f"({_union_revset_symbols(ordered_ancestor_commit_ids)})::"
         revisions_by_commit_id: dict[str, LocalRevision] = {}
         for chunk in _chunked(ordered_change_ids):
-            change_ids_revset = _present_symbols_revset(chunk)
+            change_ids_revset = _change_ids_revset(chunk)
             for revision in self._query_revisions(f"({change_ids_revset}) & {ancestor_revset}"):
                 revisions_by_commit_id.setdefault(revision.commit_id, revision)
         return tuple(revisions_by_commit_id.values())
@@ -736,7 +736,7 @@ class JjClient:
         rendered: dict[str, str] = {}
         template = _short_change_id_render_template(min_len=min_len)
         for chunk in _chunked(ordered_change_ids):
-            revset = _present_symbols_revset(chunk)
+            revset = _change_ids_revset(chunk)
             stdout = self._run_jj(
                 (
                     "--ignore-working-copy",
@@ -1668,6 +1668,20 @@ def _present_symbols_revset(symbols: Sequence[str]) -> str:
 
     return _union_revset_symbols(
         tuple(f"present({_quote_revset_symbol(symbol)})" for symbol in symbols),
+        quote=False,
+    )
+
+
+def _change_ids_revset(change_ids: Sequence[str]) -> str:
+    """Union change IDs as `change_id(...)` terms.
+
+    Every caller wants each change's visible copies, and a bare change-ID symbol fails outright
+    once a change is divergent. Selecting through `change_id()` returns all of them, and like
+    `present(...)` an unmatched change ID contributes nothing instead of failing the query.
+    """
+
+    return _union_revset_symbols(
+        tuple(f"change_id({_quote_revset_symbol(change_id)})" for change_id in change_ids),
         quote=False,
     )
 

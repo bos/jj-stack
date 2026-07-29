@@ -19,8 +19,10 @@ matches; codes 7-9 are reserved because their `gh stack` meanings have no jj-sta
 Notes:
 
 - `view` and `list` are report commands. When they cannot inspect everything — GitHub is
-  unreachable, a saved PR link has gone stale, or one selector among several fails to
-  resolve — they still print the best report they can and exit 10. Exit 0 means the inspection
+  unreachable, a saved PR link has gone stale, a change has several visible revisions, or one
+  selector among several fails to resolve — they still print the best report they can and exit
+  10. Both commands apply the same rule, so they never disagree about whether one repository's
+  report is complete. Exit 0 means the inspection
   completed; the report can still contain work to do, such as an orphaned PR or a stack that has
   changed since submit. When the command cannot produce a report at all, including when the only
   selector given fails to resolve, it fails with one of the error codes instead.

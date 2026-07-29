@@ -566,14 +566,7 @@ def _needs_github_inspection(prepared_revision: PreparedRevision) -> bool:
 
 def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:
     for revision in revisions:
-        change_status = classify_review_status_revision(revision)
-        if change_status.local == "divergent" and change_status.pr_lifecycle != "merged":
-            return True
-        if (
-            change_status.pr_lifecycle == "ambiguous"
-            or change_status.has_pull_request_lookup_failure
-            or change_status.has_stale_pull_request_link
-        ):
+        if classify_review_status_revision(revision).makes_report_incomplete:
             return True
         managed_comments_lookup = revision.managed_comments_lookup
         if managed_comments_lookup is not None and managed_comments_lookup.state in {

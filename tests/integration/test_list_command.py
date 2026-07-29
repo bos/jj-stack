@@ -455,3 +455,35 @@ def test_list_marks_stale_saved_pull_request_link_and_exits_nonzero(
     assert exit_code == EXIT_INCOMPLETE
     assert "stale link" in captured.out
     assert "PR 1" in captured.out
+
+
+def test_list_and_view_agree_that_a_divergent_change_is_an_incomplete_report(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """One repository must not look complete to `list` and incomplete to `view`.
+
+    `list` already labels the row `divergent`, so exiting 0 told a script the report could be
+    trusted while `view` reported the same repository as incomplete.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack(allow_immutable=True).head.change_id
+
+    # Two concurrent operations rewriting one change is how divergence reaches a tracked
+    # stack in real use, such as edits made from two workspaces or two machines.
+    run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 here"], repo)
+    run_command(
+        ["jj", "describe", "--at-operation", "@-", "-r", change_id, "-m", "feature 1 elsewhere"],
+        repo,
+    )
+
+    list_exit_code = run_main(repo, config_path, "list")
+    list_output = capsys.readouterr().out
+    view_exit_code = run_main(repo, config_path, "view")
+
+    assert "divergent" in list_output
+    assert list_exit_code == EXIT_INCOMPLETE
+    assert view_exit_code == EXIT_INCOMPLETE
