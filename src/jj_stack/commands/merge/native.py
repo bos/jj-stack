@@ -102,7 +102,7 @@ async def execute_native_merge(
             t"Could not request native merge through PR #{native.target.identity.pr_number}.",
             hint="Resolve the GitHub error above, then rerun merge.",
         ) from error
-    if submission.conflict:
+    if submission.already_pending:
         details = submission.result.details
         matching = (
             details.expected_head_sha == native.target.commit_id

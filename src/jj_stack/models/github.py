@@ -121,9 +121,14 @@ class GithubAsyncMerge(BaseModel):
 
 
 class GithubAsyncMergeSubmission(BaseModel):
-    """Typed submit response, including a decoded conflict diagnostic."""
+    """Typed submit response for an asynchronous merge request.
 
-    conflict: bool
+    `already_pending` reports GitHub's 409, which means an operation for this pull request is
+    already in flight. It does not mean the merge conflicts; a conflict comes back later as a
+    failed terminal status.
+    """
+
+    already_pending: bool
     result: GithubAsyncMerge
 
 

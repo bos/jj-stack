@@ -573,19 +573,21 @@ class GithubClient:
             f"{self._repo_path}/pulls/{pull_number}/merge-async",
             json={"merge_method": merge_method, "sha": expected_head_sha},
         )
-        conflict = response.status_code == 409
-        if conflict:
+        # 409 means GitHub already has an operation in flight for this pull request, not that
+        # the merge conflicts.
+        already_pending = response.status_code == 409
+        if already_pending:
             try:
                 payload = response.json()
             except json.JSONDecodeError as error:
                 raise GithubClientError(
-                    "GitHub async merge conflict response was not valid JSON.",
+                    "GitHub's already-pending merge response was not valid JSON.",
                     status_code=409,
                 ) from error
         else:
             payload = self._expect_success(response)
         return GithubAsyncMergeSubmission(
-            conflict=conflict,
+            already_pending=already_pending,
             result=_validate_async_merge_payload(payload),
         )
 
