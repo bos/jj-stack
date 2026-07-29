@@ -782,6 +782,20 @@ def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         members = _require_int_list(payload, "pull_requests")
         if len(members) < 2:
             raise HTTPException(status_code=422, detail="A stack requires two pull requests.")
+        already = sorted(
+            set(members).intersection(
+                member for existing in _native_stacks(repository).values() for member in existing
+            )
+        )
+        if already:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Pull requests "
+                    + ", ".join(f"#{number}" for number in already)
+                    + " are already part of a stack"
+                ),
+            )
         _validate_stack_members(
             repository,
             admitted_members=members,
@@ -1325,6 +1339,18 @@ def _require_int_list(payload: dict[str, object], key: str) -> tuple[int, ...]:
 def _native_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...]]:
     if repository.native_stacks is None:
         raise HTTPException(status_code=404, detail="Not Found")
+    # GitHub refuses to put one pull request in two stacks: creating a second reports
+    # "Pull requests #N are already part of a stack" (422, confirmed against the API). Tests
+    # assign this mapping directly, so refuse the impossible shape here rather than let a fixture
+    # justify production code defending against it.
+    seen: set[int] = set()
+    for members in repository.native_stacks.values():
+        overlap = seen.intersection(members)
+        assert not overlap, (
+            f"fake GitHub was given pull requests {sorted(overlap)} in more than one stack, "
+            "which GitHub rejects"
+        )
+        seen.update(members)
     return repository.native_stacks
 
 

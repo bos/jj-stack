@@ -191,8 +191,6 @@ def _github_stack_blocker(
     them applied when the code already knew.
     """
 
-    if len(matching) != 1:
-        return t"GitHub reports PR #{number} more than once in its stack membership"
     if not matching[0].is_historical:
         return t"GitHub still lists PR #{number} as an active member of its stack"
     if not isinstance(pull_request, GithubPullRequest):

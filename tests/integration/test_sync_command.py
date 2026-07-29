@@ -474,15 +474,6 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-07-23T12:00:00Z"
     fake_repo.pull_requests[1].merge_commit_sha = first.commit_id
-    fake_repo.native_stacks = {7: (1, 2), 8: (1,)}
-    ambiguous_exit = run_main(repo, config_path, "sync", "--all")
-    ambiguous = capsys.readouterr()
-
-    assert ambiguous_exit == 1
-    assert "more than once in its stack membership" in " ".join(ambiguous.err.split())
-    assert first.change_id in state_store.load().review_identities
-
-    fake_repo.native_stacks = {7: (1, 2)}
     advance_remote_trunk(fake_repo)
     remote_survivor = fake_repo.rewrite_pull_request_onto_base(
         fake_repo.pull_requests[2],
