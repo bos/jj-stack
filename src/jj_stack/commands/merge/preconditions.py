@@ -65,10 +65,25 @@ def explain_precondition(reason: str, *, change_id: str, sync_target: str) -> Me
     deciding what to tell the user.
     """
 
+    # Every boundary already names the change, so these do not repeat its ID.
+    submit = ui.cmd(f"jj-stack submit {short_change_id(change_id)}")
+    if "unresolved conflicts" in reason:
+        return t"it has unresolved conflicts; resolve them with jj, then run {submit}"
+    if "more than one visible revision" in reason:
+        return (
+            t"it has more than one visible revision; reconcile them, for example with "
+            t"{ui.cmd('jj log -r')} {ui.revset(f'change_id({short_change_id(change_id)})')}, "
+            t"then run {submit}"
+        )
+    if "no longer visible locally" in reason:
+        return (
+            t"it is no longer visible locally; run {ui.cmd('jj-stack view')} to find where it "
+            t"went, or {ui.cmd(f'jj-stack sync {sync_target}')} if it already merged"
+        )
     if "last submitted commit" in reason:
         return (
-            t"the local change, submitted version, branch, and PR do not all identify the same "
-            t"exact commit; run {ui.cmd(f'jj-stack submit {short_change_id(change_id)}')}"
+            t"the local change, the commit last submitted for it, and its review branch do not "
+            t"all name the same commit; run {submit}"
         )
     if "is already merged" in reason:
         return (
@@ -86,6 +101,26 @@ def _review_precondition_error(
     planned: MergeRevision,
     inactive_allowed: bool,
 ) -> str | None:
+    return _local_precondition_error(
+        expected_repository=expected_repository,
+        observed=observed,
+        planned=planned,
+    ) or _pull_request_precondition_error(
+        expected_bases=expected_bases,
+        observed=observed,
+        planned=planned,
+        inactive_allowed=inactive_allowed,
+    )
+
+
+def _local_precondition_error(
+    *,
+    expected_repository: GithubRepoAddress,
+    observed: ReviewObservation,
+    planned: MergeRevision,
+) -> str | None:
+    """Explain why the local change and its review branch do not match the plan."""
+
     identity = observed.identity
     local = observed.local_revision
     label = planned.change_id
@@ -95,19 +130,38 @@ def _review_precondition_error(
         or identity.repository_key != expected_repository.repository_key
     ):
         return f"saved PR tracking for {label} changed"
+    if local is None:
+        return f"{label} is no longer visible locally"
+    # Stack discovery normally rejects a divergent change first; this covers one that diverged
+    # after the plan was built.
+    if local.divergent:
+        return f"{label} has more than one visible revision"
+    # Conflicts come before the commit comparison: a rebase that conflicts also changes the
+    # commit, and resolving is what has to happen first either way.
+    if local.conflict:
+        return f"{label} has unresolved conflicts"
     if (
         observed.baseline is None
         or observed.baseline.commit_id != planned.commit_id
-        or local is None
         or local.commit_id != planned.commit_id
-        or local.conflict
-        or local.divergent
         or observed.remote_review_target != planned.commit_id
     ):
         return f"the last submitted commit for {label} changed"
+    return None
+
+
+def _pull_request_precondition_error(
+    *,
+    expected_bases: tuple[str, ...],
+    observed: ReviewObservation,
+    planned: MergeRevision,
+    inactive_allowed: bool,
+) -> str | None:
+    """Explain why GitHub's view of the pull request does not match the plan."""
+
     pull_request = observed.pull_request
     if pull_request is None:
-        return f"GitHub no longer reports the saved pull request for {label}"
+        return f"GitHub no longer reports the saved pull request for {planned.change_id}"
     pull_request = pull_request.normalize_state()
     if (
         not planned.identity.matches_pull_request(pull_request)
@@ -115,7 +169,7 @@ def _review_precondition_error(
         or observed.head_pull_requests[0].number != pull_request.number
         or pull_request.head.sha != planned.commit_id
     ):
-        return f"the pull request or its head commit for {label} changed"
+        return f"the pull request or its head commit for {planned.change_id} changed"
     if pull_request.state == "merged" and not inactive_allowed:
         return f"pull request #{pull_request.number} is already merged"
     if (pull_request.state != "open" and not inactive_allowed) or (

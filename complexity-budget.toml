@@ -3,7 +3,7 @@ production = 20_355
 tests = 21_692
 total = 42_144
 merge = 1_692
-governed = 3_380
+governed = 3_420
 governed_module = 502
 checker = 182
 

@@ -279,6 +279,12 @@ def test_native_merge_terminal_failure_is_atomic(
 
     assert exit_code == 1
     assert "nothing merged" in captured.out
+    # A refused group merge reaches the user the same way a refused single merge does: with the
+    # rebase-and-resubmit route, since rerunning merge cannot clear a conflict.
+    normalized = " ".join(captured.out.split())
+    assert "rebase onto" in normalized
+    assert "resolve the conflict" in normalized
+    assert "jj-stack submit" in normalized
     assert fake_repo.async_merge_requests
     assert fake_repo.async_merge_polls == [(2, "fake-async-1")]
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
@@ -496,12 +502,44 @@ def test_merge_requires_submit_after_a_diff_equivalent_rebase(
     rendered = " ".join(captured.out.split())
 
     assert exit_code == 1
-    assert "do not all identify the same exact commit" in rendered
+    assert "do not all name the same commit" in rendered
     assert f"jj-stack submit {revision.change_id[:8]}" in rendered
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
     assert fake_repo.pull_requests[1].state == "open"
     assert state_store.load() == state_before
+
+
+def test_merge_tells_a_conflicted_change_to_resolve_before_submitting(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A conflicted change must not be told to submit, because submit refuses conflicts.
+
+    Rebasing onto trunk to clear a merge refusal can itself conflict, so this is on the normal
+    route out of a blocked merge. Reporting it as a commit mismatch and naming `submit` sent the
+    user straight into a second, different failure.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
+
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "trunk conflict", "feature-1.txt")
+    run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
+    run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "main"], repo)
+    run_command(["jj", "rebase", "-s", change_id, "-d", "main"], repo)
+
+    exit_code = run_main(repo, config_path, "merge", change_id)
+    rendered = " ".join(capsys.readouterr().out.split())
+
+    assert exit_code == 1
+    assert "unresolved conflicts" in rendered
+    assert "resolve them" in rendered
+    assert "do not all name the same commit" not in rendered
+    assert fake_repo.pull_requests[1].state == "open"
 
 
 def test_merge_expected_head_guard_rejects_a_race(

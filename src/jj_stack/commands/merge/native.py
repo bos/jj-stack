@@ -120,12 +120,14 @@ async def execute_native_merge(
     terminal = await _terminal(github, submission.result, native.target.identity.pr_number)
     if terminal.status == "failed":
         reason = terminal.details.message or "GitHub did not provide a failure reason"
+        submit = ui.cmd(f"jj-stack submit {execution.selected_revset}")
         return _result(
             execution,
             native,
-            reason=t"GitHub reports nothing merged: {reason}. If the stack conflicts with "
-            t"{ui.revset('trunk()')}, rebase onto it, resolve, and submit again before merging; "
-            t"otherwise fix the failing check or repository rule on GitHub",
+            reason=t"GitHub reports nothing merged: {reason}; if the stack conflicts with "
+            t"{ui.bookmark(execution.trunk_branch)}, rebase onto {ui.revset('trunk()')}, resolve "
+            t"the conflict, and run {submit} before merging again; if a check or repository rule "
+            t"is failing, fix that on GitHub first",
         )
     if terminal.status != "merged" or terminal.details.sha is None:
         raise CliError(
