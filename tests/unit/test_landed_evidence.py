@@ -49,16 +49,17 @@ def _pull_request(**updates: object) -> GithubPullRequest:
 @pytest.mark.landing_recovery
 def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
     rows = (
-        ("on_trunk", _pull_request(), "octo-org", "landed"),
-        ("not_on_trunk", _pull_request(), "octo-org", "not_on_trunk"),
-        ("unresolved", _pull_request(), "octo-org", "unresolved"),
+        ("on_trunk", _pull_request(), "octo-org", True, False),
+        ("not_on_trunk", _pull_request(), "octo-org", False, False),
+        ("unresolved", _pull_request(), "octo-org", False, False),
         (
             "on_trunk",
             _pull_request(head=GithubBranchRef(ref="other", sha="submitted-1")),
             "octo-org",
-            "identity_mismatch",
+            False,
+            True,
         ),
-        ("on_trunk", _pull_request(), "other-org", "identity_mismatch"),
+        ("on_trunk", _pull_request(), "other-org", False, True),
         (
             "on_trunk",
             _pull_request(
@@ -69,11 +70,12 @@ def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
                 )
             ),
             "octo-org",
-            "head_mismatch",
+            False,
+            True,
         ),
     )
 
-    for ancestry, pull_request, owner, expected in rows:
+    for ancestry, pull_request, owner, on_trunk, review_mismatch in rows:
         result = classify_exact_snapshot(
             ancestry=ancestry,
             candidate=_candidate(),
@@ -84,7 +86,10 @@ def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
             ),
         )
 
-        assert result.state == expected
+        assert result.on_trunk is on_trunk
+        assert result.review_mismatch is review_mismatch
+        # An unproven verdict always explains itself, so no caller has to invent a message.
+        assert on_trunk or result.reason is not None
 
 
 @pytest.mark.landing_recovery
@@ -93,7 +98,7 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
         (
             _pull_request(head=GithubBranchRef(ref="other", sha="submitted-1")),
             None,
-            "identity_mismatch",
+            False,
         ),
         (
             _pull_request(
@@ -104,13 +109,13 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
                 )
             ),
             None,
-            "head_mismatch",
+            False,
         ),
-        (_pull_request(), None, "not_merged"),
+        (_pull_request(), None, False),
         (
             _pull_request(state="closed", merged_at="2026-07-21T12:00:00Z"),
             None,
-            "merge_result_missing",
+            False,
         ),
         (
             _pull_request(
@@ -119,7 +124,7 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
                 merge_commit_sha="merge-1",
             ),
             "unresolved",
-            "merge_result_unresolved",
+            False,
         ),
         (
             _pull_request(
@@ -128,7 +133,7 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
                 merge_commit_sha="merge-1",
             ),
             "not_on_trunk",
-            "merge_result_not_on_trunk",
+            False,
         ),
         (
             _pull_request(
@@ -137,11 +142,11 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
                 merge_commit_sha="merge-1",
             ),
             "on_trunk",
-            "landed",
+            True,
         ),
     )
 
-    for pull_request, ancestry, expected in rows:
+    for pull_request, ancestry, on_trunk in rows:
         result = classify_rewritten_result(
             candidate=_candidate(),
             merge_result_ancestry=ancestry,
@@ -152,7 +157,8 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
             ),
         )
 
-        assert result.state == expected
+        assert result.on_trunk is on_trunk
+        assert on_trunk or result.reason is not None
 
 
 def test_landed_exit_code_separates_a_deliberate_skip_from_a_failed_write() -> None:

@@ -147,7 +147,7 @@ async def _observe_exact_candidate(
         pull_request=pull_request,
         repository=finalizer.github.repository,
     )
-    if evidence.state != "landed":
+    if not evidence.on_trunk:
         return None, evidence.reason or "the submitted commit is not confirmed on trunk"
     review = observation.reviews[candidate.change_id]
     if pull_request.state == "open" and (
@@ -277,9 +277,8 @@ async def _fresh_retirement_blocker(
         repository=finalizer.github.repository,
         trunk_commit_id=finalizer.trunk_commit_id,
     )
-    if evidence_kind == "exact":
-        return None if exact.state == "landed" else exact.reason or exact.state
-    return None if rewritten.state == "landed" else rewritten.reason or rewritten.state
+    evidence = exact if evidence_kind == "exact" else rewritten
+    return None if evidence.on_trunk else evidence.reason
 
 
 def landed_exit_code(*, base: int, results: Sequence[LandedReviewResult]) -> int:

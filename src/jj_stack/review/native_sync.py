@@ -276,9 +276,9 @@ def _historical_review(
         repository=repository,
         trunk_commit_id=trunk_commit_id,
     )
-    if exact.state == "landed":
+    if exact.on_trunk:
         evidence_kind = "exact"
-    elif rewritten.state == "landed":
+    elif rewritten.on_trunk:
         evidence_kind = "rewritten"
     else:
         reason = rewritten.reason or exact.reason or "no merge result is on fetched trunk"

@@ -211,7 +211,7 @@ def _report_global_nonexact_candidate(
         pull_request=pull_request,
         repository=repository,
     )
-    if rewritten.state == "landed":
+    if rewritten.on_trunk:
         try:
             commands = dependent_path_commands(
                 ancestor_commit_id=candidate.submitted_baseline.commit_id,
@@ -230,15 +230,10 @@ def _report_global_nonexact_candidate(
             t"different commit; {commands}."
         )
         return False
-    if rewritten.state in {"head_mismatch", "identity_mismatch"}:
-        return _warn_global_preserved(candidate, rewritten.reason or rewritten.state)
-    if pull_request.normalize_state().state != "open":
-        return _warn_global_preserved(
-            candidate,
-            rewritten.reason
-            or t"PR #{pull_request.number} is {pull_request.normalize_state().state} "
-            t"without a result on trunk",
-        )
+    if rewritten.review_mismatch and rewritten.reason is not None:
+        return _warn_global_preserved(candidate, rewritten.reason)
+    if pull_request.normalize_state().state != "open" and rewritten.reason is not None:
+        return _warn_global_preserved(candidate, rewritten.reason)
     if ancestry == "unresolved":
         return _warn_global_preserved(candidate, "the submitted commit is unavailable locally")
     return False

@@ -14,24 +14,7 @@ from jj_stack.models.stack import LocalRevision
 from jj_stack.ui import Message
 
 CommitAncestry = Literal["not_on_trunk", "on_trunk", "unresolved"]
-ExactSnapshotState = Literal[
-    "head_mismatch",
-    "identity_mismatch",
-    "landed",
-    "not_on_trunk",
-    "unresolved",
-]
-RewrittenResultState = Literal[
-    "head_mismatch",
-    "identity_mismatch",
-    "landed",
-    "merge_result_missing",
-    "merge_result_not_on_trunk",
-    "merge_result_unresolved",
-    "not_merged",
-]
 LandedEvidenceKind = Literal["exact", "rewritten"]
-SnapshotMismatchState = Literal["head_mismatch", "identity_mismatch"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,20 +27,38 @@ class LandedReviewCandidate:
 
 
 @dataclass(frozen=True, slots=True)
-class ExactSnapshotEvidence:
-    """Repository-wide evidence for one exact submitted snapshot."""
+class TrunkEvidence:
+    """Whether one review's work is proven to be on trunk, and why not when it is not.
 
-    state: ExactSnapshotState
+    Callers only ever ask whether the work is proven and, failing that, what to tell the user, so
+    an unproven verdict always carries a reason. `review_mismatch` marks the one distinction a
+    caller draws beyond that: the saved review no longer describes the live pull request, which is
+    a tracking problem rather than a question about trunk.
+    """
+
+    on_trunk: bool
     reason: Message | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class RewrittenResultEvidence:
-    """Selected-path evidence for one forge-rewritten merge result."""
-
-    state: RewrittenResultState
+    review_mismatch: bool = False
     merge_commit_id: str | None = None
-    reason: Message | None = None
+
+    @classmethod
+    def proven(cls, *, merge_commit_id: str | None = None) -> TrunkEvidence:
+        return cls(on_trunk=True, merge_commit_id=merge_commit_id)
+
+    @classmethod
+    def unproven(
+        cls,
+        reason: Message,
+        *,
+        merge_commit_id: str | None = None,
+        review_mismatch: bool = False,
+    ) -> TrunkEvidence:
+        return cls(
+            on_trunk=False,
+            reason=reason,
+            review_mismatch=review_mismatch,
+            merge_commit_id=merge_commit_id,
+        )
 
 
 def holds_unpublished_edit(
@@ -130,16 +131,17 @@ def classify_exact_snapshot(
     candidate: LandedReviewCandidate,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
-) -> ExactSnapshotEvidence:
+) -> TrunkEvidence:
     """Classify the repository-wide exact-snapshot gate without lifecycle policy."""
 
     if ancestry != "on_trunk":
-        return ExactSnapshotEvidence(state=ancestry)
+        return TrunkEvidence.unproven(
+            _ancestry_reason(ancestry, candidate.submitted_baseline.commit_id)
+        )
     mismatch = _snapshot_mismatch(candidate, pull_request, repository)
     if mismatch is not None:
-        state, reason = mismatch
-        return ExactSnapshotEvidence(state=state, reason=reason)
-    return ExactSnapshotEvidence(state="landed")
+        return TrunkEvidence.unproven(mismatch, review_mismatch=True)
+    return TrunkEvidence.proven()
 
 
 def classify_rewritten_result(
@@ -148,34 +150,33 @@ def classify_rewritten_result(
     merge_result_ancestry: CommitAncestry | None,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
-) -> RewrittenResultEvidence:
+) -> TrunkEvidence:
     """Classify merge-result evidence for one currently selected review."""
 
     mismatch = _snapshot_mismatch(candidate, pull_request, repository)
     if mismatch is not None:
-        state, reason = mismatch
-        return RewrittenResultEvidence(state=state, reason=reason)
-    if pull_request.normalize_state().state != "merged":
-        return RewrittenResultEvidence(state="not_merged")
+        return TrunkEvidence.unproven(mismatch, review_mismatch=True)
+    lifecycle = pull_request.normalize_state().state
+    if lifecycle != "merged":
+        return TrunkEvidence.unproven(
+            t"PR #{pull_request.number} is {lifecycle} without a result on trunk"
+        )
     merge_commit_id = pull_request.merge_commit_sha
     if merge_commit_id is None:
-        return RewrittenResultEvidence(
-            state="merge_result_missing",
-            reason=t"GitHub did not report the merge-result commit for PR #{pull_request.number}",
+        return TrunkEvidence.unproven(
+            t"GitHub did not report the merge-result commit for PR #{pull_request.number}"
         )
     if merge_result_ancestry == "unresolved":
-        return RewrittenResultEvidence(
-            state="merge_result_unresolved",
+        return TrunkEvidence.unproven(
+            t"merge result {ui.commit_id(merge_commit_id)} is unavailable locally",
             merge_commit_id=merge_commit_id,
-            reason=t"merge result {ui.commit_id(merge_commit_id)} is unavailable locally",
         )
     if merge_result_ancestry != "on_trunk":
-        return RewrittenResultEvidence(
-            state="merge_result_not_on_trunk",
+        return TrunkEvidence.unproven(
+            t"merge result {ui.commit_id(merge_commit_id)} is not on fetched trunk",
             merge_commit_id=merge_commit_id,
-            reason=t"merge result {ui.commit_id(merge_commit_id)} is not on fetched trunk",
         )
-    return RewrittenResultEvidence(state="landed", merge_commit_id=merge_commit_id)
+    return TrunkEvidence.proven(merge_commit_id=merge_commit_id)
 
 
 def collect_landed_evidence(
@@ -185,7 +186,7 @@ def collect_landed_evidence(
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
     trunk_commit_id: str,
-) -> tuple[ExactSnapshotEvidence, RewrittenResultEvidence]:
+) -> tuple[TrunkEvidence, TrunkEvidence]:
     """Collect both distinct classifications from one current PR and trunk."""
 
     ancestries = classify_commit_ancestries(
@@ -208,22 +209,25 @@ def collect_landed_evidence(
     return exact, rewritten
 
 
+def _ancestry_reason(ancestry: CommitAncestry, commit_id: str) -> Message:
+    if ancestry == "unresolved":
+        return t"the submitted commit {ui.commit_id(commit_id)} is unavailable locally"
+    return t"the submitted commit {ui.commit_id(commit_id)} is not on fetched trunk"
+
+
 def _snapshot_mismatch(
     candidate: LandedReviewCandidate,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
-) -> tuple[SnapshotMismatchState, Message] | None:
+) -> Message | None:
     identity = candidate.review_identity
     if identity.repository_key != repository.repository_key or not identity.matches_pull_request(
         pull_request
     ):
-        return "identity_mismatch", (
+        return (
             t"PR #{pull_request.number} no longer matches the pull request recorded for "
             t"{ui.change_id(candidate.change_id)}"
         )
     if pull_request.head.sha != candidate.submitted_baseline.commit_id:
-        return (
-            "head_mismatch",
-            t"PR #{pull_request.number} no longer reports the submitted head",
-        )
+        return t"PR #{pull_request.number} no longer reports the submitted head"
     return None

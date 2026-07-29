@@ -195,9 +195,9 @@ def _selected_landed_kind(
         repository=repository,
         trunk_commit_id=trunk_commit_id,
     )
-    if exact.state == "landed":
+    if exact.on_trunk:
         return "exact"
-    if rewritten.state == "landed":
+    if rewritten.on_trunk:
         return "rewritten"
     if pull_request.normalize_state().state in {"closed", "merged"}:
         reason = (

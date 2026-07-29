@@ -187,7 +187,7 @@ async def _landed(
         repository=github.repository,
         trunk_commit_id=trunk_commit_id,
     )
-    return exact.state == "landed" or rewritten.state == "landed"
+    return exact.on_trunk or rewritten.on_trunk
 
 
 def _boundary(revision: MergeRevision, reason: Message) -> MergeAction:
