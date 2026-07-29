@@ -239,10 +239,12 @@ def build_selected_native_sync(
 def _require_history(stack: GithubStack, tracked: set[int]) -> None:
     if not any(member.number in tracked for member in stack.historical_pull_requests):
         raise CliError(
-            t"GitHub stack #{stack.number} rewrote a review head, but no merged member of it "
-            t"is tracked here to prove that transition.",
-            hint=t"Inspect the stack with {ui.cmd('jj-stack view')}, then attach the "
-            t"merged review with {ui.cmd('jj-stack relink')} if it belongs to this repository.",
+            t"GitHub stack #{stack.number} changed, but none of its merged members is tracked "
+            t"here, so this repository cannot prove what GitHub did to the reviews in it.",
+            hint=t"Inspect it with {ui.cmd('jj-stack view')}. Attach a merged member that "
+            t"belongs here with {ui.cmd('jj-stack relink')}; if nothing in the stack has merged, "
+            t"there is nothing for sync to reconcile, so rebase with {ui.cmd('jj rebase')} "
+            t"instead.",
         )
 
 

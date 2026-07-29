@@ -256,3 +256,4 @@ the behavior and the docs are wrong about one of the two commands owning the del
 
 Decide which command deletes the branch and make the other one's docs match. Retiring tracking
 before the branch it identifies is deleted is the ordering that produces the leak.
+
