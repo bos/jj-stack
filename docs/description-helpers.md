@@ -87,16 +87,44 @@ Replaces the defaults by invoking your program two ways:
   `title` and `body` fields; any existing overview comment is then removed. Printing nothing at
   all aborts the submit.
 
+`<helper>` is one executable, not a shell command line: it is run directly, so
+`--describe-with 'uv run helper.py'` fails to find a program of that name. It runs with the
+workspace root as its working directory.
+
 ### Helper input
 
-For the per-stack invocation, `jj-stack` writes a temporary file containing each PR's title, body,
-and a compact diffstat, and sets `JJ_STACK_INPUT_FILE` to its path. Reading that file lets a
-helper summarize from PR-level metadata instead of replaying the whole patch series.
+For the per-stack invocation, `jj-stack` writes a temporary JSON file and sets
+`JJ_STACK_INPUT_FILE` to its path. Reading that file lets a helper summarize from PR-level
+metadata instead of replaying the whole patch series. It looks like this, ordered from the bottom
+of the stack to the top:
+
+```json
+{
+  "revisions": [
+    {"change_id": "...", "title": "...", "body": "...", "diffstat": "..."}
+  ]
+}
+```
+
+The per-PR invocation gets no input file; it receives the change ID on the command line.
 
 ### Helper output
 
-Output must be structured. Invalid output aborts `submit` before any local, remote, or GitHub
-change is made — so a broken helper cannot leave a half-updated stack.
+The helper must print one JSON object on stdout, with string `title` and `body` fields:
+
+```json
+{"title": "add the API", "body": "Longer explanation.\n"}
+```
+
+For the per-stack invocation, `title` becomes a Markdown heading above `body` in the overview
+comment.
+
+Empty output, output that is not valid JSON, output that is not an object, or a missing or
+non-string `title` or `body` aborts `submit` before any local, remote, or GitHub change is
+made — so a broken helper cannot leave a half-updated stack.
+
+The repository's `scripts/` directory has working helpers to copy from, including editor-driven
+and LLM-driven examples.
 
 A helper's output is description prose only. It never affects stack topology; `jj-stack` reads
 that from the `jj` DAG on every run.

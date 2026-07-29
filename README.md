@@ -33,6 +33,15 @@ If `jj-stack` is not on your shell `PATH`, run:
 uv tool update-shell
 ```
 
+For tab completion, add the output of `jj-stack completion` to your shell startup file, for
+example:
+
+```bash
+eval "$(jj-stack completion zsh)"
+```
+
+`bash` and `fish` work the same way.
+
 To invoke it as `jj stack ...` — mirroring GitHub's `gh stack ...` — add a jj alias:
 
 ```toml
@@ -227,6 +236,17 @@ Use `--pull-request orphans` to preview or clean up every orphan in one operatio
 jj-stack unstack --cleanup --pull-request orphans --dry-run
 jj-stack unstack --cleanup --pull-request orphans
 ```
+
+To sweep review branches, stack comments, and tracking that no closed or merged review still
+needs, across the whole repository:
+
+```bash
+jj-stack cleanup --dry-run
+jj-stack cleanup
+```
+
+`cleanup` leaves open reviews alone. If a repository ever looks wrong, `jj-stack doctor` checks
+its setup and GitHub access and names a fix for what it finds.
 
 ## Learn more
 

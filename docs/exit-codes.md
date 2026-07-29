@@ -36,3 +36,5 @@ Notes:
   offending change where there is one; the trunk and working-copy cases have no change to name.
 - Exit 6 means rerun with an explicit revision or repair an incorrect saved PR attachment with
   `relink`.
+- `doctor` exits 0 when every check passed, warned, or was fixed, and 1 when any check failed. A
+  non-zero `doctor` describes the repository, not a failure of the command itself.

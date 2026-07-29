@@ -310,6 +310,19 @@ printed `jj git export` command next so the backing Git ref is also removed, the
 If the diagnostic instead names an effective `remotes.<remote>.fetch-bookmarks` override, unset
 that exact setting first so `jj-stack` can keep the managed namespace isolated.
 
+If the reservation itself is missing — the case where an ordinary fetch could import the
+namespace in the first place — `jj-stack doctor --fix` restores it.
+
+## Another jj-stack operation is already running
+
+`jj-stack` takes one lock per repository so two mutating commands cannot interleave. If another
+`jj-stack` is genuinely running, wait for it to finish.
+
+A variant of the message says the recorded holder is no longer running. That means the record of
+who took the lock is stale while the lock itself is still held. The operating system holds the
+lock and drops it when the owning process exits, so waiting a moment and rerunning the command is
+the whole fix. Do not delete anything by hand.
+
 ## You want to stop reviewing a stack on GitHub
 
 Cause:
@@ -346,7 +359,17 @@ Possible causes:
 - `submit` or another mutating command was cut short (Ctrl-C, crash, power or network failure)
   after it had already done some work but before it finished
 
-First, inspect the stack:
+First, check the repository itself. `doctor` reports leftovers from an interrupted `checkout` or
+`sync`, the state of the review-branch fetch reservation, remote and trunk resolution, and GitHub
+authentication, and names a recovery command for what it finds:
+
+```bash
+jj-stack doctor
+```
+
+It changes nothing on GitHub. Add `--fix` to let it apply the local repairs it can make safely.
+
+Then inspect the stack:
 
 ```bash
 jj-stack view

@@ -85,6 +85,22 @@ If a change does not already have its review branch and PR set up, `jj-stack sub
 remote branch and PR. After that, it reuses the saved human-readable branch name as the stable
 GitHub PR head while you revise your local change.
 
+To open the stack for early feedback without inviting merges, submit it as drafts:
+
+```bash
+jj-stack submit --draft
+```
+
+That creates new PRs as drafts and leaves existing ones alone. `--draft=all` also returns already
+open PRs to draft, and `--open` marks existing drafts ready for review:
+
+```bash
+jj-stack submit --open
+```
+
+This matters for merging: `jj-stack merge` skips a draft PR and everything above it, so a draft
+left at the bottom of the stack blocks the whole merge.
+
 ## 4. Revise locally as reviews come in
 
 During review, you can make any changes you want with `jj`. Split, squash, reorder, or rewrite
@@ -172,6 +188,26 @@ policy. GitHub evaluates those rules when it handles the request.
 If you rewrote a reviewed change, rerun `submit` before merging even when the diff is unchanged.
 `merge` accepts only the exact commit last sent for review when the review branch and PR still
 point to it. It will not refresh a review to make the change mergeable.
+
+`merge` fetches first and requires the bottom of your stack to sit directly on the trunk commit it
+just fetched. Because anyone else landing work on trunk breaks that, expect to hit it:
+
+```text
+Error: Selected stack is not based on the current trunk().
+Hint: Run jj rebase -s <bottom-change-id> -d 'trunk()' before retrying merge.
+```
+
+Doing only what that hint says is not enough. The rebase gives every change a new commit ID, so
+the next `merge` stops again on the exact-commit rule above. The full sequence is:
+
+```bash
+jj rebase -s <bottom-change-id> -d 'trunk()'
+jj-stack submit <head-change-id>
+jj-stack merge <head-change-id>
+```
+
+If the reason trunk moved is that a lower PR of your own merged, run
+`jj-stack sync <head-change-id>` instead of rebasing by hand; the error names that case.
 
 To preview the same selection and validation without asking GitHub to merge:
 

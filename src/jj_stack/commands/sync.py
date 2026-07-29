@@ -1,4 +1,20 @@
-"""Update a stack after GitHub merges, or clean up merged reviews with `sync --all`."""
+"""Update a stack after GitHub merges, or clean up merged reviews with `sync --all`.
+
+This is the one command that changes local history. For a selected stack it fetches trunk, checks
+which pull requests at the bottom GitHub merged, abandons those local changes, rebases the
+remaining ones onto the new trunk, and updates the pull requests that already exist for them. It
+opens no new pull requests and leaves other stacks alone.
+
+Some states stop the whole run instead: a remaining change that is conflicted or divergent,
+unpublished local edits on a change GitHub already merged, or another local stack built on the
+same changes. Fix what the message names and rerun.
+
+`sync --all` never rebases or submits. It checks every locally tracked pull request and removes
+tracking for those whose submitted commit is already on trunk, printing a `jj-stack sync
+<head-change-id>` command for stacks that need the rebasing form instead.
+
+Use plain `jj rebase` when trunk merely advanced and nothing in the stack merged.
+"""
 
 from __future__ import annotations
 

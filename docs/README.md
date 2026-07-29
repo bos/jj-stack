@@ -19,6 +19,11 @@ requests while keeping history easy to revise.
 The repository [README](../README.md) is the canonical install and first-run
 quickstart.
 
+`jj-stack doctor` checks a repository's setup and GitHub access and names a fix
+for anything it reports; `--fix` applies the local repairs it can make safely.
+It is a good first command in a new clone and after any command that failed
+unexpectedly.
+
 Examples use angle brackets for values you must replace. For example, in
 `jj-stack view <head-change-id>`, replace `<head-change-id>` with the change ID shown by `jj log`
 or `jj-stack`.
