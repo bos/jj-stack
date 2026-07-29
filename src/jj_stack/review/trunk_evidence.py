@@ -1,4 +1,9 @@
-"""Pure, distinct classifications for exact and forge-rewritten landed reviews."""
+"""Pure classification of whether a tracked review's work is on trunk.
+
+Two routes prove it: the exact commit sent for review is an ancestor of fetched trunk, or GitHub
+rewrote it and the merge-result commit is. GitHub reporting a pull request as merged is not one of
+them, since that says nothing about the trunk this repository fetched.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ from jj_stack.models.review_state import TrackedReview
 from jj_stack.ui import Message
 
 CommitAncestry = Literal["not_on_trunk", "on_trunk", "unresolved"]
-LandedEvidenceKind = Literal["exact", "rewritten"]
+TrunkEvidenceKind = Literal["exact", "rewritten"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +130,7 @@ def classify_rewritten_result(
     return TrunkEvidence.proven(merge_commit_id=merge_commit_id)
 
 
-def collect_landed_evidence(
+def collect_trunk_evidence(
     *,
     candidate: TrackedReview,
     context: CommandContext,

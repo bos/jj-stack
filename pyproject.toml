@@ -50,7 +50,7 @@ dev = [
 addopts = "-ra"
 markers = [
   "fixed_property: default generated fixed-point scenarios",
-  "landing_recovery: bounded deterministic landing and recovery coverage",
+  "merge_recovery: bounded deterministic merge and recovery coverage",
 ]
 testpaths = ["tests"]
 

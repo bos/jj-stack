@@ -858,7 +858,7 @@ def test_query_paired_ancestor_membership_returns_subjects_in_one_invocation(
     assert "('cand-c' & ::'base-3')" in revset
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_query_present_commit_ancestor_membership_distinguishes_absent_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

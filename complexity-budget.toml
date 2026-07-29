@@ -13,7 +13,7 @@ governed_c901 = 0
 
 [pytest]
 fixed_property = 8
-landing_recovery = 52
+merge_recovery = 52
 
 [labels]
 production = "Production"
@@ -21,11 +21,11 @@ tests = "Tests"
 total = "Production and tests combined"
 checker = "Complexity checker"
 merge = "Merge command"
-governed = "Landing and recovery code"
+governed = "Merge and recovery code"
 c901 = "Production"
-governed_c901 = "Landing and recovery code"
+governed_c901 = "Merge and recovery code"
 fixed_property = "Property-test cases"
-landing_recovery = "Landing and recovery cases"
+merge_recovery = "Merge and recovery cases"
 
 [units]
 production = "line"
@@ -37,7 +37,7 @@ governed = "line"
 c901 = "function"
 governed_c901 = "function"
 fixed_property = "case"
-landing_recovery = "case"
+merge_recovery = "case"
 
 [paths]
 production = ["src"]
@@ -50,8 +50,8 @@ governed = [
   "src/jj_stack/commands/sync_global.py",
   "src/jj_stack/models/review_state.py",
   "src/jj_stack/state/store.py",
-  "src/jj_stack/review/landed.py",
-  "src/jj_stack/review/landed_evidence.py",
+  "src/jj_stack/review/finish.py",
+  "src/jj_stack/review/trunk_evidence.py",
   "src/jj_stack/review/convergence.py",
   "src/jj_stack/review/native_sync.py",
   "src/jj_stack/review/observation.py",
@@ -59,4 +59,4 @@ governed = [
 fixed_property = [
   "tests/property/submit_property_scenarios.py",
 ]
-landing_recovery = ["tests"]
+merge_recovery = ["tests"]

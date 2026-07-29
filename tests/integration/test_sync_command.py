@@ -27,7 +27,7 @@ from .submit_command_helpers import (
 
 # Every case in this file is part of the bounded merge and post-merge convergence
 # corpus described in docs/internals/property-testing.md.
-pytestmark = pytest.mark.landing_recovery
+pytestmark = pytest.mark.merge_recovery
 
 
 def _merge_pull_request(fake_repo, pull_number: int) -> None:
@@ -127,7 +127,7 @@ def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    landed, top = JjClient(repo).discover_review_stack().revisions
+    on_trunk, top = JjClient(repo).discover_review_stack().revisions
     _merge_pull_request(fake_repo, 1)
 
     def fail_retire(*_args: object, **_kwargs: object) -> None:
@@ -144,7 +144,7 @@ def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
     assert "jj-stack cleanup" in unwrapped
     # The store's own hint must not be spliced into this line.
     assert "Move the file aside" not in unwrapped
-    assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
+    assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
 def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
@@ -156,7 +156,7 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    (landed,) = JjClient(repo).discover_review_stack().revisions
+    (on_trunk,) = JjClient(repo).discover_review_stack().revisions
     # Global recovery acts only on an exact submitted commit reachable from trunk, which a
     # merge commit produces and the merge endpoint's squash does not.
     fake_repo.apply_native_merge_commit((fake_repo.pull_requests[1],))
@@ -172,7 +172,7 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
 
     assert exit_code == 1
     assert "could not remove tracking" in " ".join(captured.out.split())
-    assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
+    assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
 def test_sync_converges_native_history_and_adopts_rewritten_survivor(
@@ -184,7 +184,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
     remote_survivor = _simulate_native_partial_merge(fake_repo)
 
     exit_code = run_main(repo, config_path, "sync", survivor.change_id)
@@ -192,7 +192,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
 
     assert exit_code == 0, (captured.out, captured.err)
     state = state_store.load()
-    assert landed.change_id not in state.review_identities
+    assert on_trunk.change_id not in state.review_identities
     rewritten_survivor = JjClient(repo).resolve_revision(survivor.change_id)
     assert rewritten_survivor.only_parent_commit_id() == read_remote_ref(
         fake_repo.git_dir,
@@ -209,10 +209,10 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     assert fake_repo.pull_requests[2].head_sha == rewritten_survivor.commit_id
     assert fake_repo.pull_requests[2].base_ref == "main"
     assert fake_repo.native_stacks == {7: (1, 2)}
-    landed_versions = JjClient(repo).query_revisions_by_change_ids((landed.change_id,))[
-        landed.change_id
+    on_trunk_versions = JjClient(repo).query_revisions_by_change_ids((on_trunk.change_id,))[
+        on_trunk.change_id
     ]
-    assert landed_versions == ()
+    assert on_trunk_versions == ()
     assert remote_survivor != survivor.commit_id
 
     survivor_baseline = state_store.load().submitted_baselines[survivor.change_id]
@@ -235,7 +235,7 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
     _simulate_native_partial_merge(fake_repo)
     state_before = state_store.load()
     run_command(["jj", "edit", survivor.change_id], repo)
@@ -251,7 +251,7 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == (
         edited_survivor.commit_id
     )
-    assert JjClient(repo).resolve_revision(landed.change_id).commit_id == landed.commit_id
+    assert JjClient(repo).resolve_revision(on_trunk.change_id).commit_id == on_trunk.commit_id
     assert state_store.load() == state_before
 
 
@@ -266,7 +266,7 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
     _simulate_native_partial_merge(fake_repo)
     fake_repo.pull_requests[2].state = "closed"
     state_before = state_store.load()
@@ -278,7 +278,7 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     unwrapped = " ".join(captured.err.split())
     assert "PR #2" in unwrapped and "is closed, so sync cannot update that review" in unwrapped
     assert "jj-stack unstack --cleanup" in unwrapped
-    assert JjClient(repo).resolve_revision(landed.change_id).commit_id == landed.commit_id
+    assert JjClient(repo).resolve_revision(on_trunk.change_id).commit_id == on_trunk.commit_id
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == survivor.commit_id
     assert state_store.load() == state_before
 
@@ -292,7 +292,7 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
     baseline_before = state_store.load().submitted_baselines[survivor.change_id]
     remote_survivor = _simulate_native_partial_merge(fake_repo)
     real_run_submit = sync_command.run_submit_async
@@ -307,7 +307,7 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     assert exit_code == 1
     assert "injected survivor submit failure" in failed.err
     interrupted_state = state_store.load()
-    assert landed.change_id in interrupted_state.review_identities
+    assert on_trunk.change_id in interrupted_state.review_identities
     assert interrupted_state.submitted_baselines[survivor.change_id].commit_id == remote_survivor
     assert remote_survivor != baseline_before.commit_id
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == remote_survivor
@@ -318,7 +318,7 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
 
     assert retry_exit_code == 0, (retry.out, retry.err)
     recovered_state = state_store.load()
-    assert landed.change_id not in recovered_state.review_identities
+    assert on_trunk.change_id not in recovered_state.review_identities
     assert recovered_state.submitted_baselines[survivor.change_id].commit_id == remote_survivor
 
 
@@ -331,7 +331,7 @@ def test_sync_checks_native_branch_drift_before_rewriting_local_history(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
     _simulate_native_partial_merge(fake_repo)
     state_before = state_store.load()
     require_targets = JjClient._require_remote_branch_targets_at_url
@@ -362,7 +362,7 @@ def test_sync_checks_native_branch_drift_before_rewriting_local_history(
 
     assert exit_code == 1
     assert "no longer points to the expected commit" in captured.err
-    assert JjClient(repo).resolve_revision(landed.change_id).commit_id == landed.commit_id
+    assert JjClient(repo).resolve_revision(on_trunk.change_id).commit_id == on_trunk.commit_id
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == survivor.commit_id
     assert state_store.load() == state_before
     review_temp = JjClient(repo).review_temp_artifacts()
@@ -378,7 +378,7 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    landed, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
     first_remote_survivor = _simulate_native_partial_merge(fake_repo)
     require_targets = JjClient._require_remote_branch_targets_at_url
     checks = 0
@@ -410,7 +410,7 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     assert "no longer points to the expected commit" in failed.err
     assert second_remote_survivor is not None
     interrupted_state = state_store.load()
-    assert landed.change_id in interrupted_state.review_identities
+    assert on_trunk.change_id in interrupted_state.review_identities
     assert interrupted_state.submitted_baselines[survivor.change_id].commit_id == (
         first_remote_survivor
     )
@@ -430,7 +430,7 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
 
     assert retry_exit_code == 0, (retry.out, retry.err)
     recovered_state = state_store.load()
-    assert landed.change_id not in recovered_state.review_identities
+    assert on_trunk.change_id not in recovered_state.review_identities
     assert recovered_state.submitted_baselines[survivor.change_id].commit_id == (
         second_remote_survivor
     )
@@ -541,8 +541,8 @@ def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = JjClient(repo).discover_review_stack()
-    landed, reviewed = stack.revisions
-    run_command(["jj", "new", landed.change_id], repo)
+    on_trunk, reviewed = stack.revisions
+    run_command(["jj", "new", on_trunk.change_id], repo)
     commit_file(repo, "local middle", "local-middle.txt")
     local_middle = JjClient(repo).discover_review_stack().head
     run_command(["jj", "rebase", "-r", reviewed.change_id, "-d", local_middle.change_id], repo)
@@ -567,7 +567,7 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    landed, reviewed = JjClient(repo).discover_review_stack().revisions
+    on_trunk, reviewed = JjClient(repo).discover_review_stack().revisions
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "side change", "side.txt")
     side = JjClient(repo).resolve_revision("@-")
@@ -586,11 +586,11 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     assert jj.resolve_revision(local_merge.change_id).commit_id == local_merge.commit_id
     assert jj.resolve_revision("@").commit_id == working_copy.commit_id
 
-    assert run_main(repo, config_path, "sync", landed.change_id) == 0
+    assert run_main(repo, config_path, "sync", on_trunk.change_id) == 0
     captured = capsys.readouterr()
     assert "then rerun sync" in captured.out
     assert "dependent" in captured.out
-    assert landed.change_id in ReviewStateStore.for_repo(repo).load().review_identities
+    assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
 def test_sync_rebases_trailing_local_work_without_creating_a_review(
@@ -601,7 +601,7 @@ def test_sync_rebases_trailing_local_work_without_creating_a_review(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     initial = JjClient(repo).discover_review_stack()
-    landed, reviewed = initial.revisions
+    on_trunk, reviewed = initial.revisions
     commit_file(repo, "local trailing", "local-trailing.txt")
     trailing = JjClient(repo).discover_review_stack().head
     state_before = ReviewStateStore.for_repo(repo).load()

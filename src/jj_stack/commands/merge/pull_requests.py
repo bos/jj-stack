@@ -11,9 +11,9 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import SubmittedBaseline
-from jj_stack.review.landed import FinalizationContext, observe_landed_candidate
-from jj_stack.review.landed_evidence import TrackedReview, collect_landed_evidence
+from jj_stack.review.finish import FinishContext, observe_tracked_review
 from jj_stack.review.observation import observe_reviews
+from jj_stack.review.trunk_evidence import TrackedReview, collect_trunk_evidence
 from jj_stack.ui import Message
 
 from .models import MergeAction, MergeRevision
@@ -82,7 +82,7 @@ async def merge_pull_request(
             merge_method=merge_method,
         )
     except GithubClientError as error:
-        if await _landed(
+        if await _reached_trunk(
             context=context,
             github=github_client,
             remote_name=remote_name,
@@ -143,7 +143,7 @@ async def _fresh(
     )
 
 
-async def _landed(
+async def _reached_trunk(
     *,
     context: CommandContext,
     github: GithubClient,
@@ -164,9 +164,9 @@ async def _landed(
         review_identity=revision.identity,
         submitted_baseline=SubmittedBaseline(commit_id=revision.commit_id),
     )
-    observation, _reason = await observe_landed_candidate(
+    observation, _reason = await observe_tracked_review(
         candidate,
-        FinalizationContext(
+        FinishContext(
             command=context,
             dry_run=False,
             github=github,
@@ -180,7 +180,7 @@ async def _landed(
     )
     if pull_request is None:
         return False
-    exact, rewritten = collect_landed_evidence(
+    exact, rewritten = collect_trunk_evidence(
         candidate=candidate,
         context=context,
         pull_request=pull_request,

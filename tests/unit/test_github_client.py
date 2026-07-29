@@ -308,7 +308,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
     assert request_sizes == [25, 2]
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_github_client_bounds_independent_pull_request_fallbacks() -> None:
     class FallbackClient(GithubClient):
         active = 0

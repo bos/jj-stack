@@ -94,11 +94,11 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
         "total": "Production and tests combined",
         "checker": "Complexity checker",
         "merge": "Merge command",
-        "governed": "Landing and recovery code",
+        "governed": "Merge and recovery code",
         "c901": "Production",
-        "governed_c901": "Landing and recovery code",
+        "governed_c901": "Merge and recovery code",
         "fixed_property": "Property-test cases",
-        "landing_recovery": "Landing and recovery cases",
+        "merge_recovery": "Merge and recovery cases",
     }
     limits = {name: 10 for name in labels} | {"governed_module": 5}
     limits["governed_c901"] = 0
@@ -108,7 +108,7 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
         name: "line" for name in ("production", "tests", "total", "checker", "merge", "governed")
     }
     units |= {"c901": "function", "governed_c901": "function"}
-    units |= {"fixed_property": "case", "landing_recovery": "case"}
+    units |= {"fixed_property": "case", "merge_recovery": "case"}
 
     exit_code = complexity_script._report(
         labels,
@@ -126,11 +126,11 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
     assert "Merge command: 12 lines (limit 10 lines; OVER LIMIT by 2 lines)" in captured.out
     assert "Functions with a complexity score above 10" in captured.out
     assert (
-        "Landing and recovery code: 0 functions (limit 0 functions; requirement met)"
+        "Merge and recovery code: 0 functions (limit 0 functions; requirement met)"
         in captured.out
     )
     assert "Fixed test-case limits" in captured.out
-    assert "Landing/recovery file sizes (3 files; 5-line limit each)" in captured.out
+    assert "Merge/recovery file sizes (3 files; 5-line limit each)" in captured.out
     assert "Over limit:" in captured.out
     assert "highest.py: 7 lines (limit 5 lines; OVER LIMIT by 2 lines)" in captured.out
     assert "over.py: 6 lines (limit 5 lines; OVER LIMIT by 1 line)" in captured.out
@@ -140,7 +140,7 @@ def test_complexity_report_explains_numbers_and_owns_its_exit_status(
     assert "Result: failed" in captured.err
     assert "highest.py: OVER LIMIT by 2 lines" in captured.err
     assert "over.py: OVER LIMIT by 1 line" in captured.err
-    assert captured.err.index("Merge command") < captured.err.index("Landing and recovery code")
+    assert captured.err.index("Merge command") < captured.err.index("Merge and recovery code")
     assert captured.err.index("highest.py") < captured.err.index("over.py")
 
     passing_measured = {name: min(value, limits[name]) for name, value in measured.items()}

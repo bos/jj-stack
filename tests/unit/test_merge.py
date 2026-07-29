@@ -53,7 +53,7 @@ def test_command_surface_has_merge_without_land_or_transport_flags(capsys) -> No
         parser.parse_args(["merge", "--skip-cleanup"])
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
     repository = _repository(
         allow_merge_commit=False,
@@ -67,7 +67,7 @@ def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
     )
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 @pytest.mark.parametrize(
     ("repository", "message"),
     (
@@ -105,7 +105,7 @@ def test_resolve_merge_method_rejects_ambiguous_or_absent_settings(
         _resolve_merge_method(configured=None, merge_method=None, repository_state=repository)
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_resolve_merge_method_prefers_the_flag_over_configuration() -> None:
     """A repository allowing several methods is the normal case, so config has to settle it.
 
@@ -131,7 +131,7 @@ def test_resolve_merge_method_prefers_the_flag_over_configuration() -> None:
     )
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_resolve_merge_method_rejects_a_method_the_repository_disallows() -> None:
     repository = _repository(
         allow_merge_commit=False,
@@ -143,7 +143,7 @@ def test_resolve_merge_method_rejects_a_method_the_repository_disallows() -> Non
         _resolve_merge_method(configured="rebase", merge_method=None, repository_state=repository)
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
     revisions = tuple(
         MergeRevision(
@@ -170,7 +170,7 @@ def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
         validate_merge_plan_method(merge_method="rebase", plan=plan)
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_merge_preconditions_reject_repository_drift() -> None:
     expected_repository = GithubRepoAddress(
         owner="acme",

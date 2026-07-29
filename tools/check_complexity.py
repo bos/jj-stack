@@ -128,7 +128,7 @@ def _report(
     sections = (
         ("Code size", ("production", "tests", "total", "merge", "governed", "checker")),
         ("Functions with a complexity score above 10", ("c901", "governed_c901")),
-        ("Fixed test-case limits", ("fixed_property", "landing_recovery")),
+        ("Fixed test-case limits", ("fixed_property", "merge_recovery")),
     )
     print("Complexity check")
     for heading, names in sections:
@@ -150,7 +150,7 @@ def _report(
     visible_modules = tuple(result for result in module_results if result[1] is not None)
     visible_modules = visible_modules or module_results[:3]
     print(
-        f"\nLanding/recovery file sizes ({_quantity(len(module_results), 'file')}; "
+        f"\nMerge/recovery file sizes ({_quantity(len(module_results), 'file')}; "
         f"{limits['governed_module']:,}-line limit each)"
     )
     print("  Over limit:" if module_failures else "  Closest to the limit:")
@@ -205,7 +205,7 @@ def main() -> int:
         "c901": _c901(("src/jj_stack",)),
         "governed_c901": _c901(paths["governed"]),
         "fixed_property": _collected("fixed_property", paths["fixed_property"]),
-        "landing_recovery": _collected("landing_recovery", paths["landing_recovery"]),
+        "merge_recovery": _collected("merge_recovery", paths["merge_recovery"]),
     }
 
     return _report(labels, limits, measured, module_lines, units)

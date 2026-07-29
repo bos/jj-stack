@@ -25,7 +25,7 @@ from .submit_command_helpers import (
 
 # Every case in this file is part of the bounded merge and post-merge convergence
 # corpus described in docs/internals/property-testing.md.
-pytestmark = pytest.mark.landing_recovery
+pytestmark = pytest.mark.merge_recovery
 
 
 def test_merge_uses_github_for_unapproved_prefix_and_leaves_local_state(
@@ -125,7 +125,7 @@ def test_merge_accepts_a_stack_based_on_an_older_trunk(
 ) -> None:
     """Trunk moving under a reviewed stack is GitHub's call, not a reason for jj-stack to refuse.
 
-    Unrelated work landing on trunk is routine in a busy repository. GitHub merges a reviewed
+    Unrelated work reaching trunk is routine in a busy repository. GitHub merges a reviewed
     pull request whose base is behind as long as it does not conflict, so refusing locally only
     forced a rebase and a force-push of an already-reviewed branch.
     """

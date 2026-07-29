@@ -13,17 +13,17 @@ from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubPullRequest, GithubStack, GithubStackPullRequest
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.landed_evidence import (
-    LandedEvidenceKind,
+from jj_stack.review.trunk_evidence import (
     TrackedReview,
-    collect_landed_evidence,
+    TrunkEvidenceKind,
+    collect_trunk_evidence,
 )
 
 
 @dataclass(frozen=True, slots=True)
 class NativeHistoricalReview:
     candidate: TrackedReview
-    evidence_kind: LandedEvidenceKind
+    evidence_kind: TrunkEvidenceKind
     revision: LocalRevision | None
 
 
@@ -266,7 +266,7 @@ def _historical_review(
             hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then rerun "
             t"sync once it reports the merge.",
         )
-    exact, rewritten = collect_landed_evidence(
+    exact, rewritten = collect_trunk_evidence(
         candidate=candidate,
         context=context,
         pull_request=pull_request,

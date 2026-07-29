@@ -6,8 +6,8 @@ from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.landed import LandedReviewResult, landed_exit_code
-from jj_stack.review.landed_evidence import (
+from jj_stack.review.finish import ReviewFinishResult, finish_exit_code
+from jj_stack.review.trunk_evidence import (
     TrackedReview,
     classify_exact_snapshot,
     classify_rewritten_result,
@@ -45,7 +45,7 @@ def _pull_request(**updates: object) -> GithubPullRequest:
     return pull_request.model_copy(update=updates)
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
     rows = (
         ("on_trunk", _pull_request(), "octo-org", True, False),
@@ -91,7 +91,7 @@ def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
         assert on_trunk or result.reason is not None
 
 
-@pytest.mark.landing_recovery
+@pytest.mark.merge_recovery
 def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
     rows = (
         (
@@ -160,24 +160,24 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
         assert on_trunk or result.reason is not None
 
 
-def test_landed_exit_code_separates_a_deliberate_skip_from_a_failed_write() -> None:
+def test_finish_exit_code_separates_a_deliberate_skip_from_a_failed_write() -> None:
     """Tracking a dependent stack still needs is preserved on purpose, not a failure."""
 
     candidate = _candidate()
-    preserved = LandedReviewResult(
+    preserved = ReviewFinishResult(
         candidate=candidate,
-        outcome="finalized",
+        outcome="finished",
         retirement_skip_reason="another local stack still depends on it",
     )
-    failed = LandedReviewResult(
+    failed = ReviewFinishResult(
         candidate=candidate,
-        outcome="finalized",
+        outcome="finished",
         retirement_failure="state file is read-only",
     )
 
-    assert landed_exit_code(base=0, results=(preserved,)) == 0
-    assert landed_exit_code(base=1, results=(preserved,)) == 1
-    assert landed_exit_code(base=0, results=(failed,)) == 1
+    assert finish_exit_code(base=0, results=(preserved,)) == 0
+    assert finish_exit_code(base=1, results=(preserved,)) == 1
+    assert finish_exit_code(base=0, results=(failed,)) == 1
 
 
 def _revision(*, commit_id: str, immutable: bool = False) -> LocalRevision:

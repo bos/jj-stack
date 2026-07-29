@@ -42,20 +42,20 @@ from jj_stack.review.convergence import (
     build_selected_convergence_plan,
     rewritten_retirement_blocker,
 )
-from jj_stack.review.landed import (
-    FinalizationContext,
-    finalize_landed_reviews,
-    landed_exit_code,
-    render_landed_results,
-    retire_landed_reviews,
+from jj_stack.review.finish import (
+    FinishContext,
+    finish_exit_code,
+    finish_reviews,
+    render_finish_results,
+    retire_reviews,
 )
-from jj_stack.review.landed_evidence import TrackedReview
 from jj_stack.review.native_sync import resolve_selected_native_observation
 from jj_stack.review.observation import (
     RepositoryObservation,
     observe_reviews,
 )
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
+from jj_stack.review.trunk_evidence import TrackedReview
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
@@ -217,7 +217,7 @@ async def _apply_selected_plan(
     trunk_branch: str,
     trunk_commit_id: str,
 ) -> int:
-    finalizer = FinalizationContext(
+    finish_context = FinishContext(
         command=context,
         dry_run=dry_run,
         github=github,
@@ -225,17 +225,17 @@ async def _apply_selected_plan(
         trunk_branch=trunk_branch,
         trunk_commit_id=trunk_commit_id,
     )
-    results = await finalize_landed_reviews(
-        candidates=tuple(landed.candidate for landed in plan.landed),
-        finalizer=finalizer,
-        skip_finalization=frozenset(
-            landed.candidate.change_id
-            for landed in plan.landed
-            if landed.evidence_kind != "exact" or landed.native
+    results = await finish_reviews(
+        candidates=tuple(change.candidate for change in plan.on_trunk),
+        finish=finish_context,
+        skip_finish=frozenset(
+            change.candidate.change_id
+            for change in plan.on_trunk
+            if change.evidence_kind != "exact" or change.native
         ),
     )
     rebase_revision_ids = (
-        tuple(revision.commit_id for revision in plan.survivors) if plan.landed else ()
+        tuple(revision.commit_id for revision in plan.survivors) if plan.on_trunk else ()
     )
 
     def retirement_blocker(candidate: TrackedReview) -> Message | None:
@@ -275,14 +275,14 @@ async def _apply_selected_plan(
             replaced = ()
             destination = trunk_commit_id
             attachment = nullcontext()
-        if plan.landed and not rebase_revision_ids:
+        if plan.on_trunk and not rebase_revision_ids:
             rebase_head = (
                 plan.survivors[-1]
                 if plan.survivors
                 else next(
                     (
                         item.revision
-                        for item in reversed(plan.landed)
+                        for item in reversed(plan.on_trunk)
                         if item.revision is not None
                     ),
                     None,
@@ -307,19 +307,19 @@ async def _apply_selected_plan(
             if replaced:
                 context.jj_client.abandon_revisions(replaced)
             abandoned = tuple(
-                landed.revision.commit_id
-                for landed in plan.landed
-                if landed.revision is not None
-                and not landed.revision.immutable
+                change.revision.commit_id
+                for change in plan.on_trunk
+                if change.revision is not None
+                and not change.revision.immutable
                 # Convergence already refused these, but repeat the work-loss check here because
                 # this is the step that actually discards commits.
                 and not (
-                    landed.revision is not None
-                    and landed.revision.holds_unpublished_edit(
-                        (landed.candidate.submitted_baseline.commit_id,)
+                    change.revision is not None
+                    and change.revision.holds_unpublished_edit(
+                        (change.candidate.submitted_baseline.commit_id,)
                     )
                 )
-                and retirement_blocker(landed.candidate) is None
+                and retirement_blocker(change.candidate) is None
             )
             if abandoned:
                 context.jj_client.abandon_revisions(abandoned)
@@ -345,17 +345,17 @@ async def _apply_selected_plan(
         dry_run=dry_run,
         plan=plan,
     )
-    results = await retire_landed_reviews(
-        evidence={landed.candidate.change_id: landed.evidence_kind for landed in plan.landed},
-        finalization_results=results,
-        finalizer=finalizer,
+    results = await retire_reviews(
+        evidence={change.candidate.change_id: change.evidence_kind for change in plan.on_trunk},
+        finish_results=results,
+        finish=finish_context,
         retirement_blocker=retirement_blocker,
         terminal_required=frozenset(
-            landed.candidate.change_id for landed in plan.landed if landed.native
+            change.candidate.change_id for change in plan.on_trunk if change.native
         ),
     )
-    render_landed_results(dry_run=dry_run, results=results)
-    return landed_exit_code(base=update_result, results=results)
+    render_finish_results(dry_run=dry_run, results=results)
+    return finish_exit_code(base=update_result, results=results)
 
 
 async def _update_selected_reviews(
@@ -364,7 +364,7 @@ async def _update_selected_reviews(
     dry_run: bool,
     plan: SelectedConvergencePlan,
 ) -> int:
-    if plan.landed and plan.survivors and dry_run:
+    if plan.on_trunk and plan.survivors and dry_run:
         console.output(
             t"Run {ui.cmd(f'jj-stack sync {plan.survivors[-1].change_id}')} to apply the rebase "
             t"and then compute updates for the remaining existing PRs."
@@ -415,13 +415,13 @@ def _selected_observation_error(
 
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
-    if not plan.landed:
+    if not plan.on_trunk:
         console.output("No merged changes in this stack need rebasing.")
         return
     status = "Would remove" if dry_run else "Removing"
     console.output(
         t"{status} merged changes from the bottom of the stack: "
-        t"{ui.join(lambda item: ui.change_id(item.candidate.change_id), plan.landed)}"
+        t"{ui.join(lambda item: ui.change_id(item.candidate.change_id), plan.on_trunk)}"
     )
 
 

@@ -25,7 +25,7 @@ Since `jj` 0.30 the `change-id` header in Git commit objects is written and impo
 experiments established that both native and ordinary rebase merge preserve it, while squash
 merge does not. Selected `sync` uses a preserved header to recognize the fetched successor;
 otherwise it retires the old local change from exact merge-result evidence without relabeling the
-landed commit or storing an alias.
+commit that reached trunk or storing an alias.
 
 The header remains supporting evidence, not a new identity. Normal Git and GitHub commit views do
 not show it, and exact review identity plus fetched trunk and merge-result checks are still

@@ -10,21 +10,21 @@ from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest, GithubStack
 from jj_stack.review.convergence import dependent_path_commands
-from jj_stack.review.landed import (
-    FinalizationContext,
-    finalize_landed_reviews,
-    landed_exit_code,
-    render_landed_results,
-    retire_landed_reviews,
+from jj_stack.review.finish import (
+    FinishContext,
+    finish_exit_code,
+    finish_reviews,
+    render_finish_results,
+    retire_reviews,
 )
-from jj_stack.review.landed_evidence import (
+from jj_stack.review.native_sync import observe_native_stacks
+from jj_stack.review.observation import duplicate_review_claim_change_ids
+from jj_stack.review.trunk_evidence import (
     CommitAncestry,
     TrackedReview,
     classify_commit_ancestries,
     classify_rewritten_result,
 )
-from jj_stack.review.native_sync import observe_native_stacks
-from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.ui import Message
 
 
@@ -123,7 +123,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             ),
         )
         had_failure = had_failure or len(eligible_exact) != len(exact_candidates)
-        finalizer = FinalizationContext(
+        finish_context = FinishContext(
             command=context,
             dry_run=dry_run,
             github=github,
@@ -131,20 +131,20 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             trunk_branch=trunk_branch,
             trunk_commit_id=trunk.commit_id,
         )
-        results = await finalize_landed_reviews(
+        results = await finish_reviews(
             candidates=eligible_exact,
-            finalizer=finalizer,
-            skip_finalization=terminal_required,
+            finish=finish_context,
+            skip_finish=terminal_required,
         )
-        results = await retire_landed_reviews(
+        results = await retire_reviews(
             evidence={candidate.change_id: "exact" for candidate in eligible_exact},
-            finalization_results=results,
-            finalizer=finalizer,
+            finish_results=results,
+            finish=finish_context,
             terminal_required=terminal_required,
         )
-    render_landed_results(dry_run=dry_run, results=results)
+    render_finish_results(dry_run=dry_run, results=results)
     blocked = had_failure or any(result.outcome == "skipped" for result in results)
-    return landed_exit_code(base=1 if blocked else 0, results=results)
+    return finish_exit_code(base=1 if blocked else 0, results=results)
 
 
 def _eligible_exact_candidates(

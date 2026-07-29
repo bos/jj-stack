@@ -302,9 +302,9 @@ machine:
 - `commands/merge/` checks and asks GitHub to merge one selected review path
 - `commands/sync.py` repairs a selected stack
 - `commands/sync_global.py` performs explicit repository-wide recovery
-- `review/landed_evidence.py` distinguishes an exact submitted commit from a rewritten GitHub
+- `review/trunk_evidence.py` distinguishes an exact submitted commit from a rewritten GitHub
   merge result
-- `review/landed.py` finalizes merged PRs and removes saved tracking
+- `review/finish.py` finalizes merged PRs and removes saved tracking
 - `review/convergence.py` checks whether another visible stack still needs that tracking
 - `review/native_sync.py` validates historical native members and survivor transitions
 - `commands/_github_stack_support.py` owns the one cached capability decision

@@ -36,7 +36,7 @@ def configure_submit_environment(
             "jj_stack.commands.sync",
             "jj_stack.commands.sync_global",
             "jj_stack.commands.list_",
-            "jj_stack.review.landed",
+            "jj_stack.review.finish",
             "jj_stack.review.status",
         ),
         fake_repo=fake_repo,

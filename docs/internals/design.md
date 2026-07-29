@@ -51,7 +51,7 @@ The normal lifecycle is:
 4. After another local rewrite, run `submit` again; existing reviews follow their change IDs.
 5. Use `jj-stack merge` to ask GitHub to merge a reviewed prefix from the bottom.
 6. Run `jj-stack sync` for that selected stack. It fetches GitHub's result, then reconciles the
-   remaining local changes and reviews with what landed on trunk.
+   remaining local changes and reviews with what reached trunk.
 
 ## Core concepts
 
@@ -90,7 +90,7 @@ Commands validate only the selected chain. Other visible children elsewhere in t
 an error. If an ancestor on the selected chain has another reviewable child, that child and its
 descendants are out of scope unless the command explicitly selects them.
 
-A rebase merge preserves `jj`'s change ID, so once the result is fetched, the landed commit on
+A rebase merge preserves `jj`'s change ID, so once the result is fetched, the commit on
 trunk and the superseded local commit are two visible copies of one change ID: the local copy is
 divergent and the trunk copy is immutable. Both are recovery context, not review changes to
 publish.
@@ -197,9 +197,9 @@ evidence, and mutation rules.
   publishes a never-submitted change.
 - **`sync`** on a selected stack (called **selected `sync`** below) reconciles that stack after
   reviewed work lands. It may rewrite surviving local changes, update their existing reviews, and
-  retire tracking for landed changes. It never creates a PR.
+  retire tracking for changes whose work is on trunk. It never creates a PR.
 - **`sync --all`** performs weaker repository-wide reconciliation. It may retarget and close
-  reviews proven landed by exact submitted-commit evidence, but never rewrites local stacks or
+  reviews proven on trunk by exact submitted-commit evidence, but never rewrites local stacks or
   submits work. A tracking record or GitHub review that cannot be read does not block independent
   candidates.
 - **`merge`** is the only command that asks GitHub to merge. It never pushes trunk or rewrites
@@ -230,7 +230,7 @@ Three sources answer questions about a review, each for a different domain:
 1. The **`jj` DAG** determines which local changes exist, how they are related, and what they
    contain.
 2. **GitHub** reports PR existence, lifecycle, reviews, GitHub stack membership, and merge
-   results. Whether work actually landed is proven separately by ancestry from fetched trunk.
+   results. Whether work actually reached trunk is proven separately by ancestry from it.
 3. **Local tracking** records only the review identity and submitted baseline of each change. It
    prevents mutation of the wrong review but cannot make a mutation safe on its own.
 
@@ -250,7 +250,7 @@ Within the supported scope, these rules are ordered; a lower rule never weakens 
    may include the surrounding GitHub resource needed to prove that mutation safe. Repository-wide
    mutation must be requested through an explicit repository-wide mode.
 6. **Forget deliberately.** Stop tracking a review only on explicit request or after GitHub and
-   fetched trunk prove that the work landed and no other visible stack needs the link.
+   fetched trunk prove the work reached it and no other visible stack needs the link.
 
 Most stops and warnings should also name a runnable next step when the right action is clear and
 the condition is reasonably likely to occur. This UX requirement never weakens a safety rule.
@@ -455,7 +455,7 @@ stack holds a copy of work already on trunk.
 ### Repository policy
 
 A merge initiated through GitHub's UI, auto-merge, or another client is supported. A later
-`sync` on that stack reconciles it under the landed-evidence rules below.
+`sync` on that stack reconciles it under the trunk-evidence rules below.
 
 `jj-stack` does not duplicate repository policy. It does not preflight approvals, checks,
 conflicts, merge queues, or auto-merge state across the repository. GitHub applies those rules to
@@ -465,9 +465,10 @@ A rejection therefore has to explain itself. Because conflicts reach the user he
 through a local preflight, a rejected merge names the way out: rebase onto trunk, resolve, and
 submit again for a conflict; fix the check or rule on GitHub otherwise.
 
-### Landed evidence and sync
+### Trunk evidence and sync
 
-Two observations prove that reviewed work landed:
+Two observations prove that reviewed work reached trunk. GitHub reporting a pull request as
+merged is not one of them, because it says nothing about the trunk this repository fetched:
 
 - **Exact submitted commit on trunk**: the baseline is an ancestor of fetched trunk and the live
   PR is a snapshot match. A PR belonging to a GitHub stack must also report merged before selected
@@ -492,16 +493,16 @@ Selected `sync` reconciles the unmerged suffix only when:
 - rewriting it would not discard unpublished local work
 - the remainder is linear and conflict-free
 - no unreviewed change sits between reviewed survivors
-- no other visible stack depends on a landed revision being retired
+- no other visible stack depends on retiring a revision whose work is on trunk
 
 It rebases surviving changes onto fetched trunk, updates existing reviews, and removes tracking
-for landed changes only after survivor updates succeed. It never rebases merely because trunk
+for changes on trunk only after survivor updates succeed. It never rebases merely because trunk
 advanced; ordinary `jj rebase` owns that workflow.
 
 GitHub preserves `jj`'s `change-id` commit header through rebase merges of PRs, but not squash
-merges. A matching full change ID on fetched trunk identifies the landed successor rather than
+merges. A matching full change ID on fetched trunk identifies the successor rather than
 an arbitrary visible side copy. When fetched trunk has no matching change ID, `sync` retires the
-old local change without relabeling the landed commit or storing an alias.
+old local change without relabeling that commit or storing an alias.
 
 When a GitHub stack merge rewrites active members above the merged prefix, selected `sync` adopts
 the exact commits GitHub reports rather than replaying equivalent diffs. It accepts those heads
@@ -553,7 +554,8 @@ cleaning a stack is the supported way to start its reviews over; a later `submit
 PRs under the ordinary generated names.
 
 `unstack --local` removes local tracking only. It never touches GitHub or local history and is the
-one explicit way to forget a review without landed evidence. Rerunning any `unstack` mode is safe.
+one explicit way to forget a review without trunk evidence. Rerunning any `unstack` mode is
+safe.
 
 Cleanup acts only on one complete identity/baseline pair. It may remove managed comments, the
 exact saved review ref only while it still points to the expected commit, and the two records.
