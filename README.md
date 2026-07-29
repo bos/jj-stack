@@ -255,7 +255,10 @@ User guides live under [docs](docs/README.md):
 
 - [Mental model](docs/mental-model.md)
 - [Daily workflow](docs/daily-workflow.md)
+- [Writing PR descriptions](docs/description-helpers.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [JSON output](docs/json-output.md)
+- [Exit codes](docs/exit-codes.md)
 
 The built-in help is the flag reference:
 

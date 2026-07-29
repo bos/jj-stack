@@ -330,7 +330,12 @@ async def _load_pull_request_chain(
     base = top.base.ref
     while is_review_branch(base):
         if base in seen:
-            raise CliError("Pull-request base branches form a cycle.")
+            raise CliError(
+                t"Pull request base branches point at each other in a loop, starting at "
+                t"{ui.bookmark(base)}.",
+                hint=t"Retarget one of those pull requests on GitHub so the stack has a "
+                t"bottom, then rerun {ui.cmd('jj-stack checkout')}.",
+            )
         seen.add(base)
         try:
             matches = (await github_client.get_pull_requests_by_head_refs(head_refs=(base,))).get(

@@ -199,7 +199,9 @@ async def _load_exact_relink_pull_request(
         raise CliError(f"Could not load pull request #{pull_number}") from error
     if pull_request.state != "open":
         raise CliError(
-            f"Pull request #{pull_number} is not open; cannot relink {pull_request.state} PRs."
+            f"Pull request #{pull_number} is not open; cannot relink {pull_request.state} PRs.",
+            hint=t"Reopen it on GitHub to keep reviewing it, or drop the stale tracking with "
+            t"{ui.cmd('jj-stack unstack --local')} and submit again.",
         )
     branch = pull_request.head.ref
     if pull_request.head.label != f"{repository_owner}:{branch}":
@@ -240,5 +242,8 @@ def _ensure_relinkable_cached_link(
     if change_id in duplicate_review_claim_change_ids(identities):
         raise CliError(
             t"PR #{identity.pr_number} or branch {ui.bookmark(identity.head_ref)} is already "
-            t"linked to another local change."
+            t"linked to another local change.",
+            hint=t"Run {ui.cmd('jj-stack list')} to find the claiming change, then drop its "
+            t"tracking with {ui.cmd('jj-stack unstack --local')} or clean it up with "
+            t"{ui.cmd('jj-stack cleanup')}.",
         )

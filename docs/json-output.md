@@ -104,8 +104,18 @@ the `changes` array.
       "type": "stack",
       "current": true,
       "subject": "add json output",
-      "status": "open",
+      "status": "1 approved, open",
       "changes": [
+        {
+          "change_id": "rlvmnowlqpsu...",
+          "branch": "jj-stack/add-the-model-rlvmnowl",
+          "subject": "add the model",
+          "status": "approved",
+          "pull_request": {
+            "number": 11,
+            "url": "https://github.com/octo-org/example/pull/11"
+          }
+        },
         {
           "change_id": "zvlyxwvksmry...",
           "branch": "jj-stack/add-json-output-zvlyxwvk",
@@ -135,7 +145,8 @@ the `changes` array.
 `current: true` on a stack row means that the current working-copy change is part of
 that stack. It is omitted for other stack rows.
 
-A stack row's `status` is a human-readable summary such as the counts of open, approved, or
-not-submitted changes. Its wording is not a stable machine-readable vocabulary. Scripts should
-inspect the `changes` array and use each change's documented `status` value instead. An orphan
-row always uses `"status": "orphan"`.
+A stack row's `status` is a human-readable summary of the changes below it, as in the
+`1 approved, open` above. Its wording is not a stable machine-readable vocabulary, and for a
+single-change stack it can look exactly like a change status. Scripts should inspect the `changes`
+array and use each change's documented `status` value instead. An orphan row always uses
+`"status": "orphan"`.

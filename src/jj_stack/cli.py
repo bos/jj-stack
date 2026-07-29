@@ -74,7 +74,7 @@ _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
 _REORDERABLE_GLOBAL_OPTIONS_WITH_VALUES = frozenset({"--repository", "--color"})
 _HELP_FLAGS = frozenset({"-h", "--help"})
 _COMPLETION_HELP = "Print shell completion setup for bash, zsh, or fish"
-_HELP_HELP = "Show help for this command or another command"
+_HELP_HELP = "Show top-level help, or help for one command"
 _COMPLETION_DESCRIPTION = """
 Print the shell completion script for bash, zsh, or fish. This only prints
 local shell setup text and does not inspect the repository or GitHub.
@@ -169,7 +169,7 @@ class _CommandArgumentParser(ArgumentParser):
         self._optionals.title = "Options"
 
     def error(self, message: str) -> NoReturn:
-        raise _cli_parse_error(message)
+        raise _cli_parse_error(message, prog=self.prog)
 
 
 def build_parser() -> ArgumentParser:
@@ -186,7 +186,7 @@ def build_parser() -> ArgumentParser:
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
-        help="Show program's version number and exit",
+        help="Show the jj-stack version and exit",
     )
 
     subcommands = parser.add_subparsers(
@@ -209,7 +209,7 @@ def build_parser() -> ArgumentParser:
         submit_parser,
         "--dry-run",
         action="store_true",
-        help="Print the submit plan without making any changes",
+        help="Preview the submit without pushing branches or changing pull requests",
     )
     submit_description_mode = submit_parser.add_mutually_exclusive_group()
     add_help_argument(
@@ -319,7 +319,7 @@ def build_parser() -> ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Show every change using jj's usual log formatting",
+        help="Show every change instead of collapsing the middle of a long stack",
     )
     list_parser = _add_command_parser(
         subcommands,
@@ -357,19 +357,23 @@ def build_parser() -> ArgumentParser:
     merge_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch and validate remote state without merging pull requests",
+        help="Preview the merge without asking GitHub to merge anything",
     )
     add_help_argument(
         merge_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
-        help="Stop after the local change linked to this pull request number or URL",
+        help="Merge up to and including this pull request number or URL, and no further",
     )
     add_help_argument(
         merge_parser,
         "--merge-method",
         choices=("merge", "rebase", "squash"),
-        help=(t"GitHub merge method; defaults to the repository's only allowed method"),
+        metavar="METHOD",
+        help=(
+            "GitHub merge method: merge, rebase, or squash. Required unless the repository "
+            "allows exactly one; rebase can only merge one pull request per run"
+        ),
     )
     unstack_parser = _add_revision_command(
         subcommands,
@@ -387,7 +391,7 @@ def build_parser() -> ArgumentParser:
     unstack_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the unstack plan without making any changes",
+        help="Preview the unstack without closing pull requests or deleting anything",
     )
     unstack_parser.add_argument(
         "--cleanup",
@@ -426,7 +430,7 @@ def build_parser() -> ArgumentParser:
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview cleanup without deleting review branches, comments, or saved PR links",
+        help="Preview the cleanup without deleting review branches, comments, or tracking",
     )
 
     sync_parser = _add_revision_command(
@@ -445,7 +449,8 @@ def build_parser() -> ArgumentParser:
         "--dry-run",
         action="store_true",
         help=(
-            "Fetch and preview without changing PRs, local commits, review branches, or tracking"
+            "Preview the sync without changing pull requests, local commits, review branches, "
+            "or tracking"
         ),
     )
     add_help_argument(
@@ -565,7 +570,7 @@ def _print_early_cli_error(
         _print_cli_error(error)
 
 
-def _cli_parse_error(message: str) -> CliError:
+def _cli_parse_error(message: str, *, prog: str | None = None) -> CliError:
     message = message.strip()
     invalid_choice = re.match(
         r"argument (?P<argument>[^:]+): invalid choice: '(?P<value>[^']+)'(?: .*)?$",
@@ -573,10 +578,18 @@ def _cli_parse_error(message: str) -> CliError:
     )
     if invalid_choice is not None and invalid_choice.group("argument") == "command":
         return _unknown_command_error(invalid_choice.group("value"))
+    unrecognized = message.lower().startswith("unrecognized argument")
     if message and not message.endswith("."):
         message = f"{message}."
     if message:
         message = f"{message[0].upper()}{message[1:]}"
+    if unrecognized:
+        command = prog.split()[-1] if prog and " " in prog else None
+        listing = f"jj-stack help {command}" if command else "jj-stack help <command>"
+        return UsageError(
+            message,
+            hint=t"Run {ui.cmd(listing)} to list the options a command accepts.",
+        )
     return UsageError(message)
 
 
@@ -822,11 +835,17 @@ def _add_command_parser(
     handler: Callable[[Namespace], int],
     common_options: bool = True,
 ) -> ArgumentParser:
+    description = normalized_help_text(description_text)
+    if aliases:
+        # `jj-stack delete` reaching unstack's help matters most: the name sounds destructive and
+        # this help is where the promise that local changes survive is made.
+        spelled = ", ".join(f"jj-stack {alias}" for alias in aliases)
+        description = f"{description}\n\nAlso spelled {spelled}."
     parser = subcommands.add_parser(
         command,
         aliases=list(aliases),
         help=help_text,
-        description=normalized_help_text(description_text),
+        description=description,
     )
     if common_options:
         _add_common_options(parser)
@@ -873,8 +892,10 @@ def _add_relink_parser(
         description_text=description_text,
         handler=handler,
     )
-    add_help_argument(parser, "pull_request", help="Pull request number or URL")
-    add_help_argument(parser, "revset", help="Revision to reassociate with the pull request")
+    add_help_argument(parser, "pull_request", metavar="PR", help="Pull request number or URL")
+    add_help_argument(
+        parser, "revset", metavar="REVSET", help="Revision to reassociate with the pull request"
+    )
     return parser
 
 
@@ -960,7 +981,7 @@ def _add_common_options(
         default=SUPPRESS,
         dest=SUPPRESS,
         metavar="PATH",
-        help="Additional config files",
+        help="Additional jj config file to load; repeat for several",
     )
     parser.add_argument(
         "--debug",

@@ -726,7 +726,10 @@ async def _discover_pull_request_lookups(
         # fail the whole inspection rather than reporting per-branch errors.
         status_code = error.status_code
         if status_code is None or status_code in {401, 403, 404} or status_code >= 500:
-            raise CliError("") from error
+            raise CliError(
+                summarize_github_lookup_error(action="pull request lookup", error=error),
+                hint=t"Run {ui.cmd('jj-stack doctor')} to check GitHub access.",
+            ) from error
         lookup_error = summarize_github_lookup_error(
             action="pull request lookup",
             error=error,

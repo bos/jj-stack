@@ -2,29 +2,32 @@
 
 This page is organized by symptom and what you should do.
 
-## `view` or `submit` says the stack selection is ambiguous
+## A command says a revset resolved to more than one revision
 
-Possible causes:
+The message is `Revset <x> resolved to more than one revision.` Your selector matched several
+revisions, so `jj-stack` stops rather than guessing which stack you meant.
 
-- the current repo state doesn't resolve to one clear stack
-- the remote or trunk branch is configured in an unusual way
-- the revset you passed doesn't point at what you expected
-
-What to do:
+Pass a selector that names one revision — usually the stack's head change ID:
 
 ```bash
-jj-stack view
+jj-stack view <head-change-id>
+jj-stack submit <head-change-id>
 ```
 
-If needed, pass an explicit revset:
+## A command says a PR is claimed by multiple tracked records
+
+The message is `PR #<n> is claimed by multiple tracked records (...)` or `PR #<n> is linked to
+multiple local changes.` Two saved records point at the same pull request, so `jj-stack` cannot
+tell which local change owns it. An explicit revset does not help here; the tracking has to be
+repaired.
+
+Find the records, then drop the wrong one or reattach it:
 
 ```bash
-jj-stack view <revset>
-jj-stack submit <revset>
+jj-stack list
+jj-stack unstack --local <head-change-id>
+jj-stack relink <pr> <change-id>
 ```
-
-For safety, `jj-stack` always stops and reports what is ambiguous rather than guessing what you
-might have meant.
 
 ## `view` says it cannot find a trunk bookmark
 
@@ -92,13 +95,12 @@ the change at it.
 If GitHub reports a remembered PR as closed or merged, decide what outcome you
 want before choosing a command:
 
-- To keep reviewing the same PR, reopen it on GitHub and rerun `jj-stack
-  view <change>`.
-- To attach a different open PR to the change, use `jj-stack relink <pr>
-  <change>`.
-- To abandon the old review and make fresh PRs, run `jj-stack unstack
-  --cleanup <stack-head>` and then `jj-stack submit <stack-head>`. `relink` is
-  not the right command for that case because it attaches an existing open PR.
+- To keep reviewing the same PR, reopen it on GitHub and rerun `jj-stack view <change-id>`.
+- To attach a different open PR to the change, use `jj-stack relink <pr> <change-id>`. That PR
+  must be open and its head must already be the review branch for that same change.
+- To abandon the old review and make fresh PRs, run `jj-stack unstack --cleanup <head-change-id>`
+  and then `jj-stack submit <head-change-id>`. `relink` is not the right command for that case
+  because it attaches an existing open PR.
 
 ## Lower changes merged elsewhere and the rest of your stack needs rebasing
 
@@ -173,7 +175,7 @@ jj-stack view <head-change-id>
 the ones that no longer match. `submit` refreshes that stack's PR branches and base branches on
 GitHub so reviewers see the current local stack.
 
-## `merge` says the local change differs from what reviewers approved
+## `merge` stops because the change, branch, and PR do not identify the same commit
 
 Possible causes:
 
@@ -230,7 +232,7 @@ Possible causes:
 What to do:
 
 ```bash
-jj-stack checkout --pull-request <number-or-url> --fetch
+jj-stack checkout --pull-request <pr> --fetch
 ```
 
 Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage them locally
@@ -250,14 +252,14 @@ leave two copies of it, so `checkout` stops. Attach the pull request to the chan
 have, then publish your edit:
 
 ```bash
-jj-stack relink <number> <change-id>
+jj-stack relink <pr> <change-id>
 jj-stack submit
 ```
 
 For a stack of several PRs, relink attaches the one you name; rerun `jj-stack submit` and follow
 the guidance it prints for any remaining untracked branch.
 
-## `submit` says one GitHub stack spans several local paths
+## `submit` says a GitHub stack keeps other PRs active outside the selected stack
 
 GitHub still groups PRs that your local `jj` history now places on separate paths. `jj-stack`
 stops because updating only part of that GitHub group would be unsafe.

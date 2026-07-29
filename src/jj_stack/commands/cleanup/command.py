@@ -1,14 +1,13 @@
-"""Find and remove unused review artifacts left behind by earlier review work.
+"""Remove review branches, comments, and tracking that no active review still needs.
 
-By default, this checks the whole repository for saved PR links, review branches, and comments
-that no active review still needs.
+It checks the whole repository, and only acts on reviews GitHub reports as closed or merged.
 
 Open orphaned PRs are left alone. Run `jj-stack list` to see them, then close and clean up one
 with `jj-stack unstack --cleanup --pull-request <pr>`, or clean up all of them with
 `jj-stack unstack --cleanup --pull-request orphans`.
 
-Use `--dry-run` to preview cleanup without deleting branches, comments, or saved PR links.
-
+If another open pull request still uses a review branch as its base, that branch stays. Close or
+retarget the pull request named in the message, then rerun the same cleanup command.
 """
 
 from __future__ import annotations
