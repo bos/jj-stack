@@ -276,7 +276,9 @@ async def _fresh_retirement_blocker(
     if pull_request is None:
         return t"GitHub no longer reports PR #{candidate.review_identity.pr_number}"
     if terminal_required and pull_request.normalize_state().state != "merged":
-        return t"native member PR #{pull_request.number} is not terminally merged"
+        return (
+            t"PR #{pull_request.number} belongs to a GitHub stack and does not report merged yet"
+        )
     exact, rewritten = collect_trunk_evidence(
         candidate=candidate,
         context=finish.command,

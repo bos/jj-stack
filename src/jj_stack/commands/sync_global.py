@@ -8,7 +8,7 @@ from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.jj.client import JjCommandError
-from jj_stack.models.github import GithubPullRequest, GithubStack
+from jj_stack.models.github import GithubPullRequest, GithubStack, GithubStackPullRequest
 from jj_stack.review.convergence import dependent_path_commands
 from jj_stack.review.finish import (
     FinishContext,
@@ -162,27 +162,50 @@ def _eligible_exact_candidates(
         if not matching:
             eligible.append(candidate)
             continue
-        pull_request = pull_requests.get(number)
-        if (
-            len(matching) != 1
-            or not matching[0].is_historical
-            or not isinstance(pull_request, GithubPullRequest)
-            or pull_request.normalize_state().state != "merged"
-            or any(
-                number in stack.pull_request_numbers
-                and not set(stack.active_pull_request_numbers).isdisjoint(tracked_pull_numbers)
-                for stack in native_stacks
-            )
-        ):
-            _warn_global_preserved(
-                candidate,
-                t"native member PR #{number} is not terminally merged, has ambiguous "
-                t"membership, or has tracked active members",
-            )
+        reason = _github_stack_blocker(
+            matching=matching,
+            native_stacks=native_stacks,
+            number=number,
+            pull_request=pull_requests.get(number),
+            tracked_pull_numbers=tracked_pull_numbers,
+        )
+        if reason is not None:
+            _warn_global_preserved(candidate, reason)
             continue
         eligible.append(candidate)
         terminal_required.add(candidate.change_id)
     return tuple(eligible), frozenset(terminal_required)
+
+
+def _github_stack_blocker(
+    *,
+    matching: list[GithubStackPullRequest],
+    native_stacks: tuple[GithubStack, ...],
+    number: int,
+    pull_request: object,
+    tracked_pull_numbers: frozenset[int],
+) -> Message | None:
+    """Explain why a GitHub stack member cannot be retired repository-wide.
+
+    Each cause is reported on its own. Naming them together left the reader to guess which of
+    them applied when the code already knew.
+    """
+
+    if len(matching) != 1:
+        return t"GitHub reports PR #{number} more than once in its stack membership"
+    if not matching[0].is_historical:
+        return t"GitHub still lists PR #{number} as an active member of its stack"
+    if not isinstance(pull_request, GithubPullRequest):
+        return t"GitHub did not return usable data for PR #{number}"
+    if pull_request.normalize_state().state != "merged":
+        return t"GitHub does not report PR #{number} merged"
+    if any(
+        number in stack.pull_request_numbers
+        and not set(stack.active_pull_request_numbers).isdisjoint(tracked_pull_numbers)
+        for stack in native_stacks
+    ):
+        return t"PR #{number} is in a GitHub stack that still has active members tracked here"
+    return None
 
 
 def _report_global_nonexact_candidate(

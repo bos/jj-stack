@@ -467,7 +467,7 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     blocked = capsys.readouterr()
 
     assert blocked_exit == 1
-    assert "not terminally merged" in blocked.err
+    assert "still lists PR #1 as an active member" in " ".join(blocked.err.split())
     assert first.change_id in state_store.load().review_identities
     assert fake_repo.pull_requests[1].state == "open"
 
@@ -479,7 +479,7 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     ambiguous = capsys.readouterr()
 
     assert ambiguous_exit == 1
-    assert "ambiguous membership" in ambiguous.err
+    assert "more than once in its stack membership" in " ".join(ambiguous.err.split())
     assert first.change_id in state_store.load().review_identities
 
     fake_repo.native_stacks = {7: (1, 2)}
@@ -496,7 +496,7 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     applied = capsys.readouterr()
 
     assert applied_exit == 1
-    assert "tracked active members" in applied.err
+    assert "still has active members tracked here" in " ".join(applied.err.split())
     assert first.change_id in state_store.load().review_identities
 
     raw_state["submitted_baselines"][second.change_id] = second_baseline.model_dump(mode="json")

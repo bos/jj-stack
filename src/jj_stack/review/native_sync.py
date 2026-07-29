@@ -201,7 +201,9 @@ def build_selected_native_sync(
             continue
         if selected_by_change_id[candidate.change_id].immutable:
             raise CliError(
-                t"Native member PR #{member.number} is not terminally merged.",
+                t"GitHub still lists PR #{member.number} as active in stack #{stack.number}, "
+                t"but {ui.change_id(candidate.change_id)} is already immutable here, so this "
+                t"repository cannot tell what GitHub did with it.",
                 hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then "
                 t"rerun sync once it reports the merge.",
             )
@@ -254,15 +256,10 @@ def _historical_review(
     revision: LocalRevision | None,
     trunk_commit_id: str,
 ) -> NativeHistoricalReview:
-    if member.head.sha != candidate.submitted_baseline.commit_id:
-        raise CliError(
-            t"Historical native member PR #{member.number} no longer reports its submitted head.",
-            hint=t"Inspect it with {ui.cmd('jj-stack view')}, then reattach the "
-            t"intended review with {ui.cmd('jj-stack relink')}.",
-        )
     if pull_request.normalize_state().state != "merged":
         raise CliError(
-            t"Native member PR #{member.number} is not terminally merged.",
+            t"GitHub lists PR #{member.number} as a past member of its stack but does not "
+            t"report it merged.",
             hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then rerun "
             t"sync once it reports the merge.",
         )
