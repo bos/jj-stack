@@ -1031,8 +1031,6 @@ def _format_status_summary(
     if change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
         if saved_label is not None:
             summary = saved_label
-        elif change_status.saved_review_identity:
-            summary = "submitted, GitHub status unknown"
         elif github_available:
             summary = "not submitted"
         else:
@@ -1059,8 +1057,6 @@ def _format_status_summary(
     elif change_status.pr_lifecycle == "missing":
         if saved_label is not None:
             summary = f"{saved_label}, no PR found for branch"
-        elif change_status.saved_review_identity:
-            summary = "submitted, no PR found for branch"
         else:
             summary = "not submitted"
     elif change_status.pr_lifecycle in {"closed", "merged"}:
