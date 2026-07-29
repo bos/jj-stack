@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Body, FastAPI, HTTPException, Response
+from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from jj_stack.models.github import GithubStack
@@ -727,6 +727,20 @@ def create_app(fake_state: FakeGithubState) -> FastAPI:
     """Create a FastAPI app that serves the configured fake GitHub state."""
 
     app = FastAPI(docs_url=None, redoc_url=None, title="fake-github")
+
+    @app.exception_handler(HTTPException)
+    async def _github_shaped_error(_request: Request, error: HTTPException) -> JSONResponse:
+        """Report errors the way GitHub does, as `message`, not FastAPI's `detail`.
+
+        Production code reads GitHub's reason out of this body to quote back to the user, so the
+        shape has to be GitHub's or the fake would exercise a path real GitHub never takes.
+        """
+
+        return JSONResponse(
+            {"message": error.detail, "status": str(error.status_code)},
+            status_code=error.status_code,
+        )
+
     _register_repository_routes(app, fake_state)
     _register_native_stack_routes(app, fake_state)
     _register_graphql_routes(app, fake_state)

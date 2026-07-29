@@ -108,7 +108,7 @@ def test_merge_reports_blocked_when_github_rejects_first_pull_request(
     assert "jj-stack submit" in normalized
     # GitHub's sentence reaches the user, not its status code and JSON envelope.
     assert "Pull Request is not mergeable" in normalized
-    assert '{"detail"' not in normalized
+    assert '{"message"' not in normalized
     assert "405" not in normalized
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[1].merged_at is None

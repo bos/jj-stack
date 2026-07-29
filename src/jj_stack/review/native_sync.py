@@ -256,13 +256,6 @@ def _historical_review(
     revision: LocalRevision | None,
     trunk_commit_id: str,
 ) -> NativeHistoricalReview:
-    if pull_request.normalize_state().state != "merged":
-        raise CliError(
-            t"GitHub lists PR #{member.number} as a past member of its stack but does not "
-            t"report it merged.",
-            hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then rerun "
-            t"sync once it reports the merge.",
-        )
     evidence_kind, reason = proven_kind(
         candidate=candidate,
         context=context,
@@ -297,7 +290,6 @@ def _validated_member_pull_request(
         or candidate.change_id in observation.duplicate_claim_change_ids
         or pull_request is None
         or not identity.matches_pull_request(pull_request)
-        or pull_request.number != member.number
         or pull_request.head.ref != member.head.ref
     ):
         raise CliError(

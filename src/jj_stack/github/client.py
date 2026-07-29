@@ -97,11 +97,9 @@ class GithubClientError(SummarizedError):
         except json.JSONDecodeError:
             return detail
         if isinstance(payload, dict):
-            # Real GitHub uses `message`; the test server speaks FastAPI's `detail`.
-            for key in ("message", "detail"):
-                value = payload.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
+            value = payload.get("message")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         return detail
 
     def user_facing_reason(self) -> str:
