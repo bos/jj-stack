@@ -1089,7 +1089,9 @@ def _forward_handler(
 
 
 def _completion_handler(args: Namespace) -> int:
-    console.output(emit_shell_completion(build_parser(), args.shell), end="")
+    # soft_wrap keeps the shell from receiving a script wrapped to the console width, which
+    # splits long case patterns mid-word and makes it unparseable.
+    console.output(emit_shell_completion(build_parser(), args.shell), end="", soft_wrap=True)
     return 0
 
 
