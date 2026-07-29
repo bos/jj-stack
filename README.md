@@ -79,15 +79,21 @@ A `--dry-run` will not set this up: it reports that the reservation is needed an
 the reservation with `doctor --fix` before previewing anything.
 
 After that, neither `jj git fetch` nor `git fetch` brings `jj-stack/*` branches into this repo. Do
-not keep your own branches under `jj-stack/`. To undo the reservation, remove that one line from
-the Git repository backing `jj`:
+not keep your own branches under `jj-stack/`. If the remote had no fetch configuration at all,
+`jj-stack` also writes the default `+refs/heads/*` refspec so the exclusion has something to
+exclude from.
+
+To undo the reservation, remove the exclusion from the Git repository backing `jj`, naming your
+own remote and prefix if they are not the defaults:
 
 ```bash
 git --git-dir "$(jj git root)" config --unset --fixed-value \
   remote.origin.fetch '^refs/heads/jj-stack/*'
 ```
 
-To reserve a different namespace instead, set `branch_prefix` before your first submit:
+To reserve a different namespace, set `branch_prefix` before your first submit. Changing it later
+leaves branches already pushed under the old prefix outside the reserved namespace, where
+`jj-stack` will neither update nor delete them:
 
 ```bash
 jj config set --repo jj-stack.branch_prefix my-reviews
@@ -121,8 +127,10 @@ If you have already written a PR body in a Markdown file, pass it when submittin
 jj-stack submit --describe <change-id>=pr-body.md
 ```
 
-For a multi-change stack, you can use `--describe stack=stack-overview.md` to add an overview
-description of the entire stack to the head PR. This is very helpful to orient a reviewer.
+For a multi-change stack, you can use `--describe stack=stack-overview.md` to post an overview of
+the whole stack as a comment on the head PR. This is very helpful to orient a reviewer. See
+[Writing PR descriptions](docs/description-helpers.md) for the other ways to set titles and
+bodies.
 
 On first submit, `jj-stack` creates one stable, readable GitHub review branch per change, such as
 `jj-stack/add-the-api-qpvuntsm`. The branches stay on the Git remote rather than appearing as

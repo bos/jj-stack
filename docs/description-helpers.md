@@ -17,15 +17,20 @@ For each change in the stack:
 If a change has no description body, `jj-stack` falls back to your repository's pull request
 template, and finally to the subject, so a PR never opens with a blank comment.
 
-The template is the first of these that exists under the workspace root, in either upper- or
-lower-case:
+The template is the first of these paths that exists under the workspace root, trying the all-caps
+name and then the all-lowercase `pull_request_template.md` in each directory:
 
 - `.github/PULL_REQUEST_TEMPLATE.md`
 - `PULL_REQUEST_TEMPLATE.md`
 - `docs/PULL_REQUEST_TEMPLATE.md`
 
-An empty template counts as missing. The template never overrides a change description body or
-anything you pass with `--describe` or `--describe-with`.
+Only those two spellings are tried, so a mixed-case name that GitHub itself would accept is not
+found on a case-sensitive filesystem.
+
+The search stops at the first path that exists, even when that file is empty; it does not fall
+through to a later path. An empty template then behaves like no template, so the body falls back
+to the subject. The template never overrides a change description body or anything you pass with
+`--describe` or `--describe-with`.
 
 ## Supplying Markdown files
 
@@ -56,12 +61,14 @@ Opens your editor once, containing the planned title and body of every PR in the
 top-to-bottom the way `view` shows them, and pre-filled from the defaults above including any
 `--describe` files. What you save replaces those titles and bodies.
 
-The editor is whatever jj's `ui.editor` resolves to, including its `$VISUAL` and `$EDITOR`
-fallbacks.
+The editor comes from jj's `ui.editor` setting, then `$VISUAL`, then `$EDITOR`, and `--edit` fails
+if none of those is set. `ui.editor` may be a string or a list of arguments, as in jj. Unlike `jj`
+itself, `jj-stack` does not read `$JJ_EDITOR` and has no built-in editor to fall back on.
 
 `submit` aborts before changing anything — locally, on the remote, or on GitHub — if the
-editor exits non-zero, or if the saved document has content before the first change separator, an
-unknown, repeated, or missing change section, or a section with no title line.
+editor cannot be launched or exits non-zero, or if the saved document has content before the first
+change separator, an unknown, repeated, or missing change section, or a section with no title
+line.
 
 `--edit` cannot be combined with `--describe-with`, since a helper already owns description
 authoring. It does compose with `--describe`.

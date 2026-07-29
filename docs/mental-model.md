@@ -22,9 +22,10 @@ agent to review:
 - refreshing those PRs after local rewrites
 - inspecting review state and asking GitHub to merge reviewed changes
 
-Each review branch is named `jj-stack/<subject-slug>-<short-change-id>`. The readable subject
-at the change's purpose; the suffix ties the name to its stable change ID. The branches stay on
-the Git remote, so they do not clutter local `jj` bookmark output. `jj-stack` creates them for
+Each review branch is named `<prefix>/<subject-slug>-<short-change-id>`, where `<prefix>` is
+`jj-stack` unless the repo sets `branch_prefix`. The readable subject hints at the change's
+purpose; the suffix ties the name to its stable change ID. The branches stay on the Git remote, so
+they do not clutter local `jj` bookmark output. `jj-stack` creates them for
 review and can remove them later during `jj-stack unstack --cleanup` or `jj-stack cleanup`.
 Merging itself does not rewrite local history or remove review state; selected `sync` reconciles
 GitHub's result first.

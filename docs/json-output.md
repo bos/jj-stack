@@ -42,6 +42,10 @@ identifies it.
 identity, not a duplicate status summary; use the change's `status` field for review
 state.
 
+Within `pull_request`, `number` is always present. `url` appears only when GitHub reported the
+pull request, so a change whose status is `submitted` — and every orphan row, which is
+identified from saved tracking alone — carries `number` by itself.
+
 Known change statuses are:
 
 - `unsubmitted`: no PR has been submitted for this change
@@ -121,8 +125,7 @@ the `changes` array.
       "subject": "local change missing",
       "status": "orphan",
       "pull_request": {
-        "number": 7,
-        "url": "https://github.com/octo-org/example/pull/7"
+        "number": 7
       }
     }
   ]
@@ -133,6 +136,6 @@ the `changes` array.
 that stack. It is omitted for other stack rows.
 
 A stack row's `status` is a human-readable summary such as the counts of open, approved, or
-unsubmitted changes. Its wording is not a stable machine-readable vocabulary. Scripts should
+not-submitted changes. Its wording is not a stable machine-readable vocabulary. Scripts should
 inspect the `changes` array and use each change's documented `status` value instead. An orphan
 row always uses `"status": "orphan"`.

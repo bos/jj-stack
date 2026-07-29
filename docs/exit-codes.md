@@ -30,8 +30,9 @@ Notes:
   together with the payload. See [json-output.md](json-output.md).
 - Commands that mutate review state (`submit`, `merge`, `sync`, `unstack`, `cleanup`) exit 1 when
   they ran but had to stop before completing every action; command output names what blocked them.
-- Exit 2 covers stack shapes `jj-stack` does not review: merge commits, divergent changes, a
-  working copy that never reaches `trunk()`, and similar. The message names the offending
-  change.
+- Exit 2 covers selections `jj-stack` cannot review as a linear stack: a merge commit, a divergent
+  change, a hidden or immutable commit, an empty or undescribed working copy, a path that never
+  reaches `trunk()`, and a repository with no trunk bookmark configured. The message names the
+  offending change where there is one; the trunk and working-copy cases have no change to name.
 - Exit 6 means rerun with an explicit revision or repair an incorrect saved PR attachment with
   `relink`.
