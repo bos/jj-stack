@@ -1358,6 +1358,8 @@ def _native_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...
     # assign this mapping directly, so refuse the impossible shape here rather than let a fixture
     # justify production code defending against it.
     seen: set[int] = set()
+    # A one-member stack is unreachable on GitHub too, but seven fixtures forge one, so serving
+    # them is not refused yet. See the backlog entry before adding another.
     for members in repository.native_stacks.values():
         overlap = seen.intersection(members)
         assert not overlap, (
