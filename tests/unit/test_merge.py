@@ -61,7 +61,10 @@ def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
         allow_squash_merge=True,
     )
 
-    assert _resolve_merge_method(merge_method=None, repository_state=repository) == "squash"
+    assert (
+        _resolve_merge_method(configured=None, merge_method=None, repository_state=repository)
+        == "squash"
+    )
 
 
 @pytest.mark.landing_recovery
@@ -99,7 +102,45 @@ def test_resolve_merge_method_rejects_ambiguous_or_absent_settings(
     message: str,
 ) -> None:
     with pytest.raises(CliError, match=message):
-        _resolve_merge_method(merge_method=None, repository_state=repository)
+        _resolve_merge_method(configured=None, merge_method=None, repository_state=repository)
+
+
+@pytest.mark.landing_recovery
+def test_resolve_merge_method_prefers_the_flag_over_configuration() -> None:
+    """A repository allowing several methods is the normal case, so config has to settle it.
+
+    GitHub reports which methods it allows but never which to prefer, so without a configured
+    default every merge in such a repository needs the flag typed out.
+    """
+
+    repository = _repository(
+        allow_merge_commit=True,
+        allow_rebase_merge=True,
+        allow_squash_merge=True,
+    )
+
+    assert (
+        _resolve_merge_method(configured="squash", merge_method=None, repository_state=repository)
+        == "squash"
+    )
+    assert (
+        _resolve_merge_method(
+            configured="squash", merge_method="merge", repository_state=repository
+        )
+        == "merge"
+    )
+
+
+@pytest.mark.landing_recovery
+def test_resolve_merge_method_rejects_a_method_the_repository_disallows() -> None:
+    repository = _repository(
+        allow_merge_commit=False,
+        allow_rebase_merge=False,
+        allow_squash_merge=True,
+    )
+
+    with pytest.raises(CliError, match="does not allow"):
+        _resolve_merge_method(configured="rebase", merge_method=None, repository_state=repository)
 
 
 @pytest.mark.landing_recovery

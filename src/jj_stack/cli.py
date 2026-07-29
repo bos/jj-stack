@@ -371,8 +371,9 @@ def build_parser() -> ArgumentParser:
         choices=("merge", "rebase", "squash"),
         metavar="METHOD",
         help=(
-            "GitHub merge method: merge, rebase, or squash. Required unless the repository "
-            "allows exactly one; rebase can only merge one pull request per run"
+            "GitHub merge method: merge, rebase, or squash. Defaults to jj-stack.merge_method, "
+            "or to the repository's only allowed method; rebase can only merge one pull request "
+            "per run"
         ),
     )
     unstack_parser = _add_revision_command(

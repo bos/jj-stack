@@ -288,7 +288,12 @@ Repo-level config can be helpful for defaults such as reviewers and labels:
 [jj-stack]
 reviewers = ["octocat"]
 labels = ["needs-review"]
+merge_method = "squash"
 ```
+
+Set `merge_method` when the repository allows more than one. GitHub reports which methods it
+allows but not which one you want, so without this `jj-stack merge` asks you to pass
+`--merge-method` every time.
 
 `jj-stack submit` can override those defaults with `--reviewers`, `--team-reviewers`,
 and `--label`.

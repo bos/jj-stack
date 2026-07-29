@@ -7,6 +7,7 @@ import logging
 import re
 import tomllib
 from collections.abc import Mapping
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -19,6 +20,9 @@ _TYPO_CUTOFF = 0.75
 _BRANCH_PREFIX_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
+MergeMethod = Literal["merge", "rebase", "squash"]
+
+
 class RepoConfig(BaseModel):
     """Repository defaults resolved before command planning."""
 
@@ -26,6 +30,7 @@ class RepoConfig(BaseModel):
 
     branch_prefix: str = DEFAULT_BRANCH_PREFIX
     labels: list[str] = Field(default_factory=list)
+    merge_method: MergeMethod | None = None
     reviewers: list[str] = Field(default_factory=list)
     team_reviewers: list[str] = Field(default_factory=list)
 

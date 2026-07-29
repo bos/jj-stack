@@ -231,12 +231,21 @@ To stop the selected bottom portion at one pull request:
 jj-stack merge --pull-request 7
 ```
 
-The merge method comes from repository settings when only one is enabled. If several are enabled,
-choose one explicitly:
+The merge method comes from repository settings when only one is enabled. When several are, set a
+default once:
+
+```bash
+jj config set --repo jj-stack.merge_method squash
+```
+
+Or choose one per run, which overrides that default:
 
 ```bash
 jj-stack merge --merge-method squash
 ```
+
+GitHub reports which methods a repository allows but never which one to prefer, which is why one
+of these is needed.
 
 In repositories with GitHub stack support, GitHub merges the selected bottom portion as one
 operation. A failed operation merges nothing. GitHub may rewrite the branches for PRs that remain
