@@ -48,6 +48,20 @@ def build_selected_convergence_plan(
 ) -> SelectedConvergencePlan:
     selected = prepared_status.prepared.stack.revisions
     state = prepared_status.prepared.state
+    # Stated once for the whole selection. Enforcing it per change meant two checks that each
+    # missed a population: the evidence path never saw a GitHub-stack survivor, and the survivor
+    # path never saw a change whose work is already on trunk.
+    ambiguous = tuple(
+        revision.change_id
+        for revision in selected
+        if revision.change_id in observation.duplicate_claim_change_ids
+    )
+    if ambiguous:
+        raise CliError(
+            t"Multiple saved changes claim the review for {ui.join(ui.change_id, ambiguous)}.",
+            hint=t"Run {ui.cmd('jj-stack list')} to find them, then drop the wrong one with "
+            t"{ui.cmd('jj-stack unstack --local')}.",
+        )
     native_history, native_active = build_selected_native_sync(
         context=context,
         native_stacks=native_stacks,
@@ -119,12 +133,6 @@ def build_selected_convergence_plan(
                 t"above an unreviewed change.",
                 hint="Submit the intervening change or select a stack that ends below it.",
             )
-        if revision.change_id in observation.duplicate_claim_change_ids:
-            raise CliError(
-                t"Multiple saved changes claim the review for {revision.change_id}.",
-                hint=t"Run {ui.cmd('jj-stack list')} to find them, then drop the wrong one with "
-                t"{ui.cmd('jj-stack unstack --local')}.",
-            )
         pull_request = observation.reviews[revision.change_id].pull_request
         identity = candidate.review_identity
         if (
@@ -171,12 +179,6 @@ def _trunk_evidence_kind_for(
             t"Saved PR tracking changed for {ui.change_id(candidate.change_id)}.",
             hint=t"Inspect it with {ui.cmd('jj-stack view')}, then reattach the intended "
             t"review with {ui.cmd('jj-stack relink')}.",
-        )
-    if candidate.change_id in observation.duplicate_claim_change_ids:
-        raise CliError(
-            t"Multiple saved changes claim the review for {candidate.change_id}.",
-            hint=t"Run {ui.cmd('jj-stack list')} to find them, then drop the wrong one with "
-            t"{ui.cmd('jj-stack unstack --local')}.",
         )
     pull_request = observed.pull_request
     if pull_request is None:
