@@ -17,7 +17,6 @@ def merge_precondition_error(
     expected_bases: Mapping[str, tuple[str, ...]],
     expected_repository: GithubRepoAddress,
     expected_trunk_branch: str,
-    expected_trunk_commit_id: str,
     observation: RepositoryObservation,
     remote_name: str,
     revisions: tuple[MergeRevision, ...],
@@ -40,11 +39,6 @@ def merge_precondition_error(
         revision.change_id in observation.duplicate_claim_change_ids for revision in revisions
     ):
         return "multiple saved changes now claim the same pull request or review branch"
-    if observation.fetched_trunk_commit_id != expected_trunk_commit_id:
-        return "fetched trunk changed after planning"
-    if observation.remote_trunk_target != expected_trunk_commit_id:
-        return "the live trunk ref moved after planning"
-
     for revision in revisions:
         error = _review_precondition_error(
             expected_bases=expected_bases.get(revision.change_id, ()),

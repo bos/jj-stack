@@ -255,7 +255,6 @@ async def _stream_merge_async(
             state=prepared.state,
             target_change_id=prepared_merge.target_change_id,
             trunk_branch=trunk_branch,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
         )
         selection = GithubStackSelection(
             github_client,
@@ -271,7 +270,6 @@ async def _stream_merge_async(
             remote_name=remote.name,
             selected_revset=prepared_status.selected_revset,
             trunk_branch=trunk_branch,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
             trunk_subject=prepared.stack.trunk.subject,
         )
         if prepared_merge.dry_run:

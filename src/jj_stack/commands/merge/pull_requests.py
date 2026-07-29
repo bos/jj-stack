@@ -29,7 +29,6 @@ async def merge_pull_request(
     remote_name: str,
     stack_selector: str,
     trunk_branch: str,
-    trunk_commit_id: str,
 ) -> tuple[GithubPullRequest | None, MergeAction | None]:
     pull_request, reason = await _fresh(
         bases=(revision.base_ref, trunk_branch),
@@ -38,7 +37,6 @@ async def merge_pull_request(
         remote_name=remote_name,
         revision=revision,
         trunk_branch=trunk_branch,
-        trunk_commit_id=trunk_commit_id,
     )
     if reason or pull_request is None:
         return None, _boundary(
@@ -67,7 +65,6 @@ async def merge_pull_request(
             remote_name=remote_name,
             revision=revision,
             trunk_branch=trunk_branch,
-            trunk_commit_id=trunk_commit_id,
         )
         if reason or pull_request is None:
             return None, _boundary(
@@ -120,7 +117,6 @@ async def _fresh(
     remote_name: str,
     revision: MergeRevision,
     trunk_branch: str,
-    trunk_commit_id: str,
 ) -> tuple[GithubPullRequest | None, str | None]:
     try:
         observation = await observe_reviews(
@@ -136,7 +132,6 @@ async def _fresh(
         expected_bases={revision.change_id: bases},
         expected_repository=github.repository,
         expected_trunk_branch=trunk_branch,
-        expected_trunk_commit_id=trunk_commit_id,
         observation=observation,
         remote_name=remote_name,
         revisions=(revision,),

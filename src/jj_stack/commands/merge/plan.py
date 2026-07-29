@@ -25,7 +25,6 @@ def build_merge_plan(
     state: ReviewState,
     target_change_id: str | None,
     trunk_branch: str,
-    trunk_commit_id: str,
 ) -> MergePlan:
     reviewed = tuple(_reviewed_revision(observation, revision, state) for revision in revisions)
     candidates: list[MergeRevision] = []
@@ -38,7 +37,6 @@ def build_merge_plan(
             expected_bases={},
             expected_repository=repository,
             expected_trunk_branch=trunk_branch,
-            expected_trunk_commit_id=trunk_commit_id,
             observation=observation,
             remote_name=remote_name,
             revisions=(revision,),

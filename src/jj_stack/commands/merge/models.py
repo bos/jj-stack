@@ -54,7 +54,6 @@ class MergeExecutionInputs:
     remote_name: str
     selected_revset: str
     trunk_branch: str
-    trunk_commit_id: str
     trunk_subject: str
 
     def result(

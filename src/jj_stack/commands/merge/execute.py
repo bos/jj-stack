@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
-from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
-from jj_stack.jj.client import JjCommandError
 
 from .models import (
     MergeAction,
@@ -40,7 +37,6 @@ async def execute_merge_plan(
     actions: list[MergeAction] = []
     merged_change_ids: list[str] = []
     blocked_action: MergeAction | None = None
-    current_trunk_commit_id = execution.trunk_commit_id
     for revision in plan.planned_revisions:
         console.output(
             t"Merging PR #{revision.identity.pr_number} for "
@@ -54,7 +50,6 @@ async def execute_merge_plan(
             remote_name=execution.remote_name,
             stack_selector=execution.selected_revset,
             trunk_branch=execution.trunk_branch,
-            trunk_commit_id=current_trunk_commit_id,
         )
         if blocked is not None or final_pull_request is None:
             blocked_action = blocked
@@ -69,23 +64,6 @@ async def execute_merge_plan(
             )
         )
         merged_change_ids.append(revision.change_id)
-        try:
-            execution.context.jj_client.fetch_remote(
-                remote=execution.remote_name,
-                on_isolation_change=report_fetch_isolation,
-            )
-            current_trunk_commit_id = execution.context.jj_client.resolve_revision(
-                "trunk()"
-            ).commit_id
-        except (CliError, JjCommandError) as error:
-            blocked_action = MergeAction(
-                kind="boundary",
-                body=t"after accepted {ui.change_id(revision.change_id)}: could not "
-                t"refresh trunk: {error}; run "
-                t"{ui.cmd(f'jj-stack sync {execution.selected_revset}')}",
-                status="blocked",
-            )
-            break
 
     if blocked_action is not None:
         actions.append(blocked_action)

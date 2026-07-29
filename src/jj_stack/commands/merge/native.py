@@ -162,7 +162,6 @@ async def check_native_merge(
         expected_bases={revision.change_id: (revision.base_ref,) for revision in revisions},
         expected_repository=github.repository,
         expected_trunk_branch=execution.trunk_branch,
-        expected_trunk_commit_id=execution.trunk_commit_id,
         observation=observation,
         remote_name=execution.remote_name,
         revisions=revisions,

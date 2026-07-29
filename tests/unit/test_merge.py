@@ -204,7 +204,6 @@ def test_merge_preconditions_reject_repository_drift() -> None:
             expected_bases={},
             expected_repository=expected_repository,
             expected_trunk_branch="main",
-            expected_trunk_commit_id="trunk-commit",
             observation=observation,
             remote_name="origin",
             revisions=(),
