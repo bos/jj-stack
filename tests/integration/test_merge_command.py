@@ -497,7 +497,7 @@ def test_merge_requires_submit_after_a_diff_equivalent_rebase(
 
     assert exit_code == 1
     assert "do not all identify the same exact commit" in rendered
-    assert f"jj-stack submit {revision.change_id}" in rendered
+    assert f"jj-stack submit {revision.change_id[:8]}" in rendered
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
     assert fake_repo.pull_requests[1].state == "open"

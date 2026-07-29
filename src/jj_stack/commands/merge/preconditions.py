@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import jj_stack.ui as ui
 from jj_stack.commands.merge.models import MergeRevision
+from jj_stack.formatting import short_change_id
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.review.observation import RepositoryObservation, ReviewObservation
+from jj_stack.ui import Message
 
 
 def merge_precondition_error(
@@ -53,6 +56,26 @@ def merge_precondition_error(
         if error is not None:
             return error
     return None
+
+
+def explain_precondition(reason: str, *, change_id: str, sync_target: str) -> Message:
+    """Restate a precondition reason so it names the command that resolves it.
+
+    Planning and execution both stop on these reasons, so they share one wording rather than each
+    deciding what to tell the user.
+    """
+
+    if "last submitted commit" in reason:
+        return (
+            t"the local change, submitted version, branch, and PR do not all identify the same "
+            t"exact commit; run {ui.cmd(f'jj-stack submit {short_change_id(change_id)}')}"
+        )
+    if "is already merged" in reason:
+        return (
+            t"{reason}, so this stack still holds a local copy of work already on trunk; run "
+            t"{ui.cmd(f'jj-stack sync {sync_target}')}"
+        )
+    return t"{reason}; inspect it and rerun {ui.cmd('merge')}"
 
 
 def _review_precondition_error(

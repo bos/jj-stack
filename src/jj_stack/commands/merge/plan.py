@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
+from jj_stack.formatting import short_change_id
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
@@ -12,7 +13,7 @@ from jj_stack.review.observation import RepositoryObservation
 from jj_stack.ui import Message
 
 from .models import MergeAction, MergePlan, MergeRevision
-from .preconditions import merge_precondition_error
+from .preconditions import explain_precondition, merge_precondition_error
 
 
 def build_merge_plan(
@@ -45,10 +46,10 @@ def build_merge_plan(
         if error is not None:
             boundary = _boundary(
                 local,
-                _boundary_detail(
+                explain_precondition(
                     error,
                     change_id=revision.change_id,
-                    head_change_id=revisions[-1].change_id,
+                    sync_target=short_change_id(revisions[-1].change_id),
                 ),
             )
             break
@@ -114,22 +115,6 @@ def _reviewed_revision(
         identity=candidate.review_identity,
         subject=revision.subject,
     )
-
-
-def _boundary_detail(error: str, *, change_id: str, head_change_id: str) -> Message:
-    """Turn a precondition reason into a boundary that names the command that resolves it."""
-
-    if "last submitted commit" in error:
-        return (
-            t"the local change, submitted version, branch, and PR do not all identify the same "
-            t"exact commit; run {ui.cmd(f'jj-stack submit {change_id}')}"
-        )
-    if "is already merged" in error:
-        return (
-            t"{error}, so this stack still holds a local copy of work already on trunk; run "
-            t"{ui.cmd(f'jj-stack sync {head_change_id}')}"
-        )
-    return error
 
 
 def _boundary(revision: LocalRevision, reason: Message) -> Message:

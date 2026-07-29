@@ -17,7 +17,7 @@ from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import Message
 
 from .models import MergeAction, MergeRevision
-from .preconditions import merge_precondition_error
+from .preconditions import explain_precondition, merge_precondition_error
 
 
 async def merge_pull_request(
@@ -27,6 +27,7 @@ async def merge_pull_request(
     revision: MergeRevision,
     merge_method: str,
     remote_name: str,
+    stack_selector: str,
     trunk_branch: str,
     trunk_commit_id: str,
 ) -> tuple[GithubPullRequest | None, MergeAction | None]:
@@ -40,7 +41,14 @@ async def merge_pull_request(
         trunk_commit_id=trunk_commit_id,
     )
     if reason or pull_request is None:
-        return None, _boundary(revision, reason or _unavailable("pull request"))
+        return None, _boundary(
+            revision,
+            explain_precondition(
+                reason or "pull request state is unavailable",
+                change_id=revision.change_id,
+                sync_target=stack_selector,
+            ),
+        )
     if pull_request.base.ref != trunk_branch:
         try:
             await github_client.update_pull_request(
@@ -62,7 +70,14 @@ async def merge_pull_request(
             trunk_commit_id=trunk_commit_id,
         )
         if reason or pull_request is None:
-            return None, _boundary(revision, reason or _unavailable("retargeted PR"))
+            return None, _boundary(
+                revision,
+                explain_precondition(
+                    reason or "retargeted PR state is unavailable",
+                    change_id=revision.change_id,
+                    sync_target=stack_selector,
+                ),
+            )
     try:
         await github_client.merge_pull_request(
             expected_head_sha=revision.commit_id,
@@ -80,9 +95,9 @@ async def merge_pull_request(
             return pull_request, None
         submit = ui.cmd(f"jj-stack submit {short_change_id(revision.change_id)}")
         if error.status_code == 409:
-            reason = t"GitHub rejected the merge because the PR head changed; run {submit}"
+            rejection: Message = t"the PR head changed on GitHub; run {submit} and merge again"
         elif error.status_code == 405:
-            reason = (
+            rejection = (
                 t"GitHub will not merge it: {error.github_message()}; if it conflicts with "
                 t"{ui.bookmark(trunk_branch)}, rebase onto {ui.revset('trunk()')}, resolve the "
                 t"conflict, and run {submit} before merging again; if a check or repository rule "
@@ -93,7 +108,7 @@ async def merge_pull_request(
                 t"Could not merge PR #{pull_request.number} on GitHub",
                 hint="Resolve the GitHub error above, then rerun merge.",
             ) from error
-        return None, _boundary(revision, reason)
+        return None, _boundary(revision, rejection)
     return pull_request, None
 
 
@@ -178,10 +193,6 @@ async def _landed(
         trunk_commit_id=trunk_commit_id,
     )
     return exact.state == "landed" or rewritten.state == "landed"
-
-
-def _unavailable(subject: str) -> Message:
-    return t"{subject} state is unavailable; inspect it and rerun {ui.cmd('merge')}"
 
 
 def _boundary(revision: MergeRevision, reason: Message) -> MergeAction:

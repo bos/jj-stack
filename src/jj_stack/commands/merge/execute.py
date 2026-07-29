@@ -52,6 +52,7 @@ async def execute_merge_plan(
             revision=revision,
             merge_method=merge_method,
             remote_name=execution.remote_name,
+            stack_selector=execution.selected_revset,
             trunk_branch=execution.trunk_branch,
             trunk_commit_id=current_trunk_commit_id,
         )
