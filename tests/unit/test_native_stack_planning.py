@@ -46,7 +46,6 @@ def _stack(
         ((1, 2), (_stack(7, 1, 2),), frozenset({1}), "replace", 7),
         ((2, 1), (_stack(7, 1, 2),), frozenset(), "replace", 7),
         ((None, 1, 2), (_stack(7, 1, 2),), frozenset(), "replace", 7),
-        ((1,), (_stack(7, 1),), frozenset(), "replace", 7),
         ((2,), (_stack(7, 1, 2, historical=(1,)),), frozenset(), "none", None),
         (
             (2, 3),

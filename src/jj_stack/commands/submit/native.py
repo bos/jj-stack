@@ -41,10 +41,8 @@ def plan_native_stack(
     if set(active_pull_numbers).intersection(pull_numbers_requiring_base_update):
         return NativeStackPlan("replace", stack)
 
-    if active_pull_numbers == desired and (len(desired) >= 2 or stack.historical_pull_requests):
+    if active_pull_numbers == desired:
         return NativeStackPlan("none")
-    if len(desired) < 2:
-        return NativeStackPlan("replace", stack)
     if (
         len(active_pull_numbers) < len(desired)
         and active_pull_numbers == desired[: len(active_pull_numbers)]

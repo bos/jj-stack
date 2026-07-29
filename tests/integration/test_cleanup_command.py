@@ -49,17 +49,20 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
+    change_ids = tuple(revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().review_identities[change_id].head_ref
+    bookmarks = tuple(
+        state_store.load().review_identities[change_id].head_ref for change_id in change_ids
+    )
 
-    fake_repo.pull_requests[1].state = "closed"
-    run_command(["jj", "abandon", change_id], repo)
-    fake_repo.native_stacks = {7: (1,)}
+    for pull_request in fake_repo.pull_requests.values():
+        pull_request.state = "closed"
+    run_command(["jj", "abandon", *change_ids], repo)
+    fake_repo.native_stacks = {7: (1, 2)}
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     state_before = state_store.load()
 
@@ -70,17 +73,24 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
     assert preview_exit_code == 1
     assert "Planned cleanup actions:" in preview.out
     assert "GitHub stack #7 blocks this jj-stack operation" in normalized_preview
-    assert f"remote branch: delete {bookmark}@origin" not in normalized_preview
+    assert all(
+        f"remote branch: delete {bookmark}@origin" not in normalized_preview
+        for bookmark in bookmarks
+    )
     assert state_store.load() == state_before
-    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
+    assert all(
+        f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
+    )
 
     blocked_exit_code = run_main(repo, config_path, "cleanup")
     blocked = capsys.readouterr()
 
     assert blocked_exit_code == 1
     assert "GitHub stack #7 blocks this jj-stack operation" in " ".join(blocked.out.split())
-    assert change_id in state_store.load().review_identities
-    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
+    assert all(change_id in state_store.load().review_identities for change_id in change_ids)
+    assert all(
+        f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
+    )
 
     fake_repo.native_stacks = {}
     apply_exit_code = run_main(repo, config_path, "cleanup")
@@ -89,9 +99,13 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
 
     assert apply_exit_code == 0
     assert "Applied cleanup actions:" in applied.out
-    assert f"remote branch: delete {bookmark}@origin" in normalized_applied
-    assert change_id not in state_store.load().review_identities
-    assert f"refs/heads/{bookmark}" not in remote_refs(fake_repo.git_dir)
+    assert all(
+        f"remote branch: delete {bookmark}@origin" in normalized_applied for bookmark in bookmarks
+    )
+    assert all(change_id not in state_store.load().review_identities for change_id in change_ids)
+    assert all(
+        f"refs/heads/{bookmark}" not in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
+    )
     assert fake_repo.native_stacks == {}
 
 

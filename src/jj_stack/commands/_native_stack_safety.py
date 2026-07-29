@@ -149,10 +149,7 @@ class GithubStackSelection:
             remaining = await self.github_client.unstack(stack_number=current.number)
         except GithubClientError as error:
             raise CliError(t"Could not dissolve GitHub stack #{current.number}.") from error
-        if remaining is not None and (
-            remaining.number != current.number
-            or remaining.pull_request_numbers != current.historical_pull_request_numbers
-        ):
+        if remaining is not None:
             members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
             raise CliError(
                 t"GitHub stack #{current.number} still contains {members}.",

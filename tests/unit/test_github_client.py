@@ -157,7 +157,7 @@ def test_github_client_sends_only_supplied_pull_request_updates(
     asyncio.run(run_test())
 
 
-def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None:
+def test_github_client_distinguishes_dissolved_and_locked_stack() -> None:
     attempts = 0
 
     def handler(request: httpxyz.Request) -> httpxyz.Response:
@@ -177,7 +177,13 @@ def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None
                         "merged_at": None,
                         "number": 8,
                         "state": "open",
-                    }
+                    },
+                    {
+                        "head": {"ref": "jj-stack/nine", "sha": "head-nine"},
+                        "merged_at": None,
+                        "number": 9,
+                        "state": "open",
+                    },
                 ],
             },
             request=request,
@@ -191,11 +197,11 @@ def test_github_client_distinguishes_dissolved_and_partially_unstacked() -> None
             raise AssertionError("The second unstack should return its locked member.")
         return dissolved, remaining.pull_request_numbers
 
-    assert asyncio.run(run_test()) == (None, (8,))
+    assert asyncio.run(run_test()) == (None, (8, 9))
 
 
 def test_github_client_paginates_stack_list() -> None:
-    def _stack(number: int, pull_number: int) -> dict[str, object]:
+    def _stack(number: int, *pull_numbers: int) -> dict[str, object]:
         return {
             "number": number,
             "pull_requests": [
@@ -205,13 +211,14 @@ def test_github_client_paginates_stack_list() -> None:
                     "number": pull_number,
                     "state": "open",
                 }
+                for pull_number in pull_numbers
             ],
         }
 
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/repos/octo-org/stacked-review/stacks"
         if request.url.params.get("page") == "2":
-            return httpxyz.Response(200, json=[_stack(2, 20)], request=request)
+            return httpxyz.Response(200, json=[_stack(2, 20, 21)], request=request)
         return httpxyz.Response(
             200,
             headers={
@@ -220,7 +227,7 @@ def test_github_client_paginates_stack_list() -> None:
                     'rel="next"'
                 )
             },
-            json=[_stack(1, 10)],
+            json=[_stack(1, 10, 11)],
             request=request,
         )
 

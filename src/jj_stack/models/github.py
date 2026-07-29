@@ -62,7 +62,7 @@ class GithubStack(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     number: int
-    pull_requests: tuple[GithubStackPullRequest, ...]
+    pull_requests: tuple[GithubStackPullRequest, ...] = Field(min_length=2)
 
     @property
     def pull_request_numbers(self) -> tuple[int, ...]:

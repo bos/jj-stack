@@ -860,18 +860,8 @@ def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
     async def unstack(owner: str, repo: str, stack_number: int) -> Response:
         repository = _get_repository(fake_state, owner, repo)
         stacks = _native_stacks(repository)
-        members = stacks.get(stack_number)
-        if members is None:
+        if stack_number not in stacks:
             raise HTTPException(status_code=404, detail="Not Found")
-        historical_members = tuple(
-            pull_number
-            for pull_number in members
-            if (pull_request := repository.pull_requests.get(pull_number)) is not None
-            and pull_request.merged_at is not None
-        )
-        if historical_members:
-            stacks[stack_number] = historical_members
-            return JSONResponse(_stack_payload(repository, stack_number, historical_members))
         del stacks[stack_number]
         return Response(status_code=204)
 
@@ -1358,9 +1348,10 @@ def _native_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...
     # assign this mapping directly, so refuse the impossible shape here rather than let a fixture
     # justify production code defending against it.
     seen: set[int] = set()
-    # A one-member stack is unreachable on GitHub too, but seven fixtures forge one, so serving
-    # them is not refused yet. See the backlog entry before adding another.
     for members in repository.native_stacks.values():
+        assert len(members) >= 2, (
+            f"fake GitHub was given a one-member stack {members}, which GitHub rejects"
+        )
         overlap = seen.intersection(members)
         assert not overlap, (
             f"fake GitHub was given pull requests {sorted(overlap)} in more than one stack, "

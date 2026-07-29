@@ -256,37 +256,3 @@ the behavior and the docs are wrong about one of the two commands owning the del
 
 Decide which command deletes the branch and make the other one's docs match. Retiring tracking
 before the branch it identifies is deleted is the ordering that produces the leak.
-
-
-## Seven fixtures forge a one-member GitHub stack, which cannot exist
-
-_Benefit: high — the behaviour these fixtures pin may be defending states no repository reaches,
-and the same forging can justify more of it._
-
-Assigning `fake_repo.native_stacks` directly lets a test describe a stack GitHub would refuse.
-Checked against the API: creating a stack with one pull request is rejected with "2 items
-required;
-only 1 was supplied", there is no endpoint that removes a member (`remove`, `delete`, and `drop`
-all 404), `unstack` dissolves a whole stack rather than shrinking it, and a merged member stays
-listed as historical. Membership can therefore only grow, so a one-member stack is unreachable.
-
-Six such shapes appear across the suite: `{7: (1,)}` four times, plus `{8: (1,)}` and
-`{7: (2,)}`, across seven tests:
-
-- `test_unstack_head_change_before_native_boundary_preserves_github_stack`
-- `test_unstack_apply_closes_pull_request_and_preserves_exact_tracking`
-- `test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actions`
-- `test_unstack_dissolves_a_resource_that_dropped_a_closed_selected_review`
-- `test_unstack_orphan_rechecks_native_membership_before_branch_delete`
-- `test_submit_restructures_active_suffix_without_dissolving_historical_prefix`
-- `test_cleanup_blocks_closed_review_still_claimed_by_native_stack`
-
-Several start from a one-change submitted stack, where only one pull request exists at all, and
-jj-stack does not register a one-pull-request review in a GitHub stack in the first place. Rebuild
-each on a two-pull-request stack, then decide per test whether the behaviour still has a scenario.
-Where it does not, the behaviour goes with the fixture.
-
-Adding the invariant to the fake is what surfaces these: asserting `len(members) >= 2` when
-serving
-`native_stacks` fails exactly those seven. Restore that assertion as the last step, so no new
-fixture can forge the shape again.

@@ -89,6 +89,32 @@ def _assert_stack_pull_requests_match_dag(
         assert pull_request.base_ref == expected_base
 
 
+def test_submit_native_support_keeps_one_pr_ordinary_until_second_is_submitted(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    fake_repo.native_stacks = {}
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    assert tuple(fake_repo.pull_requests) == (1,)
+    assert fake_repo.native_stacks == {}
+    assert issue_comments(fake_repo, 1) == []
+
+    commit_file(repo, "feature 2", "feature-2.txt")
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    assert tuple(fake_repo.pull_requests) == (1, 2)
+    assert fake_repo.native_stacks == {1: (1, 2)}
+    assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
+
+
 def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
     tmp_path: Path,
     monkeypatch,
@@ -163,7 +189,7 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
     assert all(_navigation_comments(fake_repo, number) == [] for number in range(3, 6))
 
 
-def test_submit_restructures_active_suffix_without_dissolving_historical_prefix(
+def test_submit_recreates_native_stack_only_after_active_review_grows_to_two(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -182,14 +208,14 @@ def test_submit_restructures_active_suffix_without_dissolving_historical_prefix(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.native_stacks == {7: (1,)}
+    assert fake_repo.native_stacks == {}
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "open"
     assert fake_repo.pull_requests[2].base_ref == "main"
 
     commit_file(repo, "feature 3", "feature-3.txt")
     assert run_main(repo, config_path, "submit") == 0
-    assert fake_repo.native_stacks == {1: (2, 3), 7: (1,)}
+    assert fake_repo.native_stacks == {1: (2, 3)}
 
 
 def test_submit_appends_to_active_suffix_after_historical_prefix(
@@ -725,7 +751,7 @@ def test_submit_blocks_unresolved_conflicted_rebase_without_mutation(
     assert fake_repo.pull_requests == {}
 
 
-def test_submit_creates_navigation_comment_for_each_pull_request_in_multi_pr_stack(
+def test_submit_legacy_path_creates_navigation_for_multi_pr_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -750,7 +776,7 @@ def test_submit_creates_navigation_comment_for_each_pull_request_in_multi_pr_sta
     )
 
 
-def test_submit_skips_stack_comment_for_single_commit_stack(
+def test_submit_legacy_path_keeps_single_pr_free_of_stack_comments(
     tmp_path: Path,
     monkeypatch,
     capsys,

@@ -167,10 +167,13 @@ the local `jj` view and names the repair. Plain `view` and `list` do not run thi
 A **GitHub stack** is GitHub's optional server-side object: an ordered group of pull requests.
 This is distinct from the local review stack derived from the `jj` DAG.
 
-When the repository supports GitHub stacks, `jj-stack` registers the selected PRs in that object.
-When it does not, the PRs remain ordinary stacked PRs and `jj-stack` supplies navigation through
-managed comments. Capability detection, not GitHub's current rollout label, determines which
-behavior applies.
+A GitHub stack requires at least two pull requests. A review first submitted with one PR
+therefore uses an ordinary PR, even when the repository supports GitHub stacks. When a later
+`submit` extends that review to two or more PRs, `jj-stack` registers the ordered PRs in a GitHub
+stack. An existing GitHub stack may later have only one active member because GitHub retains
+merged members as history. When the repository does not support GitHub stacks, the PRs remain
+ordinary stacked PRs and `jj-stack` adds managed navigation only once there are at least two.
+Capability detection, not GitHub's current rollout label, determines which behavior applies.
 
 GitHub reports merged members as a historical bottom prefix. This document calls the remaining
 members **active members**, regardless of whether an individual PR is open, draft, or closed.
@@ -524,10 +527,10 @@ changes during the command fails before branch or PR mutation. The diagnostic na
 `submit`, `merge`, selected `sync`, and `unstack` use this rule. Cleanup instead checks each
 candidate and never deletes a branch needed by an active GitHub stack member.
 
-Changing the base of an active GitHub stack member requires dissolving the active part of that
-GitHub stack first because GitHub offers no single-member removal. `jj-stack` asks GitHub to
-dissolve the exact observed resource. If GitHub retains a queued, auto-merge, or otherwise locked
-active member, the operation stops before changing any branch or base.
+Changing the base of an active GitHub stack member requires dissolving that GitHub stack first
+because GitHub offers no single-member removal. `jj-stack` asks GitHub to dissolve the exact
+observed resource. If GitHub retains a queued, auto-merge, or otherwise locked active member, the
+operation stops before changing any branch or base.
 
 ### Derived artifacts
 
@@ -536,7 +539,8 @@ submit and never determine topology; see [description helpers](../description-he
 
 Managed comments are rediscovered by an unambiguous body marker, never a stored comment ID.
 Ambiguous matches are left untouched. Navigation comments exist only where GitHub stack objects
-are unavailable. New PRs are created in the requested draft state. Existing PRs become draft
+are unavailable and the review has at least two PRs. A one-PR review has neither navigation nor
+an overview comment. New PRs are created in the requested draft state. Existing PRs become draft
 only with `--draft=all` and become ready only with `--open`; plain `submit --draft` never
 unpublishes an existing PR.
 

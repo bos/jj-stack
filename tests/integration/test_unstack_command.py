@@ -37,29 +37,29 @@ def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
 
 
-def test_unstack_apply_closes_pull_request_and_preserves_exact_tracking(
+def test_unstack_apply_closes_native_stack_and_preserves_exact_tracking(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
-    change_id = stack.revisions[-1].change_id
+    change_id = stack.head.change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
     app = create_app(FakeGithubState.single_repository(fake_repo))
     operations: list[str] = []
-    native_members = (1, 2)
     locked = True
-    fake_repo.native_stacks = {7: native_members}
+    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.issue_comments.clear()
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
 
     class NativeStackClient(GithubClient):
         async def unstack(self, *, stack_number):
             operations.append("unstack")
-            return github_stack(1) if locked else None
+            return github_stack(1, 2) if locked else None
 
         async def close_pull_request(self, *, pull_number):
             operations.append("close")
@@ -76,28 +76,19 @@ def test_unstack_apply_closes_pull_request_and_preserves_exact_tracking(
     dry_run_exit_code = run_main(repo, config_path, "unstack", "--dry-run", change_id)
     dry_run = capsys.readouterr()
 
-    assert dry_run_exit_code == 1
-    assert "keeps #2 active outside the selected stack" in _combined_output(dry_run)
-    assert "gh stack unstack 7" in _combined_output(dry_run)
-    assert operations == [] and fake_repo.pull_requests[1].state == "open"
+    assert dry_run_exit_code == 0
+    assert "dissolve GitHub stack #7" in dry_run.out
+    assert operations == []
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert state_store.load() == state_before
 
-    blocked_exit_code = run_main(repo, config_path, "unstack", change_id)
-    blocked = capsys.readouterr()
-
-    assert blocked_exit_code == 1
-    assert "keeps #2 active outside the selected stack" in _combined_output(blocked)
-    assert operations == [] and fake_repo.pull_requests[1].state == "open"
-    assert state_store.load() == state_before
-
-    native_members = (1,)
-    fake_repo.native_stacks = {7: native_members}
     locked_exit_code = run_main(repo, config_path, "unstack", change_id)
     locked_run = capsys.readouterr()
 
     assert locked_exit_code == 1
-    assert "GitHub stack #7 still contains #1" in _combined_output(locked_run)
-    assert operations == ["unstack"] and fake_repo.pull_requests[1].state == "open"
+    assert "GitHub stack #7 still contains #1, #2" in _combined_output(locked_run)
+    assert operations == ["unstack"]
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert state_store.load() == state_before
 
     locked = False
@@ -107,13 +98,15 @@ def test_unstack_apply_closes_pull_request_and_preserves_exact_tracking(
 
     assert exit_code == 0
     assert "Applied close actions:" in captured.out
-    assert fake_repo.pull_requests[1].state == "closed"
+    assert all(
+        pull_request.state == "closed" for pull_request in fake_repo.pull_requests.values()
+    )
     assert refreshed_state == state_before
-    assert issue_comments(fake_repo, 1) == []
-    assert operations == ["unstack", "unstack", "close"]
+    assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
+    assert operations == ["unstack", "unstack", "close", "close"]
 
 
-def test_unstack_dissolves_active_suffix_and_retains_historical_prefix(
+def test_unstack_dissolves_resource_and_preserves_merged_pull_request_history(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -132,33 +125,8 @@ def test_unstack_dissolves_active_suffix_and_retains_historical_prefix(
 
     assert exit_code == 0
     assert "dissolve GitHub stack #7" in captured.out
-    assert fake_repo.native_stacks == {7: (1,)}
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].state == "closed"
-
-
-def test_unstack_dissolves_a_resource_that_dropped_a_closed_selected_review(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """A selected review GitHub no longer lists as a member must not block the dissolve."""
-
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.native_stacks = {7: (2,)}
-
-    exit_code = run_main(repo, config_path, "unstack", stack.head.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, _combined_output(captured)
-    assert "dissolve GitHub stack #7" in captured.out
     assert fake_repo.native_stacks == {}
-    assert fake_repo.pull_requests[1].merged_at is None
+    assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "closed"
 
 
@@ -167,12 +135,12 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
     change_id = JjClient(repo).discover_review_stack().head.change_id
-    fake_repo.native_stacks = {7: (1,)}
+    fake_repo.native_stacks = {7: (1, 2)}
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     app = create_app(FakeGithubState.single_repository(fake_repo))
     native_observations = 0
@@ -219,8 +187,8 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
     assert native_observations == 1
     assert fresh_boundary_lookups == 1
     assert native_mutations == []
-    assert fake_repo.native_stacks == {7: (1,)}
-    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.native_stacks == {7: (1, 2)}
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert state_store.load() == initial_state
 
 
@@ -464,14 +432,15 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = JjClient(repo).discover_review_stack()
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    fake_repo.native_stacks = {7: (1,)}
+    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.issue_comments.clear()
     initial_state = state_store.load()
 
     exit_code = run_main(repo, config_path, "unstack", "--dry-run", change_id)
@@ -481,10 +450,10 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     assert exit_code == 0
     assert "Planned close actions:" in captured.out
     assert "dissolve GitHub stack #7" in captured.out
-    assert fake_repo.native_stacks == {7: (1,)}
-    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.native_stacks == {7: (1, 2)}
+    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert refreshed_state == initial_state
-    assert issue_comments(fake_repo, 1) == []
+    assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
 
 
 def test_unstack_pull_request_selector_requires_a_linked_local_change(
@@ -678,7 +647,7 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
     run_command(["jj", "abandon", orphaned_change_id], repo)
 
     async def dissolve_exact(_selection, **_kwargs):
-        return github_stack(orphaned_pr_number)
+        return github_stack(1, orphaned_pr_number)
 
     monkeypatch.setattr(GithubStackSelection, "dissolve_exact", dissolve_exact)
 
@@ -891,59 +860,6 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
     assert "prune orphan record" in captured.out
     assert orphaned_change_id not in state_store.load().review_identities
     assert orphaned_bookmark not in remote_refs(fake_repo.git_dir)
-
-
-def test_unstack_orphan_rechecks_native_membership_before_branch_delete(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    change_id = JjClient(repo).discover_review_stack().head.change_id
-    bookmark = initial_state.review_identities[change_id].head_ref
-    run_command(["jj", "abandon", change_id], repo)
-    fake_repo.native_stacks = {7: (1,)}
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-    observations = 0
-
-    class NativeMembershipRaceClient(GithubClient):
-        async def list_stacks(self):
-            nonlocal observations
-            observations += 1
-            if observations == 2:
-                fake_repo.native_stacks = {8: (1,)}
-            return await super().list_stacks()
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.close_orphan", "jj_stack.commands.unstack"),
-        client_type=NativeMembershipRaceClient,
-    )
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        "1",
-    )
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert observations == 2
-    assert "dissolve GitHub stack #7" in captured.out
-    assert "GitHub stack #8 blocks this jj-stack operation" in _combined_output(captured)
-    assert fake_repo.native_stacks == {8: (1,)}
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert state_store.load() == initial_state
-    assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
 
 def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_missing(
