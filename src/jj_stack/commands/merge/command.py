@@ -25,19 +25,18 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._native_stack_safety import GithubStackSelection
-from jj_stack.errors import CliError, DriftError
-from jj_stack.formatting import short_change_id
+from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepository
 from jj_stack.review.discovery import discover_stacks_from_revisions
-from jj_stack.review.observation import RepositoryObservation, observe_reviews
+from jj_stack.review.observation import observe_reviews
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_selected_revset,
 )
-from jj_stack.review.status import PreparedStatus, prepare_status
+from jj_stack.review.status import prepare_status
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from .execute import execute_merge_plan
@@ -263,12 +262,6 @@ async def _stream_merge_async(
         )
         supported, stacks = await selection.observe(persist=not prepared_merge.dry_run)
         native = build_native_merge_plan(plan, stacks, supported, prepared_merge.target_change_id)
-        if (
-            prepared.stack.revisions
-            and prepared.stack.base_parent.commit_id != prepared.stack.trunk.commit_id
-            and (native is None or not native.terminal_retry)
-        ):
-            raise _stack_not_on_trunk_error(observation, prepared_status)
         if native is None:
             validate_merge_plan_method(merge_method=resolved_merge_method, plan=plan)
         execution = MergeExecutionInputs(
@@ -329,27 +322,3 @@ def _resolve_merge_method(
         t"This repository allows more than one merge method ({options}).",
         hint=t"Pass {ui.cmd('--merge-method')} to choose one.",
     )
-
-
-def _stack_not_on_trunk_error(
-    observation: RepositoryObservation,
-    prepared_status: PreparedStatus,
-) -> DriftError:
-    message = t"Selected stack is not based on the current {ui.revset('trunk()')}."
-    merged = any(
-        review.pull_request is not None
-        and review.pull_request.normalize_state().state == "merged"
-        for review in observation.reviews.values()
-    )
-    if merged:
-        condition = "merged_ancestor_on_trunk"
-        hint = (
-            t"Run {ui.cmd('jj-stack sync')} {ui.revset(prepared_status.selected_revset)} "
-            t"before retrying merge."
-        )
-    else:
-        condition = "stack_not_on_trunk"
-        bottom = prepared_status.prepared.status_revisions[0].revision.change_id
-        rebase = f"jj rebase -s {short_change_id(bottom)} -d 'trunk()'"
-        hint = t"Run {ui.cmd(rebase)} before retrying merge."
-    return DriftError(message, condition=condition, hint=hint)

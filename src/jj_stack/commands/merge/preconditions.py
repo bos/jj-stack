@@ -93,6 +93,8 @@ def _review_precondition_error(
         or pull_request.head.sha != planned.commit_id
     ):
         return f"the pull request or its head commit for {label} changed"
+    if pull_request.state == "merged" and not inactive_allowed:
+        return f"pull request #{pull_request.number} is already merged"
     if (pull_request.state != "open" and not inactive_allowed) or (
         expected_bases and pull_request.base.ref not in expected_bases
     ):

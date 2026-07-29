@@ -437,14 +437,28 @@ ordinary PR because the first rewrite invalidates the reviewed commit identity o
 Immediately before each ordinary merge, `jj-stack` retargets the candidate to trunk and passes
 the exact expected head commit.
 
+The selected stack does not have to sit on the fetched trunk. Trunk advancing under a reviewed
+stack is routine, and GitHub merges a pull request whose base is behind unless it conflicts, so
+whether the merge is possible is GitHub's answer to give. Refusing locally also cost more than the
+merge it prevented: the rebase it demanded changed every commit ID, which then failed the
+exact-submitted-commit rule and forced a force-push of an already-reviewed branch.
+
+A reviewed change GitHub already merged is still a stop, decided from the pull request's own
+reported state rather than from trunk position. That boundary names `sync`, because the local
+stack holds a copy of work already on trunk.
+
 ### Repository policy
 
 A merge initiated through GitHub's UI, auto-merge, or another client is supported. A later
-selected `sync` reconciles it under the landed-evidence rules below.
+`sync` on that stack reconciles it under the landed-evidence rules below.
 
 `jj-stack` does not duplicate repository policy. It does not preflight approvals, checks,
 conflicts, merge queues, or auto-merge state across the repository. GitHub applies those rules to
 the requested GitHub stack or ordinary PR mutation, and `jj-stack` reports the result.
+
+A rejection therefore has to explain itself. Because conflicts reach the user here rather than
+through a local preflight, a rejected merge names the way out: rebase onto trunk, resolve, and
+submit again for a conflict; fix the check or rule on GitHub otherwise.
 
 ### Landed evidence and sync
 

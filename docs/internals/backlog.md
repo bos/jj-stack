@@ -239,35 +239,6 @@ The first two keep detection explicit, which matches how the rest of the tool tr
 capability. The third reintroduces automatic probing and should not be chosen without an
 observed case where the explicit paths were not enough.
 
-## `merge` refuses a stack that is not on the current trunk
-
-_Benefit: high — affects every merge attempt made after anyone else lands work on trunk, which
-is the normal case in a busy repository._
-
-`merge` fetches, then stops when the selected stack's base parent is not the fetched trunk commit
-(`commands/merge/command.py`), reporting `Selected stack is not based on the current trunk()`.
-Live experiments against a real repository show GitHub does not need this:
-
-- With the stack based on an older trunk, GitHub reported the bottom PR `MERGEABLE` / `CLEAN`.
-- Issuing the exact request `merge` had planned — the async native stack merge on the top PR with
-  the expected head commit — returned `status: merged` and landed both PRs.
-
-The guard also costs more than the merge it prevents. Its hint names only
-`jj rebase -s <bottom> -d 'trunk()'`; that rewrite changes the commit ID, so the next `merge`
-stops again on the exact-submitted-commit check and demands `submit`, which force-pushes the
-review branch of an already-reviewed PR. The observed sequence is rebase, blocked merge, submit,
-merge.
-
-This contradicts the merge section of `design.md`, which says `jj-stack` does not preflight
-approvals, checks, conflicts, or repository policy and lets GitHub apply those rules. The
-condition is also untested: `stack_not_on_trunk` appears only in its `DriftCondition` literal and
-its raise site.
-
-Proposed resolution: delete the trunk-position check and keep the case it was reaching for — a
-reviewed ancestor GitHub already merged — driven by the PR state the error handler already
-inspects, reported with the `sync` command to run. Removing a documented stop is a spec event, so
-amend the merge section in the same change.
-
 ## `sync` strands a review branch that `cleanup` can no longer remove
 
 _Benefit: medium — leaves branches in the reserved namespace with no supported way to delete

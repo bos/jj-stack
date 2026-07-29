@@ -43,14 +43,14 @@ def build_merge_plan(
             revisions=(revision,),
         )
         if error is not None:
-            detail = (
-                t"the local change, submitted version, branch, and PR do not all "
-                t"identify the same exact commit; run "
-                t"{ui.cmd(f'jj-stack submit {revision.change_id}')}"
-                if "last submitted commit" in error
-                else error
+            boundary = _boundary(
+                local,
+                _boundary_detail(
+                    error,
+                    change_id=revision.change_id,
+                    head_change_id=revisions[-1].change_id,
+                ),
             )
-            boundary = _boundary(local, detail)
             break
         candidates.append(revision)
     if target_change_id is not None:
@@ -114,6 +114,22 @@ def _reviewed_revision(
         identity=candidate.review_identity,
         subject=revision.subject,
     )
+
+
+def _boundary_detail(error: str, *, change_id: str, head_change_id: str) -> Message:
+    """Turn a precondition reason into a boundary that names the command that resolves it."""
+
+    if "last submitted commit" in error:
+        return (
+            t"the local change, submitted version, branch, and PR do not all identify the same "
+            t"exact commit; run {ui.cmd(f'jj-stack submit {change_id}')}"
+        )
+    if "is already merged" in error:
+        return (
+            t"{error}, so this stack still holds a local copy of work already on trunk; run "
+            t"{ui.cmd(f'jj-stack sync {head_change_id}')}"
+        )
+    return error
 
 
 def _boundary(revision: LocalRevision, reason: Message) -> Message:

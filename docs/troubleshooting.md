@@ -208,10 +208,26 @@ Possible causes:
 - a ruleset requires a merge queue
 - your account cannot merge the pull request
 
+`jj-stack` does not judge any of these itself; it asks GitHub and reports the answer, quoting
+GitHub's own reason.
+
 What to do:
 
-- Read GitHub's reason in the error. Fix that condition, then rerun the same explicit `merge`
-  command.
+- **If the changes conflict** — GitHub says something like `Pull Request is not mergeable` —
+  rerunning `merge` cannot help, because the reviewed commit is the problem. Rebase onto the
+  current trunk, resolve, resubmit, and merge again:
+
+  ```bash
+  jj rebase -r '<bottom-change-id>::<head-change-id>' -o 'trunk()'
+  jj-stack submit <head-change-id>
+  jj-stack merge <head-change-id>
+  ```
+
+  `submit` is required: the rebase gives every change a new commit ID, and `merge` only accepts
+  the exact commit last sent for review.
+- For any other reason GitHub gives — a pending or failing check, an unsatisfied review or
+  repository rule — fix that condition on GitHub, then rerun the same explicit `merge` command.
+  Nothing local needs to change.
 - For an identical GitHub stack request already in progress, wait and rerun. Once it completes,
   the retry observes the terminal result.
 - A failed GitHub stack operation merges nothing. An ordinary bottom-up merge can leave lower PRs

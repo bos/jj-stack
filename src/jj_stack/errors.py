@@ -122,7 +122,6 @@ class ConflictedStackError(CliError):
 # identity unprovable. The vocabulary matches docs/internals/distributed-state.md so
 # fail-closed stops that share an exit code stay distinguishable.
 type DriftCondition = Literal[
-    "merged_ancestor_on_trunk",
     "pull_request_ambiguous",
     "pull_request_not_open",
     "remote_branch_missing",
@@ -130,7 +129,6 @@ type DriftCondition = Literal[
     "remote_trunk_moved",
     "saved_pull_request_mismatch",
     "saved_pull_request_missing",
-    "stack_not_on_trunk",
 ]
 
 

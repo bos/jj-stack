@@ -6,6 +6,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
+from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjCommandError
 from jj_stack.models.github import GithubPullRequest
@@ -39,7 +40,7 @@ async def merge_pull_request(
         trunk_commit_id=trunk_commit_id,
     )
     if reason or pull_request is None:
-        return None, _boundary(revision, reason or "pull request state is unavailable")
+        return None, _boundary(revision, reason or _unavailable("pull request"))
     if pull_request.base.ref != trunk_branch:
         try:
             await github_client.update_pull_request(
@@ -61,7 +62,7 @@ async def merge_pull_request(
             trunk_commit_id=trunk_commit_id,
         )
         if reason or pull_request is None:
-            return None, _boundary(revision, reason or "retargeted PR state is unavailable")
+            return None, _boundary(revision, reason or _unavailable("retargeted PR"))
     try:
         await github_client.merge_pull_request(
             expected_head_sha=revision.commit_id,
@@ -77,10 +78,16 @@ async def merge_pull_request(
             trunk_branch=trunk_branch,
         ):
             return pull_request, None
+        submit = ui.cmd(f"jj-stack submit {short_change_id(revision.change_id)}")
         if error.status_code == 409:
-            reason = "GitHub rejected the merge because the PR head changed; rerun submit"
+            reason = t"GitHub rejected the merge because the PR head changed; run {submit}"
         elif error.status_code == 405:
-            reason = "GitHub reports it is not mergeable (checks, conflicts, or policy)"
+            reason = (
+                t"GitHub will not merge it: {error.github_message()}; if it conflicts with "
+                t"{ui.bookmark(trunk_branch)}, rebase onto {ui.revset('trunk()')}, resolve the "
+                t"conflict, and run {submit} before merging again; if a check or repository rule "
+                t"is failing, fix that on GitHub first"
+            )
         else:
             raise CliError(
                 t"Could not merge PR #{pull_request.number} on GitHub",
@@ -173,11 +180,14 @@ async def _landed(
     return exact.state == "landed" or rewritten.state == "landed"
 
 
+def _unavailable(subject: str) -> Message:
+    return t"{subject} state is unavailable; inspect it and rerun {ui.cmd('merge')}"
+
+
 def _boundary(revision: MergeRevision, reason: Message) -> MergeAction:
     return MergeAction(
         kind="boundary",
         body=t"at PR #{revision.identity.pr_number} for {revision.subject} "
-        t"{ui.change_id(revision.change_id)}: {reason}; inspect it and rerun "
-        t"{ui.cmd('merge')}",
+        t"{ui.change_id(revision.change_id)}: {reason}",
         status="blocked",
     )

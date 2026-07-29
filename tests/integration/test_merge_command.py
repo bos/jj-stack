@@ -15,7 +15,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_stack,
     run_command,
 )
-from ..support.submit_property_harness import update_remote_ref
+from ..support.submit_property_harness import advance_remote_trunk, update_remote_ref
 from .submit_command_helpers import (
     configure_submit_environment,
     patch_github_client_builders,
@@ -101,12 +101,46 @@ def test_merge_reports_blocked_when_github_rejects_first_pull_request(
     assert "Applied merge actions:" not in captured.out
     assert "not mergeable" in captured.out
     assert "sync " not in captured.out
+    # A conflict is the usual cause, and rerunning merge cannot fix it, so the boundary has to
+    # name the rebase-and-resubmit route out.
+    normalized = " ".join(captured.out.split())
+    assert "rebase onto" in normalized
+    assert "jj-stack submit" in normalized
+    # GitHub's sentence reaches the user, not its status code and JSON envelope.
+    assert "Pull Request is not mergeable" in normalized
+    assert '{"detail"' not in normalized
+    assert "405" not in normalized
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[1].merged_at is None
     assert fake_repo.pull_requests[2].state == "open"
     assert fake_repo.pull_requests[2].merged_at is None
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert ReviewStateStore.for_repo(repo).load() == state_before
+
+
+def test_merge_accepts_a_stack_based_on_an_older_trunk(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Trunk moving under a reviewed stack is GitHub's call, not a reason for jj-stack to refuse.
+
+    Unrelated work landing on trunk is routine in a busy repository. GitHub merges a reviewed
+    pull request whose base is behind as long as it does not conflict, so refusing locally only
+    forced a rebase and a force-push of an already-reviewed branch.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    advance_remote_trunk(fake_repo)
+
+    exit_code = run_main(repo, config_path, "merge")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "not based on the current" not in captured.out + captured.err
+    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.pull_requests[2].merged_at is not None
 
 
 def test_merge_draft_blocks_the_candidate_prefix(

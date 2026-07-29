@@ -189,25 +189,35 @@ If you rewrote a reviewed change, rerun `submit` before merging even when the di
 `merge` accepts only the exact commit last sent for review when the review branch and PR still
 point to it. It will not refresh a review to make the change mergeable.
 
-`merge` fetches first and requires the bottom of your stack to sit directly on the trunk commit it
-just fetched. Because anyone else landing work on trunk breaks that, expect to hit it:
+Your stack does not have to be rebased onto the latest `trunk()` first. Trunk moves under you all
+the time, and GitHub merges a PR whose base is behind as long as it does not conflict.
+
+If it does conflict, GitHub refuses and `merge` says so, naming the way out:
 
 ```text
-Error: Selected stack is not based on the current trunk().
-Hint: Run jj rebase -s <bottom-change-id> -d 'trunk()' before retrying merge.
+Merge blocked:
+  ✗ stop: at PR #7 for add the API qpvuntsm: GitHub will not merge it: Pull Request is not
+    mergeable; if it conflicts with main, rebase onto trunk(), resolve the conflict, and run
+    jj-stack submit qpvuntsm before merging again; if a check or repository rule is failing, fix
+    that on GitHub first
 ```
 
-Doing only what that hint says is not enough. The rebase gives every change a new commit ID, so
-the next `merge` stops again on the exact-commit rule above. The full sequence is:
+Rerunning `merge` will not clear a conflict — the reviewed commit has to change:
 
 ```bash
-jj rebase -s <bottom-change-id> -d 'trunk()'
+jj rebase -r '<bottom-change-id>::<head-change-id>' -o 'trunk()'
+# resolve conflicts with your normal jj workflow
 jj-stack submit <head-change-id>
 jj-stack merge <head-change-id>
 ```
 
-If the reason trunk moved is that a lower PR of your own merged, run
-`jj-stack sync <head-change-id>` instead of rebasing by hand; the error names that case.
+In a repository without GitHub stack support, PRs merge bottom-up and stop at the first refusal,
+so the ones below it stay merged. Run the printed `jj-stack sync <head-change-id>` before retrying
+the rest. A refused GitHub stack merge merges nothing at all.
+
+If a lower PR of your own already merged elsewhere, `merge` stops at it and names
+`jj-stack sync <head-change-id>` instead — your stack still holds a local copy of work that is
+already on trunk.
 
 To preview the same selection and validation without asking GitHub to merge:
 
