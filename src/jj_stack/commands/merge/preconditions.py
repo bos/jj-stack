@@ -163,13 +163,15 @@ def _pull_request_precondition_error(
     if pull_request is None:
         return f"GitHub no longer reports the saved pull request for {planned.change_id}"
     pull_request = pull_request.normalize_state()
+    # The head commit is deliberately not compared here. GitHub is given the expected head with
+    # the merge request and rejects a stale one atomically, which a check made beforehand cannot
+    # do; the review branch is still compared against the submitted baseline above.
     if (
         not planned.identity.matches_pull_request(pull_request)
         or len(observed.head_pull_requests) != 1
         or observed.head_pull_requests[0].number != pull_request.number
-        or pull_request.head.sha != planned.commit_id
     ):
-        return f"the pull request or its head commit for {planned.change_id} changed"
+        return f"the pull request linked to {planned.change_id} changed"
     if pull_request.state == "merged" and not inactive_allowed:
         return f"pull request #{pull_request.number} is already merged"
     if (pull_request.state != "open" and not inactive_allowed) or (
