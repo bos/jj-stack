@@ -188,6 +188,9 @@ async def observe_landed_candidate(
         return None, "GitHub no longer reports the expected repository"
     if github_repository.default_branch not in (None, "", finalizer.trunk_branch):
         return None, "GitHub no longer reports the expected trunk branch as its default"
+    # Evidence here means "an ancestor of this trunk commit", so a trunk that rewound would let a
+    # stale answer claim landed, and retiring on that abandons local commits for work not on
+    # trunk. Unlike merge, which compares no trunk commits, this pair is load-bearing.
     if observation.fetched_trunk_commit_id != finalizer.trunk_commit_id:
         return None, t"fetched {ui.revset('trunk()')} changed while checking the merged PR"
     if observation.remote_trunk_target != finalizer.trunk_commit_id:
