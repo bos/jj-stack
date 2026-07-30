@@ -436,25 +436,56 @@ def test_native_merge_requires_a_resource_for_a_multi_pr_review(
     assert state_store.load() == state_before
 
 
-def test_merge_one_pr_without_a_native_resource_uses_the_ordinary_api(
+def test_ordinary_merge_methods_create_distinct_commit_topology(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.native_stacks = {}
-    ReviewStateStore.for_repo(repo).set_stacked_pull_requests(
-        "octo-org/stacked-review",
-        True,
-    )
+    """Protect the history shape that later recovery observes from the fake."""
 
-    exit_code = run_main(repo, config_path, "merge")
-    captured = capsys.readouterr()
+    observed: dict[str, tuple[bool, bool, bool, bool]] = {}
+    for merge_method in ("merge", "rebase", "squash"):
+        method_path = tmp_path / merge_method
+        method_path.mkdir()
+        repo, fake_repo = init_fake_github_repo_with_submitted_feature(method_path)
+        config_path = configure_submit_environment(monkeypatch, method_path, fake_repo)
+        fake_repo.allow_merge_commit = True
+        fake_repo.allow_rebase_merge = True
+        fake_repo.native_stacks = {}
+        ReviewStateStore.for_repo(repo).set_stacked_pull_requests(
+            "octo-org/stacked-review",
+            True,
+        )
+        pull_request = fake_repo.pull_requests[1]
+        head_before = fake_repo.ref_target(pull_request.head_ref)
+        trunk_before = fake_repo.ref_target("main")
+        assert head_before is not None
+        assert trunk_before is not None
 
-    assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[1].merged_at is not None
+        exit_code = run_main(repo, config_path, "merge", "--method", merge_method)
+        captured = capsys.readouterr()
+
+        assert exit_code == 0, (captured.out, captured.err)
+        assert pull_request.state == "closed"
+        assert pull_request.merged_at is not None
+        merge_result = pull_request.merge_commit_sha
+        assert merge_result is not None
+        parents = tuple(
+            fake_repo._run_backing_git("show", "-s", "--format=%P", merge_result).split()
+        )
+        raw_commit = fake_repo._run_backing_git("cat-file", "commit", merge_result)
+        observed[merge_method] = (
+            parents == (trunk_before, head_before),
+            parents == (trunk_before,),
+            "\nchange-id " in raw_commit,
+            fake_repo.is_ancestor(head_before, merge_result),
+        )
+
+    assert observed == {
+        "merge": (True, False, False, True),
+        "rebase": (False, True, True, False),
+        "squash": (False, True, False, False),
+    }
 
 
 def test_merge_dry_run_validates_without_mutation(

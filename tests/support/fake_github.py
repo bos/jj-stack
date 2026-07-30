@@ -219,8 +219,8 @@ class FakeGithubRepository:
     git_dir: Path
     name: str
     owner: str
-    # Merge-method settings mirror a linear-history repo: squash only. Tests
-    # that need other methods flip these directly.
+    # The default repository allows only squash merges. Tests that need other
+    # repository policies flip these settings directly.
     allow_merge_commit: bool = False
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
@@ -439,6 +439,22 @@ class FakeGithubRepository:
         )
         return squash_commit
 
+    def apply_pull_request_merge(
+        self,
+        pull_request: FakeGithubPullRequest,
+        *,
+        merge_method: str,
+    ) -> str:
+        """Apply one ordinary PR merge using GitHub's requested commit shape."""
+
+        if merge_method == "merge":
+            return self.apply_merge_commit((pull_request,))
+        if merge_method == "rebase":
+            return self.apply_rebase_merge(pull_request)
+        if merge_method == "squash":
+            return self.apply_squash_merge(pull_request)
+        raise AssertionError(f"Unknown fake GitHub merge method {merge_method!r}.")
+
     def apply_rebase_merge(self, pull_request: FakeGithubPullRequest) -> str:
         """Replay one reviewed commit onto its base while preserving its message."""
 
@@ -462,17 +478,17 @@ class FakeGithubRepository:
         )
         return rebase_commit
 
-    def apply_native_merge_commit(
+    def apply_merge_commit(
         self,
         pull_requests: tuple[FakeGithubPullRequest, ...],
     ) -> str:
-        """Merge one native PR prefix through a shared merge commit."""
+        """Merge one PR or native PR prefix through a shared merge commit."""
 
         if not pull_requests:
-            raise AssertionError("A native merge commit requires at least one pull request.")
-        default_branch = self.default_branch or "main"
+            raise AssertionError("A merge commit requires at least one pull request.")
         heads = self.branch_heads()
-        base_commit = heads[default_branch]
+        base_ref = pull_requests[0].base_ref
+        base_commit = heads[base_ref]
         head_commit = heads[pull_requests[-1].head_ref]
         git_env = {
             "GIT_AUTHOR_EMAIL": "fake-github@example.com",
@@ -489,12 +505,12 @@ class FakeGithubRepository:
             "-p",
             head_commit,
             "-m",
-            f"Merge native stack through PR #{pull_requests[-1].number}",
+            f"Merge through PR #{pull_requests[-1].number}",
             env=git_env,
         )
         self._run_backing_git(
             "update-ref",
-            f"refs/heads/{default_branch}",
+            f"refs/heads/{base_ref}",
             merge_commit,
         )
         merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -1042,13 +1058,14 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
             or pull_number in repository.unmergeable_pull_numbers
         ):
             raise HTTPException(status_code=405, detail="Pull Request is not mergeable")
-        # Only squash merges move the backing repo; the fixture default allows
-        # nothing else, matching the recommended linear-history policy.
-        squash_commit = repository.apply_squash_merge(pull_request)
+        merge_commit = repository.apply_pull_request_merge(
+            pull_request,
+            merge_method=str(merge_method),
+        )
         return {
             "merged": True,
             "message": "Pull Request successfully merged",
-            "sha": squash_commit,
+            "sha": merge_commit,
         }
 
     @app.put("/repos/{owner}/{repo}/pulls/{pull_number}/merge-async")
@@ -1440,13 +1457,13 @@ def _complete_async_merge(
                 reason="native_merge",
             )
     if operation.merge_method == "merge":
-        repository.apply_native_merge_commit(candidates)
+        repository.apply_merge_commit(candidates)
     else:
         for pull_request in candidates:
-            if operation.merge_method == "rebase":
-                repository.apply_rebase_merge(pull_request)
-            else:
-                repository.apply_squash_merge(pull_request)
+            repository.apply_pull_request_merge(
+                pull_request,
+                merge_method=operation.merge_method,
+            )
     survivors = stack.active_pull_request_numbers[len(candidate_numbers) :]
     previous_base = repository.default_branch or "main"
     for pull_number in survivors:

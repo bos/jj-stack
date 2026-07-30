@@ -229,27 +229,6 @@ changes.
 requirements are testable, replacement boundaries are explicit, and the plan does not compete
 with `design.md`. User approval is the final gate.
 
-### Slice 1: make ordinary merge tests faithful
-
-**Objective:** Make the fake ordinary PR endpoint apply the requested merge method so an ordinary
-rebase merge can be characterized honestly.
-
-**Dependencies:** Accepted Slice 0 commit.
-
-**Boundary and adopters:** Test support only; no production topology policy.
-
-**Required deletion:** Remove comments, helpers, and cases that assume every ordinary merge is a
-squash. Consolidate overlapping fake-merge coverage.
-
-**Tests:** One boundary test proves merge, rebase, and squash create distinguishable topology. Run
-the affected merge and sync integration tests plus `./check.py`.
-
-**Documentation:** Update property-testing or fake-server documentation only if a stated
-idealization changes.
-
-**Review gate:** A test reviewer confirms the fake matches the observed GitHub contract and the
-new case protects the boundary rather than request forwarding.
-
 ### Slice 2: replace selected-stack discovery with the pure model
 
 **Objective:** Introduce the immutable observation snapshot and pure projection, then migrate

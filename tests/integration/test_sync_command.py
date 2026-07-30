@@ -30,7 +30,7 @@ from .submit_command_helpers import (
 pytestmark = pytest.mark.merge_recovery
 
 
-def _merge_pull_request(fake_repo, pull_number: int) -> None:
+def _squash_merge_pull_request(fake_repo, pull_number: int) -> None:
     fake_repo.apply_squash_merge(fake_repo.pull_requests[pull_number])
 
 
@@ -54,7 +54,7 @@ def test_sync_dry_run_previews_rebase_and_skips_submit_preview(
     top_change_id = stack.revisions[1].change_id
     top_commit_id = stack.revisions[1].commit_id
     original_base_ref = fake_repo.pull_requests[2].base_ref
-    _merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "sync", "--dry-run", top_change_id)
     captured = capsys.readouterr()
@@ -74,7 +74,7 @@ def test_sync_reports_nothing_to_submit_when_whole_stack_merged(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    _merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "sync")
     captured = capsys.readouterr()
@@ -128,7 +128,7 @@ def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     on_trunk, top = JjClient(repo).discover_review_stack().revisions
-    _merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 1)
 
     def fail_retire(*_args: object, **_kwargs: object) -> None:
         raise ReviewStateError("Could not write jj-stack data file /x/state.json")
@@ -158,8 +158,8 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     (on_trunk,) = JjClient(repo).discover_review_stack().revisions
     # Global recovery acts only on an exact submitted commit reachable from trunk, which a
-    # merge commit produces and the merge endpoint's squash does not.
-    fake_repo.apply_native_merge_commit((fake_repo.pull_requests[1],))
+    # merge commit produces and a squash merge does not.
+    fake_repo.apply_merge_commit((fake_repo.pull_requests[1],))
     capsys.readouterr()
 
     def fail_retire(*_args: object, **_kwargs: object) -> None:
@@ -539,7 +539,7 @@ def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     run_command(["jj", "rebase", "-r", reviewed.change_id, "-d", local_middle.change_id], repo)
     reviewed_before = JjClient(repo).resolve_revision(reviewed.change_id).commit_id
     middle_before = JjClient(repo).resolve_revision(local_middle.change_id).commit_id
-    _merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
     captured = capsys.readouterr()
@@ -566,7 +566,7 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     commit_file(repo, "local merge", "merge.txt")
     local_merge = JjClient(repo).resolve_revision("@-")
     working_copy = JjClient(repo).resolve_revision("@")
-    _merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
     captured = capsys.readouterr()
@@ -597,7 +597,7 @@ def test_sync_rebases_trailing_local_work_without_creating_a_review(
     trailing = JjClient(repo).discover_review_stack().head
     state_before = ReviewStateStore.for_repo(repo).load()
     assert trailing.change_id not in state_before.review_identities
-    _merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "sync", trailing.change_id)
     captured = capsys.readouterr()
@@ -624,7 +624,7 @@ def test_sync_requires_every_surviving_review_before_rewriting(
     stack = JjClient(repo).discover_review_stack()
     reviewed = stack.revisions[1]
     reviewed_before = reviewed.commit_id
-    _merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 1)
     del fake_repo.pull_requests[2]
 
     exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
