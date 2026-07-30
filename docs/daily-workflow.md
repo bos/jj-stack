@@ -241,7 +241,7 @@ jj config set --repo jj-stack.merge_method squash
 Or choose one per run, which overrides that default:
 
 ```bash
-jj-stack merge --merge-method squash
+jj-stack merge --method squash
 ```
 
 GitHub reports which methods a repository allows but never which one to prefer, which is why one

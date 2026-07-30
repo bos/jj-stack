@@ -437,7 +437,7 @@ Without a GitHub stack, PRs merge bottom-up through the ordinary API. A rejectio
 sequence, leaving any lower PRs already merged. Rebase merge is refused for more than one
 ordinary PR because the first rewrite invalidates the reviewed commit identity of the rest.
 
-The merge method comes from `--merge-method`, otherwise from `merge_method` in repository
+The merge method comes from `--method`, otherwise from `merge_method` in repository
 configuration, otherwise from the repository's only allowed method. GitHub reports which methods a
 repository allows but never which to prefer, so a repository allowing several with none configured
 stops rather than choosing one. A configured method the repository does not allow is refused by

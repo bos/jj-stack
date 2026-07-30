@@ -190,7 +190,7 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
         "merge",
         "--pull-request",
         "2",
-        "--merge-method",
+        "--method",
         "rebase",
     )
     captured = capsys.readouterr()
@@ -232,7 +232,7 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
         repo,
         config_path,
         "merge",
-        "--merge-method",
+        "--method",
         "merge",
     )
     merged = capsys.readouterr()

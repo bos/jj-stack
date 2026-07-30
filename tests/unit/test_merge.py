@@ -38,7 +38,7 @@ def _repository(
 def test_command_surface_has_merge_without_land_or_transport_flags(capsys) -> None:
     parser = build_parser()
 
-    args = parser.parse_args(["merge", "--dry-run", "--merge-method", "squash"])
+    args = parser.parse_args(["merge", "--dry-run", "--method", "squash"])
     assert args.command == "merge"
     assert args.dry_run is True
     assert args.merge_method == "squash"

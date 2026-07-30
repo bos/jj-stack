@@ -367,7 +367,8 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         merge_parser,
-        "--merge-method",
+        "--method",
+        dest="merge_method",
         choices=("merge", "rebase", "squash"),
         metavar="METHOD",
         help=(

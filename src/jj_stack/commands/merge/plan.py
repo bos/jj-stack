@@ -92,7 +92,7 @@ def validate_merge_plan_method(*, merge_method: str, plan: MergePlan) -> None:
     if merge_method == "rebase" and len(plan.planned_revisions) > 1:
         raise CliError(
             "A rebase merge cannot merge more than one ordinary PR at a time.",
-            hint=t"Use {ui.cmd('--merge-method squash')} or merge one PR per run.",
+            hint=t"Use {ui.cmd('--method squash')} or merge one PR per run.",
         )
 
 

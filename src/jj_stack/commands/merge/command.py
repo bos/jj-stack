@@ -11,7 +11,7 @@ anything.
 
 Common examples: `jj-stack merge --dry-run` previews the merge without changing GitHub;
 `jj-stack merge` asks GitHub to merge the ready bottom changes; and
-`jj-stack merge --pull-request 123 --merge-method squash` stops at one linked PR and chooses the
+`jj-stack merge --pull-request 123 --method squash` stops at one linked PR and chooses the
 merge method explicitly.
 """
 
@@ -314,7 +314,7 @@ def _resolve_merge_method(
             return merge_method
         raise CliError(
             "GitHub did not report which merge methods this repository allows.",
-            hint=t"Pass {ui.cmd('--merge-method')} explicitly.",
+            hint=t"Pass {ui.cmd('--method')} explicitly.",
         )
     allowed_methods = sorted(method for method, allowed in settings.items() if allowed)
     if not allowed_methods:
@@ -325,9 +325,7 @@ def _resolve_merge_method(
     chosen = merge_method or configured
     if chosen is not None:
         if chosen not in allowed_methods:
-            source = (
-                ui.cmd("--merge-method") if merge_method else ui.code("jj-stack.merge_method")
-            )
+            source = ui.cmd("--method") if merge_method else ui.code("jj-stack.merge_method")
             raise CliError(
                 t"This repository does not allow {ui.cmd(chosen)} merges; it allows "
                 t"{ui.join(ui.cmd, allowed_methods)}.",
@@ -339,6 +337,6 @@ def _resolve_merge_method(
     raise CliError(
         t"This repository allows more than one merge method "
         t"({ui.join(ui.cmd, allowed_methods)}).",
-        hint=t"Pass {ui.cmd('--merge-method')}, or set it once with "
+        hint=t"Pass {ui.cmd('--method')}, or set it once with "
         t"{ui.cmd('jj config set --repo jj-stack.merge_method squash')}.",
     )

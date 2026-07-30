@@ -296,14 +296,14 @@ merge_method = "squash"
   without the organization prefix.
 - `merge_method` is `merge`, `rebase`, or `squash`. Set it when the repository allows more than
   one: GitHub reports which methods it allows but not which one you want, so without it
-  `jj-stack merge` asks you to pass `--merge-method` every time. A method the repository does not
+  `jj-stack merge` asks you to pass `--method` every time. A method the repository does not
   allow is refused before anything is sent to GitHub.
 - `branch_prefix` names the reserved branch namespace, described under
   [Before your first submit](#before-your-first-submit).
 
 `jj-stack submit` can override the reviewer and label defaults with `--reviewers`,
 `--team-reviewers`, and `--label`, and `jj-stack merge` overrides `merge_method` with
-`--merge-method`.
+`--method`.
 
 Passing `--reviewers` or `--team-reviewers` also applies those review requests when the pull
 requests are otherwise unchanged. Existing reviewers that are omitted are left in place.
