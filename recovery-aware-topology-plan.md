@@ -2,26 +2,189 @@
 
 > This is a temporary execution plan. It is authoritative for project scope, sequencing,
 > ownership, and acceptance, but it is not a product specification.
-> [design.md](docs/internals/design.md) remains the only authority for product behavior.
-> Delete this file after the final project audit is accepted.
+> [design.md](docs/internals/design.md) remains the only authority for behavior that exists in
+> the accepted product. Delete this file after the final project audit is accepted.
 
 ## Authority and lifecycle
 
+This plan starts from accepted Slice 1 change `roykupmkqyyrnlpyvqsrotqrzyyllqkv`, exact commit
+`db4176fbb7b692f2ce3e0af269e9ed22b00eea11`. New production work starts from Slice 1 plus the
+accepted commit of this plan amendment.
+
+The following rejected work is comparison evidence only:
+
+- `rlyuqnzuorlmvktmrzxwxlnpnnkwkutp` at
+  `2f4c5e5640ea6e08be820a8687fd85591255d99f`;
+- `xptllrumkwovwvlrqrspnprykklnrmyo` at
+  `424badbb1eb04678c785fb462a4f3c9da288a365`; and
+- workspace change `wlwzutqrtuqpvxmvmzzqypwpzqytlkrr` at
+  `12d950ae7f9ccaa379bd36ad38136a12bfa5a2df`.
+
+None may be an ancestor or implementation base for a new slice. Their implementation content is
+read-only comparison material. Do not move any of it onto the accepted line with `jj duplicate`,
+a cherry-pick equivalent, rebase or transplant, patch application, diff replay, file or tree
+checkout or restore, or wholesale or partial tree copying.
+
+This restriction targets implementation content introduced or changed by the rejected artifacts;
+it does not forbid independently using ordinary project concepts already present at Slice 1.
+Every retained idea must be re-derived and implemented on the accepted Slice 1 plus plan tree,
+then justified item by item in the deletion/non-port ledger. Preserve the rejected revisions and
+workspaces until the accepted replacements and comparison reviews are complete.
+
 This plan contains only work that remains or is in flight. A completed slice is deleted from this
 file in the change that implements it. The implementing diff therefore shows both the promised
-work and its removal, and the independent reviewer decides whether that removal is justified.
-`jj` history records completed work; this file does not become a changelog.
+work and its removal. An independent reviewer decides whether that removal is justified. `jj`
+history records completed work; this file does not become a changelog.
 
-Behavioral decisions are written into
-[design.md](docs/internals/design.md) before or with the code that implements them.
+Behavioral decisions enter [design.md](docs/internals/design.md) with the code that implements
+them, not as target-architecture prose beforehand.
 [implementation-strategy.md](docs/internals/implementation-strategy.md) describes only
 architecture that exists after the implementing change. User documentation and help change with
 the behavior they explain.
 
-The current complexity budgets are telemetry during this project, not design constraints. Every
-slice records relevant measurements and runs `./check.py`, but a temporary budget failure does not
-force an artificial boundary or an incomplete replacement. Any final budget revision is an
-explicit final-review decision supported by the completed design and before/after evidence.
+The unimplemented accept-order operation in Slice 5 is the deliberate exception to keeping
+pending product decisions out of this plan: its proposed UX, dry-run contract, and ordering
+effect remain here until that behavior is implemented. Slice 5 moves the accepted rule into
+`design.md` in the same commit as the code. Earlier slices must not describe it in `design.md` as
+if it already exists.
+
+## Product-judgment gate
+
+Logical reachability is not a product requirement. Before adding or retaining handling for a
+scenario, the implementer and product reviewer must answer:
+
+1. Could an ordinary, mildly creative, or slightly mistaken human fairly easily reach it through
+   normal-looking `jj`, GitHub, or `jj-stack` actions?
+2. How likely is that path in actual use?
+3. What harm follows if `jj-stack` has no special behavior?
+4. How easily can a human identify and repair it with ordinary `jj` and GitHub tools?
+5. How easily can an agent diagnose and repair it?
+6. What permanent production, test, documentation, query, and conceptual complexity does special
+   handling add?
+
+First-class handling is justified only when probability, impact, and recovery difficulty
+outweigh permanent complexity. A cheap polite stop is allowed only for a realistically
+encountered state when the check and message are genuinely cheap. High impact alone does not
+justify modeling a tortuous path, and easy reachability alone does not justify code when ordinary
+or agent-assisted repair is quick.
+
+A scenario that fails this gate is outside this project's product contract. It gets no dedicated
+detection, typed outcome, diagnostic, fixture, generated transition, documentation, safety
+guarantee, or architectural influence. Existing code or tests do not create a product
+requirement.
+
+The general off-happy-path prompts in the testing and code-review guides are discovery questions,
+not prior authorization for a scenario. Every case proposed for this project still passes this
+gate before it influences code or coverage.
+
+The supported domain for this project is intentionally small: ordinary linear review stacks,
+ordinary local inserts or reparents, ordinary GitHub rebase or squash merges, fetched trunk, and
+normal overlapping branches created from shared local ancestors. The model may assume its
+adapter has supplied that domain. It is not an exhaustive algebra for every visible `jj` graph.
+
+## Scenario decisions
+
+This table is execution evidence, not user documentation. A retained row authorizes only the
+behavior in its decision cell; it does not authorize nearby combinations or a scenario matrix.
+
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Human path</th>
+<th>Likelihood</th>
+<th>Harm</th>
+<th>Manual/agent recovery</th>
+<th>Implementation cost</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reported Voxel incident</td>
+<td>
+Insert or reparent local work after submit; GitHub rebase-merges the reviewed commit; fetch.
+</td>
+<td>Real report; credible in normal stacked review.</td>
+<td>A normal sync is blocked or unpublished ordering can be lost.</td>
+<td>Manual repair is subtle; an agent can help, but the tool owns this workflow.</td>
+<td>Moderate if modeled as one ordinary linear case.</td>
+<td>Retain as the primary end-to-end acceptance case.</td>
+</tr>
+<tr>
+<td>Clean single-review rebase merge</td>
+<td>Submit one review, merge it with GitHub rebase merge, then sync.</td>
+<td>Common where rebase merge is enabled.</td>
+<td>The basic post-merge workflow fails.</td>
+<td>Repair is possible, but users reasonably expect sync to do it.</td>
+<td>Low incremental cost beside the reported incident.</td>
+<td>Retain one representative.</td>
+</tr>
+<tr>
+<td>Squash merge recovery</td>
+<td>Submit normally, squash-merge on GitHub, then sync.</td>
+<td>Common repository policy.</td>
+<td>Existing core recovery regresses.</td>
+<td>Manual repair is possible but unnecessarily error-prone.</td>
+<td>Low: preserve the existing evidence path.</td>
+<td>Retain existing behavior and one distinct regression.</td>
+</tr>
+<tr>
+<td>Reviewed suffix survives a merged prefix</td>
+<td>Submit a linear stack; merge its bottom review; keep reviewed changes above it.</td>
+<td>Normal stacked-review use.</td>
+<td>Surviving reviews can be misbased, replaced, or lose ordering.</td>
+<td>Manual repair crosses local DAG and GitHub PR bases.</td>
+<td>Moderate and central to selected sync.</td>
+<td>Retain the smallest representative suffix.</td>
+</tr>
+<tr>
+<td>Two mutable copies match a selector</td>
+<td>Concurrent workspace operations leave two mutable copies of one reviewed change.</td>
+<td>Uncommon, but easy enough with ordinary `jj` actions.</td>
+<td>Selecting the wrong local copy could mutate the wrong review.</td>
+<td>The user or an agent can choose or abandon a copy quickly.</td>
+<td>Low if it is only a uniqueness check at selection.</td>
+<td>Retain a cheap stop; add no rich topology or recovery UX.</td>
+</tr>
+<tr>
+<td>Ordinary overlapping branches</td>
+<td>Create two local branches from a shared review ancestor and select, view, or list either.</td>
+<td>Ordinary `jj` use.</td>
+<td>Paths can be conflated and the wrong PR base changed.</td>
+<td>No repair should be needed for a normal shape.</td>
+<td>Moderate; one shared-prefix rule serves selected and list views.</td>
+<td>Retain selected, inventory, and connected-view representatives of the shared rule.</td>
+</tr>
+<tr>
+<td>Network interruption and rerun</td>
+<td>A normal mutation loses connectivity after an intended effect, then the user reruns it.</td>
+<td>Routine distributed-system failure.</td>
+<td>Duplicate or inconsistent remote effects are possible.</td>
+<td>Rerun is easy when fresh observation is sufficient.</td>
+<td>Low if no phase state or interruption matrix is added.</td>
+<td>Retain fresh-observation retry and one distinct Slice 5 interruption case.</td>
+</tr>
+<tr>
+<td>Review branch moves after planning</td>
+<td>A user, teammate, or concurrent command moves a managed branch before mutation.</td>
+<td>Uncommon but realistic.</td>
+<td>The wrong ref or PR could be changed.</td>
+<td>Fetch and inspect are straightforward for a human or agent.</td>
+<td>Low because exact-target guards already exist.</td>
+<td>Retain the existing precondition; add no topology classification.</td>
+</tr>
+</tbody>
+</table>
+
+Two considered candidates do not add topology scope:
+
+- Tracking whose local change is gone remains ordinary identity and cleanup work under the
+  existing design. Do not invent a trunk-only path, placement outcome, or recovery scenario for
+  it. Slice 3 may reuse a simple membership fact only if a current consumer already needs it.
+- Saved review-head bookmarks from obsolete development behavior do not pass the gate. Delete the
+  former dedicated slice. Do not add prefix inference, exact-identity detection, repair guidance,
+  fixtures, documentation, or migration behavior for them.
 
 ## Coordination and review protocol
 
@@ -32,371 +195,411 @@ slices.
 Each implementation slice follows this protocol:
 
 1. The coordinator records the accepted parent change ID and exact commit ID.
-2. One implementation agent receives a bounded brief naming this plan section and the canonical
-   documents it must read.
-3. Isolated parallel work uses a sibling `jj workspace`, never a Git worktree. Only disjoint
-   adopters run in parallel after the pure model interface is accepted.
+2. One implementation agent receives a bounded brief naming this plan section, the retained
+   scenario rows it serves, and the canonical documents it must read.
+3. Isolated work uses a sibling `jj workspace`, never a Git worktree. Only disjoint adopters run
+   in parallel after the pure interface is accepted.
 4. The implementer reports the change ID, exact commit ID, tests, deletions, documentation
-   changes, and unresolved risks.
+   changes, before/after evidence, deletion/non-port ledger, and unresolved risks.
 5. A different agent reviews that exact commit against
    [design.md](docs/internals/design.md),
    [testing-philosophy.md](docs/internals/testing-philosophy.md), and
    [code-reviews.md](docs/internals/code-reviews.md).
-6. Findings return to the implementer. Any changed commit ID receives another review.
-7. The coordinator runs or verifies focused tests and `./check.py`, checks the promised deletions,
-   and accepts or rejects the slice.
+6. Findings return to the implementer. Any changed commit ID receives another exact-commit
+   review.
+7. The coordinator runs or verifies focused tests and `./check.py`, checks promised deletions and
+   scope, and accepts or rejects the slice.
 
-Agents receive this plan, the files named by their slice, and concise predecessor reports. They do
-not inherit the full project conversation. A reviewer reads the frozen artifact and canonical
+Agents receive this plan, the files named by their slice, and concise predecessor reports. They
+do not inherit the full project conversation. A reviewer reads the frozen artifact and canonical
 documents rather than relying on an implementer's summary.
 
 The plan section for a slice is deleted only in the exact implementation commit accepted by the
-reviewer. The project-wide success criteria and final-audit sections remain until the project
-ends.
+reviewer. Project-wide criteria and final-audit sections remain until the project ends.
+
+## Deletion and non-port protocol
+
+Slices 2 and 3 must inspect the rejected comparison diffs against Slice 1 before implementation.
+Their reports include a ledger covering every introduced or expanded:
+
+- model type, field, and problem reason;
+- traversal branch, query, and adapter;
+- diagnostic, status conversion, and command-local recovery branch;
+- test fixture, helper, oracle, generated transition, and fixed scenario; and
+- help, user-documentation, design, and implementation-strategy statement.
+
+For each item, the ledger records either:
+
+- **independently re-derive**, with the retained scenario row and present consumer that justify
+  rebuilding the idea from the accepted tree; or
+- **do not port**, with the deleted or avoided mechanism named.
+
+There is no presumption in favor of code that already exists in a rejected revision. A generic
+problem framework, complete-graph snapshot, catch-all result, or diagnostic adapter must not
+survive merely because several rejected callers already use it. If its sole justification was
+universal reachability or an excluded scenario, it is deleted or not ported.
+
+The ledger does not authorize copying an accepted idea's rejected implementation. Read-only
+inspection establishes comparison evidence; implementation begins from the accepted tree.
+
+The accepted implementation diff itself must show the replacement and deletion. The ledger is
+review evidence, not a permanent compatibility record or new source of product policy.
 
 ## Project-wide success criteria
 
-### One authority for local review topology
+### Small authority for ordinary local review paths
 
-- One pure model derives complete local review paths, copies sharing a change ID, tracked
-  placement, path overlap, and local dependencies.
-- Selected and repository-wide projections use the same rules over different complete snapshots.
-- Paths include untracked ancestors that affect review ordering.
-- Immutable trunk copies annotate local recovery state and never become independent local stacks.
-- Revision, change-ID, and PR selectors resolve through the same selection rules.
-- Every lifecycle command consumes the shared result rather than reconstructing topology.
-- All superseded discovery, selection, orphan, stale, and dependency authorities are deleted.
-- No durable topology, replay, transaction, or alias state is added.
+- One pure model derives selected linear paths and repository path inventory only for the
+  supported domain.
+- Selection by revision, change ID, or PR uses the same ordinary-path lookup.
+- A mutable local copy beside the immutable fetched-trunk result of an ordinary rebase merge
+  resolves to the actionable local path.
+- More than one mutable match stops selection through one cheap uniqueness rule.
+- Shared ancestors in ordinary overlapping branches have one observed identity and may appear in
+  each rendered path.
+- The connected `view` stale-stack advisory uses that same ordinary shared-prefix and
+  path-membership projection, with no command-local topology observer.
+- Tracking annotates a derived path; it does not create topology.
+- Commands use the model only for facts it owns. Identity, GitHub merge evidence, cleanup
+  eligibility, and mutation preconditions remain command-layer policies rather than being forced
+  into a topology result.
+- No durable topology, replay, transaction, alias, or migration state is added.
 
-The required consumers are `list`, `view`, `submit`, `merge`, selected `sync`, `sync --all`,
-`unstack` including orphan modes, `cleanup`, `checkout`, `relink`, and topology diagnostics in
-`doctor`.
+The model need not account for every visible revision, describe every rejected shape, reconstruct
+a pseudo-stack after its supported preconditions fail, or promise a result for every observation.
+Adapters may reject an unsupported selection through existing command boundaries without adding
+a taxonomy or scenario-specific message.
 
-### A pure and testable model
+### Pure boundary
 
-The model accepts immutable typed observations and returns immutable typed projections. It
-cannot reach a subprocess, `jj` or Git client, filesystem path, state store, GitHub client,
-configuration, clock, callback, lazy query, global state, or mutation API.
+The model accepts immutable typed observations and returns immutable typed ordinary-path
+projections. It cannot reach a subprocess, `jj` or Git client, filesystem path, state store,
+GitHub client, configuration, clock, callback, lazy query, global state, or mutation API.
 
-Adapters collect and batch external facts before calling the model. Commands apply GitHub
-evidence, identity safety, native-stack policy, cleanup eligibility, and mutation ordering after
-receiving the model result.
+Adapters collect and batch the bounded external facts needed for the retained scenarios before
+calling the model. Dependent mutations remain ordered and re-read their preconditions immediately
+before changing state.
 
-Provisional implementation names may include a snapshot, revision observation, change copies,
-review path, tracked placement, and selection problem. These names are not accepted terminology
-until the implementing review shows that each names an enduring type or rule. Prefer ordinary
-`jj`, Git, and GitHub language over a new taxonomy.
+The required model laws are limited to the supported domain:
 
-The pure model satisfies these laws:
+- input ordering does not change an ordinary path result;
+- every returned path is parent-connected and preserves local ancestor order;
+- tracking does not create or reorder a path;
+- the unique mutable-copy selection is stable when its immutable trunk copy is observed; and
+- selected and repository projections agree for the ordinary path they share.
 
-- Input ordering cannot change the semantic result.
-- Every in-scope revision is accounted for as local path content, trunk context, a boundary, or a
-  typed unsupported condition.
-- Every returned path is parent-connected, complete to its declared boundary, and preserves local
-  ancestor order.
-- Tracking annotates topology but does not create it.
-- One mutable local copy plus an immutable trunk copy is a recoverable shape; more than one
-  mutable copy is ambiguous.
-- Adding a competing mutable copy cannot turn an ambiguous selection into a unique one.
-- A local commit differing from its submitted baseline remains unpublished regardless of patch or
-  tree equivalence.
-- Selected and repository projections agree about every shared revision and tracked placement.
-- Reachable observations return a result or a typed problem rather than crashing.
+Do not add a law that quantifies over all reachable observations or arbitrary graphs.
 
-### Consistent and safe behavior
+### Recovery behavior
 
-- `list` and `view` show the same complete path that mutating commands would use.
-- A normal external ordinary or native rebase merge is recoverable by change-ID and PR selectors.
-- Squash recovery continues to work without a preserved change ID.
-- Truly ambiguous local copies fail closed without mutation.
-- Unpublished local work or ordering is never discarded implicitly.
-- Accepting GitHub's landed ordering after an unpublished local rewrite requires explicit user
-  authority.
-- Orphan and cleanup classification agree across every command that exposes or mutates them.
-- Every stop identifies the relevant local, submitted, and trunk commits when they differ and
-  gives a runnable next step.
-- Legacy local review bookmarks are diagnosed from saved review identities, not from a permanent
-  legacy-prefix policy or migration mechanism.
+- The faithful Voxel regression resolves change-ID and PR selectors to the local actionable
+  context after fetch.
+- The default recovery action does not discard unpublished local work or ordering.
+- Clean ordinary rebase and existing squash recovery continue to work.
+- A merged prefix with a reviewed suffix preserves the suffix's review identity and ordering.
+- Accepting GitHub's landed ordering requires the explicit authority implemented in Slice 5.
+- A rerun observes current state; no durable recovery phase or replay plan is saved.
+
+These guarantees apply only to the retained scenarios and existing supported product behavior.
+They are not a general promise for every constructible repository state.
 
 ### Replacement, not accumulation
 
-The finished project contains none of these competing authorities:
+The finished project contains one authority for each local path fact it changes. In the accepted
+supported domain, remove:
 
-- `JjClient.discover_review_stack` and its stack-boundary policy;
-- `allow_divergent` and `allow_immutable` policy combinations;
-- `discover_tracked_stacks`, `discover_connected_tracked_stacks`, and
-  `discover_stacks_from_revisions`;
-- change-ID-tuple path deduplication;
-- PR selection's separate visible-copy and path-membership policy;
-- cleanup's separate local stale-topology classifier;
-- command-local stack pickers, orphan placement, or descendant-path decisions that the model can
-  answer;
-- compatibility wrappers preserving an old and new policy path;
-- tests and helpers whose only purpose was a deleted authority.
+- `JjClient.discover_review_stack`, its stack-boundary policy flags, and selected command-local
+  path reconstruction;
+- repository discovery functions superseded by the ordinary-path projection;
+- change-ID tuple path deduplication superseded by observed revision identity;
+- separate selector rules for visible-copy and path membership;
+- command-local descendant or placement decisions answered by the shared projection;
+- compatibility wrappers preserving old and new paths; and
+- tests and helpers whose only purpose was a deleted authority or rejected scenario.
 
-## Decisions required before behavioral implementation
+Do not rewrite cleanup, orphan, doctor, or lifecycle code merely to make every command consume one
+large result. Share a fact only where two current consumers actually decide the same thing.
 
-These decisions must be accepted in `design.md` before the selected-topology replacement lands:
+### Complexity evidence and stop
 
-1. **Selector rule.** A change ID or linked PR selects the unique mutable off-trunk copy when an
-   immutable trunk copy also exists. More than one mutable copy fails closed. Trunk-only tracking
-   is a typed nonlocal condition handled only by commands whose documented scope permits it.
-2. **Inventory overlap.** Repository inventory reports complete maximal off-trunk paths. Shared
-   prefixes may appear in each rendered path but share one internal commit identity. Trunk copies
-   annotate paths and never form rows.
-3. **Inspection completeness.** Local shape alone does not prove a merge. Inspection classifies
-   the shape after GitHub lookup; proven merged recovery is cleanup work, while unmerged
-   divergence remains incomplete.
-4. **Explicit remote-order acceptance.** Decide the flag or command wording, confirmation
-   semantics, and dry-run behavior. Any name in this plan is provisional.
-5. **Ordering effect.** In the reported case, accepting GitHub history means the merged change is
-   already on trunk, followed by the formerly lower unreviewed change and then the remaining local
-   descendants. The UX must state this reorder before applying it.
-6. **Observation scope.** A selected snapshot contains the complete connected component needed
-   for selection and dependency checks. A repository snapshot contains all visible off-trunk
-   candidates plus every visible copy of tracked change IDs, without scanning all history.
+Every code slice reports before and after:
+
+- production, test, and total lines;
+- model types and fields, classes, functions, and Ruff `C901` findings;
+- affected module sizes and dependency fan-out;
+- count and location of path, selection, copy, placement, and dependency authorities; and
+- number of `jj`, remote, and GitHub observations on the retained workflows.
+
+Compare the accepted Slice 1 baseline, the rejected comparison work, and the proposed slice.
+Metrics are evidence, not line-count targets. Do not compress code, merge responsibilities, or
+move policy between files to game them.
+
+If the replacement materially exceeds the production or conceptual complexity of the mechanisms
+it deletes, stop the design. Do not accept a budget increase, promise a later cleanup, or proceed
+to the next slice. Re-derive the smallest ordinary-workflow model and obtain independent product
+and complexity approval.
 
 ## Test strategy and acceptance
 
-Before adding tests, each implementation agent inventories existing coverage for the policy
-being replaced. Every proposed test names the user-reachable regression, practical harm,
-narrowest useful layer, existing overlapping cases, and cases or helpers deleted in the same
-slice.
+Before adding or retaining a test, inventory existing coverage and record:
 
-Pure tests construct values directly. They use no temporary repository, subprocess, mocked client,
-or filesystem fixture. Focused examples cover the laws above. Generated cases use a small
-reachable transition vocabulary such as submit, rewrite, reparent, insert, abandon, branch,
-external rebase merge, squash merge, and fetch observation.
+- the retained scenario and user-reachable regression;
+- practical harm;
+- the narrowest meaningful layer;
+- overlapping cases to consolidate or delete; and
+- fixture, helper, or rejected-rewrite coverage removed in the same slice.
 
-Generated cases have stable IDs, compact traces, canonical-state deduplication, bounded graph
-size, and deterministic ordering. The oracle must not repeat the production traversal algorithm.
-A small fixed corpus runs by default; expanded exploration remains opt-in.
+Pure tests construct values directly. Their examples cover only the supported-domain laws and
+retained decisions above. There is no universal graph oracle. Generated cases are optional and
+must add independent value beyond focused examples. If used, generation is limited to supported
+ordinary transitions, bounded and deterministic, and must not turn arbitrary reachability into
+scope.
 
-Real-`jj` adapter tests are reserved for facts that depend on actual revset and DAG semantics:
-collecting every divergent copy, trunk membership, untracked ancestors, overlapping descendants,
-working-copy omission, boundary parents, conflicts, and merge parents. They do not duplicate the
-pure policy matrix or assert thin query forwarding.
+Real-`jj` adapter tests are reserved for ordinary facts that depend on actual revset and DAG
+semantics: the selected linear chain, one fetched immutable trunk copy, one shared-prefix branch,
+and omission of repository working copies where current inventory requires it. They do not
+duplicate pure policy decisions or assert query forwarding.
 
-The fake GitHub ordinary merge endpoint must dispatch merge, rebase, and squash methods
-accurately. One focused support test distinguishes their resulting commit topology. Remaining fake
-idealizations are documented explicitly.
+The fake GitHub ordinary merge endpoint continues to distinguish merge, rebase, and squash
+topology accurately. One focused support test protects that boundary.
 
 The faithful regression for the reported Voxel incident must:
 
-1. submit a reviewed change and descendants;
-2. insert an untracked change below it and rebase the reviewed local path;
+1. submit a normally reviewed linear stack;
+2. insert an untracked local change below the reviewed change and reparent the local path;
 3. externally rebase-merge the old submitted commit through an ordinary PR;
 4. fetch the immutable trunk result beside the mutable local copy;
-5. report one complete local path rather than a separate trunk-side stack;
-6. resolve change-ID and PR selectors to the mutable actionable context;
-7. stop before discarding the unpublished topology change, with the submitted, local, and trunk
-   commits plus an actionable choice; and
+5. report one ordinary actionable local path, not a separate trunk-side stack;
+6. resolve change-ID and PR selectors to that local path;
+7. stop before discarding the unpublished ordering, naming the submitted, local, and trunk
+   commits plus the available ordinary next step; and
 8. leave the DAG, tracking, remote refs, PRs, reviews, and fake GitHub event log unchanged.
 
-The PR in that regression has no native GitHub stack resource. Distinct boundary coverage also
-includes clean singleton rebase recovery, a surviving reviewed suffix, squash recovery, multiple
-mutable copies, trunk-only tracking, overlapping paths, a legacy local review bookmark, and
-post-recovery orphan and cleanup agreement.
+The stop in step 7 is required because this is the reported ordinary incident, not because all
+unsupported states receive complete diagnostics.
 
-Reject these test smells:
+Keep one focused example for each other retained risk only when another existing test would not
+catch the same regression. Reject:
 
-- a fixture language that mirrors the production model;
-- mocked-client tests that assert forwarding;
-- a command-by-topology Cartesian matrix;
-- impossible arbitrary DAGs presented as product scenarios;
-- exact prose snapshots where typed outcomes and recovery data suffice;
+- command-by-topology or topology-by-diagnostic matrices;
+- arbitrary DAGs presented as product scenarios;
+- typed problems or exact messages for excluded states;
+- generated composite histories outside the supported ordinary transition vocabulary;
 - unit and integration copies of the same policy decision;
-- unbounded or nondeterministic generation;
-- retaining old tests temporarily beside tests of the replacement.
+- a fixture language mirroring the production model; and
+- old tests retained temporarily beside replacement tests.
 
 ## Remaining slices
 
-Every slice starts from the exact accepted commit of its dependencies. Its implementation brief
-must repeat the objective, immediate adopters, required deletions, tests, documentation impact,
-and review gate below. The implementing commit deletes its own slice section from this file.
+Every slice starts from the exact accepted commit of its dependencies. Its brief repeats the
+objective, immediate adopters, required deletions, retained scenarios, tests, documentation
+impact, complexity evidence, and review gate. The implementing commit deletes its own section
+from this file.
 
-### Slice 0: approve and record this plan
+### Slice 2: replace selected-stack discovery with the small pure model
 
-**Objective:** Review this execution plan, resolve omissions or ambiguity, and commit the accepted
-plan before production work begins.
+**Objective:** Introduce the minimum immutable observation and pure projection needed to derive
+an ordinary selected linear review path, then replace the old selected-path authority.
 
-**Dependencies:** Current accepted repository tip.
+**Dependencies:** Accepted Slice 1 plus the accepted plan-amendment commit. Do not use a rejected
+rewrite as an ancestor, implementation base, or tree source.
 
-**Changes:** This file only. No product behavior, canonical design, or implementation strategy
-changes.
+**Boundary and adopters:** The adapter batches the selected chain, copies needed to resolve its
+selectors, fetched-trunk membership, and tracking annotations. Immediate adopters are the shared
+selection path used by `view`, `submit`, `merge`, selected `sync`, and selected `unstack`.
+`checkout` and `relink` adopt only the shared selector fact they currently need; do not force
+their unrelated identity policy into the model.
 
-**Validation and review:** One independent reviewer checks that the plan is executable, pure-model
-requirements are testable, replacement boundaries are explicit, and the plan does not compete
-with `design.md`. User approval is the final gate.
-
-### Slice 2: replace selected-stack discovery with the pure model
-
-**Objective:** Introduce the immutable observation snapshot and pure projection, then migrate
-every selected-path consumer in one replacement.
-
-**Dependencies:** Accepted Slice 1 commit and all decisions in the decision gate recorded in
-`design.md`.
-
-**Boundary and adopters:** External adapters batch `jj` and tracking facts. The pure model builds
-the selected path and typed selection result. Immediate adopters are `view`, `submit`, `merge`,
-selected `sync`, selected `unstack`, saved `checkout`, `relink`, and PR-based selection.
+**Retained scenarios:** Clean ordinary rebase recovery, unique mutable selection beside one
+immutable trunk result, the cheap multiple-mutable stop, and ordinary selected overlap.
 
 **Required deletion:** Delete `JjClient.discover_review_stack`, its boundary helpers and policy
-flags, selected-path validation policy in the client, and selected command-local visible-copy or
-path reconstruction. Remove superseded mocks, fixtures, and tests. Do not land an unused model or
-a compatibility wrapper.
+flags, selected-path validation in the client, and command-local copy or path reconstruction
+superseded by the projection. Delete superseded mocks, fixtures, and tests. Complete the rejected
+diff deletion/non-port ledger before requesting review.
 
-**Tests:** Pure examples and generated laws; focused real-`jj` observation tests; clean ordinary
-singleton rebase recovery by change ID and PR selector; focused tests for each migrated command's
-distinct mutation risk. Run `./check.py`.
+**Tests:** Small pure examples for the selected laws, focused real-`jj` observation coverage, one
+clean rebase selection regression by change ID and PR, and only distinct selected-command risks.
+Do not generate unsupported graphs. Run `./check.py`.
 
-**Documentation:** Update `design.md`, `implementation-strategy.md`, user workflow,
-troubleshooting, and help wherever selected behavior changes. Introduce only terms that survive as
-real types or enduring rules.
+**Documentation:** Update `design.md`, implementation strategy, user docs, and help only for
+behavior and architecture that land in this commit. Delete rejected target-architecture or
+diagnostic prose rather than carrying it forward.
 
-**Review gate:** Separate architecture and behavior reviewers confirm purity, selector semantics,
-complete paths, deletion of the old selected authority, and consistency across all adopters.
+**Review gate:** Separate architecture and product reviewers confirm purity, the narrow
+supported-domain contract, deletion of the old selected authority, the ledger, and before/after
+complexity evidence. Any materially larger replacement is a design stop.
 
-### Slice 3: replace repository-wide discovery
+### Slice 3: replace ordinary repository path discovery
 
-**Objective:** Add repository-scoped observation without adding new topology rules, then migrate
-every repository-wide consumer.
+**Objective:** Extend the accepted small projection to inventory ordinary linear paths with
+shared prefixes, then replace only repository-wide code that decides the same path facts.
 
 **Dependencies:** Accepted Slice 2 interface and exact commit.
 
-**Boundary and adopters:** The same pure model receives a repository-complete snapshot. Immediate
-adopters are `list`, connected advisories, stack pickers, orphan handling, cleanup classification,
-`sync --all`, and `doctor` topology reporting.
+**Boundary and adopters:** The adapter batches visible off-trunk candidates required by current
+inventory plus copies of tracked or selected change IDs needed by retained workflows. The model
+returns ordinary maximal paths and shared revision identity. Immediate adopters are `list`, the
+ordinary dependency check used by selected recovery, the connected `view` stale-stack advisory,
+and any existing repository stack picker that currently reconstructs those paths.
 
-**Required deletion:** Delete `review/discovery.py`, cleanup's parallel topology classifier,
-change-ID-tuple path deduplication, old orphan membership logic, obsolete `LocalStack` policy, and
-unused `jj` query helpers and tests.
+The `view` advisory uses the same shared-prefix and path-membership projection to find connected
+tracked stacks. Its existing baseline comparison and rendering remain outside the model. Delete
+its command-local topology observer and policy; do not broaden `view` into repository-wide
+inspection or route unrelated `view` behavior through the repository projection.
 
-**Tests:** Complete paths with untracked roots, immutable copies that do not become rows, shared
-prefixes and overlaps, selected/repository agreement, trunk-only placement, and orphan/cleanup
-agreement. Use integration coverage only for adapter and command-specific risks. Run `./check.py`.
+Cleanup, orphan reporting, `sync --all`, and `doctor` consume the projection only for a path or
+membership fact they demonstrably need. Their GitHub evidence, identity, cleanup eligibility, and
+setup diagnostics stay outside the model. Do not add a topology outcome merely to route every
+command through one object.
 
-**Documentation:** Update implementation strategy and any list, cleanup, orphan, checkout, or
-doctor user guidance affected by the replacement.
+**Retained scenarios:** One ordinary shared-prefix inventory, selected/repository agreement for
+that path, the existing connected `view` stale-stack advisory for the same path, and the
+dependency needed to preserve the reviewed suffix in the reported workflow.
 
-**Review gate:** Reviewers confirm there is one topology authority, repository observation is
-bounded and batched, no old wrapper remains, and every tracked change has one consistent
-placement.
+**Required deletion:** Delete `review/discovery.py` and repository discovery, tuple
+deduplication, placement, picker, or descendant logic actually superseded by the accepted
+projection. Delete stale classifiers only where they decide that same path fact. Remove obsolete
+`LocalStack` policy, query helpers, tests, and rejected-rewrite adapters that no accepted consumer
+needs. Complete the second deletion/non-port ledger before review.
 
-### Slice 4: reconcile external rebase merges without losing local work
+**Tests:** One pure shared-prefix example, one selected/repository agreement example, one
+real-`jj` ordinary overlap boundary, the existing focused connected-`view` advisory behavior, and
+focused command tests for distinct current risks. The advisory test protects only connection
+scope and identification of the other stale stack; baseline comparison and rendering reuse their
+existing coverage. Tracking without a local change remains existing cleanup evidence, not a
+synthetic path fixture. Run `./check.py`.
 
-**Objective:** Replace the merged-above-unmerged stop and generic divergence guidance with
-planning over the accepted topology and existing trunk evidence.
+**Documentation:** Update implementation strategy, the current cross-stack rule in `design.md`,
+and `daily-workflow.md` guidance for the connected `view` advisory in the same slice. Preserve
+the existing current-product behavior without adding unsupported graph taxonomy.
+
+**Review gate:** Reviewers confirm one authority for ordinary path facts, including the connected
+`view` advisory; bounded batched observation; no command-local connected-stack observer; no
+universal snapshot or catch-all problem framework; deletion of superseded code; and acceptable
+before/after complexity.
+
+### Slice 4: reconcile ordinary external merges without losing local work
+
+**Objective:** Replace the merged-above-unmerged stop and generic divergence guidance with a
+small recovery plan for the retained external-merge workflows.
 
 **Dependencies:** Accepted Slices 2 and 3.
 
-**Boundary and adopters:** Selected `sync` consumes topology facts and command-owned GitHub/trunk
-evidence. The pure model does not decide that work merged or authorize mutation.
+**Boundary and adopters:** Selected `sync` consumes the ordinary path plus command-owned
+GitHub/trunk evidence. The pure path model neither declares work merged nor authorizes mutation.
 
-**Required deletion:** Remove the “sync separately” branch, duplicate divergent-change
-diagnostics, and descendant/path checks now answered by topology. Consolidate overlapping
-convergence tests.
+**Retained scenarios:** The faithful Voxel incident, clean rebase recovery, existing squash
+recovery, and a merged prefix with the smallest reviewed suffix.
 
-**Tests:** The faithful Voxel regression, clean rebase-merged prefix with surviving reviews,
-multiple mutable ambiguity, squash recovery, and zero mutation for unpublished topology. Run
+**Required deletion:** Remove the superseded “sync separately” branch, duplicated diagnostics,
+and descendant/path checks now answered by the ordinary projection. Delete rejected-rewrite
+problem conversions and scenario coverage that do not serve a retained row.
+
+**Tests:** The faithful Voxel regression, one clean rebase case, existing squash recovery, and one
+reviewed-suffix case. Consolidate overlaps. The Voxel default stop proves no mutation. Run
 `./check.py`.
 
-**Documentation:** Update the sync policy in `design.md`, daily workflow, troubleshooting, and
-help with concrete jj/GitHub language.
+**Documentation:** Update the current sync policy in `design.md`, daily workflow,
+troubleshooting, and help using concrete `jj` and GitHub language.
 
-**Review gate:** Product and safety reviewers confirm normal recovery works, unpublished ordering
-is preserved, diagnostics name runnable choices, and no patch-equivalence shortcut was added.
+**Review gate:** Independent product and safety reviewers confirm the reported and common
+recovery paths work, unpublished ordering is preserved, the normal stop is actionable, and no
+general topology-defense framework was added.
 
-### Slice 5: implement explicit acceptance of GitHub's landed ordering
+### Slice 5: explicitly accept GitHub's landed ordering
 
-**Objective:** Implement the explicitly approved way to accept GitHub's ordering when local
-topology changed after submission.
+**Objective:** Implement an explicit operation for the user to accept GitHub's ordering after the
+ordinary local insert/reparent represented by the Voxel incident.
 
-**Dependencies:** Accepted Slice 4 and the explicit UX, dry-run, and ordering decisions recorded
-in `design.md`.
+**Dependencies:** Accepted Slice 4 and independent approval of the exact UX below. Keep the
+pending UX in this plan until the implementing commit; do not pre-write it into `design.md`.
 
-**Boundary and adopters:** Selected `sync` re-reads all mutation preconditions, removes only the
-proven merged local copy, preserves every other local change, rebases survivors in the stated
-order, updates existing reviews, and retires tracking under existing evidence rules.
+**Pending product decision:** Choose one ordinary command or flag, with normal `--dry-run`
+preview, that says GitHub already landed the reviewed change and the user now authorizes the
+formerly lower unpublished change to follow it. The preview must show the resulting order in
+change IDs and distinguish the immutable trunk commit when its commit ID matters. It must not ask
+the user to understand topology-model terminology. Final spelling and confirmation semantics
+require product review before implementation.
 
-**Required deletion:** Remove any manual-only stop superseded by the explicit operation. Add no
-durable phase, alias, replay record, or second convergence path.
+**Boundary and adopters:** Selected `sync` re-observes the selected path, trunk evidence, live PR,
+and review branch immediately before mutation. It removes only the proven merged local copy,
+preserves every other local change, rebases survivors in the previewed order, updates existing
+reviews, and retires tracking under existing evidence rules.
 
-**Tests:** Dry-run, apply, interruption/retry through fresh observation, branch drift before
-mutation, preservation of unreviewed and reviewed survivors, and the Voxel ordering outcome. Run
-`./check.py`.
+**Retained scenarios:** The Voxel ordering outcome, preservation of the smallest reviewed suffix,
+one network interruption followed by fresh-observation rerun, and existing exact-target branch
+drift immediately before mutation.
 
-**Documentation:** Update canonical design, workflow, troubleshooting, help, and JSON behavior if
-structured output changes. The final command or flag name must be ordinary and user-facing.
+**Required deletion:** Remove the manual-only stop superseded by the explicit operation. Add no
+durable phase, alias, replay record, alternate convergence path, transition taxonomy, or
+interruption matrix.
 
-**Review gate:** Independent safety and UX reviewers confirm the authority is explicit, ordering
-is understandable, preconditions are reread, work is preserved, and reruns need no durable state.
+**Tests:** Preview, apply, the faithful ordering result, preservation of unreviewed and reviewed
+survivors, one distinct interruption/rerun, and existing branch guard coverage. Do not combine
+those boundaries into exotic histories. Run `./check.py`.
 
-### Slice 6: diagnose tracked local review bookmarks
+**Documentation:** In this implementing commit, move the accepted rule from this plan into
+canonical design, workflow, troubleshooting, help, and JSON documentation if structured output
+changes.
 
-**Objective:** Detect local bookmarks named by saved review identities, including legacy head refs
-outside the current reserved namespace.
+**Review gate:** Independent safety and UX reviewers confirm explicit authority, understandable
+ordering, immediate precondition rereads, work preservation, ordinary rerun behavior, and no
+durable recovery state.
 
-**Dependencies:** Accepted repository topology model. This may run parallel to Slice 4 or 5 only
-in a separate `jj workspace` and only if it touches no shared files or model contract.
+### Slice 6: cumulative deletion and reconciliation
 
-**Boundary and adopters:** `doctor` and mutation preflight observe exact saved head refs. They do
-not infer a legacy prefix or migrate bookmarks.
-
-**Required deletion:** Remove any narrower duplicate check that the exact-identity check
-supersedes. Add no compatibility state.
-
-**Tests:** Conflicted and ordinary local tracked-head bookmarks, unrelated user bookmarks, exact
-repair guidance, and no mutation without `doctor --fix` authority. Run `./check.py`.
-
-**Documentation:** Update doctor and troubleshooting guidance in ordinary bookmark language.
-
-**Review gate:** A reviewer confirms the check derives from current saved identity, cannot affect
-unrelated bookmarks, and does not create a migration mechanism.
-
-### Slice 7: cumulative command and documentation reconciliation
-
-**Objective:** Exercise every lifecycle consumer against the accepted model and remove remaining
-contradictions, adapters, tests, and terminology before the final frozen audit.
+**Objective:** Remove remaining superseded or rejected machinery and reconcile current code,
+tests, help, and documentation before the frozen final audit.
 
 **Dependencies:** All behavior slices accepted.
 
-**Boundary and adopters:** No new authority. This slice is deletion, consolidation, and correction
-across commands and documentation.
+**Boundary and adopters:** No new product behavior or authority. This slice is deletion,
+consolidation, and correction only.
 
-**Required deletion:** Every superseded symbol named in the project-wide criteria, unused query or
-model field, duplicated command policy, stale test helper, and obsolete documentation statement.
+**Required deletion:** Every superseded symbol named in project-wide criteria; every rejected
+model field, problem, adapter, fixture, scenario, or diagnostic without a retained-scenario
+justification; every unused query; and every target-architecture or obsolete product statement.
 
-**Tests:** Focused command adoption tests, the default property corpus, expanded pure exploration,
-and `./check.py`. Record before/after production and test lines, high-complexity functions, module
-sizes, dependency fan-out, policy-authority count, and external call counts as review evidence.
+Complete a cumulative non-port ledger against all three comparison artifacts. Record before/after
+production and test lines, functions and types, `C901` findings, module sizes, dependency fan-out,
+policy-authority count, and external call counts. A material complexity increase is a design stop,
+not an invitation to edit a budget.
 
-**Documentation:** Read `design.md`, implementation strategy, all affected user docs, and help as
-continuous prose. Ensure the canonical product story is coherent and implementation strategy
-describes only the final architecture.
+**Tests:** The focused retained corpus, any supported-domain generated examples that independently
+earned their place, and `./check.py`. Remove overlapping and excluded-scenario tests.
 
-**Review gate:** Independent product/docs, architecture, and test reviewers agree that the tree is
-ready to freeze for final audit.
+**Documentation:** Read canonical design, implementation strategy, affected user docs, and help
+as continuous prose. They describe the implemented product only.
+
+**Review gate:** Independent product/docs, architecture/complexity, and test reviewers accept the
+same exact commit and agree the tree is ready to freeze.
 
 ## Final audit
 
 Freeze one exact project tip. Run three independent reviews in parallel:
 
-1. **Product and documentation:** Verify `design.md` is canonical and coherent; implementation
-   strategy matches the code; user docs and help use ordinary jj/Git/GitHub vocabulary; no stale
-   workflow, contradiction, or target-architecture prose remains.
-2. **Architecture and complexity:** Prove purity and dependency direction; search for every
-   superseded authority and wrapper; inspect before/after metrics; confirm no durable recovery
-   state, parallel policy path, complexity spiral, or unexplained new terminology survives.
-3. **Behavior and tests:** Walk the required scenario matrix; verify fake GitHub fidelity,
-   selector and command consistency, property laws, mutation safety, runnable recovery guidance,
-   and removal of overlapping tests.
+1. **Product and documentation:** Apply the product-judgment gate to every retained special case.
+   Verify `design.md` is canonical and current, implementation strategy matches the code, user
+   docs and help use ordinary vocabulary, and no excluded or unimplemented behavior remains.
+2. **Architecture and complexity:** Prove the small model's purity and dependency direction.
+   Search for every superseded authority and every rejected artifact in the cumulative ledger.
+   Verify accepted implementation content was independently derived on the Slice 1 plus plan
+   line, then inspect before/after metrics and external call counts. Confirm no durable recovery
+   state, universal graph contract, generic catch-all framework, parallel policy path, or
+   unexplained terminology survives.
+3. **Behavior and tests:** Replay the retained scenario table at the narrowest useful layers.
+   Verify the Voxel regression, ordinary rebase and squash recovery, reviewed-suffix
+   preservation, explicit authority, and deletion of overlapping or excluded coverage.
 
-Every finding creates a bounded remediation slice implemented and reviewed by separate agents.
-Freeze a new tip and rerun every affected audit. Completion is declared only when all three audits
-accept the same exact commit and `./check.py` has run with any budget decision reviewed
-explicitly.
+Every finding creates a bounded remediation slice implemented and reviewed by different agents.
+Freeze a new tip and rerun every affected audit. Completion requires all three audits to accept
+the same exact commit and `./check.py` to pass without an unreviewed budget increase.
 
-The last accepted project change deletes this file and nothing else. No one can guarantee success
-in advance; the project is successful only when these gates provide the evidence and no required
-work remains.
+After accepted replacements have passed comparison and final review, the coordinator uses only
+`jj` to abandon or otherwise supersede the obsolete rewrite changes and forget their temporary
+workspaces, then removes the workspace directories. Preserve them until that point so review can
+compare exact artifacts; they must not remain as plausible implementation heads afterward.
+
+The last accepted project change deletes this file and nothing else. Completion is declared only
+when all gates accept the frozen commit and no required work remains.
