@@ -125,14 +125,14 @@ def _run_list(
         discovered = tuple(
             path.stack for path in repository_paths.paths if path.tracked_change_ids
         )
-        current_commit_id = repository_paths.current_commit_id
+        current_review_commit_id = repository_paths.current_review_commit_id
     else:
         discovered = ()
-        current_commit_id = None
+        current_review_commit_id = None
 
     ordered = _order_discovered_stacks(
         discovered,
-        current_commit_id=current_commit_id,
+        current_review_commit_id=current_review_commit_id,
     )
     orphan_rows = tuple(
         _build_orphan_row(orphan) for orphan in enumerate_orphaned_records(state, ordered)
@@ -179,7 +179,7 @@ def _run_list(
             _PreparedDiscoveredStack(
                 current=_stack_contains_commit_id(
                     stack,
-                    commit_id=current_commit_id,
+                    commit_id=current_review_commit_id,
                 ),
                 prepared=prepare_stack_for_status(
                     context=context,
@@ -308,8 +308,8 @@ def _emit_stale_stacks_advisory(
 ) -> None:
     """Hint that tracked stacks have changed since their last successful submit.
 
-    Submitted-state disagreement means the saved commit or topology baseline no
-    longer matches the live DAG. The right follow-up can depend on the specific
+    Submitted-state disagreement means the saved baseline from the last successful
+    submit no longer matches the live DAG. The right follow-up can depend on the specific
     stack state, so this advisory directs the user to inspect each stack rather
     than naming one mutation.
     """
@@ -325,13 +325,18 @@ def _emit_stale_stacks_advisory(
 def _order_discovered_stacks(
     discovered: tuple[LocalStack, ...],
     *,
-    current_commit_id: str | None,
+    current_review_commit_id: str | None,
 ) -> tuple[LocalStack, ...]:
     return tuple(
         sorted(
             discovered,
             key=lambda stack: (
-                0 if _stack_contains_commit_id(stack, commit_id=current_commit_id) else 1,
+                0
+                if _stack_contains_commit_id(
+                    stack,
+                    commit_id=current_review_commit_id,
+                )
+                else 1,
                 stack.head.change_id,
             ),
         )

@@ -46,18 +46,13 @@ class LocalRevision(BaseModel):
 
         return not self.immutable and self.commit_id not in published_commit_ids
 
-    def is_reviewable(
-        self,
-        *,
-        allow_divergent: bool = False,
-        allow_immutable: bool = False,
-    ) -> bool:
-        """Whether the revision should count as a review change."""
+    def is_reviewable(self) -> bool:
+        """Whether the revision should count as a strict review change."""
 
         return (
             not self.hidden
-            and (allow_immutable or not self.immutable)
-            and (allow_divergent or not self.divergent)
+            and not self.immutable
+            and not self.divergent
             and not (self.is_working_copy and self.empty)
             and len(self.parents) == 1
         )
@@ -76,7 +71,6 @@ class LocalStack(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     base_parent: LocalRevision
-    base_parent_is_trunk_ancestor: bool = False
     head: LocalRevision
     revisions: tuple[LocalRevision, ...]
     selected_revset: str

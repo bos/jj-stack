@@ -13,6 +13,7 @@ from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review import status as status_module
+from jj_stack.review.path import SelectedReviewPath
 from jj_stack.review.status import (
     PreparedStatus,
     prepare_stack_for_status,
@@ -68,7 +69,7 @@ def test_untracked_status_omits_branch_and_skips_remote_and_github_discovery(
     assert result.revisions[0].remote_target is None
 
 
-def test_prepare_status_observes_only_exact_saved_review_branches() -> None:
+def test_prepare_status_observes_only_exact_saved_review_branches(monkeypatch) -> None:
     first = make_revision(
         commit_id="commit-1",
         description="feature 1",
@@ -88,6 +89,7 @@ def test_prepare_status_observes_only_exact_saved_review_branches() -> None:
         _stack_for_status(first, second),
         remote_targets={"jj-stack/feature-1-aaaaaaaa": first.commit_id},
     )
+    _patch_selected_path(monkeypatch, client=client, state=state)
 
     prepared = prepare_status(
         context=_context(client=client, state=state),
@@ -100,7 +102,7 @@ def test_prepare_status_observes_only_exact_saved_review_branches() -> None:
     assert prepared.prepared.remote_targets == {"jj-stack/feature-1-aaaaaaaa": first.commit_id}
 
 
-def test_prepare_status_reloads_saved_branch_after_fetch() -> None:
+def test_prepare_status_reloads_saved_branch_after_fetch(monkeypatch) -> None:
     revision = make_revision(
         commit_id="commit-1",
         description="feature 1",
@@ -119,6 +121,7 @@ def test_prepare_status_reloads_saved_branch_after_fetch() -> None:
         remote_targets={"jj-stack/refreshed": revision.commit_id},
     )
     state_store = _StateStoreStub(stale_state, refreshed_state)
+    _patch_selected_path(monkeypatch, client=client, state=stale_state)
 
     prepared = prepare_status(
         context=_context(client=client, state_store=state_store),
@@ -322,41 +325,6 @@ class _PrepareStatusClient:
         self.remote_targets = remote_targets or {}
         self.stack = stack
 
-    def query_revisions_with_membership(
-        self,
-        _revset,
-        *,
-        membership_revsets,
-        **_kwargs,
-    ):
-        flag_count = len(membership_revsets)
-        observed = tuple(
-            revision.model_copy(
-                update={
-                    "parents": (
-                        self.stack.trunk.commit_id
-                        if index == 0
-                        else self.stack.revisions[index - 1].commit_id,
-                    )
-                }
-            )
-            for index, revision in enumerate(self.stack.revisions)
-        )
-        return (
-            (self.stack.trunk, (True, False, *([False] * (flag_count - 3)), True)),
-            *(
-                (
-                    revision,
-                    (
-                        False,
-                        revision.commit_id == self.stack.head.commit_id,
-                        *([False] * (flag_count - 2)),
-                    ),
-                )
-                for revision in observed
-            ),
-        )
-
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
         return (_STATUS_REMOTE,)
 
@@ -388,6 +356,25 @@ class _StateStoreStub:
         state = self.states[min(self.loads, len(self.states) - 1)]
         self.loads += 1
         return state
+
+
+def _patch_selected_path(
+    monkeypatch,
+    *,
+    client: _PrepareStatusClient,
+    state: ReviewState,
+) -> None:
+    selected_path = SelectedReviewPath(
+        stack=client.stack,
+        tracked_change_ids=frozenset(state.review_identities).intersection(
+            revision.change_id for revision in client.stack.revisions
+        ),
+    )
+    monkeypatch.setattr(
+        status_module,
+        "select_review_path",
+        lambda **_kwargs: selected_path,
+    )
 
 
 def _context(

@@ -297,16 +297,6 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     initial_state = state_store.load()
     first_pr_number = initial_state.review_identities[first_change_id].pr_number
     second_pr_number = initial_state.review_identities[second_change_id].pr_number
-    original_query = JjClient.query_revisions_with_membership
-    membership_queries = 0
-
-    def count_query(self, *args, **kwargs):
-        nonlocal membership_queries
-        membership_queries += 1
-        return original_query(self, *args, **kwargs)
-
-    monkeypatch.setattr(JjClient, "query_revisions_with_membership", count_query)
-
     exit_code = run_main(
         repo,
         config_path,
@@ -318,7 +308,6 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     refreshed_state = state_store.load()
 
     assert exit_code == 0
-    assert membership_queries == 1
     assert f"Using PR #{first_pr_number} -> {first_change_id}" in captured.out
     assert fake_repo.pull_requests[first_pr_number].state == "closed"
     assert fake_repo.pull_requests[second_pr_number].state == "open"

@@ -35,7 +35,7 @@ class RepositoryPathObservation:
     """Immutable facts needed to derive ordinary repository paths."""
 
     candidate_commit_ids: frozenset[str]
-    current_commit_id: str | None
+    current_review_commit_id: str | None
     fetched_trunk_commit_ids: frozenset[str]
     revisions: tuple[LocalRevision, ...]
     tracked_change_ids: frozenset[str]
@@ -46,7 +46,7 @@ class RepositoryPathObservation:
 class RepositoryReviewPaths:
     """Ordinary maximal paths observed from one bounded repository scope."""
 
-    current_commit_id: str | None
+    current_review_commit_id: str | None
     paths: tuple[SelectedReviewPath, ...]
 
 
@@ -57,7 +57,6 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
     if selected.commit_id in observation.fetched_trunk_commit_ids:
         stack = LocalStack(
             base_parent=selected,
-            base_parent_is_trunk_ancestor=True,
             head=selected,
             revisions=(),
             selected_revset=observation.selected_revset,
@@ -82,7 +81,6 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
     path_change_ids = frozenset(revision.change_id for revision in revisions)
     stack = LocalStack(
         base_parent=current,
-        base_parent_is_trunk_ancestor=True,
         head=selected,
         revisions=revisions,
         selected_revset=observation.selected_revset,
@@ -111,9 +109,11 @@ def project_repository_paths(
             not revisions_by_commit_id[commit_id].is_working_copy
             or bool(revisions_by_commit_id[commit_id].description.strip())
         )
-        and revisions_by_commit_id[commit_id].is_reviewable(
-            allow_divergent=True,
-            allow_immutable=True,
+        and not revisions_by_commit_id[commit_id].hidden
+        and len(revisions_by_commit_id[commit_id].parents) == 1
+        and not (
+            revisions_by_commit_id[commit_id].is_working_copy
+            and revisions_by_commit_id[commit_id].empty
         )
     }
     parent_commit_ids = {
@@ -136,9 +136,6 @@ def project_repository_paths(
             SelectedReviewPath(
                 stack=LocalStack(
                     base_parent=current,
-                    base_parent_is_trunk_ancestor=(
-                        current.commit_id in observation.fetched_trunk_commit_ids
-                    ),
                     head=head,
                     revisions=revisions,
                     selected_revset=head.change_id,
@@ -148,7 +145,7 @@ def project_repository_paths(
             )
         )
     return RepositoryReviewPaths(
-        current_commit_id=observation.current_commit_id,
+        current_review_commit_id=observation.current_review_commit_id,
         paths=tuple(paths),
     )
 

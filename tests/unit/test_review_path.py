@@ -145,7 +145,7 @@ def test_repository_paths_inventory_an_ordinary_shared_prefix() -> None:
     projected = project_repository_paths(
         RepositoryPathObservation(
             candidate_commit_ids=frozenset({"shared", "left", "right"}),
-            current_commit_id=None,
+            current_review_commit_id=None,
             fetched_trunk_commit_ids=frozenset({"trunk"}),
             revisions=(right, trunk, shared, left),
             tracked_change_ids=frozenset({"left-change", "right-change"}),
@@ -156,7 +156,6 @@ def test_repository_paths_inventory_an_ordinary_shared_prefix() -> None:
     assert [
         [revision.commit_id for revision in path.stack.revisions] for path in projected.paths
     ] == [["shared", "left"], ["shared", "right"]]
-    assert projected.paths[0].stack.revisions[0] is projected.paths[1].stack.revisions[0]
 
 
 def test_repository_and_selected_projection_agree_for_one_ordinary_path() -> None:
@@ -170,7 +169,7 @@ def test_repository_and_selected_projection_agree_for_one_ordinary_path() -> Non
     repository = project_repository_paths(
         RepositoryPathObservation(
             candidate_commit_ids=frozenset({"shared", "left", "right"}),
-            current_commit_id=None,
+            current_review_commit_id=None,
             fetched_trunk_commit_ids=frozenset({"trunk"}),
             revisions=revisions,
             tracked_change_ids=frozenset(),

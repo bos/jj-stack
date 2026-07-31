@@ -56,7 +56,7 @@ def observe_repository_paths(
         (revision for revision, _flags in rows if revision.current_working_copy),
         None,
     )
-    current_commit_id = (
+    current_review_commit_id = (
         current_working_copy.parents[0]
         if current_working_copy is not None and current_working_copy.parents
         else None
@@ -66,7 +66,7 @@ def observe_repository_paths(
             candidate_commit_ids=frozenset(
                 revision.commit_id for revision, flags in rows if flags[1]
             ),
-            current_commit_id=current_commit_id,
+            current_review_commit_id=current_review_commit_id,
             fetched_trunk_commit_ids=frozenset(
                 revision.commit_id for revision, flags in rows if flags[2]
             ),

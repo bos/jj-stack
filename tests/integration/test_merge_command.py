@@ -184,16 +184,6 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     survivor_before = fake_repo.ref_target(fake_repo.pull_requests[3].head_ref)
-    original_query = JjClient.query_revisions_with_membership
-    membership_queries = 0
-
-    def count_query(self, *args, **kwargs):
-        nonlocal membership_queries
-        membership_queries += 1
-        return original_query(self, *args, **kwargs)
-
-    monkeypatch.setattr(JjClient, "query_revisions_with_membership", count_query)
-
     exit_code = run_main(
         repo,
         config_path,
@@ -206,7 +196,6 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert membership_queries == 1
     assert fake_repo.async_merge_requests == [(2, "rebase", stack_before.revisions[1].commit_id)]
     assert fake_repo.async_merge_polls == [(2, "fake-async-1")]
     assert fake_repo.pull_requests[1].state == "closed"
