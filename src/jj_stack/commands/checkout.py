@@ -26,7 +26,7 @@ from jj_stack.github.resolution import (
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient, UnsupportedStackError
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import (
     is_review_branch,
@@ -35,6 +35,7 @@ from jj_stack.review.branches import (
 )
 from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.observation import duplicate_review_claim_change_ids
+from jj_stack.review.selected import select_review_path
 from jj_stack.review.status import status_preparation_cli_error
 from jj_stack.state.operation_lock import acquire_operation_lock
 
@@ -121,11 +122,7 @@ def _checkout_saved_stack(
             remote=remote.name,
             on_isolation_change=report_fetch_isolation,
         )
-    stack = client.discover_review_stack(
-        revset,
-        allow_divergent=True,
-        allow_immutable=True,
-    )
+    stack = select_review_path(jj_client=client, revset=revset, state=state).stack
     incomplete = tuple(
         revision
         for revision in stack.revisions
@@ -205,7 +202,11 @@ async def _checkout_pull_request_stack(
                     branch=top_pull_request.head.ref,
                     revision=imported,
                 )
-                stack = _discover_checkout_stack(client=client, revision=imported.commit_id)
+                stack = _discover_checkout_stack(
+                    client=client,
+                    revision=imported.commit_id,
+                    state=context.state_store.load(),
+                )
         else:
             matches = client.query_revisions_by_commit_ids((top_head_sha,))
             if len(matches) != 1:
@@ -217,7 +218,11 @@ async def _checkout_pull_request_stack(
                 branch=top_pull_request.head.ref,
                 revision=matches[0],
             )
-            stack = _discover_checkout_stack(client=client, revision=top_head_sha)
+            stack = _discover_checkout_stack(
+                client=client,
+                revision=top_head_sha,
+                state=context.state_store.load(),
+            )
 
         # Only the chain read after this re-read is used for the tracking write below.
         fresh_top = await _load_pull_request(
@@ -293,15 +298,16 @@ def _reject_locally_rewritten_change(
     )
 
 
-def _discover_checkout_stack(*, client: JjClient, revision: str) -> LocalStack:
+def _discover_checkout_stack(
+    *,
+    client: JjClient,
+    revision: str,
+    state: ReviewState,
+) -> LocalStack:
     """Resolve the reviewed stack, translating shape failures into repair guidance."""
 
     try:
-        return client.discover_review_stack(
-            revision,
-            allow_divergent=False,
-            allow_immutable=True,
-        )
+        return select_review_path(jj_client=client, revset=revision, state=state).stack
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
 

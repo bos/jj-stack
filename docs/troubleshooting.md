@@ -14,6 +14,21 @@ jj-stack view <head-change-id>
 jj-stack submit <head-change-id>
 ```
 
+## A command says a change has more than one mutable local copy
+
+Concurrent `jj` workspace operations can leave two mutable copies of one change. `jj-stack`
+cannot know which one you intend to review or rewrite, so selection stops.
+
+Inspect the copies and abandon or reconcile the one you do not want:
+
+```bash
+jj log -r 'change_id(<change-id>)'
+```
+
+One mutable copy beside an immutable copy on fetched trunk is different: that is the ordinary
+result of fetching a GitHub rebase merge, and the full change ID or linked PR selects the mutable
+local copy.
+
 ## A command says a PR is claimed by multiple tracked records
 
 The message is `PR #<n> is claimed by multiple tracked records (...)` or `PR #<n> is linked to

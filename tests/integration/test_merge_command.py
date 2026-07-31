@@ -14,6 +14,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    selected_stack,
 )
 from ..support.submit_property_harness import advance_remote_trunk, update_remote_ref
 from .submit_command_helpers import (
@@ -35,7 +36,7 @@ def test_merge_uses_github_for_unapproved_prefix_and_leaves_local_state(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack_before = JjClient(repo).discover_review_stack()
+    stack_before = selected_stack(repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
@@ -54,7 +55,7 @@ def test_merge_uses_github_for_unapproved_prefix_and_leaves_local_state(
     assert fake_repo.pull_requests[2].base_ref == "main"
     assert read_remote_ref(fake_repo.git_dir, "main") != trunk_before
     assert ReviewStateStore.for_repo(repo).load() == state_before
-    stack_after = JjClient(repo).discover_review_stack()
+    stack_after = selected_stack(repo)
     assert tuple(revision.commit_id for revision in stack_after.revisions) == tuple(
         revision.commit_id for revision in stack_before.revisions
     )
@@ -179,10 +180,19 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
         "octo-org/stacked-review",
         True,
     )
-    stack_before = JjClient(repo).discover_review_stack()
+    stack_before = selected_stack(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     survivor_before = fake_repo.ref_target(fake_repo.pull_requests[3].head_ref)
+    original_query = JjClient.query_revisions_with_membership
+    membership_queries = 0
+
+    def count_query(self, *args, **kwargs):
+        nonlocal membership_queries
+        membership_queries += 1
+        return original_query(self, *args, **kwargs)
+
+    monkeypatch.setattr(JjClient, "query_revisions_with_membership", count_query)
 
     exit_code = run_main(
         repo,
@@ -196,6 +206,7 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
+    assert membership_queries == 1
     assert fake_repo.async_merge_requests == [(2, "rebase", stack_before.revisions[1].commit_id)]
     assert fake_repo.async_merge_polls == [(2, "fake-async-1")]
     assert fake_repo.pull_requests[1].state == "closed"
@@ -207,9 +218,9 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     assert "final trunk commit" in captured.out
     assert "sync " in captured.out
     assert state_store.load() == state_before
-    assert tuple(
-        revision.commit_id for revision in JjClient(repo).discover_review_stack().revisions
-    ) == tuple(revision.commit_id for revision in stack_before.revisions)
+    assert tuple(revision.commit_id for revision in selected_stack(repo).revisions) == tuple(
+        revision.commit_id for revision in stack_before.revisions
+    )
 
 
 def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
@@ -226,7 +237,7 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
         "octo-org/stacked-review",
         True,
     )
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
 
     merge_exit_code = run_main(
         repo,
@@ -516,7 +527,7 @@ def test_merge_requires_submit_after_a_diff_equivalent_rebase(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    revision = JjClient(repo).discover_review_stack().revisions[0]
+    revision = selected_stack(repo).revisions[0]
     state_store = ReviewStateStore.for_repo(repo)
     bookmark = state_store.load().review_identities[revision.change_id].head_ref
 
@@ -555,7 +566,7 @@ def test_merge_tells_a_conflicted_change_to_resolve_before_submitting(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
+    change_id = selected_stack(repo).revisions[0].change_id
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "trunk conflict", "feature-1.txt")
@@ -580,7 +591,7 @@ def test_merge_expected_head_guard_rejects_a_race(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    revision = JjClient(repo).discover_review_stack().revisions[0]
+    revision = selected_stack(repo).revisions[0]
     state_before = ReviewStateStore.for_repo(repo).load()
     bookmark = state_before.review_identities[revision.change_id].head_ref
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")

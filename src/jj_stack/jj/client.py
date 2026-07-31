@@ -25,7 +25,7 @@ from jj_stack.errors import (
 )
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
-from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import (
     review_branch_glob,
     review_branch_ref,
@@ -186,140 +186,6 @@ class JjClient:
     def cli_args(self) -> JjCliArgs:
         return self._cli_args
 
-    def discover_review_stack(
-        self,
-        revset: str | None = None,
-        *,
-        allow_divergent: bool = False,
-        allow_immutable: bool = False,
-    ) -> LocalStack:
-        """Resolve the selected review stack plus its trunk and base-parent context."""
-
-        if revset is None:
-            trunk, head, selected_revset = self._resolve_default_head_and_trunk()
-        else:
-            trunk, head = self._resolve_selected_head_and_trunk(revset)
-            selected_revset = revset
-            if head.is_working_copy and head.empty:
-                raise UnsupportedStackError(
-                    "Selected revision resolves to the empty working-copy commit. "
-                    "Select a concrete change instead.",
-                    reason="empty_working_copy",
-                )
-            if head.is_working_copy and not head.description.strip():
-                raise UnsupportedStackError(
-                    "Selected revision resolves to the working-copy commit, which has no "
-                    "description. Describe it with `jj describe` before submitting it for "
-                    "review.",
-                    reason="undescribed_working_copy",
-                )
-
-        if head.commit_id == trunk.commit_id:
-            return LocalStack(
-                base_parent=trunk,
-                base_parent_is_trunk_ancestor=True,
-                head=head,
-                revisions=(),
-                selected_revset=selected_revset,
-                trunk=trunk,
-            )
-
-        self._validate_reviewable_revision(
-            head,
-            allow_divergent=allow_divergent,
-            allow_immutable=allow_immutable,
-        )
-        boundary, include_boundary_in_stack = self._resolve_review_stack_boundary(
-            head_commit_id=head.commit_id,
-            trunk=trunk,
-        )
-        ancestor_revisions = self._query_revisions(
-            f"{_quote_revset_symbol(boundary.commit_id)}::{_quote_revset_symbol(head.commit_id)}"
-        )
-        revisions_by_commit_id = {revision.commit_id: revision for revision in ancestor_revisions}
-        revisions_by_commit_id[head.commit_id] = head
-        revisions_by_commit_id[boundary.commit_id] = boundary
-        revisions_by_commit_id[trunk.commit_id] = trunk
-
-        stack_head_first: list[LocalRevision] = []
-        current = head
-        while True:
-            if current.commit_id == boundary.commit_id:
-                if include_boundary_in_stack:
-                    if current.commit_id != head.commit_id:
-                        self._validate_reviewable_revision(
-                            current,
-                            allow_divergent=allow_divergent,
-                            allow_immutable=allow_immutable,
-                        )
-                    stack_head_first.append(current)
-                break
-            if current.commit_id != head.commit_id:
-                self._validate_reviewable_revision(
-                    current,
-                    allow_divergent=allow_divergent,
-                    allow_immutable=allow_immutable,
-                )
-            stack_head_first.append(current)
-            parent_commit_id = current.only_parent_commit_id()
-            current = revisions_by_commit_id.get(parent_commit_id) or self.resolve_revision(
-                parent_commit_id
-            )
-
-        stack_revisions = tuple(reversed(stack_head_first))
-        stack_base_parent = trunk
-        base_parent_is_trunk_ancestor = True
-        if stack_revisions:
-            stack_base_parent_commit_id = stack_revisions[0].only_parent_commit_id()
-            stack_base_parent = revisions_by_commit_id.get(
-                stack_base_parent_commit_id
-            ) or self.resolve_revision(stack_base_parent_commit_id)
-            base_parent_is_trunk_ancestor = (
-                stack_base_parent.commit_id == boundary.commit_id
-                and not include_boundary_in_stack
-            )
-
-        return LocalStack(
-            base_parent=stack_base_parent,
-            base_parent_is_trunk_ancestor=base_parent_is_trunk_ancestor,
-            head=head,
-            revisions=stack_revisions,
-            selected_revset=selected_revset,
-            trunk=trunk,
-        )
-
-    def _resolve_default_head_and_trunk(
-        self,
-    ) -> tuple[LocalRevision, LocalRevision, str]:
-        """Resolve the default head and `trunk()` in one call."""
-
-        revisions_with_trunk_membership = self._query_revisions_with_membership(
-            "trunk() | @ | @-", membership_revsets=("trunk()",)
-        )
-        trunk: LocalRevision | None = None
-        working_copy: LocalRevision | None = None
-        revisions_by_commit_id: dict[str, LocalRevision] = {}
-        for revision, (is_trunk,) in revisions_with_trunk_membership:
-            revisions_by_commit_id[revision.commit_id] = revision
-            if is_trunk and trunk is None:
-                trunk = revision
-            if revision.current_working_copy:
-                working_copy = revision
-        trunk = self._validate_trunk(trunk)
-        if working_copy is None:
-            raise CliError("Could not resolve the current working-copy revision.")
-        if working_copy.empty or not working_copy.description.strip():
-            parent_commit_id = working_copy.parents[0] if working_copy.parents else None
-            parent = (
-                revisions_by_commit_id.get(parent_commit_id)
-                if parent_commit_id is not None
-                else None
-            )
-            if parent is not None:
-                return trunk, parent, "@-"
-            return trunk, self.resolve_revision("@-"), "@-"
-        return trunk, working_copy, "@"
-
     def resolve_revision(self, revset: str) -> LocalRevision:
         """Resolve a revset to exactly one revision."""
 
@@ -351,6 +217,28 @@ class JjClient:
         except JjCommandError as error:
             if _is_missing_revision_error(_unwrap_command_error_message(str(error))):
                 return ()
+            raise
+
+    def query_revisions_with_membership(
+        self,
+        revset: str,
+        *,
+        membership_revsets: Sequence[str],
+        selected_revset: str | None = None,
+    ) -> tuple[tuple[LocalRevision, tuple[bool, ...]], ...]:
+        """Return revisions with one containment flag per supplied revset."""
+
+        try:
+            return tuple(
+                self._query_revisions_with_membership(
+                    revset,
+                    membership_revsets=membership_revsets,
+                )
+            )
+        except JjCommandError as error:
+            friendly_error = _revset_resolution_error(selected_revset or revset, error)
+            if friendly_error is not None:
+                raise friendly_error from error
             raise
 
     def query_revisions_by_change_ids(
@@ -501,107 +389,6 @@ class JjClient:
         )
         revisions = self._query_revisions(terms)
         return {revision.commit_id for revision in revisions}
-
-    def _validate_trunk(self, trunk: LocalRevision | None) -> LocalRevision:
-        """Reject missing-trunk and implicit-root-fallback resolutions."""
-
-        if trunk is None:
-            raise JjCommandError(t"{ui.cmd('jj log')} did not resolve {ui.revset('trunk()')}.")
-        if len(trunk.parents) == 0:
-            raise UnsupportedStackError(
-                t"No trunk bookmark is configured for this repo.",
-                hint=t"Create a trunk bookmark such as {ui.bookmark('main')}, then retry.",
-                reason="trunk_resolved_to_root",
-            )
-        return trunk
-
-    def _resolve_review_stack_boundary(
-        self,
-        *,
-        head_commit_id: str,
-        trunk: LocalRevision,
-    ) -> tuple[LocalRevision, bool]:
-        """Resolve the nearest stack boundary on the selected-parent path to `head`."""
-
-        boundary_candidates = self._query_revisions(
-            "heads("
-            f"first_ancestors({_quote_revset_symbol(head_commit_id)}) & "
-            f"::{_quote_revset_symbol(trunk.commit_id)}"
-            ")",
-            limit=2,
-        )
-        if not boundary_candidates:
-            raise UnsupportedStackError.stack_shape(
-                head_commit_id,
-                t"selected-parent path reached the root commit before {ui.revset('trunk()')}",
-                reason="reached_root_before_trunk",
-            )
-        boundary = boundary_candidates[0]
-        if len(boundary.parents) == 0:
-            raise UnsupportedStackError.stack_shape(
-                head_commit_id,
-                t"selected-parent path reached the root commit before {ui.revset('trunk()')}",
-                reason="reached_root_before_trunk",
-            )
-        return boundary, self._is_trunk_side_parent(
-            boundary_commit_id=boundary.commit_id,
-            trunk_commit_id=trunk.commit_id,
-        )
-
-    def _resolve_selected_head_and_trunk(
-        self,
-        revset: str,
-    ) -> tuple[LocalRevision, LocalRevision]:
-        """Resolve `revset` and `trunk()` in one call."""
-
-        try:
-            revisions = self._query_revisions_with_membership(
-                f"trunk() | ({revset})",
-                membership_revsets=("trunk()", revset),
-            )
-        except JjCommandError as error:
-            friendly_error = _revset_resolution_error(revset, error)
-            if friendly_error is not None:
-                raise friendly_error from error
-            raise
-
-        trunk: LocalRevision | None = None
-        selected: list[LocalRevision] = []
-        for revision, (is_trunk, is_selected) in revisions:
-            if is_trunk and trunk is None:
-                trunk = revision
-            if is_selected:
-                selected.append(revision)
-
-        if not selected:
-            raise CliError(t"Revset {ui.revset(revset)} did not resolve to a visible revision.")
-        if len(selected) > 1:
-            raise AmbiguousSelectionError(
-                t"Revset {ui.revset(revset)} resolved to more than one revision."
-            )
-
-        return self._validate_trunk(trunk), selected[0]
-
-    def _is_trunk_side_parent(
-        self,
-        *,
-        boundary_commit_id: str,
-        trunk_commit_id: str,
-    ) -> bool:
-        """Return whether the boundary was merged into trunk as a non-first parent.
-
-        Boundary discovery already found the nearest selected-parent commit that
-        reaches the current trunk. To decide whether that boundary itself still
-        belongs in the review stack, only its immediate trunk-merge children are
-        relevant; scanning every merge under `trunk()` would make routine stack
-        discovery scale with repository history.
-        """
-
-        merge_revisions = self._query_revisions(
-            f"children({_quote_revset_symbol(boundary_commit_id)}) & "
-            f"merges() & ::{_quote_revset_symbol(trunk_commit_id)}"
-        )
-        return any(boundary_commit_id in revision.parents[1:] for revision in merge_revisions)
 
     def get_config_string(self, key: str) -> str | None:
         """Return the string value of a jj config key, or None if unset.
@@ -1437,65 +1224,9 @@ class JjClient:
             raise JjCommandError(t"{ui.cmd(displayed_command)} failed: {displayed_message}")
         return completed.stdout
 
-    def _validate_reviewable_revision(
-        self,
-        revision: LocalRevision,
-        *,
-        allow_divergent: bool = False,
-        allow_immutable: bool = False,
-    ) -> None:
-        # Check the root-commit condition before immutable, because the root
-        # is always immutable in jj and "reached root before trunk()" is more
-        # actionable than "immutable commit".
-        if len(revision.parents) == 0:
-            raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                t"stack reached the root commit before {ui.revset('trunk()')}.",
-                reason="reached_root_before_trunk",
-            )
-        if revision.is_working_copy and revision.empty:
-            raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                "empty working-copy commits are not reviewable.",
-                reason="empty_working_copy",
-            )
-        if revision.is_working_copy and not revision.description.strip():
-            raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                t"describe it with {ui.cmd('jj describe')} before submitting it for review.",
-                reason="undescribed_working_copy",
-            )
-        if revision.hidden:
-            raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                "hidden commits are not reviewable.",
-                reason="hidden_commit",
-            )
-        if revision.immutable and not allow_immutable:
-            raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                "immutable commits are not reviewable.",
-                reason="immutable_commit",
-            )
-        if revision.divergent and not allow_divergent:
-            raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                "divergent changes are not supported.",
-                reason="divergent_change",
-            )
-        if len(revision.parents) > 1:
-            raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                "merge commits are not supported.",
-                reason="merge_commit",
-            )
-
 
 _EXPECTED_FIELD_COUNT = 11
 
-_DIVERGENT_CHANGE_ID_ERROR_PATTERN = re.compile(
-    r"Change ID `(?P<change_id>[0-9a-z]+)` is divergent"
-)
 _HTTP_URL_AUTHORITY_PATTERN = re.compile(
     r"(?P<scheme>https?://)(?P<authority>[^/\s'\"<>]+)",
     re.IGNORECASE,
@@ -1535,14 +1266,6 @@ def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | N
     if first_line.startswith("Error: Failed to parse revset:"):
         detail = first_line.removeprefix("Error: ").strip()
         return UsageError(t"Invalid revset {ui.revset(revset)}: {detail}.")
-
-    divergent_match = _DIVERGENT_CHANGE_ID_ERROR_PATTERN.search(first_line)
-    if divergent_match is not None:
-        return UnsupportedStackError.stack_shape(
-            divergent_match.group("change_id"),
-            "divergent changes are not supported.",
-            reason="divergent_change",
-        )
 
     return None
 

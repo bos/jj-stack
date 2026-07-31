@@ -15,6 +15,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    selected_stack,
     write_file,
 )
 from ..support.json_schema import assert_json_output_matches_schema
@@ -33,7 +34,7 @@ def test_list_json_reports_public_stack_rows(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = JjClient(repo).discover_review_stack(allow_immutable=True).head.change_id
+    change_id = selected_stack(repo).head.change_id
 
     exit_code = run_main(repo, config_path, "list", "--json")
     captured = capsys.readouterr()
@@ -68,7 +69,7 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     orphaned_change_id = stack.revisions[0].change_id
     state = ReviewStateStore.for_repo(repo).load()
     orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
@@ -111,7 +112,7 @@ def test_list_surfaces_orphaned_pull_request_when_no_live_stacks_remain(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    change_id = selected_stack(repo).head.change_id
     run_command(["jj", "abandon", change_id], repo)
 
     exit_code = run_main(repo, config_path, "list")
@@ -132,7 +133,7 @@ def test_list_warns_when_tracked_stack_was_rewritten_without_moving(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    change_id = selected_stack(repo).head.change_id
     run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 renamed"], repo)
 
     exit_code = run_main(repo, config_path, "list")
@@ -161,7 +162,7 @@ def test_list_does_not_warn_when_tracked_stack_still_starts_at_mutable_trunk(
     commit_file(repo, "alpha 1", "alpha-1.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    head_change_id = selected_stack(repo).head.change_id
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -179,7 +180,7 @@ def test_list_extends_tracked_stack_through_unsubmitted_local_descendant(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     commit_file(repo, "feature 2", "feature-2.txt")
-    head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    head_change_id = selected_stack(repo).head.change_id
 
     exit_code = run_main(repo, config_path, "ls")
     captured = capsys.readouterr()
@@ -220,7 +221,7 @@ def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
 
-    stack = JjClient(repo).discover_review_stack(allow_immutable=True)
+    stack = selected_stack(repo)
     middle_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -246,7 +247,7 @@ def test_list_keeps_current_tracked_stack_when_it_becomes_immutable(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    feature = JjClient(repo).discover_review_stack(allow_immutable=True).head.commit_id
+    feature = selected_stack(repo).head.commit_id
     run_command(
         [
             "jj",
@@ -258,7 +259,7 @@ def test_list_keeps_current_tracked_stack_when_it_becomes_immutable(
         ],
         repo,
     )
-    head_change_id = JjClient(repo).discover_review_stack(allow_immutable=True).head.change_id
+    head_change_id = selected_stack(repo).head.change_id
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -363,7 +364,7 @@ def test_list_does_not_extend_through_modified_working_copy(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    feature_change_id = JjClient(repo).discover_review_stack().head.change_id
+    feature_change_id = selected_stack(repo).head.change_id
     write_file(repo / "scratch.txt", "in progress\n")
 
     exit_code = run_main(repo, config_path, "list")
@@ -382,7 +383,7 @@ def test_list_does_not_extend_through_another_workspaces_working_copy(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    feature_change_id = JjClient(repo).discover_review_stack().head.change_id
+    feature_change_id = selected_stack(repo).head.change_id
     other_workspace = tmp_path / "other-workspace"
     run_command(
         [
@@ -470,7 +471,7 @@ def test_list_and_view_agree_that_a_divergent_change_is_an_incomplete_report(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = JjClient(repo).discover_review_stack(allow_immutable=True).head.change_id
+    change_id = selected_stack(repo).head.change_id
 
     # Two concurrent operations rewriting one change is how divergence reaches a tracked
     # stack in real use, such as edits made from two workspaces or two machines.

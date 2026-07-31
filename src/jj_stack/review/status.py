@@ -40,6 +40,8 @@ from jj_stack.review.change_status import (
     classify_review_status_revision,
     submitted_state_disagreement,
 )
+from jj_stack.review.path import SelectedReviewPath
+from jj_stack.review.selected import select_review_path, select_review_path_containing_change
 from jj_stack.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -207,6 +209,7 @@ def prepare_status(
     on_fetch_isolation_change: Callable[[ReviewFetchIsolation], None] | None = None,
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
+    containing_change_id: str | None = None,
 ) -> PreparedStatus:
     """Resolve local status inputs before any GitHub network inspection."""
 
@@ -215,10 +218,11 @@ def prepare_status(
     state = state_store.load()
     github_target = resolve_github_target(jj_client.list_git_remotes())
 
-    stack, fetched_remote_state = _resolve_selected_stack(
+    selected_path, fetched_remote_state = _resolve_selected_stack(
         dry_run=dry_run,
         fetch_only_when_tracked=fetch_only_when_tracked,
         fetch_remote_state=fetch_remote_state,
+        containing_change_id=containing_change_id,
         jj_client=jj_client,
         on_fetch_isolation_change=on_fetch_isolation_change,
         re_resolve_after_remote_refresh=re_resolve_after_remote_refresh,
@@ -232,7 +236,7 @@ def prepare_status(
         context=context,
         remote=github_target.remote,
         remote_error=github_target.remote_error,
-        stack=stack,
+        stack=selected_path.stack,
         state=state,
     )
     logger.debug(
@@ -254,13 +258,14 @@ def _resolve_selected_stack(
     dry_run: bool,
     fetch_only_when_tracked: bool,
     fetch_remote_state: bool,
+    containing_change_id: str | None,
     jj_client: JjClient,
     on_fetch_isolation_change: Callable[[ReviewFetchIsolation], None] | None,
     re_resolve_after_remote_refresh: bool,
     remote: GitRemote | None,
     revset: str | None,
     state: ReviewState,
-) -> tuple[LocalStack, bool]:
+) -> tuple[SelectedReviewPath, bool]:
     """Resolve the selected stack, fetching remote state first when requested.
 
     Returns the resolved stack and whether a fetch ran. The fetch/resolve order
@@ -276,8 +281,18 @@ def _resolve_selected_stack(
       stands
     """
 
-    def resolve() -> LocalStack:
-        return jj_client.discover_review_stack(revset, allow_divergent=True, allow_immutable=True)
+    def resolve() -> SelectedReviewPath:
+        if containing_change_id is not None:
+            return select_review_path_containing_change(
+                change_id=containing_change_id,
+                jj_client=jj_client,
+                state=state,
+            )
+        return select_review_path(
+            jj_client=jj_client,
+            revset=revset,
+            state=state,
+        )
 
     if remote is None or not fetch_remote_state:
         return resolve(), False
@@ -289,20 +304,17 @@ def _resolve_selected_stack(
         )
         return resolve(), True
 
-    stack = resolve()
-    if fetch_only_when_tracked and not any(
-        state.review_identities.get(revision.change_id) is not None
-        for revision in stack.revisions
-    ):
-        return stack, False
+    selected_path = resolve()
+    if fetch_only_when_tracked and not selected_path.tracked_change_ids:
+        return selected_path, False
     jj_client.fetch_remote(
         remote=remote.name,
         dry_run=dry_run,
         on_isolation_change=on_fetch_isolation_change,
     )
     if re_resolve_after_remote_refresh:
-        stack = resolve()
-    return stack, True
+        selected_path = resolve()
+    return selected_path, True
 
 
 def stream_status(

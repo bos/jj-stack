@@ -396,40 +396,6 @@ objective, immediate adopters, required deletions, retained scenarios, tests, do
 impact, complexity evidence, and review gate. The implementing commit deletes its own section
 from this file.
 
-### Slice 2: replace selected-stack discovery with the small pure model
-
-**Objective:** Introduce the minimum immutable observation and pure projection needed to derive
-an ordinary selected linear review path, then replace the old selected-path authority.
-
-**Dependencies:** Accepted Slice 1 plus the accepted plan-amendment commit. Do not use a rejected
-rewrite as an ancestor, implementation base, or tree source.
-
-**Boundary and adopters:** The adapter batches the selected chain, copies needed to resolve its
-selectors, fetched-trunk membership, and tracking annotations. Immediate adopters are the shared
-selection path used by `view`, `submit`, `merge`, selected `sync`, and selected `unstack`.
-`checkout` and `relink` adopt only the shared selector fact they currently need; do not force
-their unrelated identity policy into the model.
-
-**Retained scenarios:** Clean ordinary rebase recovery, unique mutable selection beside one
-immutable trunk result, the cheap multiple-mutable stop, and ordinary selected overlap.
-
-**Required deletion:** Delete `JjClient.discover_review_stack`, its boundary helpers and policy
-flags, selected-path validation in the client, and command-local copy or path reconstruction
-superseded by the projection. Delete superseded mocks, fixtures, and tests. Complete the rejected
-diff deletion/non-port ledger before requesting review.
-
-**Tests:** Small pure examples for the selected laws, focused real-`jj` observation coverage, one
-clean rebase selection regression by change ID and PR, and only distinct selected-command risks.
-Do not generate unsupported graphs. Run `./check.py`.
-
-**Documentation:** Update `design.md`, implementation strategy, user docs, and help only for
-behavior and architecture that land in this commit. Delete rejected target-architecture or
-diagnostic prose rather than carrying it forward.
-
-**Review gate:** Separate architecture and product reviewers confirm purity, the narrow
-supported-domain contract, deletion of the old selected authority, the ledger, and before/after
-complexity evidence. Any materially larger replacement is a design stop.
-
 ### Slice 3: replace ordinary repository path discovery
 
 **Objective:** Extend the accepted small projection to inventory ordinary linear paths with

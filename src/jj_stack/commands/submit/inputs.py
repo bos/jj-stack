@@ -8,6 +8,7 @@ from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.resolution import select_submit_remote
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import resolve_review_branches
+from jj_stack.review.selected import require_reviewable_revisions, select_review_path
 
 from .descriptions import resolve_generated_descriptions
 from .models import (
@@ -27,8 +28,13 @@ def prepare_submit_inputs(
     client = context.jj_client
     state_store = context.state_store
     remote = select_submit_remote(client.list_git_remotes())
-    stack = client.discover_review_stack(options.revset)
     state = state_store.load()
+    stack = select_review_path(
+        jj_client=client,
+        revset=options.revset,
+        state=state,
+    ).stack
+    require_reviewable_revisions(stack.revisions)
     for revision in stack.revisions:
         if state.issues_for(revision.change_id):
             raise CliError(

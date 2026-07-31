@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_stack.errors import EXIT_GITHUB
-from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
 
 from ..support.integration_helpers import (
@@ -12,6 +11,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_manual_pr,
     init_fake_github_repo_with_submitted_feature,
     run_command,
+    selected_stack,
 )
 from .submit_command_helpers import (
     configure_submit_environment,
@@ -28,7 +28,7 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
     repo, fake_repo = init_fake_github_repo_with_manual_pr(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    change_id = selected_stack(repo).revisions[-1].change_id
     manual_bookmark = fake_repo.pull_requests[1].head_ref
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 relinked"],
@@ -52,7 +52,7 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
 
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
-    rewritten_stack = JjClient(repo).discover_review_stack(change_id)
+    rewritten_stack = selected_stack(repo, change_id)
 
     assert exit_code == 0
     assert "PR #1 updated" in captured.out
@@ -72,7 +72,7 @@ def test_relink_replaces_stale_submitted_commit_with_remote_pr_head(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    change_id = selected_stack(repo).revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
     identity = initial_state.review_identities[change_id]
@@ -116,7 +116,7 @@ def test_relink_reports_missing_pull_request_without_traceback(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    change_id = selected_stack(repo).revisions[-1].change_id
 
     exit_code = run_main(repo, config_path, "relink", "999", change_id)
     captured = capsys.readouterr()
@@ -137,7 +137,7 @@ def test_relink_rejects_pull_request_branch_for_a_different_change(
     # The template leaves the PR branch on `feature 1`; stack a new `feature 2`
     # on top so the relink target is a different revision.
     commit_file(repo, "feature 2", "feature-2.txt")
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     top_change_id = stack.revisions[-1].change_id
 
     exit_code = run_main(repo, config_path, "relink", "1", top_change_id)
@@ -156,7 +156,7 @@ def test_relink_rejects_pull_request_with_missing_remote_head_branch(
     repo, fake_repo = init_fake_github_repo_with_manual_pr(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    change_id = selected_stack(repo).revisions[-1].change_id
     manual_bookmark = fake_repo.pull_requests[1].head_ref
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 relinked"],

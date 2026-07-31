@@ -14,6 +14,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    selected_stack,
 )
 
 
@@ -130,7 +131,7 @@ def test_checkout_rejects_missing_parent_remote_branch_without_partial_tracking(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
     state = ReviewStateStore.for_repo(repo).load()
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     bottom_branch = state.review_identities[stack.revisions[0].change_id].head_ref
     resolve_state_path(repo).unlink()
     run_command(

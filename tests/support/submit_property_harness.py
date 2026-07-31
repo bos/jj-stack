@@ -15,7 +15,7 @@ from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline as St
 from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
-from .integration_helpers import commit_file, run_command, write_file
+from .integration_helpers import commit_file, run_command, selected_stack, write_file
 from .submit_property_scenarios import (
     DriftOperation,
     ExternalDriftScenario,
@@ -469,7 +469,7 @@ def _create_labeled_stack(repo: Path, labels: tuple[str, ...]) -> dict[str, str]
     for label in labels:
         commit_file(repo, subject_for_label(label), filename_for_label(label))
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     assert tuple(revision.subject for revision in stack.revisions) == tuple(
         subject_for_label(label) for label in labels
     )
@@ -594,7 +594,7 @@ def _apply_stack_edit_operation(
             subject_for_label(operation.new_label),
             filename_for_label(operation.new_label),
         )
-        inserted_stack = JjClient(repo).discover_review_stack()
+        inserted_stack = selected_stack(repo)
         labels_to_change_ids[operation.new_label] = inserted_stack.head.change_id
         if next_label is not None:
             run_command(
@@ -624,7 +624,7 @@ def _apply_stack_edit_operation(
             subject_for_label(operation.new_label),
             filename_for_label(operation.new_label),
         )
-        inserted_stack = JjClient(repo).discover_review_stack()
+        inserted_stack = selected_stack(repo)
         labels_to_change_ids[operation.new_label] = inserted_stack.head.change_id
         return [
             *live_labels[:index],
@@ -702,7 +702,7 @@ def _discover_stack_for_labels(
     labels_to_change_ids: dict[str, str],
 ):
     head_change_id = labels_to_change_ids[labels[-1]]
-    stack = JjClient(repo).discover_review_stack(head_change_id)
+    stack = selected_stack(repo, head_change_id)
     expected_change_ids = tuple(labels_to_change_ids[label] for label in labels)
     assert tuple(revision.change_id for revision in stack.revisions) == expected_change_ids
     return stack

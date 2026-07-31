@@ -15,6 +15,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    selected_stack,
 )
 from ..support.json_schema import assert_json_output_matches_schema
 from ..support.output_assertions import assert_output_contains
@@ -32,7 +33,7 @@ def test_view_json_reports_public_stack_status(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    change_id = selected_stack(repo).head.change_id
 
     exit_code = run_main(repo, config_path, "view", "--json")
     captured = capsys.readouterr()
@@ -77,7 +78,7 @@ def test_view_rejects_empty_working_copy_from_another_workspace(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    feature_change_id = JjClient(repo).discover_review_stack().head.change_id
+    feature_change_id = selected_stack(repo).head.change_id
     other_workspace = tmp_path / "other-workspace"
     run_command(
         [
@@ -108,7 +109,7 @@ def test_view_rejects_empty_working_copy_inside_stack_from_another_workspace(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    feature_change_id = JjClient(repo).discover_review_stack().head.change_id
+    feature_change_id = selected_stack(repo).head.change_id
     base_workspace = tmp_path / "base-workspace"
     run_command(
         [
@@ -157,12 +158,21 @@ def test_view_can_select_a_stack_by_pull_request_number(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     first_change_id = stack.revisions[0].change_id
     second_change_id = stack.revisions[1].change_id
     state = ReviewStateStore.for_repo(repo).load()
     first_pr_number = state.review_identities[first_change_id].pr_number
     second_pr_number = state.review_identities[second_change_id].pr_number
+    original_query = JjClient.query_revisions_with_membership
+    membership_queries = 0
+
+    def count_query(self, *args, **kwargs):
+        nonlocal membership_queries
+        membership_queries += 1
+        return original_query(self, *args, **kwargs)
+
+    monkeypatch.setattr(JjClient, "query_revisions_with_membership", count_query)
 
     exit_code = run_main(
         repo,
@@ -174,11 +184,45 @@ def test_view_can_select_a_stack_by_pull_request_number(
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert membership_queries == 1
     assert f"Using PR #{first_pr_number} -> {first_change_id}" in captured.out
     assert "feature 1" in captured.out
     assert "PR #1" in captured.out
     assert "feature 2" not in captured.out
     assert f"PR #{second_pr_number}" not in captured.out
+
+
+def test_view_selects_local_copy_after_clean_rebase_merge_by_change_id_and_pr(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = selected_stack(repo)
+    change_id = stack.head.change_id
+    identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
+
+    fake_repo.apply_rebase_merge(fake_repo.pull_requests[identity.pr_number])
+    JjClient(repo).fetch_remote(remote="origin")
+
+    change_exit = run_main(repo, config_path, "view", change_id)
+    change_output = capsys.readouterr()
+    pr_exit = run_main(
+        repo,
+        config_path,
+        "view",
+        "--pull-request",
+        str(identity.pr_number),
+    )
+    pr_output = capsys.readouterr()
+
+    assert change_exit == 0
+    assert pr_exit == 0
+    assert "feature 1" in change_output.out
+    assert "feature 1" in pr_output.out
+    assert f"PR #{identity.pr_number}" in change_output.out
+    assert f"PR #{identity.pr_number}" in pr_output.out
 
 
 def test_view_warns_only_for_connected_stack_built_on_selected_head(
@@ -194,13 +238,13 @@ def test_view_warns_only_for_connected_stack_built_on_selected_head(
     commit_file(repo, "alpha 2", "alpha-2.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    alpha_head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    alpha_head_change_id = selected_stack(repo).head.change_id
 
     # Connected stack built on the selected head, then advanced past its submit.
     commit_file(repo, "connected 1", "connected-1.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    connected_head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    connected_head_change_id = selected_stack(repo).head.change_id
     # Rewriting the submitted change gives it a new commit ID, which is the
     # staleness signal the advisory derives from the DAG.
     run_command(
@@ -213,7 +257,7 @@ def test_view_warns_only_for_connected_stack_built_on_selected_head(
     commit_file(repo, "unrelated 1", "unrelated-1.txt")
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
-    unrelated_head_change_id = JjClient(repo).discover_review_stack().head.change_id
+    unrelated_head_change_id = selected_stack(repo).head.change_id
     run_command(
         ["jj", "describe", "-r", unrelated_head_change_id, "-m", "unrelated 1 edited"],
         repo,
@@ -250,7 +294,7 @@ def test_view_warns_after_middle_change_is_split_into_sibling_stack(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_a = stack.revisions[0].change_id
     change_b = stack.revisions[1].change_id
     change_c = stack.revisions[2].change_id
@@ -342,7 +386,7 @@ def test_view_renders_base_parent_for_stack_forked_from_trunk_ancestor(
 
     run_command(["jj", "new", base_commit_id], repo)
     commit_file(repo, "feature 1", "feature-1.txt")
-    stack = JjClient(repo).discover_review_stack(allow_immutable=True)
+    stack = selected_stack(repo)
 
     exit_code = run_main(repo, config_path, "view")
     captured = capsys.readouterr()
@@ -365,7 +409,7 @@ def test_view_ignores_off_path_reviewable_child(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     feature_1_commit_id = stack.revisions[0].commit_id
     feature_2_commit_id = stack.revisions[-1].commit_id
     run_command(["jj", "new", feature_1_commit_id], repo)
@@ -457,7 +501,7 @@ def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
@@ -513,7 +557,7 @@ def test_view_reports_unsubmitted_after_state_loss(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     resolve_state_path(repo).unlink()
 
@@ -547,7 +591,7 @@ def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     resolve_state_path(repo).unlink()
 
@@ -583,7 +627,7 @@ def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
@@ -611,7 +655,7 @@ def test_view_reports_merged_pull_request_state(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     fake_repo.pull_requests[1].state = "closed"

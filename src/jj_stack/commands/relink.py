@@ -23,6 +23,7 @@ from jj_stack.review.branches import (
     review_branch_matches_change,
 )
 from jj_stack.review.observation import duplicate_review_claim_change_ids
+from jj_stack.review.selected import require_reviewable_revisions, select_review_path
 from jj_stack.review.selection import resolve_selected_revset
 from jj_stack.state.operation_lock import acquire_operation_lock
 
@@ -77,7 +78,12 @@ async def _run_relink_async(
         require_explicit=True,
         revset=revset,
     )
-    stack = client.discover_review_stack(selected)
+    stack = select_review_path(
+        jj_client=client,
+        revset=selected,
+        state=context.state_store.load(),
+    ).stack
+    require_reviewable_revisions(stack.revisions)
     if not stack.revisions:
         raise CliError("The selected stack has no changes to review.")
     revision = stack.head

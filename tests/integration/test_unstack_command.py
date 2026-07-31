@@ -22,6 +22,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    selected_stack,
 )
 from .submit_command_helpers import (
     configure_submit_environment,
@@ -45,7 +46,7 @@ def test_unstack_apply_closes_native_stack_and_preserves_exact_tracking(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.head.change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
@@ -113,7 +114,7 @@ def test_unstack_dissolves_resource_and_preserves_merged_pull_request_history(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
@@ -139,7 +140,7 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    change_id = selected_stack(repo).head.change_id
     fake_repo.native_stacks = {7: (1, 2)}
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     app = create_app(FakeGithubState.single_repository(fake_repo))
@@ -200,7 +201,7 @@ def test_unstack_local_forgets_tracking_without_closing_pull_request(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     branch = state_store.load().review_identities[change_id].head_ref
@@ -224,7 +225,7 @@ def test_unstack_local_dry_run_leaves_tracking_and_pull_request_unchanged(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    change_id = selected_stack(repo).head.change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
 
@@ -289,13 +290,22 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     first_change_id = stack.revisions[0].change_id
     second_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
     first_pr_number = initial_state.review_identities[first_change_id].pr_number
     second_pr_number = initial_state.review_identities[second_change_id].pr_number
+    original_query = JjClient.query_revisions_with_membership
+    membership_queries = 0
+
+    def count_query(self, *args, **kwargs):
+        nonlocal membership_queries
+        membership_queries += 1
+        return original_query(self, *args, **kwargs)
+
+    monkeypatch.setattr(JjClient, "query_revisions_with_membership", count_query)
 
     exit_code = run_main(
         repo,
@@ -308,6 +318,7 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     refreshed_state = state_store.load()
 
     assert exit_code == 0
+    assert membership_queries == 1
     assert f"Using PR #{first_pr_number} -> {first_change_id}" in captured.out
     assert fake_repo.pull_requests[first_pr_number].state == "closed"
     assert fake_repo.pull_requests[second_pr_number].state == "open"
@@ -435,7 +446,7 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
@@ -482,7 +493,7 @@ def test_unstack_apply_reports_blocked_when_github_is_unavailable(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     initial_state = ReviewStateStore.for_repo(repo).load()
     app = create_app(FakeGithubState.single_repository(fake_repo))
@@ -520,7 +531,7 @@ def test_unstack_apply_cleanup_deletes_review_branches_comments_and_tracking(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -637,7 +648,7 @@ def test_unstack_cleanup_pull_request_retires_orphaned_pr(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -682,7 +693,7 @@ def test_unstack_cleanup_orphans_retries_base_after_dependent_closes(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_ids = tuple(revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
@@ -754,7 +765,7 @@ def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_ids = tuple(revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     fake_repo.pull_requests[2].base_ref = "main"
@@ -794,7 +805,7 @@ def test_unstack_cleanup_orphans_rejects_pr_claimed_by_live_change_before_mutati
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     orphaned_change_id = stack.revisions[0].change_id
     live_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
@@ -836,7 +847,7 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -870,7 +881,7 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_miss
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     bottom_change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -914,7 +925,7 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_target_drifted(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -960,7 +971,7 @@ def test_unstack_cleanup_pull_request_blocks_when_remote_branch_drifted_external
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     bottom_change_id = stack.revisions[0].change_id
     head_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
@@ -1010,7 +1021,7 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_pr_is_no_longer_on_githu
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     bottom_change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -1046,7 +1057,7 @@ def test_unstack_cleanup_pull_request_reports_blocked_when_github_is_unavailable
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    change_id = selected_stack(repo).revisions[-1].change_id
     initial_state = ReviewStateStore.for_repo(repo).load()
     app = create_app(FakeGithubState.single_repository(fake_repo))
     run_command(["jj", "abandon", change_id], repo)
@@ -1087,7 +1098,7 @@ def test_unstack_cleanup_pull_request_keeps_tracking_when_cleanup_blocks(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    change_id = selected_stack(repo).head.change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
     bookmark = initial_state.review_identities[change_id].head_ref
@@ -1125,7 +1136,7 @@ def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     bottom_change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
@@ -1165,7 +1176,7 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     orphaned_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -1211,7 +1222,7 @@ def test_unstack_apply_blocks_when_github_no_longer_reports_the_cached_pull_requ
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
@@ -1234,7 +1245,7 @@ def test_unstack_apply_checkpoints_prior_progress_before_later_block(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     first_change_id = stack.revisions[0].change_id
     head_change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
@@ -1274,7 +1285,7 @@ def test_unstack_apply_requires_checkout_after_sparse_state_loss(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     resolve_state_path(repo).unlink()
 
@@ -1296,7 +1307,7 @@ def test_unstack_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()

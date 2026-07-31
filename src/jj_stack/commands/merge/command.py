@@ -31,7 +31,6 @@ from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepository
-from jj_stack.review.discovery import discover_stacks_from_revisions
 from jj_stack.review.observation import observe_reviews
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -117,31 +116,7 @@ def _resolve_merge_target(
             revset=revset,
         )
         console.note(t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}")
-        selected = context.jj_client.resolve_revision(resolved_revset)
-        stacks = discover_stacks_from_revisions(
-            jj_client=context.jj_client,
-            revisions=(selected,),
-            include_working_copies=True,
-        )
-        matching = tuple(
-            stack
-            for stack in stacks
-            if resolved_revset in {revision.change_id for revision in stack.revisions}
-        )
-        if not matching:
-            raise CliError(
-                t"PR #{pull_request_number} is linked to {ui.change_id(resolved_revset)}, "
-                t"which is not on any current review path.",
-                hint=t"Run {ui.cmd('jj-stack view')} to find where that change went, or "
-                t"{ui.cmd('jj-stack sync')} if it already merged.",
-            )
-        if len(matching) != 1:
-            raise CliError(
-                t"PR #{pull_request_number} belongs to more than one local review path.",
-                hint=t"Run {ui.cmd('jj-stack merge <head-change-id>')} with the head of the "
-                t"stack you want to merge.",
-            )
-        return matching[0].head.change_id, resolved_revset
+        return None, resolved_revset
     return (
         resolve_selected_revset(
             command_label="merge",
@@ -162,6 +137,7 @@ def _prepare_merge(
     target_change_id: str | None,
 ) -> PreparedMerge:
     prepared_status = prepare_status(
+        containing_change_id=target_change_id,
         context=context,
         dry_run=dry_run,
         fetch_remote_state=True,

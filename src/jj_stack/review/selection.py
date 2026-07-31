@@ -160,24 +160,7 @@ def resolve_linked_change_for_pull_request(
             hint=t"{action_label} by explicit revision after repairing the links.",
         )
 
-    change_id = matching_change_ids[0]
-    visible_revisions = jj_client.query_revisions_by_change_ids((change_id,)).get(
-        change_id,
-        (),
-    )
-    if not visible_revisions:
-        raise CliError(
-            t"PR #{pull_request_number} is linked to local change {ui.change_id(change_id)}, "
-            t"but that change is not visible.",
-            hint=t"{action_label} by revision once it is visible again.",
-        )
-    if len(visible_revisions) > 1:
-        raise AmbiguousSelectionError(
-            t"PR #{pull_request_number} is linked to local change {ui.change_id(change_id)}, "
-            t"but that change is divergent.",
-            hint=t"{action_label} by explicit revision after resolving it.",
-        )
-    return pull_request_number, change_id
+    return pull_request_number, matching_change_ids[0]
 
 
 def _active_change_ids_for_pull_request(

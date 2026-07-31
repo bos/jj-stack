@@ -156,9 +156,9 @@ as targeted CLI diagnostics, not Python tracebacks.
 
 ### `jj` adapter
 
-Wraps subprocess access to `jj` and exposes typed operations: resolve a revset, inspect the
-working-copy/default submit target, enumerate the linear review chain, read the local DAG and
-ordinary bookmark state, and surface stale-workspace errors distinctly so commands can suggest
+Wraps subprocess access to `jj` and exposes typed observations and mutations: resolve a revset,
+read bounded revisions with caller-supplied membership flags, inspect working copies and ordinary
+bookmarks, and surface stale-workspace errors distinctly so commands can suggest
 `jj workspace update-stale`. It detects imported managed review bookmarks only to preserve the
 fail-closed boundary around the remote-only review namespace.
 
@@ -225,6 +225,15 @@ policy to the result and keep exact identity, baseline, PR, and branch values fo
 mutations.
 
 This is where most correctness lives.
+
+Selected path planning has a smaller pure boundary in `review/path.py`. The selected adapter
+observes selector copies, the ordinary first-parent chain, fetched-trunk membership, and tracking
+annotations in one bounded `jj` query. For a full change ID or linked pull request, the pure
+projection prefers the unique mutable local copy outside fetched trunk's first-parent path and
+stops when matches remain only on that path. A sole immutable reviewed side parent from a native
+merge remains outside the path and selectable until `sync`. The projection returns one
+parent-connected `LocalStack`. Tracking annotates that path and cannot create or reorder it.
+Command-owned GitHub identity, merge evidence, and mutation policy stay outside the projection.
 
 ### GitHub client
 

@@ -53,7 +53,6 @@ from jj_stack.github.client import GithubClient, GithubClientError, build_github
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import (
     GithubRepoAddress,
-    resolve_github_target,
 )
 from jj_stack.github.stack_comments import stack_comment_label
 from jj_stack.jj.cli_args import JjCliArgs
@@ -68,6 +67,7 @@ from jj_stack.review.change_status import (
 )
 from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.observation import RepositoryObservation, observe_reviews
+from jj_stack.review.selected import select_review_path
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
@@ -75,8 +75,6 @@ from jj_stack.review.selection import (
     resolve_selected_revset,
 )
 from jj_stack.review.status import (
-    PreparedRevision,
-    PreparedStack,
     PreparedStatus,
     ReviewStatusRevision,
     StatusResult,
@@ -341,13 +339,13 @@ def _run_local_unstack(
         pull_request=pull_request,
         revset=revset,
     )
-    with console.spinner(description="Inspecting jj stack"):
-        stack = context.jj_client.discover_review_stack(
-            selected_revset,
-            allow_divergent=True,
-            allow_immutable=True,
-        )
     state = context.state_store.load()
+    with console.spinner(description="Inspecting jj stack"):
+        stack = select_review_path(
+            jj_client=context.jj_client,
+            revset=selected_revset,
+            state=state,
+        ).stack
     actions: list[LocalUnstackAction] = []
     retirements: list[tuple[str, ReviewIdentity, SubmittedBaseline]] = []
     for revision in stack.revisions:
@@ -566,17 +564,6 @@ def prepare_close(
     state_store = context.state_store
     if not dry_run:
         state_store.require_writable()
-    fast_path = _prepare_untracked_close_fast_path(
-        context=context,
-        revset=revset,
-    )
-    if fast_path is not None:
-        return PreparedClose(
-            cleanup=cleanup,
-            context=context,
-            dry_run=dry_run,
-            prepared_status=fast_path,
-        )
     prepared_status = prepare_status(
         context=context,
         fetch_remote_state=False,
@@ -584,7 +571,14 @@ def prepare_close(
         revset=revset,
     )
     remote = prepared_status.prepared.remote
-    if cleanup and remote is not None:
+    if (
+        cleanup
+        and remote is not None
+        and any(
+            revision.review_identity is not None
+            for revision in prepared_status.prepared.status_revisions
+        )
+    ):
         context.jj_client.ensure_review_fetch_isolation(
             remote=remote.name,
             dry_run=dry_run,
@@ -595,61 +589,6 @@ def prepare_close(
         context=context,
         dry_run=dry_run,
         prepared_status=prepared_status,
-    )
-
-
-def _prepare_untracked_close_fast_path(
-    *,
-    context: CommandContext,
-    revset: str | None,
-) -> PreparedStatus | None:
-    """Build the no-op close path without remote review discovery.
-
-    Both plain `unstack` and `unstack --cleanup` are true no-ops when the selected
-    stack has no saved review identity at all. In that case we can skip
-    remote review discovery and GitHub preparation while preserving the normal
-    remote diagnostics and stale-operation retirement behavior.
-    """
-
-    client = context.jj_client
-    state_store = context.state_store
-    stack = client.discover_review_stack(
-        revset,
-        allow_divergent=True,
-        allow_immutable=True,
-    )
-    state = state_store.load()
-
-    status_revisions: list[PreparedRevision] = []
-    for revision in stack.revisions:
-        review_identity = state.review_identities.get(revision.change_id)
-        if review_identity is not None:
-            return None
-        status_revisions.append(
-            PreparedRevision(
-                branch=None,
-                revision=revision,
-                review_identity=None,
-                submitted_baseline=state.submitted_baselines.get(revision.change_id),
-            )
-        )
-
-    github_target = resolve_github_target(client.list_git_remotes())
-
-    prepared = PreparedStack(
-        client=client,
-        remote=github_target.remote,
-        remote_error=github_target.remote_error,
-        remote_targets={},
-        stack=stack,
-        state=state,
-        status_revisions=tuple(status_revisions),
-    )
-    return PreparedStatus(
-        github_target=github_target,
-        prepared=prepared,
-        selected_revset=stack.selected_revset,
-        base_parent_subject=stack.base_parent.subject,
     )
 
 

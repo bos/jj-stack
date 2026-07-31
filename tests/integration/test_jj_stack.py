@@ -7,6 +7,8 @@ import pytest
 
 from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
+from jj_stack.models.review_state import ReviewState
+from jj_stack.review.selected import select_review_path
 from jj_stack.ui import plain_text
 
 from ..support.integration_helpers import (
@@ -16,18 +18,21 @@ from ..support.integration_helpers import (
 )
 
 
-def test_discover_review_stack_walks_linear_history_from_default_head(tmp_path: Path) -> None:
+def test_selected_path_observes_linear_history_from_default_head(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = select_review_path(
+        jj_client=JjClient(repo),
+        state=ReviewState(),
+    ).stack
 
     assert stack.selected_revset == "@-"
     assert [revision.subject for revision in stack.revisions] == ["feature 1", "feature 2"]
 
 
-def test_discover_review_stack_ignores_off_path_reviewable_child(tmp_path: Path) -> None:
+def test_selected_path_ignores_off_path_reviewable_child(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     commit_file(repo, "feature 1", "feature-1.txt")
     feature_1 = _current_parent_commit_id(repo)
@@ -36,7 +41,11 @@ def test_discover_review_stack_ignores_off_path_reviewable_child(tmp_path: Path)
     run_command(["jj", "new", feature_1], repo)
     commit_file(repo, "feature side", "feature-side.txt")
 
-    stack = JjClient(repo).discover_review_stack(feature_2)
+    stack = select_review_path(
+        jj_client=JjClient(repo),
+        revset=feature_2,
+        state=ReviewState(),
+    ).stack
 
     assert [revision.subject for revision in stack.revisions] == ["feature 1", "feature 2"]
 

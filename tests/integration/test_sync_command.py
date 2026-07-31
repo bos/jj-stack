@@ -16,6 +16,7 @@ from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    selected_stack,
     write_file,
 )
 from ..support.submit_property_harness import advance_remote_trunk, update_remote_ref
@@ -50,7 +51,7 @@ def test_sync_dry_run_previews_rebase_and_skips_submit_preview(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     top_change_id = stack.revisions[1].change_id
     top_commit_id = stack.revisions[1].commit_id
     original_base_ref = fake_repo.pull_requests[2].base_ref
@@ -96,7 +97,7 @@ def test_sync_converges_the_local_stack_after_merge(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.pull_requests[2].is_draft = True
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     top_change_id = stack.revisions[1].change_id
     top_commit_id = stack.revisions[1].commit_id
 
@@ -127,7 +128,7 @@ def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    on_trunk, top = JjClient(repo).discover_review_stack().revisions
+    on_trunk, top = selected_stack(repo).revisions
     _squash_merge_pull_request(fake_repo, 1)
 
     def fail_retire(*_args: object, **_kwargs: object) -> None:
@@ -156,7 +157,7 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    (on_trunk,) = JjClient(repo).discover_review_stack().revisions
+    (on_trunk,) = selected_stack(repo).revisions
     # Global recovery acts only on an exact submitted commit reachable from trunk, which a
     # merge commit produces and a squash merge does not.
     fake_repo.apply_merge_commit((fake_repo.pull_requests[1],))
@@ -184,7 +185,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = selected_stack(repo).revisions
     remote_survivor = _simulate_native_partial_merge(fake_repo)
 
     exit_code = run_main(repo, config_path, "sync", survivor.change_id)
@@ -235,7 +236,7 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = selected_stack(repo).revisions
     _simulate_native_partial_merge(fake_repo)
     state_before = state_store.load()
     run_command(["jj", "edit", survivor.change_id], repo)
@@ -266,7 +267,7 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = selected_stack(repo).revisions
     _simulate_native_partial_merge(fake_repo)
     fake_repo.pull_requests[2].state = "closed"
     state_before = state_store.load()
@@ -292,7 +293,7 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = selected_stack(repo).revisions
     baseline_before = state_store.load().submitted_baselines[survivor.change_id]
     remote_survivor = _simulate_native_partial_merge(fake_repo)
     real_run_submit = sync_command.run_submit_async
@@ -331,7 +332,7 @@ def test_sync_checks_native_branch_drift_before_rewriting_local_history(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = selected_stack(repo).revisions
     _simulate_native_partial_merge(fake_repo)
     state_before = state_store.load()
     require_targets = JjClient._require_remote_branch_targets_at_url
@@ -378,7 +379,7 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    on_trunk, survivor = JjClient(repo).discover_review_stack().revisions
+    on_trunk, survivor = selected_stack(repo).revisions
     first_remote_survivor = _simulate_native_partial_merge(fake_repo)
     require_targets = JjClient._require_remote_branch_targets_at_url
     checks = 0
@@ -446,7 +447,7 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    first, second = JjClient(repo).discover_review_stack().revisions
+    first, second = selected_stack(repo).revisions
     state_store = ReviewStateStore.for_repo(repo)
     second_baseline = state_store.load().submitted_baselines[second.change_id]
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
@@ -510,7 +511,7 @@ def test_sync_does_not_trust_active_native_head_drift_without_merged_history(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
-    _first, second = JjClient(repo).discover_review_stack().revisions
+    _first, second = selected_stack(repo).revisions
     baseline = state_store.load().submitted_baselines[second.change_id]
     fake_repo.native_stacks = {7: (1, 2)}
     drifted_head = fake_repo.force_push_pull_request_head(fake_repo.pull_requests[2])
@@ -531,11 +532,11 @@ def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     on_trunk, reviewed = stack.revisions
     run_command(["jj", "new", on_trunk.change_id], repo)
     commit_file(repo, "local middle", "local-middle.txt")
-    local_middle = JjClient(repo).discover_review_stack().head
+    local_middle = selected_stack(repo).head
     run_command(["jj", "rebase", "-r", reviewed.change_id, "-d", local_middle.change_id], repo)
     reviewed_before = JjClient(repo).resolve_revision(reviewed.change_id).commit_id
     middle_before = JjClient(repo).resolve_revision(local_middle.change_id).commit_id
@@ -558,7 +559,7 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    on_trunk, reviewed = JjClient(repo).discover_review_stack().revisions
+    on_trunk, reviewed = selected_stack(repo).revisions
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "side change", "side.txt")
     side = JjClient(repo).resolve_revision("@-")
@@ -591,10 +592,10 @@ def test_sync_rebases_trailing_local_work_without_creating_a_review(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    initial = JjClient(repo).discover_review_stack()
+    initial = selected_stack(repo)
     on_trunk, reviewed = initial.revisions
     commit_file(repo, "local trailing", "local-trailing.txt")
-    trailing = JjClient(repo).discover_review_stack().head
+    trailing = selected_stack(repo).head
     state_before = ReviewStateStore.for_repo(repo).load()
     assert trailing.change_id not in state_before.review_identities
     _squash_merge_pull_request(fake_repo, 1)
@@ -621,7 +622,7 @@ def test_sync_requires_every_surviving_review_before_rewriting(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     reviewed = stack.revisions[1]
     reviewed_before = reviewed.commit_id
     _squash_merge_pull_request(fake_repo, 1)
@@ -643,7 +644,7 @@ def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     first, second, third = stack.revisions
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()

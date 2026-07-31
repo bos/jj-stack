@@ -78,8 +78,9 @@ an undescribed working-copy commit cannot be selected for review until the user 
 ### Local review stack
 
 A local review stack is the chain of single-parent commits from a selected head back to the
-nearest commit also reachable from `trunk()`. That commit is the stack's base and is not itself
-part of the stack.
+nearest commit on `trunk()`'s first-parent chain. That commit is the stack's base and is not
+itself part of the stack. A reviewed side parent of a merge commit on trunk therefore remains in
+the selected path until `sync` reconciles it.
 
 `jj-stack` supports only linear stacks, so the walk follows each commit's sole parent. A merge
 commit inside the selected chain is rejected, as is a divergent review change. Unresolved
@@ -93,7 +94,12 @@ descendants are out of scope unless the command explicitly selects them.
 A rebase merge preserves `jj`'s change ID, so once the result is fetched, the commit on
 trunk and the superseded local commit are two visible copies of one change ID: the local copy is
 divergent and the trunk copy is immutable. Both are recovery context, not review changes to
-publish.
+publish. A full change ID or linked pull request selects that unique mutable local copy. If two
+mutable copies match, selection stops rather than choosing between them. If every matching copy
+is on fetched trunk's first-parent path, logical selection stops instead of turning the sole
+immutable trunk result into an empty local stack; an explicit revision expression can still
+select a commit on trunk. The sole immutable reviewed side parent from a native merge is outside
+that first-parent path and remains selectable until `sync`.
 
 ### Tracking
 
@@ -348,7 +354,12 @@ supported.
 
 Stack lifecycle commands default to `@` when the working-copy change has a nonblank description
 and contents, and to `@-` otherwise. Explicit empty or undescribed working-copy selections fail.
-`view` may accept several selectors. `relink` requires both the change and PR.
+`view` may accept several selectors. A revision expression selects the exact revision it
+resolves to. A full change ID or linked pull request instead selects the unique mutable copy
+outside fetched trunk's first-parent path, so fetching an ordinary rebase result does not hide
+the local path. As defined for local review stacks, the sole immutable reviewed side parent from
+a native merge remains selectable outside that path until `sync`. `relink` requires both the
+change and PR.
 
 Three modes deliberately reach beyond one selected stack:
 

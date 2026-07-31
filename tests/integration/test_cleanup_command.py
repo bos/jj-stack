@@ -11,6 +11,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
+    selected_stack,
 )
 from .submit_command_helpers import (
     configure_submit_environment,
@@ -29,7 +30,7 @@ def test_cleanup_retires_closed_review_after_local_change_is_abandoned(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = JjClient(repo).discover_review_stack().revisions[-1].change_id
+    change_id = selected_stack(repo).revisions[-1].change_id
     fake_repo.pull_requests[1].state = "closed"
     run_command(["jj", "abandon", change_id], repo)
 
@@ -52,7 +53,7 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_ids = tuple(revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     bookmarks = tuple(
@@ -116,7 +117,7 @@ def test_cleanup_preserves_closed_review_branch_used_by_open_pull_request(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    bottom_change_id = JjClient(repo).discover_review_stack().revisions[0].change_id
+    bottom_change_id = selected_stack(repo).revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
     identity = state.review_identities[bottom_change_id]
@@ -141,7 +142,7 @@ def test_cleanup_rechecks_open_dependents_before_deleting_branch(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = JjClient(repo).discover_review_stack().head.change_id
+    change_id = selected_stack(repo).head.change_id
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
     identity = state.review_identities[change_id]
@@ -187,7 +188,7 @@ def test_cleanup_blocks_duplicate_saved_pr_claims_before_deleting_artifacts(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     bottom_change_id, head_change_id = (revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
@@ -224,7 +225,7 @@ def test_cleanup_isolates_malformed_review_observation(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     failed_change_id, cleaned_change_id = (revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
@@ -268,7 +269,7 @@ def test_cleanup_preserves_open_orphan_record_and_remote_branch(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
     bookmark = state_store.load().review_identities[change_id].head_ref
@@ -295,7 +296,7 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
@@ -344,7 +345,7 @@ def test_cleanup_removes_managed_stack_comment_for_closed_pull_request(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    stack = JjClient(repo).discover_review_stack()
+    stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     fake_repo.pull_requests[2].state = "closed"

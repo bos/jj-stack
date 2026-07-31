@@ -201,8 +201,8 @@ def build_parser() -> ArgumentParser:
         description_text=submit_command.__doc__ or "",
         handler=_forward_handler(submit_command.submit, open_="open"),
         revset_help=(
-            t"Revision to submit; defaults to {ui.revset('@')} when the working-copy change is "
-            t"described and nonempty, otherwise {ui.revset('@-')}"
+            t"Revision or full change ID to submit; defaults to {ui.revset('@')} when the "
+            t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
     add_help_argument(
@@ -297,7 +297,7 @@ def build_parser() -> ArgumentParser:
             selectors=lambda args: args.view_selectors,
         ),
         revset_help=(
-            "Revsets to inspect; can be mixed with repeated --pull-request selectors; "
+            "Revsets or full change IDs to inspect; can be mixed with --pull-request selectors; "
             "defaults to the current stack"
         ),
         revset_nargs="*",
@@ -349,9 +349,9 @@ def build_parser() -> ArgumentParser:
         description_text=merge_command.__doc__ or "",
         handler=_forward_handler(merge_command.merge),
         revset_help=(
-            t"Revision to merge; defaults to {ui.revset('@')} when the working-copy change is "
-            t"described and nonempty, otherwise {ui.revset('@-')}; cannot be combined with "
-            t"{ui.cmd('--pull-request')}"
+            t"Revision or full change ID to merge; defaults to {ui.revset('@')} when the "
+            t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
+            t"cannot be combined with {ui.cmd('--pull-request')}"
         ),
     )
     merge_parser.add_argument(
@@ -385,9 +385,9 @@ def build_parser() -> ArgumentParser:
         description_text=unstack_command.__doc__ or "",
         handler=_forward_handler(unstack_command.unstack),
         revset_help=(
-            t"Revision to unstack; defaults to {ui.revset('@')} when the working-copy change is "
-            t"described and nonempty, otherwise {ui.revset('@-')}; cannot be combined with "
-            t"{ui.cmd('--pull-request')}"
+            t"Revision or full change ID to unstack; defaults to {ui.revset('@')} when the "
+            t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
+            t"cannot be combined with {ui.cmd('--pull-request')}"
         ),
     )
     unstack_parser.add_argument(
@@ -442,8 +442,8 @@ def build_parser() -> ArgumentParser:
         description_text=sync_command.__doc__ or "",
         handler=_forward_handler(sync_command.sync, all_="all"),
         revset_help=(
-            t"Revision to sync; defaults to {ui.revset('@')} when the working-copy change is "
-            t"described and nonempty, otherwise {ui.revset('@-')}"
+            t"Revision or full change ID to sync; defaults to {ui.revset('@')} when the "
+            t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
     add_help_argument(
@@ -896,7 +896,10 @@ def _add_relink_parser(
     )
     add_help_argument(parser, "pull_request", metavar="PR", help="Pull request number or URL")
     add_help_argument(
-        parser, "revset", metavar="REVSET", help="Revision to reassociate with the pull request"
+        parser,
+        "revset",
+        metavar="REVSET",
+        help="Revision or full change ID to reassociate with the pull request",
     )
     return parser
 

@@ -160,6 +160,10 @@ jj-stack view --pull-request 7
 
 (You can use `-p` as an alias for `--pull-request`.)
 
+A full change ID and a linked PR continue to select the mutable local copy after you fetch an
+ordinary GitHub rebase merge. If two mutable copies of that change are visible, `jj-stack` stops;
+use `jj log -r 'change_id(<change-id>)'` to inspect them and choose or reconcile the copy you want.
+
 If you want to inspect several stacks in one run, pass several selectors in
 the order you want them shown:
 

@@ -322,14 +322,40 @@ class _PrepareStatusClient:
         self.remote_targets = remote_targets or {}
         self.stack = stack
 
-    def discover_review_stack(
+    def query_revisions_with_membership(
         self,
         _revset,
         *,
-        allow_divergent: bool = False,
-        allow_immutable: bool = False,
-    ) -> LocalStack:
-        return self.stack
+        membership_revsets,
+        **_kwargs,
+    ):
+        flag_count = len(membership_revsets)
+        observed = tuple(
+            revision.model_copy(
+                update={
+                    "parents": (
+                        self.stack.trunk.commit_id
+                        if index == 0
+                        else self.stack.revisions[index - 1].commit_id,
+                    )
+                }
+            )
+            for index, revision in enumerate(self.stack.revisions)
+        )
+        return (
+            (self.stack.trunk, (True, False, *([False] * (flag_count - 3)), True)),
+            *(
+                (
+                    revision,
+                    (
+                        False,
+                        revision.commit_id == self.stack.head.commit_id,
+                        *([False] * (flag_count - 2)),
+                    ),
+                )
+                for revision in observed
+            ),
+        )
 
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
         return (_STATUS_REMOTE,)

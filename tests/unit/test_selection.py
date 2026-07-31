@@ -10,7 +10,6 @@ from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
-    resolve_linked_change_for_pull_request,
     resolve_orphaned_pull_request,
     resolve_selected_revset,
 )
@@ -29,25 +28,6 @@ def test_resolve_selected_revset_requires_explicit_selection() -> None:
         resolve_selected_revset(
             command_label="relink",
             require_explicit=True,
-            revset=None,
-        )
-
-
-def test_resolve_linked_change_for_pull_request_uses_action_specific_guidance(
-    monkeypatch,
-) -> None:
-    state = ReviewState(review_identities={"change-1": _identity(pr_number=17)})
-    monkeypatch.setattr(
-        "jj_stack.review.selection.ReviewStateStore.for_repo",
-        lambda repo_root: _StateStoreStub(state),
-    )
-    jj_client = _JjClientStub(_REPO_ROOT, revisions_by_change_id={"change-1": ()})
-
-    with pytest.raises(CliError, match="Close by revision once it is visible again."):
-        resolve_linked_change_for_pull_request(
-            action_name="close",
-            jj_client=cast(JjClient, jj_client),
-            pull_request_reference="17",
             revset=None,
         )
 
@@ -118,14 +98,6 @@ def _identity(
         head_owner="octo-org",
         head_ref=head_ref,
     )
-
-
-class _StateStoreStub:
-    def __init__(self, state: ReviewState) -> None:
-        self._state = state
-
-    def load(self) -> ReviewState:
-        return self._state
 
 
 class _JjClientStub:

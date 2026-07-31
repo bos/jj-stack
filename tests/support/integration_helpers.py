@@ -18,6 +18,9 @@ from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
+from jj_stack.models.stack import LocalStack
+from jj_stack.review.selected import select_review_path
+from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import (
     FakeGithubRepository,
@@ -264,6 +267,16 @@ def init_fake_github_repo_with_submitted_feature(
     return init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
 
 
+def selected_stack(repo: Path, revset: str | None = None) -> LocalStack:
+    """Return the ordinary selected path for integration setup and assertions."""
+
+    return select_review_path(
+        jj_client=JjClient(repo),
+        revset=revset,
+        state=ReviewStateStore.for_repo(repo).load(),
+    ).stack
+
+
 def init_fake_github_repo_with_submitted_stack(
     tmp_path: Path,
     *,
@@ -312,7 +325,7 @@ def _build_manual_pr_template(template_root: Path) -> None:
     """
     repo, fake_repo = _copy_fake_github_repo_from_template(template_root, _get_cached_template())
     commit_file(repo, "feature 1", "feature-1.txt")
-    revision = JjClient(repo).discover_review_stack().head
+    revision = selected_stack(repo).head
     change_id = revision.change_id
     manual_bookmark = f"jj-stack/manual-feature-{short_change_id(change_id)}"
     JjClient(repo).mutate_remote_review_refs(
