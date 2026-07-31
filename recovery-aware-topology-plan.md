@@ -31,22 +31,17 @@ Every retained idea must be re-derived and implemented on the accepted Slice 1 p
 then justified item by item in the deletion/non-port ledger. Preserve the rejected revisions and
 workspaces until the accepted replacements and comparison reviews are complete.
 
-This plan contains only work that remains or is in flight. A completed slice is deleted from this
-file in the change that implements it. The implementing diff therefore shows both the promised
-work and its removal. An independent reviewer decides whether that removal is justified. `jj`
-history records completed work; this file does not become a changelog.
+This plan contains only work that remains or is in flight. An implemented slice is deleted in the
+change that implements it. If a required product or design gate rejects a slice before
+implementation, an exact, independently reviewed plan-only amendment may instead remove that
+slice and the requirements that depend on it. `jj` history records completed work and gate
+rejections; this file does not become a changelog.
 
 Behavioral decisions enter [design.md](docs/internals/design.md) with the code that implements
 them, not as target-architecture prose beforehand.
 [implementation-strategy.md](docs/internals/implementation-strategy.md) describes only
 architecture that exists after the implementing change. User documentation and help change with
 the behavior they explain.
-
-The unimplemented accept-order operation in Slice 5 is the deliberate exception to keeping
-pending product decisions out of this plan: its proposed UX, dry-run contract, and ordering
-effect remain here until that behavior is implemented. Slice 5 moves the accepted rule into
-`design.md` in the same commit as the code. Earlier slices must not describe it in `design.md` as
-if it already exists.
 
 ## Product-judgment gate
 
@@ -163,7 +158,7 @@ Insert or reparent local work after submit; GitHub rebase-merges the reviewed co
 <td>Duplicate or inconsistent remote effects are possible.</td>
 <td>Rerun is easy when fresh observation is sufficient.</td>
 <td>Low if no phase state or interruption matrix is added.</td>
-<td>Retain fresh-observation retry and one distinct Slice 5 interruption case.</td>
+<td>Retain fresh-observation retry; add no interruption matrix.</td>
 </tr>
 <tr>
 <td>Review branch moves after planning</td>
@@ -214,8 +209,11 @@ Agents receive this plan, the files named by their slice, and concise predecesso
 do not inherit the full project conversation. A reviewer reads the frozen artifact and canonical
 documents rather than relying on an implementer's summary.
 
-The plan section for a slice is deleted only in the exact implementation commit accepted by the
-reviewer. Project-wide criteria and final-audit sections remain until the project ends.
+A plan section is deleted in the exact implementation commit accepted by the reviewer. When a
+required product or design gate rejects the slice before implementation, it may instead be
+deleted in an exact plan-only amendment accepted by an independent reviewer; that amendment also
+deletes the requirements that depend on the rejected slice. Project-wide criteria and
+final-audit sections remain until the project ends.
 
 ## Deletion and non-port protocol
 
@@ -297,7 +295,6 @@ Do not add a law that quantifies over all reachable observations or arbitrary gr
 - The default recovery action does not discard unpublished local work or ordering.
 - Clean ordinary rebase and existing squash recovery continue to work.
 - A merged prefix with a reviewed suffix preserves the suffix's review identity and ordering.
-- Accepting GitHub's landed ordering requires the explicit authority implemented in Slice 5.
 - A rerun observes current state; no durable recovery phase or replay plan is saved.
 
 These guarantees apply only to the retained scenarios and existing supported product behavior.
@@ -396,52 +393,12 @@ objective, immediate adopters, required deletions, retained scenarios, tests, do
 impact, complexity evidence, and review gate. The implementing commit deletes its own section
 from this file.
 
-### Slice 5: explicitly accept GitHub's landed ordering
-
-**Objective:** Implement an explicit operation for the user to accept GitHub's ordering after the
-ordinary local insert/reparent represented by the Voxel incident.
-
-**Dependencies:** Accepted Slice 4 and independent approval of the exact UX below. Keep the
-pending UX in this plan until the implementing commit; do not pre-write it into `design.md`.
-
-**Pending product decision:** Choose one ordinary command or flag, with normal `--dry-run`
-preview, that says GitHub already landed the reviewed change and the user now authorizes the
-formerly lower unpublished change to follow it. The preview must show the resulting order in
-change IDs and distinguish the immutable trunk commit when its commit ID matters. It must not ask
-the user to understand topology-model terminology. Final spelling and confirmation semantics
-require product review before implementation.
-
-**Boundary and adopters:** Selected `sync` re-observes the selected path, trunk evidence, live PR,
-and review branch immediately before mutation. It removes only the proven merged local copy,
-preserves every other local change, rebases survivors in the previewed order, updates existing
-reviews, and retires tracking under existing evidence rules.
-
-**Retained scenarios:** The Voxel ordering outcome, preservation of the smallest reviewed suffix,
-one network interruption followed by fresh-observation rerun, and existing exact-target branch
-drift immediately before mutation.
-
-**Required deletion:** Remove the manual-only stop superseded by the explicit operation. Add no
-durable phase, alias, replay record, alternate convergence path, transition taxonomy, or
-interruption matrix.
-
-**Tests:** Preview, apply, the faithful ordering result, preservation of unreviewed and reviewed
-survivors, one distinct interruption/rerun, and existing branch guard coverage. Do not combine
-those boundaries into exotic histories. Run `./check.py`.
-
-**Documentation:** In this implementing commit, move the accepted rule from this plan into
-canonical design, workflow, troubleshooting, help, and JSON documentation if structured output
-changes.
-
-**Review gate:** Independent safety and UX reviewers confirm explicit authority, understandable
-ordering, immediate precondition rereads, work preservation, ordinary rerun behavior, and no
-durable recovery state.
-
 ### Slice 6: cumulative deletion and reconciliation
 
 **Objective:** Remove remaining superseded or rejected machinery and reconcile current code,
 tests, help, and documentation before the frozen final audit.
 
-**Dependencies:** All behavior slices accepted.
+**Dependencies:** Accepted implemented behavior slices 2–4.
 
 **Boundary and adopters:** No new product behavior or authority. This slice is deletion,
 consolidation, and correction only.
@@ -479,7 +436,7 @@ Freeze one exact project tip. Run three independent reviews in parallel:
    unexplained terminology survives.
 3. **Behavior and tests:** Replay the retained scenario table at the narrowest useful layers.
    Verify the Voxel regression, ordinary rebase and squash recovery, reviewed-suffix
-   preservation, explicit authority, and deletion of overlapping or excluded coverage.
+   preservation, and deletion of overlapping or excluded coverage.
 
 Every finding creates a bounded remediation slice implemented and reviewed by different agents.
 Freeze a new tip and rerun every affected audit. Completion requires all three audits to accept
