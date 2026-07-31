@@ -84,7 +84,6 @@ def build_selected_convergence_plan(
         for item in native_historical.values()
     ]
     survivors: list[LocalRevision] = []
-    seen_survivor = False
     for revision in filter(
         lambda item: item.change_id not in native_historical,
         selected,
@@ -102,14 +101,28 @@ def build_selected_convergence_plan(
             )
         )
         if candidate is None or evidence_kind is None:
-            seen_survivor = True
             survivors.append(revision)
             continue
-        if seen_survivor:
+        if survivors:
             raise CliError(
-                t"Merged {ui.change_id(revision.change_id)} appears above a change that has not "
-                t"merged in this stack.",
-                hint="Run jj-stack sync separately for each affected stack.",
+                t"Reviewed {ui.change_id(revision.change_id)} is proven on fetched trunk, but "
+                t"its local copy still follows unmerged local changes: "
+                t"{ui.join(lambda item: ui.change_id(item.change_id), tuple(survivors))}.\n"
+                t"Submitted commit: "
+                t"{ui.semantic_text(candidate.submitted_baseline.commit_id, 'commit_id')}\n"
+                t"Local copy commit: {ui.semantic_text(revision.commit_id, 'commit_id')}\n"
+                t"Fetched trunk commit: "
+                t"{
+                    ui.semantic_text(prepared_status.prepared.stack.trunk.commit_id, 'commit_id')
+                }",
+                hint=t"Inspect the local and fetched histories with "
+                t"{
+                    ui.cmd(f"jj log -r 'trunk() | (trunk()..{selected[-1].commit_id})'")
+                }. Choose the intended order with {ui.cmd('jj')}; ask an agent to inspect "
+                t"this repository and these commit IDs if useful. Then inspect the remaining "
+                t"local reviews with {ui.cmd('jj-stack view')}. Run "
+                t"{ui.cmd('jj-stack sync <head-change-id>')} for a remaining mutable reviewed "
+                t"head, or {ui.cmd('jj-stack cleanup')} if none remains.",
             )
         on_trunk.append(
             OnTrunkChange(
@@ -210,7 +223,7 @@ def _validate_rebase_scope(
     plan: SelectedConvergencePlan,
 ) -> None:
     for revision in plan.survivors:
-        if revision.conflict or revision.divergent or len(revision.parents) != 1:
+        if revision.conflict or revision.divergent:
             raise CliError(
                 t"The changes remaining after the merge are not linear at "
                 t"{ui.change_id(revision.change_id)}.",
@@ -229,7 +242,6 @@ def _validate_rebase_scope(
         else item.candidate.submitted_baseline.commit_id
         for item in plan.on_trunk
     )
-    selected_head = plan.survivors[-1]
     repository_paths = observe_repository_paths(
         jj_client=context.jj_client,
         tracked_change_ids=(),
@@ -240,14 +252,7 @@ def _validate_rebase_scope(
         revision.commit_id: revision
         for path in repository_paths.paths
         for revision in path.stack.revisions
-        if revision.commit_id not in selected_commit_ids
-        and not revision.hidden
-        and not revision.immutable
-        and not (
-            revision.is_working_copy
-            and revision.empty
-            and revision.parents == (selected_head.commit_id,)
-        )
+        if revision.commit_id not in selected_commit_ids and not revision.immutable
     }
     outside = tuple(outside_by_commit_id.values())
     if outside:
@@ -311,23 +316,6 @@ def dependent_path_commands(
         descendant_of=(ancestor_commit_id,),
         include_current_working_copy=True,
     )
-    dependents = tuple(
-        {
-            revision.commit_id: revision
-            for path in repository_paths.paths
-            for revision in path.stack.revisions
-            if revision.change_id not in excluded_changes
-            and not (revision.is_working_copy and revision.empty)
-        }.values()
-    )
-    if not dependents:
-        return None
-    if any(
-        revision.conflict or revision.divergent or len(revision.parents) != 1
-        for revision in dependents
-    ):
-        revisions = ui.join(lambda item: ui.change_id(item.change_id), dependents)
-        return t"repair these non-linear dependent changes, then rerun sync: {revisions}"
     heads_by_commit_id: dict[str, LocalRevision] = {}
     for path in repository_paths.paths:
         head = next(
@@ -341,8 +329,6 @@ def dependent_path_commands(
         if head is not None:
             heads_by_commit_id[head.commit_id] = head
     heads = tuple(heads_by_commit_id.values())
-    return t"run {
-        ui.join(
-            lambda revision: ui.cmd(f'jj-stack sync {revision.change_id}'), heads or dependents
-        )
-    }"
+    if not heads:
+        return None
+    return t"run {ui.join(lambda revision: ui.cmd(f'jj-stack sync {revision.change_id}'), heads)}"

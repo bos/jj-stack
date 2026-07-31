@@ -278,12 +278,19 @@ jj-stack sync <head-change-id>
 `sync` fetches trunk, verifies which lower PRs GitHub merged, rebases the remaining selected
 changes, and updates only PRs that already exist for them. It does not open a PR for trailing WIP
 or touch other local stacks. If it cannot safely remove an old local copy, it leaves the change
-alone and prints the next command to run.
+alone and prints the commits and inspection step that explain the stop.
 
 GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
 `sync` handles either result without pretending the new GitHub commit is the old local change.
 If a native merge also rewrote the PRs that remain open, `sync` adopts those exact reviewed
 commits and rebases only your trailing local work above them.
+
+If reviewed work is already on fetched trunk but its local copy still follows unmerged changes,
+`sync` cannot choose their intended order. It changes nothing and prints the earlier change IDs,
+the submitted, local, and fetched-trunk commits, and an exact `jj log` command. Inspect that
+history and choose the order with ordinary `jj`; ask an agent to inspect the repository if useful.
+Then run `jj-stack view` for the remaining local reviews. Sync a remaining mutable reviewed head,
+or run `jj-stack cleanup` if no reviewed local copy remains.
 
 `sync` does not otherwise rewrite history. If your stack simply drifted because `trunk()`
 advanced without anything in your stack merging, rebase only the intended bottom-to-head path

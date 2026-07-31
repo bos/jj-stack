@@ -181,39 +181,6 @@ def test_view_can_select_a_stack_by_pull_request_number(
     assert f"PR #{second_pr_number}" not in captured.out
 
 
-def test_view_selects_local_copy_after_clean_rebase_merge_by_change_id_and_pr(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = selected_stack(repo)
-    change_id = stack.head.change_id
-    identity = ReviewStateStore.for_repo(repo).load().review_identities[change_id]
-
-    fake_repo.apply_rebase_merge(fake_repo.pull_requests[identity.pr_number])
-    JjClient(repo).fetch_remote(remote="origin")
-
-    change_exit = run_main(repo, config_path, "view", change_id)
-    change_output = capsys.readouterr()
-    pr_exit = run_main(
-        repo,
-        config_path,
-        "view",
-        "--pull-request",
-        str(identity.pr_number),
-    )
-    pr_output = capsys.readouterr()
-
-    assert change_exit == 0
-    assert pr_exit == 0
-    assert "feature 1" in change_output.out
-    assert "feature 1" in pr_output.out
-    assert f"PR #{identity.pr_number}" in change_output.out
-    assert f"PR #{identity.pr_number}" in pr_output.out
-
-
 def test_view_warns_only_for_connected_stack_built_on_selected_head(
     tmp_path: Path,
     monkeypatch,

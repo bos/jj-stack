@@ -501,6 +501,13 @@ A PR merely reporting merged, or a merge result no longer reachable from fetched
 permits no change. Local revisions, identity, and baseline remain untouched until a later sync can
 prove the result on fetched trunk.
 
+When unmerged local changes precede the local copy of reviewed work proven on fetched trunk,
+selected `sync` stops without mutation. It names the earlier changes and the exact submitted,
+local, and fetched-trunk commits, then gives a `jj log` command for inspecting the two histories.
+The user chooses the intended order with ordinary `jj`, with agent help if useful. Afterward they
+inspect the remaining local reviews, sync a remaining mutable reviewed head, or run cleanup when
+no reviewed local copy remains.
+
 Here unpublished local work means a mutable revision whose commit is neither its submitted
 baseline nor an exact GitHub stack head that this run may adopt.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from jj_stack.state.store import ReviewStateError, ReviewStateStore, resolve_sta
 
 from ..support.integration_helpers import (
     commit_file,
+    init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     run_command,
     selected_stack,
@@ -23,6 +25,7 @@ from ..support.submit_property_harness import advance_remote_trunk, update_remot
 from .submit_command_helpers import (
     configure_submit_environment,
     read_remote_ref,
+    remote_refs,
     run_main,
 )
 
@@ -87,6 +90,31 @@ def test_sync_reports_nothing_to_submit_when_whole_stack_merged(
     )
     # No replacement pull request was opened for the merged change.
     assert set(fake_repo.pull_requests) == {1}
+
+
+def test_sync_recovers_a_clean_single_review_rebase_merge(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    reviewed = selected_stack(repo).head
+    state_store = ReviewStateStore.for_repo(repo)
+    identity = state_store.load().review_identities[reviewed.change_id]
+    landed_commit_id = fake_repo.apply_rebase_merge(fake_repo.pull_requests[identity.pr_number])
+
+    exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    copies = JjClient(repo).query_revisions_by_change_ids((reviewed.change_id,))[
+        reviewed.change_id
+    ]
+    assert tuple(item.commit_id for item in copies) == (landed_commit_id,)
+    assert copies[0].immutable
+    assert JjClient(repo).resolve_revision("@").parents == (landed_commit_id,)
+    assert reviewed.change_id not in state_store.load().review_identities
 
 
 def test_sync_converges_the_local_stack_after_merge(
@@ -550,6 +578,74 @@ def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     assert JjClient(repo).resolve_revision(reviewed.change_id).commit_id == reviewed_before
     assert JjClient(repo).resolve_revision(local_middle.change_id).commit_id == middle_before
     assert set(fake_repo.pull_requests) == {1, 2}
+
+
+def test_sync_explains_the_reported_rebase_ordering_stop_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    initial = selected_stack(repo)
+    reviewed = initial.head
+    state_store = ReviewStateStore.for_repo(repo)
+    initial_state = state_store.load()
+    identity = initial_state.review_identities[reviewed.change_id]
+    submitted_commit_id = initial_state.submitted_baselines[reviewed.change_id].commit_id
+    run_command(["jj", "new", initial.base_parent.commit_id], repo)
+    commit_file(repo, "local lower", "local-lower.txt")
+    lower = selected_stack(repo).head
+    run_command(["jj", "rebase", "-r", reviewed.commit_id, "-o", lower.commit_id], repo)
+    local_reviewed = JjClient(repo).resolve_revision(reviewed.change_id)
+    run_command(["jj", "new", local_reviewed.commit_id], repo)
+    landed_commit_id = fake_repo.apply_rebase_merge(fake_repo.pull_requests[identity.pr_number])
+    JjClient(repo).fetch_remote(remote="origin")
+
+    change_exit = run_main(repo, config_path, "view", reviewed.change_id)
+    change_view = capsys.readouterr()
+    pr_exit = run_main(
+        repo,
+        config_path,
+        "view",
+        "--pull-request",
+        str(identity.pr_number),
+    )
+    pr_view = capsys.readouterr()
+
+    assert change_exit == 0
+    assert pr_exit == 0
+    assert "local lower" in change_view.out and "feature 1" in change_view.out
+    assert "local lower" in pr_view.out and "feature 1" in pr_view.out
+    jj = JjClient(repo)
+    dag_before = {item.commit_id: item for item in jj.query_revisions("visible()")}
+    state_before = state_store.load()
+    refs_before = remote_refs(fake_repo.git_dir)
+    pull_requests_before = deepcopy(fake_repo.pull_requests)
+    reviews_before = deepcopy(fake_repo.pull_request_reviews)
+    events_before = deepcopy(fake_repo.pull_request_events)
+
+    exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    unwrapped = " ".join(captured.err.split())
+    assert f"Reviewed {reviewed.change_id[:8]}" in unwrapped
+    assert f"unmerged local changes: {lower.change_id[:8]}" in unwrapped
+    assert f"Submitted commit: {submitted_commit_id}" in unwrapped
+    assert f"Local copy commit: {local_reviewed.commit_id}" in unwrapped
+    assert f"Fetched trunk commit: {landed_commit_id}" in unwrapped
+    assert f"jj log -r 'trunk() | (trunk()..{local_reviewed.commit_id})'" in unwrapped
+    assert "ask an agent to inspect this repository and these commit IDs" in unwrapped
+    assert "jj-stack view" in unwrapped
+    assert "jj-stack sync <head-change-id>" in unwrapped
+    assert "jj-stack cleanup" in unwrapped
+    assert {item.commit_id: item for item in jj.query_revisions("visible()")} == dag_before
+    assert state_store.load() == state_before
+    assert remote_refs(fake_repo.git_dir) == refs_before
+    assert fake_repo.pull_requests == pull_requests_before
+    assert fake_repo.pull_request_reviews == reviews_before
+    assert fake_repo.pull_request_events == events_before
 
 
 def test_sync_preserves_a_described_working_copy_above_the_reviewed_survivor(

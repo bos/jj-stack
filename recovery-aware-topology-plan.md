@@ -396,34 +396,6 @@ objective, immediate adopters, required deletions, retained scenarios, tests, do
 impact, complexity evidence, and review gate. The implementing commit deletes its own section
 from this file.
 
-### Slice 4: reconcile ordinary external merges without losing local work
-
-**Objective:** Replace the merged-above-unmerged stop and generic divergence guidance with a
-small recovery plan for the retained external-merge workflows.
-
-**Dependencies:** Accepted Slices 2 and 3.
-
-**Boundary and adopters:** Selected `sync` consumes the ordinary path plus command-owned
-GitHub/trunk evidence. The pure path model neither declares work merged nor authorizes mutation.
-
-**Retained scenarios:** The faithful Voxel incident, clean rebase recovery, existing squash
-recovery, and a merged prefix with the smallest reviewed suffix.
-
-**Required deletion:** Remove the superseded “sync separately” branch, duplicated diagnostics,
-and descendant/path checks now answered by the ordinary projection. Delete rejected-rewrite
-problem conversions and scenario coverage that do not serve a retained row.
-
-**Tests:** The faithful Voxel regression, one clean rebase case, existing squash recovery, and one
-reviewed-suffix case. Consolidate overlaps. The Voxel default stop proves no mutation. Run
-`./check.py`.
-
-**Documentation:** Update the current sync policy in `design.md`, daily workflow,
-troubleshooting, and help using concrete `jj` and GitHub language.
-
-**Review gate:** Independent product and safety reviewers confirm the reported and common
-recovery paths work, unpublished ordering is preserved, the normal stop is actionable, and no
-general topology-defense framework was added.
-
 ### Slice 5: explicitly accept GitHub's landed ordering
 
 **Objective:** Implement an explicit operation for the user to accept GitHub's ordering after the

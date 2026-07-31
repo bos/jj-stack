@@ -6,8 +6,9 @@ remaining ones onto the new trunk, and updates the pull requests that already ex
 opens no new pull requests and leaves other stacks alone.
 
 Some states stop the whole run instead: a remaining change that is conflicted or divergent,
-unpublished local edits on a change GitHub already merged, or another local stack built on the
-same changes. Fix what the message names and rerun.
+unpublished local edits on a change GitHub already merged, reviewed work on fetched trunk whose
+local copy still follows unmerged changes, or another local stack built on the same changes.
+Follow the inspection or repair named by the message.
 
 `sync --all` never rebases or submits. It checks every locally tracked pull request and removes
 tracking for those whose submitted commit is already on trunk, printing a `jj-stack sync

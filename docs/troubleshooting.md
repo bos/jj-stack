@@ -140,6 +140,21 @@ When a native merge rewrote the PRs that remain open, `sync` adopts those exact 
 and rebases only trailing local work above them. It leaves other stacks and unreviewed trailing
 changes alone.
 
+## Reviewed work is on trunk but an earlier local change remains
+
+This can happen when you insert or reparent local work after submitting a review, then GitHub
+merges the submitted commit before you refresh the review. `sync` does not guess whether your
+local change should stay before the reviewed work or follow the commit now on trunk.
+
+The stop names the earlier change IDs and the exact submitted, local, and fetched-trunk commits.
+Run the printed `jj log` command to inspect both histories. Choose the intended order with your
+normal `jj` workflow, or ask an agent with repository access to inspect those commit IDs and help
+apply it.
+
+After repairing the order, run `jj-stack view` to inspect the remaining local reviews. Run
+`jj-stack sync <head-change-id>` for a remaining mutable reviewed head. If no reviewed local copy
+remains, run `jj-stack cleanup` instead.
+
 ## Trunk advanced, but none of your stack merged
 
 `sync` is for reconciling GitHub merge results. If `trunk()` merely moved forward, rebase the

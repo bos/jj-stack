@@ -187,16 +187,6 @@ def status_preparation_cli_error(error: UnsupportedStackError) -> CliError:
             "No trunk bookmark is configured for this repo.",
             hint=error.hint,
         )
-    if error.reason == "divergent_change" and error.change_id is not None:
-        return CliError(
-            t"Local history does not form a linear stack. {error}",
-            hint=(
-                t"Inspect the divergent revisions with {ui.cmd('jj log -r')} "
-                t"{ui.revset(f'change_id({error.change_id})')} and reconcile them "
-                t"before retrying. This can happen after {ui.cmd('jj-stack view')} "
-                t"or another fetch refreshes rewritten changes already merged into trunk."
-            ),
-        )
     return CliError(t"Local history does not form a linear stack. {error}")
 
 
