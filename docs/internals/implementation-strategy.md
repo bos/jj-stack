@@ -460,7 +460,7 @@ Implemented local coverage includes:
 
 - unit tests for parsing, planning, and model behavior
 - local integration tests against the fake GitHub server and a real backing Git repo
-- six fixed generated/property cases that replay the integration harness in the default suite
+- five fixed generated/property cases that replay the integration harness in the default suite
 - focused merge and recovery cases, including native atomic failure, partial survivor rewrites,
   terminal retry, and ordinary sequential stops
 

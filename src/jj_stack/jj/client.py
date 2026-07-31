@@ -341,11 +341,12 @@ class JjClient:
     ) -> set[str]:
         """Return subject commit IDs from `pairs` that are ancestors of any paired target.
 
-        Each `(subject, target)` pair becomes one term in a unioned revset of the
-        form `(subject_i & ::target_i)`, so the whole check runs as one `jj log`
-        invocation regardless of pair count. A subject's commit_id appears in the
-        result iff at least one of its paired targets contains it. Equal commit
-        IDs count as ancestors. Repeated pairs are deduped.
+        Each `(subject, target)` pair becomes one term in a unioned revset of the form
+        `(subject_i & ::present(target_i))`, so the whole check runs as one `jj log` invocation
+        regardless of pair count. Targets may be observed remotely without being available
+        locally; those pairs yield no match. Subjects are required local commits. A subject's
+        commit_id appears in the result iff at least one of its paired targets contains it. Equal
+        commit IDs count as ancestors. Repeated pairs are deduped.
         """
 
         deduped_pairs = tuple(dict.fromkeys(pairs))
@@ -353,7 +354,7 @@ class JjClient:
             return set()
 
         terms = " | ".join(
-            f"({_quote_revset_symbol(subject)} & ::{_quote_revset_symbol(target)})"
+            f"({_quote_revset_symbol(subject)} & ::present({_quote_revset_symbol(target)}))"
             for subject, target in deduped_pairs
         )
         revisions = self._query_revisions(terms)

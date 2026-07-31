@@ -50,6 +50,25 @@ def test_selected_path_ignores_off_path_reviewable_child(tmp_path: Path) -> None
     assert [revision.subject for revision in stack.revisions] == ["feature 1", "feature 2"]
 
 
+def test_paired_ancestor_membership_ignores_an_unavailable_target(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    client = JjClient(repo)
+    ancestor = client.resolve_revision("@--").commit_id
+    descendant = client.resolve_revision("@-").commit_id
+
+    matching = client.query_paired_ancestor_membership(
+        (
+            (ancestor, descendant),
+            (descendant, ancestor),
+            (descendant, "f" * 40),
+        )
+    )
+
+    assert matching == {ancestor}
+
+
 def test_list_git_remotes_preserves_distinct_fetch_and_push_urls(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     run_command(

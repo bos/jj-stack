@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PROPERTY_TEST_FILES = (REPO_ROOT / "tests" / "property" / "submit_property_scenarios.py",)
+PROPERTY_TEST_FILES = (REPO_ROOT / "tests" / "property" / "test_submit_property_scenarios.py",)
 DEFAULT_PROPERTY_SEED = 8675309
 _REPRODUCTION_SCENARIO_OPTIONS = (
     (

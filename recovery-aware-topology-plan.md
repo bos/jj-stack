@@ -393,34 +393,6 @@ objective, immediate adopters, required deletions, retained scenarios, tests, do
 impact, complexity evidence, and review gate. The implementing commit deletes its own section
 from this file.
 
-### Slice 6: cumulative deletion and reconciliation
-
-**Objective:** Remove remaining superseded or rejected machinery and reconcile current code,
-tests, help, and documentation before the frozen final audit.
-
-**Dependencies:** Accepted implemented behavior slices 2–4.
-
-**Boundary and adopters:** No new product behavior or authority. This slice is deletion,
-consolidation, and correction only.
-
-**Required deletion:** Every superseded symbol named in project-wide criteria; every rejected
-model field, problem, adapter, fixture, scenario, or diagnostic without a retained-scenario
-justification; every unused query; and every target-architecture or obsolete product statement.
-
-Complete a cumulative non-port ledger against all three comparison artifacts. Record before/after
-production and test lines, functions and types, `C901` findings, module sizes, dependency fan-out,
-policy-authority count, and external call counts. A material complexity increase is a design stop,
-not an invitation to edit a budget.
-
-**Tests:** The focused retained corpus, any supported-domain generated examples that independently
-earned their place, and `./check.py`. Remove overlapping and excluded-scenario tests.
-
-**Documentation:** Read canonical design, implementation strategy, affected user docs, and help
-as continuous prose. They describe the implemented product only.
-
-**Review gate:** Independent product/docs, architecture/complexity, and test reviewers accept the
-same exact commit and agree the tree is ready to freeze.
-
 ## Final audit
 
 Freeze one exact project tip. Run three independent reviews in parallel:

@@ -62,7 +62,6 @@ the generated scenario code records only the source expected to produce the prim
 | `foreign_branch_fetched` | remote refs, local `jj` | fail closed (2) | property |
 | `conflicted_rebase` | local `jj` | fail closed (3) | deterministic |
 | `merge_commit` | local `jj` | fail closed (2) | deterministic |
-| `agent_recreated_change` | all four sources | fail closed (2) | property |
 
 Two local-`jj` mechanics deserve emphasis because they are how *remote* actions corrupt
 the *local* stack:
@@ -74,11 +73,6 @@ the *local* stack:
 - **Fetch-induced divergence.** If the foreign branch points at a commit that a local
   rewrite already replaced, the fetch resurrects the hidden predecessor and the change
   becomes divergent; even resolving the change ID to a single revision fails.
-
-The fixed composite `agent_recreated_change` scenario closes a reviewed PR, deletes its review
-branch, abandons and recreates the local work, pushes it outside the tool, opens a replacement PR,
-and fetches. The result is an immutable recreated change, another ref on the same commit, and
-saved tracking that still points at the closed PR.
 
 ## Required behavior per drift class
 

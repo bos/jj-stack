@@ -57,6 +57,6 @@ governed = [
   "src/jj_stack/review/observation.py",
 ]
 fixed_property = [
-  "tests/property/submit_property_scenarios.py",
+  "tests/property/test_submit_property_scenarios.py",
 ]
 merge_recovery = ["tests"]

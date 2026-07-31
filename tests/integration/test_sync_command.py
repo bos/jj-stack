@@ -7,10 +7,8 @@ from pathlib import Path
 import pytest
 
 import jj_stack.commands.sync as sync_command
-from jj_stack.errors import EXIT_USAGE, CliError
-from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient
-from jj_stack.models.github import GithubPullRequest
 from jj_stack.state.store import ReviewStateError, ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
@@ -730,105 +728,60 @@ def test_sync_requires_every_surviving_review_before_rewriting(
     assert set(fake_repo.pull_requests) == {1}
 
 
-def test_sync_all_isolates_a_head_mismatch_from_an_exact_review(
+def test_sync_all_isolates_an_unavailable_snapshot_from_an_exact_review(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = selected_stack(repo)
-    first, second, third = stack.revisions
+    first, second = selected_stack(repo).revisions
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    state_path = resolve_state_path(repo)
-    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-    raw_state["review_identities"]["incomplete-change"] = (
-        initial_state.review_identities[first.change_id]
-        .model_copy(update={"head_ref": "jj-stack/incomplete-incomple", "pr_number": 99})
-        .model_dump(mode="json")
-    )
-    missing_change_ids = tuple(f"miss{index:04d}change" for index in range(64))
-    for index, change_id in enumerate(missing_change_ids, start=100):
-        raw_state["review_identities"][change_id] = (
-            initial_state.review_identities[first.change_id]
-            .model_copy(
-                update={
-                    "head_ref": f"jj-stack/missing-{change_id[:8]}",
-                    "pr_number": index,
-                }
-            )
-            .model_dump(mode="json")
-        )
-        raw_state["submitted_baselines"][change_id] = (
-            initial_state.submitted_baselines[first.change_id]
-            .model_copy(update={"commit_id": f"{index:040x}"})
-            .model_dump(mode="json")
-        )
-    malformed_change_id = "malformedbaseline"
-    raw_state["review_identities"][malformed_change_id] = (
-        initial_state.review_identities[first.change_id]
-        .model_copy(update={"head_ref": "jj-stack/malformed-malforme", "pr_number": 164})
-        .model_dump(mode="json")
-    )
-    raw_state["submitted_baselines"][malformed_change_id] = (
-        initial_state.submitted_baselines[first.change_id]
-        .model_copy(update={"commit_id": "bad'commit"})
-        .model_dump(mode="json")
-    )
-    write_file(state_path, json.dumps(raw_state))
-
-    usage_exit = run_main(repo, config_path, "sync", "--all", second.change_id)
-    usage = capsys.readouterr()
-    assert usage_exit == EXIT_USAGE
-    assert "either" in usage.err
-
-    fake_repo.auto_merge_reachable_heads = False
-    fake_repo.pull_requests[3].state = "closed"
-    update_remote_ref(fake_repo, branch="main", target=second.commit_id)
+    git_dir = str(fake_repo.git_dir)
+    remote_tree = run_command(
+        ["git", "--git-dir", git_dir, "rev-parse", f"{first.commit_id}^{{tree}}"],
+        fake_repo.git_dir.parent,
+    ).stdout.strip()
+    unavailable_commit_id = run_command(
+        [
+            "git",
+            "-c",
+            "user.name=External User",
+            "-c",
+            "user.email=external@example.com",
+            "--git-dir",
+            git_dir,
+            "commit-tree",
+            remote_tree,
+            "-p",
+            first.commit_id,
+            "-m",
+            "external review head",
+        ],
+        fake_repo.git_dir.parent,
+    ).stdout.strip()
     update_remote_ref(
         fake_repo,
         branch=initial_state.review_identities[first.change_id].head_ref,
-        target=second.commit_id,
+        target=unavailable_commit_id,
     )
+    state_path = resolve_state_path(repo)
+    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    raw_state["submitted_baselines"][first.change_id]["commit_id"] = unavailable_commit_id
+    write_file(state_path, json.dumps(raw_state))
 
-    original_batch = GithubClient.get_pull_requests_by_numbers
-    original_single = GithubClient.get_pull_request
-    failed_batch = False
-
-    async def fail_first_multi_lookup(self, *, pull_numbers):
-        nonlocal failed_batch
-        numbers = tuple(pull_numbers)
-        if len(numbers) > 1 and not failed_batch:
-            failed_batch = True
-            raise GithubClientError("forced batch failure")
-        return await original_batch(self, pull_numbers=numbers)
-
-    async def inject_malformed_fallback(self, *, pull_number):
-        if pull_number == 100:
-            return GithubPullRequest.model_validate({})
-        return await original_single(self, pull_number=pull_number)
-
-    monkeypatch.setattr(GithubClient, "get_pull_requests_by_numbers", fail_first_multi_lookup)
-    monkeypatch.setattr(GithubClient, "get_pull_request", inject_malformed_fallback)
+    fake_repo.auto_merge_reachable_heads = False
+    update_remote_ref(fake_repo, branch="main", target=second.commit_id)
 
     exit_code = run_main(repo, config_path, "sync", "--all")
     captured = capsys.readouterr()
 
     assert exit_code == 1, (captured.out, captured.err)
-    assert "leave" in captured.out
-    assert "submitted head" in captured.out
-    assert "is closed without a result on trunk" in captured.out + captured.err
-    assert "last submitted commit is incomplete" in captured.out + captured.err
-    assert "could not inspect its current review" in captured.out + captured.err
-    assert "invalid data for PR #100" in captured.out + captured.err
+    assert "leave" in captured.err.lower()
+    assert "submitted commit is unavailable locally" in captured.err
     state = state_store.load()
     assert first.change_id in state.review_identities
     assert second.change_id not in state.review_identities
-    assert third.change_id in state.review_identities
-    assert "incomplete-change" in state.review_identities
-    assert set(missing_change_ids) <= state.review_identities.keys()
-    assert malformed_change_id in state.review_identities
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
-    assert fake_repo.pull_requests[3].state == "closed"

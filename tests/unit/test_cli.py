@@ -165,6 +165,18 @@ def test_main_reports_unknown_command_with_short_recovery_hint(
     assert "Hint: Run jj-stack help to list commands." in err_lines
 
 
+@pytest.mark.merge_recovery
+def test_sync_all_rejects_a_revision_before_repository_access(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(["--repository", str(tmp_path), "sync", "--all", "some-selector"])
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_USAGE
+    assert "Use either jj-stack sync --all or a revision, not both." in captured.err
+
+
 def _patch_fake_jj_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

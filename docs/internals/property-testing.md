@@ -38,7 +38,7 @@ testing should spend its budget on those cross-system invariants.
   vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
   compact operation trace that can be copied into a deterministic regression test.
-- Keep the default suite fast. `./check.py` runs a fixed six-case property corpus; larger
+- Keep the default suite fast. `./check.py` runs a fixed five-case property corpus; larger
   generated or randomized pools remain opt-in.
 - Use all available workers when exploration is widened. Scenario modules expose generated cases
   as ordinary data so pytest can distribute them across cores.
@@ -133,10 +133,9 @@ Stack-edit scenarios cover successful repair after supported local DAG rewrites.
 not cover behavior when another source of state has moved independently. The external-drift
 family starts from a submitted, approved stack, optionally applies one local stack edit
 from the stack-edit vocabulary, then applies one or two drift operations from a typed
-transition vocabulary. Each drift kind is data: the boundary it mutates, whether it is
-composable with other drifts, whether it targets one submitted change, and the modeled
-`submit` outcome. [distributed-state.md](distributed-state.md) owns the drift inventory and
-expected outcomes.
+transition vocabulary. Each drift kind is data: the boundary it mutates, whether it targets one
+submitted change, and the modeled `submit` outcome.
+[distributed-state.md](distributed-state.md) owns the drift inventory and expected outcomes.
 
 Fail-closed kinds (for example an externally closed, merged, or replaced PR, a corrupted
 saved PR number, a drifted or deleted remote review branch, or a foreign branch fetch that makes
@@ -155,17 +154,12 @@ PR base, an external draft toggle) must reach the full successful-submit result.
 Drift transitions stay faithful to the platform: deleting a remote review branch also
 closes its PR because GitHub does, and a replacement PR created outside the tool shares
 the original head branch. The generator composes drifts only in reachable combinations —
-label-targeted drifts pick distinct live submitted changes. The shape-changing recreated-change
-incident stays in the fixed corpus; conflict and merge-commit boundaries are covered by focused
-deterministic command tests.
+label-targeted drifts pick distinct live submitted changes. Conflict and merge-commit boundaries
+are covered by focused deterministic command tests.
 
 Every drift scenario, fail-closed or successful, ends by running `view` on the drifted
 selection and requiring a report exit (`0`, `2`, or `10`) rather than a crash or an
 unclassified error. Exact diagnostic wording stays out of scope.
-
-The fixed corpus includes the composite `agent-recreated-pr` scenario described in
-[distributed-state.md](distributed-state.md). `submit` must refuse with the unsupported-stack
-diagnostic, and `view` must still report.
 
 ## Merge and sync coverage
 
@@ -239,8 +233,8 @@ For the submitted stack as a whole:
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
-The default suite runs six fixed scenarios: one stack edit, one merge, one move, one submit retry,
-and two drift cases. Their defined names and counts live in
+The default suite runs five fixed scenarios: one stack edit, one merge, one move, one submit
+retry, and one drift case. Their defined names and counts live in
 `tests/support/submit_property_scenarios.py`; larger deterministic pools remain opt-in.
 
 ## Efficiency

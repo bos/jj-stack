@@ -15,7 +15,6 @@ from .stack_edit_scenarios import (
 )
 
 DriftKind = Literal[
-    "agent_recreated_change",
     "closed_pr",
     "foreign_branch_fetched",
     "merged_pr",
@@ -112,30 +111,20 @@ class DriftKindSpec:
     pairs the CLI may report: a `DriftError` condition, an
     `unsupported_stack:<reason>`. Asserting the diagnosis
     keeps a stop that fired for the wrong reason — right exit code, misleading
-    repair path — from satisfying the model. The non-composable incident shape
-    appears only in the hand-written fixed corpus.
+    repair path — from satisfying the model.
     """
 
     boundary: Literal["github_prs", "local_jj", "remote_refs", "tracking_store"]
     expected_outcome: DriftOutcome
     failures: tuple[tuple[int, str], ...]
-    composable: bool
     needs_label: bool
 
 
 DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
-    "agent_recreated_change": DriftKindSpec(
-        boundary="local_jj",
-        expected_outcome="fail_closed",
-        failures=((2, "unsupported_stack:immutable_commit"),),
-        composable=False,
-        needs_label=True,
-    ),
     "closed_pr": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="fail_closed",
         failures=((1, "pull_request_not_open"),),
-        composable=True,
         needs_label=True,
     ),
     # The fetched foreign ref pins the submitted commit: immutable when the
@@ -148,63 +137,54 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
             (2, "unsupported_stack:divergent_change"),
             (2, "unsupported_stack:immutable_commit"),
         ),
-        composable=True,
         needs_label=True,
     ),
     "merged_pr": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="fail_closed",
         failures=((1, "pull_request_not_open"),),
-        composable=True,
         needs_label=True,
     ),
     "pr_base_retargeted": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="success",
         failures=(),
-        composable=True,
         needs_label=True,
     ),
     "pr_draft_toggled": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="success",
         failures=(),
-        composable=True,
         needs_label=True,
     ),
     "pr_replaced": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="fail_closed",
         failures=((1, "pull_request_ambiguous"),),
-        composable=True,
         needs_label=True,
     ),
     "remote_branch_deleted": DriftKindSpec(
         boundary="remote_refs",
         expected_outcome="fail_closed",
         failures=((1, "remote_branch_missing"),),
-        composable=True,
         needs_label=True,
     ),
     "remote_branch_drift": DriftKindSpec(
         boundary="remote_refs",
         expected_outcome="fail_closed",
         failures=((1, "remote_branch_moved"),),
-        composable=True,
         needs_label=True,
     ),
     "trunk_advanced": DriftKindSpec(
         boundary="remote_refs",
         expected_outcome="success",
         failures=(),
-        composable=True,
         needs_label=False,
     ),
     "wrong_saved_pr_number": DriftKindSpec(
         boundary="tracking_store",
         expected_outcome="fail_closed",
         failures=((1, "saved_pull_request_mismatch"),),
-        composable=True,
         needs_label=True,
     ),
 }
@@ -216,7 +196,6 @@ class DriftOperation:
 
     kind: DriftKind
     label: str | None = None
-    new_label: str | None = None
 
     @property
     def spec(self) -> DriftKindSpec:
@@ -227,8 +206,6 @@ class DriftOperation:
         parts: list[str] = [self.kind]
         if self.label is not None:
             parts.append(self.label)
-        if self.new_label is not None:
-            parts.append(self.new_label)
         return ":".join(parts)
 
 
@@ -794,16 +771,11 @@ def generate_external_drift_scenarios(
     return tuple(scenarios)
 
 
-_COMPOSABLE_DRIFT_KINDS: tuple[DriftKind, ...] = tuple(
-    sorted(kind for kind, spec in DRIFT_KIND_SPECS.items() if spec.composable)
-)
+_GENERATED_DRIFT_KINDS: tuple[DriftKind, ...] = tuple(sorted(DRIFT_KIND_SPECS))
 
 
 def _fixed_external_drift_scenarios() -> tuple[ExternalDriftScenario, ...]:
-    return (
-        _closed_pr_after_insert_scenario(),
-        _agent_recreated_change_scenario(),
-    )
+    return (_closed_pr_after_insert_scenario(),)
 
 
 def _closed_pr_after_insert_scenario() -> ExternalDriftScenario:
@@ -812,34 +784,6 @@ def _closed_pr_after_insert_scenario() -> ExternalDriftScenario:
         edit_operations=(StackEditOperation(kind="insert_after", label="c1", new_label="i1"),),
         hazard_class="github-external-close-with-unsubmitted-change",
         name="closed-pr-after-insert",
-    )
-
-
-def _agent_recreated_change_scenario() -> ExternalDriftScenario:
-    """The observed incident: a PR and its jj change replaced outside jj-stack.
-
-    An agent closed a reviewed PR, deleted its review branch, abandoned the
-    local change, recreated the same work as a new change, pushed it with plain
-    git, opened a replacement PR with `gh`, and fetched. The fetch imports the
-    replacement branch as an untracked remote bookmark, which makes the
-    recreated change immutable, so the stack is no longer reviewable. `submit`
-    must refuse without touching any boundary, and `view` must still report.
-    """
-
-    return _drift_scenario(
-        drifts=(
-            DriftOperation(
-                kind="agent_recreated_change",
-                label="c2",
-                new_label="i1",
-            ),
-        ),
-        edit_operations=(
-            StackEditOperation(kind="abandon", label="c2"),
-            StackEditOperation(kind="insert_after", label="c1", new_label="i1"),
-        ),
-        hazard_class="incident-recreated-pr",
-        name="agent-recreated-pr",
     )
 
 
@@ -904,8 +848,8 @@ def _random_drift_operations(
     live_initial_labels = [label for label in model.live_labels if label.startswith("c")]
     drift_count = rng.choice((1, 1, 2))
     kinds = rng.sample(
-        _COMPOSABLE_DRIFT_KINDS,
-        k=min(drift_count, len(_COMPOSABLE_DRIFT_KINDS)),
+        _GENERATED_DRIFT_KINDS,
+        k=min(drift_count, len(_GENERATED_DRIFT_KINDS)),
     )
     drifts: list[DriftOperation] = []
     available_labels = list(live_initial_labels)

@@ -1,3 +1,5 @@
+"""Replay the fixed and opt-in submit property scenarios."""
+
 from __future__ import annotations
 
 from pathlib import Path
