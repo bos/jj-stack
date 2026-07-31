@@ -126,10 +126,11 @@ def test_cleanup_preserves_closed_review_branch_used_by_open_pull_request(
 
     exit_code = run_main(repo, config_path, "cleanup")
     captured = capsys.readouterr()
+    output = " ".join(captured.out.split())
 
     assert exit_code == 1
-    assert "open PR #2 still" in captured.out
-    assert "rerun cleanup" in " ".join(captured.out.split())
+    assert "open PR #2 still" in output
+    assert "rerun cleanup" in output
     assert state_store.load() == state
     assert issue_comments(fake_repo, identity.pr_number) == comments_before
     assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
@@ -176,7 +177,7 @@ def test_cleanup_rechecks_open_dependents_before_deleting_branch(
 
     assert exit_code == 1
     assert calls == 2
-    assert "open PR #2 still" in captured.out
+    assert "open PR #2 still" in " ".join(captured.out.split())
     assert state_store.load() == state
     assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
 

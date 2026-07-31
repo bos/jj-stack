@@ -31,6 +31,10 @@ from .fake_github import (
 
 _TEMPLATE_OWNER = "octo-org"
 _TEMPLATE_NAME = "stacked-review"
+_TEST_JJ_IDENTITY = {
+    "JJ_EMAIL": "test@example.com",
+    "JJ_USER": "Test User",
+}
 _SHARED_TEMPLATE_ROOT: Path | None = None
 _TEMPLATE_MEMO: dict[str, Path] = {}
 _SUBMIT_CONFIG_MODULES = (
@@ -403,7 +407,15 @@ def commit_file(repo: Path, message: str, filename: str) -> None:
 
 
 def run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(command, capture_output=True, check=False, cwd=cwd, text=True)
+    env = {**os.environ, **_TEST_JJ_IDENTITY} if command[0] == "jj" else None
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        cwd=cwd,
+        env=env,
+        text=True,
+    )
     if completed.returncode != 0:
         raise AssertionError(
             f"{command!r} failed:\nstdout={completed.stdout}\nstderr={completed.stderr}"

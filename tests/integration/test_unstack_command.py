@@ -566,7 +566,7 @@ def test_unstack_apply_cleanup_deletes_review_branches_comments_and_tracking(
     dry_run = capsys.readouterr()
 
     assert dry_run_exit_code == 1
-    assert f"open PR #{external.number} still" in dry_run.out
+    assert f"open PR #{external.number} still" in " ".join(dry_run.out.split())
     assert all(fake_repo.pull_requests[number].state == "open" for number in (1, 2))
     assert state_store.load() == state
     del fake_repo.pull_requests[external.number]
@@ -623,7 +623,7 @@ def test_unstack_cleanup_rechecks_dependents_after_comment_discovery(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "open PR #2 still" in captured.out
+    assert "open PR #2 still" in " ".join(captured.out.split())
     assert fake_repo.pull_requests[1].state == "closed"
     assert state_store.load() == state
     assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
@@ -704,7 +704,7 @@ def test_unstack_cleanup_orphans_retries_base_after_dependent_closes(
     dry_run = capsys.readouterr()
 
     assert dry_run_exit_code == 1
-    assert "open PR #2 still" in dry_run.out
+    assert "open PR #2 still" in " ".join(dry_run.out.split())
     assert "close PR #1" not in dry_run.out
     assert "close PR #2" in dry_run.out
     assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
@@ -721,7 +721,7 @@ def test_unstack_cleanup_orphans_retries_base_after_dependent_closes(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "open PR #2 still" in captured.out
+    assert "open PR #2 still" in " ".join(captured.out.split())
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
     assert set(state_store.load().review_identities) == {change_ids[0]}

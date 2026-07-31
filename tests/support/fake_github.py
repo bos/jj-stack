@@ -611,15 +611,15 @@ class FakeGithubRepository:
             capture_output=True,
             check=False,
             env=None if env is None else {**os.environ, **env},
-            input=stdin,
-            text=True,
+            input=None if stdin is None else stdin.encode("utf-8"),
         )
+        stdout = completed.stdout.decode("utf-8")
+        stderr = completed.stderr.decode("utf-8")
         if completed.returncode != 0:
             raise AssertionError(
-                f"fake github git {args} failed:\n"
-                f"stdout={completed.stdout}\nstderr={completed.stderr}"
+                f"fake github git {args} failed:\nstdout={stdout}\nstderr={stderr}"
             )
-        return completed.stdout.strip()
+        return stdout.strip()
 
     def branch_heads(self) -> dict[str, str]:
         """Read every branch target in one git invocation."""

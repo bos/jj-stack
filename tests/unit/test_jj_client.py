@@ -24,6 +24,8 @@ from jj_stack.jj.client import (
 from jj_stack.models.stack import LocalRevision
 from tests.support.revision_helpers import make_revision
 
+_REPO_GIT_DIR = str(Path("/repo/.git"))
+
 
 def _revision_line(
     *,
@@ -220,7 +222,7 @@ def test_list_remote_branches_resolves_jj_remote_name_to_fetch_url(
         if invocation == (
             "git",
             "--git-dir",
-            "/repo/.git",
+            _REPO_GIT_DIR,
             "ls-remote",
             "--refs",
             "https://github.test/octo-org/repo.git",
@@ -246,7 +248,7 @@ def test_list_remote_branches_resolves_jj_remote_name_to_fetch_url(
         (
             "git",
             "--git-dir",
-            "/repo/.git",
+            _REPO_GIT_DIR,
             "ls-remote",
             "--refs",
             "https://github.test/octo-org/repo.git",
@@ -302,7 +304,7 @@ def test_remote_failure_redacts_http_userinfo_without_changing_subprocess_argv(
         if invocation == (
             "git",
             "--git-dir",
-            "/repo/.git",
+            _REPO_GIT_DIR,
             "ls-remote",
             "--refs",
             remote_url,
@@ -357,7 +359,7 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
         if invocation == (
             "git",
             "--git-dir",
-            "/repo/.git",
+            _REPO_GIT_DIR,
             "config",
             "--get-all",
             "remote.origin.fetch",
@@ -417,7 +419,7 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
         if invocation == (
             "git",
             "--git-dir",
-            "/repo/.git",
+            _REPO_GIT_DIR,
             "config",
             "--get-all",
             "remote.origin.fetch",
@@ -437,7 +439,7 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
         if invocation == (
             "git",
             "--git-dir",
-            "/repo/.git",
+            _REPO_GIT_DIR,
             "config",
             "--fixed-value",
             "--replace-all",
@@ -471,7 +473,7 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
         (
             "git",
             "--git-dir",
-            "/repo/.git",
+            _REPO_GIT_DIR,
             "config",
             "--fixed-value",
             "--replace-all",
