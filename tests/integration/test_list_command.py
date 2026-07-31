@@ -240,6 +240,41 @@ def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
     assert "1 change" not in captured.out
 
 
+def test_list_inventories_paths_that_share_a_reviewed_prefix(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    commit_file(repo, "shared", "shared.txt")
+    shared = selected_stack(repo).head
+    commit_file(repo, "left", "left.txt")
+    left = selected_stack(repo).head
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    run_command(["jj", "new", shared.commit_id], repo)
+    commit_file(repo, "right", "right.txt")
+    right = selected_stack(repo).head
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    assert run_main(repo, config_path, "list", "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+    paths = {
+        tuple(change["change_id"] for change in row["changes"])
+        for row in payload["rows"]
+        if row["type"] == "stack"
+    }
+
+    assert paths == {
+        (shared.change_id, left.change_id),
+        (shared.change_id, right.change_id),
+    }
+
+
 def test_list_keeps_current_tracked_stack_when_it_becomes_immutable(
     tmp_path,
     monkeypatch,

@@ -509,7 +509,8 @@ Selected `sync` reconciles the unmerged suffix only when:
 - rewriting it would not discard unpublished local work
 - the remainder is linear and conflict-free
 - no unreviewed change sits between reviewed survivors
-- no other visible stack depends on retiring a revision whose work is on trunk
+- no other ordinary linear review path, including one ending at the invoking workspace's
+  described, nonempty working copy, depends on retiring a revision whose work is on trunk
 
 It rebases surviving changes onto fetched trunk, updates existing reviews, and removes tracking
 for changes on trunk only after survivor updates succeed. It never rebases merely because trunk
@@ -654,16 +655,19 @@ affected stacks wait for their own explicit commands.
 
 - **Move changes between stacks**: submitting one resulting stack updates that chain. Moved
   changes retain their PRs and recalculate bases from their new parents.
-- **Split one stack into several**: resulting paths may share reviewed ancestors. If one old
-  GitHub stack spans active reviews on more than one desired path, the user dissolves it with the
-  named `gh stack unstack <number>` command and submits each path separately.
+- **Split one stack into several**: each maximal linear path appears separately in repository
+  inventory. The paths may contain the same observed reviewed ancestors; tracking annotates those
+  paths but does not create or join them. If one old GitHub stack spans active reviews on more
+  than one desired path, the user dissolves it with the named
+  `gh stack unstack <number>` command and submits each path separately.
 - **Merge several stacks into one**: submitting the resulting chain reuses reviews by change ID,
   recalculates every base, and produces one overview comment on the new head.
 
 Stacks not yet resubmitted may still show old navigation or overview comments. That is expected:
-`submit` does not mutate stacks outside its selection. `view` and `list` identify stale reviews
-by comparing each baseline with the current change and name the stack to refresh. Orphaned PRs
-need explicit `unstack --cleanup --pull-request <pr>`.
+`submit` does not mutate stacks outside its selection. `list` identifies stale reviews across the
+repository. `view` does so only for another path that shares an observed revision with the
+selected path. Both compare each baseline with the current change and name the stack to refresh.
+Orphaned PRs need explicit `unstack --cleanup --pull-request <pr>`.
 
 ## CLI contract
 

@@ -552,7 +552,7 @@ def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     assert set(fake_repo.pull_requests) == {1, 2}
 
 
-def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
+def test_sync_preserves_a_described_working_copy_above_the_reviewed_survivor(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -560,13 +560,12 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     on_trunk, reviewed = selected_stack(repo).revisions
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "side change", "side.txt")
-    side = JjClient(repo).resolve_revision("@-")
-    run_command(["jj", "new", reviewed.change_id, side.change_id], repo)
-    commit_file(repo, "local merge", "merge.txt")
-    local_merge = JjClient(repo).resolve_revision("@-")
-    working_copy = JjClient(repo).resolve_revision("@")
+    write_file(repo / "local-wip.txt", "keep this work\n")
+    run_command(["jj", "describe", "-m", "local WIP"], repo)
+    jj = JjClient(repo)
+    working_copy_before = jj.resolve_revision("@")
+    state_before = ReviewStateStore.for_repo(repo).load()
+    reviewed_head_before = fake_repo.pull_requests[2].head_sha
     _squash_merge_pull_request(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
@@ -574,15 +573,13 @@ def test_sync_rejects_an_unselected_merge_descendant_before_rebase(
 
     assert exit_code == 1
     assert "Other local changes depend on this stack" in captured.err
-    jj = JjClient(repo)
-    assert jj.resolve_revision(local_merge.change_id).commit_id == local_merge.commit_id
-    assert jj.resolve_revision("@").commit_id == working_copy.commit_id
-
-    assert run_main(repo, config_path, "sync", on_trunk.change_id) == 0
-    captured = capsys.readouterr()
-    assert "then rerun sync" in captured.out
-    assert "dependent" in captured.out
-    assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
+    working_copy_after = jj.resolve_revision("@")
+    assert working_copy_after.commit_id == working_copy_before.commit_id
+    assert working_copy_after.only_parent_commit_id() == reviewed.commit_id
+    assert jj.resolve_revision(reviewed.change_id).commit_id == reviewed.commit_id
+    assert jj.resolve_revision(on_trunk.change_id).commit_id == on_trunk.commit_id
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert fake_repo.pull_requests[2].head_sha == reviewed_head_before
 
 
 def test_sync_rebases_trailing_local_work_without_creating_a_review(

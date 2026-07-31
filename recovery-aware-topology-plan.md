@@ -396,55 +396,6 @@ objective, immediate adopters, required deletions, retained scenarios, tests, do
 impact, complexity evidence, and review gate. The implementing commit deletes its own section
 from this file.
 
-### Slice 3: replace ordinary repository path discovery
-
-**Objective:** Extend the accepted small projection to inventory ordinary linear paths with
-shared prefixes, then replace only repository-wide code that decides the same path facts.
-
-**Dependencies:** Accepted Slice 2 interface and exact commit.
-
-**Boundary and adopters:** The adapter batches visible off-trunk candidates required by current
-inventory plus copies of tracked or selected change IDs needed by retained workflows. The model
-returns ordinary maximal paths and shared revision identity. Immediate adopters are `list`, the
-ordinary dependency check used by selected recovery, the connected `view` stale-stack advisory,
-and any existing repository stack picker that currently reconstructs those paths.
-
-The `view` advisory uses the same shared-prefix and path-membership projection to find connected
-tracked stacks. Its existing baseline comparison and rendering remain outside the model. Delete
-its command-local topology observer and policy; do not broaden `view` into repository-wide
-inspection or route unrelated `view` behavior through the repository projection.
-
-Cleanup, orphan reporting, `sync --all`, and `doctor` consume the projection only for a path or
-membership fact they demonstrably need. Their GitHub evidence, identity, cleanup eligibility, and
-setup diagnostics stay outside the model. Do not add a topology outcome merely to route every
-command through one object.
-
-**Retained scenarios:** One ordinary shared-prefix inventory, selected/repository agreement for
-that path, the existing connected `view` stale-stack advisory for the same path, and the
-dependency needed to preserve the reviewed suffix in the reported workflow.
-
-**Required deletion:** Delete `review/discovery.py` and repository discovery, tuple
-deduplication, placement, picker, or descendant logic actually superseded by the accepted
-projection. Delete stale classifiers only where they decide that same path fact. Remove obsolete
-`LocalStack` policy, query helpers, tests, and rejected-rewrite adapters that no accepted consumer
-needs. Complete the second deletion/non-port ledger before review.
-
-**Tests:** One pure shared-prefix example, one selected/repository agreement example, one
-real-`jj` ordinary overlap boundary, the existing focused connected-`view` advisory behavior, and
-focused command tests for distinct current risks. The advisory test protects only connection
-scope and identification of the other stale stack; baseline comparison and rendering reuse their
-existing coverage. Tracking without a local change remains existing cleanup evidence, not a
-synthetic path fixture. Run `./check.py`.
-
-**Documentation:** Update implementation strategy, the current cross-stack rule in `design.md`,
-and `daily-workflow.md` guidance for the connected `view` advisory in the same slice. Preserve
-the existing current-product behavior without adding unsupported graph taxonomy.
-
-**Review gate:** Reviewers confirm one authority for ordinary path facts, including the connected
-`view` advisory; bounded batched observation; no command-local connected-stack observer; no
-universal snapshot or catch-all problem framework; deletion of superseded code; and acceptable
-before/after complexity.
-
 ### Slice 4: reconcile ordinary external merges without losing local work
 
 **Objective:** Replace the merged-above-unmerged stop and generic divergence guidance with a

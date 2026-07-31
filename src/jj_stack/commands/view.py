@@ -49,7 +49,7 @@ from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
 )
-from jj_stack.review.discovery import discover_connected_tracked_stacks
+from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_selected_revset,
@@ -257,24 +257,25 @@ def _emit_connected_stale_stacks_advisory(
 
     if not state.review_identities:
         return
-    discovered = discover_connected_tracked_stacks(
-        jj_client=context.jj_client,
-        selected_stacks=rendered_stacks,
-        state=state,
+    selected_commit_ids = tuple(
+        revision.commit_id for stack in rendered_stacks for revision in stack.revisions
     )
-    rendered_head_change_ids = {stack.head.change_id for stack in rendered_stacks}
+    if not selected_commit_ids:
+        return
+    repository_paths = observe_repository_paths(
+        jj_client=context.jj_client,
+        tracked_change_ids=tuple(state.review_identities),
+        descendant_of=selected_commit_ids,
+    )
+    rendered_head_commit_ids = {stack.head.commit_id for stack in rendered_stacks}
     rendered_change_ids = {
         revision.change_id for stack in rendered_stacks for revision in stack.revisions
     }
     other_stacks = tuple(
-        stack
-        for stack in discovered
-        if stack.head.change_id not in rendered_head_change_ids
-        and _stack_has_tracked_change_outside_selection(
-            stack,
-            rendered_change_ids=rendered_change_ids,
-            state=state,
-        )
+        path.stack
+        for path in repository_paths.paths
+        if path.stack.head.commit_id not in rendered_head_commit_ids
+        and path.tracked_change_ids - rendered_change_ids
     )
     if not other_stacks:
         return
@@ -284,22 +285,6 @@ def _emit_connected_stale_stacks_advisory(
         single_subject="Other tracked stack",
         plural_subject="Other tracked stacks",
     )
-
-
-def _stack_has_tracked_change_outside_selection(
-    stack: LocalStack,
-    *,
-    rendered_change_ids: set[str],
-    state: ReviewState,
-) -> bool:
-    for revision in stack.revisions:
-        if revision.change_id in rendered_change_ids:
-            continue
-        review_identity = state.review_identities.get(revision.change_id)
-        if review_identity is None:
-            continue
-        return True
-    return False
 
 
 def _normalize_status_selectors(

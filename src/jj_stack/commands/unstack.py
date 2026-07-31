@@ -65,8 +65,8 @@ from jj_stack.review.change_status import (
     classify_review_status_revision,
     enumerate_orphaned_records,
 )
-from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.observation import RepositoryObservation, observe_reviews
+from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.selected import select_review_path
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -260,11 +260,14 @@ async def _run_orphan_closes(
     dry_run: bool,
 ) -> int:
     state = context.state_store.load()
-    discovered = discover_tracked_stacks(
+    repository_paths = observe_repository_paths(
         jj_client=context.jj_client,
-        state=state,
+        tracked_change_ids=tuple(state.review_identities),
     )
-    orphaned_records = enumerate_orphaned_records(state, discovered.stacks)
+    tracked_stacks = tuple(
+        path.stack for path in repository_paths.paths if path.tracked_change_ids
+    )
+    orphaned_records = enumerate_orphaned_records(state, tracked_stacks)
     orphan_targets_by_pull_request: dict[int, list[str]] = {}
     for orphan in orphaned_records:
         pull_request_number = orphan.review_identity.pr_number

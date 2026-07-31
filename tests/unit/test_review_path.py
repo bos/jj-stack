@@ -4,7 +4,12 @@ import pytest
 
 from jj_stack.errors import AmbiguousSelectionError, CliError
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.path import SelectedPathObservation, project_selected_path
+from jj_stack.review.path import (
+    RepositoryPathObservation,
+    SelectedPathObservation,
+    project_repository_paths,
+    project_selected_path,
+)
 
 
 def test_selected_path_is_order_independent_and_tracking_only_annotates() -> None:
@@ -129,6 +134,55 @@ def test_selected_overlap_follows_only_the_explicit_head_parent_path() -> None:
     )
 
     assert [revision.commit_id for revision in selected.stack.revisions] == ["shared", "right"]
+
+
+def test_repository_paths_inventory_an_ordinary_shared_prefix() -> None:
+    trunk = _revision("trunk", "trunk-change", parents=("root",), immutable=True)
+    shared = _revision("shared", "shared-change", parents=("trunk",))
+    left = _revision("left", "left-change", parents=("shared",))
+    right = _revision("right", "right-change", parents=("shared",))
+
+    projected = project_repository_paths(
+        RepositoryPathObservation(
+            candidate_commit_ids=frozenset({"shared", "left", "right"}),
+            current_commit_id=None,
+            fetched_trunk_commit_ids=frozenset({"trunk"}),
+            revisions=(right, trunk, shared, left),
+            tracked_change_ids=frozenset({"left-change", "right-change"}),
+            trunk=trunk,
+        )
+    )
+
+    assert [
+        [revision.commit_id for revision in path.stack.revisions] for path in projected.paths
+    ] == [["shared", "left"], ["shared", "right"]]
+    assert projected.paths[0].stack.revisions[0] is projected.paths[1].stack.revisions[0]
+
+
+def test_repository_and_selected_projection_agree_for_one_ordinary_path() -> None:
+    trunk = _revision("trunk", "trunk-change", parents=("root",), immutable=True)
+    shared = _revision("shared", "shared-change", parents=("trunk",))
+    left = _revision("left", "left-change", parents=("shared",))
+    right = _revision("right", "right-change", parents=("shared",))
+    revisions = (left, trunk, right, shared)
+
+    selected = project_selected_path(_observation(head=right, revisions=revisions, trunk=trunk))
+    repository = project_repository_paths(
+        RepositoryPathObservation(
+            candidate_commit_ids=frozenset({"shared", "left", "right"}),
+            current_commit_id=None,
+            fetched_trunk_commit_ids=frozenset({"trunk"}),
+            revisions=revisions,
+            tracked_change_ids=frozenset(),
+            trunk=trunk,
+        )
+    )
+    repository_right = next(
+        path for path in repository.paths if path.stack.head.commit_id == "right"
+    )
+
+    assert repository_right.stack.revisions == selected.stack.revisions
+    assert repository_right.stack.base_parent == selected.stack.base_parent
 
 
 def _observation(

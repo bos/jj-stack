@@ -13,6 +13,7 @@ from jj_stack.review.native_sync import (
     build_selected_native_sync,
 )
 from jj_stack.review.observation import RepositoryObservation
+from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.status import PreparedStatus
 from jj_stack.review.trunk_evidence import (
     TrackedReview,
@@ -229,9 +230,16 @@ def _validate_rebase_scope(
         for item in plan.on_trunk
     )
     selected_head = plan.survivors[-1]
-    outside = tuple(
-        revision
-        for revision in context.jj_client.query_descendant_revisions(source_commit_ids)
+    repository_paths = observe_repository_paths(
+        jj_client=context.jj_client,
+        tracked_change_ids=(),
+        descendant_of=source_commit_ids,
+        include_current_working_copy=True,
+    )
+    outside_by_commit_id = {
+        revision.commit_id: revision
+        for path in repository_paths.paths
+        for revision in path.stack.revisions
         if revision.commit_id not in selected_commit_ids
         and not revision.hidden
         and not revision.immutable
@@ -240,7 +248,8 @@ def _validate_rebase_scope(
             and revision.empty
             and revision.parents == (selected_head.commit_id,)
         )
-    )
+    }
+    outside = tuple(outside_by_commit_id.values())
     if outside:
         heads = ui.join(lambda revision: ui.change_id(revision.change_id), outside)
         raise CliError(
@@ -296,11 +305,20 @@ def dependent_path_commands(
     excluded_change_ids: set[str] | None = None,
 ) -> Message | None:
     excluded_changes = excluded_change_ids or set()
+    repository_paths = observe_repository_paths(
+        jj_client=context.jj_client,
+        tracked_change_ids=(),
+        descendant_of=(ancestor_commit_id,),
+        include_current_working_copy=True,
+    )
     dependents = tuple(
-        revision
-        for revision in context.jj_client.query_descendant_revisions((ancestor_commit_id,))
-        if revision.change_id not in excluded_changes
-        and not (revision.is_working_copy and revision.empty)
+        {
+            revision.commit_id: revision
+            for path in repository_paths.paths
+            for revision in path.stack.revisions
+            if revision.change_id not in excluded_changes
+            and not (revision.is_working_copy and revision.empty)
+        }.values()
     )
     if not dependents:
         return None
@@ -310,13 +328,19 @@ def dependent_path_commands(
     ):
         revisions = ui.join(lambda item: ui.change_id(item.change_id), dependents)
         return t"repair these non-linear dependent changes, then rerun sync: {revisions}"
-    dependent_commit_ids = {revision.commit_id for revision in dependents}
-    parent_commit_ids = {parent for revision in dependents for parent in revision.parents}
-    heads = tuple(
-        revision
-        for revision in dependents
-        if revision.commit_id in dependent_commit_ids - parent_commit_ids
-    )
+    heads_by_commit_id: dict[str, LocalRevision] = {}
+    for path in repository_paths.paths:
+        head = next(
+            (
+                revision
+                for revision in reversed(path.stack.revisions)
+                if revision.change_id not in excluded_changes
+            ),
+            None,
+        )
+        if head is not None:
+            heads_by_commit_id[head.commit_id] = head
+    heads = tuple(heads_by_commit_id.values())
     return t"run {
         ui.join(
             lambda revision: ui.cmd(f'jj-stack sync {revision.change_id}'), heads or dependents

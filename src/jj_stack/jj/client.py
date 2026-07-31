@@ -260,26 +260,6 @@ class JjClient:
                 grouped.setdefault(revision.change_id, []).append(revision)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
 
-    def query_revisions_by_change_ids_descending_from(
-        self,
-        change_ids: Sequence[str],
-        ancestor_commit_ids: Sequence[str],
-    ) -> tuple[LocalRevision, ...]:
-        """Return visible change-id matches that descend from any supplied ancestor."""
-
-        ordered_change_ids = tuple(dict.fromkeys(change_ids))
-        ordered_ancestor_commit_ids = tuple(dict.fromkeys(ancestor_commit_ids))
-        if not ordered_change_ids or not ordered_ancestor_commit_ids:
-            return ()
-
-        ancestor_revset = f"({_union_revset_symbols(ordered_ancestor_commit_ids)})::"
-        revisions_by_commit_id: dict[str, LocalRevision] = {}
-        for chunk in _chunked(ordered_change_ids):
-            change_ids_revset = _change_ids_revset(chunk)
-            for revision in self._query_revisions(f"({change_ids_revset}) & {ancestor_revset}"):
-                revisions_by_commit_id.setdefault(revision.commit_id, revision)
-        return tuple(revisions_by_commit_id.values())
-
     def query_revisions_by_commit_ids(
         self,
         commit_ids: Sequence[str],
@@ -295,17 +275,6 @@ class JjClient:
             for revision in self._query_revisions(_union_revset_symbols(chunk)):
                 revisions_by_commit_id.setdefault(revision.commit_id, revision)
         return tuple(revisions_by_commit_id.values())
-
-    def query_trunk_ancestor_commit_ids(
-        self,
-        commit_ids: Sequence[str],
-    ) -> set[str]:
-        """Return supplied commit IDs that are ancestors of `trunk()`."""
-
-        return self._query_commit_ids_in_ancestor_revset(
-            commit_ids,
-            ancestor_revset="::trunk()",
-        )
 
     def query_present_commit_ancestor_membership(
         self,

@@ -30,6 +30,26 @@ class SelectedReviewPath:
     tracked_change_ids: frozenset[str]
 
 
+@dataclass(frozen=True, slots=True)
+class RepositoryPathObservation:
+    """Immutable facts needed to derive ordinary repository paths."""
+
+    candidate_commit_ids: frozenset[str]
+    current_commit_id: str | None
+    fetched_trunk_commit_ids: frozenset[str]
+    revisions: tuple[LocalRevision, ...]
+    tracked_change_ids: frozenset[str]
+    trunk: LocalRevision
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryReviewPaths:
+    """Ordinary maximal paths observed from one bounded repository scope."""
+
+    current_commit_id: str | None
+    paths: tuple[SelectedReviewPath, ...]
+
+
 def project_selected_path(observation: SelectedPathObservation) -> SelectedReviewPath:
     """Derive a parent-connected path without consulting external state."""
 
@@ -71,6 +91,65 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
     return SelectedReviewPath(
         stack=stack,
         tracked_change_ids=observation.tracked_change_ids & path_change_ids,
+    )
+
+
+def project_repository_paths(
+    observation: RepositoryPathObservation,
+) -> RepositoryReviewPaths:
+    """Derive maximal parent-connected paths from ordinary visible candidates."""
+
+    revisions_by_commit_id = {
+        revision.commit_id: revision
+        for revision in sorted(observation.revisions, key=lambda item: item.commit_id)
+    }
+    candidate_commit_ids = observation.candidate_commit_ids & revisions_by_commit_id.keys()
+    candidates = {
+        commit_id: revisions_by_commit_id[commit_id]
+        for commit_id in candidate_commit_ids
+        if (
+            not revisions_by_commit_id[commit_id].is_working_copy
+            or bool(revisions_by_commit_id[commit_id].description.strip())
+        )
+        and revisions_by_commit_id[commit_id].is_reviewable(
+            allow_divergent=True,
+            allow_immutable=True,
+        )
+    }
+    parent_commit_ids = {
+        revision.parents[0] for revision in candidates.values() if revision.parents
+    }
+    heads = tuple(
+        candidates[commit_id] for commit_id in sorted(candidates.keys() - parent_commit_ids)
+    )
+
+    paths: list[SelectedReviewPath] = []
+    for head in heads:
+        head_first: list[LocalRevision] = []
+        current = head
+        while current.commit_id in candidates:
+            head_first.append(current)
+            current = revisions_by_commit_id[current.parents[0]]
+        revisions = tuple(reversed(head_first))
+        path_change_ids = frozenset(revision.change_id for revision in revisions)
+        paths.append(
+            SelectedReviewPath(
+                stack=LocalStack(
+                    base_parent=current,
+                    base_parent_is_trunk_ancestor=(
+                        current.commit_id in observation.fetched_trunk_commit_ids
+                    ),
+                    head=head,
+                    revisions=revisions,
+                    selected_revset=head.change_id,
+                    trunk=observation.trunk,
+                ),
+                tracked_change_ids=observation.tracked_change_ids & path_change_ids,
+            )
+        )
+    return RepositoryReviewPaths(
+        current_commit_id=observation.current_commit_id,
+        paths=tuple(paths),
     )
 
 

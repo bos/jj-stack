@@ -34,7 +34,6 @@ from jj_stack.github.resolution import (
     resolve_github_target,
 )
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.branches import duplicate_review_branch_claims
@@ -44,7 +43,7 @@ from jj_stack.review.change_status import (
     classify_review_status_revision,
     enumerate_orphaned_records,
 )
-from jj_stack.review.discovery import discover_tracked_stacks
+from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.status import (
     PreparedRevision,
     PreparedStack,
@@ -117,13 +116,23 @@ def _run_list(
 ) -> int:
     state = context.state_store.load()
     state_incomplete = bool(state.record_issues)
-    with console.spinner(description="Inspecting local stacks"):
-        discovered = discover_tracked_stacks(jj_client=context.jj_client, state=state)
+    if state.review_identities:
+        with console.spinner(description="Inspecting local stacks"):
+            repository_paths = observe_repository_paths(
+                jj_client=context.jj_client,
+                tracked_change_ids=tuple(state.review_identities),
+            )
+        discovered = tuple(
+            path.stack for path in repository_paths.paths if path.tracked_change_ids
+        )
+        current_commit_id = repository_paths.current_commit_id
+    else:
+        discovered = ()
+        current_commit_id = None
 
     ordered = _order_discovered_stacks(
-        discovered.stacks,
-        current_commit_id=discovered.current_commit_id,
-        jj_client=context.jj_client,
+        discovered,
+        current_commit_id=current_commit_id,
     )
     orphan_rows = tuple(
         _build_orphan_row(orphan) for orphan in enumerate_orphaned_records(state, ordered)
@@ -170,7 +179,7 @@ def _run_list(
             _PreparedDiscoveredStack(
                 current=_stack_contains_commit_id(
                     stack,
-                    commit_id=discovered.current_commit_id,
+                    commit_id=current_commit_id,
                 ),
                 prepared=prepare_stack_for_status(
                     context=context,
@@ -317,19 +326,12 @@ def _order_discovered_stacks(
     discovered: tuple[LocalStack, ...],
     *,
     current_commit_id: str | None,
-    jj_client: JjClient,
 ) -> tuple[LocalStack, ...]:
-    head_commit_ids = tuple(stack.head.commit_id for stack in discovered)
-    if not head_commit_ids:
-        return ()
-    ordered_heads = jj_client.query_revisions_by_commit_ids(head_commit_ids)
-    order_index = {revision.commit_id: index for index, revision in enumerate(ordered_heads)}
     return tuple(
         sorted(
             discovered,
             key=lambda stack: (
                 0 if _stack_contains_commit_id(stack, commit_id=current_commit_id) else 1,
-                order_index.get(stack.head.commit_id, len(order_index)),
                 stack.head.change_id,
             ),
         )

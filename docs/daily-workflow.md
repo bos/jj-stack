@@ -363,9 +363,10 @@ local path.
 If `jj-stack list` says another tracked stack changed since its last submit, either run
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
 `jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another
-stack when that stack is built on top of a change in the stack you are inspecting. `view` also
-calls out which tracked changes no longer match their last submitted commits, and whether
-`jj-stack sync <head-change-id>` is needed first.
+stack when its local path shares a change with the stack you are inspecting, such as two paths
+created by splitting above a reviewed change. A stack that only shares trunk stays silent.
+`view` also calls out which tracked changes no longer match their last submitted commits, and
+whether `jj-stack sync <head-change-id>` is needed first.
 
 ## Short version
 

@@ -13,7 +13,7 @@ from jj_stack.github.pull_request_refs import (
 from jj_stack.github.resolution import parse_github_repo, select_submit_remote
 from jj_stack.jj.client import JjClient
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
-from jj_stack.review.discovery import discover_tracked_stacks
+from jj_stack.review.repository import observe_repository_paths
 from jj_stack.state.store import ReviewStateStore
 
 
@@ -99,11 +99,14 @@ def resolve_orphaned_pull_request(
             ),
         )
     change_id = matching_change_ids[0]
-    discovered = discover_tracked_stacks(jj_client=jj_client, state=state)
+    repository_paths = observe_repository_paths(
+        jj_client=jj_client,
+        tracked_change_ids=tuple(state.review_identities),
+    )
     if any(
         revision.change_id == change_id
-        for stack in discovered.stacks
-        for revision in stack.revisions
+        for path in repository_paths.paths
+        for revision in path.stack.revisions
     ):
         return None
     return pull_request_number, change_id

@@ -64,8 +64,10 @@ def test_local_cleanup_observations_flag_changes_outside_supported_stacks(
 
     monkeypatch.setattr(
         stale_module,
-        "discover_stacks_from_revisions",
-        lambda **_kwargs: (SimpleNamespace(revisions=(live_revision,)),),
+        "observe_repository_paths",
+        lambda **_kwargs: SimpleNamespace(
+            paths=(SimpleNamespace(stack=SimpleNamespace(revisions=(live_revision,))),)
+        ),
     )
 
     observations = stale_module._local_cleanup_observations(

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -32,7 +33,7 @@ def test_resolve_selected_revset_requires_explicit_selection() -> None:
         )
 
 
-def test_resolve_orphaned_pull_request_uses_supported_stack_membership() -> None:
+def test_resolve_orphaned_pull_request_uses_supported_stack_membership(monkeypatch) -> None:
     state = ReviewState(
         review_identities={
             "change-1": _identity(
@@ -52,6 +53,10 @@ def test_resolve_orphaned_pull_request_uses_supported_stack_membership() -> None
                 ),
             ),
         },
+    )
+    monkeypatch.setattr(
+        "jj_stack.review.selection.observe_repository_paths",
+        lambda **_kwargs: SimpleNamespace(paths=()),
     )
 
     assert resolve_orphaned_pull_request(

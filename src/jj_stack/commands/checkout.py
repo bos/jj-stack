@@ -33,8 +33,8 @@ from jj_stack.review.branches import (
     review_branch_matches_change,
     review_namespace,
 )
-from jj_stack.review.discovery import discover_tracked_stacks
 from jj_stack.review.observation import duplicate_review_claim_change_ids
+from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.selected import select_review_path
 from jj_stack.review.status import status_preparation_cli_error
 from jj_stack.state.operation_lock import acquire_operation_lock
@@ -521,11 +521,18 @@ def _require_branch_matches_revision(*, branch: str, revision: LocalRevision) ->
 def _pick_tracked_stack_head(context: CommandContext) -> str:
     """Prompt for one locally tracked stack without holding the operation lock."""
 
-    discovered = discover_tracked_stacks(
-        jj_client=context.jj_client,
-        state=context.state_store.load(),
-    )
-    stacks = sorted(discovered.stacks, key=lambda stack: stack.head.change_id)
+    state = context.state_store.load()
+    if not state.review_identities:
+        stacks: list[LocalStack] = []
+    else:
+        repository_paths = observe_repository_paths(
+            jj_client=context.jj_client,
+            tracked_change_ids=tuple(state.review_identities),
+        )
+        stacks = sorted(
+            (path.stack for path in repository_paths.paths if path.tracked_change_ids),
+            key=lambda stack: stack.head.change_id,
+        )
     if not stacks:
         raise CliError(
             "No locally tracked stacks to pick from.",

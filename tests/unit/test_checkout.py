@@ -18,13 +18,15 @@ def test_pick_tracked_stack_head_reports_missing_or_invalid_selection(
         CommandContext,
         SimpleNamespace(
             jj_client=SimpleNamespace(),
-            state_store=SimpleNamespace(load=lambda: SimpleNamespace(changes={})),
+            state_store=SimpleNamespace(
+                load=lambda: SimpleNamespace(review_identities={"change-1": object()})
+            ),
         ),
     )
 
     monkeypatch.setattr(
-        "jj_stack.commands.checkout.discover_tracked_stacks",
-        lambda **kwargs: SimpleNamespace(current_commit_id=None, stacks=()),
+        "jj_stack.commands.checkout.observe_repository_paths",
+        lambda **kwargs: SimpleNamespace(paths=()),
     )
     monkeypatch.setattr("sys.stdin", io.StringIO("1\n"))
     with pytest.raises(CliError, match="No locally tracked stacks"):
@@ -35,8 +37,10 @@ def test_pick_tracked_stack_head_reports_missing_or_invalid_selection(
         revisions=(SimpleNamespace(commit_id="commit-1"),),
     )
     monkeypatch.setattr(
-        "jj_stack.commands.checkout.discover_tracked_stacks",
-        lambda **kwargs: SimpleNamespace(current_commit_id="commit-1", stacks=(stack,)),
+        "jj_stack.commands.checkout.observe_repository_paths",
+        lambda **kwargs: SimpleNamespace(
+            paths=(SimpleNamespace(stack=stack, tracked_change_ids={"change-1"}),)
+        ),
     )
     monkeypatch.setattr("sys.stdin", io.StringIO("9\n"))
     with pytest.raises(UsageError, match="not a valid stack number"):

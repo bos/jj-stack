@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from jj_stack.bootstrap import CommandContext
-from jj_stack.models.stack import LocalRevision
-from jj_stack.review.discovery import discover_stacks_from_revisions
+from jj_stack.review.repository import observe_repository_paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,25 +55,19 @@ def _local_cleanup_observations(
         for revisions in (matched_revisions.get(change_id, ()),)
         if revisions
     )
-    supported_commit_ids = _supported_review_commit_ids_for_revisions(
-        context=context,
-        revisions=candidate_revisions,
+    if not candidate_revisions:
+        return observations
+    repository_paths = observe_repository_paths(
+        jj_client=jj_client,
+        tracked_change_ids=change_ids,
+        descendant_of=tuple(revision.commit_id for revision in candidate_revisions),
     )
+    supported_commit_ids = {
+        revision.commit_id for path in repository_paths.paths for revision in path.stack.revisions
+    }
     for revision in candidate_revisions:
         if revision.commit_id not in supported_commit_ids:
             observations[revision.change_id] = LocalCleanupObservation(
                 stale_reason="local change no longer participates in a supported stack",
             )
     return observations
-
-
-def _supported_review_commit_ids_for_revisions(
-    *,
-    context: CommandContext,
-    revisions: tuple[LocalRevision, ...],
-) -> set[str]:
-    stacks = discover_stacks_from_revisions(
-        jj_client=context.jj_client,
-        revisions=revisions,
-    )
-    return {revision.commit_id for stack in stacks for revision in stack.revisions}

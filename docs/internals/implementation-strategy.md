@@ -235,6 +235,15 @@ merge remains outside the path and selectable until `sync`. The projection retur
 parent-connected `LocalStack`. Tracking annotates that path and cannot create or reorder it.
 Command-owned GitHub identity, merge evidence, and mutation policy stay outside the projection.
 
+The same module folds a bounded repository observation into ordinary maximal linear paths.
+`review/repository.py` collects visible off-trunk candidates, their base parents, fetched-trunk
+membership, and the invoking workspace parent in one `jj` query. Exact commit anchors narrow
+that scan for connected `view`, cleanup membership, and sync dependency checks. Repository
+inventory omits every working-copy commit. An exact sync dependency scan additionally includes
+the invoking `@` when it is described, nonempty, and descends from one of its anchors. The fold
+keys revisions by commit ID, so overlapping paths reuse the observed shared prefix without
+change-ID-tuple deduplication. Tracking only annotates the paths after their topology is derived.
+
 ### GitHub client
 
 Thin `httpxyz` wrapper plus typed `pydantic` models. Knows how to fetch PR state, batch PR
@@ -347,12 +356,14 @@ Public `--json` command output is a separate user-facing contract. Its schema li
 `list --json` payloads against that file so the emitters cannot accidentally expose tracking-state
 or GitHub-client internals.
 
-Repository-wide discovery supplies current stacks to `commands/list_.py`, which loads tracking
-separately. `review/change_status.py` classifies each change and enumerates orphaned records;
-`commands/_stale_stacks.py` renders stale-stack advisories. Selected discovery supplies `view` and
-mutation targets. All paths preserve malformed or unmatched saved identities for explicit repair
-rather than changing them during inspection. The command behavior is specified in
-[design.md](design.md).
+The ordinary repository projection supplies current stacks to `commands/list_.py`, which loads
+tracking separately. The same projection supplies path membership to the tracked-stack picker,
+orphan selection, and cleanup, and finds only paths descending from the revisions rendered by
+the connected-`view` advisory. `review/change_status.py` classifies each change and enumerates
+orphaned records; `commands/_stale_stacks.py` renders stale-stack advisories. Selected projection
+supplies `view` and mutation targets. All paths preserve malformed or unmatched saved identities
+for explicit repair rather than changing them during inspection. The command behavior is
+specified in [design.md](design.md).
 
 Orphan cleanup lives in its own command module because it begins from saved identity rather than
 a selected live stack. `review/observation.py` batches raw observations of saved identity and
