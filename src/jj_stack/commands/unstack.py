@@ -182,7 +182,6 @@ class _CloseUntrackedPullRequestTarget:
     """Untracked PR selected for explicit cleanup."""
 
     pull_request_number: int
-    state: ReviewState
 
 
 type _CloseTarget = (
@@ -452,9 +451,7 @@ def _run_close(
         return asyncio.run(
             run_untracked_cleanup_pull_request(
                 context=context,
-                dry_run=dry_run,
                 pull_request_number=target.pull_request_number,
-                state=target.state,
             )
         )
 
@@ -505,7 +502,6 @@ def _resolve_close_target(
             ):
                 return _CloseUntrackedPullRequestTarget(
                     pull_request_number=pull_request_number,
-                    state=state,
                 )
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
             action_name="unstack",

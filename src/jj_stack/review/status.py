@@ -10,7 +10,6 @@ from typing import Literal
 
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import (
@@ -41,7 +40,6 @@ from jj_stack.review.selected import select_review_path, select_review_path_cont
 from jj_stack.ui import Message
 
 logger = logging.getLogger(__name__)
-_GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
 
 HELP = "Check the review status of one or more jj stacks"
 
@@ -58,7 +56,6 @@ class PullRequestLookup:
     state: PullRequestLookupState
     review_decision: str | None = None
     review_decision_error: str | None = None
-    repository_error: ErrorMessage | None = None
     source: PullRequestLookupSource = "head"
 
 
@@ -100,7 +97,6 @@ class StatusResult:
     remote_error: ErrorMessage | None
     revisions: tuple[ReviewStatusRevision, ...]
     selected_revset: str
-    base_parent_subject: str
     submitted_state_disagreements: tuple[str, ...] = ()
 
 
@@ -111,7 +107,6 @@ class PreparedStatus:
     github_target: GithubTarget | UnresolvedGithubTarget
     prepared: PreparedStack
     selected_revset: str
-    base_parent_subject: str
 
     @property
     def github_repository(self) -> GithubRepoAddress | None:
@@ -223,7 +218,6 @@ def prepare_status(
         github_target=github_target,
         prepared=prepared,
         selected_revset=prepared.stack.selected_revset,
-        base_parent_subject=prepared.stack.base_parent.subject,
     )
 
 
@@ -313,7 +307,6 @@ async def stream_status_async(
 ) -> StatusResult:
     prepared = prepared_status.prepared
     selected_revset = prepared_status.selected_revset
-    base_parent_subject = prepared_status.base_parent_subject
     github_repository = prepared_status.github_repository
     github_repository_error = prepared_status.github_repository_error
     state_incomplete = bool(prepared.state.record_issues)
@@ -335,7 +328,6 @@ async def stream_status_async(
             remote_error=prepared.remote_error,
             revisions=display_revisions,
             selected_revset=selected_revset,
-            base_parent_subject=base_parent_subject,
             submitted_state_disagreements=submitted_disagreements,
         )
 
@@ -353,7 +345,6 @@ async def stream_status_async(
             remote_error=None,
             revisions=display_revisions,
             selected_revset=selected_revset,
-            base_parent_subject=base_parent_subject,
             submitted_state_disagreements=submitted_disagreements,
         )
 
@@ -366,7 +357,6 @@ async def stream_status_async(
             remote_error=None,
             revisions=(),
             selected_revset=selected_revset,
-            base_parent_subject=base_parent_subject,
             submitted_state_disagreements=submitted_disagreements,
         )
 
@@ -385,7 +375,6 @@ async def stream_status_async(
             remote_error=None,
             revisions=fallback_revisions,
             selected_revset=selected_revset,
-            base_parent_subject=base_parent_subject,
             submitted_state_disagreements=submitted_disagreements,
         )
 
@@ -414,7 +403,6 @@ async def stream_status_async(
             remote_error=None,
             revisions=fallback_revisions,
             selected_revset=selected_revset,
-            base_parent_subject=base_parent_subject,
             submitted_state_disagreements=submitted_disagreements,
         )
 
@@ -431,7 +419,6 @@ async def stream_status_async(
         remote_error=None,
         revisions=display_revisions,
         selected_revset=selected_revset,
-        base_parent_subject=base_parent_subject,
         submitted_state_disagreements=submitted_disagreements,
     )
 
@@ -565,26 +552,26 @@ async def _iter_status_revisions_with_github(
             on_progress=None,
             prepared_revisions=ordered_prepared_revisions,
         )
-        semaphore = asyncio.Semaphore(_GITHUB_INSPECTION_CONCURRENCY)
-        tasks = tuple(
-            asyncio.create_task(
-                _inspect_revision_with_github(
-                    prepared=prepared,
-                    prepared_revision=prepared_revision,
-                    pull_request_lookup=pull_request_lookups[_required_branch(prepared_revision)],
-                    semaphore=semaphore,
-                )
+        for prepared_revision in ordered_prepared_revisions:
+            branch = _required_branch(prepared_revision)
+            pull_request_lookup = pull_request_lookups[branch]
+            logger.debug(
+                "status revision inspected: change_id=%s branch=%s pr_state=%s",
+                short_change_id(prepared_revision.revision.change_id),
+                branch,
+                pull_request_lookup.state,
             )
-            for prepared_revision in ordered_prepared_revisions
-        )
-        try:
-            for task in tasks:
-                yield await task
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            yield ReviewStatusRevision(
+                branch=branch,
+                change_id=prepared_revision.revision.change_id,
+                commit_id=prepared_revision.revision.commit_id,
+                local_divergent=prepared_revision.revision.divergent,
+                pull_request_lookup=pull_request_lookup,
+                remote_target=prepared.remote_targets.get(branch),
+                review_identity=prepared_revision.review_identity,
+                submitted_baseline=prepared_revision.submitted_baseline,
+                subject=prepared_revision.revision.subject,
+            )
 
 
 def lookup_pull_request_lookups(
@@ -617,34 +604,6 @@ async def lookup_pull_request_lookups_async(
             github_client=github_client,
             on_progress=on_progress,
             prepared_revisions=prepared_revisions,
-        )
-
-
-async def _inspect_revision_with_github(
-    *,
-    prepared: PreparedStack,
-    prepared_revision: PreparedRevision,
-    pull_request_lookup: PullRequestLookup,
-    semaphore: asyncio.Semaphore,
-) -> ReviewStatusRevision:
-    async with semaphore:
-        branch = _required_branch(prepared_revision)
-        logger.debug(
-            "status revision inspected: change_id=%s branch=%s pr_state=%s",
-            short_change_id(prepared_revision.revision.change_id),
-            branch,
-            pull_request_lookup.state,
-        )
-        return ReviewStatusRevision(
-            branch=branch,
-            change_id=prepared_revision.revision.change_id,
-            commit_id=prepared_revision.revision.commit_id,
-            local_divergent=prepared_revision.revision.divergent,
-            pull_request_lookup=pull_request_lookup,
-            remote_target=prepared.remote_targets.get(branch),
-            review_identity=prepared_revision.review_identity,
-            submitted_baseline=prepared_revision.submitted_baseline,
-            subject=prepared_revision.revision.subject,
         )
 
 

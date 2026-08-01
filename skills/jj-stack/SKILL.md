@@ -83,7 +83,7 @@ creating a replacement PR; or equivalent `gh api` mutations. These desync
 local changes, review branches, and tracking data. Map the intent to a
 jj-stack command instead; use `gh` only if the user explicitly confirms after
 you explain that risk. The one routine exception is an exact `gh stack
-unstack <number>` command printed by `submit` when one old GitHub stack spans
+unstack <number>` command printed by `submit` when one GitHub stack spans
 multiple desired local paths; run it, then submit each path separately.
 
 - **Merge reviewed bottom changes:** `merge --dry-run`, then `merge`. It

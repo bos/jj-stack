@@ -647,15 +647,15 @@ When a rewrite moves changes between local stacks, identity still follows full `
 stack command still acts on one selected chain, and ambiguous linkage still fails closed. Other
 affected stacks wait for their own explicit commands.
 
-- **Move changes between stacks**: dissolve any old GitHub stack spanning more than one resulting
-  path, then submit one resulting stack to update that chain. Moved changes retain their PRs and
-  recalculate bases from their new parents.
+- **Move changes between stacks**: dissolve any existing GitHub stack spanning more than one
+  resulting path, then submit one resulting stack to update that chain. Moved changes retain their
+  PRs and recalculate bases from their new parents.
 - **Split one stack into several**: each maximal linear path appears separately in repository
   inventory. The paths may contain the same observed reviewed ancestors; tracking annotates those
-  paths but does not create or join them. If one old GitHub stack spans active reviews on more
-  than one desired path, the user dissolves it with the named
+  paths but does not create or join them. If one existing GitHub stack spans active reviews on
+  more than one desired path, the user dissolves it with the named
   `gh stack unstack <number>` command and submits each path separately.
-- **Merge several stacks into one**: dissolve the old GitHub stacks, then submit the resulting
+- **Join several stacks into one**: dissolve the existing GitHub stacks, then submit the resulting
   chain. It reuses reviews by change ID, recalculates every base, and produces one overview
   comment on the new head.
 

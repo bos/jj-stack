@@ -318,17 +318,15 @@ class SubmitRetryScenario:
 
 
 @dataclass(frozen=True, slots=True)
-class StackMergeScenario:
-    """A rewrite that merges two independently submitted stacks into one stack."""
+class StackJoinScenario:
+    """A rewrite that joins two independently submitted stacks into one stack."""
 
     name: str
-    hazard_class: str
     first_stack_labels: tuple[str, ...]
     second_stack_labels: tuple[str, ...]
     selected_labels: tuple[str, ...]
     source_label: str
     target_label: str
-    rewritten_initial_labels: tuple[str, ...]
 
     @property
     def initial_size(self) -> int:
@@ -336,7 +334,7 @@ class StackMergeScenario:
 
     @property
     def trace(self) -> str:
-        return f"merge_stack_onto:{self.source_label}:{self.target_label}"
+        return f"join_stack_onto:{self.source_label}:{self.target_label}"
 
     @property
     def invariants(self) -> SubmitInvariants:
@@ -350,16 +348,8 @@ class StackMergeScenario:
     @property
     def canonical_key(
         self,
-    ) -> tuple[
-        str,
-        tuple[str, ...],
-        tuple[str, ...],
-    ]:
-        return (
-            self.hazard_class,
-            self.selected_labels,
-            self.rewritten_initial_labels,
-        )
+    ) -> tuple[str, ...]:
+        return self.selected_labels
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,7 +357,6 @@ class StackMoveScenario:
     """A rewrite that moves one change between independently submitted stacks."""
 
     name: str
-    hazard_class: str
     first_stack_labels: tuple[str, ...]
     second_stack_labels: tuple[str, ...]
     source_label: str
@@ -375,8 +364,6 @@ class StackMoveScenario:
     placement: Literal["after", "before"]
     selected_labels: tuple[str, ...]
     deferred_labels: tuple[str, ...]
-    deferred_stack_labels: tuple[str, ...]
-    rewritten_initial_labels: tuple[str, ...]
 
     @property
     def initial_size(self) -> int:
@@ -400,17 +387,13 @@ class StackMoveScenario:
         self,
     ) -> tuple[
         str,
-        str,
-        tuple[str, ...],
         tuple[str, ...],
         tuple[str, ...],
     ]:
         return (
-            self.hazard_class,
             self.placement,
             self.selected_labels,
             self.deferred_labels,
-            self.rewritten_initial_labels,
         )
 
 
@@ -480,13 +463,13 @@ def stack_edit_scenarios_from_environment() -> tuple[StackEditScenario, ...]:
     return generate_stack_edit_scenarios(count=count, seed=seed)
 
 
-def stack_merge_scenarios_from_environment() -> tuple[StackMergeScenario, ...]:
-    """Return deterministic stack-merge scenarios for the pytest adapter."""
+def stack_join_scenarios_from_environment() -> tuple[StackJoinScenario, ...]:
+    """Return deterministic stack-join scenarios for the pytest adapter."""
 
     count = int(
         os.environ.get(
-            "JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS",
-            str(DEFAULT_STACK_MERGE_SCENARIO_COUNT),
+            "JJ_STACK_SUBMIT_PROPERTY_STACK_JOIN_SCENARIOS",
+            str(DEFAULT_STACK_JOIN_SCENARIO_COUNT),
         )
     )
     seed = int(
@@ -495,7 +478,7 @@ def stack_merge_scenarios_from_environment() -> tuple[StackMergeScenario, ...]:
             str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
         )
     )
-    return generate_stack_merge_scenarios(count=count, seed=seed)
+    return generate_stack_join_scenarios(count=count, seed=seed)
 
 
 def stack_move_scenarios_from_environment() -> tuple[StackMoveScenario, ...]:
@@ -573,19 +556,19 @@ def generate_stack_edit_scenarios(
     return tuple(scenarios)
 
 
-def generate_stack_merge_scenarios(
+def generate_stack_join_scenarios(
     *,
     count: int,
     seed: int,
-) -> tuple[StackMergeScenario, ...]:
-    """Generate two-stack merge scenarios that should preserve every PR identity."""
+) -> tuple[StackJoinScenario, ...]:
+    """Generate two-stack join scenarios that should preserve every PR identity."""
 
     if count < 1:
         return ()
 
-    scenarios: list[StackMergeScenario] = []
-    seen: set[tuple[str, tuple[str, ...], tuple[str, ...]]] = set()
-    for scenario in _fixed_stack_merge_scenarios():
+    scenarios: list[StackJoinScenario] = []
+    seen: set[tuple[str, ...]] = set()
+    for scenario in _fixed_stack_join_scenarios():
         scenarios.append(scenario)
         seen.add(scenario.canonical_key)
         if len(scenarios) >= count:
@@ -599,11 +582,10 @@ def generate_stack_merge_scenarios(
         first_size = rng.randint(1, 5)
         second_size = rng.randint(1, 5)
         first_then_second = rng.choice((True, False))
-        scenario = _stack_merge_scenario(
+        scenario = _stack_join_scenario(
             first_size=first_size,
             first_then_second=first_then_second,
-            hazard_class="random",
-            name=f"merge-random-{attempts:03d}",
+            name=f"join-random-{attempts:03d}",
             second_size=second_size,
         )
         if scenario.canonical_key in seen:
@@ -672,8 +654,6 @@ def generate_stack_move_scenarios(
     seen: set[
         tuple[
             str,
-            str,
-            tuple[str, ...],
             tuple[str, ...],
             tuple[str, ...],
         ]
@@ -696,7 +676,6 @@ def generate_stack_move_scenarios(
         target_size = second_size if source_from_first else first_size
         scenario = _stack_move_scenario(
             first_size=first_size,
-            hazard_class="random",
             name=f"move-random-{attempts:03d}",
             placement=rng.choice(("after", "before")),
             second_size=second_size,
@@ -893,7 +872,6 @@ def _fixed_stack_move_scenarios() -> tuple[StackMoveScenario, ...]:
     return (
         _stack_move_scenario(
             first_size=3,
-            hazard_class="move-middle-into-head",
             name="move-first-middle-after-second-head",
             placement="after",
             second_size=2,
@@ -907,7 +885,6 @@ def _fixed_stack_move_scenarios() -> tuple[StackMoveScenario, ...]:
 def _stack_move_scenario(
     *,
     first_size: int,
-    hazard_class: str,
     name: str,
     placement: Literal["after", "before"],
     second_size: int,
@@ -927,23 +904,12 @@ def _stack_move_scenario(
         target_label=target_label,
         target_labels=target_labels,
     )
-    deferred_stack_labels = tuple(label for label in source_labels if label != source_label)
-    rewritten_initial_labels = _stack_move_rewritten_labels(
-        placement=placement,
-        source_index=source_index,
-        source_label=source_label,
-        source_labels=source_labels,
-        target_index=target_index,
-        target_labels=target_labels,
-    )
+    deferred_labels = tuple(label for label in source_labels if label != source_label)
     return StackMoveScenario(
-        deferred_labels=deferred_stack_labels,
-        deferred_stack_labels=deferred_stack_labels,
+        deferred_labels=deferred_labels,
         first_stack_labels=first_labels,
-        hazard_class=hazard_class,
         name=name,
         placement=placement,
-        rewritten_initial_labels=rewritten_initial_labels,
         second_stack_labels=second_labels,
         selected_labels=selected_labels,
         source_label=source_label,
@@ -967,61 +933,37 @@ def _insert_moved_label(
     )
 
 
-def _stack_move_rewritten_labels(
-    *,
-    placement: Literal["after", "before"],
-    source_index: int,
-    source_label: str,
-    source_labels: tuple[str, ...],
-    target_index: int,
-    target_labels: tuple[str, ...],
-) -> tuple[str, ...]:
-    target_rewrite_start = target_index + 1 if placement == "after" else target_index
-    rewritten = {
-        source_label,
-        *source_labels[source_index + 1 :],
-        *target_labels[target_rewrite_start:],
-    }
-    return tuple(sorted(rewritten, key=_label_sort_key))
-
-
-def _fixed_stack_merge_scenarios() -> tuple[StackMergeScenario, ...]:
+def _fixed_stack_join_scenarios() -> tuple[StackJoinScenario, ...]:
     return (
-        _stack_merge_scenario(
+        _stack_join_scenario(
             first_size=2,
             first_then_second=True,
-            hazard_class="append-second",
-            name="merge-second-after-first",
+            name="join-second-after-first",
             second_size=2,
         ),
     )
 
 
-def _stack_merge_scenario(
+def _stack_join_scenario(
     *,
     first_size: int,
     first_then_second: bool,
-    hazard_class: str,
     name: str,
     second_size: int,
-) -> StackMergeScenario:
+) -> StackJoinScenario:
     first_labels = tuple(_stack_label("a", index) for index in range(1, first_size + 1))
     second_labels = tuple(_stack_label("b", index) for index in range(1, second_size + 1))
     if first_then_second:
         selected_labels = (*first_labels, *second_labels)
         source_label = second_labels[0]
         target_label = first_labels[-1]
-        rewritten_initial_labels = second_labels
     else:
         selected_labels = (*second_labels, *first_labels)
         source_label = first_labels[0]
         target_label = second_labels[-1]
-        rewritten_initial_labels = first_labels
-    return StackMergeScenario(
+    return StackJoinScenario(
         first_stack_labels=first_labels,
-        hazard_class=hazard_class,
         name=name,
-        rewritten_initial_labels=rewritten_initial_labels,
         second_stack_labels=second_labels,
         selected_labels=selected_labels,
         source_label=source_label,
@@ -1177,7 +1119,7 @@ def _label_sort_key(label: str) -> tuple[str, int]:
 # Unconfigured pytest runs exercise only the fixed observable-risk representatives.
 # Larger counts continue into deterministic randomized generation through the opt-in runner.
 DEFAULT_STACK_EDIT_SCENARIO_COUNT = len(_fixed_stack_edit_scenarios())
-DEFAULT_STACK_MERGE_SCENARIO_COUNT = len(_fixed_stack_merge_scenarios())
+DEFAULT_STACK_JOIN_SCENARIO_COUNT = len(_fixed_stack_join_scenarios())
 DEFAULT_STACK_MOVE_SCENARIO_COUNT = len(_fixed_stack_move_scenarios())
 DEFAULT_SUBMIT_RETRY_SCENARIO_COUNT = len(_fixed_submit_retry_scenarios())
 DEFAULT_EXTERNAL_DRIFT_SCENARIO_COUNT = len(_fixed_external_drift_scenarios())

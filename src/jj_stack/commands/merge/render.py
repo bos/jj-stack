@@ -44,7 +44,7 @@ def print_merge_result(result: MergeResult) -> None:
         console.output(
             t"GitHub reported final trunk commit {ui.commit_id(result.final_trunk_commit_id)}."
         )
-    if result.applied and result.merged_change_ids:
+    if result.applied:
         console.output(
             t"GitHub accepted one or more merges. Run "
             t"{ui.cmd(f'jj-stack sync {result.selected_revset}')} to update the local stack."

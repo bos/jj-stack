@@ -41,13 +41,8 @@ def test_github_client_retries_429_responses_with_retry_after() -> None:
         return httpxyz.Response(
             200,
             json={
-                "clone_url": "https://github.test/octo-org/stacked-review.git",
                 "default_branch": "main",
                 "full_name": "octo-org/stacked-review",
-                "html_url": "https://github.test/octo-org/stacked-review",
-                "name": "stacked-review",
-                "private": True,
-                "url": "https://api.github.test/repos/octo-org/stacked-review",
             },
             request=request,
         )
@@ -77,13 +72,8 @@ def test_github_client_retries_secondary_rate_limits_without_retry_after() -> No
         return httpxyz.Response(
             200,
             json={
-                "clone_url": "https://github.test/octo-org/stacked-review.git",
                 "default_branch": "main",
                 "full_name": "octo-org/stacked-review",
-                "html_url": "https://github.test/octo-org/stacked-review",
-                "name": "stacked-review",
-                "private": True,
-                "url": "https://api.github.test/repos/octo-org/stacked-review",
             },
             request=request,
         )
@@ -500,7 +490,6 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
                                     {
                                         "body": "<!-- jj-stack-overview -->",
                                         "databaseId": 70,
-                                        "url": "https://github.test/comment/70",
                                     }
                                 ],
                                 "pageInfo": {"hasNextPage": False},
@@ -512,14 +501,14 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
             request=request,
         )
 
-    async def run_test() -> tuple[int, str]:
+    async def run_test() -> int:
         async with _github_client(handler) as client:
             comments = await client.get_issue_comments_by_pull_request_numbers(
                 pull_numbers=(7,),
             )
-        return comments[7][0].id, comments[7][0].html_url
+        return comments[7][0].id
 
-    assert asyncio.run(run_test()) == (70, "https://github.test/comment/70")
+    assert asyncio.run(run_test()) == 70
     assert len(queries) == 1
 
 

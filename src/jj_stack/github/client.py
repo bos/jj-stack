@@ -901,7 +901,6 @@ def _pull_request_issue_comments_query(numbers: Sequence[int]) -> str:
                 nodes {{
                   databaseId
                   body
-                  url
                 }}
                 pageInfo {{
                   hasNextPage

@@ -14,7 +14,6 @@ from jj_stack.state.store import ReviewStateStore, resolve_state_path
 from ..support.fake_github import (
     FakeGithubState,
     create_app,
-    github_stack,
 )
 from ..support.integration_helpers import (
     commit_file,
@@ -59,7 +58,9 @@ def test_unstack_apply_closes_github_stack_and_preserves_exact_tracking(
     class GithubStackClient(GithubClient):
         async def unstack(self, *, stack_number):
             operations.append("unstack")
-            return github_stack(1, 2) if locked else None
+            if locked:
+                return await self.get_stack(stack_number=stack_number)
+            return await super().unstack(stack_number=stack_number)
 
         async def close_pull_request(self, *, pull_number):
             operations.append("close")
@@ -102,6 +103,7 @@ def test_unstack_apply_closes_github_stack_and_preserves_exact_tracking(
         pull_request.state == "closed" for pull_request in fake_repo.pull_requests.values()
     )
     assert refreshed_state == state_before
+    assert fake_repo.github_stacks == {}
     assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
     assert operations == ["unstack", "unstack", "close", "close"]
 

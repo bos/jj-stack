@@ -67,7 +67,6 @@ async def observe_reviews(
     change_ids: tuple[str, ...],
     context: CommandContext | None = None,
     github_client: GithubClient,
-    identity_overrides: Mapping[str, ReviewIdentity] | None = None,
     include_open_dependents: bool = False,
     remote_name: str | None = None,
     state_store: ReviewStateStore | None = None,
@@ -80,8 +79,7 @@ async def observe_reviews(
     store = context.state_store if context is not None else state_store
     assert store is not None
     state = store.load()
-    claim_identities = dict(state.review_identities)
-    claim_identities.update(identity_overrides or {})
+    claim_identities = state.review_identities
     identities = {
         change_id: claim_identities.get(change_id) for change_id in dict.fromkeys(change_ids)
     }

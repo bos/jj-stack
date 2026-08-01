@@ -153,7 +153,7 @@ def test_stack_merge_commit_uses_one_group_result_that_sync_can_retire(
 
     assert sync_exit_code == 0, (synced.out, synced.err)
     assert state_store.load().review_identities == {}
-    assert JjClient(repo).resolve_revision("@").only_parent_commit_id() == merge_commit
+    assert JjClient(repo).resolve_revision("@").parents == (merge_commit,)
 
 
 def test_stack_merge_terminal_failure_is_atomic(
@@ -336,7 +336,6 @@ def test_ordinary_merge_methods_create_distinct_commit_topology(
         config_path = configure_submit_environment(monkeypatch, method_path, fake_repo)
         fake_repo.allow_merge_commit = True
         fake_repo.allow_rebase_merge = True
-        fake_repo.github_stacks = {}
         pull_request = fake_repo.pull_requests[1]
         head_before = fake_repo.ref_target(pull_request.head_ref)
         trunk_before = fake_repo.ref_target("main")

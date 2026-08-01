@@ -204,11 +204,6 @@ class _RemoteBranchClient:
 
 def _github_repository(default_branch: str) -> GithubRepository:
     return GithubRepository(
-        clone_url="https://github.test/octo-org/repo.git",
         default_branch=default_branch,
         full_name="octo-org/repo",
-        html_url="https://github.test/octo-org/repo",
-        name="repo",
-        private=True,
-        url="https://api.github.test/repos/octo-org/repo",
     )

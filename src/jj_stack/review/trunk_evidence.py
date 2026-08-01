@@ -34,25 +34,22 @@ class TrunkEvidence:
     on_trunk: bool
     reason: Message | None = None
     review_mismatch: bool = False
-    merge_commit_id: str | None = None
 
     @classmethod
-    def proven(cls, *, merge_commit_id: str | None = None) -> TrunkEvidence:
-        return cls(on_trunk=True, merge_commit_id=merge_commit_id)
+    def proven(cls) -> TrunkEvidence:
+        return cls(on_trunk=True)
 
     @classmethod
     def unproven(
         cls,
         reason: Message,
         *,
-        merge_commit_id: str | None = None,
         review_mismatch: bool = False,
     ) -> TrunkEvidence:
         return cls(
             on_trunk=False,
             reason=reason,
             review_mismatch=review_mismatch,
-            merge_commit_id=merge_commit_id,
         )
 
 
@@ -120,14 +117,12 @@ def classify_rewritten_result(
     if merge_result_ancestry == "unresolved":
         return TrunkEvidence.unproven(
             t"merge result {ui.commit_id(merge_commit_id)} is unavailable locally",
-            merge_commit_id=merge_commit_id,
         )
     if merge_result_ancestry != "on_trunk":
         return TrunkEvidence.unproven(
             t"merge result {ui.commit_id(merge_commit_id)} is not on fetched trunk",
-            merge_commit_id=merge_commit_id,
         )
-    return TrunkEvidence.proven(merge_commit_id=merge_commit_id)
+    return TrunkEvidence.proven()
 
 
 def collect_trunk_evidence(

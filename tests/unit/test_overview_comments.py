@@ -18,7 +18,6 @@ def _comment(*, body: str, comment_id: int) -> GithubIssueComment:
     return GithubIssueComment(
         body=body,
         databaseId=comment_id,
-        url=f"https://github.test/comments/{comment_id}",
     )
 
 

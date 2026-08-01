@@ -62,7 +62,6 @@ class SubmittedRevision:
     pull_request_action: PullRequestAction
     pull_request_is_draft: bool | None
     pull_request_number: int | None
-    pull_request_title: str | None
     pull_request_url: str | None
 
     @property
@@ -78,15 +77,8 @@ class SubmitResult:
 
     client: JjClient
     dry_run: bool
-    remote: GitRemote
     revisions: tuple[SubmittedRevision, ...]
-    selected_change_id: str
-    selected_revset: str
-    selected_subject: str
-    trunk_change_id: str
-    trunk_branch: str
     trunk: LocalRevision
-    trunk_subject: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,9 +96,7 @@ class PendingPullRequestSync:
     base_branch: str
     discovered_pull_request: GithubPullRequest | None
     generated_description: GeneratedDescription
-    parent_change_id: str | None
     prepared: PreparedSubmitRevision
-    stack_head_change_id: str | None
 
 
 @dataclass(frozen=True, slots=True)

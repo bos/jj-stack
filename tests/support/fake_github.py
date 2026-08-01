@@ -17,33 +17,6 @@ from fastapi.responses import JSONResponse
 from jj_stack.models.github import GithubStack
 
 
-def github_stack(
-    *pull_numbers: int,
-    number: int = 7,
-    historical_pull_numbers: tuple[int, ...] = (),
-) -> GithubStack:
-    """Build a typed GitHub stack response for focused client overrides."""
-
-    return GithubStack.model_validate(
-        {
-            "number": number,
-            "pull_requests": [
-                {
-                    "head": {
-                        "ref": f"jj-stack/pull-{pull_number}",
-                        "sha": f"head-{pull_number}",
-                    },
-                    "merged_at": (
-                        "2026-07-23T12:00:00Z" if pull_number in historical_pull_numbers else None
-                    ),
-                    "number": pull_number,
-                }
-                for pull_number in pull_numbers
-            ],
-        }
-    )
-
-
 @dataclass(slots=True)
 class FakeGithubPullRequest:
     """Mutable pull request state served by the fake API."""
@@ -167,11 +140,6 @@ class FakeGithubPullRequestEvent:
 
     kind: str
     pull_request_number: int
-    new_base_ref: str | None = None
-    new_state: str | None = None
-    old_base_ref: str | None = None
-    old_state: str | None = None
-    reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -182,32 +150,16 @@ class FakeGithubIssueComment:
     id: int
     issue_number: int
 
-    def to_payload(
-        self,
-        *,
-        repository: FakeGithubRepository,
-        web_origin: str,
-    ) -> dict[str, object]:
+    def to_payload(self) -> dict[str, object]:
         return {
             "body": self.body,
-            "html_url": (
-                f"{web_origin}/{repository.full_name}/issues/{self.issue_number}"
-                f"#issuecomment-{self.id}"
-            ),
             "id": self.id,
         }
 
-    def to_graphql_payload(
-        self,
-        *,
-        repository: FakeGithubRepository,
-        web_origin: str,
-    ) -> dict[str, object]:
-        payload = self.to_payload(repository=repository, web_origin=web_origin)
+    def to_graphql_payload(self) -> dict[str, object]:
         return {
-            "body": payload["body"],
-            "databaseId": payload["id"],
-            "url": payload["html_url"],
+            "body": self.body,
+            "databaseId": self.id,
         }
 
 
@@ -247,18 +199,13 @@ class FakeGithubRepository:
     def full_name(self) -> str:
         return f"{self.owner}/{self.name}"
 
-    def to_payload(self, *, api_origin: str, web_origin: str) -> dict[str, object]:
+    def to_payload(self) -> dict[str, object]:
         return {
             "allow_merge_commit": self.allow_merge_commit,
             "allow_rebase_merge": self.allow_rebase_merge,
             "allow_squash_merge": self.allow_squash_merge,
-            "clone_url": f"{web_origin}/{self.full_name}.git",
             "default_branch": self.default_branch,
             "full_name": self.full_name,
-            "html_url": f"{web_origin}/{self.full_name}",
-            "name": self.name,
-            "private": True,
-            "url": f"{api_origin}/repos/{self.full_name}",
         }
 
     def create_pull_request(
@@ -334,7 +281,6 @@ class FakeGithubRepository:
         self.update_pull_request_state(
             pull_request,
             state="closed",
-            reason="head_reachable_from_base",
         )
 
     def refresh_pull_requests(
@@ -355,19 +301,14 @@ class FakeGithubRepository:
         pull_request: FakeGithubPullRequest,
         *,
         base_ref: str,
-        reason: str,
     ) -> None:
         if pull_request.base_ref == base_ref:
             return
-        old_base_ref = pull_request.base_ref
         pull_request.base_ref = base_ref
         self.pull_request_events.append(
             FakeGithubPullRequestEvent(
                 kind="base",
-                new_base_ref=base_ref,
-                old_base_ref=old_base_ref,
                 pull_request_number=pull_request.number,
-                reason=reason,
             )
         )
 
@@ -376,19 +317,14 @@ class FakeGithubRepository:
         pull_request: FakeGithubPullRequest,
         *,
         state: str,
-        reason: str,
     ) -> None:
         if pull_request.state == state:
             return
-        old_state = pull_request.state
         pull_request.state = state
         self.pull_request_events.append(
             FakeGithubPullRequestEvent(
                 kind="state",
-                new_state=state,
-                old_state=old_state,
                 pull_request_number=pull_request.number,
-                reason=reason,
             )
         )
 
@@ -433,7 +369,6 @@ class FakeGithubRepository:
         self.update_pull_request_state(
             pull_request,
             state="closed",
-            reason="merged",
         )
         return squash_commit
 
@@ -472,7 +407,6 @@ class FakeGithubRepository:
         self.update_pull_request_state(
             pull_request,
             state="closed",
-            reason="merged",
         )
         return rebase_commit
 
@@ -518,7 +452,6 @@ class FakeGithubRepository:
             self.update_pull_request_state(
                 pull_request,
                 state="closed",
-                reason="merged",
             )
         return merge_commit
 
@@ -544,7 +477,6 @@ class FakeGithubRepository:
         self.update_pull_request_base(
             pull_request,
             base_ref=base_ref,
-            reason="github_stack_merge",
         )
         pull_request.head_sha = rewritten
         return rewritten
@@ -729,7 +661,6 @@ class FakeGithubState:
     """Static state served by the fake GitHub app."""
 
     repositories: dict[tuple[str, str], FakeGithubRepository]
-    api_origin: str = "https://api.github.test"
     web_origin: str = "https://github.test"
 
     @classmethod
@@ -771,10 +702,7 @@ def _register_repository_routes(app: FastAPI, fake_state: FakeGithubState) -> No
         repository = fake_state.repositories.get((owner, repo))
         if repository is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        return repository.to_payload(
-            api_origin=fake_state.api_origin,
-            web_origin=fake_state.web_origin,
-        )
+        return repository.to_payload()
 
 
 def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
@@ -1012,7 +940,6 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
             repository.update_pull_request_base(
                 pull_request,
                 base_ref=base_ref,
-                reason="api_update",
             )
         repository.refresh_pull_request_state(pull_request)
         return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
@@ -1149,7 +1076,6 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         repository.update_pull_request_state(
             pull_request,
             state=state,
-            reason="issue_update",
         )
         if state == "closed":
             repository.refresh_pull_request_state(pull_request)
@@ -1224,7 +1150,7 @@ def _register_issue_comment_routes(app: FastAPI, fake_state: FakeGithubState) ->
         repository = _get_repository(fake_state, owner, repo)
         comments = repository.list_issue_comments(issue_number)
         return [
-            comment.to_payload(repository=repository, web_origin=fake_state.web_origin)
+            comment.to_payload()
             for comment in sorted(comments, key=lambda candidate: candidate.id)
         ]
 
@@ -1240,7 +1166,7 @@ def _register_issue_comment_routes(app: FastAPI, fake_state: FakeGithubState) ->
             body=_require_string(payload, "body"),
             issue_number=issue_number,
         )
-        return comment.to_payload(repository=repository, web_origin=fake_state.web_origin)
+        return comment.to_payload()
 
     @app.patch("/repos/{owner}/{repo}/issues/comments/{comment_id}")
     async def update_issue_comment(
@@ -1256,7 +1182,7 @@ def _register_issue_comment_routes(app: FastAPI, fake_state: FakeGithubState) ->
         )
         if comment is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        return comment.to_payload(repository=repository, web_origin=fake_state.web_origin)
+        return comment.to_payload()
 
     @app.delete(
         "/repos/{owner}/{repo}/issues/comments/{comment_id}",
@@ -1450,7 +1376,6 @@ def _complete_stack_merge(
             repository.update_pull_request_base(
                 pull_request,
                 base_ref=repository.default_branch or "main",
-                reason="github_stack_merge",
             )
     if operation.merge_method == "merge":
         repository.apply_merge_commit(candidates)
@@ -1652,10 +1577,7 @@ def _graphql_repository_payload(
         if "comments(" in query:
             graphql_payload["comments"] = {
                 "nodes": [
-                    comment.to_graphql_payload(
-                        repository=repository,
-                        web_origin=web_origin,
-                    )
+                    comment.to_graphql_payload()
                     for comment in sorted(
                         repository.list_issue_comments(pull_number),
                         key=lambda candidate: candidate.id,

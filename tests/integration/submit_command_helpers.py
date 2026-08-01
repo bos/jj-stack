@@ -101,7 +101,6 @@ def patch_github_client_builders(
     fake_repo: FakeGithubRepository,
     modules: tuple[str, ...],
     client_type: type[GithubClient] = GithubClient,
-    concurrency_limits: dict[str, int] | None = None,
 ) -> None:
     def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
         return client_type(
@@ -129,10 +128,6 @@ def patch_github_client_builders(
         monkeypatch.setattr(
             module_object, "require_github_repo", parse_github_repo, raising=False
         )
-    if concurrency_limits is None:
-        return
-    for module, limit in concurrency_limits.items():
-        monkeypatch.setattr(f"{module}._GITHUB_INSPECTION_CONCURRENCY", limit)
 
 
 def write_config(

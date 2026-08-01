@@ -79,7 +79,6 @@ def build_merge_plan(
         else None
     )
     return MergePlan(
-        blocked=not candidates,
         boundary_action=action,
         planned_revisions=tuple(candidates),
         reviewed_revisions=tuple(revision for revision in reviewed if revision is not None),

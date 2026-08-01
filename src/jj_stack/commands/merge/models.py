@@ -26,13 +26,18 @@ class MergeResult:
     """Rendered merge result for one selected local stack."""
 
     actions: tuple[MergeAction, ...]
-    applied: bool
-    blocked: bool
     selected_revset: str
     trunk_branch: str
     trunk_subject: str
     final_trunk_commit_id: str | None = None
-    merged_change_ids: tuple[str, ...] = ()
+
+    @property
+    def applied(self) -> bool:
+        return any(action.status == "applied" for action in self.actions)
+
+    @property
+    def blocked(self) -> bool:
+        return any(action.status == "blocked" for action in self.actions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,14 +66,10 @@ class MergeExecutionInputs:
         *,
         actions: tuple[MergeAction, ...],
         final_trunk_commit_id: str | None = None,
-        merged_change_ids: tuple[str, ...] = (),
     ) -> MergeResult:
         return MergeResult(
             actions=actions,
-            applied=bool(merged_change_ids),
-            blocked=any(action.status == "blocked" for action in actions),
             final_trunk_commit_id=final_trunk_commit_id,
-            merged_change_ids=merged_change_ids,
             selected_revset=self.selected_revset,
             trunk_branch=self.trunk_branch,
             trunk_subject=self.trunk_subject,
@@ -90,11 +91,14 @@ class MergeRevision:
 class MergePlan:
     """Resolved merge plan for the selected stack."""
 
-    blocked: bool
     boundary_action: MergeAction | None
     planned_revisions: tuple[MergeRevision, ...]
     reviewed_revisions: tuple[MergeRevision, ...]
     trunk_branch: str
+
+    @property
+    def blocked(self) -> bool:
+        return not self.planned_revisions
 
     def planned_actions(self) -> tuple[MergeAction, ...]:
         if self.blocked:

@@ -22,13 +22,8 @@ def _repository(
         allow_merge_commit=allow_merge_commit,
         allow_rebase_merge=allow_rebase_merge,
         allow_squash_merge=allow_squash_merge,
-        clone_url="https://github.test/acme/widgets.git",
         default_branch="main",
         full_name="acme/widgets",
-        html_url="https://github.test/acme/widgets",
-        name="widgets",
-        private=True,
-        url="https://api.github.test/repos/acme/widgets",
     )
 
 

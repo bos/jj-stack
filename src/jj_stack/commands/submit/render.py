@@ -10,6 +10,7 @@ from jj_stack.formatting import (
     render_revision_lines,
 )
 from jj_stack.jj.client import JjClient
+from jj_stack.models.stack import LocalRevision
 
 from .models import SubmitResult, SubmittedRevision
 
@@ -18,23 +19,21 @@ def print_submit_result(result: SubmitResult) -> None:
     """Print the final submit result."""
 
     client = result.client
-    prerendered_blocks: dict[str, tuple[str, ...]] = {}
-    if client is not None:
-        # Overlap the `jj log` subprocess startup cost before we print
-        # the final summary for large stacks.
-        with console.spinner(description="Rendering jj log"):
-            prerendered_blocks = render_revision_blocks(
-                client=client,
-                revisions=tuple(revision.prepared.revision for revision in result.revisions)
-                + (result.trunk,),
-            )
+    # Overlap the `jj log` subprocess startup cost before we print the final summary for large
+    # stacks.
+    with console.spinner(description="Rendering jj log"):
+        prerendered_blocks = render_revision_blocks(
+            client=client,
+            revisions=tuple(revision.prepared.revision for revision in result.revisions)
+            + (result.trunk,),
+        )
     if not result.revisions:
         for line in _render_submit_trunk_lines(
             client=client,
             prerendered_lines=prerendered_blocks.get(result.trunk.commit_id),
-            result=result,
+            trunk=result.trunk,
         ):
-            _print_submit_line(line, client=client)
+            console.output(line, soft_wrap=True)
         console.note(
             "The selected stack has no changes to review.",
             soft_wrap=True,
@@ -52,13 +51,13 @@ def print_submit_result(result: SubmitResult) -> None:
             prerendered_lines=prerendered_blocks.get(revision.prepared.revision.commit_id),
             revision=revision,
         ):
-            _print_submit_line(line, client=client)
+            console.output(line, soft_wrap=True)
     for line in _render_submit_trunk_lines(
         client=client,
         prerendered_lines=prerendered_blocks.get(result.trunk.commit_id),
-        result=result,
+        trunk=result.trunk,
     ):
-        _print_submit_line(line, client=client)
+        console.output(line, soft_wrap=True)
     if not result.dry_run:
         top_pull_request_url = result.revisions[-1].pull_request_url
         if top_pull_request_url is not None:
@@ -78,16 +77,9 @@ def render_selected_line(
     )
 
 
-def _print_submit_line(line: ui.Renderable, *, client: JjClient | None) -> None:
-    if client is None:
-        console.output(line)
-    else:
-        console.output(line, soft_wrap=True)
-
-
 def _render_submit_revision_lines(
     *,
-    client: JjClient | None,
+    client: JjClient,
     prerendered_lines: tuple[str, ...] | None = None,
     revision: SubmittedRevision,
 ) -> tuple[ui.Renderable, ...]:
@@ -116,14 +108,6 @@ def _render_submit_revision_lines(
             parts.append(f"{label} {revision.pull_request_action}")
 
     summary = ", ".join(parts)
-    if client is None:
-        return (
-            ui.prefixed_line(
-                "- ",
-                t"{revision.prepared.revision.subject} "
-                t"({ui.change_id(revision.change_id)}): {summary}",
-            ),
-        )
     return render_revision_lines(
         client=client,
         prerendered_lines=prerendered_lines,
@@ -134,20 +118,12 @@ def _render_submit_revision_lines(
 
 def _render_submit_trunk_lines(
     *,
-    client: JjClient | None,
+    client: JjClient,
     prerendered_lines: tuple[str, ...] | None = None,
-    result: SubmitResult,
+    trunk: LocalRevision,
 ) -> tuple[ui.Renderable, ...]:
-    if client is None:
-        return (
-            ui.prefixed_line(
-                "Trunk: ",
-                t"{result.trunk_subject} ({ui.change_id(result.trunk_change_id)}) "
-                t"-> {ui.bookmark(result.trunk_branch)}",
-            ),
-        )
     return render_revision_lines(
         client=client,
         prerendered_lines=prerendered_lines,
-        revision=result.trunk,
+        revision=trunk,
     )

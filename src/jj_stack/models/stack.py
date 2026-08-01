@@ -57,13 +57,6 @@ class LocalRevision(BaseModel):
             and len(self.parents) == 1
         )
 
-    def only_parent_commit_id(self) -> str:
-        """Return the sole parent commit ID when the revision is linear."""
-
-        if len(self.parents) != 1:
-            raise ValueError("Revision does not have exactly one parent.")
-        return self.parents[0]
-
 
 class LocalStack(BaseModel):
     """A linear stack of reviewable revisions with explicit trunk and base-parent context."""

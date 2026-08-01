@@ -14,13 +14,8 @@ class GithubRepository(BaseModel):
     allow_merge_commit: bool | None = None
     allow_rebase_merge: bool | None = None
     allow_squash_merge: bool | None = None
-    clone_url: str
     default_branch: str | None
     full_name: str
-    html_url: str
-    name: str
-    private: bool
-    url: str
 
 
 class GithubBranchRef(BaseModel):
@@ -79,14 +74,12 @@ class GithubStack(BaseModel):
         return tuple(pull_request.number for pull_request in self.historical_pull_requests)
 
     @property
-    def active_pull_requests(self) -> tuple[GithubStackPullRequest, ...]:
-        return tuple(
-            pull_request for pull_request in self.pull_requests if not pull_request.is_historical
-        )
-
-    @property
     def active_pull_request_numbers(self) -> tuple[int, ...]:
-        return tuple(pull_request.number for pull_request in self.active_pull_requests)
+        return tuple(
+            pull_request.number
+            for pull_request in self.pull_requests
+            if not pull_request.is_historical
+        )
 
     @model_validator(mode="after")
     def _validate_historical_prefix(self) -> Self:
@@ -213,7 +206,6 @@ class GithubIssueComment(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     body: str
-    html_url: str = Field(alias="url")
     id: int = Field(alias="databaseId")
 
 

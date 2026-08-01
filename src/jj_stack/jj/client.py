@@ -297,27 +297,6 @@ class JjClient:
                 memberships[revision.commit_id] = is_ancestor
         return memberships
 
-    def _query_commit_ids_in_ancestor_revset(
-        self,
-        commit_ids: Sequence[str],
-        *,
-        ancestor_revset: str,
-    ) -> set[str]:
-        """Return supplied commit IDs selected by an ancestor revset."""
-
-        ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
-        if not ordered_commit_ids:
-            return set()
-
-        matching_commit_ids: set[str] = set()
-        for chunk in _chunked(ordered_commit_ids):
-            revisions = self._query_revisions(
-                f"({_union_revset_symbols(chunk)}) & {ancestor_revset}"
-            )
-            for revision in revisions:
-                matching_commit_ids.add(revision.commit_id)
-        return matching_commit_ids
-
     def query_descendant_revisions(
         self,
         commit_ids: Sequence[str],

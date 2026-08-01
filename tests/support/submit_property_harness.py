@@ -21,7 +21,7 @@ from .submit_property_scenarios import (
     ExternalDriftScenario,
     StackEditOperation,
     StackEditScenario,
-    StackMergeScenario,
+    StackJoinScenario,
     StackMoveScenario,
     SubmitInvariants,
     SubmitRetryScenario,
@@ -363,25 +363,24 @@ def _replay_failed_resubmit(
     _assert_retry_metadata(fake_repo)
 
 
-def replay_stack_merge_scenario(
+def replay_stack_join_scenario(
     *,
     discard_output: OutputDiscarder,
     fake_repo: FakeGithubRepository,
     repo: Path,
-    scenario: StackMergeScenario,
+    scenario: StackJoinScenario,
     submit: SubmitRunner,
 ) -> None:
-    """Replay two independently submitted stacks merged into one selected stack."""
+    """Replay two independently submitted stacks joined into one selected stack."""
 
     labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers = set(fake_repo.github_stacks)
 
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers.update(fake_repo.github_stacks)
+    initial_stack_numbers = tuple(sorted(fake_repo.github_stacks))
 
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
@@ -398,7 +397,7 @@ def replay_stack_merge_scenario(
         ],
         repo,
     )
-    merged_stack = _discover_stack_for_labels(
+    joined_stack = _discover_stack_for_labels(
         repo=repo,
         labels=scenario.selected_labels,
         labels_to_change_ids=labels_to_change_ids,
@@ -406,9 +405,9 @@ def replay_stack_merge_scenario(
 
     _dissolve_github_stacks(
         fake_repo=fake_repo,
-        stack_numbers=tuple(sorted(initial_stack_numbers)),
+        stack_numbers=initial_stack_numbers,
     )
-    assert submit(merged_stack.head.change_id) == 0
+    assert submit(joined_stack.head.change_id) == 0
     discard_output()
 
     _assert_successful_submit_invariants(
@@ -417,7 +416,7 @@ def replay_stack_merge_scenario(
         invariants=scenario.invariants,
         labels_to_change_ids=labels_to_change_ids,
         repo=repo,
-        stack=merged_stack,
+        stack=joined_stack,
         strict_base_events=True,
     )
 
@@ -435,12 +434,11 @@ def replay_stack_move_scenario(
     labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers = set(fake_repo.github_stacks)
 
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers.update(fake_repo.github_stacks)
+    initial_stack_numbers = tuple(sorted(fake_repo.github_stacks))
 
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
@@ -462,16 +460,16 @@ def replay_stack_move_scenario(
         labels=scenario.selected_labels,
         labels_to_change_ids=labels_to_change_ids,
     )
-    if scenario.deferred_stack_labels:
+    if scenario.deferred_labels:
         _discover_stack_for_labels(
             repo=repo,
-            labels=scenario.deferred_stack_labels,
+            labels=scenario.deferred_labels,
             labels_to_change_ids=labels_to_change_ids,
         )
 
     _dissolve_github_stacks(
         fake_repo=fake_repo,
-        stack_numbers=tuple(sorted(initial_stack_numbers)),
+        stack_numbers=initial_stack_numbers,
     )
     assert submit(selected_stack.head.change_id) == 0
     discard_output()
@@ -943,7 +941,6 @@ def _apply_drift_operation(
         fake_repo.update_pull_request_state(
             fake_repo.pull_requests[submitted.pr_number],
             state="closed",
-            reason="external_close",
         )
         return None
     if drift.kind == "merged_pr":
@@ -952,7 +949,6 @@ def _apply_drift_operation(
         fake_repo.update_pull_request_state(
             pull_request,
             state="closed",
-            reason="external_merge",
         )
         return None
     if drift.kind == "pr_replaced":
@@ -960,7 +956,6 @@ def _apply_drift_operation(
         fake_repo.update_pull_request_state(
             old_pull_request,
             state="closed",
-            reason="external_close",
         )
         fake_repo.create_pull_request(
             base_ref=old_pull_request.base_ref,
@@ -973,7 +968,6 @@ def _apply_drift_operation(
         fake_repo.update_pull_request_base(
             fake_repo.pull_requests[submitted.pr_number],
             base_ref="main",
-            reason="external_retarget",
         )
         return None
     if drift.kind == "pr_draft_toggled":
@@ -1017,7 +1011,6 @@ def _apply_drift_operation(
         fake_repo.update_pull_request_state(
             fake_repo.pull_requests[submitted.pr_number],
             state="closed",
-            reason="head_branch_deleted",
         )
         return None
     if drift.kind == "foreign_branch_fetched":

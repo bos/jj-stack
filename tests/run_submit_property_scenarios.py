@@ -16,8 +16,8 @@ PROPERTY_TEST_FILES = (REPO_ROOT / "tests" / "property" / "test_submit_property_
 DEFAULT_PROPERTY_SEED = 8675309
 _REPRODUCTION_SCENARIO_OPTIONS = (
     (
-        "--stack-merge-scenarios",
-        "JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS",
+        "--stack-join-scenarios",
+        "JJ_STACK_SUBMIT_PROPERTY_STACK_JOIN_SCENARIOS",
     ),
     (
         "--stack-move-scenarios",
@@ -52,10 +52,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Generate and print one random seed for scenarios and pytest ordering.",
     )
     parser.add_argument(
-        "--stack-merge-scenarios",
+        "--stack-join-scenarios",
         type=_non_negative_int,
         help=(
-            "Number of generated two-stack merge scenarios to run "
+            "Number of generated two-stack join scenarios to run "
             "(default: max(4, scenarios // 10))."
         ),
     )
@@ -110,10 +110,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     env.setdefault("JJ_USER", "Test User")
     env.setdefault("JJ_EMAIL", "test@example.com")
     env["JJ_STACK_SUBMIT_PROPERTY_SCENARIOS"] = str(args.scenarios)
-    stack_merge_scenarios = args.stack_merge_scenarios
-    if stack_merge_scenarios is None:
-        stack_merge_scenarios = max(4, args.scenarios // 10)
-    env["JJ_STACK_SUBMIT_PROPERTY_STACK_MERGE_SCENARIOS"] = str(stack_merge_scenarios)
+    stack_join_scenarios = args.stack_join_scenarios
+    if stack_join_scenarios is None:
+        stack_join_scenarios = max(4, args.scenarios // 10)
+    env["JJ_STACK_SUBMIT_PROPERTY_STACK_JOIN_SCENARIOS"] = str(stack_join_scenarios)
     stack_move_scenarios = args.stack_move_scenarios
     if stack_move_scenarios is None:
         stack_move_scenarios = max(4, args.scenarios // 10)

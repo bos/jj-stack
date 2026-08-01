@@ -86,8 +86,8 @@ def test_sync_reports_nothing_to_submit_when_whole_stack_merged(
 
     assert exit_code == 0, (captured.out, captured.err)
     assert "Nothing to submit: everything in this stack has merged." in captured.out
-    assert JjClient(repo).resolve_revision("@").only_parent_commit_id() == read_remote_ref(
-        fake_repo.git_dir, "main"
+    assert JjClient(repo).resolve_revision("@").parents == (
+        read_remote_ref(fake_repo.git_dir, "main"),
     )
     # No replacement pull request was opened for the merged change.
     assert set(fake_repo.pull_requests) == {1}
@@ -143,7 +143,7 @@ def test_sync_converges_the_local_stack_after_merge(
     assert sync_exit_code == 0, (captured.out, captured.err)
     merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
     rewritten_top = JjClient(repo).resolve_revision(top_change_id)
-    assert rewritten_top.only_parent_commit_id() == merged_trunk_commit
+    assert rewritten_top.parents == (merged_trunk_commit,)
     assert fake_repo.pull_requests[2].base_ref == "main"
     assert fake_repo.pull_requests[2].state == "open"
 
@@ -223,13 +223,8 @@ def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     state = state_store.load()
     assert on_trunk.change_id not in state.review_identities
     rewritten_survivor = JjClient(repo).resolve_revision(survivor.change_id)
-    assert rewritten_survivor.only_parent_commit_id() == read_remote_ref(
-        fake_repo.git_dir,
-        "main",
-    )
-    assert JjClient(repo).resolve_revision("@").only_parent_commit_id() == (
-        rewritten_survivor.commit_id
-    )
+    assert rewritten_survivor.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert JjClient(repo).resolve_revision("@").parents == (rewritten_survivor.commit_id,)
     review_temp = JjClient(repo).review_temp_artifacts()
     assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
     assert state.submitted_baselines[survivor.change_id].commit_id == (
@@ -664,7 +659,7 @@ def test_sync_preserves_a_described_working_copy_above_the_reviewed_survivor(
     assert "Other local changes depend on this stack" in captured.err
     working_copy_after = jj.resolve_revision("@")
     assert working_copy_after.commit_id == working_copy_before.commit_id
-    assert working_copy_after.only_parent_commit_id() == reviewed.commit_id
+    assert working_copy_after.parents == (reviewed.commit_id,)
     assert jj.resolve_revision(reviewed.change_id).commit_id == reviewed.commit_id
     assert jj.resolve_revision(on_trunk.change_id).commit_id == on_trunk.commit_id
     assert ReviewStateStore.for_repo(repo).load() == state_before
@@ -693,10 +688,8 @@ def test_sync_rebases_trailing_local_work_without_creating_a_review(
     jj = JjClient(repo)
     rewritten_reviewed = jj.resolve_revision(reviewed.change_id)
     rewritten_trailing = jj.resolve_revision(trailing.change_id)
-    assert rewritten_reviewed.only_parent_commit_id() == read_remote_ref(
-        fake_repo.git_dir, "main"
-    )
-    assert rewritten_trailing.only_parent_commit_id() == rewritten_reviewed.commit_id
+    assert rewritten_reviewed.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert rewritten_trailing.parents == (rewritten_reviewed.commit_id,)
     assert set(fake_repo.pull_requests) == {1, 2}
     assert trailing.change_id not in ReviewStateStore.for_repo(repo).load().review_identities
 

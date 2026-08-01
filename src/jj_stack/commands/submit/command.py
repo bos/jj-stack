@@ -63,7 +63,6 @@ from jj_stack.models.stack import LocalStack
 from jj_stack.review.branches import (
     ResolvedReviewBranch,
     ensure_unique_review_branches,
-    is_review_branch,
     review_branch_glob,
     review_branch_matches_change,
 )
@@ -79,7 +78,6 @@ from .github_stack import (
     GithubStackPlan,
     apply_github_stack_plan,
     plan_github_stack,
-    require_current_github_stack_plan,
 )
 from .inputs import prepare_submit_inputs
 from .models import (
@@ -262,25 +260,16 @@ def _build_submit_result(
     *,
     client: JjClient,
     dry_run: bool,
-    remote: GitRemote,
     revisions: tuple[SubmittedRevision, ...],
     stack: LocalStack,
-    trunk_branch: str,
 ) -> SubmitResult:
     """Render one submit result from the shared stack context."""
 
     return SubmitResult(
         client=client,
         dry_run=dry_run,
-        remote=remote,
         revisions=revisions,
-        selected_change_id=stack.head.change_id,
-        selected_revset=stack.selected_revset,
-        selected_subject=stack.head.subject,
-        trunk_change_id=stack.trunk.change_id,
-        trunk_branch=trunk_branch,
         trunk=stack.trunk,
-        trunk_subject=stack.trunk.subject,
     )
 
 
@@ -293,19 +282,12 @@ def _pending_pull_request_syncs(
 ) -> tuple[PendingPullRequestSync, ...]:
     """Build the desired pull-request sync plan for the submitted stack."""
 
-    stack_head_change_id = (
-        prepared_revisions[-1].revision.change_id if prepared_revisions else None
-    )
     return tuple(
         PendingPullRequestSync(
             base_branch=prepared_revisions[index - 1].branch if index > 0 else trunk_branch,
             discovered_pull_request=discovered_pull_requests[prepared_revision.branch],
             generated_description=generated_descriptions[prepared_revision.revision.change_id],
-            parent_change_id=(
-                prepared_revisions[index - 1].revision.change_id if index > 0 else None
-            ),
             prepared=prepared_revision,
-            stack_head_change_id=stack_head_change_id,
         )
         for index, prepared_revision in enumerate(prepared_revisions)
     )
@@ -410,27 +392,11 @@ async def run_submit_async(
     state = prepared_inputs.state
 
     if not stack.revisions:
-        trunk_branch = stack.trunk.subject
-        remote_targets = {
-            branch: target
-            for branch, target in client.list_remote_branches(
-                remote=remote.name,
-                patterns=("refs/heads/*",),
-            ).items()
-            if not is_review_branch(branch)
-        }
-        matches = tuple(
-            branch for branch, target in remote_targets.items() if target == stack.trunk.commit_id
-        )
-        if len(matches) == 1:
-            trunk_branch = matches[0]
         return _build_submit_result(
             client=client,
             dry_run=dry_run,
-            remote=remote,
             revisions=(),
             stack=stack,
-            trunk_branch=trunk_branch,
         )
 
     client.ensure_review_fetch_isolation(
@@ -559,11 +525,9 @@ async def run_submit_async(
             ).dissolve_exact(observed=(github_stack,))
             github_stack_plan = GithubStackPlan("create" if len(pending_syncs) > 1 else "none")
         if not dry_run:
-            await require_current_github_stack_plan(
-                github_client=github_client,
-                plan=github_stack_plan,
-                pull_numbers=desired_pull_numbers,
-            )
+            # GitHub has no transaction spanning review branches, pull requests, and stack
+            # membership. An external stack edit can race this mutation, and submit accepts that
+            # narrow window rather than pretending another non-atomic observation closes it.
             if pushes_review_branches:
                 await retarget_review_bases_before_branch_push(
                     github_client=github_client,
@@ -626,8 +590,6 @@ async def run_submit_async(
     return _build_submit_result(
         client=client,
         dry_run=dry_run,
-        remote=remote,
         revisions=submitted_revisions,
         stack=stack,
-        trunk_branch=trunk_branch,
     )

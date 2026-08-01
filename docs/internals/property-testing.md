@@ -9,7 +9,7 @@ testing should spend its budget on those cross-system invariants.
 ## Requirements
 
 - Test user-reachable stack edits: reorder, reparent, insert, abandon, rewrite,
-  squash, two-stack merges, single-change moves between independently submitted
+  squash, two-stack joins, single-change moves between independently submitted
   stacks, and combinations of those edits after an initial successful submit.
 - Use real `jj` commands, real remote branch updates, the CLI entrypoint, and the fake
   GitHub server for integration coverage. A pure model may supplement this, but it must
@@ -84,8 +84,8 @@ Replay follows the same shape for every scenario:
 6. Apply the scenario operations with real `jj` commands.
 7. Rediscover the selected live stack from the current DAG and assert that its
    `change_id` order matches the scenario model. Subjects are diagnostics only.
-8. Dissolve any old GitHub stack that includes active reviews outside the selected path,
-   or when the selection combines more than one old GitHub stack. This models the exact
+8. Dissolve any existing GitHub stack that includes active reviews outside the selected path,
+   or when the selection combines more than one existing GitHub stack. This models the exact
    `gh stack unstack` recovery named by `submit`.
 9. Run `submit` again on the new stack head.
 10. Assert the cross-system invariants.
@@ -110,21 +110,21 @@ The successful-submit operations cover the common linear-stack edit surface:
 
 Those operations cover the common single-selected-stack failure classes while staying
 small enough for quick shrinking by inspection. Separate harness families cover two-stack
-merges, single-change moves between stacks, and failed-submit retries. Duplicate is not
+joins, single-change moves between stacks, and failed-submit retries. Duplicate is not
 represented in the current model.
 
 ## Cross-stack harnesses
 
 Two harness families cover edits that involve more than one submitted stack:
 
-- **Merge:** dissolve the two old GitHub stacks, then submit the combined stack. Reuse every PR
-  and approval by `change_id`; recompute heads and bases; store no topology.
-- **Move:** dissolve old GitHub stacks that span the resulting paths, then submit the destination
-  stack. Reuse the moved change's PR; leave the source remainder unchanged.
+- **Join:** dissolve the two existing GitHub stacks, then submit the combined stack. Reuse every
+  PR and approval by `change_id`; recompute heads and bases; store no topology.
+- **Move:** dissolve existing GitHub stacks that span the resulting paths, then submit the
+  destination stack. Reuse the moved change's PR; leave the source remainder unchanged.
 
 Both families assert that no original PR is unexpectedly closed, merged, or replaced. Selected PR
 bases are recomputed; PRs in the source remainder must not receive a base-retarget event. Fixed
-cases cover merging two stacks and moving a middle change while leaving a nonempty source
+cases cover joining two stacks and moving a middle change while leaving a nonempty source
 remainder. Expanded runs vary directions, sizes, and insertion points.
 
 Focused deterministic tests cover resubmitting after `jj split` creates an additional change and

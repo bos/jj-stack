@@ -48,10 +48,6 @@ def test_github_stack_splits_history_and_rejects_nonprefix_history() -> None:
 
     assert stack.historical_pull_request_numbers == (1,)
     assert stack.active_pull_request_numbers == (2,)
-    assert stack.active_pull_requests[0].head.model_dump() == {
-        "ref": "jj-stack/two",
-        "sha": "head-two",
-    }
     with pytest.raises(ValueError, match="bottom prefix"):
         GithubStack.model_validate({"number": 7, "pull_requests": [active, historical]})
 

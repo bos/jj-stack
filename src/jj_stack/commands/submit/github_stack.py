@@ -70,11 +70,13 @@ async def apply_github_stack_plan(
         return
     assert plan.action != "replace"
     try:
-        current_plan = await require_current_github_stack_plan(
-            github_client=github_client,
-            plan=plan,
-            pull_numbers=pull_numbers,
+        current_plan = plan_github_stack(
+            desired=pull_numbers,
+            observed_stacks=await github_client.list_stacks(),
+            pull_numbers_requiring_base_update=frozenset(),
         )
+        if current_plan.membership_key != plan.membership_key:
+            raise _membership_error("GitHub stack membership changed during submit.")
         if current_plan.action == "create":
             updated = await github_client.create_stack(pull_numbers=pull_numbers)
             expected_number = updated.number
@@ -99,27 +101,3 @@ async def apply_github_stack_plan(
             "Could not update the GitHub stack",
             hint=t"Resolve GitHub's reported error, then rerun {ui.cmd('jj-stack submit')}.",
         ) from error
-
-
-async def require_current_github_stack_plan(
-    *,
-    github_client: GithubClient,
-    plan: GithubStackPlan,
-    pull_numbers: tuple[int | None, ...],
-) -> GithubStackPlan:
-    """Recheck exact stack membership before a dependent submit mutation."""
-
-    try:
-        current_plan = plan_github_stack(
-            desired=pull_numbers,
-            observed_stacks=await github_client.list_stacks(),
-            pull_numbers_requiring_base_update=frozenset(),
-        )
-    except GithubClientError as error:
-        raise CliError(
-            "Could not inspect GitHub stack membership.",
-            hint=t"Resolve GitHub's reported error, then rerun {ui.cmd('jj-stack submit')}.",
-        ) from error
-    if current_plan.membership_key != plan.membership_key:
-        raise _membership_error("GitHub stack membership changed during submit.")
-    return current_plan

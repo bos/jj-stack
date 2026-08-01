@@ -15,19 +15,19 @@ from tests.support.integration_helpers import init_fake_github_repo
 from tests.support.submit_property_harness import (
     replay_external_drift_scenario,
     replay_failed_submit_retry_scenario,
-    replay_stack_merge_scenario,
+    replay_stack_join_scenario,
     replay_stack_move_scenario,
     replay_successful_stack_edit_scenario,
 )
 from tests.support.submit_property_scenarios import (
     ExternalDriftScenario,
     StackEditScenario,
-    StackMergeScenario,
+    StackJoinScenario,
     StackMoveScenario,
     SubmitRetryScenario,
     external_drift_scenarios_from_environment,
     stack_edit_scenarios_from_environment,
-    stack_merge_scenarios_from_environment,
+    stack_join_scenarios_from_environment,
     stack_move_scenarios_from_environment,
     subject_for_label,
     submit_retry_scenarios_from_environment,
@@ -41,7 +41,7 @@ from jj_stack.github.client import GithubClient, GithubClientError
 pytestmark = pytest.mark.fixed_property
 
 STACK_EDIT_SCENARIOS = stack_edit_scenarios_from_environment()
-STACK_MERGE_SCENARIOS = stack_merge_scenarios_from_environment()
+STACK_JOIN_SCENARIOS = stack_join_scenarios_from_environment()
 STACK_MOVE_SCENARIOS = stack_move_scenarios_from_environment()
 SUBMIT_RETRY_SCENARIOS = submit_retry_scenarios_from_environment()
 EXTERNAL_DRIFT_SCENARIOS = external_drift_scenarios_from_environment()
@@ -81,14 +81,14 @@ def test_submit_property_stack_edits_preserve_review_identity(
 
 @pytest.mark.parametrize(
     "scenario",
-    STACK_MERGE_SCENARIOS,
+    STACK_JOIN_SCENARIOS,
     ids=lambda scenario: scenario.name,
 )
-def test_submit_property_stack_merge_preserves_review_identity(
+def test_submit_property_stack_join_preserves_review_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    scenario: StackMergeScenario,
+    scenario: StackJoinScenario,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -97,7 +97,7 @@ def test_submit_property_stack_merge_preserves_review_identity(
         args = () if revset is None else (revset,)
         return run_main(repo, config_path, "submit", *args)
 
-    replay_stack_merge_scenario(
+    replay_stack_join_scenario(
         discard_output=capsys.readouterr,
         fake_repo=fake_repo,
         repo=repo,

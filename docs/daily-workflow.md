@@ -113,7 +113,7 @@ jj-stack submit
 ```
 
 If a rewrite splits, moves, or combines changes from existing GitHub stacks, `submit` may tell
-you that an old GitHub stack no longer matches the selected local path. Run every exact
+you that an existing GitHub stack no longer matches the selected local path. Run every exact
 `gh stack unstack <number>` command in that diagnostic to dissolve the old grouping, then submit
 each resulting local stack. If `gh stack` is unavailable, install GitHub's extension first:
 

@@ -245,7 +245,6 @@ async def _sync_pull_request(
             pull_request_action=action,
             pull_request_is_draft=(pull_request.is_draft if pull_request is not None else None),
             pull_request_number=(pull_request.number if pull_request is not None else None),
-            pull_request_title=(pull_request.title if pull_request is not None else None),
             pull_request_url=(pull_request.html_url if pull_request is not None else None),
         ),
         next_identity,

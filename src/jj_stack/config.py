@@ -55,7 +55,6 @@ class LoggingConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    http_debug: bool = False
     level: str = "WARNING"
 
     @field_validator("level")

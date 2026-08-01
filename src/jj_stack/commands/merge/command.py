@@ -38,7 +38,6 @@ from jj_stack.review.selection import (
 from jj_stack.review.status import prepare_status
 from jj_stack.state.operation_lock import acquire_operation_lock
 
-from .execute import execute_single_pull_request_merge
 from .github_stack import (
     build_github_stack_merge_plan,
     check_github_stack_merge,
@@ -46,6 +45,7 @@ from .github_stack import (
 )
 from .models import MergeExecutionInputs, MergeResult, PreparedMerge
 from .plan import build_merge_plan
+from .pull_requests import execute_single_pull_request_merge
 from .render import print_merge_result
 
 HELP = "Merge the reviewed changes at the bottom of a stack"

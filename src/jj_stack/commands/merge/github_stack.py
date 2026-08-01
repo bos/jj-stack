@@ -22,7 +22,10 @@ class GithubStackMergePlan:
     resource: GithubStack
     active: tuple[MergeRevision, ...]
     planned: tuple[MergeRevision, ...]
-    terminal_retry: bool = False
+
+    @property
+    def terminal_retry(self) -> bool:
+        return self.target.identity.pr_number in self.resource.historical_pull_request_numbers
 
     @property
     def target(self) -> MergeRevision:
@@ -77,7 +80,7 @@ def build_github_stack_merge_plan(
         stop = change_ids.index(target_change_id) + 1
     if not stop or merge_plan.reviewed_revisions[: len(historical)] != historical:
         return None
-    return GithubStackMergePlan(resource, active, historical[:stop], terminal_retry=True)
+    return GithubStackMergePlan(resource, active, historical[:stop])
 
 
 async def execute_github_stack_merge(
@@ -231,5 +234,4 @@ def _applied_result(
     return execution.result(
         actions=(replace(github_stack_merge.action(merge_method), status="applied"),),
         final_trunk_commit_id=final_sha,
-        merged_change_ids=tuple(revision.change_id for revision in github_stack_merge.planned),
     )

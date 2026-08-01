@@ -85,7 +85,6 @@ def test_submit_keeps_one_pr_ordinary_until_github_stack_is_needed(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    fake_repo.github_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
 
@@ -111,7 +110,6 @@ def test_submit_github_stack_recovers_lost_create_and_retries_blocked_append(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    fake_repo.github_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -211,7 +209,6 @@ def test_submit_appends_to_active_suffix_after_historical_prefix(
     fake_repo.update_pull_request_base(
         fake_repo.pull_requests[2],
         base_ref="main",
-        reason="github_stack_merge",
     )
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
     active_change_id = selected_stack(repo).head.change_id
@@ -234,7 +231,6 @@ def test_submit_retargets_stale_review_bases_before_pushing_reordered_stack(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    fake_repo.github_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -276,7 +272,6 @@ def test_submit_stack_preflight_failures_recover_without_persisted_phase(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    fake_repo.github_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -336,111 +331,6 @@ def test_submit_stack_preflight_failures_recover_without_persisted_phase(
         state_before.review_identities.keys()
     )
     assert fake_repo.github_stacks == {2: (2, 1)}
-
-
-def test_submit_rechecks_github_stack_membership_before_mutating_reviews(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = selected_stack(repo)
-    top_change_id = stack.revisions[-1].change_id
-    run_command(
-        ["jj", "describe", "-r", top_change_id, "-m", "feature 2 rewritten"],
-        repo,
-    )
-
-    state_store = ReviewStateStore.for_repo(repo)
-    state_before = state_store.load()
-    review_branches = tuple(
-        identity.head_ref for identity in state_before.review_identities.values()
-    )
-    review_refs_before = {
-        branch: read_remote_ref(fake_repo.git_dir, branch) for branch in review_branches
-    }
-    pull_requests_before = {
-        number: (
-            pull_request.base_ref,
-            pull_request.body,
-            pull_request.head_ref,
-            pull_request.title,
-        )
-        for number, pull_request in fake_repo.pull_requests.items()
-    }
-    comments_before = {
-        number: tuple(comment.body for comment in issue_comments(fake_repo, number))
-        for number in fake_repo.pull_requests
-    }
-    stack_number = next(iter(fake_repo.github_stacks))
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-    observations = 0
-
-    class ConcurrentAppendClient(GithubClient):
-        async def list_stacks(self):
-            nonlocal observations
-            observed = await super().list_stacks()
-            observations += 1
-            if observations == 1:
-                top_pull_request = fake_repo.pull_requests[2]
-                dependent_branch = "external/dependent"
-                run_command(
-                    [
-                        "git",
-                        "--git-dir",
-                        str(fake_repo.git_dir),
-                        "update-ref",
-                        f"refs/heads/{dependent_branch}",
-                        top_pull_request.head_sha,
-                    ],
-                    fake_repo.git_dir.parent,
-                )
-                dependent = fake_repo.create_pull_request(
-                    base_ref=top_pull_request.head_ref,
-                    body="external dependent",
-                    head_ref=dependent_branch,
-                    title="external dependent",
-                )
-                fake_repo.github_stacks[stack_number] = (
-                    *fake_repo.github_stacks[stack_number],
-                    dependent.number,
-                )
-            return observed
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
-        client_type=ConcurrentAppendClient,
-    )
-    fake_repo.pull_request_events.clear()
-
-    assert run_main(repo, config_path, "submit") == 1
-    captured = capsys.readouterr()
-
-    assert "keeps #3 active outside the selected stack" in captured.err
-    assert observations == 2
-    assert state_store.load() == state_before
-    assert {
-        branch: read_remote_ref(fake_repo.git_dir, branch) for branch in review_branches
-    } == review_refs_before
-    assert {
-        number: (
-            fake_repo.pull_requests[number].base_ref,
-            fake_repo.pull_requests[number].body,
-            fake_repo.pull_requests[number].head_ref,
-            fake_repo.pull_requests[number].title,
-        )
-        for number in pull_requests_before
-    } == pull_requests_before
-    assert {
-        number: tuple(comment.body for comment in issue_comments(fake_repo, number))
-        for number in pull_requests_before
-    } == comments_before
-    assert fake_repo.pull_request_events == []
-    assert fake_repo.github_stacks == {stack_number: (1, 2, 3)}
 
 
 def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
@@ -564,7 +454,7 @@ def test_submit_squash_blocks_until_old_github_stack_is_dissolved(
     assert len(fake_repo.pull_requests) == 3
 
 
-def test_submit_split_path_blocks_until_old_github_stack_is_dissolved(
+def test_submit_split_path_blocks_until_github_stack_is_dissolved(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -971,7 +861,6 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    fake_repo.github_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -1070,7 +959,6 @@ def test_submit_moves_overview_comment_when_stack_head_advances(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    fake_repo.github_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -1624,7 +1512,6 @@ def test_submit_checkpoints_successful_in_flight_pull_request_before_failure(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    fake_repo.github_stacks = {}
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")

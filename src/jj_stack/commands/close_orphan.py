@@ -77,9 +77,7 @@ def state_has_pull_request_record(
 async def run_untracked_cleanup_pull_request(
     *,
     context: CommandContext,
-    dry_run: bool,
     pull_request_number: int,
-    state: ReviewState,
 ) -> int:
     """Handle cleanup by PR number after saved tracking was already retired."""
 
@@ -116,7 +114,6 @@ async def run_untracked_cleanup_pull_request(
             ),
         )
 
-    del dry_run, state
     console.output(t"Nothing to close for PR #{pull_request_number}.")
     return 0
 
