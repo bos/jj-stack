@@ -20,11 +20,11 @@ have defined behavior but no dedicated current scenario.
    `jj-stack` atomic leased pushes, by anyone else's pushes (a teammate merging to `main`, an
    agent pushing a branch with plain git), and by branch deletion from the GitHub UI or `gh`.
 3. **GitHub review state** — PRs with head/base refs, open/closed/merged state, draft
-   flags, reviews, labels, comments, plus native stack resources with ordered membership
+   flags, reviews, labels, comments, plus GitHub stack resources with ordered membership
    and historical merge results. Moved by `jj-stack` mutations, by humans and agents
    through the UI or `gh`, and by GitHub itself: it auto-closes an open PR whose head
    becomes reachable from its base, closes PRs whose head branch is deleted, and records
-   native stack transitions.
+   GitHub stack transitions.
 4. **Tracking store** — the `ReviewIdentity` and `SubmittedBaseline` records described in
    [design.md](design.md). Moved by the commands that design.md allows to change an identity or
    advance a baseline; status observation never writes any of them.

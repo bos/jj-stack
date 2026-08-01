@@ -152,7 +152,7 @@ class StaleWorkspaceError(CliError):
     """Raised when `jj` refuses to run because the current workspace is stale."""
 
 
-class _NativeRevision(Protocol):
+class _RenderableRevision(Protocol):
     @property
     def commit_id(self) -> str: ...
 
@@ -421,11 +421,11 @@ class JjClient:
 
     def render_revision_log_lines(
         self,
-        revision: _NativeRevision,
+        revision: _RenderableRevision,
         *,
         color_when: JjColorWhen,
     ) -> tuple[str, ...]:
-        """Render one revision with the user's native `jj log` formatting."""
+        """Render one revision with the user's `jj log` formatting."""
 
         stdout = self._run_jj(
             (
@@ -444,7 +444,7 @@ class JjClient:
 
     def render_revision_log_blocks(
         self,
-        revisions: Sequence[_NativeRevision],
+        revisions: Sequence[_RenderableRevision],
         *,
         color_when: JjColorWhen,
     ) -> dict[str, tuple[str, ...]]:

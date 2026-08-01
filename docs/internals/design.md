@@ -20,7 +20,7 @@ The model is small:
 The only per-change state `jj-stack` saves locally is the PR and branch attached to each change
 and the exact commit last sent for review. Everything else is observed or derived.
 
-Three goals shape the design beyond that model: stacked GitHub PRs should feel native in a `jj`
+Three goals shape the design beyond that model: stacked GitHub PRs should feel natural in a `jj`
 workflow, the tool should be easy to use, and review branch names should stay stable across
 rewrite-heavy review.
 
@@ -98,7 +98,7 @@ publish. A full change ID or linked pull request selects that unique mutable loc
 mutable copies match, selection stops rather than choosing between them. If every matching copy
 is on fetched trunk's first-parent path, logical selection stops instead of turning the sole
 immutable trunk result into an empty local stack; an explicit revision expression can still
-select a commit on trunk. The sole immutable reviewed side parent from a native merge is outside
+select a commit on trunk. The sole immutable reviewed side parent from a stack merge is outside
 that first-parent path and remains selectable until `sync`.
 
 ### Tracking
@@ -352,7 +352,7 @@ and contents, and to `@-` otherwise. Explicit empty or undescribed working-copy 
 resolves to. A full change ID or linked pull request instead selects the unique mutable copy
 outside fetched trunk's first-parent path, so fetching an ordinary rebase result does not hide
 the local path. As defined for local review stacks, the sole immutable reviewed side parent from
-a native merge remains selectable outside that path until `sync`. `relink` requires both the
+a stack merge remains selectable outside that path until `sync`. `relink` requires both the
 change and PR.
 
 Three modes deliberately reach beyond one selected stack:
@@ -626,7 +626,7 @@ One repository therefore cannot report complete from one command and incomplete 
 Because a divergent change has several visible copies, every change-ID query selects all of them
 rather than resolving a bare change-ID symbol, which `jj` rejects as ambiguous.
 
-`view` and `submit` render stack rows through the user's native `jj log` formatting. `--json`
+`view` and `submit` render stack rows through the user's `jj log` formatting. `--json`
 follows [`docs/json-output.schema.json`](../json-output.schema.json) and exposes no cache state,
 raw remote targets, or tracking records.
 
@@ -698,7 +698,7 @@ Supported:
 - linear local review stacks
 - visible mutable review changes
 - one PR per review change
-- native GitHub stacks for every multi-PR review
+- GitHub stacks for every multi-PR review
 
 Unsupported:
 

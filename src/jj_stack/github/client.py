@@ -18,13 +18,13 @@ from jj_stack.errors import EXIT_GITHUB, SummarizedError
 from jj_stack.github.auth import github_token, github_token_from_env
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import (
-    GithubAsyncMerge,
-    GithubAsyncMergeSubmission,
     GithubIssueComment,
     GithubPullRequest,
     GithubPullRequestReview,
     GithubRepository,
     GithubStack,
+    GithubStackMerge,
+    GithubStackMergeSubmission,
 )
 
 logger = logging.getLogger(__name__)
@@ -565,7 +565,7 @@ class GithubClient:
         expected_head_sha: str,
         merge_method: str,
         pull_number: int,
-    ) -> GithubAsyncMergeSubmission:
+    ) -> GithubStackMergeSubmission:
         response = await self._request(
             "PUT",
             f"{self._repo_path}/pulls/{pull_number}/merge-async",
@@ -584,9 +584,9 @@ class GithubClient:
                 ) from error
         else:
             payload = self._expect_success(response)
-        return GithubAsyncMergeSubmission(
+        return GithubStackMergeSubmission(
             already_pending=already_pending,
-            result=_validate_async_merge_payload(payload),
+            result=_validate_stack_merge_payload(payload),
         )
 
     async def poll_stack_merge(
@@ -594,12 +594,12 @@ class GithubClient:
         *,
         operation_uuid: str,
         pull_number: int,
-    ) -> GithubAsyncMerge:
+    ) -> GithubStackMerge:
         response = await self._request(
             "GET",
             f"{self._repo_path}/pulls/{pull_number}/merge-async/{operation_uuid}",
         )
-        return _validate_async_merge_payload(self._expect_success(response))
+        return _validate_stack_merge_payload(self._expect_success(response))
 
     async def close_pull_request(
         self,
@@ -1070,11 +1070,11 @@ def _validate_stack_payload(payload: object, *, response_name: str) -> GithubSta
         ) from error
 
 
-def _validate_async_merge_payload(payload: object) -> GithubAsyncMerge:
+def _validate_stack_merge_payload(payload: object) -> GithubStackMerge:
     try:
-        return GithubAsyncMerge.model_validate(payload)
+        return GithubStackMerge.model_validate(payload)
     except ValidationError as error:
-        raise GithubClientError("GitHub async merge response had invalid data.") from error
+        raise GithubClientError("GitHub stack merge response had invalid data.") from error
 
 
 def _validate_graphql_model[GraphqlModel: BaseModel](

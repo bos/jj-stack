@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import jj_stack.review.observation as review_observation
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._native_stack_safety import selected_native_stack
+from jj_stack.commands._github_stack_safety import selected_github_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
@@ -20,37 +20,36 @@ from jj_stack.review.trunk_evidence import (
 
 
 @dataclass(frozen=True, slots=True)
-class NativeHistoricalReview:
+class GithubStackHistoryReview:
     candidate: TrackedReview
     evidence_kind: TrunkEvidenceKind
     revision: LocalRevision | None
 
 
 @dataclass(frozen=True, slots=True)
-class NativeSurvivorReview:
+class GithubStackSurvivorReview:
     candidate: TrackedReview
     remote_head_commit_id: str
 
 
-async def observe_native_stacks(
+async def observe_github_stacks(
     *,
     github: GithubClient,
 ) -> tuple[GithubStack, ...]:
-    """Read the current native resources."""
+    """Read the current GitHub stack resources."""
 
     try:
         return await github.list_stacks()
     except GithubClientError as error:
         raise CliError(
-            "Could not inspect native GitHub stack membership.",
+            "Could not inspect GitHub stack membership.",
             hint=t"Resolve the GitHub error above, then rerun the command.",
         ) from error
 
 
-async def resolve_selected_native_observation(
+async def resolve_selected_github_stack_observation(
     *,
     context: CommandContext,
-    dry_run: bool,
     github: GithubClient,
     initial: review_observation.RepositoryObservation,
     remote_name: str,
@@ -70,7 +69,7 @@ async def resolve_selected_native_observation(
         _changed_review(initial.reviews[revision.change_id]) for revision in selected
     ):
         return initial, ()
-    stacks = await observe_native_stacks(github=github)
+    stacks = await observe_github_stacks(github=github)
 
     selected_pull_numbers = {
         identity.pr_number
@@ -115,16 +114,16 @@ def _changed_review(observed: review_observation.ReviewObservation) -> bool:
     )
 
 
-def build_selected_native_sync(
+def build_selected_github_stack_sync(
     *,
     context: CommandContext,
-    native_stacks: tuple[GithubStack, ...],
+    github_stacks: tuple[GithubStack, ...],
     observation: review_observation.RepositoryObservation,
     repository: GithubRepoAddress,
     selected: tuple[LocalRevision, ...],
     state: ReviewState,
     trunk_commit_id: str,
-) -> tuple[tuple[NativeHistoricalReview, ...], tuple[NativeSurvivorReview, ...]]:
+) -> tuple[tuple[GithubStackHistoryReview, ...], tuple[GithubStackSurvivorReview, ...]]:
     selected_by_change_id = {revision.change_id: revision for revision in selected}
     candidates_by_pull = {
         candidate.review_identity.pr_number: candidate
@@ -140,9 +139,9 @@ def build_selected_native_sync(
     selected_pull_numbers = {
         candidate.review_identity.pr_number for candidate in selected_candidates
     }
-    stack = selected_native_stack(
+    stack = selected_github_stack(
         selected_pull_numbers=selected_pull_numbers,
-        stacks=native_stacks,
+        stacks=github_stacks,
     )
     if stack is None:
         return (), ()
@@ -160,8 +159,8 @@ def build_selected_native_sync(
             hint=t"Bring them back into line with {ui.cmd('jj-stack submit')}, or dissolve the "
             t"stack with {ui.cmd(f'gh stack unstack {stack.number}')} and resubmit.",
         )
-    historical: list[NativeHistoricalReview] = []
-    survivors: list[NativeSurvivorReview] = []
+    historical: list[GithubStackHistoryReview] = []
+    survivors: list[GithubStackSurvivorReview] = []
     _require_history(stack, set(candidates_by_pull))
     for member in stack.pull_requests:
         candidate = candidates_by_pull.get(member.number)
@@ -210,11 +209,11 @@ def build_selected_native_sync(
             or observed.remote_review_target != member.head.sha
         ):
             raise CliError(
-                t"Active native member PR #{member.number} does not match its reviewed branch.",
+                t"Active stack member PR #{member.number} does not match its reviewed branch.",
                 hint=t"Republish the review with {ui.cmd('jj-stack submit')}, then rerun sync.",
             )
         survivors.append(
-            NativeSurvivorReview(
+            GithubStackSurvivorReview(
                 candidate=candidate,
                 remote_head_commit_id=member.head.sha,
             )
@@ -243,7 +242,7 @@ def _historical_review(
     repository: GithubRepoAddress,
     revision: LocalRevision | None,
     trunk_commit_id: str,
-) -> NativeHistoricalReview:
+) -> GithubStackHistoryReview:
     evidence_kind, reason = proven_kind(
         candidate=candidate,
         context=context,
@@ -253,10 +252,10 @@ def _historical_review(
     )
     if evidence_kind is None:
         raise CliError(
-            t"Cannot retire native member PR #{member.number}: {reason}.",
+            t"Cannot retire stack member PR #{member.number}: {reason}.",
             hint=t"Make GitHub's merge result reachable from trunk, then rerun sync.",
         )
-    return NativeHistoricalReview(
+    return GithubStackHistoryReview(
         candidate=candidate,
         evidence_kind=evidence_kind,
         revision=revision,
@@ -281,7 +280,7 @@ def _validated_member_pull_request(
         or pull_request.head.ref != member.head.ref
     ):
         raise CliError(
-            t"Native member PR #{member.number} no longer matches its saved review identity.",
+            t"Stack member PR #{member.number} no longer matches its saved review identity.",
             hint=t"Reattach it with {ui.cmd('jj-stack relink')}, or end the review with "
             t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
         )

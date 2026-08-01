@@ -136,7 +136,7 @@ jj-stack sync <head-change-id>
 changes above the current `trunk()`, and updates only PRs that already exist for them. Use
 `jj-stack sync --dry-run <head-change-id>` first to preview merged changes and any cleanup or
 rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
-When a native merge rewrote the PRs that remain open, `sync` adopts those exact reviewed commits
+When a stack merge rewrote the PRs that remain open, `sync` adopts those exact reviewed commits
 and rebases only trailing local work above them. It leaves other stacks and unreviewed trailing
 changes alone.
 
@@ -448,7 +448,7 @@ each time.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
   `jj-stack sync --all`.
 - `merge`: rerun the same explicit selector and merge method. A matching request still in progress
-  asks you to wait; a completed native request is observed on retry.
+  asks you to wait; a completed stack-merge request is observed on retry.
 
 `jj-stack sync <head-change-id>` handles commits rewritten by GitHub while keeping a review
 branch that a PR above still needs. `sync --all` checks independently tracked exact commits

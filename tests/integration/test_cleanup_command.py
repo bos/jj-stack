@@ -46,7 +46,7 @@ def test_cleanup_retires_closed_review_after_local_change_is_abandoned(
     )
 
 
-def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
+def test_cleanup_blocks_closed_review_still_claimed_by_github_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -64,7 +64,7 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
     for pull_request in fake_repo.pull_requests.values():
         pull_request.state = "closed"
     run_command(["jj", "abandon", *change_ids], repo)
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     state_before = state_store.load()
 
     preview_exit_code = run_main(repo, config_path, "cleanup", "--dry-run")
@@ -93,7 +93,7 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
         f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
     )
 
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
     apply_exit_code = run_main(repo, config_path, "cleanup")
     applied = capsys.readouterr()
     normalized_applied = " ".join(applied.out.split())
@@ -107,7 +107,7 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
     assert all(
         f"refs/heads/{bookmark}" not in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
     )
-    assert fake_repo.native_stacks == {}
+    assert fake_repo.github_stacks == {}
 
 
 def test_cleanup_preserves_closed_review_branch_used_by_open_pull_request(
@@ -230,7 +230,7 @@ def test_cleanup_isolates_malformed_review_observation(
     failed_change_id, cleaned_change_id = (revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
     failed_identity = initial_state.review_identities[failed_change_id]
     cleaned_identity = initial_state.review_identities[cleaned_change_id]
     fake_repo.pull_requests[failed_identity.pr_number].state = "closed"
@@ -351,7 +351,7 @@ def test_cleanup_removes_overview_comment_for_closed_pull_request(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     fake_repo.pull_requests[2].state = "closed"
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
     fake_repo.create_issue_comment(
         body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstack overview",
         issue_number=2,

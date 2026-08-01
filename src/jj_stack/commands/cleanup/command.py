@@ -29,7 +29,7 @@ from jj_stack.commands._close_actions import (
     check_current_review_cleanup,
     check_tracked_review,
     find_overview_comment,
-    native_stack_cleanup_blocker,
+    github_stack_cleanup_blocker,
     plan_review_cleanup,
 )
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
@@ -335,12 +335,12 @@ async def _cleanup_tracked_review(
                 )
             )
         return
-    native_blocker = await native_stack_cleanup_blocker(
+    stack_blocker = await github_stack_cleanup_blocker(
         github_client=github_client,
         pull_number=identity.pr_number,
     )
-    if native_blocker is not None:
-        record_action(_cleanup_action(native_blocker))
+    if stack_blocker is not None:
+        record_action(_cleanup_action(stack_blocker))
         return
     overview_lookup = await _preflight_cleanup_overview_comment(
         github_client=github_client,

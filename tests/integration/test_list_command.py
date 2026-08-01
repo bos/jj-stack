@@ -258,7 +258,7 @@ def test_list_inventories_paths_that_share_a_reviewed_prefix(
     run_command(["jj", "new", shared.commit_id], repo)
     commit_file(repo, "right", "right.txt")
     right = selected_stack(repo).head
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
 

@@ -85,7 +85,7 @@ The bundled agent skill in `skills/jj-stack/` is installed separately from the e
 - discovers and caches the working invocation for a repository
 - uses `list --json` and `view --json` to recognize locally managed reviews
 - routes structural PR and review-branch changes through `jj-stack`, except for the explicit
-  `gh stack unstack` repair that dissolves one native GitHub stack before separate submissions
+  `gh stack unstack` repair that dissolves one GitHub stack before separate submissions
 
 Built-in help and the user guide own the command and alias inventory.
 
@@ -112,15 +112,15 @@ src/
     ...
     models/
     commands/
-      _native_stack_safety.py
+      _github_stack_safety.py
       cleanup/
       merge/
       submit/
-        native.py
+        github_stack.py
     jj/
     github/
     review/
-      native_sync.py
+      github_stack_sync.py
     state/
 tests/
   unit/
@@ -204,8 +204,8 @@ is that change; none, or more than one, is ambiguous and fails closed.
 
 Planning is a layering rule rather than a separate package. Shared classification lives under
 `review/`, while command-specific planning lives beside the command, such as
-`commands/merge/plan.py`, `commands/merge/native.py`, and the submit modules. Given typed local
-and remote state, it decides:
+`commands/merge/plan.py`, `commands/merge/github_stack.py`, and the submit modules. Given typed
+local and remote state, it decides:
 
 - which changes are reviewable
 - which stable remote branch each change should use
@@ -229,7 +229,7 @@ Selected path planning has a smaller pure boundary in `review/path.py`. The sele
 observes selector copies, the ordinary first-parent chain, fetched-trunk membership, and tracking
 annotations in one bounded `jj` query. For a full change ID or linked pull request, the pure
 projection prefers the unique mutable local copy outside fetched trunk's first-parent path and
-stops when matches remain only on that path. A sole immutable reviewed side parent from a native
+stops when matches remain only on that path. A sole immutable reviewed side parent from a stack
 merge remains outside the path and selectable until `sync`. The projection returns one
 parent-connected `LocalStack`. Tracking annotates that path and cannot create or reorder it.
 Command-owned GitHub identity, merge evidence, and mutation policy stay outside the projection.
@@ -247,8 +247,8 @@ change-ID-tuple deduplication. Tracking only annotates the paths after their top
 
 Thin `httpxyz` wrapper plus typed `pydantic` models. Knows how to fetch PR state, batch PR
 lookup by PR number or known head branch, create PRs, update PRs, assign reviewers and labels,
-manage overview comments, list/create/append/unstack native resources, submit and
-poll asynchronous native merges, and handle endpoint-specific pagination or retry.
+manage overview comments, list/create/append/unstack GitHub stack resources, submit and
+poll asynchronous stack merges, and handle endpoint-specific pagination or retry.
 
 When endpoint semantics allow it, the client and command layers prefer batched or
 bounded-parallel GitHub work over one-request-per-item serial loops. Ordering
@@ -271,15 +271,15 @@ Property families and their assertions live in [property-testing.md](property-te
 managed comment, falling back to REST pagination only for PRs whose first comment page
 is incomplete.
 
-Native group merge is `PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async`, whose body
+Stack merge is `PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async`, whose body
 carries `merge_method` and the `sha` of the exact target PR head. An accepted request returns an
 operation UUID that the client polls to a terminal state. A concurrent `409` is decoded so a
 matching pending request can be distinguished from an unrelated conflict, but its UUID is never
 adopted, because the response body does not identify the target PR. The merge policy those
 requests serve is specified in [design.md](design.md).
 
-The client reports endpoint results but does not decide stack topology, branch naming, or native
-membership policy.
+The client reports endpoint results but does not decide stack topology, branch naming, or GitHub
+stack membership policy.
 
 ### Config and tracking state
 
@@ -308,8 +308,8 @@ The repo state directory also contains the operation lock files:
 
 Mutating commands hold the lock through their mutation phase. Bootstrap, validation, interactive
 selection, and final rendering may happen outside it. The lock is process coordination only. The
-state directory contains no operation journal, merge note, phase, selector, path, native resource
-ID, or recovery checkpoint.
+state directory contains no operation journal, merge note, phase, selector, path, GitHub stack
+resource ID, or recovery checkpoint.
 
 Merge and recovery share current-state observation rather than a durable operation state
 machine:
@@ -321,15 +321,15 @@ machine:
   merge result
 - `review/finish.py` finalizes merged PRs and removes saved tracking
 - `review/convergence.py` checks whether another visible stack still needs that tracking
-- `review/native_sync.py` validates historical native members and survivor transitions
-- `commands/_native_stack_safety.py` owns the one native membership decision:
-  `selected_native_stack` resolves the single resource a selected review set belongs to and
+- `review/github_stack_sync.py` validates historical stack members and survivor transitions
+- `commands/_github_stack_safety.py` owns the one stack membership decision:
+  `selected_github_stack` resolves the single resource a selected review set belongs to and
   requires every active member of it to be selected. `submit`, `merge`, selected `sync`,
   `unstack`, and cleanup call it and derive their own consequence from the resource it returns;
   none of them repeats the decision
 
-Selected native sync uses the same fixed temporary attachment as checkout for one additional
-purpose: after a native merge rewrites the active suffix, it validates every active raw Git commit
+Selected stack sync uses the same fixed temporary attachment as checkout for one additional
+purpose: after a stack merge rewrites the active suffix, it validates every active raw Git commit
 and parent, reobserves the whole branch set, then imports the exact top into jj. It rebases only
 trailing local descendants, abandons the replaced local active copies, and advances every adopted
 baseline together through the state store's existing pair compare-and-swap. It
@@ -372,7 +372,7 @@ eligibility checks instead of observing those facts again through a command-spec
 
 Repository-wide cleanup is one lifecycle-driven pass over complete identity/baseline pairs.
 It observes the exact saved PR, prepares branch and comment cleanup for a closed or merged match,
-and rereads the PR, its unique head claim, open base-ref dependents, remote ref, native
+and rereads the PR, its unique head claim, open base-ref dependents, remote ref, GitHub stack
 membership, and tracking records at their mutation boundaries. Selected cleanup processes the
 observed stack head-to-base. A dry run may omit only dependents that an earlier selected action
 would close; actual cleanup never omits a live dependent. Local jj descendants remain
@@ -457,8 +457,8 @@ Implemented local coverage includes:
 - unit tests for parsing, planning, and model behavior
 - local integration tests against the fake GitHub server and a real backing Git repo
 - five fixed generated/property cases that replay the integration harness in the default suite
-- focused merge and recovery cases, including native atomic failure, partial survivor rewrites,
-  terminal retry, and single-PR merge topology
+- focused merge and recovery cases, including atomic stack-merge failure, partial survivor
+  rewrites, terminal retry, and single-PR merge topology
 
 Local tests are the default.
 
@@ -514,10 +514,10 @@ Rules:
 The fake server owns a real Git repo because many assertions are about actual remote
 branch state, not just JSON responses.
 
-Its native endpoints model ordered resource membership, historical merged prefixes, exact active
-suffix unstacking, create/append admission, and asynchronous merge submission and polling. The
-merge fixtures cover atomic failure, partial survivor rewrites, and terminal retry. They remain
-bounded contracts rather than a general native-stack emulator.
+Its GitHub stack endpoints model ordered resource membership, historical merged prefixes, exact
+active suffix unstacking, create/append admission, and asynchronous merge submission and
+polling. The merge fixtures cover atomic failure, partial survivor rewrites, and terminal retry.
+They remain bounded contracts rather than a general GitHub stack emulator.
 
 We use FastAPI for the fake server unless Starlette later proves to offer a clear
 concrete advantage for this test harness.
@@ -525,7 +525,7 @@ concrete advantage for this test harness.
 ## Live GitHub evidence
 
 There is no credentialed live suite. Approved disposable-repository experiments established the
-native create, append, unstack, historical-member, asynchronous merge, queue-rejection,
+stack creation, append, unstack, historical-member, asynchronous merge, queue-rejection,
 merge-method, expected-head, and Git `change-id` contracts modeled by the fake. Future live checks
 still require explicit credentials, a disposable repository, and separate approval for external
 mutations.

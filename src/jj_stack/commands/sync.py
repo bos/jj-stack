@@ -50,7 +50,7 @@ from jj_stack.review.finish import (
     render_finish_results,
     retire_reviews,
 )
-from jj_stack.review.native_sync import resolve_selected_native_observation
+from jj_stack.review.github_stack_sync import resolve_selected_github_stack_observation
 from jj_stack.review.observation import (
     RepositoryObservation,
     observe_reviews,
@@ -146,9 +146,8 @@ async def _run_selected_convergence(
             remote_name=target.remote.name,
             trunk_branch=trunk_branch,
         )
-        observation, native_stacks = await resolve_selected_native_observation(
+        observation, github_stacks = await resolve_selected_github_stack_observation(
             context=context,
-            dry_run=dry_run,
             github=github,
             initial=observation,
             remote_name=target.remote.name,
@@ -171,7 +170,7 @@ async def _run_selected_convergence(
             )
         plan = build_selected_convergence_plan(
             context=context,
-            native_stacks=native_stacks,
+            github_stacks=github_stacks,
             observation=observation,
             prepared_status=prepared_status,
             repository=target.repository,
@@ -232,7 +231,7 @@ async def _apply_selected_plan(
         skip_finish=frozenset(
             change.candidate.change_id
             for change in plan.on_trunk
-            if change.evidence_kind != "exact" or change.native
+            if change.evidence_kind != "exact" or change.requires_terminal_pull_request
         ),
     )
     rebase_revision_ids = (
@@ -247,13 +246,17 @@ async def _apply_selected_plan(
         )
 
     if not dry_run:
-        native = plan.native_survivors
-        if native:
-            top = native[-1]
-            rebase_revision_ids = rebase_revision_ids[len(native) :]
+        github_stack_survivors = plan.github_stack_survivors
+        if github_stack_survivors:
+            top = github_stack_survivors[-1]
+            rebase_revision_ids = rebase_revision_ids[len(github_stack_survivors) :]
             replaced = tuple(
                 revision.commit_id
-                for revision, survivor in zip(plan.survivors[: len(native)], native, strict=False)
+                for revision, survivor in zip(
+                    plan.survivors[: len(github_stack_survivors)],
+                    github_stack_survivors,
+                    strict=False,
+                )
                 if revision.commit_id != survivor.remote_head_commit_id
             )
             destination = top.remote_head_commit_id
@@ -268,7 +271,7 @@ async def _apply_selected_plan(
                         survivor.remote_head_commit_id,
                         survivor.candidate.change_id,
                     )
-                    for survivor in native
+                    for survivor in github_stack_survivors
                 ),
                 expected_parent_commit_id=trunk_commit_id,
             )
@@ -324,21 +327,21 @@ async def _apply_selected_plan(
             )
             if abandoned:
                 context.jj_client.abandon_revisions(abandoned)
-            if native:
+            if github_stack_survivors:
                 context.state_store.relink_reviews(
                     expected={
                         survivor.candidate.change_id: (
                             survivor.candidate.review_identity,
                             survivor.candidate.submitted_baseline,
                         )
-                        for survivor in native
+                        for survivor in github_stack_survivors
                     },
                     replacements={
                         survivor.candidate.change_id: (
                             survivor.candidate.review_identity,
                             SubmittedBaseline(commit_id=survivor.remote_head_commit_id),
                         )
-                        for survivor in native
+                        for survivor in github_stack_survivors
                     },
                 )
     update_result = await _update_selected_reviews(
@@ -352,7 +355,9 @@ async def _apply_selected_plan(
         finish=finish_context,
         retirement_blocker=retirement_blocker,
         terminal_required=frozenset(
-            change.candidate.change_id for change in plan.on_trunk if change.native
+            change.candidate.change_id
+            for change in plan.on_trunk
+            if change.requires_terminal_pull_request
         ),
     )
     render_finish_results(dry_run=dry_run, results=results)

@@ -4,7 +4,7 @@ Candidates are the consecutive open, non-draft pull requests from the bottom. Ea
 match the exact commit last submitted; GitHub decides whether reviews, checks, conflicts, and
 repository rules allow the merge.
 
-GitHub merges a multi-PR prefix together through its native stack API. A one-PR review uses the
+GitHub merges a multi-PR prefix together through its stack API. A one-PR review uses the
 ordinary pull-request API. This command does not update local history or remove review state; run
 the printed `jj-stack sync` command after GitHub merges anything.
 
@@ -23,7 +23,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
-from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
@@ -39,8 +39,12 @@ from jj_stack.review.status import prepare_status
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from .execute import execute_single_pull_request_merge
+from .github_stack import (
+    build_github_stack_merge_plan,
+    check_github_stack_merge,
+    execute_github_stack_merge,
+)
 from .models import MergeExecutionInputs, MergeResult, PreparedMerge
-from .native import build_native_merge_plan, check_native_merge, execute_native_merge
 from .plan import build_merge_plan
 from .render import print_merge_result
 
@@ -236,7 +240,11 @@ async def _stream_merge_async(
             tuple(revision.identity.pr_number for revision in plan.reviewed_revisions),
         )
         stacks = await selection.observe()
-        native = build_native_merge_plan(plan, stacks, prepared_merge.target_change_id)
+        github_stack_merge = build_github_stack_merge_plan(
+            plan,
+            stacks,
+            prepared_merge.target_change_id,
+        )
         execution = MergeExecutionInputs(
             context=prepared_merge.context,
             remote_name=remote.name,
@@ -245,16 +253,18 @@ async def _stream_merge_async(
             trunk_subject=prepared.stack.trunk.subject,
         )
         if prepared_merge.dry_run:
-            if native is not None:
-                await check_native_merge(execution, github_client, native)
-                return execution.result(actions=(native.action(resolved_merge_method),))
+            if github_stack_merge is not None:
+                await check_github_stack_merge(execution, github_client, github_stack_merge)
+                return execution.result(
+                    actions=(github_stack_merge.action(resolved_merge_method),)
+                )
             return execution.result(actions=plan.planned_actions())
-        if native is not None:
-            return await execute_native_merge(
+        if github_stack_merge is not None:
+            return await execute_github_stack_merge(
                 execution=execution,
                 github=github_client,
                 merge_method=resolved_merge_method,
-                native=native,
+                github_stack_merge=github_stack_merge,
             )
         return await execute_single_pull_request_merge(
             execution=execution,

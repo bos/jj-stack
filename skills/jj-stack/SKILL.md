@@ -2,7 +2,7 @@
 name: jj-stack
 license: Apache-2.0
 description: >
-  Manage jj-native stacked GitHub review with jj-stack. Use when inspecting,
+  Manage stacked GitHub review for jj with jj-stack. Use when inspecting,
   creating, submitting, refreshing, revising, merging, cleaning up, or
   recovering stacked pull requests for local jj changes, and before mutating
   any GitHub pull request or branch with gh or the GitHub API in a jj repo.
@@ -157,7 +157,7 @@ that is incomplete or needs attention (the output is still valid — read it);
 
 - `merge` rejected by GitHub: read the reported check, conflict, queue,
   policy, or access reason, fix it, and rerun the same explicit
-  command. A native terminal failure merges nothing. A matching request already
+  command. A terminal stack-merge failure merges nothing. A matching request already
   pending should be allowed to finish, then observed by rerunning the same target
   and method.
 - Interrupted command: `view`, then rerun with an explicit change ID, revset,

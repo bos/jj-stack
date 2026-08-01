@@ -22,8 +22,9 @@ current core workflow._
 
 Since `jj` 0.30 the `change-id` header in Git commit objects is written and imported by default
 (`git.write-change-id-header`), so change IDs survive ordinary push/fetch round trips. Live GitHub
-experiments established that both native and ordinary rebase merge preserve it, while squash
-merge does not. Selected `sync` uses a preserved header to recognize the fetched successor;
+experiments established that both GitHub stack merges and ordinary rebase merges preserve it,
+while squash merge does not. Selected `sync` uses a preserved header to recognize the fetched
+successor;
 otherwise it retires the old local change from exact merge-result evidence without relabeling the
 commit that reached trunk or storing an alias.
 
@@ -46,9 +47,9 @@ High-level cases where this might help:
 _Benefit: medium — high value for teams that require queues, but not part of the current merge
 contract._
 
-Live evidence shows that GitHub accepts a native asynchronous stack-merge request for processing
+Live evidence shows that GitHub accepts an asynchronous stack-merge request for processing
 under a queue ruleset, then returns a terminal failure requiring the queue. The ordinary PR API
-cannot enqueue that native member either. `jj-stack` therefore reports the GitHub rejection and
+cannot enqueue that stack member either. `jj-stack` therefore reports the GitHub rejection and
 does not impose repository-wide queue or auto-merge restrictions.
 
 A future queue integration needs an explicit design for current-state observation, user-visible

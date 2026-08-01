@@ -8,7 +8,7 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
 
-from ..support.fake_github import FakeGithubState, _complete_async_merge, create_app
+from ..support.fake_github import FakeGithubState, _complete_stack_merge, create_app
 from ..support.integration_helpers import (
     commit_file,
     init_fake_github_repo_with_submitted_feature,
@@ -75,7 +75,7 @@ def test_merge_draft_blocks_the_candidate_prefix(
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
 
 
-def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
+def test_stack_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -83,7 +83,7 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.allow_rebase_merge = True
-    fake_repo.native_stacks = {7: (1, 2, 3)}
+    fake_repo.github_stacks = {7: (1, 2, 3)}
     fake_repo.pull_requests[3].state = "closed"
     state_store = ReviewStateStore.for_repo(repo)
     stack_before = selected_stack(repo)
@@ -102,8 +102,8 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.async_merge_requests == [(2, "rebase", stack_before.revisions[1].commit_id)]
-    assert fake_repo.async_merge_polls == [(2, "fake-async-1")]
+    assert fake_repo.stack_merge_requests == [(2, "rebase", stack_before.revisions[1].commit_id)]
+    assert fake_repo.stack_merge_polls == [(2, "fake-stack-merge-1")]
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[2].state == "closed"
     assert fake_repo.pull_requests[3].state == "closed"
@@ -118,7 +118,7 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     )
 
 
-def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
+def test_stack_merge_commit_uses_one_group_result_that_sync_can_retire(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -126,7 +126,7 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.allow_merge_commit = True
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
     stack = selected_stack(repo)
 
@@ -156,14 +156,14 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
     assert JjClient(repo).resolve_revision("@").only_parent_commit_id() == merge_commit
 
 
-def test_native_merge_terminal_failure_is_atomic(
+def test_stack_merge_terminal_failure_is_atomic(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.unmergeable_pull_numbers.add(2)
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
@@ -183,19 +183,19 @@ def test_native_merge_terminal_failure_is_atomic(
     assert "rebase onto" in normalized
     assert "resolve the conflict" in normalized
     assert "jj-stack submit" in normalized
-    assert fake_repo.async_merge_requests
-    assert fake_repo.async_merge_polls == [(2, "fake-async-1")]
+    assert fake_repo.stack_merge_requests
+    assert fake_repo.stack_merge_polls == [(2, "fake-stack-merge-1")]
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
     assert tuple(
         fake_repo.ref_target(pr.head_ref) for pr in fake_repo.pull_requests.values()
     ) == (heads_before)
-    assert fake_repo.native_stacks == {7: (1, 2)}
+    assert fake_repo.github_stacks == {7: (1, 2)}
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert state_store.load() == state_before
 
 
 @pytest.mark.parametrize("dry_run", (False, True))
-def test_native_merge_reobserves_lower_heads_before_request(
+def test_stack_merge_reobserves_lower_heads_before_request(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -204,7 +204,7 @@ def test_native_merge_reobserves_lower_heads_before_request(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.auto_merge_reachable_heads = False
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
@@ -231,19 +231,19 @@ def test_native_merge_reobserves_lower_heads_before_request(
 
     assert exit_code == 1
     assert "last submitted commit" in captured.err
-    assert fake_repo.async_merge_requests == []
+    assert fake_repo.stack_merge_requests == []
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
 
 
-def test_native_merge_recovers_only_from_a_terminal_retry(
+def test_stack_merge_recovers_only_from_a_terminal_retry(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
     app = create_app(FakeGithubState.single_repository(fake_repo))
@@ -272,7 +272,7 @@ def test_native_merge_recovers_only_from_a_terminal_retry(
     )
     assert run_main(repo, config_path, "merge") != 0
     capsys.readouterr()
-    assert fake_repo.async_merge_polls == []
+    assert fake_repo.stack_merge_polls == []
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
 
     patch_github_client_builders(
@@ -284,28 +284,28 @@ def test_native_merge_recovers_only_from_a_terminal_retry(
     assert run_main(repo, config_path, "merge") == 1
     pending = capsys.readouterr()
     assert "matching request is already pending" in pending.out
-    assert fake_repo.async_merge_polls == []
+    assert fake_repo.stack_merge_polls == []
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
 
-    _complete_async_merge(fake_repo, fake_repo.async_merge_operations[2])
+    _complete_stack_merge(fake_repo, fake_repo.stack_merge_operations[2])
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("closed", "closed")
     assert run_main(repo, config_path, "merge") == 0
     completed = capsys.readouterr()
     assert "final trunk commit" in completed.out
-    assert fake_repo.async_merge_polls == []
-    assert len(fake_repo.async_merge_requests) == 1
+    assert fake_repo.stack_merge_polls == []
+    assert len(fake_repo.stack_merge_requests) == 1
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("closed", "closed")
     assert state_store.load() == state_before
 
 
-def test_native_merge_requires_a_resource_for_a_multi_pr_review(
+def test_stack_merge_requires_a_resource_for_a_multi_pr_review(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
     state_store = ReviewStateStore.for_repo(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
@@ -314,8 +314,8 @@ def test_native_merge_requires_a_resource_for_a_multi_pr_review(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "did not report a native stack" in captured.err
-    assert fake_repo.async_merge_requests == []
+    assert "did not report a stack" in captured.err
+    assert fake_repo.stack_merge_requests == []
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert state_store.load() == state_before
@@ -336,7 +336,7 @@ def test_ordinary_merge_methods_create_distinct_commit_topology(
         config_path = configure_submit_environment(monkeypatch, method_path, fake_repo)
         fake_repo.allow_merge_commit = True
         fake_repo.allow_rebase_merge = True
-        fake_repo.native_stacks = {}
+        fake_repo.github_stacks = {}
         pull_request = fake_repo.pull_requests[1]
         head_before = fake_repo.ref_target(pull_request.head_ref)
         trunk_before = fake_repo.ref_target("main")

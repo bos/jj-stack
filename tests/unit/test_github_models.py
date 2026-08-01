@@ -32,7 +32,7 @@ def test_graphql_review_decision_normalizes_known_states_and_drops_unknown() -> 
     assert unknown.review_decision is None
 
 
-def test_native_stack_splits_history_and_rejects_nonprefix_history() -> None:
+def test_github_stack_splits_history_and_rejects_nonprefix_history() -> None:
     historical = {
         "head": {"ref": "jj-stack/one", "sha": "head-one"},
         "merged_at": "2026-07-23T12:00:00Z",
@@ -56,7 +56,7 @@ def test_native_stack_splits_history_and_rejects_nonprefix_history() -> None:
         GithubStack.model_validate({"number": 7, "pull_requests": [active, historical]})
 
 
-def test_native_stack_requires_two_members_and_defaults_missing_merge_state_to_active() -> None:
+def test_github_stack_requires_two_members_and_defaults_missing_merge_state_to_active() -> None:
     """GitHub rejects one-member resources and may omit `merged_at` from valid members."""
 
     stack = GithubStack.model_validate(

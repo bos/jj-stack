@@ -20,7 +20,7 @@ def print_submit_result(result: SubmitResult) -> None:
     client = result.client
     prerendered_blocks: dict[str, tuple[str, ...]] = {}
     if client is not None:
-        # Overlap the native `jj log` subprocess startup cost before we print
+        # Overlap the `jj log` subprocess startup cost before we print
         # the final summary for large stacks.
         with console.spinner(description="Rendering jj log"):
             prerendered_blocks = render_revision_blocks(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from jj_stack.commands.submit.native import plan_native_stack
+from jj_stack.commands.submit.github_stack import plan_github_stack
 from jj_stack.errors import CliError, error_hint, error_message
 from jj_stack.models.github import GithubStack
 from jj_stack.ui import plain_text
@@ -70,14 +70,14 @@ def _stack(
         ),
     ),
 )
-def test_native_stack_plan_classifies_selected_membership(
+def test_github_stack_plan_classifies_selected_membership(
     desired: tuple[int | None, ...],
     observed: tuple[GithubStack, ...],
     base_updates: frozenset[int],
     expected_action: str,
     expected_stack_number: int | None,
 ) -> None:
-    plan = plan_native_stack(
+    plan = plan_github_stack(
         desired=desired,
         observed_stacks=observed,
         pull_numbers_requiring_base_update=base_updates,
@@ -118,14 +118,14 @@ def test_native_stack_plan_classifies_selected_membership(
         ),
     ),
 )
-def test_native_stack_plan_rejects_ambiguous_selected_membership(
+def test_github_stack_plan_rejects_ambiguous_selected_membership(
     desired: tuple[int, ...],
     observed: tuple[GithubStack, ...],
     message_parts: tuple[str, ...],
     hint_parts: tuple[str, ...],
 ) -> None:
     with pytest.raises(CliError) as caught:
-        plan_native_stack(
+        plan_github_stack(
             desired=desired,
             observed_stacks=observed,
             pull_numbers_requiring_base_update=frozenset(),

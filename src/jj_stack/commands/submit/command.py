@@ -45,7 +45,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
-from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
@@ -75,6 +75,12 @@ from jj_stack.state.operation_lock import acquire_operation_lock
 
 from . import auto_close
 from .auto_close import retarget_review_bases_before_branch_push
+from .github_stack import (
+    GithubStackPlan,
+    apply_github_stack_plan,
+    plan_github_stack,
+    require_current_github_stack_plan,
+)
 from .inputs import prepare_submit_inputs
 from .models import (
     GeneratedDescription,
@@ -87,7 +93,6 @@ from .models import (
     SubmitResult,
     SubmittedRevision,
 )
-from .native import NativeStackPlan, apply_native_stack_plan, plan_native_stack
 from .overview_comments import stack_overview_comment_bodies, sync_stack_overview_comments
 from .pull_requests import (
     discover_pull_requests_by_branch,
@@ -536,7 +541,7 @@ async def run_submit_async(
             else None
             for pending in pending_syncs
         )
-        native_plan = plan_native_stack(
+        github_stack_plan = plan_github_stack(
             desired=desired_pull_numbers,
             observed_stacks=observed_stacks,
             pull_numbers_requiring_base_update={
@@ -546,14 +551,19 @@ async def run_submit_async(
                 and (pull_request.base.ref != pending.base_branch or pending in retarget_syncs)
             },
         )
-        if native_plan.action == "replace" and not dry_run:
-            assert (native_stack := native_plan.affected_stack) is not None
+        if github_stack_plan.action == "replace" and not dry_run:
+            assert (github_stack := github_stack_plan.affected_stack) is not None
             await GithubStackSelection(
                 github_client,
-                native_stack.pull_request_numbers,
-            ).dissolve_exact(observed=(native_stack,))
-            native_plan = NativeStackPlan("create" if len(pending_syncs) > 1 else "none")
+                github_stack.pull_request_numbers,
+            ).dissolve_exact(observed=(github_stack,))
+            github_stack_plan = GithubStackPlan("create" if len(pending_syncs) > 1 else "none")
         if not dry_run:
+            await require_current_github_stack_plan(
+                github_client=github_client,
+                plan=github_stack_plan,
+                pull_numbers=desired_pull_numbers,
+            )
             if pushes_review_branches:
                 await retarget_review_bases_before_branch_push(
                     github_client=github_client,
@@ -592,10 +602,12 @@ async def run_submit_async(
                 if (pull_number := revision.pull_request_number) is not None
             )
             if len(pull_numbers) != len(submitted_revisions):
-                raise AssertionError("Native submit requires concrete pull request numbers.")
-            await apply_native_stack_plan(
+                raise AssertionError(
+                    "GitHub stack submit requires concrete pull request numbers."
+                )
+            await apply_github_stack_plan(
                 github_client=github_client,
-                plan=native_plan,
+                plan=github_stack_plan,
                 pull_numbers=pull_numbers,
             )
             await sync_stack_overview_comments(

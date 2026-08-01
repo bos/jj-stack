@@ -27,8 +27,8 @@ from jj_stack.commands._json_status import review_change_json
 from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, error_message
 from jj_stack.formatting import (
-    NativeRevision,
-    NativeRevisionRenderClient,
+    RenderableRevision,
+    RevisionRenderClient,
     format_pull_request_label,
     render_revision_blocks,
     render_revision_lines,
@@ -573,7 +573,7 @@ def render_trunk_status_lines(
     prepared: PreparedStack,
     prerendered_blocks: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[str, ...]:
-    """Render the trunk footer with native `jj log` formatting."""
+    """Render the trunk footer with the user's `jj log` formatting."""
 
     trunk = prepared.stack.base_parent
     return render_revision_lines(
@@ -601,14 +601,14 @@ def render_empty_status_lines(
 
 def _prefetch_revision_log_blocks(
     *,
-    client: NativeRevisionRenderClient,
+    client: RevisionRenderClient,
     revisions: tuple[ReviewStatusRevision, ...],
-    trunk: NativeRevision,
+    trunk: RenderableRevision,
 ) -> dict[str, tuple[str, ...]]:
     """Render the `jj log` block for every revision we will print, in parallel."""
 
     seen: set[str] = set()
-    ordered: list[NativeRevision] = []
+    ordered: list[RenderableRevision] = []
     for revision in (*revisions, trunk):
         if revision.commit_id in seen:
             continue

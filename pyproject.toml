@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "jj-stack"
 version = "0.1.0"
-description = "JJ-native stacked GitHub review tooling"
+description = "Stacked GitHub review tooling for jj"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.14"

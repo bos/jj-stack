@@ -1,4 +1,4 @@
-"""Native asynchronous merge policy."""
+"""GitHub stack merge policy."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import asyncio
 from dataclasses import dataclass, replace
 
 import jj_stack.ui as ui
-from jj_stack.commands._native_stack_safety import selected_native_stack
+from jj_stack.commands._github_stack_safety import selected_github_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.models.github import GithubAsyncMerge, GithubStack
+from jj_stack.models.github import GithubStack, GithubStackMerge
 from jj_stack.review.observation import observe_reviews
 from jj_stack.ui import Message
 
@@ -18,7 +18,7 @@ from .preconditions import merge_precondition_error
 
 
 @dataclass(frozen=True, slots=True)
-class NativeMergePlan:
+class GithubStackMergePlan:
     resource: GithubStack
     active: tuple[MergeRevision, ...]
     planned: tuple[MergeRevision, ...]
@@ -31,26 +31,26 @@ class NativeMergePlan:
     def action(self, method: str) -> MergeAction:
         numbers = ", ".join(f"#{revision.identity.pr_number}" for revision in self.planned)
         return MergeAction(
-            kind="native stack request",
-            body=t"PUT one {ui.cmd(method)} native prefix for PRs {numbers} through "
+            kind="GitHub stack merge request",
+            body=t"PUT one {ui.cmd(method)} GitHub stack prefix for PRs {numbers} through "
             t"commit {ui.commit_id(self.target.commit_id)}",
             status="planned",
         )
 
 
-def build_native_merge_plan(
+def build_github_stack_merge_plan(
     merge_plan: MergePlan,
     stacks: tuple[GithubStack, ...],
     target_change_id: str | None,
-) -> NativeMergePlan | None:
+) -> GithubStackMergePlan | None:
     by_pull = {
         revision.identity.pr_number: revision for revision in merge_plan.reviewed_revisions
     }
-    resource = selected_native_stack(selected_pull_numbers=tuple(by_pull), stacks=stacks)
+    resource = selected_github_stack(selected_pull_numbers=tuple(by_pull), stacks=stacks)
     if resource is None:
         if len(by_pull) > 1:
             raise CliError(
-                "GitHub did not report a native stack for this multi-PR review.",
+                "GitHub did not report a stack for this multi-PR review.",
                 hint=t"Run {ui.cmd('submit')} before merging.",
             )
         return None
@@ -65,7 +65,7 @@ def build_native_merge_plan(
                 hint=t"Run {ui.cmd('jj-stack submit')} so the stack matches this path, "
                 t"then retry.",
             )
-        return NativeMergePlan(resource, active, merge_plan.planned_revisions)
+        return GithubStackMergePlan(resource, active, merge_plan.planned_revisions)
     historical = tuple(
         by_pull[number]
         for number in resource.historical_pull_request_numbers
@@ -77,50 +77,55 @@ def build_native_merge_plan(
         stop = change_ids.index(target_change_id) + 1
     if not stop or merge_plan.reviewed_revisions[: len(historical)] != historical:
         return None
-    return NativeMergePlan(resource, active, historical[:stop], terminal_retry=True)
+    return GithubStackMergePlan(resource, active, historical[:stop], terminal_retry=True)
 
 
-async def execute_native_merge(
+async def execute_github_stack_merge(
     *,
     execution: MergeExecutionInputs,
     github: GithubClient,
     merge_method: str,
-    native: NativeMergePlan,
+    github_stack_merge: GithubStackMergePlan,
 ) -> MergeResult:
-    await check_native_merge(execution, github, native)
+    await check_github_stack_merge(execution, github, github_stack_merge)
     try:
         submission = await github.submit_stack_merge(
-            expected_head_sha=native.target.commit_id,
+            expected_head_sha=github_stack_merge.target.commit_id,
             merge_method=merge_method,
-            pull_number=native.target.identity.pr_number,
+            pull_number=github_stack_merge.target.identity.pr_number,
         )
     except GithubClientError as error:
         raise CliError(
-            t"Could not request native merge through PR #{native.target.identity.pr_number}.",
+            t"Could not request GitHub stack merge through "
+            t"PR #{github_stack_merge.target.identity.pr_number}.",
             hint="Resolve the GitHub error above, then rerun merge.",
         ) from error
     if submission.already_pending:
         details = submission.result.details
         matching = (
-            details.expected_head_sha == native.target.commit_id
+            details.expected_head_sha == github_stack_merge.target.commit_id
             and details.merge_method == merge_method
         )
-        return _result(
+        return _blocked_result(
             execution,
-            native,
+            github_stack_merge,
             reason=(
                 "a matching request is already pending; wait and rerun merge"
                 if matching
-                else "another native merge request is already pending"
+                else "another GitHub stack merge request is already pending"
             ),
         )
-    terminal = await _terminal(github, submission.result, native.target.identity.pr_number)
+    terminal = await _terminal(
+        github,
+        submission.result,
+        github_stack_merge.target.identity.pr_number,
+    )
     if terminal.status == "failed":
         reason = terminal.details.message or "GitHub did not provide a failure reason"
         submit = ui.cmd(f"jj-stack submit {execution.selected_revset}")
-        return _result(
+        return _blocked_result(
             execution,
-            native,
+            github_stack_merge,
             reason=t"GitHub reports nothing merged: {reason}; if the stack conflicts with "
             t"{ui.bookmark(execution.trunk_branch)}, rebase onto {ui.revset('trunk()')}, resolve "
             t"the conflict, and run {submit} before merging again; if a check or repository rule "
@@ -128,25 +133,33 @@ async def execute_native_merge(
         )
     if terminal.status != "merged" or terminal.details.sha is None:
         raise CliError(
-            "GitHub reported the native merge as merged without a final trunk commit.",
+            "GitHub reported the stack merge as merged without a final trunk commit.",
             hint=t"Run {ui.cmd('jj-stack sync')} to reconcile whatever GitHub actually did.",
         )
-    return _result(
+    return _applied_result(
         execution,
-        native,
+        github_stack_merge,
         final_sha=terminal.details.sha,
         merge_method=merge_method,
     )
 
 
-async def check_native_merge(
+async def check_github_stack_merge(
     execution: MergeExecutionInputs,
     github: GithubClient,
-    native: NativeMergePlan,
+    github_stack_merge: GithubStackMergePlan,
 ) -> None:
-    resource = await github.get_stack(stack_number=native.resource.number)
-    revisions = native.planned if native.terminal_retry else native.active
-    inactive = revisions if native.terminal_retry else native.active[len(native.planned) :]
+    resource = await github.get_stack(stack_number=github_stack_merge.resource.number)
+    revisions = (
+        github_stack_merge.planned
+        if github_stack_merge.terminal_retry
+        else github_stack_merge.active
+    )
+    inactive = (
+        revisions
+        if github_stack_merge.terminal_retry
+        else github_stack_merge.active[len(github_stack_merge.planned) :]
+    )
     observation = await observe_reviews(
         change_ids=tuple(revision.change_id for revision in revisions),
         context=execution.context,
@@ -163,7 +176,7 @@ async def check_native_merge(
         remote_name=execution.remote_name,
         revisions=revisions,
     )
-    if error or resource.pull_request_numbers != native.resource.pull_request_numbers:
+    if error or resource.pull_request_numbers != github_stack_merge.resource.pull_request_numbers:
         raise CliError(
             error or t"GitHub stack #{resource.number} changed after planning.",
             hint=t"Rerun {ui.cmd('jj-stack merge')} to plan against the current stack.",
@@ -172,13 +185,13 @@ async def check_native_merge(
 
 async def _terminal(
     github: GithubClient,
-    result: GithubAsyncMerge,
+    result: GithubStackMerge,
     pull_number: int,
-) -> GithubAsyncMerge:
+) -> GithubStackMerge:
     operation_uuid = result.details.uuid
     if result.status == "pending" and operation_uuid is None:
         raise CliError(
-            "GitHub accepted the native merge without an operation ID to follow.",
+            "GitHub accepted the stack merge without an operation ID to follow.",
             hint=t"Run {ui.cmd('jj-stack sync')} to see whether the merge completed.",
         )
     while result.status == "pending":
@@ -191,26 +204,32 @@ async def _terminal(
     return result
 
 
-def _result(
+def _blocked_result(
     execution: MergeExecutionInputs,
-    native: NativeMergePlan,
+    github_stack_merge: GithubStackMergePlan,
     *,
-    final_sha: str | None = None,
-    merge_method: str | None = None,
-    reason: Message | None = None,
+    reason: Message,
 ) -> MergeResult:
-    if reason is not None:
-        return execution.result(
-            actions=(
-                MergeAction(
-                    kind="boundary",
-                    body=t"at native stack #{native.resource.number}: {reason}",
-                    status="blocked",
-                ),
-            )
-        )
     return execution.result(
-        actions=(replace(native.action(merge_method or ""), status="applied"),),
+        actions=(
+            MergeAction(
+                kind="boundary",
+                body=t"at GitHub stack #{github_stack_merge.resource.number}: {reason}",
+                status="blocked",
+            ),
+        )
+    )
+
+
+def _applied_result(
+    execution: MergeExecutionInputs,
+    github_stack_merge: GithubStackMergePlan,
+    *,
+    final_sha: str,
+    merge_method: str,
+) -> MergeResult:
+    return execution.result(
+        actions=(replace(github_stack_merge.action(merge_method), status="applied"),),
         final_trunk_commit_id=final_sha,
-        merged_change_ids=tuple(revision.change_id for revision in native.planned),
+        merged_change_ids=tuple(revision.change_id for revision in github_stack_merge.planned),
     )

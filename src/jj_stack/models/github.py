@@ -34,7 +34,7 @@ class GithubBranchRef(BaseModel):
 
 
 class GithubStackPullRequestHead(BaseModel):
-    """Exact reviewed branch head embedded in a native stack response."""
+    """Exact reviewed branch head embedded in a GitHub stack response."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -43,7 +43,7 @@ class GithubStackPullRequestHead(BaseModel):
 
 
 class GithubStackPullRequest(BaseModel):
-    """Pull request state embedded in a native stack response."""
+    """Pull request state embedded in a GitHub stack response."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -57,7 +57,7 @@ class GithubStackPullRequest(BaseModel):
 
 
 class GithubStack(BaseModel):
-    """Ordered pull requests in one native GitHub stack."""
+    """Ordered pull requests in one GitHub stack."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -95,12 +95,12 @@ class GithubStack(BaseModel):
             if not pull_request.is_historical:
                 active_seen = True
             elif active_seen:
-                raise ValueError("Merged native stack members must form a bottom prefix.")
+                raise ValueError("Merged GitHub stack members must form a bottom prefix.")
         return self
 
 
-class GithubAsyncMergeDetails(BaseModel):
-    """Details returned by GitHub's native asynchronous merge endpoint."""
+class GithubStackMergeDetails(BaseModel):
+    """Details returned by GitHub's asynchronous stack merge endpoint."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -111,16 +111,16 @@ class GithubAsyncMergeDetails(BaseModel):
     uuid: str | None = None
 
 
-class GithubAsyncMerge(BaseModel):
-    """Pending or terminal native asynchronous merge state."""
+class GithubStackMerge(BaseModel):
+    """Pending or terminal asynchronous stack merge state."""
 
     model_config = ConfigDict(extra="ignore")
 
-    details: GithubAsyncMergeDetails
+    details: GithubStackMergeDetails
     status: Literal["failed", "merged", "pending"]
 
 
-class GithubAsyncMergeSubmission(BaseModel):
+class GithubStackMergeSubmission(BaseModel):
     """Typed submit response for an asynchronous merge request.
 
     `already_pending` reports GitHub's 409, which means an operation for this pull request is
@@ -129,7 +129,7 @@ class GithubAsyncMergeSubmission(BaseModel):
     """
 
     already_pending: bool
-    result: GithubAsyncMerge
+    result: GithubStackMerge
 
 
 class GithubPullRequest(BaseModel):

@@ -54,7 +54,7 @@ class SubmittedBaseline:
     submitted_baseline: StoredBaseline
 
 
-def _dissolve_native_stacks(
+def _dissolve_github_stacks(
     *,
     fake_repo: FakeGithubRepository,
     stack_numbers: tuple[int, ...],
@@ -62,7 +62,7 @@ def _dissolve_native_stacks(
     """Model explicit `gh stack unstack` actions chosen by the scenario."""
 
     for stack_number in stack_numbers:
-        fake_repo.native_stacks.pop(stack_number, None)
+        fake_repo.github_stacks.pop(stack_number, None)
 
 
 def replay_successful_stack_edit_scenario(
@@ -79,7 +79,7 @@ def replay_successful_stack_edit_scenario(
 
     assert submit(None) == 0
     discard_output()
-    initial_stack_numbers = tuple(fake_repo.native_stacks)
+    initial_stack_numbers = tuple(fake_repo.github_stacks)
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
     fake_repo.pull_request_events.clear()
@@ -99,9 +99,9 @@ def replay_successful_stack_edit_scenario(
         labels=scenario.final_live_labels,
         labels_to_change_ids=labels_to_change_ids,
     )
-    _dissolve_native_stacks(
+    _dissolve_github_stacks(
         fake_repo=fake_repo,
-        stack_numbers=initial_stack_numbers,
+        stack_numbers=initial_stack_numbers if scenario.orphaned_labels else (),
     )
     assert submit(stack.head.change_id) == 0
     discard_output()
@@ -141,6 +141,7 @@ def replay_external_drift_scenario(
 
     assert run_cli(("submit",)) == 0
     discard_output()
+    initial_stack_numbers = tuple(fake_repo.github_stacks)
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
 
@@ -153,6 +154,11 @@ def replay_external_drift_scenario(
             operation=operation,
         )
     assert tuple(live_labels) == scenario.final_live_labels
+    if scenario.orphaned_labels:
+        _dissolve_github_stacks(
+            fake_repo=fake_repo,
+            stack_numbers=initial_stack_numbers,
+        )
 
     submit_revset = labels_to_change_ids[scenario.final_live_labels[-1]]
     for drift in scenario.drifts:
@@ -370,12 +376,12 @@ def replay_stack_merge_scenario(
     labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers = set(fake_repo.native_stacks)
+    initial_stack_numbers = set(fake_repo.github_stacks)
 
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers.update(fake_repo.native_stacks)
+    initial_stack_numbers.update(fake_repo.github_stacks)
 
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
@@ -398,7 +404,7 @@ def replay_stack_merge_scenario(
         labels_to_change_ids=labels_to_change_ids,
     )
 
-    _dissolve_native_stacks(
+    _dissolve_github_stacks(
         fake_repo=fake_repo,
         stack_numbers=tuple(sorted(initial_stack_numbers)),
     )
@@ -429,12 +435,12 @@ def replay_stack_move_scenario(
     labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers = set(fake_repo.native_stacks)
+    initial_stack_numbers = set(fake_repo.github_stacks)
 
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers.update(fake_repo.native_stacks)
+    initial_stack_numbers.update(fake_repo.github_stacks)
 
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
@@ -463,7 +469,7 @@ def replay_stack_move_scenario(
             labels_to_change_ids=labels_to_change_ids,
         )
 
-    _dissolve_native_stacks(
+    _dissolve_github_stacks(
         fake_repo=fake_repo,
         stack_numbers=tuple(sorted(initial_stack_numbers)),
     )

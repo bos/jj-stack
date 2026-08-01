@@ -8,15 +8,15 @@ from typing import IO, Literal, Protocol
 from jj_stack.console import RequestedColorMode, requested_color_mode
 
 
-class NativeRevision(Protocol):
+class RenderableRevision(Protocol):
     """Revision-like value that can be rendered by commit ID."""
 
     @property
     def commit_id(self) -> str: ...
 
 
-class NativeRevisionRenderClient(Protocol):
-    """Subset of the jj client interface used for native revision rendering."""
+class RevisionRenderClient(Protocol):
+    """Subset of the jj client interface used for revision rendering."""
 
     def resolve_color_when(
         self,
@@ -27,14 +27,14 @@ class NativeRevisionRenderClient(Protocol):
 
     def render_revision_log_lines(
         self,
-        revision: NativeRevision,
+        revision: RenderableRevision,
         *,
         color_when: Literal["always", "debug", "never"],
     ) -> tuple[str, ...]: ...
 
     def render_revision_log_blocks(
         self,
-        revisions: tuple[NativeRevision, ...],
+        revisions: tuple[RenderableRevision, ...],
         *,
         color_when: Literal["always", "debug", "never"],
     ) -> dict[str, tuple[str, ...]]: ...
@@ -62,8 +62,8 @@ def format_pull_request_label(
 
 def render_revision_lines(
     *,
-    client: NativeRevisionRenderClient,
-    revision: NativeRevision,
+    client: RevisionRenderClient,
+    revision: RenderableRevision,
     stdout: IO[str] | None = None,
     suffix: str | None = None,
     prerendered_lines: tuple[str, ...] | None = None,
@@ -89,8 +89,8 @@ def render_revision_lines(
 
 def render_revision_blocks(
     *,
-    client: NativeRevisionRenderClient,
-    revisions: tuple[NativeRevision, ...],
+    client: RevisionRenderClient,
+    revisions: tuple[RenderableRevision, ...],
     stdout: IO[str] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Render several revisions using the active CLI/UI color policy."""

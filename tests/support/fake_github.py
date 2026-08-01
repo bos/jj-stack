@@ -22,7 +22,7 @@ def github_stack(
     number: int = 7,
     historical_pull_numbers: tuple[int, ...] = (),
 ) -> GithubStack:
-    """Build a typed native stack response for focused client overrides."""
+    """Build a typed GitHub stack response for focused client overrides."""
 
     return GithubStack.model_validate(
         {
@@ -151,7 +151,7 @@ class FakeGithubPullRequestReview:
 
 
 @dataclass(slots=True)
-class FakeAsyncMergeOperation:
+class FakeStackMergeOperation:
     expected_head_sha: str
     merge_method: str
     pull_number: int
@@ -224,16 +224,16 @@ class FakeGithubRepository:
     allow_merge_commit: bool = False
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
-    async_merge_operations: dict[int, FakeAsyncMergeOperation] = field(default_factory=dict)
-    async_merge_polls: list[tuple[int, str]] = field(default_factory=list)
-    async_merge_requests: list[tuple[int, str, str]] = field(default_factory=list)
+    stack_merge_operations: dict[int, FakeStackMergeOperation] = field(default_factory=dict)
+    stack_merge_polls: list[tuple[int, str]] = field(default_factory=list)
+    stack_merge_requests: list[tuple[int, str, str]] = field(default_factory=list)
     auto_merge_reachable_heads: bool = True
     next_issue_comment_id: int = 1
-    next_native_stack_number: int = 1
+    next_github_stack_number: int = 1
     next_pull_request_number: int = 1
     next_pull_request_review_id: int = 1
     issue_comments: dict[int, list[FakeGithubIssueComment]] = field(default_factory=dict)
-    native_stacks: dict[int, tuple[int, ...]] = field(default_factory=dict)
+    github_stacks: dict[int, tuple[int, ...]] = field(default_factory=dict)
     pull_request_events: list[FakeGithubPullRequestEvent] = field(default_factory=list)
     pull_requests: dict[int, FakeGithubPullRequest] = field(default_factory=dict)
     pull_request_reviews: dict[int, list[FakeGithubPullRequestReview]] = field(
@@ -302,7 +302,7 @@ class FakeGithubRepository:
         return None
 
     def stack_number_for_pull(self, pull_number: int) -> int | None:
-        for stack_number, pull_numbers in self.native_stacks.items():
+        for stack_number, pull_numbers in self.github_stacks.items():
             if pull_number in pull_numbers:
                 return stack_number
         return None
@@ -480,7 +480,7 @@ class FakeGithubRepository:
         self,
         pull_requests: tuple[FakeGithubPullRequest, ...],
     ) -> str:
-        """Merge one PR or native PR prefix through a shared merge commit."""
+        """Merge one PR or stack PR prefix through a shared merge commit."""
 
         if not pull_requests:
             raise AssertionError("A merge commit requires at least one pull request.")
@@ -528,12 +528,12 @@ class FakeGithubRepository:
         *,
         base_ref: str,
     ) -> str:
-        """Model GitHub retargeting and replaying an active native survivor."""
+        """Model GitHub retargeting and replaying an active stack survivor."""
 
         heads = self.branch_heads()
         rewritten = self._replay_commit(
             commit_id=heads[pull_request.head_ref],
-            extra_header="x-fake-native-rewrite true",
+            extra_header="x-fake-stack-rewrite true",
             parent_commit_id=heads[base_ref],
         )
         self._run_backing_git(
@@ -544,7 +544,7 @@ class FakeGithubRepository:
         self.update_pull_request_base(
             pull_request,
             base_ref=base_ref,
-            reason="native_merge",
+            reason="github_stack_merge",
         )
         pull_request.head_sha = rewritten
         return rewritten
@@ -756,7 +756,7 @@ def create_app(fake_state: FakeGithubState) -> FastAPI:
         )
 
     _register_repository_routes(app, fake_state)
-    _register_native_stack_routes(app, fake_state)
+    _register_github_stack_routes(app, fake_state)
     _register_graphql_routes(app, fake_state)
     _register_pull_request_routes(app, fake_state)
     _register_issue_comment_routes(app, fake_state)
@@ -777,15 +777,15 @@ def _register_repository_routes(app: FastAPI, fake_state: FakeGithubState) -> No
         )
 
 
-def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
-    """Register the observed native-stack routes."""
+def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
+    """Register the observed stack routes."""
 
     @app.get("/repos/{owner}/{repo}/stacks")
     async def list_stacks(owner: str, repo: str) -> list[dict[str, object]]:
         repository = _get_repository(fake_state, owner, repo)
         return [
             _stack_payload(repository, number, members)
-            for number, members in sorted(_native_stacks(repository).items())
+            for number, members in sorted(_github_stacks(repository).items())
         ]
 
     @app.get("/repos/{owner}/{repo}/stacks/{stack_number}")
@@ -795,7 +795,7 @@ def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         stack_number: int,
     ) -> dict[str, object]:
         repository = _get_repository(fake_state, owner, repo)
-        members = _native_stacks(repository).get(stack_number)
+        members = _github_stacks(repository).get(stack_number)
         if members is None:
             raise HTTPException(status_code=404, detail="Not Found")
         return _stack_payload(repository, stack_number, members)
@@ -812,7 +812,7 @@ def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
             raise HTTPException(status_code=422, detail="A stack requires two pull requests.")
         already = sorted(
             set(members).intersection(
-                member for existing in _native_stacks(repository).values() for member in existing
+                member for existing in _github_stacks(repository).values() for member in existing
             )
         )
         if already:
@@ -830,11 +830,11 @@ def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
             chained_members=members,
             complete_members=members,
         )
-        stacks = _native_stacks(repository)
-        number = repository.next_native_stack_number
+        stacks = _github_stacks(repository)
+        number = repository.next_github_stack_number
         while number in stacks:
             number += 1
-        repository.next_native_stack_number = number + 1
+        repository.next_github_stack_number = number + 1
         stacks[number] = members
         return _stack_payload(repository, number, members)
 
@@ -846,7 +846,7 @@ def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
         repository = _get_repository(fake_state, owner, repo)
-        stacks = _native_stacks(repository)
+        stacks = _github_stacks(repository)
         existing = stacks.get(stack_number)
         added = _require_int_list(payload, "pull_requests")
         if existing is None:
@@ -873,7 +873,7 @@ def _register_native_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
     )
     async def unstack(owner: str, repo: str, stack_number: int) -> Response:
         repository = _get_repository(fake_state, owner, repo)
-        stacks = _native_stacks(repository)
+        stacks = _github_stacks(repository)
         if stack_number not in stacks:
             raise HTTPException(status_code=404, detail="Not Found")
         del stacks[stack_number]
@@ -1089,32 +1089,32 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         live_head = repository.ref_target(pull_request.head_ref)
         if live_head != expected_head_sha:
             raise HTTPException(status_code=400, detail="Target head changed.")
-        existing = repository.async_merge_operations.get(pull_number)
+        existing = repository.stack_merge_operations.get(pull_number)
         if existing is not None:
             if (
                 existing.expected_head_sha != expected_head_sha
                 or existing.merge_method != merge_method
             ):
-                return JSONResponse(_async_merge_payload(existing), status_code=409)
+                return JSONResponse(_stack_merge_payload(existing), status_code=409)
             status_code = 409 if existing.status == "pending" else 200
-            return JSONResponse(_async_merge_payload(existing), status_code=status_code)
+            return JSONResponse(_stack_merge_payload(existing), status_code=status_code)
         stack_number = repository.stack_number_for_pull(pull_number)
         if stack_number is None:
-            raise HTTPException(status_code=400, detail="Target is not a native stack member.")
+            raise HTTPException(status_code=400, detail="Target is not a GitHub stack member.")
         stack = GithubStack.model_validate(
-            _stack_payload(repository, stack_number, _native_stacks(repository)[stack_number])
+            _stack_payload(repository, stack_number, _github_stacks(repository)[stack_number])
         )
         if pull_number not in stack.active_pull_request_numbers or pull_request.is_draft:
             raise HTTPException(status_code=400, detail="Target is not mergeable.")
-        operation = FakeAsyncMergeOperation(
+        operation = FakeStackMergeOperation(
             expected_head_sha=expected_head_sha,
             merge_method=merge_method,
             pull_number=pull_number,
-            uuid=f"fake-async-{len(repository.async_merge_operations) + 1}",
+            uuid=f"fake-stack-merge-{len(repository.stack_merge_operations) + 1}",
         )
-        repository.async_merge_operations[pull_number] = operation
-        repository.async_merge_requests.append((pull_number, merge_method, expected_head_sha))
-        return JSONResponse(_async_merge_payload(operation), status_code=202)
+        repository.stack_merge_operations[pull_number] = operation
+        repository.stack_merge_requests.append((pull_number, merge_method, expected_head_sha))
+        return JSONResponse(_stack_merge_payload(operation), status_code=202)
 
     @app.get("/repos/{owner}/{repo}/pulls/{pull_number}/merge-async/{operation_uuid}")
     async def poll_stack_merge(
@@ -1124,13 +1124,13 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         operation_uuid: str,
     ) -> dict[str, object]:
         repository = _get_repository(fake_state, owner, repo)
-        operation = repository.async_merge_operations.get(pull_number)
+        operation = repository.stack_merge_operations.get(pull_number)
         if operation is None or operation.uuid != operation_uuid:
             raise HTTPException(status_code=404, detail="Not Found")
-        repository.async_merge_polls.append((pull_number, operation_uuid))
+        repository.stack_merge_polls.append((pull_number, operation_uuid))
         if operation.status == "pending":
-            _complete_async_merge(repository, operation)
-        return _async_merge_payload(operation)
+            _complete_stack_merge(repository, operation)
+        return _stack_merge_payload(operation)
 
     @app.patch("/repos/{owner}/{repo}/issues/{issue_number}")
     async def update_issue(
@@ -1355,13 +1355,13 @@ def _require_int_list(payload: dict[str, object], key: str) -> tuple[int, ...]:
     return tuple(value)
 
 
-def _native_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...]]:
+def _github_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...]]:
     # GitHub refuses to put one pull request in two stacks: creating a second reports
     # "Pull requests #N are already part of a stack" (422, confirmed against the API). Tests
     # assign this mapping directly, so refuse the impossible shape here rather than let a fixture
     # justify production code defending against it.
     seen: set[int] = set()
-    for members in repository.native_stacks.values():
+    for members in repository.github_stacks.values():
         assert len(members) >= 2, (
             f"fake GitHub was given a one-member stack {members}, which GitHub rejects"
         )
@@ -1371,7 +1371,7 @@ def _native_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...
             "which GitHub rejects"
         )
         seen.update(members)
-    return repository.native_stacks
+    return repository.github_stacks
 
 
 def _stack_payload(
@@ -1408,7 +1408,7 @@ def _stack_pull_request_payload(
     }
 
 
-def _async_merge_payload(operation: FakeAsyncMergeOperation) -> dict[str, object]:
+def _stack_merge_payload(operation: FakeStackMergeOperation) -> dict[str, object]:
     return {
         "status": operation.status,
         "details": {
@@ -1421,17 +1421,17 @@ def _async_merge_payload(operation: FakeAsyncMergeOperation) -> dict[str, object
     }
 
 
-def _complete_async_merge(
+def _complete_stack_merge(
     repository: FakeGithubRepository,
-    operation: FakeAsyncMergeOperation,
+    operation: FakeStackMergeOperation,
 ) -> None:
     stack_number = repository.stack_number_for_pull(operation.pull_number)
     if stack_number is None:
         operation.status = "failed"
-        operation.message = "The native stack is no longer available."
+        operation.message = "The GitHub stack is no longer available."
         return
     stack = GithubStack.model_validate(
-        _stack_payload(repository, stack_number, _native_stacks(repository)[stack_number])
+        _stack_payload(repository, stack_number, _github_stacks(repository)[stack_number])
     )
     target_index = stack.active_pull_request_numbers.index(operation.pull_number)
     candidate_numbers = stack.active_pull_request_numbers[: target_index + 1]
@@ -1443,14 +1443,14 @@ def _complete_async_merge(
         for pull_request in candidates
     ):
         operation.status = "failed"
-        operation.message = "The native stack prefix is not mergeable."
+        operation.message = "The GitHub stack prefix is not mergeable."
         return
     for pull_request in candidates:
         if pull_request.base_ref != repository.default_branch:
             repository.update_pull_request_base(
                 pull_request,
                 base_ref=repository.default_branch or "main",
-                reason="native_merge",
+                reason="github_stack_merge",
             )
     if operation.merge_method == "merge":
         repository.apply_merge_commit(candidates)
@@ -1508,7 +1508,7 @@ def _validate_stack_members(
         )
     ):
         raise HTTPException(status_code=422, detail="Pull request bases do not form a chain.")
-    for number, existing in _native_stacks(repository).items():
+    for number, existing in _github_stacks(repository).items():
         if number != allowed_stack and not set(existing).isdisjoint(admitted_members):
             raise HTTPException(
                 status_code=422, detail="Pull request already belongs to a stack."

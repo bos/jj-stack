@@ -42,7 +42,7 @@ from jj_stack.commands._close_actions import (
     prepare_current_review_cleanup,
 )
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
-from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.commands.close_orphan import (
     run_orphan_close,
     run_untracked_cleanup_pull_request,
@@ -690,10 +690,10 @@ async def _stream_close_async(
                 if prepared_revision.revision.change_id in review_identities
             ),
         )
-        native_stacks = await selection.active_stacks()
+        github_stacks = await selection.active_stacks()
         initial_observation = None
         blocked = False
-        if native_stacks or prepared_close.cleanup:
+        if github_stacks or prepared_close.cleanup:
             if prepared.remote is None:
                 raise AssertionError("Tracked unstack requires a configured remote.")
             try:
@@ -716,8 +716,8 @@ async def _stream_close_async(
             prepared_close=prepared_close,
             record_action=recorder.record,
         )
-        if native_stacks and not blocked:
-            native_preflight = (
+        if github_stacks and not blocked:
+            stack_preflight = (
                 _close_revision_preflight_error(
                     change_status=classify_review_status_revision(revision),
                     revision=revision,
@@ -726,7 +726,7 @@ async def _stream_close_async(
                 for revision in status_result.revisions
             )
             blocker = next(
-                (action for action in native_preflight if action is not None),
+                (action for action in stack_preflight if action is not None),
                 None,
             )
             if blocker is None:
@@ -740,16 +740,16 @@ async def _stream_close_async(
                 recorder.record(blocker)
                 blocked = True
             else:
-                native_stack = (
-                    await selection.recheck_active_suffix(observed=native_stacks)
+                github_stack = (
+                    await selection.recheck_active_suffix(observed=github_stacks)
                     if prepared_close.dry_run
-                    else await selection.dissolve_exact(observed=native_stacks)
+                    else await selection.dissolve_exact(observed=github_stacks)
                 )
-                if native_stack is not None:
+                if github_stack is not None:
                     recorder.record(
                         CloseAction(
                             kind="GitHub stack",
-                            body=t"dissolve GitHub stack #{native_stack.number}",
+                            body=t"dissolve GitHub stack #{github_stack.number}",
                             status="planned" if prepared_close.dry_run else "applied",
                         )
                     )

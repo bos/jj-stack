@@ -8,9 +8,9 @@ from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.native_sync import (
-    NativeSurvivorReview,
-    build_selected_native_sync,
+from jj_stack.review.github_stack_sync import (
+    GithubStackSurvivorReview,
+    build_selected_github_stack_sync,
 )
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.review.repository import observe_repository_paths
@@ -27,14 +27,14 @@ from jj_stack.ui import Message
 class OnTrunkChange:
     candidate: TrackedReview
     evidence_kind: TrunkEvidenceKind
-    native: bool
+    requires_terminal_pull_request: bool
     revision: LocalRevision | None
 
 
 @dataclass(frozen=True, slots=True)
 class SelectedConvergencePlan:
     on_trunk: tuple[OnTrunkChange, ...]
-    native_survivors: tuple[NativeSurvivorReview, ...]
+    github_stack_survivors: tuple[GithubStackSurvivorReview, ...]
     reviewed_survivors: tuple[LocalRevision, ...]
     survivors: tuple[LocalRevision, ...]
 
@@ -42,7 +42,7 @@ class SelectedConvergencePlan:
 def build_selected_convergence_plan(
     *,
     context: CommandContext,
-    native_stacks: tuple[GithubStack, ...],
+    github_stacks: tuple[GithubStack, ...],
     observation: RepositoryObservation,
     prepared_status: PreparedStatus,
     repository: GithubRepoAddress,
@@ -63,35 +63,35 @@ def build_selected_convergence_plan(
             hint=t"Run {ui.cmd('jj-stack list')} to find them, then drop the wrong one with "
             t"{ui.cmd('jj-stack unstack --local')}.",
         )
-    native_history, native_active = build_selected_native_sync(
+    stack_history, stack_survivor_reviews = build_selected_github_stack_sync(
         context=context,
-        native_stacks=native_stacks,
+        github_stacks=github_stacks,
         observation=observation,
         repository=repository,
         selected=selected,
         state=state,
         trunk_commit_id=prepared_status.prepared.stack.trunk.commit_id,
     )
-    native_historical = {item.candidate.change_id: item for item in native_history}
-    native_survivors = {item.candidate.change_id: item for item in native_active}
+    stack_history_by_change_id = {item.candidate.change_id: item for item in stack_history}
+    github_stack_survivors = {item.candidate.change_id: item for item in stack_survivor_reviews}
     on_trunk: list[OnTrunkChange] = [
         OnTrunkChange(
             candidate=item.candidate,
             evidence_kind=item.evidence_kind,
-            native=True,
+            requires_terminal_pull_request=True,
             revision=item.revision,
         )
-        for item in native_historical.values()
+        for item in stack_history_by_change_id.values()
     ]
     survivors: list[LocalRevision] = []
     for revision in filter(
-        lambda item: item.change_id not in native_historical,
+        lambda item: item.change_id not in stack_history_by_change_id,
         selected,
     ):
         candidate = state.tracked_review(revision.change_id)
         evidence_kind = (
             None
-            if candidate is None or revision.change_id in native_survivors
+            if candidate is None or revision.change_id in github_stack_survivors
             else _trunk_evidence_kind_for(
                 candidate=candidate,
                 context=context,
@@ -128,7 +128,7 @@ def build_selected_convergence_plan(
             OnTrunkChange(
                 candidate=candidate,
                 evidence_kind=evidence_kind,
-                native=False,
+                requires_terminal_pull_request=False,
                 revision=revision,
             )
         )
@@ -171,7 +171,7 @@ def build_selected_convergence_plan(
         reviewed.append(revision)
     plan = SelectedConvergencePlan(
         on_trunk=tuple(on_trunk),
-        native_survivors=tuple(native_survivors.values()),
+        github_stack_survivors=tuple(github_stack_survivors.values()),
         reviewed_survivors=tuple(reviewed),
         survivors=tuple(survivors),
     )

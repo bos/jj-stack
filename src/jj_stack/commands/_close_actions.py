@@ -9,7 +9,7 @@ from typing import Literal
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import (
@@ -491,12 +491,12 @@ def plan_review_cleanup(
     return pull_request, update, None
 
 
-async def native_stack_cleanup_blocker(
+async def github_stack_cleanup_blocker(
     *,
     github_client: GithubClient,
     pull_number: int,
 ) -> CloseAction | None:
-    """Fail closed when current native membership still needs a review branch."""
+    """Fail closed when current stack membership still needs a review branch."""
 
     try:
         await GithubStackSelection(github_client, (pull_number,)).require_unstacked()
@@ -573,7 +573,7 @@ async def prepare_current_review_cleanup(
     )
     if blocker is not None:
         return None, blocker
-    blocker = await native_stack_cleanup_blocker(
+    blocker = await github_stack_cleanup_blocker(
         github_client=github_client,
         pull_number=review_identity.pr_number,
     )

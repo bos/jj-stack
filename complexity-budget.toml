@@ -53,7 +53,7 @@ governed = [
   "src/jj_stack/review/finish.py",
   "src/jj_stack/review/trunk_evidence.py",
   "src/jj_stack/review/convergence.py",
-  "src/jj_stack/review/native_sync.py",
+  "src/jj_stack/review/github_stack_sync.py",
   "src/jj_stack/review/observation.py",
 ]
 fixed_property = [

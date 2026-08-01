@@ -352,7 +352,7 @@ obscuring the rest of the work.
 ### AI agent integration
 
 If you use coding agents, install the bundled `jj-stack` skill so they know how to work with a
-`jj`-native stack:
+`jj` stack:
 
 ```bash
 gh skill install bos/jj-stack jj-stack
@@ -410,5 +410,5 @@ agent-written. Nevertheless, I've provided heavy oversight.
 - linear stacks only
 - one PR per change ID
 
-`jj-stack` registers every multi-PR review in GitHub's native stack model and asks GitHub to merge
+`jj-stack` registers every multi-PR review as a GitHub stack and asks GitHub to merge
 the selected prefix together. A review with one PR remains an ordinary pull request.

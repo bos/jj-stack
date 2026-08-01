@@ -22,7 +22,7 @@ from jj_stack.commands._close_actions import (
     plan_review_cleanup,
 )
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
-from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
@@ -266,7 +266,7 @@ async def _mutate_orphan_close(
 ) -> None:
     """Apply the preflighted orphan mutations in dependency order."""
 
-    pull_request = await _dissolve_orphan_native_stack(
+    pull_request = await _dissolve_orphan_github_stack(
         github_client=github_client,
         prepared=prepared,
         recorder=recorder,
@@ -309,14 +309,14 @@ async def _mutate_orphan_close(
         )
 
 
-async def _dissolve_orphan_native_stack(
+async def _dissolve_orphan_github_stack(
     *,
     github_client: GithubClient,
     prepared: _PreparedOrphanClose,
     recorder: ActionRecorder[CloseAction],
     run: _OrphanCloseRun,
 ) -> GithubPullRequest | None:
-    """Recheck and dissolve native membership when orphan cleanup needs it."""
+    """Recheck and dissolve stack membership when orphan cleanup needs it."""
 
     if run.dry_run:
         pull_request = prepared.initial_pull_request
@@ -341,7 +341,7 @@ async def _dissolve_orphan_native_stack(
         (prepared.review_identity.pr_number,),
     )
     try:
-        native_stack = (
+        github_stack = (
             await selection.recheck_active_suffix()
             if run.dry_run
             else await selection.dissolve_exact()
@@ -349,11 +349,11 @@ async def _dissolve_orphan_native_stack(
     except CliError as error:
         recorder.record(CloseAction(kind="GitHub stack", body=str(error), status="blocked"))
         return None
-    if native_stack is not None:
+    if github_stack is not None:
         recorder.record(
             CloseAction(
                 kind="GitHub stack",
-                body=t"dissolve GitHub stack #{native_stack.number}",
+                body=t"dissolve GitHub stack #{github_stack.number}",
                 status="planned" if run.dry_run else "applied",
             )
         )

@@ -1,4 +1,4 @@
-"""JJ-native stacked GitHub review tooling."""
+"""Stacked GitHub review tooling for jj."""
 
 from importlib.metadata import PackageNotFoundError, version
 

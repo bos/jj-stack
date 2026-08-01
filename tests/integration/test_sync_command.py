@@ -35,12 +35,12 @@ pytestmark = pytest.mark.merge_recovery
 def _squash_merge_pull_request(fake_repo, pull_number: int) -> None:
     stack_number = fake_repo.stack_number_for_pull(pull_number)
     if stack_number is not None:
-        del fake_repo.native_stacks[stack_number]
+        del fake_repo.github_stacks[stack_number]
     fake_repo.apply_squash_merge(fake_repo.pull_requests[pull_number])
 
 
-def _simulate_native_partial_merge(fake_repo) -> str:
-    fake_repo.native_stacks = {7: (1, 2)}
+def _simulate_stack_partial_merge(fake_repo) -> str:
+    fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
     return fake_repo.rewrite_pull_request_onto_base(
         fake_repo.pull_requests[2],
@@ -205,7 +205,7 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
     assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
-def test_sync_converges_native_history_and_adopts_rewritten_survivor(
+def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -214,7 +214,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).revisions
-    remote_survivor = _simulate_native_partial_merge(fake_repo)
+    remote_survivor = _simulate_stack_partial_merge(fake_repo)
 
     exit_code = run_main(repo, config_path, "sync", survivor.change_id)
     captured = capsys.readouterr()
@@ -237,7 +237,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     )
     assert fake_repo.pull_requests[2].head_sha == rewritten_survivor.commit_id
     assert fake_repo.pull_requests[2].base_ref == "main"
-    assert fake_repo.native_stacks == {7: (1, 2)}
+    assert fake_repo.github_stacks == {7: (1, 2)}
     on_trunk_versions = JjClient(repo).query_revisions_by_change_ids((on_trunk.change_id,))[
         on_trunk.change_id
     ]
@@ -255,7 +255,7 @@ def test_sync_converges_native_history_and_adopts_rewritten_survivor(
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
 
-def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
+def test_sync_preserves_unpublished_edits_to_an_active_stack_survivor(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -264,7 +264,7 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).revisions
-    _simulate_native_partial_merge(fake_repo)
+    _simulate_stack_partial_merge(fake_repo)
     state_before = state_store.load()
     run_command(["jj", "edit", survivor.change_id], repo)
     write_file(repo / "local-survivor-edit.txt", "keep this edit\n")
@@ -283,7 +283,7 @@ def test_sync_preserves_unpublished_edits_to_an_active_native_survivor(
     assert state_store.load() == state_before
 
 
-def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_drift(
+def test_sync_reports_a_closed_stack_survivor_as_a_closed_review_not_branch_drift(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -294,7 +294,7 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).revisions
-    _simulate_native_partial_merge(fake_repo)
+    _simulate_stack_partial_merge(fake_repo)
     fake_repo.pull_requests[2].state = "closed"
     state_before = state_store.load()
 
@@ -310,7 +310,7 @@ def test_sync_reports_a_closed_native_survivor_as_a_closed_review_not_branch_dri
     assert state_store.load() == state_before
 
 
-def test_sync_retries_native_adoption_after_survivor_submit_fails(
+def test_sync_retries_stack_adoption_after_survivor_submit_fails(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -320,7 +320,7 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     state_store = ReviewStateStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).revisions
     baseline_before = state_store.load().submitted_baselines[survivor.change_id]
-    remote_survivor = _simulate_native_partial_merge(fake_repo)
+    remote_survivor = _simulate_stack_partial_merge(fake_repo)
     real_run_submit = sync_command.run_submit_async
 
     async def fail_submit(**_kwargs):
@@ -348,7 +348,7 @@ def test_sync_retries_native_adoption_after_survivor_submit_fails(
     assert recovered_state.submitted_baselines[survivor.change_id].commit_id == remote_survivor
 
 
-def test_sync_checks_native_branch_drift_before_rewriting_local_history(
+def test_sync_checks_stack_branch_drift_before_rewriting_local_history(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -357,7 +357,7 @@ def test_sync_checks_native_branch_drift_before_rewriting_local_history(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).revisions
-    _simulate_native_partial_merge(fake_repo)
+    _simulate_stack_partial_merge(fake_repo)
     state_before = state_store.load()
     require_targets = JjClient._require_remote_branch_targets_at_url
     drifted = False
@@ -394,7 +394,7 @@ def test_sync_checks_native_branch_drift_before_rewriting_local_history(
     assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
 
 
-def test_sync_retries_native_adoption_after_post_apply_branch_drift(
+def test_sync_retries_stack_adoption_after_post_apply_branch_drift(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -403,7 +403,7 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = ReviewStateStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).revisions
-    first_remote_survivor = _simulate_native_partial_merge(fake_repo)
+    first_remote_survivor = _simulate_stack_partial_merge(fake_repo)
     require_targets = JjClient._require_remote_branch_targets_at_url
     checks = 0
     second_remote_survivor: str | None = None
@@ -463,7 +463,7 @@ def test_sync_retries_native_adoption_after_post_apply_branch_drift(
     )
 
 
-def test_sync_all_requires_terminal_merge_for_exact_native_member(
+def test_sync_all_requires_terminal_stack_merge_for_exact_stack_member(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -473,7 +473,7 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     first, second = selected_stack(repo).revisions
     state_store = ReviewStateStore.for_repo(repo)
     second_baseline = state_store.load().submitted_baselines[second.change_id]
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.auto_merge_reachable_heads = False
     update_remote_ref(fake_repo, branch="main", target=first.commit_id)
 
@@ -521,10 +521,10 @@ def test_sync_all_requires_terminal_merge_for_exact_native_member(
     assert selected_exit == 0, (selected.out, selected.err)
     assert first.change_id not in state_store.load().review_identities
     assert state_store.load().submitted_baselines[second.change_id].commit_id == remote_survivor
-    assert fake_repo.native_stacks == {7: (1, 2)}
+    assert fake_repo.github_stacks == {7: (1, 2)}
 
 
-def test_sync_does_not_trust_active_native_head_drift_without_merged_history(
+def test_sync_does_not_trust_active_stack_head_drift_without_merged_history(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -534,7 +534,7 @@ def test_sync_does_not_trust_active_native_head_drift_without_merged_history(
     state_store = ReviewStateStore.for_repo(repo)
     _first, second = selected_stack(repo).revisions
     baseline = state_store.load().submitted_baselines[second.change_id]
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     drifted_head = fake_repo.force_push_pull_request_head(fake_repo.pull_requests[2])
 
     exit_code = run_main(repo, config_path, "sync", second.change_id)
@@ -767,7 +767,7 @@ def test_sync_all_isolates_an_unavailable_snapshot_from_an_exact_review(
     write_file(state_path, json.dumps(raw_state))
 
     fake_repo.auto_merge_reachable_heads = False
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
     update_remote_ref(fake_repo, branch="main", target=second.commit_id)
 
     exit_code = run_main(repo, config_path, "sync", "--all")

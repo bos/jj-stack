@@ -84,7 +84,7 @@ Replay follows the same shape for every scenario:
 6. Apply the scenario operations with real `jj` commands.
 7. Rediscover the selected live stack from the current DAG and assert that its
    `change_id` order matches the scenario model. Subjects are diagnostics only.
-8. Dissolve any old native GitHub stack that includes active reviews outside the selected path,
+8. Dissolve any old GitHub stack that includes active reviews outside the selected path,
    or when the selection combines more than one old GitHub stack. This models the exact
    `gh stack unstack` recovery named by `submit`.
 9. Run `submit` again on the new stack head.
@@ -168,13 +168,14 @@ unclassified error. Exact diagnostic wording stays out of scope.
 
 Merge and post-merge convergence use focused deterministic integration tests rather than the
 submit property generator. The tested boundaries include exact submitted-head validation,
-bottom-prefix selection, draft and closed boundaries, native atomic failure, partial native
-survivor rewrites, terminal retry, historical-member cleanup, and selected or repository-wide
-sync eligibility.
+bottom-prefix selection, draft and closed boundaries, atomic stack-merge failure, partial stack
+merge survivor rewrites, terminal retry, historical-member cleanup, and selected or
+repository-wide sync eligibility.
 
-The native tests assert both final Git and PR state and the significant API events. A terminal
-native failure changes nothing. A successful partial request may change survivor heads and bases,
-but `merge` does not rewrite local history; selected `sync` validates and converges that remote
+The stack-merge tests assert both final Git and PR state and the significant API events. A
+terminal stack-merge failure changes nothing. A successful partial request may change survivor
+heads and bases, but `merge` does not rewrite local history; selected `sync` validates and
+converges that remote
 transition. These are bounded command contracts, not generated merge property families or a
 durable recovery state machine.
 

@@ -61,7 +61,7 @@ request." `jj-stack` creates review branches only because GitHub requires them. 
 a transport layer; the main authoring model is still local `jj` history.
 
 A review first submitted with one change remains one ordinary PR. Once the review has at least
-two PRs, `jj-stack` registers their order with GitHub's native stack feature. After lower PRs
+two PRs, `jj-stack` registers their order with GitHub's stack feature. After lower PRs
 merge, GitHub may keep them in that group as history, so the remaining PR can still belong to the
 existing group. The local DAG decides which changes belong together; the grouping on GitHub
 follows from it.

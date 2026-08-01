@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import jj_stack.commands.unstack as unstack_module
-from jj_stack.commands._native_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
@@ -38,7 +38,7 @@ def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
 
 
-def test_unstack_apply_closes_native_stack_and_preserves_exact_tracking(
+def test_unstack_apply_closes_github_stack_and_preserves_exact_tracking(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -53,10 +53,10 @@ def test_unstack_apply_closes_native_stack_and_preserves_exact_tracking(
     app = create_app(FakeGithubState.single_repository(fake_repo))
     operations: list[str] = []
     locked = True
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.issue_comments.clear()
 
-    class NativeStackClient(GithubClient):
+    class GithubStackClient(GithubClient):
         async def unstack(self, *, stack_number):
             operations.append("unstack")
             return github_stack(1, 2) if locked else None
@@ -70,7 +70,7 @@ def test_unstack_apply_closes_native_stack_and_preserves_exact_tracking(
         app=app,
         fake_repo=fake_repo,
         modules=("jj_stack.commands.unstack", "jj_stack.review.status"),
-        client_type=NativeStackClient,
+        client_type=GithubStackClient,
     )
 
     dry_run_exit_code = run_main(repo, config_path, "unstack", "--dry-run", change_id)
@@ -114,7 +114,7 @@ def test_unstack_dissolves_resource_and_preserves_merged_pull_request_history(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = selected_stack(repo)
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-07-23T12:00:00Z"
 
@@ -123,12 +123,12 @@ def test_unstack_dissolves_resource_and_preserves_merged_pull_request_history(
 
     assert exit_code == 0
     assert "dissolve GitHub stack #7" in captured.out
-    assert fake_repo.native_stacks == {}
+    assert fake_repo.github_stacks == {}
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "closed"
 
 
-def test_unstack_head_change_before_native_boundary_preserves_github_stack(
+def test_unstack_head_change_before_stack_boundary_preserves_github_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -138,34 +138,34 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
     change_id = selected_stack(repo).head.change_id
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     app = create_app(FakeGithubState.single_repository(fake_repo))
-    native_observations = 0
+    stack_observations = 0
     fresh_boundary_lookups = 0
-    native_mutations: list[int] = []
+    stack_mutations: list[int] = []
 
     class HeadRaceClient(GithubClient):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self.native_observed = False
+            self.stack_observed = False
 
         async def list_stacks(self):
-            nonlocal native_observations
+            nonlocal stack_observations
             stacks = await super().list_stacks()
-            native_observations += 1
-            self.native_observed = True
+            stack_observations += 1
+            self.stack_observed = True
             return stacks
 
         async def get_pull_requests_by_numbers(self, *, pull_numbers):
             nonlocal fresh_boundary_lookups
-            if self.native_observed:
+            if self.stack_observed:
                 fresh_boundary_lookups += 1
                 fake_repo.pull_requests[1].head_ref = "jj-stack/moved-aaaaaaaa"
                 fake_repo.pull_requests[1].head_label = "octo-org:jj-stack/moved-aaaaaaaa"
             return await super().get_pull_requests_by_numbers(pull_numbers=pull_numbers)
 
         async def unstack(self, *, stack_number):
-            native_mutations.append(stack_number)
+            stack_mutations.append(stack_number)
             return await super().unstack(stack_number=stack_number)
 
     patch_github_client_builders(
@@ -181,10 +181,10 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
 
     assert exit_code == 1
     assert "live PR and head no longer uniquely match" in _combined_output(captured)
-    assert native_observations == 1
+    assert stack_observations == 1
     assert fresh_boundary_lookups == 1
-    assert native_mutations == []
-    assert fake_repo.native_stacks == {7: (1, 2)}
+    assert stack_mutations == []
+    assert fake_repo.github_stacks == {7: (1, 2)}
     assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert state_store.load() == initial_state
 
@@ -380,7 +380,7 @@ def test_unstack_and_cleanup_match_dry_run_on_fully_untracked_stack(
         )
 
     async def fail_list_stacks(*args, **kwargs):
-        raise AssertionError("unstack should not inspect native stacks without a mutation")
+        raise AssertionError("unstack should not inspect GitHub stacks without a mutation")
 
     monkeypatch.setattr(
         "jj_stack.review.status.JjClient.fetch_remote",
@@ -431,7 +431,7 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.issue_comments.clear()
     initial_state = state_store.load()
 
@@ -442,7 +442,7 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     assert exit_code == 0
     assert "Planned close actions:" in captured.out
     assert "dissolve GitHub stack #7" in captured.out
-    assert fake_repo.native_stacks == {7: (1, 2)}
+    assert fake_repo.github_stacks == {7: (1, 2)}
     assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert refreshed_state == initial_state
     assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
@@ -638,7 +638,7 @@ def test_unstack_cleanup_orphans_retries_base_after_dependent_closes(
     )
 
     run_command(["jj", "abandon", *change_ids], repo)
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
 
     dry_run_exit_code = run_main(
         repo,
@@ -707,11 +707,11 @@ def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     state_store = ReviewStateStore.for_repo(repo)
     fake_repo.pull_requests[2].base_ref = "main"
     run_command(["jj", "abandon", *change_ids], repo)
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
 
     async def dissolve_exact(selection, **_kwargs):
         if tuple(selection.pull_numbers) == (1,):
-            raise CliError("native stack includes an unselected pull request")
+            raise CliError("GitHub stack includes an unselected pull request")
         return None
 
     monkeypatch.setattr(GithubStackSelection, "dissolve_exact", dissolve_exact)
@@ -727,7 +727,7 @@ def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "native stack includes an unselected pull request" in _combined_output(captured)
+    assert "GitHub stack includes an unselected pull request" in _combined_output(captured)
     assert fake_repo.pull_requests[1].state == "open"
     assert fake_repo.pull_requests[2].state == "closed"
     refreshed_state = state_store.load()
@@ -794,7 +794,7 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
 
     run_command(["jj", "abandon", orphaned_change_id], repo)
     fake_repo.pull_requests[orphaned_pr_number].state = "closed"
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
 
     exit_code = run_main(
         repo,
@@ -1065,7 +1065,7 @@ def test_unstack_cleanup_pull_request_keeps_tracking_when_cleanup_blocks(
     assert refreshed_state == initial_state
 
 
-def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
+def test_unstack_cleanup_pull_request_dry_run_rejects_partial_github_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1076,7 +1076,7 @@ def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
     stack = selected_stack(repo)
     bottom_change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    fake_repo.native_stacks = {7: (1, 2)}
+    fake_repo.github_stacks = {7: (1, 2)}
     state = state_store.load()
     bottom_bookmark = state.review_identities[bottom_change_id].head_ref
     bottom_pr_number = state.review_identities[bottom_change_id].pr_number
@@ -1131,7 +1131,7 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
             ),
         ),
     )
-    fake_repo.native_stacks = {}
+    fake_repo.github_stacks = {}
 
     exit_code = run_main(
         repo,

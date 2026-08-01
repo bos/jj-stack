@@ -162,7 +162,8 @@ jj-stack view --pull-request 7
 
 A full change ID and a linked PR continue to select the mutable local copy after you fetch an
 ordinary GitHub rebase merge. If two mutable copies of that change are visible, `jj-stack` stops;
-use `jj log -r 'change_id(<change-id>)'` to inspect them and choose or reconcile the copy you want.
+use `jj log -r 'change_id(<change-id>)'` to inspect them and choose or reconcile the copy you
+want.
 
 If you want to inspect several stacks in one run, pass several selectors in
 the order you want them shown:
@@ -215,7 +216,7 @@ jj-stack submit <head-change-id>
 jj-stack merge <head-change-id>
 ```
 
-A refused GitHub stack merge merges nothing at all.
+If GitHub refuses a stack merge, nothing merges.
 
 If a lower PR of your own already merged elsewhere, `merge` stops at it and names
 `jj-stack sync <head-change-id>` instead — your stack still holds a local copy of work that is
@@ -275,7 +276,7 @@ alone and prints the commits and inspection step that explain the stop.
 
 GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
 `sync` handles either result without pretending the new GitHub commit is the old local change.
-If a native merge also rewrote the PRs that remain open, `sync` adopts those exact reviewed
+If a stack merge also rewrote the PRs that remain open, `sync` adopts those exact reviewed
 commits and rebases only your trailing local work above them.
 
 If reviewed work is already on fetched trunk but its local copy still follows unmerged changes,

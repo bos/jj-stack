@@ -17,7 +17,7 @@ from jj_stack.review.finish import (
     render_finish_results,
     retire_reviews,
 )
-from jj_stack.review.native_sync import observe_native_stacks
+from jj_stack.review.github_stack_sync import observe_github_stacks
 from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.review.trunk_evidence import (
     CommitAncestry,
@@ -80,7 +80,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
                 candidate.review_identity.pr_number for candidate in all_candidates
             )
         )
-        native_stacks = await observe_native_stacks(github=github) if exact_candidates else ()
+        github_stacks = await observe_github_stacks(github=github) if exact_candidates else ()
         merge_ancestry = classify_commit_ancestries(
             commit_ids=tuple(
                 pull_request.merge_commit_sha
@@ -110,7 +110,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             )
         eligible_exact, terminal_required = _eligible_exact_candidates(
             candidates=exact_candidates,
-            native_stacks=native_stacks,
+            github_stacks=github_stacks,
             pull_requests=pull_requests,
             tracked_pull_numbers=frozenset(
                 identity.pr_number
@@ -145,11 +145,11 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
 
 def _eligible_exact_candidates(
     candidates: tuple[TrackedReview, ...],
-    native_stacks: tuple[GithubStack, ...],
+    github_stacks: tuple[GithubStack, ...],
     pull_requests: dict[int, GithubPullRequest | GithubClientError | None],
     tracked_pull_numbers: frozenset[int],
 ) -> tuple[tuple[TrackedReview, ...], frozenset[str]]:
-    members = [member for stack in native_stacks for member in stack.pull_requests]
+    members = [member for stack in github_stacks for member in stack.pull_requests]
     eligible: list[TrackedReview] = []
     terminal_required: set[str] = set()
     for candidate in candidates:
@@ -160,7 +160,7 @@ def _eligible_exact_candidates(
             continue
         reason = _github_stack_blocker(
             matching=matching,
-            native_stacks=native_stacks,
+            github_stacks=github_stacks,
             number=number,
             pull_request=pull_requests.get(number),
             tracked_pull_numbers=tracked_pull_numbers,
@@ -176,7 +176,7 @@ def _eligible_exact_candidates(
 def _github_stack_blocker(
     *,
     matching: list[GithubStackPullRequest],
-    native_stacks: tuple[GithubStack, ...],
+    github_stacks: tuple[GithubStack, ...],
     number: int,
     pull_request: object,
     tracked_pull_numbers: frozenset[int],
@@ -196,7 +196,7 @@ def _github_stack_blocker(
     if any(
         number in stack.pull_request_numbers
         and not set(stack.active_pull_request_numbers).isdisjoint(tracked_pull_numbers)
-        for stack in native_stacks
+        for stack in github_stacks
     ):
         return t"PR #{number} is in a GitHub stack that still has active members tracked here"
     return None

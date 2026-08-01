@@ -1,4 +1,4 @@
-"""Mutation guards for GitHub native stack resources."""
+"""Mutation guards for GitHub stack resources."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubStack
 
 
-def selected_native_stack(
+def selected_github_stack(
     *,
     selected_pull_numbers: Collection[int],
     stacks: Sequence[GithubStack],
 ) -> GithubStack | None:
-    """Return the one native GitHub stack the selected pull requests belong to.
+    """Return the one GitHub stack the selected pull requests belong to.
 
     The selection may overlap at most one resource, and every active member of that resource
     must be selected. A merged prefix GitHub retains is always valid, so a resource the selection
@@ -41,7 +41,7 @@ def selected_native_stack(
     if len(dissolvable) > 1:
         numbers = tuple(sorted(stack.number for stack in dissolvable))
         raise CliError(
-            t"The selected reviews belong to native GitHub stacks "
+            t"The selected reviews belong to GitHub stacks "
             t"{ui.join(lambda number: f'#{number}', numbers)}.",
             hint=t"Run {ui.join(lambda number: ui.cmd(f'gh stack unstack {number}'), numbers)}, "
             t"then retry.",
@@ -49,7 +49,7 @@ def selected_native_stack(
     if not dissolvable and len(overlapping) > 1:
         numbers = tuple(sorted(stack.number for stack in overlapping))
         raise CliError(
-            t"The selected reviews are merged members of native GitHub stacks "
+            t"The selected reviews are merged members of GitHub stacks "
             t"{ui.join(lambda number: f'#{number}', numbers)}.",
             hint="Select changes belonging to one of those stacks, then retry.",
         )
@@ -70,18 +70,18 @@ def selected_native_stack(
 
 @dataclass(frozen=True, slots=True)
 class GithubStackSelection:
-    """Live native membership for one exact ordered PR selection."""
+    """Live stack membership for one exact ordered PR selection."""
 
     github_client: GithubClient
     pull_numbers: tuple[int, ...]
 
     async def observe(self) -> tuple[GithubStack, ...]:
-        """Return the current complete native resources."""
+        """Return the current complete GitHub stack resources."""
 
         try:
             return await self.github_client.list_stacks()
         except GithubClientError as error:
-            raise CliError("Could not inspect native GitHub stack membership.") from error
+            raise CliError("Could not inspect GitHub stack membership.") from error
 
     async def active_stacks(self) -> tuple[GithubStack, ...]:
         """Return the resources in which a selected review is still an active member.
@@ -145,7 +145,7 @@ class GithubStackSelection:
         stacks = observed if observed is not None else await self.active_stacks()
         if not stacks:
             return None
-        stack = selected_native_stack(selected_pull_numbers=self.pull_numbers, stacks=stacks)
+        stack = selected_github_stack(selected_pull_numbers=self.pull_numbers, stacks=stacks)
         assert stack is not None
         try:
             current = await self.github_client.get_stack(stack_number=stack.number)
