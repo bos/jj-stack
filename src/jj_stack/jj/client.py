@@ -1219,6 +1219,14 @@ def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | N
     return None
 
 
+def divergent_change_id_from_error(error: JjCommandError) -> str | None:
+    """Return the short change ID that made a bare revset symbol divergent."""
+
+    first_line = _unwrap_command_error_message(str(error)).splitlines()[0].strip()
+    match = re.fullmatch(r"Error: Change ID `([k-z]+)` is divergent", first_line)
+    return match.group(1) if match is not None else None
+
+
 def _parse_revision_line(line: str) -> LocalRevision:
     parts = line.split("\t")
     if len(parts) != _EXPECTED_FIELD_COUNT:

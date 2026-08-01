@@ -227,12 +227,12 @@ This is where most correctness lives.
 
 Selected path planning has a smaller pure boundary in `review/path.py`. The selected adapter
 observes selector copies, the ordinary first-parent chain, fetched-trunk membership, and tracking
-annotations in one bounded `jj` query. For a full change ID or linked pull request, the pure
-projection prefers the unique mutable local copy outside fetched trunk's first-parent path and
-stops when matches remain only on that path. A sole immutable reviewed side parent from a stack
-merge remains outside the path and selectable until `sync`. The projection returns one
-parent-connected `LocalStack`. Tracking annotates that path and cannot create or reorder it.
-Command-owned GitHub identity, merge evidence, and mutation policy stay outside the projection.
+annotations in one bounded `jj` query. For a change ID or linked pull request, the pure projection
+prefers the unique mutable local copy outside fetched trunk's first-parent path and stops when
+matches remain only on that path. A sole immutable reviewed side parent from a stack merge
+remains outside the path and selectable until `sync`. The projection returns one parent-connected
+`LocalStack`. Tracking annotates that path and cannot create or reorder it. Command-owned GitHub
+identity, merge evidence, and mutation policy stay outside the projection.
 
 The same module folds a bounded repository observation into ordinary maximal linear paths.
 `review/repository.py` collects visible off-trunk candidates, their base parents, fetched-trunk

@@ -26,8 +26,8 @@ jj log -r 'change_id(<change-id>)'
 ```
 
 One mutable copy beside an immutable copy on fetched trunk is different: that is the ordinary
-result of fetching a GitHub rebase merge, and the full change ID or linked PR selects the mutable
-local copy.
+result of fetching a GitHub rebase merge, and a change ID, including a short prefix, or a linked
+PR selects the mutable local copy.
 
 ## A command says a PR is claimed by multiple tracked records
 

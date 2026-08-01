@@ -6,7 +6,12 @@ import json
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
-from jj_stack.jj.client import JjClient, UnsupportedStackError
+from jj_stack.jj.client import (
+    JjClient,
+    JjCommandError,
+    UnsupportedStackError,
+    divergent_change_id_from_error,
+)
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.path import (
@@ -37,11 +42,22 @@ def select_review_path(
         selected_revset = revset
         select_mutable_copy = False
 
-    rows = _observe_path_rows(
-        jj_client=jj_client,
-        selector=selector,
-        selected_revset=revset,
-    )
+    try:
+        rows = _observe_path_rows(
+            jj_client=jj_client,
+            selector=selector,
+            selected_revset=revset,
+        )
+    except JjCommandError as error:
+        if revset is None or divergent_change_id_from_error(error) != revset:
+            raise
+        selector = _change_id_revset(revset)
+        select_mutable_copy = True
+        rows = _observe_path_rows(
+            jj_client=jj_client,
+            selector=selector,
+            selected_revset=revset,
+        )
     path = _project_rows(
         rows=rows,
         selected_revset=selected_revset,

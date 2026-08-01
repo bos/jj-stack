@@ -94,12 +94,13 @@ descendants are out of scope unless the command explicitly selects them.
 A rebase merge preserves `jj`'s change ID, so once the result is fetched, the commit on
 trunk and the superseded local commit are two visible copies of one change ID: the local copy is
 divergent and the trunk copy is immutable. Both are recovery context, not review changes to
-publish. A full change ID or linked pull request selects that unique mutable local copy. If two
-mutable copies match, selection stops rather than choosing between them. If every matching copy
-is on fetched trunk's first-parent path, logical selection stops instead of turning the sole
-immutable trunk result into an empty local stack; an explicit revision expression can still
-select a commit on trunk. The sole immutable reviewed side parent from a stack merge is outside
-that first-parent path and remains selectable until `sync`.
+publish. A change ID, including a short prefix that identifies one logical change, or a linked
+pull request selects that unique mutable local copy. If two mutable copies match, selection stops
+rather than choosing between them. If every matching copy is on fetched trunk's first-parent
+path, logical selection stops instead of turning the sole immutable trunk result into an empty
+local stack; an explicit revision expression can still select a commit on trunk. The sole
+immutable reviewed side parent from a stack merge is outside that first-parent path and remains
+selectable until `sync`.
 
 ### Tracking
 
@@ -349,11 +350,11 @@ supported.
 Stack lifecycle commands default to `@` when the working-copy change has a nonblank description
 and contents, and to `@-` otherwise. Explicit empty or undescribed working-copy selections fail.
 `view` may accept several selectors. A revision expression selects the exact revision it
-resolves to. A full change ID or linked pull request instead selects the unique mutable copy
-outside fetched trunk's first-parent path, so fetching an ordinary rebase result does not hide
-the local path. As defined for local review stacks, the sole immutable reviewed side parent from
-a stack merge remains selectable outside that path until `sync`. `relink` requires both the
-change and PR.
+resolves to. A change ID, including a prefix that identifies one logical change, or a linked pull
+request instead selects the unique mutable copy outside fetched trunk's first-parent path, so
+fetching an ordinary rebase result does not hide the local path. As defined for local review
+stacks, the sole immutable reviewed side parent from a stack merge remains selectable outside
+that path until `sync`. `relink` requires both the change and PR.
 
 Three modes deliberately reach beyond one selected stack:
 

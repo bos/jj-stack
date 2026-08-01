@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -118,7 +119,7 @@ def test_sync_recovers_a_clean_single_review_rebase_merge(
     assert reviewed.change_id not in state_store.load().review_identities
 
 
-def test_sync_converges_the_local_stack_after_merge(
+def test_merge_prints_a_short_sync_target_that_converges_the_local_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -129,15 +130,19 @@ def test_sync_converges_the_local_stack_after_merge(
     stack = selected_stack(repo)
     top_change_id = stack.revisions[1].change_id
     top_commit_id = stack.revisions[1].commit_id
+    abbreviated_change_id = top_change_id[:8]
 
-    merge_exit_code = run_main(repo, config_path, "merge")
-    capsys.readouterr()
+    merge_exit_code = run_main(repo, config_path, "merge", abbreviated_change_id)
+    merged = capsys.readouterr()
     assert merge_exit_code == 0
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "open"
     assert JjClient(repo).resolve_revision(top_change_id).commit_id == top_commit_id
+    match = re.search(r"jj-stack sync\s+([k-z]+)", merged.out)
+    assert match is not None, merged.out
+    assert match.group(1) == abbreviated_change_id
 
-    sync_exit_code = run_main(repo, config_path, "sync", top_change_id)
+    sync_exit_code = run_main(repo, config_path, "sync", match.group(1))
     captured = capsys.readouterr()
 
     assert sync_exit_code == 0, (captured.out, captured.err)

@@ -201,7 +201,7 @@ def build_parser() -> ArgumentParser:
         description_text=submit_command.__doc__ or "",
         handler=_forward_handler(submit_command.submit, open_="open"),
         revset_help=(
-            t"Revision or full change ID to submit; defaults to {ui.revset('@')} when the "
+            t"Revision or change ID to submit; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
@@ -297,7 +297,7 @@ def build_parser() -> ArgumentParser:
             selectors=lambda args: args.view_selectors,
         ),
         revset_help=(
-            "Revsets or full change IDs to inspect; can be mixed with --pull-request selectors; "
+            "Revsets or change IDs to inspect; can be mixed with --pull-request selectors; "
             "defaults to the current stack"
         ),
         revset_nargs="*",
@@ -349,7 +349,7 @@ def build_parser() -> ArgumentParser:
         description_text=merge_command.__doc__ or "",
         handler=_forward_handler(merge_command.merge),
         revset_help=(
-            t"Revision or full change ID to merge; defaults to {ui.revset('@')} when the "
+            t"Revision or change ID to merge; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
             t"cannot be combined with {ui.cmd('--pull-request')}"
         ),
@@ -384,7 +384,7 @@ def build_parser() -> ArgumentParser:
         description_text=unstack_command.__doc__ or "",
         handler=_forward_handler(unstack_command.unstack),
         revset_help=(
-            t"Revision or full change ID to unstack; defaults to {ui.revset('@')} when the "
+            t"Revision or change ID to unstack; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
             t"cannot be combined with {ui.cmd('--pull-request')}"
         ),
@@ -441,7 +441,7 @@ def build_parser() -> ArgumentParser:
         description_text=sync_command.__doc__ or "",
         handler=_forward_handler(sync_command.sync, all_="all"),
         revset_help=(
-            t"Revision or full change ID to sync; defaults to {ui.revset('@')} when the "
+            t"Revision or change ID to sync; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
@@ -898,7 +898,7 @@ def _add_relink_parser(
         parser,
         "revset",
         metavar="REVSET",
-        help="Revision or full change ID to reassociate with the pull request",
+        help="Revision or change ID to reassociate with the pull request",
     )
     return parser
 
