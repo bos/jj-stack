@@ -170,16 +170,13 @@ the local `jj` view and names the repair. Plain `view` and `list` do not run thi
 
 ### GitHub stack objects
 
-A **GitHub stack** is GitHub's optional server-side object: an ordered group of pull requests.
-This is distinct from the local review stack derived from the `jj` DAG.
+A **GitHub stack** is GitHub's server-side object for an ordered group of pull requests. This is
+distinct from the local review stack derived from the `jj` DAG.
 
 A GitHub stack requires at least two pull requests. A review first submitted with one PR
-therefore uses an ordinary PR, even when the repository supports GitHub stacks. When a later
-`submit` extends that review to two or more PRs, `jj-stack` registers the ordered PRs in a GitHub
-stack. An existing GitHub stack may later have only one active member because GitHub retains
-merged members as history. When the repository does not support GitHub stacks, the PRs remain
-ordinary stacked PRs and `jj-stack` adds managed navigation only once there are at least two.
-Capability detection, not GitHub's current rollout label, determines which behavior applies.
+therefore uses an ordinary PR. When a later `submit` extends that review to two or more PRs,
+`jj-stack` registers the ordered PRs in a GitHub stack. An existing GitHub stack may later have
+only one active member because GitHub retains merged members as history.
 
 GitHub reports merged members as a historical bottom prefix. This document calls the remaining
 members **active members**, regardless of whether an individual PR is open, draft, or closed.
@@ -215,9 +212,9 @@ evidence, and mutation rules.
   local history.
 - **`unstack`** ends review by closing tracked open PRs. `--cleanup` also removes eligible
   artifacts; `--local` only forgets local tracking.
-- **`cleanup`** removes eligible branches, managed comments, and tracking left by closed or
-  merged reviews across the repository. It is optional housekeeping, not part of correctness or
-  local-history recovery.
+- **`cleanup`** removes eligible branches, managed overview comments, and tracking left by closed
+  or merged reviews across the repository. It is optional housekeeping, not part of correctness
+  or local-history recovery.
 - **`checkout`** adopts review state already on GitHub. It sets up tracking but does not move the
   workspace or rewrite local commits.
 - **`relink`** attaches one known PR and same-repository head branch to one selected change when
@@ -307,9 +304,6 @@ its repair.
 An unreadable or unsupported top-level state file blocks commands that load it. The diagnostic
 names the exact path and explains how to move it aside before re-adopting reviews through
 `checkout` or `relink`.
-
-The repository-pair capability cache for GitHub stacks is separate from per-change records. The
-first command that needs the fact asks GitHub and persists the result.
 
 ### Storage locations
 
@@ -410,8 +404,7 @@ Only commands that successfully send or adopt a specific reviewed commit may rep
 ### Submit and branch transport
 
 `submit` publishes only the selected stack, bottom-up. It creates missing PRs, moves existing
-review branches, updates PR bases and content, and refreshes GitHub stack membership or managed
-navigation comments.
+review branches, updates PR bases and content, and refreshes GitHub stack membership.
 
 All selected review branches move in one atomic push. Every update carries the exact target
 `jj-stack` observed for that remote ref, including expected absence for a new branch. If any ref
@@ -440,13 +433,9 @@ them by silently replacing tracking.
 open and non-draft. The first draft or closed-unmerged review blocks itself and everything above.
 `--pull-request` truncates the candidate prefix at the selected linked PR.
 
-When the candidates belong to one GitHub stack, GitHub receives one asynchronous group request
-for the selected prefix. Only a terminal merged result is success; rejection changes no local
-history, and a later `sync` observes whatever GitHub reports.
-
-Without a GitHub stack, PRs merge bottom-up through the ordinary API. A rejection stops the
-sequence, leaving any lower PRs already merged. Rebase merge is refused for more than one
-ordinary PR because the first rewrite invalidates the reviewed commit identity of the rest.
+For a multi-PR review, GitHub receives one asynchronous group request for the selected prefix.
+Only a terminal merged result is success; rejection changes no local history, and a later `sync`
+observes whatever GitHub reports. A one-PR review uses the ordinary pull-request merge API.
 
 The merge method comes from `--method`, otherwise from `merge_method` in repository
 configuration, otherwise from the repository's only allowed method. GitHub reports which methods a
@@ -475,7 +464,7 @@ A merge initiated through GitHub's UI, auto-merge, or another client is supporte
 
 `jj-stack` does not duplicate repository policy. It does not preflight approvals, checks,
 conflicts, merge queues, or auto-merge state across the repository. GitHub applies those rules to
-the requested GitHub stack or ordinary PR mutation, and `jj-stack` reports the result.
+the requested GitHub stack or single-PR mutation, and `jj-stack` reports the result.
 
 A rejection therefore has to explain itself. Because conflicts reach the user here rather than
 through a local preflight, a rejected merge names the way out: rebase onto trunk, resolve, and
@@ -555,15 +544,13 @@ operation stops before changing any branch or base.
 
 ### Derived artifacts
 
-PR titles, bodies, navigation comments, and the stack overview comment are derived on every
-submit and never determine topology; see [description helpers](../description-helpers.md).
+PR titles, bodies, and the stack overview comment are derived on every submit and never determine
+topology; see [description helpers](../description-helpers.md).
 
-Managed comments are rediscovered by an unambiguous body marker, never a stored comment ID.
-Ambiguous matches are left untouched. Navigation comments exist only where GitHub stack objects
-are unavailable and the review has at least two PRs. A one-PR review has neither navigation nor
-an overview comment. New PRs are created in the requested draft state. Existing PRs become draft
-only with `--draft=all` and become ready only with `--open`; plain `submit --draft` never
-unpublishes an existing PR.
+The managed overview comment is rediscovered by an unambiguous body marker, never a stored
+comment ID. Ambiguous matches are left untouched. A one-PR review has no overview comment. New
+PRs are created in the requested draft state. Existing PRs become draft only with `--draft=all`
+and become ready only with `--open`; plain `submit --draft` never unpublishes an existing PR.
 
 `--reviewers` and `--team-reviewers` request the named reviewers even when a PR is otherwise
 unchanged and never remove omitted reviewers. `--re-request` acts on an otherwise unchanged PR,
@@ -582,8 +569,9 @@ PRs under the ordinary generated names.
 one explicit way to forget a review without trunk evidence. Rerunning any `unstack` mode is
 safe.
 
-Cleanup acts only on one complete identity/baseline pair. It may remove managed comments, the
-exact saved review ref only while it still points to the expected commit, and the two records.
+Cleanup acts only on one complete identity/baseline pair. It may remove the managed overview
+comment, the exact saved review ref only while it still points to the expected commit, and the
+two records.
 
 A pair is eligible only when:
 
@@ -660,17 +648,19 @@ When a rewrite moves changes between local stacks, identity still follows full `
 stack command still acts on one selected chain, and ambiguous linkage still fails closed. Other
 affected stacks wait for their own explicit commands.
 
-- **Move changes between stacks**: submitting one resulting stack updates that chain. Moved
-  changes retain their PRs and recalculate bases from their new parents.
+- **Move changes between stacks**: dissolve any old GitHub stack spanning more than one resulting
+  path, then submit one resulting stack to update that chain. Moved changes retain their PRs and
+  recalculate bases from their new parents.
 - **Split one stack into several**: each maximal linear path appears separately in repository
   inventory. The paths may contain the same observed reviewed ancestors; tracking annotates those
   paths but does not create or join them. If one old GitHub stack spans active reviews on more
   than one desired path, the user dissolves it with the named
   `gh stack unstack <number>` command and submits each path separately.
-- **Merge several stacks into one**: submitting the resulting chain reuses reviews by change ID,
-  recalculates every base, and produces one overview comment on the new head.
+- **Merge several stacks into one**: dissolve the old GitHub stacks, then submit the resulting
+  chain. It reuses reviews by change ID, recalculates every base, and produces one overview
+  comment on the new head.
 
-Stacks not yet resubmitted may still show old navigation or overview comments. That is expected:
+Stacks not yet resubmitted may still show old overview comments. That is expected:
 `submit` does not mutate stacks outside its selection. `list` identifies stale reviews across the
 repository. `view` does so only for another path that shares an observed revision with the
 selected path. Both compare each baseline with the current change and name the stack to refresh.
@@ -709,7 +699,7 @@ Supported:
 - linear local review stacks
 - visible mutable review changes
 - one PR per review change
-- operation with or without GitHub stack support
+- native GitHub stacks for every multi-PR review
 
 Unsupported:
 

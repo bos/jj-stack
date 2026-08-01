@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Never
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from jj_stack.errors import CliError
 from jj_stack.models.review_state import (
@@ -47,7 +47,6 @@ class _StoredReviewState(BaseModel):
 
     version: int
     review_identities: dict[str, JsonValue] = Field(default_factory=dict)
-    stacked_pull_requests: dict[str, StrictBool] = Field(default_factory=dict)
     submitted_baselines: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -90,14 +89,6 @@ class ReviewStateStore:
         """Load valid records and isolate malformed entries without interpreting them."""
 
         return self._observe(self._load_envelope())
-
-    def get_stacked_pull_requests(self, repository_key: str) -> bool | None:
-        return self._load_envelope().stacked_pull_requests.get(repository_key)
-
-    def set_stacked_pull_requests(self, repository_key: str, supported: bool) -> None:
-        envelope = self._load_envelope()
-        envelope.stacked_pull_requests[repository_key] = supported
-        self._persist(envelope)
 
     def create_review(
         self,
@@ -191,7 +182,7 @@ class ReviewStateStore:
 
     def _load_envelope(self) -> _StoredReviewState:
         if not self._path.exists():
-            return _StoredReviewState(version=3)
+            return _StoredReviewState(version=4)
         if not self._path.is_file():
             raise self._invalid_state_error(f"jj-stack data path is not a file: {self._path}")
         try:
@@ -211,7 +202,7 @@ class ReviewStateStore:
                 f"Invalid jj-stack data in {self._path}: top level must be an object"
             )
         version = raw.get("version")
-        if version != 3:
+        if version != 4:
             raise self._invalid_state_error(
                 f"Invalid jj-stack data in {self._path}: unsupported version {version!r}"
             )

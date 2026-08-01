@@ -4,15 +4,12 @@ import pytest
 
 from jj_stack.cli import build_parser, main
 from jj_stack.commands.merge.command import _resolve_merge_method
-from jj_stack.commands.merge.models import MergePlan, MergeRevision
-from jj_stack.commands.merge.plan import validate_merge_plan_method
 from jj_stack.commands.merge.preconditions import merge_precondition_error
 from jj_stack.errors import EXIT_USAGE, CliError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
 from jj_stack.review.observation import RepositoryObservation
-from tests.support.review_state import make_review_identity
 
 
 def _repository(
@@ -141,33 +138,6 @@ def test_resolve_merge_method_rejects_a_method_the_repository_disallows() -> Non
 
     with pytest.raises(CliError, match="does not allow"):
         _resolve_merge_method(configured="rebase", merge_method=None, repository_state=repository)
-
-
-@pytest.mark.merge_recovery
-def test_merge_plan_rejects_rebase_for_a_multi_pr_prefix() -> None:
-    revisions = tuple(
-        MergeRevision(
-            base_ref="main",
-            change_id=f"change-{number}",
-            commit_id=f"commit-{number}",
-            identity=make_review_identity(
-                head_ref=f"jj-stack/feature-{number}",
-                pr_number=number,
-            ),
-            subject=f"feature {number}",
-        )
-        for number in (1, 2)
-    )
-    plan = MergePlan(
-        blocked=False,
-        boundary_action=None,
-        planned_revisions=revisions,
-        reviewed_revisions=revisions,
-        trunk_branch="main",
-    )
-
-    with pytest.raises(CliError, match="rebase merge cannot merge more than one ordinary PR"):
-        validate_merge_plan_method(merge_method="rebase", plan=plan)
 
 
 @pytest.mark.merge_recovery

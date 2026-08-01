@@ -216,7 +216,7 @@ def build_prompt(mode: str, revset: str, context: str) -> str:
                     "- This stack contains exactly one commit.",
                     "- Describe that one change directly.",
                     "- Do not invent a broader series or mention multiple commits.",
-                    "- The body will appear above an existing stack-navigation comment.",
+                    "- The stack helper is normally skipped for a one-commit stack.",
                 ]
             )
         else:
@@ -225,7 +225,7 @@ def build_prompt(mode: str, revset: str, context: str) -> str:
                     f"- This stack contains {commit_count} commits.",
                     "- Summarize the series as a whole, not just the top commit.",
                     "- Explain how the changes in the stack fit together.",
-                    "- The body will appear above an existing stack-navigation comment.",
+                    "- The body will appear in the selected head PR's stack overview comment.",
                 ]
             )
     return PROMPT_TEMPLATE.format(

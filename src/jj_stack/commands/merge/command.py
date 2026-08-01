@@ -4,10 +4,9 @@ Candidates are the consecutive open, non-draft pull requests from the bottom. Ea
 match the exact commit last submitted; GitHub decides whether reviews, checks, conflicts, and
 repository rules allow the merge.
 
-Repositories with GitHub stack support merge the selected changes together. Other repositories
-merge pull requests bottom-up and stop at the first rejection. This command does not update local
-history or remove review state; run the printed `jj-stack sync` command after GitHub merges
-anything.
+GitHub merges a multi-PR prefix together through its native stack API. A one-PR review uses the
+ordinary pull-request API. This command does not update local history or remove review state; run
+the printed `jj-stack sync` command after GitHub merges anything.
 
 Common examples: `jj-stack merge --dry-run` previews the merge without changing GitHub;
 `jj-stack merge` asks GitHub to merge the ready bottom changes; and
@@ -42,7 +41,7 @@ from jj_stack.state.operation_lock import acquire_operation_lock
 from .execute import execute_merge_plan
 from .models import MergeExecutionInputs, MergeResult, PreparedMerge
 from .native import build_native_merge_plan, check_native_merge, execute_native_merge
-from .plan import build_merge_plan, validate_merge_plan_method
+from .plan import build_merge_plan
 from .render import print_merge_result
 
 HELP = "Merge the reviewed changes at the bottom of a stack"
@@ -235,12 +234,9 @@ async def _stream_merge_async(
         selection = GithubStackSelection(
             github_client,
             tuple(revision.identity.pr_number for revision in plan.reviewed_revisions),
-            prepared_merge.context.state_store,
         )
-        supported, stacks = await selection.observe(persist=not prepared_merge.dry_run)
-        native = build_native_merge_plan(plan, stacks, supported, prepared_merge.target_change_id)
-        if native is None:
-            validate_merge_plan_method(merge_method=resolved_merge_method, plan=plan)
+        stacks = await selection.observe()
+        native = build_native_merge_plan(plan, stacks, prepared_merge.target_change_id)
         execution = MergeExecutionInputs(
             context=prepared_merge.context,
             remote_name=remote.name,

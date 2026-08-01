@@ -27,10 +27,7 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
-from jj_stack.github.stack_comments import (
-    is_navigation_comment,
-    is_overview_comment,
-)
+from jj_stack.github.stack_comments import is_overview_comment
 from jj_stack.jj.client import JjClient, ReviewFetchIsolation, UnsupportedStackError
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
@@ -72,7 +69,6 @@ class ManagedCommentsLookup:
     """Best-effort GitHub managed-comment lookup for one pull request."""
 
     message: ErrorMessage | None
-    navigation_comment: GithubIssueComment | None
     overview_comment: GithubIssueComment | None
     state: ManagedCommentsLookupState
 
@@ -886,20 +882,12 @@ async def _inspect_managed_comments(
                 action=f"stack comment lookup for pull request #{pull_request_number}",
                 error=error,
             ),
-            navigation_comment=None,
             overview_comment=None,
             state="error",
         )
 
-    navigation_comments = [comment for comment in comments if is_navigation_comment(comment.body)]
     overview_comments = [comment for comment in comments if is_overview_comment(comment.body)]
     messages: list[str] = []
-    if len(navigation_comments) > 1:
-        comment_ids = ", ".join(str(comment.id) for comment in navigation_comments)
-        messages.append(
-            "GitHub reports multiple jj-stack stack navigation comments for the same "
-            f"request: {comment_ids}."
-        )
     if len(overview_comments) > 1:
         comment_ids = ", ".join(str(comment.id) for comment in overview_comments)
         messages.append(
@@ -909,13 +897,11 @@ async def _inspect_managed_comments(
     if messages:
         return ManagedCommentsLookup(
             message=" ".join(messages),
-            navigation_comment=None,
             overview_comment=None,
             state="ambiguous",
         )
     return ManagedCommentsLookup(
         message=None,
-        navigation_comment=navigation_comments[0] if navigation_comments else None,
         overview_comment=overview_comments[0] if overview_comments else None,
         state="resolved",
     )

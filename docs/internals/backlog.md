@@ -210,35 +210,6 @@ continues, matching how the surrounding validation failures already behave. Note
 `if not cleanup_current: return False` fallbacks were the vestige of exactly this skip, never
 wired up; the missing piece is the guarantee, not those returns.
 
-## No way to refresh the cached native-stack answer
-
-_Benefit: medium — affects any repository where GitHub turns native stacks on or off after
-`jj-stack` has already recorded an answer._
-
-The first command that needs to know whether a repository supports native GitHub stacks asks
-GitHub and saves the answer. Nothing ever asks again: there is no periodic recheck, no flag to
-force one, and `state/store.py` offers only `get_stacked_pull_requests` and
-`set_stacked_pull_requests` — no way to clear the entry.
-
-That is the right default. Re-probing on every run would cost a request for a fact that almost
-never changes. But the fact does change: GitHub is rolling the feature out, so a repository
-recorded as unsupported today may support stacks next month, and `jj-stack` will keep writing
-navigation comments forever without saying why.
-
-The only current escape is to move the whole state file aside, which `design.md` describes as a
-recovery of last resort — it also discards every review identity and forces re-adoption through
-`checkout` or `relink`. Losing all tracking to correct one boolean is out of proportion.
-
-Options, cheapest first:
-
-- let `doctor` report the recorded answer, so the state is at least visible
-- let `doctor --recheck`, or a similar explicit flag, clear the entry so the next command re-asks
-- re-ask automatically when a cached `false` repository returns something other than a `404`
-
-The first two keep detection explicit, which matches how the rest of the tool treats
-capability. The third reintroduces automatic probing and should not be chosen without an
-observed case where the explicit paths were not enough.
-
 ## `sync` strands a review branch that `cleanup` can no longer remove
 
 _Benefit: medium — leaves branches in the reserved namespace with no supported way to delete

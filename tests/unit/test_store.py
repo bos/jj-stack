@@ -32,7 +32,7 @@ def _identity(
     )
 
 
-def test_store_persists_schema_three_identity_three_and_baseline_one(tmp_path: Path) -> None:
+def test_store_persists_schema_four_identity_three_and_baseline_one(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     store = ReviewStateStore(state_path)
     identity = _identity()
@@ -44,42 +44,16 @@ def test_store_persists_schema_three_identity_three_and_baseline_one(tmp_path: P
     assert persisted.review_identities == {CHANGE_ID: identity}
     assert persisted.submitted_baselines == {CHANGE_ID: baseline}
     rendered = json.loads(state_path.read_text(encoding="utf-8"))
-    assert rendered["version"] == 3
+    assert rendered["version"] == 4
     assert rendered["review_identities"][CHANGE_ID]["version"] == 3
     assert rendered["submitted_baselines"][CHANGE_ID]["version"] == 1
 
 
-def test_store_keeps_stack_support_per_github_repository(tmp_path: Path) -> None:
-    store = ReviewStateStore(tmp_path / "state.json")
-
-    store.set_stacked_pull_requests("octocat/example", True)
-    store.set_stacked_pull_requests("octocat/legacy", False)
-
-    assert store.get_stacked_pull_requests("octocat/example") is True
-    assert store.get_stacked_pull_requests("octocat/legacy") is False
-
-
-def test_store_rejects_ambiguous_stack_support(tmp_path: Path) -> None:
-    state_path = tmp_path / "state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": 3,
-                "stacked_pull_requests": {"octocat/example": "true"},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ReviewStateError, match="valid boolean"):
-        ReviewStateStore(state_path).get_stacked_pull_requests("octocat/example")
-
-
-def test_store_returns_schema_three_defaults_when_file_is_missing(tmp_path: Path) -> None:
+def test_store_returns_schema_four_defaults_when_file_is_missing(tmp_path: Path) -> None:
     state = ReviewStateStore(tmp_path / "missing" / "state.json").load()
 
     assert state == ReviewState()
-    assert state.version == 3
+    assert state.version == 4
 
 
 def test_atomic_relink_failure_preserves_original_pair(
@@ -168,14 +142,14 @@ def test_stale_expected_identity_cannot_retire_pair(tmp_path: Path) -> None:
     assert store.load() == original
 
 
-def test_store_isolates_identity_v1_inside_schema_three(tmp_path: Path) -> None:
+def test_store_isolates_identity_v1_inside_schema_four(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     legacy_identity = _identity().model_dump(mode="json")
     legacy_identity["version"] = 1
     state_path.write_text(
         json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "review_identities": {CHANGE_ID: legacy_identity},
                 "submitted_baselines": {
                     CHANGE_ID: SubmittedBaseline(commit_id="abc123").model_dump(mode="json")
@@ -198,7 +172,7 @@ def test_store_isolates_identity_with_wrong_branch_suffix(tmp_path: Path) -> Non
     state_path.write_text(
         json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "review_identities": {
                     CHANGE_ID: _identity(change_id=OTHER_CHANGE_ID).model_dump(mode="json")
                 },
@@ -222,7 +196,7 @@ def test_unrelated_write_preserves_invalid_record_as_opaque_json(tmp_path: Path)
     state_path.write_text(
         json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "review_identities": {
                     OTHER_CHANGE_ID: invalid_identity,
                     CHANGE_ID: _identity().model_dump(mode="json"),
@@ -254,7 +228,7 @@ def test_relink_replaces_only_exact_observed_invalid_record(tmp_path: Path) -> N
     state_path.write_text(
         json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "review_identities": {CHANGE_ID: {"version": 9}},
                 "submitted_baselines": {},
             }
@@ -313,7 +287,7 @@ def test_relink_rejects_concurrent_transition_between_missing_and_null(
     state_path = tmp_path / "state.json"
     identity = _identity()
     payload = {
-        "version": 3,
+        "version": 4,
         "review_identities": {CHANGE_ID: identity.model_dump(mode="json")},
         "submitted_baselines": observed_baselines,
     }

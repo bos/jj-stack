@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import jj_stack.review.observation as review_observation
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._github_stack_support import resolve_github_stack_support
 from jj_stack.commands._native_stack_safety import selected_native_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -35,25 +34,12 @@ class NativeSurvivorReview:
 
 async def observe_native_stacks(
     *,
-    context: CommandContext,
-    dry_run: bool,
     github: GithubClient,
 ) -> tuple[GithubStack, ...]:
-    """Read the current native resources when GitHub supports them."""
+    """Read the current native resources."""
 
     try:
-        support = await resolve_github_stack_support(
-            github_client=github,
-            state_store=context.state_store,
-            persist=not dry_run,
-        )
-        if not support.supported:
-            return ()
-        return (
-            support.observed_stacks
-            if support.observed_stacks is not None
-            else await github.list_stacks()
-        )
+        return await github.list_stacks()
     except GithubClientError as error:
         raise CliError(
             "Could not inspect native GitHub stack membership.",
@@ -84,7 +70,7 @@ async def resolve_selected_native_observation(
         _changed_review(initial.reviews[revision.change_id]) for revision in selected
     ):
         return initial, ()
-    stacks = await observe_native_stacks(context=context, dry_run=dry_run, github=github)
+    stacks = await observe_native_stacks(github=github)
 
     selected_pull_numbers = {
         identity.pr_number

@@ -30,7 +30,7 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
-from jj_stack.github.stack_comments import stack_comment_label
+from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.jj.client import ReviewRefUpdate
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import (
@@ -339,11 +339,10 @@ async def _dissolve_orphan_native_stack(
     selection = GithubStackSelection(
         github_client,
         (prepared.review_identity.pr_number,),
-        run.context.state_store,
     )
     try:
         native_stack = (
-            await selection.recheck_active_suffix(persist=False)
+            await selection.recheck_active_suffix()
             if run.dry_run
             else await selection.dissolve_exact()
         )
@@ -453,7 +452,7 @@ async def _preflight_orphaned_comment_cleanup(
         if lookup.blocked_reason is not None:
             recorder.record(
                 CloseAction(
-                    kind=stack_comment_label(lookup.kind),
+                    kind=STACK_OVERVIEW_COMMENT_LABEL,
                     body=lookup.blocked_reason,
                     status="blocked",
                 )

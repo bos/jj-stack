@@ -112,7 +112,6 @@ src/
     ...
     models/
     commands/
-      _github_stack_support.py
       _native_stack_safety.py
       cleanup/
       merge/
@@ -248,7 +247,7 @@ change-ID-tuple deduplication. Tracking only annotates the paths after their top
 
 Thin `httpxyz` wrapper plus typed `pydantic` models. Knows how to fetch PR state, batch PR
 lookup by PR number or known head branch, create PRs, update PRs, assign reviewers and labels,
-manage navigation and overview comments, list/create/append/unstack native resources, submit and
+manage overview comments, list/create/append/unstack native resources, submit and
 poll asynchronous native merges, and handle endpoint-specific pagination or retry.
 
 When endpoint semantics allow it, the client and command layers prefer batched or
@@ -268,8 +267,8 @@ rule belongs to the submission algorithm in [design.md](design.md); the implemen
 batched ancestry query over the planned head/base pairs, then pre-retargets only the affected PRs.
 Property families and their assertions live in [property-testing.md](property-testing.md).
 
-`submit` batches stack-comment reads by PR number through GraphQL before mutating the
-managed comments, falling back to REST pagination only for PRs whose first comment page
+`submit` batches stack-overview comment reads by PR number through GraphQL before mutating the
+managed comment, falling back to REST pagination only for PRs whose first comment page
 is incomplete.
 
 Native group merge is `PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async`, whose body
@@ -279,8 +278,8 @@ matching pending request can be distinguished from an unrelated conflict, but it
 adopted, because the response body does not identify the target PR. The merge policy those
 requests serve is specified in [design.md](design.md).
 
-The client reports endpoint results but does not decide capability, stack topology, branch naming,
-native membership policy, or fallback behavior.
+The client reports endpoint results but does not decide stack topology, branch naming, or native
+membership policy.
 
 ### Config and tracking state
 
@@ -294,8 +293,6 @@ native membership policy, or fallback behavior.
   effective `--config` / `--config-file` overrides on every `jj` invocation
 - tracking state lives in
   `${XDG_STATE_HOME:-~/.local/state}/jj-stack/repos/<repo-id>/state.json`
-- the state-file envelope also caches one `stacked_pull_requests` boolean for each resolved GitHub
-  repository; the enclosing path supplies the local repository half of the cache key
 - `<repo-id>` is derived from the canonical `.jj/repo` storage path so every workspace
   for the same repo shares one state location. Primary workspaces expose that path as a
   directory; additional workspaces expose a path file whose contents are resolved relative
@@ -325,7 +322,6 @@ machine:
 - `review/finish.py` finalizes merged PRs and removes saved tracking
 - `review/convergence.py` checks whether another visible stack still needs that tracking
 - `review/native_sync.py` validates historical native members and survivor transitions
-- `commands/_github_stack_support.py` owns the one cached capability decision
 - `commands/_native_stack_safety.py` owns the one native membership decision:
   `selected_native_stack` resolves the single resource a selected review set belongs to and
   requires every active member of it to be selected. `submit`, `merge`, selected `sync`,
@@ -348,7 +344,7 @@ write is lost, the next command rereads current state and reports or completes t
 
 Tracking state stays minimal and optional. It is a small versioned
 JSON file validated through `pydantic`. Human-authored config stays in TOML.
-The current top-level state version is 3. Each `ReviewIdentity` is version 3 and contains only
+The current top-level state version is 4. Each `ReviewIdentity` is version 3 and contains only
 the exact repository, PR, and head-owner/ref fields; `SubmittedBaseline` remains version 1.
 
 Public `--json` command output is a separate user-facing contract. Its schema lives in

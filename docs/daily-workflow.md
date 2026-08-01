@@ -112,10 +112,10 @@ Once the local stack looks right again, refresh GitHub:
 jj-stack submit
 ```
 
-If you split one previously submitted GitHub stack into separate local paths, `submit` may tell
-you that the old GitHub stack spans both results. Run the exact `gh stack unstack <number>`
-command in that diagnostic to dissolve the old grouping, then submit each resulting local stack.
-If `gh stack` is unavailable, install GitHub's extension first:
+If a rewrite splits, moves, or combines changes from existing GitHub stacks, `submit` may tell
+you that an old GitHub stack no longer matches the selected local path. Run every exact
+`gh stack unstack <number>` command in that diagnostic to dissolve the old grouping, then submit
+each resulting local stack. If `gh stack` is unavailable, install GitHub's extension first:
 
 ```bash
 gh extension install github/gh-stack
@@ -215,9 +215,7 @@ jj-stack submit <head-change-id>
 jj-stack merge <head-change-id>
 ```
 
-In a repository without GitHub stack support, PRs merge bottom-up and stop at the first refusal,
-so the ones below it stay merged. Run the printed `jj-stack sync <head-change-id>` before retrying
-the rest. A refused GitHub stack merge merges nothing at all.
+A refused GitHub stack merge merges nothing at all.
 
 If a lower PR of your own already merged elsewhere, `merge` stops at it and names
 `jj-stack sync <head-change-id>` instead — your stack still holds a local copy of work that is
@@ -251,14 +249,9 @@ jj-stack merge --method squash
 GitHub reports which methods a repository allows but never which one to prefer, which is why one
 of these is needed.
 
-In repositories with GitHub stack support, GitHub merges the selected bottom portion as one
-operation. A failed operation merges nothing. GitHub may rewrite the branches for PRs that remain
-above a partial selection.
-
-In other repositories, GitHub merges the PRs bottom-up and stops at the first rejection. PRs it
-already accepted below that point stay merged. A one-PR review uses this same path even in a
-repository with GitHub stack support. Merging several ordinary PRs with `rebase` is not supported
-in one command because the first rewrite invalidates the later reviewed commit identities.
+GitHub merges a selected multi-PR bottom portion as one operation. A failed operation merges
+nothing. GitHub may rewrite the branches for PRs that remain above a partial selection. A one-PR
+review uses GitHub's ordinary pull-request merge API.
 
 `merge` does not rewrite local history, refresh surviving PRs, or remove tracking. After GitHub
 merges anything, run the `jj-stack sync <head-change-id>` command printed in the result. If an
@@ -388,8 +381,7 @@ jj-stack merge
 jj-stack sync <head-change-id>
 ```
 
-Use the head change ID printed by `merge`. If GitHub rejected an ordinary PR after accepting lower
-ones, sync first and then rerun `merge <head-change-id>` if you still want to merge the remainder.
+Use the head change ID printed by `merge`.
 
 ## When something goes wrong
 

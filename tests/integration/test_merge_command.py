@@ -29,96 +29,6 @@ from .submit_command_helpers import (
 pytestmark = pytest.mark.merge_recovery
 
 
-def test_merge_uses_github_for_unapproved_prefix_and_leaves_local_state(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack_before = selected_stack(repo)
-    state_store = ReviewStateStore.for_repo(repo)
-    state_before = state_store.load()
-    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-
-    exit_code = run_main(repo, config_path, "merge")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, (captured.out, captured.err)
-    assert "merge PR #1" in captured.out
-    assert "merge PR #2" in captured.out
-    assert "sync " in captured.out
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].state == "closed"
-    assert fake_repo.pull_requests[2].merged_at is not None
-    assert fake_repo.pull_requests[2].base_ref == "main"
-    assert read_remote_ref(fake_repo.git_dir, "main") != trunk_before
-    assert ReviewStateStore.for_repo(repo).load() == state_before
-    stack_after = selected_stack(repo)
-    assert tuple(revision.commit_id for revision in stack_after.revisions) == tuple(
-        revision.commit_id for revision in stack_before.revisions
-    )
-
-
-def test_merge_stops_after_first_github_rejection(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.unmergeable_pull_numbers.add(2)
-    state_before = ReviewStateStore.for_repo(repo).load()
-
-    exit_code = run_main(repo, config_path, "merge")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "not mergeable" in captured.out
-    assert "sync " in captured.out
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].state == "open"
-    assert fake_repo.pull_requests[2].merged_at is None
-    assert ReviewStateStore.for_repo(repo).load() == state_before
-
-
-def test_merge_reports_blocked_when_github_rejects_first_pull_request(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.unmergeable_pull_numbers.add(1)
-    state_before = ReviewStateStore.for_repo(repo).load()
-    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-
-    exit_code = run_main(repo, config_path, "merge")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "Merge blocked:" in captured.out
-    assert "Applied merge actions:" not in captured.out
-    assert "not mergeable" in captured.out
-    assert "sync " not in captured.out
-    # A conflict is the usual cause, and rerunning merge cannot fix it, so the boundary has to
-    # name the rebase-and-resubmit route out.
-    normalized = " ".join(captured.out.split())
-    assert "rebase onto" in normalized
-    assert "jj-stack submit" in normalized
-    # GitHub's sentence reaches the user, not its status code and JSON envelope.
-    assert "Pull Request is not mergeable" in normalized
-    assert '{"message"' not in normalized
-    assert "405" not in normalized
-    assert fake_repo.pull_requests[1].state == "open"
-    assert fake_repo.pull_requests[1].merged_at is None
-    assert fake_repo.pull_requests[2].state == "open"
-    assert fake_repo.pull_requests[2].merged_at is None
-    assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
-    assert ReviewStateStore.for_repo(repo).load() == state_before
-
-
 def test_merge_accepts_a_stack_based_on_an_older_trunk(
     tmp_path: Path,
     monkeypatch,
@@ -176,10 +86,6 @@ def test_native_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     fake_repo.native_stacks = {7: (1, 2, 3)}
     fake_repo.pull_requests[3].state = "closed"
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests(
-        "octo-org/stacked-review",
-        True,
-    )
     stack_before = selected_stack(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
@@ -222,10 +128,6 @@ def test_native_merge_commit_uses_one_group_result_that_sync_can_retire(
     fake_repo.allow_merge_commit = True
     fake_repo.native_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests(
-        "octo-org/stacked-review",
-        True,
-    )
     stack = selected_stack(repo)
 
     merge_exit_code = run_main(
@@ -264,10 +166,6 @@ def test_native_merge_terminal_failure_is_atomic(
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.unmergeable_pull_numbers.add(2)
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests(
-        "octo-org/stacked-review",
-        True,
-    )
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     heads_before = tuple(
@@ -307,11 +205,6 @@ def test_native_merge_reobserves_lower_heads_before_request(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.auto_merge_reachable_heads = False
     fake_repo.native_stacks = {7: (1, 2)}
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests(
-        "octo-org/stacked-review",
-        True,
-    )
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
@@ -352,10 +245,6 @@ def test_native_merge_recovers_only_from_a_terminal_retry(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.native_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests(
-        "octo-org/stacked-review",
-        True,
-    )
     state_before = state_store.load()
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
@@ -418,10 +307,6 @@ def test_native_merge_requires_a_resource_for_a_multi_pr_review(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.native_stacks = {}
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests(
-        "octo-org/stacked-review",
-        True,
-    )
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
 
@@ -452,10 +337,6 @@ def test_ordinary_merge_methods_create_distinct_commit_topology(
         fake_repo.allow_merge_commit = True
         fake_repo.allow_rebase_merge = True
         fake_repo.native_stacks = {}
-        ReviewStateStore.for_repo(repo).set_stacked_pull_requests(
-            "octo-org/stacked-review",
-            True,
-        )
         pull_request = fake_repo.pull_requests[1]
         head_before = fake_repo.ref_target(pull_request.head_ref)
         trunk_before = fake_repo.ref_target("main")

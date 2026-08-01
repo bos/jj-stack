@@ -40,7 +40,7 @@ from jj_stack.github.resolution import (
     GithubTarget,
     resolve_github_target,
 )
-from jj_stack.github.stack_comments import stack_comment_label
+from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import ReviewRefUpdate
 from jj_stack.models.review_state import ReviewIdentity
@@ -337,9 +337,7 @@ async def _cleanup_tracked_review(
         return
     native_blocker = await native_stack_cleanup_blocker(
         github_client=github_client,
-        persist=not prepared_cleanup.dry_run,
         pull_number=identity.pr_number,
-        state_store=prepared_cleanup.context.state_store,
     )
     if native_blocker is not None:
         record_action(_cleanup_action(native_blocker))
@@ -423,7 +421,7 @@ async def _preflight_cleanup_comments(
             continue
         record_action(
             CleanupAction(
-                kind=stack_comment_label(lookup.kind),
+                kind=STACK_OVERVIEW_COMMENT_LABEL,
                 status="blocked",
                 body=lookup.blocked_reason,
             )

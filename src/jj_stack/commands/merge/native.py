@@ -41,11 +41,8 @@ class NativeMergePlan:
 def build_native_merge_plan(
     merge_plan: MergePlan,
     stacks: tuple[GithubStack, ...],
-    supported: bool,
     target_change_id: str | None,
 ) -> NativeMergePlan | None:
-    if not supported:
-        return None
     by_pull = {
         revision.identity.pr_number: revision for revision in merge_plan.reviewed_revisions
     }

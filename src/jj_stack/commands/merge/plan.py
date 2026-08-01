@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import jj_stack.ui as ui
-from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.review_state import ReviewState
@@ -86,14 +85,6 @@ def build_merge_plan(
         reviewed_revisions=tuple(revision for revision in reviewed if revision is not None),
         trunk_branch=trunk_branch,
     )
-
-
-def validate_merge_plan_method(*, merge_method: str, plan: MergePlan) -> None:
-    if merge_method == "rebase" and len(plan.planned_revisions) > 1:
-        raise CliError(
-            "A rebase merge cannot merge more than one ordinary PR at a time.",
-            hint=t"Use {ui.cmd('--method squash')} or merge one PR per run.",
-        )
 
 
 def _reviewed_revision(

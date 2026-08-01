@@ -13,10 +13,9 @@ from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import (
-    StackCommentKind,
-    comment_matches_kind,
-    delete_stack_comment,
-    stack_comment_label,
+    STACK_OVERVIEW_COMMENT_LABEL,
+    delete_stack_overview_comment,
+    is_overview_comment,
 )
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
@@ -237,12 +236,10 @@ async def close_current_tracked_pull_request(
 class ManagedCommentLookup:
     """One resolution result for a managed stack comment on a pull request.
 
-    Exactly one of ``comment`` or ``blocked_reason`` is set; the other is
-    ``None``. Kinds with neither a cached id nor a body-marker match are
-    omitted from the result rather than represented as a third state.
+    Exactly one of ``comment`` or ``blocked_reason`` is set; the other is ``None``. A missing
+    body-marker match is omitted from the result rather than represented as a third state.
     """
 
-    kind: StackCommentKind
     comment: GithubIssueComment | None = None
     blocked_reason: str | None = None
 
@@ -254,12 +251,9 @@ async def find_managed_comments(
 ) -> tuple[ManagedCommentLookup, ...]:
     """Discover managed stack comments for one PR via a single list call.
 
-    Managed comments are identified by their body markers alone. Returns
-    entries only for kinds that resolved to a delete target or were blocked;
-    kinds with no body-marker match are omitted.
+    The managed comment is identified by its body marker alone. Returns one entry when it
+    resolved to a delete target or was blocked, and no entry when the marker is absent.
     """
-
-    kinds: tuple[StackCommentKind, ...] = ("navigation", "overview")
 
     try:
         comments = await github_client.list_issue_comments(
@@ -269,29 +263,20 @@ async def find_managed_comments(
         if error.status_code == 404:
             return ()
         reason = error.user_facing_reason()
-        return tuple(
+        return (
             ManagedCommentLookup(
-                kind=kind,
                 blocked_reason=(
-                    f"cannot inspect {stack_comment_label(kind)}s for PR "
+                    f"cannot inspect {STACK_OVERVIEW_COMMENT_LABEL}s for PR "
                     f"#{pull_request_number}: {reason}"
                 ),
-            )
-            for kind in kinds
-        )
-
-    return tuple(
-        entry
-        for kind in kinds
-        for entry in (
-            _resolve_managed_comment_from_listed(
-                comments=comments,
-                kind=kind,
-                pull_request_number=pull_request_number,
             ),
         )
-        if entry is not None
+
+    entry = _resolve_managed_comment_from_listed(
+        comments=comments,
+        pull_request_number=pull_request_number,
     )
+    return () if entry is None else (entry,)
 
 
 async def apply_managed_comment_cleanup(
@@ -324,33 +309,32 @@ async def apply_managed_comment_cleanup(
             if blocker is not None:
                 return ((*actions, blocker), False)
             try:
-                deleted = await delete_stack_comment(
+                deleted = await delete_stack_overview_comment(
                     comment_id=comment.id,
                     github_client=github_client,
-                    kind=lookup.kind,
                     pull_request_number=review_identity.pr_number,
                 )
             except CliError as error:
                 actions.append(
                     CloseAction(
-                        kind=stack_comment_label(lookup.kind),
+                        kind=STACK_OVERVIEW_COMMENT_LABEL,
                         body=str(error),
                         status="blocked",
                     )
                 )
                 return tuple(actions), False
         action_body = (
-            f"delete {stack_comment_label(lookup.kind)} #{comment.id} from "
+            f"delete {STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} from "
             f"PR #{review_identity.pr_number}"
         )
         if not dry_run and not deleted:
             action_body = (
-                f"{stack_comment_label(lookup.kind)} #{comment.id} already absent from "
+                f"{STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} already absent from "
                 f"PR #{review_identity.pr_number}"
             )
         actions.append(
             CloseAction(
-                kind=stack_comment_label(lookup.kind),
+                kind=STACK_OVERVIEW_COMMENT_LABEL,
                 body=action_body,
                 status="planned" if dry_run else "applied",
             )
@@ -361,23 +345,19 @@ async def apply_managed_comment_cleanup(
 def _resolve_managed_comment_from_listed(
     *,
     comments: tuple[GithubIssueComment, ...],
-    kind: StackCommentKind,
     pull_request_number: int,
 ) -> ManagedCommentLookup | None:
-    matching_comments = [
-        comment for comment in comments if comment_matches_kind(body=comment.body, kind=kind)
-    ]
+    matching_comments = [comment for comment in comments if is_overview_comment(comment.body)]
     if len(matching_comments) > 1:
         return ManagedCommentLookup(
-            kind=kind,
             blocked_reason=(
-                f"cannot delete {stack_comment_label(kind)}s because GitHub reports "
+                f"cannot delete {STACK_OVERVIEW_COMMENT_LABEL}s because GitHub reports "
                 f"multiple candidates on PR #{pull_request_number}"
             ),
         )
     if not matching_comments:
         return None
-    return ManagedCommentLookup(kind=kind, comment=matching_comments[0])
+    return ManagedCommentLookup(comment=matching_comments[0])
 
 
 def emit_close_actions(
@@ -525,16 +505,12 @@ def plan_review_cleanup(
 async def native_stack_cleanup_blocker(
     *,
     github_client: GithubClient,
-    persist: bool,
     pull_number: int,
-    state_store: ReviewStateStore,
 ) -> CloseAction | None:
     """Fail closed when current native membership still needs a review branch."""
 
     try:
-        await GithubStackSelection(github_client, (pull_number,), state_store).require_unstacked(
-            persist=persist
-        )
+        await GithubStackSelection(github_client, (pull_number,)).require_unstacked()
     except CliError as error:
         return CloseAction(kind="remote branch", body=str(error), status="blocked")
     return None
@@ -610,9 +586,7 @@ async def prepare_current_review_cleanup(
         return None, blocker
     blocker = await native_stack_cleanup_blocker(
         github_client=github_client,
-        persist=False,
         pull_number=review_identity.pr_number,
-        state_store=context.state_store,
     )
     return update, blocker
 

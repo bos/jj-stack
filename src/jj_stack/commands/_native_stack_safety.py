@@ -6,11 +6,9 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 import jj_stack.ui as ui
-from jj_stack.commands._github_stack_support import resolve_github_stack_support
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubStack
-from jj_stack.state.store import ReviewStateStore
 
 
 def selected_native_stack(
@@ -76,33 +74,16 @@ class GithubStackSelection:
 
     github_client: GithubClient
     pull_numbers: tuple[int, ...]
-    state_store: ReviewStateStore
 
-    async def observe(
-        self,
-        *,
-        persist: bool = True,
-    ) -> tuple[bool, tuple[GithubStack, ...]]:
-        """Resolve support and return current complete native resources."""
+    async def observe(self) -> tuple[GithubStack, ...]:
+        """Return the current complete native resources."""
 
         try:
-            support = await resolve_github_stack_support(
-                github_client=self.github_client,
-                state_store=self.state_store,
-                persist=persist,
-            )
-            if not support.supported:
-                return False, ()
-            stacks = (
-                support.observed_stacks
-                if support.observed_stacks is not None
-                else await self.github_client.list_stacks()
-            )
+            return await self.github_client.list_stacks()
         except GithubClientError as error:
             raise CliError("Could not inspect native GitHub stack membership.") from error
-        return True, stacks
 
-    async def active_stacks(self, *, persist: bool = True) -> tuple[GithubStack, ...]:
+    async def active_stacks(self) -> tuple[GithubStack, ...]:
         """Return the resources in which a selected review is still an active member.
 
         Only these resources can be dissolved or blocked on: GitHub keeps merged members
@@ -111,7 +92,7 @@ class GithubStackSelection:
 
         if not self.pull_numbers:
             return ()
-        _supported, stacks = await self.observe(persist=persist)
+        stacks = await self.observe()
         selected = set(self.pull_numbers)
         return tuple(
             stack
@@ -119,14 +100,10 @@ class GithubStackSelection:
             if not selected.isdisjoint(stack.active_pull_request_numbers)
         )
 
-    async def require_unstacked(
-        self,
-        *,
-        persist: bool = True,
-    ) -> None:
+    async def require_unstacked(self) -> None:
         """Reject an ordinary mutation while a selected review is still an active member."""
 
-        blocking = await self.active_stacks(persist=persist)
+        blocking = await self.active_stacks()
         if not blocking:
             return
         stack_number = blocking[0].number
@@ -162,11 +139,10 @@ class GithubStackSelection:
         self,
         *,
         observed: tuple[GithubStack, ...] | None = None,
-        persist: bool = True,
     ) -> GithubStack | None:
         """Return the current resource after confirming its active membership."""
 
-        stacks = observed if observed is not None else await self.active_stacks(persist=persist)
+        stacks = observed if observed is not None else await self.active_stacks()
         if not stacks:
             return None
         stack = selected_native_stack(selected_pull_numbers=self.pull_numbers, stacks=stacks)

@@ -200,9 +200,8 @@ Your typical author loop is:
 
 `merge` asks GitHub to merge the consecutive open, non-draft PRs at the bottom of the stack. It
 requires every candidate to remain at the exact commit last submitted, but GitHub decides
-approvals, checks, conflicts, and repository policy. Repositories with GitHub stack support merge
-the selected bottom portion as one operation; other repositories merge PRs bottom-up and stop at
-the first rejection.
+approvals, checks, conflicts, and repository policy. GitHub merges a selected multi-PR bottom
+portion as one operation. A one-PR review uses GitHub's ordinary pull-request merge API.
 
 `merge` never pushes trunk, rewrites local history, or removes review tracking. Run
 `jj-stack sync <head-change-id>` after GitHub merges lower changes. It rebases the remaining
@@ -222,9 +221,9 @@ jj-stack view <head-change-id>
 The status output will show whether the next step is `jj-stack submit` or
 `jj-stack sync <head-change-id>`.
 
-If `list` shows an `orphan` row, tracking remains for a PR whose local change is no longer part of
-any current stack. To close it and remove the review branch, stack comments, and local tracking
-it left behind:
+If `list` shows an `orphan` row, tracking remains for a PR whose local change is no longer part
+of any current stack. To close it and remove the review branch, stack overview comment, and local
+tracking it left behind:
 
 ```bash
 jj-stack unstack --cleanup --pull-request <pr> --dry-run
@@ -238,8 +237,8 @@ jj-stack unstack --cleanup --pull-request orphans --dry-run
 jj-stack unstack --cleanup --pull-request orphans
 ```
 
-To sweep review branches, stack comments, and tracking that no closed or merged review still
-needs, across the whole repository:
+To sweep review branches, stack overview comments, and tracking that no closed or merged review
+still needs, across the whole repository:
 
 ```bash
 jj-stack cleanup --dry-run
@@ -411,6 +410,5 @@ agent-written. Nevertheless, I've provided heavy oversight.
 - linear stacks only
 - one PR per change ID
 
-When GitHub exposes native stacked-review support for a repository, `jj-stack` registers submitted
-PRs in GitHub's stack model and asks GitHub to merge them together. Otherwise, PR comments provide
-stack navigation and `merge` submits eligible PRs bottom-up.
+`jj-stack` registers every multi-PR review in GitHub's native stack model and asks GitHub to merge
+the selected prefix together. A review with one PR remains an ordinary pull request.

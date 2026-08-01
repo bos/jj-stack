@@ -80,11 +80,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
                 candidate.review_identity.pr_number for candidate in all_candidates
             )
         )
-        native_stacks = (
-            await observe_native_stacks(context=context, dry_run=dry_run, github=github)
-            if exact_candidates
-            else ()
-        )
+        native_stacks = await observe_native_stacks(github=github) if exact_candidates else ()
         merge_ancestry = classify_commit_ancestries(
             commit_ids=tuple(
                 pull_request.merge_commit_sha

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.state.store import ReviewStateStore
@@ -64,7 +65,6 @@ def test_cleanup_blocks_closed_review_still_claimed_by_native_stack(
         pull_request.state = "closed"
     run_command(["jj", "abandon", *change_ids], repo)
     fake_repo.native_stacks = {7: (1, 2)}
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     state_before = state_store.load()
 
     preview_exit_code = run_main(repo, config_path, "cleanup", "--dry-run")
@@ -230,6 +230,7 @@ def test_cleanup_isolates_malformed_review_observation(
     failed_change_id, cleaned_change_id = (revision.change_id for revision in stack.revisions)
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
+    fake_repo.native_stacks = {}
     failed_identity = initial_state.review_identities[failed_change_id]
     cleaned_identity = initial_state.review_identities[cleaned_change_id]
     fake_repo.pull_requests[failed_identity.pr_number].state = "closed"
@@ -350,12 +351,17 @@ def test_cleanup_removes_managed_stack_comment_for_closed_pull_request(
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     fake_repo.pull_requests[2].state = "closed"
+    fake_repo.native_stacks = {}
+    fake_repo.create_issue_comment(
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstack overview",
+        issue_number=2,
+    )
 
     exit_code = run_main(repo, config_path, "cleanup")
     captured = capsys.readouterr()
     refreshed_state = state_store.load()
 
     assert exit_code == 0
-    assert "delete stack navigation comment" in captured.out
+    assert "delete stack overview comment" in captured.out
     assert change_id not in refreshed_state.review_identities
     assert issue_comments(fake_repo, 2) == []

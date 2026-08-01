@@ -10,9 +10,7 @@ import pytest
 from jj_stack.errors import EXIT_CONFLICTS, EXIT_GITHUB, EXIT_USAGE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_comments import (
-    STACK_NAVIGATION_COMMENT_MARKER,
     STACK_OVERVIEW_COMMENT_MARKER,
-    is_navigation_comment,
     is_overview_comment,
 )
 from jj_stack.jj.client import JjClient
@@ -32,7 +30,6 @@ from ..support.integration_helpers import (
     write_file,
 )
 from .submit_command_helpers import (
-    approve_pull_requests,
     configure_submit_environment,
     issue_comments,
     patch_github_client_builders,
@@ -41,14 +38,6 @@ from .submit_command_helpers import (
     run_main,
     write_config,
 )
-
-
-def _navigation_comments(fake_repo, issue_number: int):
-    return [
-        comment
-        for comment in issue_comments(fake_repo, issue_number)
-        if is_navigation_comment(comment.body)
-    ]
 
 
 def _overview_comments(fake_repo, issue_number: int):
@@ -151,17 +140,12 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
         client_type=LoseFirstCreateResponseClient,
     )
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
 
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     assert "jj-stack submit" in capsys.readouterr().err
     assert fake_repo.native_stacks == {1: (1, 2)}
     assert len(state_store.load().review_identities) == 2
 
-    fake_repo.create_issue_comment(
-        body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nold navigation",
-        issue_number=2,
-    )
     top_change_id = selected_stack(repo).revisions[-1].change_id
     run_command(
         ["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed\n\nupdated body"],
@@ -173,7 +157,6 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
     assert run_main(repo, config_path, "submit", "--describe", f"stack={stack_description}") == 0
     assert fake_repo.pull_requests[2].title == "feature 2 renamed"
     assert fake_repo.pull_requests[2].body == "updated body"
-    assert _navigation_comments(fake_repo, 2) == []
     assert "Native stack overview" in _overview_comments(fake_repo, 2)[0].body
 
     for number in range(3, 6):
@@ -187,7 +170,6 @@ def test_submit_native_stack_recovers_lost_create_and_retries_blocked_append(
         {1: (1, 2, 3, 4, 5)},
         [(3, 4, 5), (3, 4, 5)],
     )
-    assert all(_navigation_comments(fake_repo, number) == [] for number in range(3, 6))
 
 
 def test_submit_recreates_native_stack_only_after_active_review_grows_to_two(
@@ -197,8 +179,6 @@ def test_submit_recreates_native_stack_only_after_active_review_grows_to_two(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
@@ -216,7 +196,7 @@ def test_submit_recreates_native_stack_only_after_active_review_grows_to_two(
 
     commit_file(repo, "feature 3", "feature-3.txt")
     assert run_main(repo, config_path, "submit") == 0
-    assert fake_repo.native_stacks == {1: (2, 3)}
+    assert fake_repo.native_stacks == {2: (2, 3)}
 
 
 def test_submit_appends_to_active_suffix_after_historical_prefix(
@@ -226,8 +206,6 @@ def test_submit_appends_to_active_suffix_after_historical_prefix(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
     fake_repo.update_pull_request_base(
@@ -330,7 +308,7 @@ def test_submit_native_preflight_failures_recover_without_persisted_phase(
     remote_before = remote_refs(fake_repo.git_dir)
 
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
-    assert "Could not inspect native GitHub stack membership" in capsys.readouterr().err
+    assert "Could not inspect GitHub repository" in capsys.readouterr().err
 
     # Reordering the stack makes the desired membership differ from the live one, so submit
     # must unstack the resource before it can move any branch or base.
@@ -418,7 +396,7 @@ def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
     assert len(fake_repo.pull_requests) == 4
 
 
-def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
+def test_submit_squash_blocks_until_old_native_stack_is_dissolved(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -439,9 +417,6 @@ def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
     initial_state = ReviewStateStore.for_repo(repo).load()
-    surviving_pr_number = initial_state.review_identities[
-        change_ids_by_subject["feature 1"]
-    ].pr_number
     orphaned_identity = initial_state.review_identities[change_ids_by_subject["feature 2"]]
     orphaned_pr_number = orphaned_identity.pr_number
     orphaned_bookmark = orphaned_identity.head_ref
@@ -468,20 +443,14 @@ def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
         "feature 1",
         "feature 3",
     ]
-    assert run_main(repo, config_path, "submit", surviving_stack.head.change_id) == 0
-    capsys.readouterr()
-
-    _assert_stack_pull_requests_match_dag(
-        fake_repo=fake_repo,
-        repo=repo,
-        stack=surviving_stack,
-    )
+    exit_code = run_main(repo, config_path, "submit", surviving_stack.head.change_id)
+    captured = capsys.readouterr()
 
     refreshed_state = ReviewStateStore.for_repo(repo).load()
-    assert (
-        refreshed_state.review_identities[change_ids_by_subject["feature 1"]].pr_number
-        == surviving_pr_number
-    )
+    assert exit_code == 1
+    assert "keeps #2 active outside the selected stack" in captured.err
+    assert "gh stack unstack 1" in captured.err
+    assert refreshed_state == initial_state
     orphaned_pr = fake_repo.pull_requests[orphaned_pr_number]
     assert orphaned_pr.state == "open"
     assert orphaned_pr.merged_at is None
@@ -490,17 +459,12 @@ def test_submit_preserves_orphan_when_two_adjacent_changes_are_squashed(
     assert len(fake_repo.pull_requests) == 3
 
 
-def test_submit_retargets_only_the_selected_fork_when_a_split_stack_shares_a_review_base(
+def test_submit_split_path_blocks_until_old_native_stack_is_dissolved(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    """Rebasing the upper half of a submitted stack onto its bottom change forks the
-    review path. Submitting one fork moves the lowest pull request on that fork onto the
-    review branch of the shared change, so two open pull requests end up on the same base
-    ref. The deferred fork keeps its pull request, branch, and tracking until the user
-    submits it explicitly.
-    """
+    """A GitHub stack spanning two local paths must be dissolved before either is updated."""
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=4)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -530,17 +494,12 @@ def test_submit_retargets_only_the_selected_fork_when_a_split_stack_shares_a_rev
     exit_code = run_main(repo, config_path, "submit", change_ids[3])
     captured = capsys.readouterr()
 
-    assert exit_code == 0, captured.err
-    _assert_stack_pull_requests_match_dag(
-        fake_repo=fake_repo,
-        repo=repo,
-        stack=fork_stack,
-    )
+    assert exit_code == 1
+    assert "keeps #2 active outside the selected stack" in captured.err
+    assert "gh stack unstack 1" in captured.err
 
     refreshed_state = ReviewStateStore.for_repo(repo).load()
-    forked_pr_number = refreshed_state.review_identities[change_ids[2]].pr_number
-    assert fake_repo.pull_requests[forked_pr_number].base_ref == shared_base_ref
-
+    assert refreshed_state == submitted_state
     assert deferred_pull_request.base_ref == shared_base_ref
     assert deferred_pull_request.head_ref == deferred_identity.head_ref
     assert deferred_pull_request.state == "open"
@@ -556,46 +515,6 @@ def test_submit_retargets_only_the_selected_fork_when_a_split_stack_shares_a_rev
         if event.pull_request_number == deferred_identity.pr_number
     ] == deferred_events
     assert len(fake_repo.pull_requests) == 4
-
-
-def test_submit_post_flight_check_catches_unexpected_pull_request_closure(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """If the pre-push predictor misses an auto-close, the post-flight check fires."""
-
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    commit_file(repo, "feature 3", "feature-3.txt")
-    commit_file(repo, "feature 4", "feature-4.txt")
-
-    initial_stack = selected_stack(repo)
-    old_bottom_change_id = initial_stack.revisions[0].change_id
-    old_top_change_id = initial_stack.revisions[-1].change_id
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    run_command(["jj", "rebase", "-r", old_bottom_change_id, "-A", old_top_change_id], repo)
-    reordered_stack = selected_stack(repo)
-
-    from jj_stack.commands.submit import auto_close as submit_auto_close
-
-    monkeypatch.setattr(
-        submit_auto_close,
-        "predict_pull_requests_auto_closed_by_push",
-        lambda **_kwargs: (),
-    )
-
-    assert run_main(repo, config_path, "submit", reordered_stack.head.change_id) != 0
-    captured = capsys.readouterr()
-
-    assert "Pull request(s) #2 were open at the start of this submit" in captured.err
-    assert fake_repo.pull_requests[2].state == "closed"
-    assert fake_repo.pull_requests[2].merged_at is not None
 
 
 def test_submit_uses_readable_review_branch_names(
@@ -750,43 +669,6 @@ def test_submit_blocks_unresolved_conflicted_rebase_without_mutation(
     assert fake_repo.pull_requests == {}
 
 
-def test_submit_legacy_path_creates_navigation_for_multi_pr_stack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    selected_stack(repo)
-
-    assert _overview_comments(fake_repo, 1) == []
-    assert _overview_comments(fake_repo, 2) == []
-    assert len(_navigation_comments(fake_repo, 1)) == 1
-    assert len(_navigation_comments(fake_repo, 2)) == 1
-    assert STACK_NAVIGATION_COMMENT_MARKER in _navigation_comments(fake_repo, 1)[0].body
-    assert "**feature 1 (this PR)**" in _navigation_comments(fake_repo, 1)[0].body
-    assert "[feature 2](https://github.test/octo-org/stacked-review/pull/2)" in (
-        _navigation_comments(fake_repo, 1)[0].body
-    )
-    assert "trunk `main`" in _navigation_comments(fake_repo, 1)[0].body
-    assert "**feature 2 (this PR)**" in _navigation_comments(fake_repo, 2)[0].body
-    assert "[feature 1](https://github.test/octo-org/stacked-review/pull/1)" in (
-        _navigation_comments(fake_repo, 2)[0].body
-    )
-
-
-def test_submit_legacy_path_keeps_single_pr_free_of_stack_comments(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    assert issue_comments(fake_repo, 1) == []
-    assert fake_repo.pull_requests[1].body == "feature 1"
-
-
 def test_submit_describe_reads_pull_request_and_stack_bodies_from_files(
     tmp_path: Path,
     monkeypatch,
@@ -928,8 +810,6 @@ def test_submit_describe_with_generates_pull_request_and_stack_metadata(
     assert fake_repo.pull_requests[2].body == (
         f"Generated body for {stack.revisions[1].change_id}"
     )
-    assert len(_navigation_comments(fake_repo, 1)) == 1
-    assert len(_navigation_comments(fake_repo, 2)) == 1
     assert len(_overview_comments(fake_repo, 2)) == 1
     assert STACK_OVERVIEW_COMMENT_MARKER in _overview_comments(fake_repo, 2)[0].body
     assert "## Generated stack summary" in _overview_comments(fake_repo, 2)[0].body
@@ -937,9 +817,6 @@ def test_submit_describe_with_generates_pull_request_and_stack_metadata(
         f"Generated stack body for {stack.selected_revset}: "
         f"AI {stack.revisions[0].change_id[:8]} -> AI {stack.revisions[1].change_id[:8]} | "
         "feature-1.txt" in _overview_comments(fake_repo, 2)[0].body
-    )
-    assert "This pull request is part of a stack tracked by `jj-stack`." in (
-        _navigation_comments(fake_repo, 2)[0].body
     )
 
 
@@ -1007,10 +884,6 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     assert ": new PR" in captured.out
     assert fake_repo.pull_requests == {}
     assert remote_refs(fake_repo.git_dir) == initial_remote_refs
-    assert (
-        ReviewStateStore.for_repo(repo).get_stacked_pull_requests("octo-org/stacked-review")
-        is None
-    )
 
 
 def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
@@ -1086,59 +959,6 @@ def test_submit_batches_stack_comment_reads_with_graphql(
     assert comment_batch_calls == [(1, 2)]
 
 
-def test_submit_rediscovers_and_regenerates_stack_comments_when_cache_is_missing(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    approve_pull_requests(fake_repo, 1, 2)
-
-    stack = selected_stack(repo)
-    top_change_id = stack.revisions[-1].change_id
-    initial_comment_id = _navigation_comments(fake_repo, 2)[0].id
-
-    _navigation_comments(fake_repo, 2)[
-        0
-    ].body = f"{STACK_NAVIGATION_COMMENT_MARKER}\nmanually edited"
-
-    run_command(["jj", "describe", "-r", top_change_id, "-m", "feature 2 renamed"], repo)
-
-    assert run_main(repo, config_path, "submit", top_change_id) == 0
-    capsys.readouterr()
-
-    assert len(_navigation_comments(fake_repo, 2)) == 1
-    assert _navigation_comments(fake_repo, 2)[0].id == initial_comment_id
-    assert "**feature 2 renamed (this PR)**" in _navigation_comments(fake_repo, 2)[0].body
-    assert "[feature 1](https://github.test/octo-org/stacked-review/pull/1)" in (
-        _navigation_comments(fake_repo, 2)[0].body
-    )
-    assert len(_navigation_comments(fake_repo, 1)) == 1
-
-
-def test_submit_moves_managed_stack_comment_to_new_selected_head(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    initial_comment_id = _navigation_comments(fake_repo, 2)[0].id
-
-    assert len(_navigation_comments(fake_repo, 1)) == 1
-    assert len(_navigation_comments(fake_repo, 2)) == 1
-
-    commit_file(repo, "feature 3", "feature-3.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-    assert len(_navigation_comments(fake_repo, 1)) == 1
-    assert len(_navigation_comments(fake_repo, 2)) == 1
-    assert len(_navigation_comments(fake_repo, 3)) == 1
-    assert _navigation_comments(fake_repo, 3)[0].id != initial_comment_id
-
-
 def test_submit_moves_overview_comment_when_stack_head_advances(
     tmp_path: Path,
     monkeypatch,
@@ -1192,17 +1012,13 @@ def test_submit_moves_overview_comment_when_stack_head_advances(
     assert len(_overview_comments(fake_repo, new_top_pr_number)) == 1
 
 
-def test_submit_single_change_clears_stale_managed_stack_comment(
+def test_submit_single_change_clears_stale_stack_overview_comment(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.create_issue_comment(
-        body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nstale stack navigation",
-        issue_number=1,
-    )
     fake_repo.create_issue_comment(
         body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstale stack overview",
         issue_number=1,
@@ -1214,7 +1030,7 @@ def test_submit_single_change_clears_stale_managed_stack_comment(
     assert issue_comments(fake_repo, 1) == []
 
 
-def test_submit_rejects_ambiguous_discovered_stack_comments(
+def test_submit_rejects_ambiguous_stack_overview_comments(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1225,7 +1041,11 @@ def test_submit_rejects_ambiguous_discovered_stack_comments(
     stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     fake_repo.create_issue_comment(
-        body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nextra",
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\none",
+        issue_number=2,
+    )
+    fake_repo.create_issue_comment(
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\ntwo",
         issue_number=2,
     )
 
@@ -1233,7 +1053,7 @@ def test_submit_rejects_ambiguous_discovered_stack_comments(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "multiple jj-stack stack navigation comments" in captured.err
+    assert "multiple jj-stack stack overview comments" in captured.err
 
 
 def test_submit_reports_stack_comment_update_failures_without_traceback(
@@ -1246,7 +1066,12 @@ def test_submit_reports_stack_comment_update_failures_without_traceback(
 
     stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
-    run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 renamed"], repo)
+    fake_repo.create_issue_comment(
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nold overview",
+        issue_number=2,
+    )
+    stack_description = tmp_path / "stack.md"
+    write_file(stack_description, "New stack overview\n")
 
     class FailingCommentUpdateClient(GithubClient):
         async def update_issue_comment(
@@ -1267,11 +1092,18 @@ def test_submit_reports_stack_comment_update_failures_without_traceback(
         client_type=FailingCommentUpdateClient,
     )
 
-    exit_code = run_main(repo, config_path, "submit", change_id)
+    exit_code = run_main(
+        repo,
+        config_path,
+        "submit",
+        change_id,
+        "--describe",
+        f"stack={stack_description}",
+    )
     captured = capsys.readouterr()
 
     assert exit_code == EXIT_GITHUB
-    assert "Could not update stack navigation comment" in captured.err
+    assert "Could not update stack overview comment" in captured.err
     assert "Traceback" not in captured.err
 
 
@@ -1968,79 +1800,6 @@ def test_submit_re_request_adds_prior_approved_reviewer_through_github(
         "pending-reviewer",
         "alice",
     ]
-
-
-def test_submit_checkpoints_successful_in_flight_stack_comment_before_failure(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    for index in range(3):
-        commit_file(repo, f"feature {index + 1}", f"feature-{index + 1}.txt")
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-
-    state_store = ReviewStateStore.for_repo(repo)
-    stack = selected_stack(repo)
-    initial_state = state_store.load()
-    change_id_1 = stack.revisions[0].change_id
-    change_id_2 = stack.revisions[1].change_id
-    change_id_3 = stack.revisions[2].change_id
-    issue_number_1 = initial_state.review_identities[change_id_1].pr_number
-    issue_number_2 = initial_state.review_identities[change_id_2].pr_number
-    issue_number_3 = initial_state.review_identities[change_id_3].pr_number
-
-    stale_comment_1 = _navigation_comments(fake_repo, issue_number_1)[0]
-    stale_comment_2 = _navigation_comments(fake_repo, issue_number_2)[0]
-    stale_comment_3 = _navigation_comments(fake_repo, issue_number_3)[0]
-    stale_comment_1.body = f"{STACK_NAVIGATION_COMMENT_MARKER}\nstale bottom navigation"
-    stale_comment_2.body = f"{STACK_NAVIGATION_COMMENT_MARKER}\nstale middle navigation"
-    stale_overview_2 = fake_repo.create_issue_comment(
-        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstale overview",
-        issue_number=issue_number_2,
-    )
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-    updated_comment_ids: list[int] = []
-
-    class FlakyCommentClient(GithubClient):
-        async def update_issue_comment(self, *, comment_id, body):
-            updated_comment_ids.append(comment_id)
-            if comment_id == stale_comment_2.id:
-                await asyncio.sleep(0.01)
-                raise GithubClientError(
-                    "Simulated stack navigation comment failure",
-                    status_code=500,
-                )
-            if comment_id == stale_comment_1.id:
-                await asyncio.sleep(0.03)
-            return await super().update_issue_comment(
-                comment_id=comment_id,
-                body=body,
-            )
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
-        client_type=FlakyCommentClient,
-        concurrency_limits={"jj_stack.commands.submit.command": 2},
-    )
-
-    assert run_main(repo, config_path, "submit") == EXIT_GITHUB
-    capsys.readouterr()
-
-    assert stale_comment_1.id in updated_comment_ids
-    assert stale_comment_2.id in updated_comment_ids
-    assert stale_comment_3.id not in updated_comment_ids
-    assert len(_navigation_comments(fake_repo, issue_number_1)) == 1
-    assert len(issue_comments(fake_repo, issue_number_2)) == 2
-    assert stale_overview_2.body.endswith("stale overview")
-    assert len(issue_comments(fake_repo, issue_number_3)) == 1
 
 
 def _write_edit_editor(tmp_path: Path, name: str, body_lines: list[str]) -> str:

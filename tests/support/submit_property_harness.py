@@ -54,6 +54,38 @@ class SubmittedBaseline:
     submitted_baseline: StoredBaseline
 
 
+def _dissolve_conflicting_native_stacks(
+    *,
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    selected_change_ids: tuple[str, ...],
+) -> None:
+    """Model the documented `gh stack unstack` step before a cross-stack submit."""
+
+    state = ReviewStateStore.for_repo(repo).load()
+    selected_pull_numbers = {
+        identity.pr_number
+        for change_id in selected_change_ids
+        if (identity := state.review_identities.get(change_id)) is not None
+    }
+    overlapping = tuple(
+        stack_number
+        for stack_number, pull_numbers in fake_repo.native_stacks.items()
+        if not selected_pull_numbers.isdisjoint(pull_numbers)
+    )
+    conflicting = (
+        overlapping
+        if len(overlapping) > 1
+        else tuple(
+            stack_number
+            for stack_number in overlapping
+            if not set(fake_repo.native_stacks[stack_number]).issubset(selected_pull_numbers)
+        )
+    )
+    for stack_number in conflicting:
+        del fake_repo.native_stacks[stack_number]
+
+
 def replay_successful_stack_edit_scenario(
     *,
     discard_output: OutputDiscarder,
@@ -86,6 +118,11 @@ def replay_successful_stack_edit_scenario(
         repo=repo,
         labels=scenario.final_live_labels,
         labels_to_change_ids=labels_to_change_ids,
+    )
+    _dissolve_conflicting_native_stacks(
+        fake_repo=fake_repo,
+        repo=repo,
+        selected_change_ids=tuple(revision.change_id for revision in stack.revisions),
     )
     assert submit(stack.head.change_id) == 0
     discard_output()
@@ -380,6 +417,11 @@ def replay_stack_merge_scenario(
         labels_to_change_ids=labels_to_change_ids,
     )
 
+    _dissolve_conflicting_native_stacks(
+        fake_repo=fake_repo,
+        repo=repo,
+        selected_change_ids=tuple(revision.change_id for revision in merged_stack.revisions),
+    )
     assert submit(merged_stack.head.change_id) == 0
     discard_output()
 
@@ -439,6 +481,11 @@ def replay_stack_move_scenario(
             labels_to_change_ids=labels_to_change_ids,
         )
 
+    _dissolve_conflicting_native_stacks(
+        fake_repo=fake_repo,
+        repo=repo,
+        selected_change_ids=tuple(revision.change_id for revision in selected_stack.revisions),
+    )
     assert submit(selected_stack.head.change_id) == 0
     discard_output()
 

@@ -224,8 +224,7 @@ def build_prompt(mode: str, revset: str, context: str) -> str:
                     f"- This stack contains {commit_count} commits.",
                     "- Summarize the series as a whole, not just the top commit.",
                     "- Explain how the changes in the stack fit together.",
-                    "- The body will appear above the selected head PR's stack-navigation "
-                    "comment.",
+                    "- The body will appear in the selected head PR's stack overview comment.",
                 ]
             )
     return PROMPT_TEMPLATE.format(

@@ -265,9 +265,7 @@ What to do:
   Nothing local needs to change.
 - For an identical GitHub stack request already in progress, wait and rerun. Once it completes,
   the retry observes the terminal result.
-- A failed GitHub stack operation merges nothing. An ordinary bottom-up merge can leave lower PRs
-  merged before a later one is rejected; run `jj-stack sync <head-change-id>`, then retry
-  `jj-stack merge <head-change-id>` if you still want the remainder.
+- A failed GitHub stack operation merges nothing.
 - `jj-stack` does not enqueue merge-queue work. If repository policy requires a queue, use the
   repository's supported queue workflow, then run `jj-stack sync <head-change-id>` once GitHub
   merges the work.

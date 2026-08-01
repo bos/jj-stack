@@ -74,8 +74,8 @@ command they use before any direct GitHub mutation.
 **Collaboration writes are fine when the user asks**: comments, reviews,
 labels, assignees, milestones, reviewer requests, draft/ready state, and
 title or body edits (a later `submit` may overwrite generated title/body
-text). Never edit or delete comments containing `<!-- jj-stack-navigation -->`
-or `<!-- jj-stack-overview -->`; jj-stack manages those.
+text). Never edit or delete comments containing `<!-- jj-stack-overview -->`;
+jj-stack manages those.
 
 **Structural and lifecycle writes are not**: closing, merging, or reopening a
 PR; retargeting base or head; deleting or force-pushing a review branch;
@@ -89,11 +89,10 @@ multiple desired local paths; run it, then submit each path separately.
 - **Merge reviewed bottom changes:** `merge --dry-run`, then `merge`. It
   selects the consecutive open, non-draft PRs from the bottom and requires
   every candidate to match the exact submitted commit. GitHub decides
-  approvals, checks, conflicts, and repository policy. Repositories with
-  GitHub stack support use one atomic bottom-prefix request; others merge PRs
-  bottom-up and may stop after lower PRs have merged. It never pushes trunk or
-  rewrites local history. Run the selected `sync <head-change-id>` printed
-  after GitHub accepts anything.
+  approvals, checks, conflicts, and repository policy. Multi-PR reviews use
+  one atomic bottom-prefix request; a one-PR review uses the ordinary PR API.
+  It never pushes trunk or rewrites local history. Run the selected
+  `sync <head-change-id>` printed after GitHub accepts anything.
 - **Close an abandoned stack's PRs:** `unstack --dry-run`, then `unstack`.
 - **Also remove review branches and tracking:** `unstack --cleanup`, only
   after confirming the stack should be retired. For an orphaned PR from
@@ -158,10 +157,9 @@ that is incomplete or needs attention (the output is still valid — read it);
 
 - `merge` rejected by GitHub: read the reported check, conflict, queue,
   policy, or access reason, fix it, and rerun the same explicit
-  command. A native terminal failure merges nothing. If ordinary bottom-up
-  merging accepted lower PRs first, run `sync <head-change-id>` before retrying the
-  remainder. A matching request already pending should be allowed to finish,
-  then observed by rerunning the same target and method.
+  command. A native terminal failure merges nothing. A matching request already
+  pending should be allowed to finish, then observed by rerunning the same target
+  and method.
 - Interrupted command: `view`, then rerun with an explicit change ID, revset,
   or `--pull-request` selector.
 - jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.

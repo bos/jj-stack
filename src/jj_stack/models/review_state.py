@@ -68,7 +68,7 @@ class ReviewState(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[3] = 3
+    version: Literal[4] = 4
     review_identities: dict[str, ReviewIdentity] = Field(default_factory=dict)
     submitted_baselines: dict[str, SubmittedBaseline] = Field(default_factory=dict)
     record_issues: tuple[ReviewStateRecordIssue, ...] = Field(

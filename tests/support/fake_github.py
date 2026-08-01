@@ -233,7 +233,7 @@ class FakeGithubRepository:
     next_pull_request_number: int = 1
     next_pull_request_review_id: int = 1
     issue_comments: dict[int, list[FakeGithubIssueComment]] = field(default_factory=dict)
-    native_stacks: dict[int, tuple[int, ...]] | None = None
+    native_stacks: dict[int, tuple[int, ...]] = field(default_factory=dict)
     pull_request_events: list[FakeGithubPullRequestEvent] = field(default_factory=list)
     pull_requests: dict[int, FakeGithubPullRequest] = field(default_factory=dict)
     pull_request_reviews: dict[int, list[FakeGithubPullRequestReview]] = field(
@@ -302,8 +302,6 @@ class FakeGithubRepository:
         return None
 
     def stack_number_for_pull(self, pull_number: int) -> int | None:
-        if self.native_stacks is None:
-            return None
         for stack_number, pull_numbers in self.native_stacks.items():
             if pull_number in pull_numbers:
                 return stack_number
@@ -1358,8 +1356,6 @@ def _require_int_list(payload: dict[str, object], key: str) -> tuple[int, ...]:
 
 
 def _native_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...]]:
-    if repository.native_stacks is None:
-        raise HTTPException(status_code=404, detail="Not Found")
     # GitHub refuses to put one pull request in two stacks: creating a second reports
     # "Pull requests #N are already part of a stack" (422, confirmed against the API). Tests
     # assign this mapping directly, so refuse the impossible shape here rather than let a fixture

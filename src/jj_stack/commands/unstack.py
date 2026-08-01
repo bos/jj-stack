@@ -54,7 +54,7 @@ from jj_stack.github.error_messages import remote_and_github_unavailable_message
 from jj_stack.github.resolution import (
     GithubRepoAddress,
 )
-from jj_stack.github.stack_comments import stack_comment_label
+from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
@@ -690,9 +690,8 @@ async def _stream_close_async(
                 for prepared_revision in prepared.status_revisions
                 if prepared_revision.revision.change_id in review_identities
             ),
-            prepared_close.context.state_store,
         )
-        native_stacks = await selection.active_stacks(persist=not prepared_close.dry_run)
+        native_stacks = await selection.active_stacks()
         initial_observation = None
         blocked = False
         if native_stacks or prepared_close.cleanup:
@@ -743,7 +742,7 @@ async def _stream_close_async(
                 blocked = True
             else:
                 native_stack = (
-                    await selection.recheck_active_suffix(observed=native_stacks, persist=False)
+                    await selection.recheck_active_suffix(observed=native_stacks)
                     if prepared_close.dry_run
                     else await selection.dissolve_exact(observed=native_stacks)
                 )
@@ -1043,7 +1042,7 @@ async def _cleanup_revision(
         if lookup.blocked_reason is not None:
             run.record_action(
                 CloseAction(
-                    kind=stack_comment_label(lookup.kind),
+                    kind=STACK_OVERVIEW_COMMENT_LABEL,
                     body=lookup.blocked_reason,
                     status="blocked",
                 )

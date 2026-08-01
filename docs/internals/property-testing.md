@@ -84,8 +84,11 @@ Replay follows the same shape for every scenario:
 6. Apply the scenario operations with real `jj` commands.
 7. Rediscover the selected live stack from the current DAG and assert that its
    `change_id` order matches the scenario model. Subjects are diagnostics only.
-8. Run `submit` again on the new stack head.
-9. Assert the cross-system invariants.
+8. Dissolve any old native GitHub stack that includes active reviews outside the selected path,
+   or when the selection combines more than one old GitHub stack. This models the exact
+   `gh stack unstack` recovery named by `submit`.
+9. Run `submit` again on the new stack head.
+10. Assert the cross-system invariants.
 
 The replay model must track stable `change_id`s for initial and inserted changes.
 Subjects and filenames are only labels that make failure output readable.
@@ -114,10 +117,10 @@ represented in the current model.
 
 Two harness families cover edits that involve more than one submitted stack:
 
-- **Merge:** submit the combined stack. Reuse every PR and approval by `change_id`; recompute
-  heads and bases; store no topology.
-- **Move:** submit the destination stack. Reuse the moved change's PR; leave the source remainder
-  unchanged.
+- **Merge:** dissolve the two old GitHub stacks, then submit the combined stack. Reuse every PR
+  and approval by `change_id`; recompute heads and bases; store no topology.
+- **Move:** dissolve old GitHub stacks that span the resulting paths, then submit the destination
+  stack. Reuse the moved change's PR; leave the source remainder unchanged.
 
 Both families assert that no original PR is unexpectedly closed, merged, or replaced. Selected PR
 bases are recomputed; PRs in the source remainder must not receive a base-retarget event. Fixed
@@ -165,16 +168,15 @@ unclassified error. Exact diagnostic wording stays out of scope.
 
 Merge and post-merge convergence use focused deterministic integration tests rather than the
 submit property generator. The tested boundaries include exact submitted-head validation,
-bottom-prefix selection, draft and closed boundaries, ordinary bottom-up stops, native atomic
-failure, partial native survivor rewrites, terminal retry, historical-member cleanup, and selected
-or repository-wide sync eligibility.
+bottom-prefix selection, draft and closed boundaries, native atomic failure, partial native
+survivor rewrites, terminal retry, historical-member cleanup, and selected or repository-wide
+sync eligibility.
 
 The native tests assert both final Git and PR state and the significant API events. A terminal
 native failure changes nothing. A successful partial request may change survivor heads and bases,
 but `merge` does not rewrite local history; selected `sync` validates and converges that remote
-transition. Ordinary multi-PR merge is sequential, so a rejected PR preserves merges GitHub
-already accepted below it. These are bounded command contracts, not generated merge property
-families or a durable recovery state machine.
+transition. These are bounded command contracts, not generated merge property families or a
+durable recovery state machine.
 
 ## Interrupted-submit retry harness
 

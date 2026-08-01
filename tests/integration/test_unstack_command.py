@@ -7,7 +7,7 @@ import jj_stack.commands.unstack as unstack_module
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.stack_comments import STACK_NAVIGATION_COMMENT_MARKER
+from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
@@ -55,7 +55,6 @@ def test_unstack_apply_closes_native_stack_and_preserves_exact_tracking(
     locked = True
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.issue_comments.clear()
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
 
     class NativeStackClient(GithubClient):
         async def unstack(self, *, stack_number):
@@ -115,8 +114,6 @@ def test_unstack_dissolves_resource_and_preserves_merged_pull_request_history(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = selected_stack(repo)
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.pull_requests[1].state = "closed"
     fake_repo.pull_requests[1].merged_at = "2026-07-23T12:00:00Z"
@@ -142,7 +139,6 @@ def test_unstack_head_change_before_native_boundary_preserves_github_stack(
     initial_state = state_store.load()
     change_id = selected_stack(repo).head.change_id
     fake_repo.native_stacks = {7: (1, 2)}
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     app = create_app(FakeGithubState.single_repository(fake_repo))
     native_observations = 0
     fresh_boundary_lookups = 0
@@ -287,16 +283,14 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
     first_change_id = stack.revisions[0].change_id
-    second_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
     first_pr_number = initial_state.review_identities[first_change_id].pr_number
-    second_pr_number = initial_state.review_identities[second_change_id].pr_number
     exit_code = run_main(
         repo,
         config_path,
@@ -310,7 +304,6 @@ def test_unstack_apply_can_select_a_stack_by_pull_request_number(
     assert exit_code == 0
     assert f"Using PR #{first_pr_number} -> {first_change_id}" in captured.out
     assert fake_repo.pull_requests[first_pr_number].state == "closed"
-    assert fake_repo.pull_requests[second_pr_number].state == "open"
     assert refreshed_state == initial_state
 
 
@@ -438,7 +431,6 @@ def test_unstack_dry_run_leaves_remote_state_unchanged_and_reports_planned_actio
     stack = selected_stack(repo)
     change_id = stack.revisions[-1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     fake_repo.issue_comments.clear()
     initial_state = state_store.load()
@@ -629,51 +621,6 @@ def test_unstack_cleanup_rechecks_dependents_after_comment_discovery(
     assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
 
 
-def test_unstack_cleanup_pull_request_retires_orphaned_pr(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = selected_stack(repo)
-    orphaned_change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    orphaned_bookmark = state.review_identities[orphaned_change_id].head_ref
-    orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
-
-    run_command(["jj", "abandon", orphaned_change_id], repo)
-
-    async def dissolve_exact(_selection, **_kwargs):
-        return github_stack(1, orphaned_pr_number)
-
-    monkeypatch.setattr(GithubStackSelection, "dissolve_exact", dissolve_exact)
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "unstack",
-        "--cleanup",
-        "--pull-request",
-        str(orphaned_pr_number),
-    )
-    captured = capsys.readouterr()
-    refreshed_state = state_store.load()
-    output = captured.out
-
-    assert exit_code == 0
-    assert "Applied close actions:" in output
-    assert "dissolve GitHub stack #7" in output
-    assert f"close PR #{orphaned_pr_number}" in output
-    assert "prune orphan record" in output
-    assert fake_repo.pull_requests[orphaned_pr_number].state == "closed"
-    assert issue_comments(fake_repo, orphaned_pr_number) == []
-    assert orphaned_change_id not in refreshed_state.review_identities
-    assert orphaned_bookmark not in remote_refs(fake_repo.git_dir)
-
-
 def test_unstack_cleanup_orphans_retries_base_after_dependent_closes(
     tmp_path: Path,
     monkeypatch,
@@ -691,6 +638,7 @@ def test_unstack_cleanup_orphans_retries_base_after_dependent_closes(
     )
 
     run_command(["jj", "abandon", *change_ids], repo)
+    fake_repo.native_stacks = {}
 
     dry_run_exit_code = run_main(
         repo,
@@ -759,6 +707,7 @@ def test_unstack_cleanup_orphans_continues_after_one_orphan_is_blocked(
     state_store = ReviewStateStore.for_repo(repo)
     fake_repo.pull_requests[2].base_ref = "main"
     run_command(["jj", "abandon", *change_ids], repo)
+    fake_repo.native_stacks = {}
 
     async def dissolve_exact(selection, **_kwargs):
         if tuple(selection.pull_numbers) == (1,):
@@ -845,6 +794,7 @@ def test_unstack_cleanup_pull_request_closes_orphaned_pr(
 
     run_command(["jj", "abandon", orphaned_change_id], repo)
     fake_repo.pull_requests[orphaned_pr_number].state = "closed"
+    fake_repo.native_stacks = {}
 
     exit_code = run_main(
         repo,
@@ -901,7 +851,6 @@ def test_unstack_cleanup_pull_request_blocks_when_saved_submitted_target_is_miss
     assert "no valid last submitted commit" in combined
     assert f"close PR #{bottom_pr_number}" not in captured.out
     assert fake_repo.pull_requests[bottom_pr_number].state == "open"
-    assert issue_comments(fake_repo, bottom_pr_number)
     assert f"refs/heads/{bottom_bookmark}" in remote_refs(fake_repo.git_dir)
     assert bottom_change_id in state_store.load().review_identities
 
@@ -998,7 +947,6 @@ def test_unstack_cleanup_pull_request_blocks_when_remote_branch_drifted_external
     assert "head no longer matches the saved submitted commit" in combined
     assert f"close PR #{bottom_pr_number}" not in captured.out
     assert fake_repo.pull_requests[bottom_pr_number].state == "open"
-    assert issue_comments(fake_repo, bottom_pr_number)
     assert bottom_change_id in state_store.load().review_identities
 
 
@@ -1128,7 +1076,6 @@ def test_unstack_cleanup_pull_request_dry_run_rejects_partial_native_stack(
     stack = selected_stack(repo)
     bottom_change_id = stack.revisions[0].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    state_store.set_stacked_pull_requests("octo-org/stacked-review", True)
     fake_repo.native_stacks = {7: (1, 2)}
     state = state_store.load()
     bottom_bookmark = state.review_identities[bottom_change_id].head_ref
@@ -1184,6 +1131,7 @@ def test_unstack_cleanup_pull_request_orphan_close_is_idempotent_after_branch_al
             ),
         ),
     )
+    fake_repo.native_stacks = {}
 
     exit_code = run_main(
         repo,
@@ -1226,46 +1174,6 @@ def test_unstack_apply_blocks_when_github_no_longer_reports_the_cached_pull_requ
     assert state_store.load() == initial_state
 
 
-def test_unstack_apply_checkpoints_prior_progress_before_later_block(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = selected_stack(repo)
-    first_change_id = stack.revisions[0].change_id
-    head_change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    first_bookmark = initial_state.review_identities[first_change_id].head_ref
-    head_pr_number = initial_state.review_identities[head_change_id].pr_number
-
-    fake_repo.create_pull_request(
-        base_ref="main",
-        body="duplicate",
-        head_ref=first_bookmark,
-        title="feature 1 duplicate",
-    )
-
-    first_exit_code = run_main(repo, config_path, "unstack", head_change_id)
-    first_run = capsys.readouterr()
-    checkpointed_state = state_store.load()
-
-    second_exit_code = run_main(repo, config_path, "unstack", head_change_id)
-    second_run = capsys.readouterr()
-
-    assert first_exit_code == 1
-    assert second_exit_code == 1
-    assert "Close blocked:" in first_run.out
-    assert checkpointed_state == initial_state
-    assert fake_repo.pull_requests[1].state == "open"
-    assert fake_repo.pull_requests[2].state == "closed"
-    assert "previous close was interrupted" not in second_run.out
-    assert f"close PR #{head_pr_number}" not in second_run.out
-
-
 def test_unstack_apply_requires_checkout_after_sparse_state_loss(
     tmp_path: Path,
     monkeypatch,
@@ -1302,7 +1210,11 @@ def test_unstack_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
     initial_state = state_store.load()
     bookmark = initial_state.review_identities[change_id].head_ref
     fake_repo.create_issue_comment(
-        body=f"{STACK_NAVIGATION_COMMENT_MARKER}\nextra",
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\none",
+        issue_number=2,
+    )
+    fake_repo.create_issue_comment(
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\ntwo",
         issue_number=2,
     )
     initial_comments = issue_comments(fake_repo, 2)
@@ -1312,7 +1224,7 @@ def test_unstack_apply_cleanup_exits_nonzero_when_cleanup_is_blocked(
 
     assert exit_code == 1
     assert "Close blocked:" in captured.out
-    assert "stack navigation comment:" in captured.out
+    assert "stack overview comment:" in captured.out
     assert fake_repo.pull_requests[2].state == "closed"
     assert issue_comments(fake_repo, 2) == initial_comments
     assert (

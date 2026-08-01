@@ -45,7 +45,6 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._fetch_isolation import report_fetch_isolation
-from jj_stack.commands._github_stack_support import resolve_github_stack_support
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
@@ -96,11 +95,7 @@ from .pull_requests import (
 )
 from .render import print_submit_result, render_selected_line
 from .revisions import prepare_submit_revisions
-from .stack_comments import (
-    navigation_comment_bodies,
-    stack_overview_comment_bodies,
-    sync_stack_comments,
-)
+from .stack_comments import stack_overview_comment_bodies, sync_stack_comments
 
 HELP = "Send a jj stack to GitHub for review"
 
@@ -470,18 +465,14 @@ async def run_submit_async(
                 (
                     github_repository_state,
                     discovered_pull_requests,
-                    stack_support,
+                    observed_stacks,
                 ) = await asyncio.gather(
                     github_client.get_repository(),
                     discover_pull_requests_by_branch(
                         github_client=github_client,
                         branches=tuple(resolution.branch for resolution in branch_resolutions),
                     ),
-                    resolve_github_stack_support(
-                        github_client=github_client,
-                        state_store=state_store,
-                        persist=not dry_run,
-                    ),
+                    github_client.list_stacks(),
                 )
             except GithubClientError as error:
                 raise CliError(
@@ -536,43 +527,32 @@ async def run_submit_async(
                     **observed_base_targets,
                 },
             )
-            if pushes_review_branches and (stack_support.supported or not dry_run)
+            if pushes_review_branches
             else ()
         )
-        native_plan = None
-        if stack_support.supported:
-            desired_pull_numbers = tuple(
-                pending.discovered_pull_request.number
-                if pending.discovered_pull_request is not None
-                else None
+        desired_pull_numbers = tuple(
+            pending.discovered_pull_request.number
+            if pending.discovered_pull_request is not None
+            else None
+            for pending in pending_syncs
+        )
+        native_plan = plan_native_stack(
+            desired=desired_pull_numbers,
+            observed_stacks=observed_stacks,
+            pull_numbers_requiring_base_update={
+                pull_request.number
                 for pending in pending_syncs
-            )
-            observed_stacks = stack_support.observed_stacks
-            if observed_stacks is None and any(desired_pull_numbers):
-                try:
-                    observed_stacks = await github_client.list_stacks()
-                except GithubClientError as error:
-                    raise CliError("Could not inspect native GitHub stack membership") from error
-            native_plan = plan_native_stack(
-                desired=desired_pull_numbers,
-                observed_stacks=observed_stacks or (),
-                pull_numbers_requiring_base_update={
-                    pull_request.number
-                    for pending in pending_syncs
-                    if (pull_request := pending.discovered_pull_request) is not None
-                    and (
-                        pull_request.base.ref != pending.base_branch or pending in retarget_syncs
-                    )
-                },
-            )
-            if native_plan.action == "replace" and not dry_run:
-                assert (native_stack := native_plan.affected_stack) is not None
-                await GithubStackSelection(
-                    github_client,
-                    native_stack.pull_request_numbers,
-                    state_store,
-                ).dissolve_exact(observed=(native_stack,))
-                native_plan = NativeStackPlan("create" if len(pending_syncs) > 1 else "none")
+                if (pull_request := pending.discovered_pull_request) is not None
+                and (pull_request.base.ref != pending.base_branch or pending in retarget_syncs)
+            },
+        )
+        if native_plan.action == "replace" and not dry_run:
+            assert (native_stack := native_plan.affected_stack) is not None
+            await GithubStackSelection(
+                github_client,
+                native_stack.pull_request_numbers,
+            ).dissolve_exact(observed=(native_stack,))
+            native_plan = NativeStackPlan("create" if len(pending_syncs) > 1 else "none")
         if not dry_run:
             if pushes_review_branches:
                 await retarget_review_bases_before_branch_push(
@@ -606,34 +586,21 @@ async def run_submit_async(
             )
 
         if not dry_run:
-            if native_plan is not None:
-                pull_numbers = tuple(
-                    pull_number
-                    for revision in submitted_revisions
-                    if (pull_number := revision.pull_request_number) is not None
-                )
-                if len(pull_numbers) != len(submitted_revisions):
-                    raise AssertionError("Native submit requires concrete pull request numbers.")
-                await apply_native_stack_plan(
-                    github_client=github_client,
-                    plan=native_plan,
-                    pull_numbers=pull_numbers,
-                )
+            pull_numbers = tuple(
+                pull_number
+                for revision in submitted_revisions
+                if (pull_number := revision.pull_request_number) is not None
+            )
+            if len(pull_numbers) != len(submitted_revisions):
+                raise AssertionError("Native submit requires concrete pull request numbers.")
+            await apply_native_stack_plan(
+                github_client=github_client,
+                plan=native_plan,
+                pull_numbers=pull_numbers,
+            )
             await sync_stack_comments(
                 concurrency=_GITHUB_INSPECTION_CONCURRENCY,
                 github_client=github_client,
-                navigation_bodies=(
-                    {
-                        pull_number: None
-                        for revision in submitted_revisions
-                        if (pull_number := revision.pull_request_number) is not None
-                    }
-                    if native_plan is not None
-                    else navigation_comment_bodies(
-                        revisions=submitted_revisions,
-                        trunk_branch=trunk_branch,
-                    )
-                ),
                 overview_bodies=stack_overview_comment_bodies(
                     generated_stack_description=prepared_inputs.generated_stack_description,
                     revisions=submitted_revisions,

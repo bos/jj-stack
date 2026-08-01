@@ -8,8 +8,8 @@ import pytest
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
 from jj_stack.github.stack_comments import (
-    STACK_NAVIGATION_COMMENT_MARKER,
-    delete_stack_comment,
+    STACK_OVERVIEW_COMMENT_MARKER,
+    delete_stack_overview_comment,
 )
 from jj_stack.models.github import GithubIssueComment
 
@@ -39,7 +39,7 @@ class _CommentClient:
     "comments",
     (
         (_comment(body="marker removed", comment_id=7),),
-        (_comment(body=STACK_NAVIGATION_COMMENT_MARKER, comment_id=8),),
+        (_comment(body=STACK_OVERVIEW_COMMENT_MARKER, comment_id=8),),
     ),
     ids=("expected-marker-edited", "replacement-marker-created"),
 )
@@ -50,10 +50,9 @@ def test_comment_delete_blocks_when_marker_plan_changes(
 
     with pytest.raises(CliError, match="marker"):
         asyncio.run(
-            delete_stack_comment(
+            delete_stack_overview_comment(
                 comment_id=7,
                 github_client=cast(GithubClient, client),
-                kind="navigation",
                 pull_request_number=3,
             )
         )
@@ -65,10 +64,9 @@ def test_comment_delete_accepts_absent_target_only_without_replacement_marker() 
     client = _CommentClient((_comment(body="ordinary comment", comment_id=8),))
 
     deleted = asyncio.run(
-        delete_stack_comment(
+        delete_stack_overview_comment(
             comment_id=7,
             github_client=cast(GithubClient, client),
-            kind="navigation",
             pull_request_number=3,
         )
     )
