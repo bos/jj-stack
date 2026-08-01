@@ -98,6 +98,28 @@ def test_main_renders_cli_error_hint_on_separate_line(
     assert "Hint: Run view and retry." in err_lines
 
 
+def test_sync_help_hanging_indents_wrapped_bullets(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("COLUMNS", "60")
+
+    exit_code = main(["sync", "--help"])
+    lines = capsys.readouterr().out.splitlines()
+
+    assert exit_code == 0
+    bullet_indexes = [index for index, line in enumerate(lines) if line.startswith("- ")]
+    assert bullet_indexes
+    for index in bullet_indexes:
+        following = lines[index + 1 :]
+        wrapped_lines = next(
+            (following[:end] for end, line in enumerate(following) if not line),
+            following,
+        )
+        assert wrapped_lines
+        assert all(line.startswith("  ") for line in wrapped_lines)
+
+
 @pytest.mark.parametrize("command", ["view", "status", "st", "v"])
 def test_main_preserves_view_selector_order(
     monkeypatch: pytest.MonkeyPatch,

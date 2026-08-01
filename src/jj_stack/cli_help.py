@@ -287,4 +287,7 @@ def _emit_help_paragraphs(text: str) -> None:
     for index, paragraph in enumerate(_help_paragraphs(text)):
         if index:
             console.output()
-        console.output(_help_rich_text(paragraph))
+        if paragraph.startswith("- "):
+            console.output(ui.prefixed_line("- ", _help_rich_text(paragraph[2:])))
+        else:
+            console.output(_help_rich_text(paragraph))
