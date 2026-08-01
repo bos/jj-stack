@@ -8,10 +8,14 @@ GitHub merges a multi-PR prefix together through its stack API. A one-PR review 
 ordinary pull-request API. This command does not update local history or remove review state; run
 the printed `jj-stack sync` command after GitHub merges anything.
 
-Common examples: `jj-stack merge --dry-run` previews the merge without changing GitHub;
-`jj-stack merge` asks GitHub to merge the ready bottom changes; and
-`jj-stack merge --pull-request 123 --method squash` stops at one linked PR and chooses the
-merge method explicitly.
+Common examples:
+
+- `jj-stack merge --dry-run` previews the merge without changing GitHub.
+
+- `jj-stack merge` asks GitHub to merge the ready bottom changes.
+
+- `jj-stack merge --pull-request 123 --method squash` stops at one linked PR and chooses the
+  merge method explicitly.
 """
 
 from __future__ import annotations

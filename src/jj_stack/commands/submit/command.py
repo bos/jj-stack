@@ -30,9 +30,13 @@ a non-zero editor exit aborts it before any change is made. The editor is the on
 The `--label`, `--reviewers`, and `--team-reviewers` flags accept comma-separated values and may
 be repeated. When passed, they override the corresponding configured defaults for this run.
 
-Common examples: `jj-stack submit --dry-run` previews the current stack;
-`jj-stack submit` creates or refreshes its pull requests; and
-`jj-stack submit <head-change-id>` selects another stack explicitly.
+Common examples:
+
+- `jj-stack submit --dry-run` previews the current stack.
+
+- `jj-stack submit` creates or refreshes its pull requests.
+
+- `jj-stack submit <head-change-id>` selects another stack explicitly.
 """
 
 from __future__ import annotations

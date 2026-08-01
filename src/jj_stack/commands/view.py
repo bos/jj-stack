@@ -7,9 +7,14 @@ It reads pull request state from GitHub but does not fetch, so run `jj git fetch
 local trunk may be behind. Mix revsets and repeated `--pull-request` values to inspect several
 stacks in one run.
 
-Common examples: `jj-stack view` inspects the stack ending at `@` when the working-copy change is
-described and nonempty, otherwise `@-`; `jj-stack view --pull-request 123` finds the local stack
-for one linked PR; and `jj-stack view <head-change-id>` selects another stack explicitly.
+Common examples:
+
+- `jj-stack view` inspects the stack ending at `@` when the working-copy change is described and
+  nonempty, otherwise `@-`.
+
+- `jj-stack view --pull-request 123` finds the local stack for one linked PR.
+
+- `jj-stack view <head-change-id>` selects another stack explicitly.
 """
 
 from __future__ import annotations

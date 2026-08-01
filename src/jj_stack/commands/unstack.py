@@ -1,19 +1,28 @@
 """End review for a stack without changing its local jj changes.
 
-With no mode flag, `unstack` closes the tracked open pull requests but keeps their review
-branches and tracking, so `jj-stack cleanup` can still remove them later. Passing `--cleanup`
-also deletes each closed pull request's review branch, overview comment, and tracking.
-Use `--pull-request` to close by PR number or URL.
+Choose what to remove:
+
+- With no mode flag, `unstack` closes the tracked open pull requests but keeps their review
+  branches and tracking, so `jj-stack cleanup` can still remove them later.
+
+- With `--cleanup`, it also deletes each closed pull request's review branch, overview comment,
+  and tracking.
+
+- With `--local`, it forgets local review tracking without closing PRs or deleting branches.
 
 Use `jj-stack unstack --cleanup --pull-request <pr>` to close and clean up an orphaned PR shown
 by `list`. Use `jj-stack unstack --cleanup --pull-request orphans` to clean up every orphan
-shown by `list`. Use `jj-stack unstack --local` to forget local review tracking without closing
-PRs or deleting branches.
+shown by `list`. Without `--cleanup`, use `--pull-request` to close by PR number or URL while
+keeping its review branch and tracking.
 
-Common examples: `jj-stack unstack --dry-run` previews which PRs would close;
-`jj-stack unstack --local` forgets only local review tracking; and
-`jj-stack unstack --cleanup --pull-request orphans` closes and cleans up every orphan shown by
-`list`.
+Common examples:
+
+- `jj-stack unstack --dry-run` previews which PRs would close.
+
+- `jj-stack unstack --local` forgets only local review tracking.
+
+- `jj-stack unstack --cleanup --pull-request orphans` closes and cleans up every orphan shown by
+  `list`.
 """
 
 from __future__ import annotations
