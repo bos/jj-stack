@@ -167,7 +167,7 @@ def test_finish_exit_code_separates_a_deliberate_skip_from_a_failed_write() -> N
     preserved = ReviewFinishResult(
         candidate=candidate,
         outcome="finished",
-        retirement_skip_reason="another local stack still depends on it",
+        retirement_skip_reason="another local stack still uses this merged change",
     )
     failed = ReviewFinishResult(
         candidate=candidate,

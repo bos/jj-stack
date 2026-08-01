@@ -283,6 +283,63 @@ def test_sync_preserves_unpublished_edits_to_an_active_stack_survivor(
     assert state_store.load() == state_before
 
 
+def test_sync_rebases_a_conflicted_review_before_stopping_its_update(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    on_trunk, reviewed = selected_stack(repo).revisions
+    reviewed_baseline = state_store.load().submitted_baselines[reviewed.change_id].commit_id
+
+    run_command(["jj", "new", on_trunk.change_id], repo)
+    commit_file(repo, "left conflict", "conflict.txt")
+    left = JjClient(repo).resolve_revision("@-")
+    run_command(["jj", "new", on_trunk.change_id], repo)
+    commit_file(repo, "right conflict", "conflict.txt")
+    right = JjClient(repo).resolve_revision("@-")
+    run_command(["jj", "new", left.commit_id, right.commit_id], repo)
+    conflict_source = JjClient(repo).resolve_revision("@")
+    assert conflict_source.conflict
+    run_command(
+        [
+            "jj",
+            "restore",
+            "--from",
+            conflict_source.commit_id,
+            "--into",
+            reviewed.change_id,
+            "conflict.txt",
+        ],
+        repo,
+    )
+    run_command(["jj", "edit", reviewed.change_id], repo)
+    run_command(["jj", "new"], repo)
+    run_command(
+        ["jj", "abandon", conflict_source.commit_id, left.commit_id, right.commit_id],
+        repo,
+    )
+    conflicted_before = JjClient(repo).resolve_revision(reviewed.change_id)
+    assert conflicted_before.conflict
+    _squash_merge_pull_request(fake_repo, 1)
+
+    exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 3
+    rendered = " ".join(captured.err.split())
+    assert "The local rebase is complete" in rendered
+    assert f"jj-stack submit {reviewed.change_id}" in rendered
+    conflicted_after = JjClient(repo).resolve_revision(reviewed.change_id)
+    assert conflicted_after.conflict
+    assert conflicted_after.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert conflicted_after.commit_id != conflicted_before.commit_id
+    assert fake_repo.pull_requests[2].head_sha == reviewed_baseline
+    assert on_trunk.change_id in state_store.load().review_identities
+
+
 def test_sync_reports_a_closed_stack_survivor_as_a_closed_review_not_branch_drift(
     tmp_path: Path,
     monkeypatch,
@@ -623,8 +680,9 @@ def test_sync_explains_the_reported_rebase_ordering_stop_without_mutation(
 
     assert exit_code == 1
     unwrapped = " ".join(captured.err.split())
-    assert f"Reviewed {reviewed.change_id[:8]}" in unwrapped
-    assert f"unmerged local changes: {lower.change_id[:8]}" in unwrapped
+    assert f"Cannot sync reviewed {reviewed.change_id[:8]}" in unwrapped
+    assert f"unmerged local changes are its parents: {lower.change_id[:8]}" in unwrapped
+    assert "cannot decide whether those local changes belong before or after it" in unwrapped
     assert f"Submitted commit: {submitted_commit_id}" in unwrapped
     assert f"Local copy commit: {local_reviewed.commit_id}" in unwrapped
     assert f"Fetched trunk commit: {landed_commit_id}" in unwrapped
@@ -641,7 +699,7 @@ def test_sync_explains_the_reported_rebase_ordering_stop_without_mutation(
     assert fake_repo.pull_request_events == events_before
 
 
-def test_sync_preserves_a_described_working_copy_above_the_reviewed_survivor(
+def test_sync_converges_selected_path_while_a_sibling_still_needs_the_merged_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -649,26 +707,25 @@ def test_sync_preserves_a_described_working_copy_above_the_reviewed_survivor(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     on_trunk, reviewed = selected_stack(repo).revisions
-    write_file(repo / "local-wip.txt", "keep this work\n")
-    run_command(["jj", "describe", "-m", "local WIP"], repo)
+    run_command(["jj", "new", on_trunk.change_id], repo)
+    commit_file(repo, "sibling work", "sibling.txt")
+    sibling = selected_stack(repo).head
     jj = JjClient(repo)
-    working_copy_before = jj.resolve_revision("@")
-    state_before = ReviewStateStore.for_repo(repo).load()
-    reviewed_head_before = fake_repo.pull_requests[2].head_sha
     _squash_merge_pull_request(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
     captured = capsys.readouterr()
 
-    assert exit_code == 1
-    assert "Other local changes depend on this stack" in captured.err
-    working_copy_after = jj.resolve_revision("@")
-    assert working_copy_after.commit_id == working_copy_before.commit_id
-    assert working_copy_after.parents == (reviewed.commit_id,)
-    assert jj.resolve_revision(reviewed.change_id).commit_id == reviewed.commit_id
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "another local stack still uses this merged change" in captured.out
+    assert f"jj-stack sync {sibling.change_id}" in captured.out
+    rewritten_reviewed = jj.resolve_revision(reviewed.change_id)
+    assert rewritten_reviewed.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert fake_repo.pull_requests[2].head_sha == rewritten_reviewed.commit_id
+    assert fake_repo.pull_requests[2].base_ref == "main"
+    assert jj.resolve_revision(sibling.change_id).parents == (on_trunk.commit_id,)
     assert jj.resolve_revision(on_trunk.change_id).commit_id == on_trunk.commit_id
-    assert ReviewStateStore.for_repo(repo).load() == state_before
-    assert fake_repo.pull_requests[2].head_sha == reviewed_head_before
+    assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
 def test_sync_rebases_trailing_local_work_without_creating_a_review(

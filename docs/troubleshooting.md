@@ -137,8 +137,8 @@ changes above the current `trunk()`, and updates only PRs that already exist for
 `jj-stack sync --dry-run <head-change-id>` first to preview merged changes and any cleanup or
 rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
 When a stack merge rewrote the PRs that remain open, `sync` adopts those exact reviewed commits
-and rebases only trailing local work above them. It leaves other stacks and unreviewed trailing
-changes alone.
+and rebases trailing local work above them. Ordinary `jj` rewrite propagation may also rebase
+local descendants, but `sync` updates reviews only for the selected stack.
 
 ## Reviewed work is on trunk but an earlier local change remains
 
@@ -169,12 +169,22 @@ Use the bounded bottom-to-head revset so sibling paths are not rewritten. Then r
 
 ## `sync` rebased the stack but reported conflicts
 
-The local rebase happened, but `jj-stack` did not update conflicting changes on GitHub. Inspect
-the conflicts with `jj status`, resolve them using your normal `jj` workflow, and then run:
+`sync` can rebase a change that was already conflicted, and a clean change can become
+conflicted during the rebase. In either case, the local rebase remains in place but `jj-stack`
+does not update the conflicting review on GitHub. Inspect the conflicts with `jj status`, resolve
+them using your normal `jj` workflow, and then run:
 
 ```bash
 jj-stack submit <head-change-id>
 ```
+
+## `sync` says another local stack still needs a merged change
+
+Two local paths still depend on the same reviewed change. `sync` rebased the path you selected,
+but it did not remove the shared change or its tracking because the other path still needs them.
+
+Run each `jj-stack sync <head-change-id>` command printed by the message. After every dependent
+path has moved to trunk, the last run can remove the old local change and its tracking.
 
 ## `list` or `view` says another stack changed since its last submit
 

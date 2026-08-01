@@ -206,8 +206,9 @@ portion as one operation. A one-PR review uses GitHub's ordinary pull-request me
 `merge` never pushes trunk, rewrites local history, or removes review tracking. Run
 `jj-stack sync <head-change-id>` after GitHub merges lower changes. It rebases the remaining
 selected changes onto `trunk()`, updates only PRs that already exist for them, and cleans up a
-merged PR when no PR above still needs its review branch. Unreviewed trailing work stays local,
-and other local stacks are left alone. Preview it with
+merged PR when no local path still needs it. Conflicts remain local for you to resolve before
+their PRs are updated. Ordinary `jj` rewrite propagation may also rebase local descendants, but
+`sync` updates reviews only for the selected stack. Preview it with
 `jj-stack sync --dry-run <head-change-id>`; if a rebase is needed, the later PR-update plan is
 available only after you run `sync`.
 

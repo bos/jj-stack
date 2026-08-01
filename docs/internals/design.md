@@ -85,11 +85,12 @@ the selected path until `sync` reconciles it.
 `jj-stack` supports only linear stacks, so the walk follows each commit's sole parent. A merge
 commit inside the selected chain is rejected, as is a divergent review change. Unresolved
 conflicts are a separate matter: they do not break the shape, so `view` and `list` report a
-conflicted change, while `submit`, `merge`, and `sync` refuse to act on one.
+conflicted change. `submit` and `merge` refuse to act on one. `sync` may rebase it locally but
+does not update its review until the conflict is resolved.
 
-Commands validate only the selected chain. Other visible children elsewhere in the DAG are not
-an error. If an ancestor on the selected chain has another reviewable child, that child and its
-descendants are out of scope unless the command explicitly selects them.
+Commands plan review mutations from the selected chain. Other visible children elsewhere in the
+DAG are not an error. A `sync` rebase may also move descendants when `jj` propagates a rewrite,
+but it never updates reviews outside the selected chain.
 
 A rebase merge preserves `jj`'s change ID, so once the result is fetched, the commit on
 trunk and the superseded local commit are two visible copies of one change ID: the local copy is
@@ -363,7 +364,8 @@ Three modes deliberately reach beyond one selected stack:
 - `unstack --cleanup --pull-request <pr>`, which may select one tracked PR whose local change is
   gone, and `unstack --cleanup --pull-request orphans`, which selects all such PRs
 
-No default invocation mutates beyond the selected stack. Ambiguous selectors always fail closed.
+No default invocation mutates reviews beyond the selected stack. A `sync` rebase may propagate to
+local descendants under ordinary `jj` rewrite rules. Ambiguous selectors always fail closed.
 
 ### Identity and mutation preconditions
 
@@ -476,26 +478,27 @@ Two observations prove that reviewed work reached trunk. GitHub reporting a pull
 merged is not one of them, because it says nothing about the trunk this repository fetched:
 
 - **Exact submitted commit on trunk**: the baseline is an ancestor of fetched trunk and the live
-  PR is a snapshot match. A PR belonging to a GitHub stack must also report merged before selected
-  `sync` may act on it.
+  PR is a snapshot match. A PR belonging to a GitHub stack must also report merged before `sync`
+  may act on it.
 - **Selected PR's rewritten merge result on trunk**: the saved PR is an identity match, reports
   merged, still reports the submitted head, and reports a merge-result commit that is an ancestor
   of fetched trunk. This covers squash and rebase results.
 
-`sync` may use either proof. `sync --all` may use only exact submitted-commit evidence
-because a rewritten merge result is selected-stack evidence and cannot support repository-wide
-local change.
+`sync` may use either proof. `sync --all` may use only exact submitted-commit evidence because a
+rewritten merge result proves only the stack named by the command and cannot support
+repository-wide local change.
 
 A PR merely reporting merged, or a merge result no longer reachable from fetched trunk,
 permits no change. Local revisions, identity, and baseline remain untouched until a later sync can
 prove the result on fetched trunk.
 
-When unmerged local changes precede the local copy of reviewed work proven on fetched trunk,
-`sync` stops without mutation. It names the earlier changes and the exact submitted,
-local, and fetched-trunk commits, then gives a `jj log` command for inspecting the two histories.
-The user chooses the intended order with ordinary `jj`, with agent help if useful. Afterward they
-inspect the remaining local reviews, sync a remaining mutable reviewed head, or run cleanup when
-no reviewed local copy remains.
+When an unmerged local change sits below a reviewed change whose submitted work is proven on
+fetched trunk, `sync` stops without mutation. Rebasing would silently decide whether that local
+change belongs before or after the merged work. The diagnostic names the changes and the exact
+submitted, local, and fetched-trunk commits, then gives a `jj log` command for inspecting both
+histories. The user chooses the intended order with ordinary `jj`, with agent help if useful.
+Afterward they inspect the remaining local reviews, sync a remaining mutable reviewed head, or run
+cleanup when no reviewed local copy remains.
 
 Here unpublished local work means a mutable revision whose commit is neither its submitted
 baseline nor an exact GitHub stack head that this run may adopt.
@@ -503,14 +506,22 @@ baseline nor an exact GitHub stack head that this run may adopt.
 `sync` reconciles the unmerged suffix only when:
 
 - rewriting it would not discard unpublished local work
-- the remainder is linear and conflict-free
+- no surviving change is divergent
 - no unreviewed change sits between reviewed survivors
-- no other ordinary linear review path, including one ending at the invoking workspace's
-  described, nonempty working copy, depends on retiring a revision whose work is on trunk
 
-It rebases surviving changes onto fetched trunk, updates existing reviews, and removes tracking
-for changes on trunk only after survivor updates succeed. It never rebases merely because trunk
-advanced; ordinary `jj rebase` owns that workflow.
+It rebases surviving changes onto fetched trunk even when they contain conflicts. If a reviewed
+survivor remains conflicted, the local rebase stays in place but its review is not updated. The
+user resolves the conflict with `jj` and runs `submit` for the remaining stack.
+
+Rewriting a selected revision may also rebase its local descendants under ordinary `jj` rules. If
+another local path still depends on a merged revision after that rewrite, `sync` leaves the
+revision and its tracking in place and names each other stack that still needs `sync`. It never
+updates reviews outside the selected chain.
+
+Tracking for changes on trunk is removed only after survivor updates succeed and no local path
+still needs it. A failure after local convergence leaves completed work in place; a rerun observes
+the current DAG, tracking, and GitHub state and continues from there. `sync` never rebases merely
+because trunk advanced; ordinary `jj rebase` owns that workflow.
 
 GitHub preserves `jj`'s `change-id` commit header through rebase merges of PRs, but not squash
 merges. A matching full change ID on fetched trunk identifies the successor rather than
@@ -645,8 +656,9 @@ explicit rules:
 ### Cross-stack rewrites
 
 When a rewrite moves changes between local stacks, identity still follows full `change_id`, each
-stack command still acts on one selected chain, and ambiguous linkage still fails closed. Other
-affected stacks wait for their own explicit commands.
+stack command still updates reviews for one selected chain, and ambiguous linkage still fails
+closed. Local `jj` rewrites may propagate to descendants on another path. Reviews on that path
+wait for their own explicit commands.
 
 - **Move changes between stacks**: dissolve any existing GitHub stack spanning more than one
   resulting path, then submit one resulting stack to update that chain. Moved changes retain their

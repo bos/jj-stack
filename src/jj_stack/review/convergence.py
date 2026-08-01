@@ -105,9 +105,11 @@ def build_selected_convergence_plan(
             continue
         if survivors:
             raise CliError(
-                t"Reviewed {ui.change_id(revision.change_id)} is proven on fetched trunk, but "
-                t"its local copy still follows unmerged local changes: "
-                t"{ui.join(lambda item: ui.change_id(item.change_id), tuple(survivors))}.\n"
+                t"Cannot sync reviewed {ui.change_id(revision.change_id)} because these "
+                t"unmerged local changes are its parents: "
+                t"{ui.join(lambda item: ui.change_id(item.change_id), tuple(survivors))}. "
+                t"The submitted review is already on fetched trunk, so sync cannot decide "
+                t"whether those local changes belong before or after it.\n"
                 t"Submitted commit: "
                 t"{ui.semantic_text(candidate.submitted_baseline.commit_id, 'commit_id')}\n"
                 t"Local copy commit: {ui.semantic_text(revision.commit_id, 'commit_id')}\n"
@@ -175,7 +177,7 @@ def build_selected_convergence_plan(
         reviewed_survivors=tuple(reviewed),
         survivors=tuple(survivors),
     )
-    _validate_rebase_scope(context=context, plan=plan)
+    _require_no_divergent_survivors(plan)
     return plan
 
 
@@ -217,50 +219,15 @@ def _trunk_evidence_kind_for(
     return evidence_kind
 
 
-def _validate_rebase_scope(
-    *,
-    context: CommandContext,
-    plan: SelectedConvergencePlan,
-) -> None:
+def _require_no_divergent_survivors(plan: SelectedConvergencePlan) -> None:
     for revision in plan.survivors:
-        if revision.conflict or revision.divergent:
+        if revision.divergent:
             raise CliError(
-                t"The changes remaining after the merge are not linear at "
-                t"{ui.change_id(revision.change_id)}.",
-                hint=t"Resolve the conflict or divergence with {ui.cmd('jj')}, then rerun sync "
-                t"for this stack.",
+                t"Cannot rebase remaining {ui.change_id(revision.change_id)} because it has "
+                t"multiple visible revisions.",
+                hint=t"Resolve the divergence with {ui.cmd('jj')}, then rerun sync for this "
+                t"stack.",
             )
-    if not plan.on_trunk or not plan.survivors:
-        return
-    selected_commit_ids = {revision.commit_id for revision in plan.survivors}
-    selected_commit_ids.update(
-        item.revision.commit_id for item in plan.on_trunk if item.revision is not None
-    )
-    source_commit_ids = tuple(
-        item.revision.commit_id
-        if item.revision is not None
-        else item.candidate.submitted_baseline.commit_id
-        for item in plan.on_trunk
-    )
-    repository_paths = observe_repository_paths(
-        jj_client=context.jj_client,
-        tracked_change_ids=(),
-        descendant_of=source_commit_ids,
-        include_current_working_copy=True,
-    )
-    outside_by_commit_id = {
-        revision.commit_id: revision
-        for path in repository_paths.paths
-        for revision in path.stack.revisions
-        if revision.commit_id not in selected_commit_ids and not revision.immutable
-    }
-    outside = tuple(outside_by_commit_id.values())
-    if outside:
-        heads = ui.join(lambda revision: ui.change_id(revision.change_id), outside)
-        raise CliError(
-            t"Other local changes depend on this stack: {heads}.",
-            hint="Select each affected stack and run jj-stack sync explicitly.",
-        )
 
 
 def rewritten_retirement_blocker(
@@ -285,7 +252,11 @@ def rewritten_retirement_blocker(
             *(revision.change_id for revision in plan.survivors),
         },
     )
-    return None if recovery is None else t"another local stack still depends on it; {recovery}"
+    return (
+        None
+        if recovery is None
+        else t"another local stack still uses this merged change; {recovery}"
+    )
 
 
 def _require_no_unpublished_edits(

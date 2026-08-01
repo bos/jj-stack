@@ -271,20 +271,40 @@ jj-stack sync <head-change-id>
 
 `sync` fetches trunk, verifies which lower PRs GitHub merged, rebases the remaining selected
 changes, and updates only PRs that already exist for them. It does not open a PR for trailing WIP
-or touch other local stacks. If it cannot safely remove an old local copy, it leaves the change
-alone and prints the commits and inspection step that explain the stop.
+or update reviews outside the selected stack. As with any `jj` rewrite, rebasing a selected change
+may also rebase its local descendants.
 
 GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
 `sync` handles either result without pretending the new GitHub commit is the old local change.
 If a stack merge also rewrote the PRs that remain open, `sync` adopts those exact reviewed
 commits and rebases only your trailing local work above them.
 
-If reviewed work is already on fetched trunk but its local copy still follows unmerged changes,
-`sync` cannot choose their intended order. It changes nothing and prints the earlier change IDs,
-the submitted, local, and fetched-trunk commits, and an exact `jj log` command. Inspect that
-history and choose the order with ordinary `jj`; ask an agent to inspect the repository if useful.
-Then run `jj-stack view` for the remaining local reviews. Sync a remaining mutable reviewed head,
-or run `jj-stack cleanup` if no reviewed local copy remains.
+The local DAG stops `sync` before it rebases in these cases:
+
+- A remaining change has multiple visible revisions, so there is no single revision to rebase.
+- A merged change has local edits made after submit. Removing it would discard those edits.
+- A local change that has not merged is a parent of reviewed work that has merged. Moving the
+  local change could put it before or after the merged work, and `sync` will not choose for you.
+- An unreviewed change sits between reviewed changes. `sync` updates existing PRs but never
+  creates the missing review.
+
+When the order between an unmerged parent and merged review is ambiguous, the diagnostic prints
+the relevant change IDs and commits plus an exact `jj log` command. Inspect both histories and
+choose the order with ordinary `jj`; ask an agent to inspect the repository if useful. Then run
+`jj-stack view`. Sync a remaining mutable reviewed head, or run `jj-stack cleanup` if no reviewed
+local copy remains.
+
+Before rebasing, `sync` also checks the configured remote, fetched trunk, saved PR links, and
+GitHub stack membership. A missing, moved, closed, or ambiguous review stops the run before local
+history changes. The diagnostic names the state to inspect or repair.
+
+Conflicts do not prevent the local rebase. If a reviewed change remains conflicted afterward,
+`sync` leaves the rebase in place and stops before updating that PR. Resolve the conflict with
+`jj`, then run `jj-stack submit <head-change-id>`.
+
+If another local path still depends on an old merged change, `sync` leaves that change and its
+tracking in place. It prints the head of each other stack that still needs `sync`. Work completed
+before any later stop remains in place, and rerunning `sync` continues from the current state.
 
 `sync` does not otherwise rewrite history. If your stack simply drifted because `trunk()`
 advanced without anything in your stack merging, rebase only the intended bottom-to-head path

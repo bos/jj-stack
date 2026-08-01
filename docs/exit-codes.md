@@ -9,7 +9,7 @@ matches; codes 7-9 are reserved because their `gh stack` meanings have no jj-sta
 | 0 | Success. |
 | 1 | Any other failure, including a command stopped by a blocked action. |
 | 2 | The selection does not form a supported review stack. |
-| 3 | Unresolved conflicts in the selected changes block the operation. |
+| 3 | Unresolved conflicts prevented a review update. |
 | 4 | GitHub authentication, network, or API failure. |
 | 5 | Invalid command-line arguments. |
 | 6 | A selector matched more than one target, so the command failed closed. |
@@ -30,6 +30,8 @@ Notes:
   together with the payload. See [json-output.md](json-output.md).
 - Commands that mutate review state (`submit`, `merge`, `sync`, `unstack`, `cleanup`) exit 1 when
   they ran but had to stop before completing every action; command output names what blocked them.
+- `sync` may finish its local rebase before exiting 3. Its message says whether to resolve the
+  conflicts and continue with `submit`.
 - Exit 2 covers selections `jj-stack` cannot review as a linear stack: a merge commit, a divergent
   change, a hidden or immutable commit, an empty or undescribed working copy, a path that never
   reaches `trunk()`, and a repository with no trunk bookmark configured. The message names the

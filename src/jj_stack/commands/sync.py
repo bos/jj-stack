@@ -1,18 +1,40 @@
 """Update a stack after GitHub merges, or clean up merged reviews with `sync --all`.
 
-This is the one command that changes local history. For a selected stack it fetches trunk, checks
-which pull requests at the bottom GitHub merged, abandons those local changes, rebases the
-remaining ones onto the new trunk, and updates the pull requests that already exist for them. It
-opens no new pull requests and leaves other stacks alone.
+`sync` is the only jj-stack command that changes local history. It fetches trunk and proves
+which reviewed changes reached it. It then rebases the remaining changes, updates only their
+existing pull requests, and retires reviews that no local path still needs. It never creates a
+pull request.
 
-Some states stop the whole run instead: a remaining change that is conflicted or divergent,
-unpublished local edits on a change GitHub already merged, reviewed work on fetched trunk whose
-local copy still follows unmerged changes, or another local stack built on the same changes.
-Follow the inspection or repair named by the message.
+Some local states stop `sync` before it rebases:
+
+- A remaining change has multiple visible revisions. `sync` cannot choose one.
+
+- A merged change contains edits made after it was submitted. Removing it would discard work.
+
+- A local change that has not merged is a parent of reviewed work that has merged. Moving the
+  local change could put it before or after the merged work. `sync` will not choose for you.
+
+- An unreviewed change sits between reviewed changes. `sync` updates existing pull requests but
+  never creates the missing review.
+
+Before rebasing, `sync` also checks the configured remote, fetched trunk, saved pull request
+links, and GitHub stack membership. A missing, moved, closed, or ambiguous review stops the run
+before local history changes. The message names the state to inspect or repair.
+
+Conflicts do not prevent the local rebase. If a rebased review remains conflicted, `sync` leaves
+the conflict in local history and stops before updating that pull request. Resolve the conflict
+with `jj`, then run `jj-stack submit`.
+
+Rebasing a `jj` change also rebases its descendants. This may move local work above the selected
+stack, but `sync` updates pull requests only for the selected stack.
+
+A different local path may share a merged change with the stack being synced. If that path still
+uses the old local change, `sync` leaves the change and its tracking in place. It prints the other
+stack to sync next. A rerun observes work already completed and continues from there.
 
 `sync --all` never rebases or submits. It checks every locally tracked pull request and removes
-tracking for those whose submitted commit is already on trunk, printing a `jj-stack sync
-<head-change-id>` command for stacks that need the rebasing form instead.
+tracking for those whose submitted commit is already on trunk. For stacks that need a rebase, it
+prints a `jj-stack sync <head-change-id>` command instead.
 
 Use plain `jj rebase` when trunk merely advanced and nothing in the stack merged.
 """
@@ -31,7 +53,7 @@ from jj_stack.commands.submit.command import print_selected_line, run_submit_asy
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
 from jj_stack.commands.sync_global import run_global_recovery
-from jj_stack.errors import CliError, UsageError
+from jj_stack.errors import CliError, ConflictedStackError, UsageError
 from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
@@ -382,14 +404,25 @@ async def _update_selected_reviews(
         else:
             console.output("Nothing to submit: everything in this stack has merged.")
         return 0
-    result = await run_submit_async(
-        context=context,
-        on_prepared=None,
-        options=_sync_submit_options(
-            dry_run=dry_run,
-            revset=plan.reviewed_survivors[-1].change_id,
-        ),
-    )
+    head_change_id = plan.reviewed_survivors[-1].change_id
+    try:
+        result = await run_submit_async(
+            context=context,
+            on_prepared=None,
+            options=_sync_submit_options(
+                dry_run=dry_run,
+                revset=head_change_id,
+            ),
+        )
+    except ConflictedStackError as error:
+        if not plan.on_trunk:
+            raise
+        raise ConflictedStackError(
+            error.message,
+            hint=t"The local rebase is complete. Resolve the conflicts with {ui.cmd('jj')}, "
+            t"then update the remaining reviews with "
+            t"{ui.cmd(f'jj-stack submit {head_change_id}')}",
+        ) from error
     print_submit_result(result)
     return 0
 
