@@ -196,7 +196,7 @@ def _select_revision(observation: SelectedPathObservation) -> LocalRevision:
             raise AmbiguousSelectionError("The selector resolved to more than one revision.")
         if off_trunk:
             # A stack merge side parent is immutable to jj but remains outside
-            # the fetched trunk's first-parent path until selected sync retires it.
+            # the fetched trunk's first-parent path until sync retires it.
             return off_trunk[0]
         raise CliError("The selected change has no mutable local copy.")
 

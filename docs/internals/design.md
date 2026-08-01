@@ -202,7 +202,7 @@ evidence, and mutation rules.
 - **`list`** reports the repository-wide inventory of local stacks and orphaned tracked reviews.
 - **`submit`** publishes the selected stack. It is the only command that creates a PR or
   publishes a never-submitted change.
-- **`sync`** on a selected stack (called **selected `sync`** below) reconciles that stack after
+- **`sync`** reconciles the selected stack after
   reviewed work lands. It may rewrite surviving local changes, update their existing reviews, and
   retire tracking for changes whose work is on trunk. It never creates a PR.
 - **`sync --all`** performs weaker repository-wide reconciliation. It may retarget and close
@@ -390,13 +390,13 @@ swap, repository retarget, renamed head, moved branch, missing PR, or replacemen
 and names `relink` or `unstack --cleanup` followed by a fresh `submit`.
 
 Only review creation, `relink`, and `checkout` create or replace identity. `unstack --local`
-deletes it explicitly; selected `sync`, `sync --all`, and cleanup retire it from evidence.
+deletes it explicitly; `sync`, `sync --all`, and cleanup retire it from evidence.
 
 Only commands that successfully send or adopt a specific reviewed commit may replace
 `SubmittedBaseline` for the same review identity:
 
-- `submit` and selected `sync`, after a survivor's review update succeeds
-- selected `sync`, when adopting an exact surviving GitHub stack commit
+- `submit` and `sync`, after a survivor's review update succeeds
+- `sync`, when adopting an exact surviving GitHub stack commit
 - `relink`, from the observed remote target
 - `checkout`, when adopting an existing review
 
@@ -482,7 +482,7 @@ merged is not one of them, because it says nothing about the trunk this reposito
   merged, still reports the submitted head, and reports a merge-result commit that is an ancestor
   of fetched trunk. This covers squash and rebase results.
 
-Selected `sync` may use either proof. `sync --all` may use only exact submitted-commit evidence
+`sync` may use either proof. `sync --all` may use only exact submitted-commit evidence
 because a rewritten merge result is selected-stack evidence and cannot support repository-wide
 local change.
 
@@ -491,7 +491,7 @@ permits no change. Local revisions, identity, and baseline remain untouched unti
 prove the result on fetched trunk.
 
 When unmerged local changes precede the local copy of reviewed work proven on fetched trunk,
-selected `sync` stops without mutation. It names the earlier changes and the exact submitted,
+`sync` stops without mutation. It names the earlier changes and the exact submitted,
 local, and fetched-trunk commits, then gives a `jj log` command for inspecting the two histories.
 The user chooses the intended order with ordinary `jj`, with agent help if useful. Afterward they
 inspect the remaining local reviews, sync a remaining mutable reviewed head, or run cleanup when
@@ -500,7 +500,7 @@ no reviewed local copy remains.
 Here unpublished local work means a mutable revision whose commit is neither its submitted
 baseline nor an exact GitHub stack head that this run may adopt.
 
-Selected `sync` reconciles the unmerged suffix only when:
+`sync` reconciles the unmerged suffix only when:
 
 - rewriting it would not discard unpublished local work
 - the remainder is linear and conflict-free
@@ -517,7 +517,7 @@ merges. A matching full change ID on fetched trunk identifies the successor rath
 an arbitrary visible side copy. When fetched trunk has no matching change ID, `sync` retires the
 old local change without relabeling that commit or storing an alias.
 
-When a GitHub stack merge rewrites active members above the merged prefix, selected `sync` adopts
+When a GitHub stack merge rewrites active members above the merged prefix, `sync` adopts
 the exact commits GitHub reports rather than replaying equivalent diffs. It accepts those heads
 and bases only while a merged tracked member of the same GitHub stack proves the transition.
 
@@ -534,7 +534,7 @@ An active unselected member, two active GitHub stacks in one selection, or membe
 changes during the command fails before branch or PR mutation. The diagnostic names the exact
 `gh stack unstack <number>` command when dissolution can unblock the operation.
 
-`submit`, `merge`, selected `sync`, and `unstack` use this rule. Cleanup instead checks each
+`submit`, `merge`, `sync`, and `unstack` use this rule. Cleanup instead checks each
 candidate and never deletes a branch needed by an active GitHub stack member.
 
 Changing the base of an active GitHub stack member requires dissolving that GitHub stack first
@@ -581,7 +581,7 @@ A pair is eligible only when:
 - no active member of a GitHub stack still needs the branch
 
 Local descendants do not substitute for the open-PR base check. Descendant visibility is evidence
-for selected `sync`, not deletion of a GitHub branch.
+for `sync`, not deletion of a GitHub branch.
 
 Identity and baseline retire only after artifact cleanup succeeds. A tracking record or PR that
 cannot be inspected is skipped. Once mutation starts, a failure stops cleanup and leaves later
@@ -614,7 +614,7 @@ even if a PR happens to use the branch name that change would generate.
 
 Inspection tolerates history exposed by fetch rather than immediately declaring the stack broken.
 `view` walks past immutable or divergent side copies of merged changes. A merged PR still in the
-local stack becomes a `cleanup needed` row naming the selected `sync`. Only when no supported
+local stack becomes a `cleanup needed` row naming `sync`. Only when no supported
 linear walk remains does `view` stop with a targeted diagnostic.
 
 A per-change lookup failure marks only that row unresolved and produces an incomplete report. A

@@ -324,11 +324,11 @@ machine:
 - `review/github_stack_sync.py` validates historical stack members and survivor transitions
 - `commands/_github_stack_safety.py` owns the one stack membership decision:
   `selected_github_stack` resolves the single resource a selected review set belongs to and
-  requires every active member of it to be selected. `submit`, `merge`, selected `sync`,
+  requires every active member of it to be selected. `submit`, `merge`, `sync`,
   `unstack`, and cleanup call it and derive their own consequence from the resource it returns;
   none of them repeats the decision
 
-Selected stack sync uses the same fixed temporary attachment as checkout for one additional
+`sync` uses the same fixed temporary attachment as checkout for one additional
 purpose: after a stack merge rewrites the active suffix, it validates every active raw Git commit
 and parent, reobserves the whole branch set, then imports the exact top into jj. It rebases only
 trailing local descendants, abandons the replaced local active copies, and advances every adopted
@@ -376,7 +376,7 @@ and rereads the PR, its unique head claim, open base-ref dependents, remote ref,
 membership, and tracking records at their mutation boundaries. Selected cleanup processes the
 observed stack head-to-base. A dry run may omit only dependents that an earlier selected action
 would close; actual cleanup never omits a live dependent. Local jj descendants remain
-selected-sync evidence, not cleanup evidence. Shared code supplies observation and artifact
+`sync` evidence, not cleanup evidence. Shared code supplies observation and artifact
 mutation without a second set of eligibility rules.
 
 ## Data model

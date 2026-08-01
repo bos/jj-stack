@@ -174,7 +174,7 @@ repository-wide sync eligibility.
 
 The stack-merge tests assert both final Git and PR state and the significant API events. A
 terminal stack-merge failure changes nothing. A successful partial request may change survivor
-heads and bases, but `merge` does not rewrite local history; selected `sync` validates and
+heads and bases, but `merge` does not rewrite local history; `sync` validates and
 converges that remote
 transition. These are bounded command contracts, not generated merge property families or a
 durable recovery state machine.

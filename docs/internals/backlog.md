@@ -23,7 +23,7 @@ current core workflow._
 Since `jj` 0.30 the `change-id` header in Git commit objects is written and imported by default
 (`git.write-change-id-header`), so change IDs survive ordinary push/fetch round trips. Live GitHub
 experiments established that both GitHub stack merges and ordinary rebase merges preserve it,
-while squash merge does not. Selected `sync` uses a preserved header to recognize the fetched
+while squash merge does not. `sync` uses a preserved header to recognize the fetched
 successor;
 otherwise it retires the old local change from exact merge-result evidence without relabeling the
 commit that reached trunk or storing an alias.
@@ -228,3 +228,23 @@ the behavior and the docs are wrong about one of the two commands owning the del
 
 Decide which command deletes the branch and make the other one's docs match. Retiring tracking
 before the branch it identifies is deleted is the ordering that produces the leak.
+
+## Rebase divergent descendant paths during `sync`
+
+_Benefit: small — it could recover more local paths automatically, but divergence is unusual and
+the simpler current rule gives it one clear repair boundary._
+
+`sync` currently stops before rebasing when a surviving change is divergent. Divergent
+versions do not necessarily share parents, so rebasing every version of a change is not generally
+one well-defined stack operation.
+
+A narrower future design could work from commit ancestry instead of change identity. When an exact
+local revision whose work is proven on fetched trunk still has divergent mutable descendants,
+`sync` could find each local path that depends on that revision and rebase the path at the first
+safe descendant onto the uniquely proven replacement. It would still leave GitHub updates blocked
+for every divergent change ID.
+
+Before implementing this, decide whether `sync` may rewrite dependent paths belonging to
+other local stacks, and specify how it avoids paths with unpublished edits, ambiguous ordering, or
+different replacement destinations. Until that broader scope has a clear contract, divergence
+should continue to stop `sync` before local mutation.
