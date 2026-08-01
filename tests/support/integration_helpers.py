@@ -41,7 +41,6 @@ _SUBMIT_CONFIG_MODULES = (
     "jj_stack.commands.submit.command",
     "jj_stack.commands.relink",
     "jj_stack.commands.unstack",
-    "jj_stack.commands.close_orphan",
     "jj_stack.commands.cleanup.command",
     "jj_stack.commands.merge.command",
     "jj_stack.review.finish",

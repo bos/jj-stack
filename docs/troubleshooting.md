@@ -100,8 +100,8 @@ jj-stack submit <head-change-id>
 
 `unstack --local` only removes this repository's record of the PR and its last submitted commit;
 it contacts neither GitHub nor the remote, which is what makes it work when the PR is gone.
-`submit` then opens a fresh PR. `unstack --cleanup` is not the command here: it tries to close the
-PR first, and stops on this change because GitHub no longer reports one.
+`submit` then opens a fresh PR. `cleanup` is not the command here because it cannot verify a PR
+that GitHub no longer reports.
 
 If the change instead shows `remembered PR #<n>`, the PR does still exist. `view` prints an
 advisory when it has moved to another head branch, and `jj-stack relink <pr> <change-id>` points
@@ -113,9 +113,9 @@ want before choosing a command:
 - To keep reviewing the same PR, reopen it on GitHub and rerun `jj-stack view <change-id>`.
 - To attach a different open PR to the change, use `jj-stack relink <pr> <change-id>`. That PR
   must be open and its head must already be the review branch for that same change.
-- To abandon the old review and make fresh PRs, run `jj-stack unstack --cleanup <head-change-id>`
-  and then `jj-stack submit <head-change-id>`. `relink` is not the right command for that case
-  because it attaches an existing open PR.
+- To abandon the old review and make fresh PRs, close the old PR on GitHub, run
+  `jj-stack cleanup <head-change-id>`, and then run `jj-stack submit <head-change-id>`. `relink`
+  is not the right command for that case because it attaches an existing open PR.
 
 ## Lower changes merged elsewhere and the rest of your stack needs rebasing
 
@@ -326,20 +326,17 @@ stops because updating only part of that GitHub group would be unsafe.
 Run the exact command from the diagnostic, which has this form:
 
 ```bash
-gh stack unstack <number>
+jj-stack unstack --stack <number>
 ```
 
-Then submit each local path separately. If `gh stack` is unavailable, install GitHub's extension:
-
-```bash
-gh extension install github/gh-stack
-```
+This removes only GitHub's grouping and leaves every PR open. Then submit each local path
+separately.
 
 ## Old review branches remain after merging or closing
 
 Possible causes:
 
-- your `unstack` succeeded, but the follow-up cleanup hasn't run yet
+- you closed PRs on GitHub, but the follow-up cleanup hasn't run yet
 - GitHub merged the PRs, but `jj-stack sync` or a later `cleanup` has not run yet
 - another visible stack still needs the saved review link
 - `cleanup` could not confirm that a branch or comment is unused, so it left it alone and said so
@@ -385,7 +382,7 @@ who took the lock is stale while the lock itself is still held. The operating sy
 lock and drops it when the owning process exits, so waiting a moment and rerunning the command is
 the whole fix. Do not delete anything by hand.
 
-## You want to stop reviewing a stack on GitHub
+## You want to close a stack without merging it
 
 Cause:
 
@@ -394,25 +391,27 @@ Cause:
 What to do:
 
 ```bash
-jj-stack unstack --dry-run
-jj-stack unstack
+jj-stack unstack --dry-run <head-change-id>
+jj-stack unstack <head-change-id>
 ```
 
-If you already know the pull request number, you can use:
+`unstack` removes GitHub's stack grouping and leaves the PRs open. Close each PR on GitHub or
+with `gh`:
 
 ```bash
-jj-stack unstack --pull-request 7 --dry-run
-jj-stack unstack --pull-request 7
+gh pr close <pr>
 ```
 
-This closes the stack's pull requests but keeps their exact tracking and submitted commits. That
-lets later cleanup verify the old artifacts and prevents `submit` from silently reusing a closed
-review. Add `--cleanup` if you also want to delete review branches, comments, and
-tracking that `jj-stack` can verify are safe to remove.
+The saved PR links remain in place. Remove the closed reviews' branches, comments, and saved links
+with:
 
-Plain `jj-stack cleanup` handles closed or merged reviews and leaves open reviews alone. If it
-reports that another open PR depends on a review branch, close or retarget the named PR and rerun
-the same cleanup command.
+```bash
+jj-stack cleanup --dry-run <head-change-id>
+jj-stack cleanup <head-change-id>
+```
+
+If cleanup reports that another open PR depends on a review branch, close or retarget the named
+PR and rerun the same command.
 
 ## A command was interrupted before it finished
 
@@ -451,8 +450,10 @@ each time.
 
 - `submit`: preview with `jj-stack submit --dry-run <head-change-id>`, then run
   `jj-stack submit <head-change-id>`.
-- `unstack` or `unstack --cleanup`: add `--dry-run` to the same explicit command, inspect it,
-  then rerun without `--dry-run`.
+- `unstack`: add `--dry-run` to the same explicit command, inspect it, then rerun without
+  `--dry-run`.
+- `cleanup`: add `--dry-run` to the same revision or pull request selector, inspect it, then
+  rerun without `--dry-run`.
 - `sync`: preview with `jj-stack sync --dry-run <head-change-id>`, then run
   `jj-stack sync <head-change-id>`.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
@@ -464,16 +465,10 @@ each time.
 branch that a PR above still needs. `sync --all` checks independently tracked exact commits
 already on trunk. Both inspect current GitHub state and trunk history.
 
-### Back out
+### Remove an unwanted review
 
-```bash
-jj-stack unstack --cleanup --dry-run <head-change-id>
-jj-stack unstack --cleanup <head-change-id>
-```
-
-If a failed `submit` created PRs or review branches that you no longer want, run
-`unstack --cleanup` on the selected stack. If the change was abandoned and only tracking data
-remains, use `jj-stack list` to find the orphaned PR and then
-`jj-stack unstack --cleanup --pull-request <pr>`. To clean up every orphan shown by
-`jj-stack list`, preview `jj-stack unstack --cleanup --pull-request orphans --dry-run`, then
-run it again without `--dry-run`.
+If a failed `submit` created PRs or review branches that you no longer want, remove any GitHub
+stack grouping with `unstack`, close the PRs on GitHub, then preview and run
+`jj-stack cleanup <head-change-id>`. If the local change is gone, use `jj-stack list` to find the
+orphaned PR and select it with `jj-stack cleanup --pull-request <pr>`. After closing every orphan
+shown by `list`, use `jj-stack cleanup --pull-request orphans` to remove their leftovers.

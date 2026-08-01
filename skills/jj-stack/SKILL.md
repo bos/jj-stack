@@ -37,8 +37,8 @@ command they use before any direct GitHub mutation.
 1. **Edit the stack with `jj`; talk to GitHub with `jj-stack`.** Never use
    `git branch`/`checkout`/`rebase` or manual branch pushes on a jj-stack
    stack, and never create, delete, or force-push its review branches by
-   hand. Use `gh stack` only for the exact resource-dissolution repair
-   described below.
+   hand. Closing a known pull request with GitHub or `gh pr close` is supported;
+   use `jj-stack unstack` for GitHub stack grouping.
 2. **Check tracking before the first `gh` or API write in a repo.** Run
    `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json`
    for one PR. A matching PR or `branch` field proves tracking; a bare
@@ -51,7 +51,8 @@ command they use before any direct GitHub mutation.
 3. **Use jj-stack for stack changes.** Once jj-stack is detected anywhere
    in a repo, use it for stack-level PR work in that repo: status, submit,
    refresh, base/head changes caused by stack rewrites, merging, cleanup,
-   closing, importing, relinking, and recovery. `gh` remains fine for reads and
+   importing, relinking, and recovery. `gh` remains fine for reads, closing
+   known pull requests, and
    collaboration metadata, but not for deciding or changing stack shape.
 4. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`,
    `cleanup`, or `unstack`, and preview with `--dry-run` whenever the next
@@ -77,14 +78,17 @@ title or body edits (a later `submit` may overwrite generated title/body
 text). Never edit or delete comments containing `<!-- jj-stack-overview -->`;
 jj-stack manages those.
 
-**Structural and lifecycle writes are not**: closing, merging, or reopening a
-PR; retargeting base or head; deleting or force-pushing a review branch;
-creating a replacement PR; or equivalent `gh api` mutations. These desync
-local changes, review branches, and tracking data. Map the intent to a
-jj-stack command instead; use `gh` only if the user explicitly confirms after
-you explain that risk. The one routine exception is an exact `gh stack
-unstack <number>` command printed by `submit` when one GitHub stack spans
-multiple desired local paths; run it, then submit each path separately.
+**Closing and reopening known pull requests is supported when the user asks.**
+Inspect the stack first, use explicit PR numbers, and leave jj-stack's saved
+links in place so `cleanup` can verify what it removes. Remove GitHub stack
+grouping with `jj-stack unstack` before closing a whole stack.
+
+**Other structural and lifecycle writes are not**: merging a PR; retargeting
+base or head; deleting or force-pushing a review branch; creating a replacement
+PR; changing GitHub stack membership outside `jj-stack`; or equivalent `gh api`
+mutations. These desync local changes, review branches, and tracking data. Map
+the intent to a jj-stack command instead; use `gh` only if the user explicitly
+confirms after you explain that risk.
 
 - **Merge reviewed bottom changes:** `merge --dry-run`, then `merge`. It
   selects the consecutive open, non-draft PRs from the bottom and requires
@@ -93,21 +97,25 @@ multiple desired local paths; run it, then submit each path separately.
   one atomic bottom-prefix request; a one-PR review uses the ordinary PR API.
   It never pushes trunk or rewrites local history. Run the selected
   `sync <head-change-id>` printed after GitHub accepts anything.
-- **Close an abandoned stack's PRs:** `unstack --dry-run`, then `unstack`.
-- **Also remove review branches and tracking:** `unstack --cleanup`, only
-  after confirming the stack should be retired. For an orphaned PR from
-  `list`, add `--pull-request <pr>`; to preview and retire every orphan, use
-  `unstack --cleanup --pull-request orphans --dry-run`, then
-  `unstack --cleanup --pull-request orphans`.
+- **Remove GitHub stack grouping:** `unstack --dry-run <head-change-id>`, then
+  `unstack <head-change-id>`. When one GitHub stack spans several desired local
+  paths, use the exact `unstack --stack <number>` command from the diagnostic.
+  Pull requests remain open.
+- **Close a stack without merging:** inspect it, remove its GitHub grouping,
+  then run `gh pr close <pr>` for each explicit PR number the user wants closed.
+- **Remove a closed stack's branches, comments, and saved links:**
+  `cleanup --dry-run <head-change-id>`, then `cleanup <head-change-id>`. For an
+  orphan from `list`, use `cleanup --pull-request <pr>`; after the user closes
+  every orphan, use `cleanup --pull-request orphans`.
 - **Collect closed or merged leftovers:** `cleanup --dry-run`, then `cleanup`.
   It checks each exact saved PR and removes only verified artifacts for
   closed or merged reviews. Open reviews and open orphans are preserved;
   mismatched or unavailable GitHub state blocks that record.
-- **Stop tracking locally but leave PRs open:** `unstack --local`.
+- **Forget saved PR links without changing GitHub:** `unstack --local`.
 - **Change PR base/head because the stack shape changed:** reshape with `jj`,
   then `submit --dry-run` and `submit`.
 - **Recover after GitHub merges:** `sync --dry-run <head-change-id>`, then
-  `sync <head-change-id>` chains the repair — fetch, retire merged ancestors,
+  `sync <head-change-id>` chains the repair — fetch, remove merged ancestors,
   rebase selected survivors, and update their existing PRs. GitHub rebase
   merges preserve jj change IDs; squash merges do not, and `sync` handles both
   from the fetched merge result.
@@ -116,14 +124,15 @@ multiple desired local paths; run it, then submit each path separately.
   commits and saves tracking without moving the working copy, rewriting
   existing changes, or touching GitHub), or
   `relink <pr> <revset>` for one PR/change link.
-- **Fresh PRs for the same local changes:** retire the old review first with
-  `unstack --cleanup --dry-run <revset>` then `unstack --cleanup <revset>`,
-  and then `submit <revset>`. There is no restart flag; submitting without
-  retiring the old review reuses the existing PRs.
+- **Fresh PRs for the same local changes:** remove the GitHub grouping, close
+  the old PRs with explicit `gh pr close` commands, run
+  `cleanup --dry-run <revset>` then `cleanup <revset>`, and finally
+  `submit <revset>`. There is no restart flag; submitting before cleanup does
+  not replace the saved reviews.
 
 If a direct GitHub mutation already happened, do not rebuild changes or PRs
 by hand. Inspect with `list --json`, `view --pull-request <pr> --json`, and
-`doctor`, then choose `checkout`, `relink`, `submit`, or `unstack` from what
+`doctor`, then choose `checkout`, `relink`, `submit`, `unstack`, or `cleanup` from what
 you see.
 
 ## Everyday flow

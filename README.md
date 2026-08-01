@@ -223,19 +223,27 @@ The status output will show whether the next step is `jj-stack submit` or
 `jj-stack sync <head-change-id>`.
 
 If `list` shows an `orphan` row, tracking remains for a PR whose local change is no longer part
-of any current stack. To close it and remove the review branch, stack overview comment, and local
-tracking it left behind:
+of any current stack. Close it on GitHub or with `gh`, then remove the review branch, stack
+overview comment, and saved PR link it left behind:
 
 ```bash
-jj-stack unstack --cleanup --pull-request <pr> --dry-run
-jj-stack unstack --cleanup --pull-request <pr>
+gh pr close <pr>
+jj-stack cleanup --pull-request <pr> --dry-run
+jj-stack cleanup --pull-request <pr>
 ```
 
 Use `--pull-request orphans` to preview or clean up every orphan in one operation:
 
 ```bash
-jj-stack unstack --cleanup --pull-request orphans --dry-run
-jj-stack unstack --cleanup --pull-request orphans
+jj-stack cleanup --pull-request orphans --dry-run
+jj-stack cleanup --pull-request orphans
+```
+
+If GitHub still groups PRs that your local history now puts on different paths, remove that
+grouping without closing the PRs:
+
+```bash
+jj-stack unstack --stack <number>
 ```
 
 To sweep review branches, stack overview comments, and tracking that no closed or merged review

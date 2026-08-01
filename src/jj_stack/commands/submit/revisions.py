@@ -49,8 +49,8 @@ def prepare_submit_revisions(
                     t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} no longer exists.",
                     condition="remote_branch_missing",
                     hint=(
-                        t"Restore the branch, or end the review with "
-                        t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again."
+                        t"Restore the branch, or close the PR on GitHub, run "
+                        t"{ui.cmd('jj-stack cleanup')}, and submit it again."
                     ),
                 )
             if remote_target not in {baseline.commit_id, revision.commit_id}:

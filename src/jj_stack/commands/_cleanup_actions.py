@@ -1,4 +1,4 @@
-"""Shared types and rendering helpers for close command action rows."""
+"""Shared review checks and cleanup helpers."""
 
 from __future__ import annotations
 
@@ -29,17 +29,17 @@ from jj_stack.state.store import ReviewStateStore
 from jj_stack.ui import Message, plain_text
 
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
-CloseActionStatus = Literal["applied", "blocked", "planned"]
-type CloseActionBody = Message
+ReviewMutationActionStatus = Literal["applied", "blocked", "planned"]
+type ReviewMutationActionBody = Message
 
 
 @dataclass(frozen=True, slots=True)
-class CloseAction:
-    """One close action that was planned, applied, or blocked."""
+class ReviewMutationAction:
+    """One review mutation that was planned, applied, or blocked."""
 
     kind: str
-    status: CloseActionStatus
-    body: CloseActionBody
+    status: ReviewMutationActionStatus
+    body: ReviewMutationActionBody
 
     @property
     def message(self) -> str:
@@ -48,11 +48,11 @@ class CloseAction:
         return plain_text(self.body)
 
 
-def github_observation_blocker() -> CloseAction:
+def github_observation_blocker() -> ReviewMutationAction:
     """Return the shared user-facing blocker for unavailable GitHub facts."""
 
-    return CloseAction(
-        kind="close",
+    return ReviewMutationAction(
+        kind="tracking",
         body=(
             "cannot inspect pull requests tracked by jj-stack without live GitHub state; "
             "fix GitHub access and retry"
@@ -71,13 +71,13 @@ def check_tracked_review(
     retry_command: str = "cleanup",
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
-) -> tuple[GithubPullRequest | None, CloseAction | None]:
+) -> tuple[GithubPullRequest | None, ReviewMutationAction | None]:
     """Check one exact unchanged review against shared observations."""
 
     observed = observation.reviews[change_id]
     pull_request_number = review_identity.pr_number
     pull_request = observed.pull_request
-    kind = "close"
+    kind = "pull request"
     reason: Message | None = None
     if (observed.identity, observed.baseline) != (review_identity, submitted_baseline):
         kind = "tracking"
@@ -150,7 +150,9 @@ def check_tracked_review(
             )
     return (
         pull_request,
-        None if reason is None else CloseAction(kind=kind, body=reason, status="blocked"),
+        None
+        if reason is None
+        else ReviewMutationAction(kind=kind, body=reason, status="blocked"),
     )
 
 
@@ -164,7 +166,7 @@ async def check_current_tracked_pull_request(
     review_identity: ReviewIdentity,
     state_store: ReviewStateStore,
     submitted_baseline: SubmittedBaseline,
-) -> tuple[GithubPullRequest | None, CloseAction | None]:
+) -> tuple[GithubPullRequest | None, ReviewMutationAction | None]:
     """Check one unchanged tracking pair with all saved claims in context."""
 
     try:
@@ -184,51 +186,6 @@ async def check_current_tracked_pull_request(
         retry_command=retry_command,
         review_identity=review_identity,
         submitted_baseline=submitted_baseline,
-    )
-
-
-async def close_current_tracked_pull_request(
-    *,
-    change_id: str,
-    dry_run: bool,
-    github_client: GithubClient,
-    observed_pull_request: GithubPullRequest | None,
-    review_identity: ReviewIdentity,
-    state_store: ReviewStateStore,
-    submitted_baseline: SubmittedBaseline,
-    target_label: Message,
-) -> tuple[GithubPullRequest | None, CloseAction | None]:
-    """Close a freshly checked open PR, or accept an already-ended PR."""
-
-    if dry_run:
-        pull_request = observed_pull_request
-        blocker = None
-    else:
-        pull_request, blocker = await check_current_tracked_pull_request(
-            allowed_states=frozenset({"open", "closed", "merged"}),
-            change_id=change_id,
-            github_client=github_client,
-            review_identity=review_identity,
-            state_store=state_store,
-            submitted_baseline=submitted_baseline,
-        )
-    if blocker is not None:
-        return pull_request, blocker
-    if pull_request is None:
-        raise AssertionError("Tracked close requires an exact pull request.")
-    if pull_request.state in {"closed", "merged"}:
-        return pull_request, None
-    if pull_request.state != "open":
-        raise AssertionError("Tracked close check returned an unexpected lifecycle.")
-    if not dry_run:
-        await github_client.close_pull_request(pull_number=pull_request.number)
-    return (
-        pull_request,
-        CloseAction(
-            kind="pull request",
-            body=t"close PR #{pull_request.number} for {target_label}",
-            status="planned" if dry_run else "applied",
-        ),
     )
 
 
@@ -281,7 +238,7 @@ async def apply_overview_comment_cleanup(
     review_identity: ReviewIdentity,
     state_store: ReviewStateStore,
     submitted_baseline: SubmittedBaseline,
-) -> tuple[tuple[CloseAction, ...], bool]:
+) -> tuple[tuple[ReviewMutationAction, ...], bool]:
     """Delete one preflighted overview comment through a fresh PR boundary."""
 
     comment = lookup.comment
@@ -307,7 +264,7 @@ async def apply_overview_comment_cleanup(
             )
         except CliError as error:
             return (
-                CloseAction(
+                ReviewMutationAction(
                     kind=STACK_OVERVIEW_COMMENT_LABEL,
                     body=str(error),
                     status="blocked",
@@ -323,7 +280,7 @@ async def apply_overview_comment_cleanup(
             f"PR #{review_identity.pr_number}"
         )
     return (
-        CloseAction(
+        ReviewMutationAction(
             kind=STACK_OVERVIEW_COMMENT_LABEL,
             body=action_body,
             status="planned" if dry_run else "applied",
@@ -347,22 +304,6 @@ def _resolve_overview_comment_from_listed(
     if not matching_comments:
         return OverviewCommentLookup()
     return OverviewCommentLookup(comment=matching_comments[0])
-
-
-def emit_close_actions(
-    *,
-    actions: tuple[CloseAction, ...],
-    applied: bool,
-    blocked: bool,
-) -> None:
-    header = (
-        "Close blocked:"
-        if blocked
-        else ("Applied close actions:" if applied else "Planned close actions:")
-    )
-    console.output(header)
-    for action in actions:
-        emit_action_row(kind=action.kind, status=action.status, body=action.body)
 
 
 def emit_action_row(
@@ -424,7 +365,7 @@ def plan_review_cleanup(
     retry_command: str = "cleanup",
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
-) -> tuple[GithubPullRequest | None, ReviewRefUpdate | None, CloseAction | None]:
+) -> tuple[GithubPullRequest | None, ReviewRefUpdate | None, ReviewMutationAction | None]:
     """Check exact cleanup facts and derive at most one leased ref deletion."""
 
     pull_request, blocker = check_tracked_review(
@@ -448,7 +389,7 @@ def plan_review_cleanup(
         return (
             pull_request,
             None,
-            CloseAction(
+            ReviewMutationAction(
                 kind="remote branch",
                 body=t"cannot resolve the configured remote for saved PR "
                 t"#{review_identity.pr_number}",
@@ -460,7 +401,7 @@ def plan_review_cleanup(
         return (
             pull_request,
             None,
-            CloseAction(
+            ReviewMutationAction(
                 kind="tracking",
                 body=t"cannot clean up {ui.bookmark(branch)} because it does not match "
                 t"change {ui.change_id(change_id)}",
@@ -472,7 +413,7 @@ def plan_review_cleanup(
         return (
             pull_request,
             None,
-            CloseAction(
+            ReviewMutationAction(
                 kind="remote branch",
                 body=t"cannot delete {ui.bookmark(branch)} because it "
                 t"already points to a different revision",
@@ -495,13 +436,13 @@ async def github_stack_cleanup_blocker(
     *,
     github_client: GithubClient,
     pull_number: int,
-) -> CloseAction | None:
+) -> ReviewMutationAction | None:
     """Fail closed when current stack membership still needs a review branch."""
 
     try:
         await GithubStackSelection(github_client, (pull_number,)).require_unstacked()
     except CliError as error:
-        return CloseAction(kind="remote branch", body=str(error), status="blocked")
+        return ReviewMutationAction(kind="remote branch", body=str(error), status="blocked")
     return None
 
 
@@ -515,7 +456,7 @@ async def check_current_review_cleanup(
     retry_command: str = "cleanup",
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
-) -> CloseAction | None:
+) -> ReviewMutationAction | None:
     """Check one review cleanup against current remote state."""
 
     current_update, blocker = await prepare_current_review_cleanup(
@@ -531,7 +472,7 @@ async def check_current_review_cleanup(
     if blocker is not None:
         return blocker
     if current_update != expected_update:
-        return CloseAction(
+        return ReviewMutationAction(
             kind="remote branch",
             body=t"remote branch {ui.bookmark(review_identity.head_ref)} changed during "
             t"cleanup; reload and retry",
@@ -550,7 +491,7 @@ async def prepare_current_review_cleanup(
     retry_command: str = "cleanup",
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
-) -> tuple[ReviewRefUpdate | None, CloseAction | None]:
+) -> tuple[ReviewRefUpdate | None, ReviewMutationAction | None]:
     """Recheck one cleanup and derive its exact leased ref deletion."""
 
     try:
@@ -584,7 +525,7 @@ def apply_remote_branch_cleanup(
     *,
     dry_run: bool,
     jj_client: JjClient,
-    record_action: Callable[[CloseAction], None],
+    record_action: Callable[[ReviewMutationAction], None],
     remote_name: str,
     update: ReviewRefUpdate | None,
 ) -> None:
@@ -600,7 +541,7 @@ def apply_remote_branch_cleanup(
                 updates=(update,),
             )
         record_action(
-            CloseAction(
+            ReviewMutationAction(
                 kind="remote branch",
                 body=t"delete {ui.bookmark(f'{update.branch}@{remote_name}')}",
                 status="planned" if dry_run else "applied",

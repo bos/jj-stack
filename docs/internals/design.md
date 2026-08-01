@@ -212,11 +212,13 @@ evidence, and mutation rules.
   candidates.
 - **`merge`** is the only command that asks GitHub to merge. It never pushes trunk or rewrites
   local history.
-- **`unstack`** ends review by closing tracked open PRs. `--cleanup` also removes eligible
-  artifacts; `--local` only forgets local tracking.
+- **`unstack`** removes GitHub's stack grouping while leaving its pull requests open. A GitHub
+  stack number selects the remote resource directly; otherwise a local review stack selects its
+  matching GitHub stack. `--local` only forgets local tracking and does not change GitHub.
 - **`cleanup`** removes eligible branches, managed overview comments, and tracking left by closed
-  or merged reviews across the repository. It is optional housekeeping, not part of correctness
-  or local-history recovery.
+  or merged reviews. With no selector it checks the repository; a revision or pull request limits
+  it to the named review. It is optional housekeeping, not part of correctness or local-history
+  recovery.
 - **`checkout`** adopts review state already on GitHub. It sets up tracking but does not move the
   workspace or rewrite local commits.
 - **`relink`** attaches one known PR and same-repository head branch to one selected change when
@@ -296,8 +298,8 @@ Neither check permits mutation alone. Each mutating policy says which other fact
 and when they must be rechecked.
 
 Commands never replace a missing, closed, moved, or ambiguous PR automatically. They leave the
-tracking untouched and direct the user to `relink`, or to `unstack --cleanup` followed by a fresh
-`submit`.
+tracking untouched and direct the user to `relink`, to forget a missing or incorrect link with
+`unstack --local`, or to close and clean up an old review before a fresh `submit`.
 
 Recording a submitted commit cannot replace PR identity: the write fails if the identity changed
 underneath it. A missing or invalid per-change record is isolated and reported with `relink` as
@@ -360,9 +362,10 @@ that path until `sync`. `relink` requires both the change and PR.
 Three modes deliberately reach beyond one selected stack:
 
 - `sync --all`, which cannot be combined with a selector
-- `cleanup`, which considers every tracked change in the repository
-- `unstack --cleanup --pull-request <pr>`, which may select one tracked PR whose local change is
-  gone, and `unstack --cleanup --pull-request orphans`, which selects all such PRs
+- `cleanup` without a selector, which considers every tracked change in the repository
+- `cleanup --pull-request <pr>`, which may select one tracked PR whose local change is gone, and
+  `cleanup --pull-request orphans`, which selects all such PRs
+- `unstack --stack <number>`, which selects one GitHub stack without requiring local tracking
 
 No default invocation mutates reviews beyond the selected stack. A `sync` rebase may propagate to
 local descendants under ordinary `jj` rewrite rules. Ambiguous selectors always fail closed.
@@ -384,15 +387,16 @@ The command-specific planning requirements are:
 - `merge` requires the current local commit and remote review ref both to equal
   `SubmittedBaseline.commit_id`, plus a live snapshot match. Tree or diff equivalence is not
   sufficient.
-- `sync --all` requires a snapshot match before retargeting, closing, or retiring a review.
-- cleanup requires a snapshot match before deleting artifacts or retiring tracking.
+- `sync --all` requires a snapshot match before retargeting, closing, or removing a saved review.
+- cleanup requires a snapshot match before deleting artifacts or removing saved links.
 
 Immediately before each irreversible action, the command rereads its required facts. A remote
 swap, repository retarget, renamed head, moved branch, missing PR, or replacement PR fails closed
-and names `relink` or `unstack --cleanup` followed by a fresh `submit`.
+and names `relink` or `unstack --local`, depending on whether the user needs to repair or forget
+the saved link.
 
 Only review creation, `relink`, and `checkout` create or replace identity. `unstack --local`
-deletes it explicitly; `sync`, `sync --all`, and cleanup retire it from evidence.
+deletes it explicitly; `sync`, `sync --all`, and cleanup remove it after checking live evidence.
 
 Only commands that successfully send or adopt a specific reviewed commit may replace
 `SubmittedBaseline` for the same review identity:
@@ -543,7 +547,7 @@ GitHub stack may be observed without mutation; more than one is ambiguous and st
 
 An active unselected member, two active GitHub stacks in one selection, or membership that
 changes during the command fails before branch or PR mutation. The diagnostic names the exact
-`gh stack unstack <number>` command when dissolution can unblock the operation.
+`jj-stack unstack --stack <number>` command when removing the grouping can unblock the operation.
 
 `submit`, `merge`, `sync`, and `unstack` use this rule. Cleanup instead checks each
 candidate and never deletes a branch needed by an active GitHub stack member.
@@ -571,14 +575,20 @@ removed.
 
 ### Unstack and cleanup
 
-`unstack` closes the selected open PRs but retains identity and baseline so later cleanup can
-prove what it is deleting. With `--cleanup`, it also removes every eligible artifact. Closing and
-cleaning a stack is the supported way to start its reviews over; a later `submit` creates fresh
-PRs under the ordinary generated names.
+`unstack` removes one exact GitHub stack grouping and leaves every pull request, review branch,
+overview comment, and tracking record unchanged. With `--stack <number>`, GitHub is the source of
+the selected resource and no local tracking is required. Otherwise the selected local review
+stack must identify one coherent GitHub stack. The command rereads exact membership immediately
+before asking GitHub to remove it. Rerunning it after the grouping is gone is safe.
 
-`unstack --local` removes local tracking only. It never touches GitHub or local history and is the
-one explicit way to forget a review without trunk evidence. Rerunning any `unstack` mode is
-safe.
+`unstack --local` removes local tracking for the selected local review stack only. It never
+touches GitHub or local history and is the one explicit way to forget a review without trunk
+evidence.
+
+Closing pull requests through GitHub's UI or `gh pr close` is supported. It leaves local tracking
+in place, so `submit` does not silently reuse a closed review and `cleanup` can still prove which
+branches and comments belong to it. Starting reviews over means closing the old pull requests,
+running selected cleanup, and then submitting again.
 
 Cleanup acts only on one complete identity/baseline pair. It may remove the managed overview
 comment, the exact saved review ref only while it still points to the expected commit, and the
@@ -594,9 +604,9 @@ A pair is eligible only when:
 Local descendants do not substitute for the open-PR base check. Descendant visibility is evidence
 for `sync`, not deletion of a GitHub branch.
 
-Identity and baseline retire only after artifact cleanup succeeds. A tracking record or PR that
-cannot be inspected is skipped. Once mutation starts, a failure stops cleanup and leaves later
-records for a rerun.
+Identity and baseline are removed only after artifact cleanup succeeds. A tracking record or PR
+that cannot be inspected is skipped. Once mutation starts, a failure stops cleanup and leaves
+later records for a rerun.
 
 ### Adoption and repair
 
@@ -649,7 +659,7 @@ explicit rules:
 
 - **Abandon**: the change leaves every current local stack and descendants attach to its parent.
   Its PR becomes orphaned. Surviving stacks never close, reuse, or retarget it. Explicit closure
-  uses `unstack --cleanup --pull-request <pr>`.
+  uses GitHub or `gh pr close`; `cleanup --pull-request <pr>` then removes its leftovers.
 - **Split**: new logical changes get new change IDs and normally new PRs. The change retaining the
   original change ID retains its PR.
 
@@ -666,8 +676,8 @@ wait for their own explicit commands.
 - **Split one stack into several**: each maximal linear path appears separately in repository
   inventory. The paths may contain the same observed reviewed ancestors; tracking annotates those
   paths but does not create or join them. If one existing GitHub stack spans active reviews on
-  more than one desired path, the user dissolves it with the named
-  `gh stack unstack <number>` command and submits each path separately.
+  more than one desired path, the user removes the grouping with the named
+  `jj-stack unstack --stack <number>` command and submits each path separately.
 - **Join several stacks into one**: dissolve the existing GitHub stacks, then submit the resulting
   chain. It reuses reviews by change ID, recalculates every base, and produces one overview
   comment on the new head.
@@ -676,7 +686,8 @@ Stacks not yet resubmitted may still show old overview comments. That is expecte
 `submit` does not mutate stacks outside its selection. `list` identifies stale reviews across the
 repository. `view` does so only for another path that shares an observed revision with the
 selected path. Both compare each baseline with the current change and name the stack to refresh.
-Orphaned PRs need explicit `unstack --cleanup --pull-request <pr>`.
+Close orphaned PRs on GitHub, then remove their leftovers with
+`cleanup --pull-request <pr>`.
 
 ## CLI contract
 

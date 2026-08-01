@@ -2,7 +2,7 @@
 
 `sync` is the only jj-stack command that changes local history. It fetches trunk and proves
 which reviewed changes reached it. It then rebases the remaining changes, updates only their
-existing pull requests, and retires reviews that no local path still needs. It never creates a
+existing pull requests, and removes saved links that no local path still needs. It never creates a
 pull request.
 
 Some local states stop `sync` before it rebases:

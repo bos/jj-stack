@@ -114,11 +114,11 @@ jj-stack submit
 
 If a rewrite splits, moves, or combines changes from existing GitHub stacks, `submit` may tell
 you that an existing GitHub stack no longer matches the selected local path. Run every exact
-`gh stack unstack <number>` command in that diagnostic to dissolve the old grouping, then submit
-each resulting local stack. If `gh stack` is unavailable, install GitHub's extension first:
+`jj-stack unstack --stack <number>` command in that diagnostic to remove the old grouping, then
+submit each resulting local stack.
 
 ```bash
-gh extension install github/gh-stack
+jj-stack unstack --stack <number>
 ```
 
 If you want to ask prior reviewers to take another look after you've addressed feedback, run:
@@ -324,62 +324,61 @@ rewrites or submits a stack. When GitHub created a different commit, `sync --all
 in place and prints a
 `jj-stack sync <head-change-id>` command for each affected stack.
 
-## 8. Unstack abandoned stacks
+## 8. Close a stack without merging it
 
-If a stack should no longer be reviewed, preview which PRs will close and then apply:
-
-```bash
-jj-stack unstack --dry-run
-jj-stack unstack
-```
-
-If it's handier to identify your stack by PR number, you can specify that instead:
+GitHub may still group the PRs as a stack. Remove that grouping first; this leaves every pull
+request open:
 
 ```bash
-jj-stack unstack --pull-request 7 --dry-run
-jj-stack unstack --pull-request 7
+jj-stack unstack --dry-run <head-change-id>
+jj-stack unstack <head-change-id>
 ```
 
-Plain `unstack` closes the PRs but retains their exact tracking and submitted commits. That
-information prevents a later `submit` from silently reusing a closed review and lets `cleanup`
-verify what it is acting on.
-
-Use `--cleanup` when you also want to remove review branches, comments, and tracking that
-`jj-stack` can verify are safe to delete after the PRs close.
-
-Cleanup keeps a review branch and its tracking whenever any open PR in the same GitHub repository
-still uses that branch as its base, even if that PR is not tracked by `jj-stack` or its local
-change is gone. Close or retarget the dependent PR named in the blocker, then rerun the same
-cleanup command. For a selected stack, `jj-stack` works from the head down; a preview may account
-for upper selected PRs it would close first, while the real command checks GitHub again before
-each deletion.
-
-Use `--local` when you only want this local repository to stop tracking the stack. It removes the
-exact local PR and submitted-commit records while leaving the PRs and review branches alone:
+When the GitHub grouping no longer matches one local path, use the stack number printed by the
+diagnostic:
 
 ```bash
-jj-stack unstack --local
+jj-stack unstack --stack <number>
 ```
 
-If `jj-stack list` shows an `orphan` row, tracking remains for a PR whose local change is no
-longer part of any current stack. When you are ready, preview closing it if needed and cleaning
-up its verified review artifacts:
+Close the PRs on GitHub or name each one explicitly with `gh`:
 
 ```bash
-jj-stack unstack --cleanup --pull-request 7 --dry-run
-jj-stack unstack --cleanup --pull-request 7
+gh pr close <pr>
 ```
 
-To preview and clean up every orphan shown by `list` in one operation, run:
+The saved PR links remain in place, so `submit` will not silently reuse closed reviews and
+`cleanup` can verify what it removes. Preview cleanup for only this local stack, then apply it:
 
 ```bash
-jj-stack unstack --cleanup --pull-request orphans --dry-run
-jj-stack unstack --cleanup --pull-request orphans
+jj-stack cleanup --dry-run <head-change-id>
+jj-stack cleanup <head-change-id>
 ```
 
-If GitHub groups the selected PR with other active PRs that must close together, both the preview
-and real command stop before changing anything unless the full group belongs to the selected
-local path.
+Cleanup keeps a review branch whenever another open PR still uses it as a base. Close or retarget
+the PR named in the message, then rerun the same cleanup command.
+
+If `jj-stack list` shows an `orphan` row, close that PR and select it directly for cleanup:
+
+```bash
+gh pr close 7
+jj-stack cleanup --pull-request 7 --dry-run
+jj-stack cleanup --pull-request 7
+```
+
+After closing every orphan shown by `list`, select all of them with:
+
+```bash
+jj-stack cleanup --pull-request orphans --dry-run
+jj-stack cleanup --pull-request orphans
+```
+
+Use `--local` only when you want this repository to forget its saved PR links while leaving
+GitHub unchanged:
+
+```bash
+jj-stack unstack --local <head-change-id>
+```
 
 If `jj-stack list` says another tracked stack changed since its last submit, either run
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
@@ -416,12 +415,13 @@ jj-stack view <head-change-id>
 Then choose the recovery command based on what was interrupted:
 
 ```bash
-# submit or plain unstack: rerun it with the same explicit selector
+# submit or unstack: rerun it with the same explicit selector
 jj-stack submit <head-change-id>
 jj-stack unstack <head-change-id>
 
-# if the interrupted command was unstack --cleanup, keep that explicit option
-jj-stack unstack --cleanup <head-change-id>
+# cleanup: preview and rerun it with the same selector
+jj-stack cleanup --dry-run <head-change-id>
+jj-stack cleanup <head-change-id>
 
 # sync: retry the same mode explicitly
 jj-stack sync --dry-run <head-change-id>
@@ -436,8 +436,7 @@ jj-stack merge <head-change-id>
 ```
 
 Use explicit selectors after a failure, not a naked command that falls back to
-the default stack. If you want to undo review work that was partially created,
-use `unstack --cleanup` on the stack you want to close and clean up. That is also how you start
-a review over from scratch: close and clean up the old PRs, then `submit` again.
+the default stack. To start a review over, remove any GitHub stack grouping, close the old PRs,
+clean up their branches and saved links, then `submit` again.
 
 See the [troubleshooting guide](troubleshooting.md) for more recovery scenarios.

@@ -159,16 +159,17 @@ def build_selected_convergence_plan(
             raise CliError(
                 t"The pull request no longer matches saved tracking for "
                 t"{ui.change_id(candidate.change_id)}.",
-                hint=t"Reattach the intended review with {ui.cmd('jj-stack relink')}, or end "
-                t"this review with {ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
+                hint=t"Reattach the intended review with {ui.cmd('jj-stack relink')}, or forget "
+                t"the incorrect link with {ui.cmd('jj-stack unstack --local')} before "
+                t"submitting again.",
             )
         lifecycle = pull_request.normalize_state().state
         if lifecycle != "open":
             raise CliError(
                 t"PR #{pull_request.number} for {ui.change_id(candidate.change_id)} is "
                 t"{lifecycle}, so sync cannot update that review.",
-                hint=t"Reopen it on GitHub, or end this review with "
-                t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
+                hint=t"Reopen it on GitHub, or run {ui.cmd('jj-stack cleanup')} before "
+                t"submitting again.",
             )
         reviewed.append(revision)
     plan = SelectedConvergencePlan(
@@ -201,8 +202,8 @@ def _trunk_evidence_kind_for(
         raise CliError(
             t"GitHub no longer reports PR #{candidate.review_identity.pr_number}.",
             hint=t"Confirm it with {ui.cmd('jj-stack view')}, then reattach an open "
-            t"replacement with {ui.cmd('jj-stack relink')}, or end the review with "
-            t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
+            t"replacement with {ui.cmd('jj-stack relink')}, or forget the missing link with "
+            t"{ui.cmd('jj-stack unstack --local')} before submitting again.",
         )
     evidence_kind, reason = proven_kind(
         candidate=candidate,

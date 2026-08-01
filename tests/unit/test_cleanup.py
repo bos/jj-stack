@@ -5,7 +5,7 @@ from typing import cast
 
 import jj_stack.commands.cleanup.stale as stale_module
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._close_actions import plan_review_cleanup
+from jj_stack.commands._cleanup_actions import plan_review_cleanup
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote

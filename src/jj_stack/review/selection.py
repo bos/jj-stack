@@ -71,8 +71,8 @@ def resolve_orphaned_pull_request(
 
     Raises `CliError` when two or more tracked records claim the same pull
     request number. The tracking data is ambiguous; the user must discard an
-    incorrect claim or relink it before `unstack --cleanup --pull-request` can
-    act, because there is no single orphan target to retire.
+    incorrect claim or relink it before `cleanup --pull-request` can act,
+    because there is no single orphan target to clean up.
 
     The membership check matches what `list` renders as an `orphan` row: a visible revision
     outside the supported review stacks should still be cleaned up through this path rather than

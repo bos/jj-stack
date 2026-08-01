@@ -59,7 +59,7 @@ def _dissolve_github_stacks(
     fake_repo: FakeGithubRepository,
     stack_numbers: tuple[int, ...],
 ) -> None:
-    """Model explicit `gh stack unstack` actions chosen by the scenario."""
+    """Model explicit `jj-stack unstack --stack` actions chosen by the scenario."""
 
     for stack_number in stack_numbers:
         fake_repo.github_stacks.pop(stack_number, None)

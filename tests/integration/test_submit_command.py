@@ -444,7 +444,7 @@ def test_submit_squash_blocks_until_old_github_stack_is_dissolved(
     refreshed_state = ReviewStateStore.for_repo(repo).load()
     assert exit_code == 1
     assert "keeps #2 active outside the selected stack" in captured.err
-    assert "gh stack unstack 1" in captured.err
+    assert "jj-stack unstack --stack 1" in captured.err
     assert refreshed_state == initial_state
     orphaned_pr = fake_repo.pull_requests[orphaned_pr_number]
     assert orphaned_pr.state == "open"
@@ -491,7 +491,7 @@ def test_submit_split_path_blocks_until_github_stack_is_dissolved(
 
     assert exit_code == 1
     assert "keeps #2 active outside the selected stack" in captured.err
-    assert "gh stack unstack 1" in captured.err
+    assert "jj-stack unstack --stack 1" in captured.err
 
     refreshed_state = ReviewStateStore.for_repo(repo).load()
     assert refreshed_state == submitted_state

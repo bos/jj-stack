@@ -4,8 +4,8 @@ Shows one row per locally known stack, including the head change ID, stack size,
 and description of the head change. It does not discover stacks that exist only on GitHub.
 
 It also shows orphaned PRs: tracked PRs whose local change is no longer part of any current
-stack. Close and clean up every orphan it lists with
-`jj-stack unstack --cleanup --pull-request orphans`.
+stack. Close them on GitHub, then remove their branches, comments, and saved links with
+`jj-stack cleanup --pull-request orphans`.
 
 It reads pull request state from GitHub but does not fetch, so run `jj git fetch` first when your
 local trunk may be behind.
@@ -297,8 +297,8 @@ def _json_orphan_row(row: OrphanRow) -> dict[str, object]:
 def _emit_orphan_hint(orphan_rows: tuple[OrphanRow, ...]) -> None:
     if not orphan_rows:
         return
-    command = ui.cmd("unstack --cleanup --pull-request orphans")
-    console.note(t"Orphan cleanup: run {command} to close and clean up every orphan shown.")
+    command = ui.cmd("cleanup --pull-request orphans")
+    console.note(t"Orphan cleanup: close the listed PRs on GitHub, then run {command}.")
 
 
 def _emit_stale_stacks_advisory(

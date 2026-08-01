@@ -86,7 +86,7 @@ Replay follows the same shape for every scenario:
    `change_id` order matches the scenario model. Subjects are diagnostics only.
 8. Dissolve any existing GitHub stack that includes active reviews outside the selected path,
    or when the selection combines more than one existing GitHub stack. This models the exact
-   `gh stack unstack` recovery named by `submit`.
+   `jj-stack unstack --stack` recovery named by `submit`.
 9. Run `submit` again on the new stack head.
 10. Assert the cross-system invariants.
 

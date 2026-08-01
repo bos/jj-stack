@@ -156,8 +156,8 @@ def build_selected_github_stack_sync(
     ):
         raise CliError(
             t"Selected reviews do not match GitHub stack #{stack.number}'s ordered members.",
-            hint=t"Bring them back into line with {ui.cmd('jj-stack submit')}, or dissolve the "
-            t"stack with {ui.cmd(f'gh stack unstack {stack.number}')} and resubmit.",
+            hint=t"Bring them back into line with {ui.cmd('jj-stack submit')}, or remove the "
+            t"grouping with {ui.cmd(f'jj-stack unstack --stack {stack.number}')} and resubmit.",
         )
     historical: list[GithubStackHistoryReview] = []
     survivors: list[GithubStackSurvivorReview] = []
@@ -252,7 +252,7 @@ def _historical_review(
     )
     if evidence_kind is None:
         raise CliError(
-            t"Cannot retire stack member PR #{member.number}: {reason}.",
+            t"Cannot remove the saved link for stack member PR #{member.number}: {reason}.",
             hint=t"Make GitHub's merge result reachable from trunk, then rerun sync.",
         )
     return GithubStackHistoryReview(
@@ -281,7 +281,7 @@ def _validated_member_pull_request(
     ):
         raise CliError(
             t"Stack member PR #{member.number} no longer matches its saved review identity.",
-            hint=t"Reattach it with {ui.cmd('jj-stack relink')}, or end the review with "
-            t"{ui.cmd('jj-stack unstack --cleanup')} and submit it again.",
+            hint=t"Reattach it with {ui.cmd('jj-stack relink')}, or forget the incorrect link "
+            t"with {ui.cmd('jj-stack unstack --local')} before submitting again.",
         )
     return pull_request

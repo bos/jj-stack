@@ -40,5 +40,5 @@ jj-stack help --all
 jj-stack <command> --help
 ```
 
-`jj-stack help --all` also shows command aliases where a command has one,
-such as `status`, `st`, and `v` for `view`, `ls` for `list`, and `delete` for `unstack`.
+`jj-stack help --all` also shows command aliases where a command has one, such as `status`, `st`,
+and `v` for `view`, and `ls` for `list`.

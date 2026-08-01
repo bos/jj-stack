@@ -19,6 +19,7 @@ from ..support.integration_helpers import (
     write_file,
 )
 from ..support.json_schema import assert_json_output_matches_schema
+from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     approve_pull_requests,
     configure_submit_environment,
@@ -84,7 +85,7 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     assert "orphan" in captured.out
     assert f"PR #{orphaned_pr_number}" in captured.out
     assert "local change missing" in captured.out
-    assert "unstack --cleanup --pull-request orphans" in captured.out
+    assert_output_contains(captured.out, "cleanup --pull-request orphans")
 
     exit_code = run_main(repo, config_path, "list", "--json")
     captured = capsys.readouterr()

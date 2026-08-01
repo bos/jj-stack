@@ -361,7 +361,7 @@ def test_sync_reports_a_closed_stack_survivor_as_a_closed_review_not_branch_drif
     assert exit_code == 1
     unwrapped = " ".join(captured.err.split())
     assert "PR #2" in unwrapped and "is closed, so sync cannot update that review" in unwrapped
-    assert "jj-stack unstack --cleanup" in unwrapped
+    assert "jj-stack cleanup" in unwrapped
     assert JjClient(repo).resolve_revision(on_trunk.change_id).commit_id == on_trunk.commit_id
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == survivor.commit_id
     assert state_store.load() == state_before
@@ -539,7 +539,7 @@ def test_sync_all_requires_terminal_stack_merge_for_exact_stack_member(
 
     assert selected_exit == 1
     assert "keeps #1 active outside the selected stack" in selected.err
-    assert "gh stack unstack 7" in selected.err
+    assert "jj-stack unstack --stack 7" in selected.err
     assert first.change_id in state_store.load().review_identities
     assert fake_repo.pull_requests[1].state == "open"
 

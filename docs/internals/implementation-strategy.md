@@ -84,8 +84,8 @@ The bundled agent skill in `skills/jj-stack/` is installed separately from the e
 
 - discovers and caches the working invocation for a repository
 - uses `list --json` and `view --json` to recognize locally managed reviews
-- routes structural PR and review-branch changes through `jj-stack`, except for the explicit
-  `gh stack unstack` repair that dissolves one GitHub stack before separate submissions
+- routes structural PR and review-branch changes through `jj-stack`; closing a pull request is a
+  supported GitHub lifecycle action because saved tracking remains available for later cleanup
 
 Built-in help and the user guide own the command and alias inventory.
 
@@ -361,23 +361,19 @@ supplies `view` and mutation targets. All paths preserve malformed or unmatched 
 for explicit repair rather than changing them during inspection. The command behavior is
 specified in [design.md](design.md).
 
-Orphan cleanup lives in its own command module because it begins from saved identity rather than
-a selected live stack. `review/observation.py` batches raw observations of saved identity and
-baseline pairs, exact PR numbers, unique head claims, and open base-ref dependents. It does not
-create a second exact-PR resolution path.
+Selected cleanup begins from either a local stack or saved pull request identity. Orphan cleanup
+therefore uses the same repository cleanup pass after selection instead of a separate mutation
+path. `review/observation.py` batches raw observations of saved identity and baseline pairs,
+exact PR numbers, unique head claims, and open base-ref dependents. It does not create a second
+exact-PR resolution path.
 
-Ordinary close, selected cleanup, orphan cleanup, sync, and merge request only the facts their
-mutation boundary needs; `_close_actions.py` applies the shared exact-link and dependent-PR
-eligibility checks instead of observing those facts again through a command-specific path.
-
-Repository-wide cleanup is one lifecycle-driven pass over complete identity/baseline pairs.
+Cleanup is one lifecycle-driven pass over the selected complete identity/baseline pairs. With no
+selector it uses every saved pair in the repository.
 It observes the exact saved PR, prepares branch and comment cleanup for a closed or merged match,
 and rereads the PR, its unique head claim, open base-ref dependents, remote ref, GitHub stack
-membership, and tracking records at their mutation boundaries. Selected cleanup processes the
-observed stack head-to-base. A dry run may omit only dependents that an earlier selected action
-would close; actual cleanup never omits a live dependent. Local jj descendants remain
-`sync` evidence, not cleanup evidence. Shared code supplies observation and artifact
-mutation without a second set of eligibility rules.
+membership, and tracking records at their mutation boundaries. Local jj descendants remain
+`sync` evidence, not cleanup evidence. Shared code supplies observation and artifact mutation
+without a second set of eligibility rules.
 
 ## Data model
 

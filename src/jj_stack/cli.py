@@ -123,7 +123,6 @@ _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "submit": ("sub",),
     "view": ("status", "st", "v"),
     "list": ("ls",),
-    "unstack": ("delete",),
 }
 _VIEW_COMMANDS = frozenset(("view", *_COMMAND_ALIASES["view"]))
 _KNOWN_COMMANDS = frozenset(
@@ -379,39 +378,37 @@ def build_parser() -> ArgumentParser:
     unstack_parser = _add_revision_command(
         subcommands,
         command="unstack",
-        aliases=_COMMAND_ALIASES["unstack"],
         help_text=normalized_help_text(unstack_command.HELP),
         description_text=unstack_command.__doc__ or "",
         handler=_forward_handler(unstack_command.unstack),
         revset_help=(
             t"Revision or change ID to unstack; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
-            t"cannot be combined with {ui.cmd('--pull-request')}"
+            t"cannot be combined with {ui.cmd('--pull-request')} or {ui.cmd('--stack')}"
         ),
     )
     unstack_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview the unstack without closing pull requests or deleting anything",
-    )
-    unstack_parser.add_argument(
-        "--cleanup",
-        action="store_true",
-        help="Also delete each closed PR's review branch, overview comment, and tracking",
+        help="Preview the GitHub grouping removal or locally forgotten saved links",
     )
     unstack_parser.add_argument(
         "--local",
         action="store_true",
-        help="Forget local review tracking without closing PRs or deleting review branches",
+        help="Only forget saved pull request links; do not change GitHub",
     )
     add_help_argument(
         unstack_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
-        help=(
-            "Select a stack by PR number or URL, or use 'orphans' with --cleanup "
-            "to close and clean up every orphan"
-        ),
+        help="Select the local stack linked to this pull request number or URL",
+    )
+    add_help_argument(
+        unstack_parser,
+        "--stack",
+        type=int,
+        metavar="NUMBER",
+        help="Remove this GitHub stack grouping without requiring local tracking",
     )
     _add_checkout_parser(
         subcommands,
@@ -421,17 +418,27 @@ def build_parser() -> ArgumentParser:
         handler=_forward_handler(checkout_command.checkout),
     )
 
-    cleanup_parser = _add_command_parser(
+    cleanup_parser = _add_revision_command(
         subcommands,
         command="cleanup",
         help_text=normalized_help_text(cleanup_command.HELP),
         description_text=cleanup_command.__doc__ or "",
         handler=_forward_handler(cleanup_command.cleanup),
+        revset_help=(
+            "Revision or change ID whose stack should be cleaned up; omit it to check every "
+            "saved review; cannot be combined with --pull-request"
+        ),
     )
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Preview the cleanup without deleting review branches, comments, or tracking",
+    )
+    add_help_argument(
+        cleanup_parser,
+        *_PULL_REQUEST_OPTION_STRINGS,
+        metavar="PR",
+        help="Clean up this saved pull request, or use 'orphans' for every orphaned review",
     )
 
     sync_parser = _add_revision_command(
@@ -838,8 +845,6 @@ def _add_command_parser(
 ) -> ArgumentParser:
     description = normalized_help_text(description_text)
     if aliases:
-        # `jj-stack delete` reaching unstack's help matters most: the name sounds destructive and
-        # this help is where the promise that local changes survive is made.
         spelled = ", ".join(f"jj-stack {alias}" for alias in aliases)
         description = f"{description}\n\nAlso spelled {spelled}."
     parser = subcommands.add_parser(

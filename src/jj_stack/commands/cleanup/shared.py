@@ -8,7 +8,7 @@ from typing import Literal
 
 import jj_stack.console as console
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._close_actions import emit_action_row
+from jj_stack.commands._cleanup_actions import emit_action_row
 from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
@@ -55,6 +55,7 @@ class PreparedCleanup:
     # None until plain cleanup proves it needs remote or GitHub state.
     github_target: GithubTarget | UnresolvedGithubTarget | None
     dry_run: bool
+    selected_change_ids: tuple[str, ...] | None
     state: ReviewState
 
     @property

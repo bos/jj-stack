@@ -43,7 +43,8 @@ def selected_github_stack(
         raise CliError(
             t"The selected reviews belong to GitHub stacks "
             t"{ui.join(lambda number: f'#{number}', numbers)}.",
-            hint=t"Run {ui.join(lambda number: ui.cmd(f'gh stack unstack {number}'), numbers)}, "
+            hint=t"Run "
+            t"{ui.join(lambda number: ui.cmd(f'jj-stack unstack --stack {number}'), numbers)}, "
             t"then retry.",
         )
     if not dissolvable and len(overlapping) > 1:
@@ -63,7 +64,7 @@ def selected_github_stack(
             t"{ui.join(lambda number: f'#{number}', unselected)} active outside the selected "
             t"stack.",
             hint=t"Select the complete stack, or run "
-            t"{ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
+            t"{ui.cmd(f'jj-stack unstack --stack {stack.number}')}, then retry.",
         )
     return stack
 
@@ -109,7 +110,7 @@ class GithubStackSelection:
         stack_number = blocking[0].number
         raise CliError(
             t"GitHub stack #{stack_number} blocks this jj-stack operation.",
-            hint=t"Run {ui.cmd(f'gh stack unstack {stack_number}')} and retry.",
+            hint=t"Run {ui.cmd(f'jj-stack unstack --stack {stack_number}')} and retry.",
         )
 
     async def dissolve_exact(
@@ -125,13 +126,15 @@ class GithubStackSelection:
         try:
             remaining = await self.github_client.unstack(stack_number=current.number)
         except GithubClientError as error:
-            raise CliError(t"Could not dissolve GitHub stack #{current.number}.") from error
+            raise CliError(
+                t"Could not remove GitHub stack grouping #{current.number}."
+            ) from error
         if remaining is not None:
             members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
             raise CliError(
                 t"GitHub stack #{current.number} still contains {members}.",
-                hint=t"Resolve its locked pull requests, run "
-                t"{ui.cmd(f'gh stack unstack {current.number}')}, then retry jj-stack.",
+                hint=t"Resolve its locked pull requests, then retry "
+                t"{ui.cmd(f'jj-stack unstack --stack {current.number}')}.",
             )
         return current
 
@@ -153,7 +156,8 @@ class GithubStackSelection:
             raise CliError(t"Could not inspect GitHub stack #{stack.number}.") from error
         if current.pull_request_numbers != stack.pull_request_numbers:
             raise CliError(
-                t"GitHub stack #{stack.number} changed before jj-stack could dissolve it.",
-                hint=t"Run {ui.cmd(f'gh stack unstack {stack.number}')}, then retry.",
+                t"GitHub stack #{stack.number} changed before jj-stack could remove its "
+                t"grouping.",
+                hint=t"Retry {ui.cmd(f'jj-stack unstack --stack {stack.number}')}.",
             )
         return current

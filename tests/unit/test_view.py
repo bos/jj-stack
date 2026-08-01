@@ -168,7 +168,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_end_review() -> None:
     assert "GitHub reports a closed PR for the change shown above" in normalized_lines
     assert "Reopen the PR on GitHub to continue that review" in normalized_lines
     assert "relink an open replacement" in normalized_lines
-    assert "jj-stack unstack --cleanup @" in normalized_lines
+    assert "jj-stack cleanup @" in normalized_lines
     assert "changes below" not in normalized_lines
 
 
@@ -203,7 +203,7 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
     assert "GitHub did not report a PR for the remembered review branch" in normalized_lines
     assert "jj git fetch" in normalized_lines
     assert "Relink an open PR if one exists" in normalized_lines
-    assert "jj-stack unstack --cleanup @" in normalized_lines
+    assert "jj-stack unstack --local @" in normalized_lines
     assert "GitHub did not report remembered PR #42 for this branch" in normalized_lines
 
 

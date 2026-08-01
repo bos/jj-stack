@@ -904,16 +904,16 @@ def _link_advisory_summary_row(
         if len(link_revisions) == 1
         else "one or more changes shown above"
     )
-    end_review_command = ui.cmd(f"jj-stack unstack --cleanup {selected_revset}")
+    cleanup_command = ui.cmd(f"jj-stack cleanup {selected_revset}")
     if states == {"closed"}:
         label = "Closed GitHub PR" if len(link_revisions) == 1 else "Closed GitHub PRs"
         closed_phrase = "a closed PR" if len(link_revisions) == 1 else "closed PRs"
         detail = (
             f"GitHub reports {closed_phrase} for {change_phrase}; submit will not "
             "reuse closed reviews. Reopen the PR on GitHub to continue that review, "
-            "relink an open replacement, or end the review with ",
-            end_review_command,
-            " and submit it again.",
+            "relink an open replacement, or remove the closed review's leftovers with ",
+            cleanup_command,
+            " before submitting again.",
         )
         return label, detail
     if states == {"missing"}:
@@ -922,10 +922,10 @@ def _link_advisory_summary_row(
             "GitHub did not report a PR for the remembered review branch of "
             f"{change_phrase}. Run ",
             ui.cmd("jj git fetch"),
-            " if branch state may be stale. Relink an open PR if one exists; otherwise end "
-            "the review with ",
-            end_review_command,
-            " and submit it again.",
+            " if branch state may be stale. Relink an open PR if one exists; otherwise forget "
+            "the missing PR link with ",
+            ui.cmd(f"jj-stack unstack --local {selected_revset}"),
+            " before submitting again.",
         )
         return label, detail
     if states == {"ambiguous"}:
@@ -942,17 +942,15 @@ def _link_advisory_summary_row(
         detail = (
             "GitHub found the remembered PR, but its head branch no longer matches "
             f"{change_phrase}. Relink it if that PR should stay attached; "
-            "otherwise end the review with ",
-            end_review_command,
-            " and submit it again.",
+            "otherwise forget the incorrect link with ",
+            ui.cmd(f"jj-stack unstack --local {selected_revset}"),
+            " before submitting again.",
         )
         return label, detail
     detail = (
         "GitHub reports closed, missing, or ambiguous PR state for one or more "
-        "changes shown above. Inspect the per-change rows, then reopen, relink, or end the "
-        "review with ",
-        end_review_command,
-        " as appropriate.",
+        "changes shown above. Inspect the per-change rows, then reopen, relink, clean up, or "
+        "forget a saved link as appropriate.",
     )
     return "GitHub PRs need repair", detail
 
