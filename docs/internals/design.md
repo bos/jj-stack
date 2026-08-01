@@ -443,15 +443,14 @@ repository allows but never which to prefer, so a repository allowing several wi
 stops rather than choosing one. A configured method the repository does not allow is refused by
 name before any request goes out.
 
-Immediately before each ordinary merge, `jj-stack` retargets the candidate to trunk and passes
-the exact expected head commit.
+Immediately before an ordinary single-PR merge, `jj-stack` retargets the candidate to trunk and
+passes the exact expected head commit.
 
-`merge` does not compare trunk commits at all — neither before planning nor between the pull
-requests it merges. Trunk advancing under a reviewed stack is routine, and GitHub merges a pull
-request whose base is behind unless it conflicts, so whether the merge is possible is GitHub's
-answer to give. Each candidate is retargeted to the trunk branch by name and sent with its
-expected head commit, so no step depends on which commit trunk points at, and no local fetch is
-needed between merges: every remote fact a later candidate depends on is read live.
+`merge` does not compare trunk commits before planning. Trunk advancing under a reviewed stack is
+routine, and GitHub merges a pull request whose base is behind unless it conflicts, so whether the
+merge is possible is GitHub's answer to give. The single-PR candidate is retargeted to the trunk
+branch by name and sent with its expected head commit, so the mutation does not depend on which
+commit trunk points at.
 
 A reviewed change GitHub already merged is still a stop, decided from the pull request's own
 reported state rather than from trunk position. That boundary names `sync`, because the local

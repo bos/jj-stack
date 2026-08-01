@@ -448,9 +448,7 @@ each time.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
   `jj-stack sync --all`.
 - `merge`: rerun the same explicit selector and merge method. A matching request still in progress
-  asks you to wait; a completed native request is observed on retry. If an ordinary merge accepted
-  lower PRs first, preview with `jj-stack sync --dry-run <head-change-id>`, then run
-  `jj-stack sync <head-change-id>` before retrying the remainder.
+  asks you to wait; a completed native request is observed on retry.
 
 `jj-stack sync <head-change-id>` handles commits rewritten by GitHub while keeping a review
 branch that a PR above still needs. `sync --all` checks independently tracked exact commits

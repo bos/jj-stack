@@ -2,7 +2,7 @@
 
 With no mode flag, `unstack` closes the tracked open pull requests but keeps their review
 branches and tracking, so `jj-stack cleanup` can still remove them later. Passing `--cleanup`
-also deletes each closed pull request's review branch, stack comments, and tracking.
+also deletes each closed pull request's review branch, overview comment, and tracking.
 Use `--pull-request` to close by PR number or URL.
 
 Use `jj-stack unstack --cleanup --pull-request <pr>` to close and clean up an orphaned PR shown
@@ -30,13 +30,13 @@ from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.commands._close_actions import (
     CloseAction,
     CloseActionBody,
-    apply_managed_comment_cleanup,
+    apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
     check_current_review_cleanup,
     check_tracked_review,
     close_current_tracked_pull_request,
     emit_close_actions,
-    find_managed_comments as _find_managed_comments,
+    find_overview_comment as _find_overview_comment,
     github_observation_blocker,
     plan_review_cleanup,
     prepare_current_review_cleanup,
@@ -51,10 +51,10 @@ from jj_stack.commands.close_orphan import (
 from jj_stack.errors import AmbiguousSelectionError, CliError, ErrorMessage, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
+from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.github.resolution import (
     GithubRepoAddress,
 )
-from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
@@ -606,7 +606,6 @@ def stream_close(
     progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         status_result = stream_status(
-            inspect_stack_comments=True,
             on_revision=lambda _revision, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
@@ -1034,20 +1033,19 @@ async def _cleanup_revision(
     run: _CloseMutationRun,
     submitted_baseline: SubmittedBaseline,
 ) -> bool:
-    lookups = await _find_managed_comments(
+    overview_lookup = await _find_overview_comment(
         github_client=run.github_client,
         pull_request_number=review_identity.pr_number,
     )
-    for lookup in lookups:
-        if lookup.blocked_reason is not None:
-            run.record_action(
-                CloseAction(
-                    kind=STACK_OVERVIEW_COMMENT_LABEL,
-                    body=lookup.blocked_reason,
-                    status="blocked",
-                )
+    if overview_lookup.blocked_reason is not None:
+        run.record_action(
+            CloseAction(
+                kind=STACK_OVERVIEW_COMMENT_LABEL,
+                body=overview_lookup.blocked_reason,
+                status="blocked",
             )
-            return False
+        )
+        return False
     if run.dry_run:
         assert run.initial_observation is not None
         _pull_request, branch_update, blocker = plan_review_cleanup(
@@ -1081,11 +1079,11 @@ async def _cleanup_revision(
         remote_name=run.remote_name,
         update=branch_update,
     )
-    comment_actions, comments_current = await apply_managed_comment_cleanup(
+    comment_actions, comments_current = await apply_overview_comment_cleanup(
         change_id=revision.change_id,
         dry_run=run.dry_run,
         github_client=run.github_client,
-        lookups=lookups,
+        lookup=overview_lookup,
         review_identity=review_identity,
         state_store=run.prepared_close.context.state_store,
         submitted_baseline=submitted_baseline,

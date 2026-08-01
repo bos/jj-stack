@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_MARKER
+from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.state.store import ReviewStateStore
@@ -339,7 +339,7 @@ def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
     assert "changed before the atomic push" in captured.err
 
 
-def test_cleanup_removes_managed_stack_comment_for_closed_pull_request(
+def test_cleanup_removes_overview_comment_for_closed_pull_request(
     tmp_path: Path,
     monkeypatch,
     capsys,

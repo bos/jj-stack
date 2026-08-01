@@ -54,36 +54,15 @@ class SubmittedBaseline:
     submitted_baseline: StoredBaseline
 
 
-def _dissolve_conflicting_native_stacks(
+def _dissolve_native_stacks(
     *,
     fake_repo: FakeGithubRepository,
-    repo: Path,
-    selected_change_ids: tuple[str, ...],
+    stack_numbers: tuple[int, ...],
 ) -> None:
-    """Model the documented `gh stack unstack` step before a cross-stack submit."""
+    """Model explicit `gh stack unstack` actions chosen by the scenario."""
 
-    state = ReviewStateStore.for_repo(repo).load()
-    selected_pull_numbers = {
-        identity.pr_number
-        for change_id in selected_change_ids
-        if (identity := state.review_identities.get(change_id)) is not None
-    }
-    overlapping = tuple(
-        stack_number
-        for stack_number, pull_numbers in fake_repo.native_stacks.items()
-        if not selected_pull_numbers.isdisjoint(pull_numbers)
-    )
-    conflicting = (
-        overlapping
-        if len(overlapping) > 1
-        else tuple(
-            stack_number
-            for stack_number in overlapping
-            if not set(fake_repo.native_stacks[stack_number]).issubset(selected_pull_numbers)
-        )
-    )
-    for stack_number in conflicting:
-        del fake_repo.native_stacks[stack_number]
+    for stack_number in stack_numbers:
+        fake_repo.native_stacks.pop(stack_number, None)
 
 
 def replay_successful_stack_edit_scenario(
@@ -100,6 +79,7 @@ def replay_successful_stack_edit_scenario(
 
     assert submit(None) == 0
     discard_output()
+    initial_stack_numbers = tuple(fake_repo.native_stacks)
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
     fake_repo.pull_request_events.clear()
@@ -119,10 +99,9 @@ def replay_successful_stack_edit_scenario(
         labels=scenario.final_live_labels,
         labels_to_change_ids=labels_to_change_ids,
     )
-    _dissolve_conflicting_native_stacks(
+    _dissolve_native_stacks(
         fake_repo=fake_repo,
-        repo=repo,
-        selected_change_ids=tuple(revision.change_id for revision in stack.revisions),
+        stack_numbers=initial_stack_numbers,
     )
     assert submit(stack.head.change_id) == 0
     discard_output()
@@ -391,10 +370,12 @@ def replay_stack_merge_scenario(
     labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
+    initial_stack_numbers = set(fake_repo.native_stacks)
 
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
+    initial_stack_numbers.update(fake_repo.native_stacks)
 
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
@@ -417,10 +398,9 @@ def replay_stack_merge_scenario(
         labels_to_change_ids=labels_to_change_ids,
     )
 
-    _dissolve_conflicting_native_stacks(
+    _dissolve_native_stacks(
         fake_repo=fake_repo,
-        repo=repo,
-        selected_change_ids=tuple(revision.change_id for revision in merged_stack.revisions),
+        stack_numbers=tuple(sorted(initial_stack_numbers)),
     )
     assert submit(merged_stack.head.change_id) == 0
     discard_output()
@@ -449,10 +429,12 @@ def replay_stack_move_scenario(
     labels_to_change_ids = _create_labeled_stack(repo, scenario.first_stack_labels)
     assert submit(labels_to_change_ids[scenario.first_stack_labels[-1]]) == 0
     discard_output()
+    initial_stack_numbers = set(fake_repo.native_stacks)
 
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
+    initial_stack_numbers.update(fake_repo.native_stacks)
 
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
@@ -481,10 +463,9 @@ def replay_stack_move_scenario(
             labels_to_change_ids=labels_to_change_ids,
         )
 
-    _dissolve_conflicting_native_stacks(
+    _dissolve_native_stacks(
         fake_repo=fake_repo,
-        repo=repo,
-        selected_change_ids=tuple(revision.change_id for revision in selected_stack.revisions),
+        stack_numbers=tuple(sorted(initial_stack_numbers)),
     )
     assert submit(selected_stack.head.change_id) == 0
     discard_output()

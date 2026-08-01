@@ -27,10 +27,9 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
-from jj_stack.github.stack_comments import is_overview_comment
 from jj_stack.jj.client import JjClient, ReviewFetchIsolation, UnsupportedStackError
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubIssueComment, GithubPullRequest
+from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.change_status import (
@@ -48,7 +47,6 @@ HELP = "Check the review status of one or more jj stacks"
 
 PullRequestLookupState = Literal["ambiguous", "closed", "error", "missing", "open"]
 PullRequestLookupSource = Literal["head", "remembered"]
-ManagedCommentsLookupState = Literal["ambiguous", "error", "resolved"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,15 +63,6 @@ class PullRequestLookup:
 
 
 @dataclass(frozen=True, slots=True)
-class ManagedCommentsLookup:
-    """Best-effort GitHub managed-comment lookup for one pull request."""
-
-    message: ErrorMessage | None
-    overview_comment: GithubIssueComment | None
-    state: ManagedCommentsLookupState
-
-
-@dataclass(frozen=True, slots=True)
 class ReviewStatusRevision:
     """Rendered pull-request and branch state for one local revision."""
 
@@ -85,7 +74,6 @@ class ReviewStatusRevision:
     submitted_baseline: SubmittedBaseline | None
     pull_request_lookup: PullRequestLookup | None
     remote_target: str | None
-    managed_comments_lookup: ManagedCommentsLookup | None
     subject: str
 
     def pull_request(self) -> GithubPullRequest | None:
@@ -305,7 +293,6 @@ def _resolve_selected_stack(
 
 def stream_status(
     *,
-    inspect_stack_comments: bool = False,
     prepared_status: PreparedStatus,
     on_revision: Callable[[ReviewStatusRevision, bool], None] | None = None,
 ) -> StatusResult:
@@ -313,7 +300,6 @@ def stream_status(
 
     return asyncio.run(
         stream_status_async(
-            inspect_stack_comments=inspect_stack_comments,
             on_revision=on_revision,
             prepared_status=prepared_status,
         )
@@ -322,7 +308,6 @@ def stream_status(
 
 async def stream_status_async(
     *,
-    inspect_stack_comments: bool = False,
     on_revision: Callable[[ReviewStatusRevision, bool], None] | None,
     prepared_status: PreparedStatus,
 ) -> StatusResult:
@@ -408,7 +393,6 @@ async def stream_status_async(
     try:
         async for revision in _iter_status_revisions_with_github(
             github_repository=github_repository,
-            inspect_stack_comments=inspect_stack_comments,
             prepared=prepared,
             prepared_revisions=prepared_revisions_for_github,
         ):
@@ -551,7 +535,6 @@ def build_status_revisions_for_prepared_stack(
             ),
             review_identity=revision.review_identity,
             submitted_baseline=revision.submitted_baseline,
-            managed_comments_lookup=None,
             subject=revision.revision.subject,
         )
         for revision in prepared.status_revisions
@@ -563,22 +546,15 @@ def _needs_github_inspection(prepared_revision: PreparedRevision) -> bool:
 
 
 def _status_is_incomplete(revisions: tuple[ReviewStatusRevision, ...]) -> bool:
-    for revision in revisions:
-        if classify_review_status_revision(revision).makes_report_incomplete:
-            return True
-        managed_comments_lookup = revision.managed_comments_lookup
-        if managed_comments_lookup is not None and managed_comments_lookup.state in {
-            "ambiguous",
-            "error",
-        }:
-            return True
-    return False
+    return any(
+        classify_review_status_revision(revision).makes_report_incomplete
+        for revision in revisions
+    )
 
 
 async def _iter_status_revisions_with_github(
     *,
     github_repository: GithubRepoAddress,
-    inspect_stack_comments: bool,
     prepared: PreparedStack,
     prepared_revisions: tuple[PreparedRevision, ...],
 ) -> AsyncIterator[ReviewStatusRevision]:
@@ -593,8 +569,6 @@ async def _iter_status_revisions_with_github(
         tasks = tuple(
             asyncio.create_task(
                 _inspect_revision_with_github(
-                    github_client=github_client,
-                    inspect_stack_comments=inspect_stack_comments,
                     prepared=prepared,
                     prepared_revision=prepared_revision,
                     pull_request_lookup=pull_request_lookups[_required_branch(prepared_revision)],
@@ -648,8 +622,6 @@ async def lookup_pull_request_lookups_async(
 
 async def _inspect_revision_with_github(
     *,
-    github_client: GithubClient,
-    inspect_stack_comments: bool,
     prepared: PreparedStack,
     prepared_revision: PreparedRevision,
     pull_request_lookup: PullRequestLookup,
@@ -657,15 +629,6 @@ async def _inspect_revision_with_github(
 ) -> ReviewStatusRevision:
     async with semaphore:
         branch = _required_branch(prepared_revision)
-        managed_comments_lookup: ManagedCommentsLookup | None = None
-        if inspect_stack_comments and pull_request_lookup.state == "open":
-            pull_request = pull_request_lookup.pull_request
-            if pull_request is None:
-                raise AssertionError("Open pull request lookup must include a pull request.")
-            managed_comments_lookup = await _inspect_managed_comments(
-                github_client=github_client,
-                pull_request_number=pull_request.number,
-            )
         logger.debug(
             "status revision inspected: change_id=%s branch=%s pr_state=%s",
             short_change_id(prepared_revision.revision.change_id),
@@ -681,7 +644,6 @@ async def _inspect_revision_with_github(
             remote_target=prepared.remote_targets.get(branch),
             review_identity=prepared_revision.review_identity,
             submitted_baseline=prepared_revision.submitted_baseline,
-            managed_comments_lookup=managed_comments_lookup,
             subject=prepared_revision.revision.subject,
         )
 
@@ -864,44 +826,4 @@ def _single_pull_request_lookup(
         ),
         source=source,
         state="open" if open_ else "closed",
-    )
-
-
-async def _inspect_managed_comments(
-    *,
-    github_client: GithubClient,
-    pull_request_number: int,
-) -> ManagedCommentsLookup:
-    try:
-        comments = await github_client.list_issue_comments(
-            issue_number=pull_request_number,
-        )
-    except GithubClientError as error:
-        return ManagedCommentsLookup(
-            message=summarize_github_lookup_error(
-                action=f"stack comment lookup for pull request #{pull_request_number}",
-                error=error,
-            ),
-            overview_comment=None,
-            state="error",
-        )
-
-    overview_comments = [comment for comment in comments if is_overview_comment(comment.body)]
-    messages: list[str] = []
-    if len(overview_comments) > 1:
-        comment_ids = ", ".join(str(comment.id) for comment in overview_comments)
-        messages.append(
-            "GitHub reports multiple jj-stack stack overview comments for the same "
-            f"request: {comment_ids}."
-        )
-    if messages:
-        return ManagedCommentsLookup(
-            message=" ".join(messages),
-            overview_comment=None,
-            state="ambiguous",
-        )
-    return ManagedCommentsLookup(
-        message=None,
-        overview_comment=overview_comments[0] if overview_comments else None,
-        state="resolved",
     )

@@ -12,7 +12,7 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.stack_comments import (
+from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_LABEL,
     delete_stack_overview_comment,
     is_overview_comment,
@@ -233,27 +233,23 @@ async def close_current_tracked_pull_request(
 
 
 @dataclass(frozen=True, slots=True)
-class ManagedCommentLookup:
-    """One resolution result for a managed stack comment on a pull request.
+class OverviewCommentLookup:
+    """Resolution of the managed overview comment on one pull request.
 
-    Exactly one of ``comment`` or ``blocked_reason`` is set; the other is ``None``. A missing
-    body-marker match is omitted from the result rather than represented as a third state.
+    At most one of ``comment`` or ``blocked_reason`` is set. Both are ``None`` when the marker is
+    absent.
     """
 
     comment: GithubIssueComment | None = None
     blocked_reason: str | None = None
 
 
-async def find_managed_comments(
+async def find_overview_comment(
     *,
     github_client: GithubClient,
     pull_request_number: int,
-) -> tuple[ManagedCommentLookup, ...]:
-    """Discover managed stack comments for one PR via a single list call.
-
-    The managed comment is identified by its body marker alone. Returns one entry when it
-    resolved to a delete target or was blocked, and no entry when the marker is absent.
-    """
+) -> OverviewCommentLookup:
+    """Discover the managed overview comment for one PR via a single list call."""
 
     try:
         comments = await github_client.list_issue_comments(
@@ -261,103 +257,96 @@ async def find_managed_comments(
         )
     except GithubClientError as error:
         if error.status_code == 404:
-            return ()
+            return OverviewCommentLookup()
         reason = error.user_facing_reason()
-        return (
-            ManagedCommentLookup(
-                blocked_reason=(
-                    f"cannot inspect {STACK_OVERVIEW_COMMENT_LABEL}s for PR "
-                    f"#{pull_request_number}: {reason}"
-                ),
+        return OverviewCommentLookup(
+            blocked_reason=(
+                f"cannot inspect the {STACK_OVERVIEW_COMMENT_LABEL} for PR "
+                f"#{pull_request_number}: {reason}"
             ),
         )
 
-    entry = _resolve_managed_comment_from_listed(
+    return _resolve_overview_comment_from_listed(
         comments=comments,
         pull_request_number=pull_request_number,
     )
-    return () if entry is None else (entry,)
 
 
-async def apply_managed_comment_cleanup(
+async def apply_overview_comment_cleanup(
     *,
     change_id: str,
     dry_run: bool,
     github_client: GithubClient,
-    lookups: tuple[ManagedCommentLookup, ...],
+    lookup: OverviewCommentLookup,
     review_identity: ReviewIdentity,
     state_store: ReviewStateStore,
     submitted_baseline: SubmittedBaseline,
 ) -> tuple[tuple[CloseAction, ...], bool]:
-    """Delete preflighted comments through one fresh marker and PR boundary."""
+    """Delete one preflighted overview comment through a fresh PR boundary."""
 
-    actions: list[CloseAction] = []
-    for lookup in lookups:
-        comment = lookup.comment
-        if comment is None:
-            continue
-        deleted = True
-        if not dry_run:
-            _pull_request, blocker = await check_current_tracked_pull_request(
-                allowed_states=frozenset({"closed", "merged"}),
-                change_id=change_id,
+    comment = lookup.comment
+    if comment is None:
+        return (), True
+    deleted = True
+    if not dry_run:
+        _pull_request, blocker = await check_current_tracked_pull_request(
+            allowed_states=frozenset({"closed", "merged"}),
+            change_id=change_id,
+            github_client=github_client,
+            review_identity=review_identity,
+            state_store=state_store,
+            submitted_baseline=submitted_baseline,
+        )
+        if blocker is not None:
+            return (blocker,), False
+        try:
+            deleted = await delete_stack_overview_comment(
+                comment_id=comment.id,
                 github_client=github_client,
-                review_identity=review_identity,
-                state_store=state_store,
-                submitted_baseline=submitted_baseline,
+                pull_request_number=review_identity.pr_number,
             )
-            if blocker is not None:
-                return ((*actions, blocker), False)
-            try:
-                deleted = await delete_stack_overview_comment(
-                    comment_id=comment.id,
-                    github_client=github_client,
-                    pull_request_number=review_identity.pr_number,
-                )
-            except CliError as error:
-                actions.append(
-                    CloseAction(
-                        kind=STACK_OVERVIEW_COMMENT_LABEL,
-                        body=str(error),
-                        status="blocked",
-                    )
-                )
-                return tuple(actions), False
+        except CliError as error:
+            return (
+                CloseAction(
+                    kind=STACK_OVERVIEW_COMMENT_LABEL,
+                    body=str(error),
+                    status="blocked",
+                ),
+            ), False
+    action_body = (
+        f"delete {STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} from "
+        f"PR #{review_identity.pr_number}"
+    )
+    if not dry_run and not deleted:
         action_body = (
-            f"delete {STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} from "
+            f"{STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} already absent from "
             f"PR #{review_identity.pr_number}"
         )
-        if not dry_run and not deleted:
-            action_body = (
-                f"{STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} already absent from "
-                f"PR #{review_identity.pr_number}"
-            )
-        actions.append(
-            CloseAction(
-                kind=STACK_OVERVIEW_COMMENT_LABEL,
-                body=action_body,
-                status="planned" if dry_run else "applied",
-            )
-        )
-    return tuple(actions), True
+    return (
+        CloseAction(
+            kind=STACK_OVERVIEW_COMMENT_LABEL,
+            body=action_body,
+            status="planned" if dry_run else "applied",
+        ),
+    ), True
 
 
-def _resolve_managed_comment_from_listed(
+def _resolve_overview_comment_from_listed(
     *,
     comments: tuple[GithubIssueComment, ...],
     pull_request_number: int,
-) -> ManagedCommentLookup | None:
+) -> OverviewCommentLookup:
     matching_comments = [comment for comment in comments if is_overview_comment(comment.body)]
     if len(matching_comments) > 1:
-        return ManagedCommentLookup(
+        return OverviewCommentLookup(
             blocked_reason=(
                 f"cannot delete {STACK_OVERVIEW_COMMENT_LABEL}s because GitHub reports "
                 f"multiple candidates on PR #{pull_request_number}"
             ),
         )
     if not matching_comments:
-        return None
-    return ManagedCommentLookup(comment=matching_comments[0])
+        return OverviewCommentLookup()
+    return OverviewCommentLookup(comment=matching_comments[0])
 
 
 def emit_close_actions(

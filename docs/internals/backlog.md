@@ -166,7 +166,7 @@ per-label remote-ref reads) have been applied.
 _Benefit: small — the current family covers the main mutation boundaries; extend it only if the
 corresponding failures prove important._
 
-- stack-comment failures
+- overview-comment failures
 - draft-state and review-rerequest failures
 - retry after an external GitHub change between attempts
 

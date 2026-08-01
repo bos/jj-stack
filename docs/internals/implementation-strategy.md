@@ -458,7 +458,7 @@ Implemented local coverage includes:
 - local integration tests against the fake GitHub server and a real backing Git repo
 - five fixed generated/property cases that replay the integration harness in the default suite
 - focused merge and recovery cases, including native atomic failure, partial survivor rewrites,
-  terminal retry, and ordinary sequential stops
+  terminal retry, and single-PR merge topology
 
 Local tests are the default.
 

@@ -38,7 +38,7 @@ from jj_stack.review.selection import (
 from jj_stack.review.status import prepare_status
 from jj_stack.state.operation_lock import acquire_operation_lock
 
-from .execute import execute_merge_plan
+from .execute import execute_single_pull_request_merge
 from .models import MergeExecutionInputs, MergeResult, PreparedMerge
 from .native import build_native_merge_plan, check_native_merge, execute_native_merge
 from .plan import build_merge_plan
@@ -256,7 +256,7 @@ async def _stream_merge_async(
                 merge_method=resolved_merge_method,
                 native=native,
             )
-        return await execute_merge_plan(
+        return await execute_single_pull_request_merge(
             execution=execution,
             github_client=github_client,
             merge_method=resolved_merge_method,

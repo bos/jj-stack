@@ -78,8 +78,8 @@ If you already have a PR body in a Markdown file, attach it while submitting:
 jj-stack submit --describe <change-id>=pr-body.md
 ```
 
-For a multi-change stack, `--describe stack=stack-overview.md` adds stack overview text
-to the head PR's stack comment.
+For a multi-change stack, `--describe stack=stack-overview.md` adds text to the head PR's stack
+overview comment.
 
 If a change does not already have its review branch and PR set up, `jj-stack submit` creates the
 remote branch and PR. After that, it reuses the saved human-readable branch name as the stable

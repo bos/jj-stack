@@ -10,7 +10,6 @@ import jj_stack.ui as ui_module
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.review.status import (
-    ManagedCommentsLookup,
     PullRequestLookup,
     PullRequestLookupSource,
     PullRequestLookupState,
@@ -44,7 +43,6 @@ def _status_revision(
     change_id: str,
     commit_id: str = "commit-1",
     local_divergent: bool = False,
-    managed_comments_lookup: ManagedCommentsLookup | None = None,
     pull_request_lookup: PullRequestLookup | None = None,
     review_identity: ReviewIdentity | None = None,
     remote_target: str | None = None,
@@ -56,7 +54,6 @@ def _status_revision(
         change_id=change_id,
         commit_id=commit_id,
         local_divergent=local_divergent,
-        managed_comments_lookup=managed_comments_lookup,
         pull_request_lookup=pull_request_lookup,
         review_identity=review_identity,
         remote_target=remote_target,

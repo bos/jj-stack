@@ -88,6 +88,7 @@ from .models import (
     SubmittedRevision,
 )
 from .native import NativeStackPlan, apply_native_stack_plan, plan_native_stack
+from .overview_comments import stack_overview_comment_bodies, sync_stack_overview_comments
 from .pull_requests import (
     discover_pull_requests_by_branch,
     ensure_pull_request_syncs_are_safe,
@@ -95,7 +96,6 @@ from .pull_requests import (
 )
 from .render import print_submit_result, render_selected_line
 from .revisions import prepare_submit_revisions
-from .stack_comments import stack_overview_comment_bodies, sync_stack_comments
 
 HELP = "Send a jj stack to GitHub for review"
 
@@ -598,7 +598,7 @@ async def run_submit_async(
                 plan=native_plan,
                 pull_numbers=pull_numbers,
             )
-            await sync_stack_comments(
+            await sync_stack_overview_comments(
                 concurrency=_GITHUB_INSPECTION_CONCURRENCY,
                 github_client=github_client,
                 overview_bodies=stack_overview_comment_bodies(

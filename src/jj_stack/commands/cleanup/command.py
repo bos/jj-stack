@@ -23,12 +23,12 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.commands._close_actions import (
     CloseAction,
-    ManagedCommentLookup,
-    apply_managed_comment_cleanup,
+    OverviewCommentLookup,
+    apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
     check_current_review_cleanup,
     check_tracked_review,
-    find_managed_comments,
+    find_overview_comment,
     native_stack_cleanup_blocker,
     plan_review_cleanup,
 )
@@ -36,11 +36,11 @@ from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
+from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.github.resolution import (
     GithubTarget,
     resolve_github_target,
 )
-from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import ReviewRefUpdate
 from jj_stack.models.review_state import ReviewIdentity
@@ -342,12 +342,12 @@ async def _cleanup_tracked_review(
     if native_blocker is not None:
         record_action(_cleanup_action(native_blocker))
         return
-    comment_lookups = await _preflight_cleanup_comments(
+    overview_lookup = await _preflight_cleanup_overview_comment(
         github_client=github_client,
         identity=identity,
         record_action=record_action,
     )
-    if comment_lookups is None:
+    if overview_lookup is None:
         return
     if not prepared_cleanup.dry_run:
         mutation_blocker = await check_current_review_cleanup(
@@ -364,7 +364,7 @@ async def _cleanup_tracked_review(
             return
     await _apply_tracked_review_cleanup(
         branch_update=update,
-        comment_lookups=comment_lookups,
+        overview_lookup=overview_lookup,
         github_client=github_client,
         prepared_change=prepared_change,
         prepared_cleanup=prepared_cleanup,
@@ -404,21 +404,19 @@ def _review_cleanup_update(
     return False, update, None if blocker is None else _cleanup_action(blocker)
 
 
-async def _preflight_cleanup_comments(
+async def _preflight_cleanup_overview_comment(
     *,
     github_client: GithubClient,
     identity: ReviewIdentity,
     record_action: Callable[[CleanupAction], None],
-) -> tuple[ManagedCommentLookup, ...] | None:
-    """Resolve managed comments, recording and stopping on ambiguous lookup."""
+) -> OverviewCommentLookup | None:
+    """Resolve the overview comment, recording and stopping on an ambiguous lookup."""
 
-    lookups = await find_managed_comments(
+    lookup = await find_overview_comment(
         github_client=github_client,
         pull_request_number=identity.pr_number,
     )
-    for lookup in lookups:
-        if lookup.blocked_reason is None:
-            continue
+    if lookup.blocked_reason is not None:
         record_action(
             CleanupAction(
                 kind=STACK_OVERVIEW_COMMENT_LABEL,
@@ -427,13 +425,13 @@ async def _preflight_cleanup_comments(
             )
         )
         return None
-    return lookups
+    return lookup
 
 
 async def _apply_tracked_review_cleanup(
     *,
     branch_update: ReviewRefUpdate | None,
-    comment_lookups: tuple[ManagedCommentLookup, ...],
+    overview_lookup: OverviewCommentLookup,
     github_client: GithubClient,
     prepared_change: PreparedCleanupChange,
     prepared_cleanup: PreparedCleanup,
@@ -451,11 +449,11 @@ async def _apply_tracked_review_cleanup(
         remote_name=remote_name,
         update=branch_update,
     )
-    comment_actions, comments_current = await apply_managed_comment_cleanup(
+    comment_actions, comments_current = await apply_overview_comment_cleanup(
         change_id=prepared_change.change_id,
         dry_run=prepared_cleanup.dry_run,
         github_client=github_client,
-        lookups=comment_lookups,
+        lookup=overview_lookup,
         review_identity=identity,
         state_store=prepared_cleanup.context.state_store,
         submitted_baseline=baseline,

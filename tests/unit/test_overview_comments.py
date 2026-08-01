@@ -7,7 +7,7 @@ import pytest
 
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
-from jj_stack.github.stack_comments import (
+from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_MARKER,
     delete_stack_overview_comment,
 )

@@ -224,7 +224,7 @@ def build_parser() -> ArgumentParser:
         submit_description_mode,
         "--describe-with",
         metavar="HELPER",
-        help="Delegate pull request and stack-comment text generation to HELPER",
+        help="Delegate pull request and stack-overview text generation to HELPER",
     )
     add_help_argument(
         submit_parser,
@@ -373,8 +373,7 @@ def build_parser() -> ArgumentParser:
         metavar="METHOD",
         help=(
             "GitHub merge method: merge, rebase, or squash. Defaults to jj-stack.merge_method, "
-            "or to the repository's only allowed method; rebase can only merge one pull request "
-            "per run"
+            "or to the repository's only allowed method"
         ),
     )
     unstack_parser = _add_revision_command(
@@ -398,7 +397,7 @@ def build_parser() -> ArgumentParser:
     unstack_parser.add_argument(
         "--cleanup",
         action="store_true",
-        help="Also delete each closed pull request's review branch, stack comments, and tracking",
+        help="Also delete each closed PR's review branch, overview comment, and tracking",
     )
     unstack_parser.add_argument(
         "--local",

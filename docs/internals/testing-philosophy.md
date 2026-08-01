@@ -186,7 +186,7 @@ Test names should explain the rule being protected, not just the setup.
 
 Prefer names like:
 
-- `test_cleanup_skips_stack_comment_lookup_when_open_pr_still_has_remote_branch`
+- `test_cleanup_skips_overview_comment_lookup_when_open_pr_still_has_remote_branch`
 - `test_status_reports_divergent_stack_with_targeted_jj_guidance`
 
 Avoid names that only enumerate setup details without stating the policy or

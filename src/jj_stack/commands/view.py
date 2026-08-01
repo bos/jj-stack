@@ -1072,13 +1072,6 @@ def _format_status_summary(
     if change_status.local == "divergent" and change_status.pr_lifecycle != "merged":
         summary = f"{summary}, multiple visible revisions"
 
-    managed_comments_lookup = revision.managed_comments_lookup
-    if managed_comments_lookup is not None and managed_comments_lookup.state in {
-        "ambiguous",
-        "error",
-    }:
-        message = managed_comments_lookup.message or "stack comment lookup failed"
-        return f"{summary}, {message}"
     return summary
 
 

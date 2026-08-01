@@ -400,8 +400,8 @@ class FakeGithubRepository:
 
         Real GitHub computes a three-way merge before squashing. Using the head
         commit's tree matches that result whenever the base has not diverged
-        beyond the PR's merge base, which holds for the sequential stacked
-        merges these tests exercise.
+        beyond the PR's merge base, which holds for the merge scenarios these
+        tests construct.
         """
 
         heads = self.branch_heads()

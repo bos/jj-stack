@@ -475,36 +475,6 @@ def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
     assert state_store.load() == state_before
 
 
-def test_view_skips_stack_comment_github_reads(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class FailingCommentLookupClient(GithubClient):
-        async def list_issue_comments(self, *, issue_number):
-            raise AssertionError("status should not inspect stack comments")
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.review.status",),
-        client_type=FailingCommentLookupClient,
-    )
-
-    exit_code = run_main(repo, config_path, "view")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "PR #2" in captured.out
-    assert "stack comment" not in captured.out
-
-
 def test_view_reports_unsubmitted_after_state_loss(
     tmp_path: Path,
     monkeypatch,

@@ -9,7 +9,7 @@ import pytest
 
 from jj_stack.errors import EXIT_CONFLICTS, EXIT_GITHUB, EXIT_USAGE
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.stack_comments import (
+from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_MARKER,
     is_overview_comment,
 )
@@ -79,7 +79,7 @@ def _assert_stack_pull_requests_match_dag(
         assert pull_request.base_ref == expected_base
 
 
-def test_submit_native_support_keeps_one_pr_ordinary_until_second_is_submitted(
+def test_submit_keeps_one_pr_ordinary_until_native_stack_is_needed(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -913,7 +913,7 @@ def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
     assert ReviewStateStore.for_repo(repo).load() == state_before
 
 
-def test_submit_batches_stack_comment_reads_with_graphql(
+def test_submit_batches_stack_overview_comment_reads_with_graphql(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -940,7 +940,7 @@ def test_submit_batches_stack_comment_reads_with_graphql(
             issue_number: int,
         ):
             raise AssertionError(
-                f"submit should batch stack comment reads for pull request #{issue_number}"
+                f"submit should batch overview comment reads for pull request #{issue_number}"
             )
 
     app = create_app(FakeGithubState.single_repository(fake_repo))
@@ -1056,7 +1056,7 @@ def test_submit_rejects_ambiguous_stack_overview_comments(
     assert "multiple jj-stack stack overview comments" in captured.err
 
 
-def test_submit_reports_stack_comment_update_failures_without_traceback(
+def test_submit_reports_stack_overview_comment_update_failures_without_traceback(
     tmp_path: Path,
     monkeypatch,
     capsys,

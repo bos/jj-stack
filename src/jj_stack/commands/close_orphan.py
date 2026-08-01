@@ -10,14 +10,14 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.commands._close_actions import (
     CloseAction,
-    ManagedCommentLookup,
-    apply_managed_comment_cleanup,
+    OverviewCommentLookup,
+    apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
     check_current_review_cleanup,
     check_current_tracked_pull_request,
     close_current_tracked_pull_request,
     emit_close_actions,
-    find_managed_comments,
+    find_overview_comment,
     github_observation_blocker,
     plan_review_cleanup,
 )
@@ -26,11 +26,11 @@ from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
+from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
-from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_LABEL
 from jj_stack.jj.client import ReviewRefUpdate
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import (
@@ -56,7 +56,7 @@ class _PreparedOrphanClose:
 
     branch_update: ReviewRefUpdate | None
     change_id: str
-    comment_lookups: tuple[ManagedCommentLookup, ...]
+    overview_lookup: OverviewCommentLookup
     initial_pull_request: GithubPullRequest
     remote_name: str
     review_identity: ReviewIdentity
@@ -239,7 +239,7 @@ async def _preflight_orphan_close(
     if pull_request is None:
         raise AssertionError("Orphan close inspection must resolve a pull request state.")
 
-    comment_lookups = await _preflight_orphaned_comment_cleanup(
+    overview_lookup = await _preflight_orphaned_overview_comment(
         github_client=github_client,
         pull_request_number=pull_request_number,
         recorder=recorder,
@@ -249,7 +249,7 @@ async def _preflight_orphan_close(
     return _PreparedOrphanClose(
         branch_update=branch_update,
         change_id=change_id,
-        comment_lookups=comment_lookups,
+        overview_lookup=overview_lookup,
         initial_pull_request=pull_request,
         remote_name=remote_name,
         review_identity=review_identity,
@@ -289,11 +289,11 @@ async def _mutate_orphan_close(
     if recorder.blocked:
         return
 
-    comment_actions, comments_current = await apply_managed_comment_cleanup(
+    comment_actions, comments_current = await apply_overview_comment_cleanup(
         change_id=prepared.change_id,
         dry_run=run.dry_run,
         github_client=github_client,
-        lookups=prepared.comment_lookups,
+        lookup=prepared.overview_lookup,
         review_identity=prepared.review_identity,
         state_store=run.context.state_store,
         submitted_baseline=prepared.submitted_baseline,
@@ -438,24 +438,22 @@ def _render_orphan_close_actions(
     return 1 if blocked else 0
 
 
-async def _preflight_orphaned_comment_cleanup(
+async def _preflight_orphaned_overview_comment(
     *,
     github_client: GithubClient,
     pull_request_number: int,
     recorder: ActionRecorder[CloseAction],
-) -> tuple[ManagedCommentLookup, ...]:
-    lookups = await find_managed_comments(
+) -> OverviewCommentLookup:
+    lookup = await find_overview_comment(
         github_client=github_client,
         pull_request_number=pull_request_number,
     )
-    for lookup in lookups:
-        if lookup.blocked_reason is not None:
-            recorder.record(
-                CloseAction(
-                    kind=STACK_OVERVIEW_COMMENT_LABEL,
-                    body=lookup.blocked_reason,
-                    status="blocked",
-                )
+    if lookup.blocked_reason is not None:
+        recorder.record(
+            CloseAction(
+                kind=STACK_OVERVIEW_COMMENT_LABEL,
+                body=lookup.blocked_reason,
+                status="blocked",
             )
-            return ()
-    return lookups
+        )
+    return lookup

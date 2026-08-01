@@ -155,6 +155,5 @@ def _stub_revision() -> ReviewStatusRevision:
         review_identity=_review_identity(),
         remote_target="commit-1",
         submitted_baseline=SubmittedBaseline(commit_id="commit-1"),
-        managed_comments_lookup=None,
         subject="feature",
     )

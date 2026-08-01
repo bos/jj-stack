@@ -1,4 +1,4 @@
-"""Synchronize submit stack comments on GitHub pull requests."""
+"""Synchronize submit stack overview comments on GitHub pull requests."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import jj_stack.ui as ui
 from jj_stack.concurrency import run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.stack_comments import (
+from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_LABEL,
     STACK_OVERVIEW_COMMENT_MARKER,
     delete_stack_overview_comment,
@@ -43,7 +43,7 @@ def stack_overview_comment_bodies(
     }
 
 
-async def sync_stack_comments(
+async def sync_stack_overview_comments(
     *,
     concurrency: int,
     github_client: GithubClient,
@@ -54,7 +54,7 @@ async def sync_stack_comments(
     pull_request_numbers = tuple(overview_bodies)
     if not pull_request_numbers:
         return
-    with console.spinner(description="Loading stack comments"):
+    with console.spinner(description="Loading stack overview comments"):
         try:
             comments_by_pull_request_number = (
                 await github_client.get_issue_comments_by_pull_request_numbers(
@@ -62,38 +62,22 @@ async def sync_stack_comments(
                 )
             )
         except GithubClientError as error:
-            raise CliError("Could not list stack comments") from error
+            raise CliError("Could not list stack overview comments") from error
 
     with console.progress(
-        description="Syncing stack comments",
+        description="Syncing stack overview comments",
         total=len(pull_request_numbers),
     ) as progress:
         await run_bounded_tasks(
             concurrency=concurrency,
             items=pull_request_numbers,
-            run_item=lambda pull_request_number: _sync_stack_comment_task(
-                github_client=github_client,
+            run_item=lambda pull_request_number: _sync_overview_comment(
+                comment_body=overview_bodies[pull_request_number],
                 comments=comments_by_pull_request_number[pull_request_number],
-                overview_bodies=overview_bodies,
+                github_client=github_client,
                 pull_request_number=pull_request_number,
             ),
             on_success=lambda _index, _result: progress.advance(),
-        )
-
-
-async def _sync_stack_comment_task(
-    *,
-    comments: tuple[GithubIssueComment, ...],
-    github_client: GithubClient,
-    overview_bodies: dict[int, str | None],
-    pull_request_number: int,
-) -> None:
-    if pull_request_number in overview_bodies:
-        await _sync_overview_comment(
-            comment_body=overview_bodies[pull_request_number],
-            comments=comments,
-            github_client=github_client,
-            pull_request_number=pull_request_number,
         )
 
 

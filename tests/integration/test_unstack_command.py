@@ -7,7 +7,7 @@ import jj_stack.commands.unstack as unstack_module
 from jj_stack.commands._native_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.stack_comments import STACK_OVERVIEW_COMMENT_MARKER
+from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
@@ -594,21 +594,21 @@ def test_unstack_cleanup_rechecks_dependents_after_comment_discovery(
     state_store = ReviewStateStore.for_repo(repo)
     state = state_store.load()
     change_id, identity = next(iter(state.review_identities.items()))
-    find_comments = unstack_module._find_managed_comments
+    find_comment = unstack_module._find_overview_comment
 
     async def dependent_appears_during_comment_lookup(**kwargs):
-        lookups = await find_comments(**kwargs)
+        lookup = await find_comment(**kwargs)
         fake_repo.create_pull_request(
             base_ref=identity.head_ref,
             body="",
             head_ref="manual/late-dependent",
             title="late dependent",
         )
-        return lookups
+        return lookup
 
     monkeypatch.setattr(
         unstack_module,
-        "_find_managed_comments",
+        "_find_overview_comment",
         dependent_appears_during_comment_lookup,
     )
     exit_code = run_main(repo, config_path, "unstack", "--cleanup", change_id)
