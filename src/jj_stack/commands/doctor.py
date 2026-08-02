@@ -1,7 +1,8 @@
 """Check jj-stack's configuration and connectivity.
 
-Checks review-branch fetch settings, leftovers from interrupted checkout or sync
-commands, remote selection, GitHub connectivity, authentication, and trunk discovery.
+Checks review-branch fetch settings, visible review bookmarks, leftovers from interrupted
+checkout or sync commands, remote selection, GitHub connectivity, authentication, and trunk
+discovery.
 Reports only; pass --fix to also apply the local repairs it can make safely, which
 today means reserving the review-branch namespace in the remote's fetch configuration.
 Nothing on GitHub is ever changed.
@@ -34,7 +35,6 @@ from jj_stack.github.resolution import (
     select_submit_remote,
 )
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import ReviewFetchIsolationRequired
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
 from jj_stack.review.branches import (
@@ -192,22 +192,36 @@ def _check_review_fetch_isolation(
     fix: bool,
     remote: GitRemote,
 ) -> CheckResult:
+    visible = tuple(context.jj_client.visible_review_bookmark_targets())
+    visible_detail: CheckDetail = (
+        t" Visible bookmarks remain: {ui.join(ui.bookmark, visible)}." if visible else ""
+    )
     try:
         isolation = context.jj_client.ensure_review_fetch_isolation(
             remote=remote.name,
             dry_run=not fix,
         )
-    except ReviewFetchIsolationRequired as error:
+    except CliError as error:
+        detail: CheckDetail = error_message(error)
+        if error.hint is not None:
+            detail = (detail, t" {error.hint}")
+        return CheckResult("review branch fetch", "warn", detail)
+    if isolation.status == "required":
         return CheckResult(
             "review branch fetch",
-            "fail",
+            "warn",
             (
-                error_message(error),
-                t" Apply it with {ui.cmd('jj-stack doctor --fix')}.",
+                t"missing or duplicated {ui.code(review_fetch_refspec())} exclusion; ",
+                t"apply it with {ui.cmd('jj-stack doctor --fix')}.",
+                visible_detail,
             ),
         )
-    except CliError as error:
-        return CheckResult("review branch fetch", "fail", str(error))
+    if visible:
+        return CheckResult(
+            "review branch fetch",
+            "warn",
+            t"exclusion is configured; visible bookmarks remain: {ui.join(ui.bookmark, visible)}",
+        )
     return CheckResult(
         "review branch fetch",
         "fixed" if isolation.status == "applied" else "ok",

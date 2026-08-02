@@ -14,7 +14,6 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
@@ -120,7 +119,6 @@ def _checkout_saved_stack(
     if fetch:
         client.fetch_remote(
             remote=remote.name,
-            on_isolation_change=report_fetch_isolation,
         )
     stack = select_review_path(jj_client=client, revset=revset, state=state).stack
     incomplete = tuple(
@@ -152,12 +150,6 @@ async def _checkout_pull_request_stack(
         reference=pull_request_reference,
         github_repository=repository,
     )
-    if not fetch:
-        client.ensure_review_fetch_isolation(
-            remote=remote.name,
-            on_change=report_fetch_isolation,
-        )
-
     async with build_github_client(repository=repository) as github_client:
         top_pull_request = await _load_pull_request(
             github_client=github_client,
@@ -185,7 +177,6 @@ async def _checkout_pull_request_stack(
         if fetch:
             client.fetch_remote(
                 remote=remote.name,
-                on_isolation_change=report_fetch_isolation,
             )
             _reject_locally_rewritten_change(
                 client=client,
@@ -527,7 +518,7 @@ def _pick_tracked_stack_head(context: CommandContext) -> str:
     else:
         repository_paths = observe_repository_paths(
             jj_client=context.jj_client,
-            tracked_change_ids=tuple(state.review_identities),
+            state=state,
         )
         stacks = sorted(
             (path.stack for path in repository_paths.paths if path.tracked_change_ids),

@@ -143,11 +143,12 @@ with:
 jj-stack checkout --pull-request <pr> --fetch
 ```
 
-Despite its name, `checkout` does not move the working copy. It fetches only the exact reviewed
-commits needed to identify the stack, saves local tracking, and prints the tip commit. It does not
-leave persistent review bookmarks behind. To continue on top of those reviewed commits, use
-`jj new <tip-commit-id>` afterward; to edit an existing change directly, use
-`jj edit <change-id>`.
+Despite its name, `checkout` does not move the working copy. It fetches the reviewed commits
+needed to identify the stack, saves local tracking, and prints the tip commit. Its temporary
+import bookmark is removed. A custom fetch configuration may also expose ordinary review
+bookmarks; those do not prevent adoption when they match the saved review. To continue on top of
+the reviewed commits, use `jj new <tip-commit-id>` afterward; to edit an existing change directly,
+use `jj edit <change-id>`.
 
 When several stacks are already tracked in this repository and you do not remember a head change
 ID, `jj-stack checkout --pick` presents a numbered list. It does not discover GitHub-only stacks.

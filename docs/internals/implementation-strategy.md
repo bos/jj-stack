@@ -158,8 +158,8 @@ as targeted CLI diagnostics, not Python tracebacks.
 Wraps subprocess access to `jj` and exposes typed observations and mutations: resolve a revset,
 read bounded revisions with caller-supplied membership flags, inspect working copies and ordinary
 bookmarks, and surface stale-workspace errors distinctly so commands can suggest
-`jj workspace update-stale`. It detects imported managed review bookmarks only to preserve the
-fail-closed boundary around the remote-only review namespace.
+`jj workspace update-stale`. It also reads the names and targets of visible review bookmarks so
+path selection can distinguish an exact submitted snapshot from unrelated local state.
 
 The adapter prefers machine-readable template output over parsing human text.
 Revision templates capture both `current_working_copy` and the names returned by
@@ -178,16 +178,19 @@ configured fetch URL; leased mutation uses the configured push URL. No raw Git c
 a configured remote name, and the same boundary works for colocated and non-colocated
 repositories.
 
-Ordinary fetch installs a negative Git refspec for the reserved namespace and rejects an effective
-jj `fetch-bookmarks` override that would bypass it. Every broad jj import or fetch that jj-stack
-performs immediately rechecks for imported managed review bookmarks before callers consume its
-result. Recovery ends with `jj git export`, so forgetting an imported bookmark also removes its
-raw local or remote-tracking ref. Review observation uses direct `git ls-remote` against the fetch
-URL, without importing refs or bookmarks. Explicit `checkout` attachment fetches one exact remote
-ref into a fixed temporary Git ref, imports it into jj, verifies the full change ID, and removes
-the temporary ref and bookmark in a `finally` path. `relink` instead fetches and reads the exact
-remote commit object without creating a ref, then compares its full change ID to the selected
-local revision.
+`doctor --fix` installs the negative Git refspec for the reserved namespace. Commands that fetch
+use the repository's configured selection without changing it. A matching saved branch and
+baseline narrow `builtin_immutable_heads()` only when that branch is the sole untracked remote
+bookmark at its commit. The exception is bound to the exact target, and the user's full
+`immutable_heads()` expression still decides whether another rule keeps either copy immutable.
+Review projection accepts only the bounded two-copy case containing the exact baseline and one
+mutable local rewrite.
+
+Review observation uses direct `git ls-remote` against the fetch URL, without importing refs or
+bookmarks. Explicit `checkout` attachment fetches one exact remote ref into a fixed temporary Git
+ref, imports it into jj, verifies the full change ID, and removes the temporary ref and bookmark
+in a `finally` path. `relink` instead fetches and reads the exact remote commit object without
+creating a ref, then compares its full change ID to the selected local revision.
 
 Every submit or deletion expresses its complete remote-ref mutation as one direct atomic Git push
 to the push URL. Each update carries an exact `force-with-lease` expectation, including expected

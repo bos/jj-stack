@@ -14,6 +14,7 @@ from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest, GithubRepository
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
+from jj_stack.review.branches import prepare_visible_review_snapshots
 from jj_stack.state.store import ReviewStateStore
 
 
@@ -106,11 +107,11 @@ async def observe_reviews(
             remote=remote.name,
             patterns=tuple(f"refs/heads/{ref}" for ref in remote_refs),
         )
-    local_revisions = (
-        context.jj_client.query_revisions_by_change_ids(tuple(identities))
-        if context is not None
-        else {}
-    )
+    if context is None:
+        local_revisions = {}
+    else:
+        prepare_visible_review_snapshots(jj_client=context.jj_client, state=state)
+        local_revisions = context.jj_client.query_revisions_by_change_ids(tuple(identities))
     reviews = {
         change_id: ReviewObservation(
             baseline=state.submitted_baselines.get(change_id),

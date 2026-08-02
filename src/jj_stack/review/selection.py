@@ -101,7 +101,7 @@ def resolve_orphaned_pull_request(
     change_id = matching_change_ids[0]
     repository_paths = observe_repository_paths(
         jj_client=jj_client,
-        tracked_change_ids=tuple(state.review_identities),
+        state=state,
     )
     if any(
         revision.change_id == change_id

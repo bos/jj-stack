@@ -26,7 +26,7 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
-from jj_stack.jj.client import JjClient, ReviewFetchIsolation, UnsupportedStackError
+from jj_stack.jj.client import JjClient, UnsupportedStackError
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
@@ -172,10 +172,8 @@ def status_preparation_cli_error(error: UnsupportedStackError) -> CliError:
 def prepare_status(
     *,
     context: CommandContext,
-    dry_run: bool = False,
     fetch_remote_state: bool = False,
     fetch_only_when_tracked: bool = False,
-    on_fetch_isolation_change: Callable[[ReviewFetchIsolation], None] | None = None,
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
     containing_change_id: str | None = None,
@@ -188,12 +186,10 @@ def prepare_status(
     github_target = resolve_github_target(jj_client.list_git_remotes())
 
     selected_path, fetched_remote_state = _resolve_selected_stack(
-        dry_run=dry_run,
         fetch_only_when_tracked=fetch_only_when_tracked,
         fetch_remote_state=fetch_remote_state,
         containing_change_id=containing_change_id,
         jj_client=jj_client,
-        on_fetch_isolation_change=on_fetch_isolation_change,
         re_resolve_after_remote_refresh=re_resolve_after_remote_refresh,
         remote=github_target.remote,
         revset=revset,
@@ -223,12 +219,10 @@ def prepare_status(
 
 def _resolve_selected_stack(
     *,
-    dry_run: bool,
     fetch_only_when_tracked: bool,
     fetch_remote_state: bool,
     containing_change_id: str | None,
     jj_client: JjClient,
-    on_fetch_isolation_change: Callable[[ReviewFetchIsolation], None] | None,
     re_resolve_after_remote_refresh: bool,
     remote: GitRemote | None,
     revset: str | None,
@@ -267,8 +261,6 @@ def _resolve_selected_stack(
     if re_resolve_after_remote_refresh and not fetch_only_when_tracked:
         jj_client.fetch_remote(
             remote=remote.name,
-            dry_run=dry_run,
-            on_isolation_change=on_fetch_isolation_change,
         )
         return resolve(), True
 
@@ -277,8 +269,6 @@ def _resolve_selected_stack(
         return selected_path, False
     jj_client.fetch_remote(
         remote=remote.name,
-        dry_run=dry_run,
-        on_isolation_change=on_fetch_isolation_change,
     )
     if re_resolve_after_remote_refresh:
         selected_path = resolve()

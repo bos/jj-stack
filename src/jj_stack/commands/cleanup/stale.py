@@ -59,8 +59,8 @@ def _local_cleanup_observations(
         return observations
     repository_paths = observe_repository_paths(
         jj_client=jj_client,
-        tracked_change_ids=change_ids,
         descendant_of=tuple(revision.commit_id for revision in candidate_revisions),
+        state=context.state_store.load(),
     )
     supported_commit_ids = {
         revision.commit_id for path in repository_paths.paths for revision in path.stack.revisions

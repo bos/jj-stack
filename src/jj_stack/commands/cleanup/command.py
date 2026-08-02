@@ -33,7 +33,6 @@ from jj_stack.commands._cleanup_actions import (
     github_stack_cleanup_blocker,
     plan_review_cleanup,
 )
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import AmbiguousSelectionError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
@@ -190,7 +189,7 @@ def _resolve_cleanup_change_ids(
     if pull_request == "orphans":
         repository_paths = observe_repository_paths(
             jj_client=context.jj_client,
-            tracked_change_ids=tuple(state.review_identities),
+            state=state,
         )
         tracked_stacks = tuple(
             path.stack for path in repository_paths.paths if path.tracked_change_ids
@@ -242,11 +241,6 @@ async def _run_cleanup_async(
     )
     github_target = prepared_cleanup.github_target
     if isinstance(github_target, GithubTarget) and prepared_changes:
-        prepared_cleanup.context.jj_client.ensure_review_fetch_isolation(
-            remote=github_target.remote.name,
-            dry_run=prepared_cleanup.dry_run,
-            on_change=report_fetch_isolation,
-        )
         async with build_github_client(repository=github_target.repository) as github_client:
             await _run_tracked_review_cleanup_pass(
                 github_client=github_client,

@@ -284,9 +284,9 @@ def dependent_path_commands(
     excluded_changes = excluded_change_ids or set()
     repository_paths = observe_repository_paths(
         jj_client=context.jj_client,
-        tracked_change_ids=(),
         descendant_of=(ancestor_commit_id,),
         include_current_working_copy=True,
+        state=context.state_store.load(),
     )
     heads_by_commit_id: dict[str, LocalRevision] = {}
     for path in repository_paths.paths:

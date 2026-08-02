@@ -48,7 +48,6 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
@@ -403,11 +402,6 @@ async def run_submit_async(
             stack=stack,
         )
 
-    client.ensure_review_fetch_isolation(
-        remote=remote.name,
-        dry_run=dry_run,
-        on_change=report_fetch_isolation,
-    )
     github_repository = require_github_repo(remote)
     branch_resolutions = _recover_interrupted_first_submissions(
         client=client,
@@ -415,6 +409,20 @@ async def run_submit_async(
         resolutions=prepared_inputs.branch_resolutions,
         state_identities=state.review_identities,
     )
+    visible_bookmarks = client.visible_review_bookmark_targets()
+    collisions = tuple(
+        resolution.branch
+        for resolution in branch_resolutions
+        if resolution.change_id not in state.review_identities
+        and resolution.recovered_target is None
+        and resolution.branch in visible_bookmarks
+    )
+    if collisions:
+        raise CliError(
+            t"Cannot claim visible bookmark {ui.join(ui.bookmark, collisions)} for a new review.",
+            hint=t"Move work you need to keep outside the reserved namespace, or forget a stale "
+            t"bookmark, then retry.",
+        )
     remote_targets = client.list_remote_branches(
         remote=remote.name,
         patterns=tuple(f"refs/heads/{resolution.branch}" for resolution in branch_resolutions),

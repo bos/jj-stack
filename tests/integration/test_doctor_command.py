@@ -68,7 +68,7 @@ def test_doctor_exits_zero_for_healthy_repo(
     assert "Traceback" not in captured.out + captured.err
 
 
-def test_doctor_reports_imported_review_bookmark_recovery_command(
+def test_doctor_warns_about_an_imported_review_bookmark(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -81,8 +81,8 @@ def test_doctor_reports_imported_review_bookmark_recovery_command(
     exit_code = run_main(repo, config_path, "doctor")
     output = " ".join(capsys.readouterr().out.split())
 
-    assert exit_code == 1
-    assert f"jj bookmark forget --include-remotes {branch}" in output
+    assert exit_code == 0
+    assert f"Visible bookmarks remain: {branch}" in output
 
 
 def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
@@ -96,7 +96,7 @@ def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
     exit_code = run_main(repo, config_path, "doctor")
     output = " ".join(capsys.readouterr().out.split())
 
-    assert exit_code == 1
+    assert exit_code == 0
     assert "jj-stack doctor --fix" in output
     assert "without --dry-run" not in output
 
@@ -109,7 +109,7 @@ def test_doctor_fix_applies_the_review_fetch_exclusion(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
 
-    assert run_main(repo, config_path, "doctor") == 1
+    assert run_main(repo, config_path, "doctor") == 0
     capsys.readouterr()
 
     run_checks = doctor_mod._run_checks

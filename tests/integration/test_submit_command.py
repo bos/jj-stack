@@ -179,6 +179,7 @@ def test_submit_recreates_github_stack_only_after_active_review_grows_to_two(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
     active_change_id = selected_stack(repo).head.change_id
     run_command(["jj", "rebase", "-s", active_change_id, "-d", "main"], repo)
@@ -210,6 +211,7 @@ def test_submit_appends_to_active_suffix_after_historical_prefix(
         fake_repo.pull_requests[2],
         base_ref="main",
     )
+    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
     active_change_id = selected_stack(repo).head.change_id
     run_command(["jj", "rebase", "-s", active_change_id, "-d", "main"], repo)
@@ -524,7 +526,7 @@ def test_submit_uses_readable_review_branch_names(
 
     assert run_main(repo, config_path, "submit") == 0
     state = ReviewStateStore.for_repo(repo).load()
-    assert JjClient(repo).list_imported_review_bookmarks() == ()
+    assert JjClient(repo).visible_review_bookmark_targets() == {}
 
     for revision, subject in zip(stack.revisions, ("feature-1", "feature-2"), strict=True):
         branch = state.review_identities[revision.change_id].head_ref
@@ -905,6 +907,127 @@ def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
     assert fake_repo.pull_requests[1].title == "feature 1"
     assert remote_refs(fake_repo.git_dir) == remote_refs_before
     assert ReviewStateStore.for_repo(repo).load() == state_before
+
+
+@pytest.mark.parametrize(
+    ("rewrite", "tracked"),
+    ((False, False), (True, False), (True, True)),
+)
+def test_submit_accepts_a_matching_visible_review_bookmark(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    rewrite: bool,
+    tracked: bool,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state = ReviewStateStore.for_repo(repo).load()
+    change_id, identity = next(iter(state.review_identities.items()))
+    old_commit = state.submitted_baselines[change_id].commit_id
+    if rewrite:
+        run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
+    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "*"], repo)
+    if tracked:
+        run_command(["jj", "bookmark", "track", f"{identity.head_ref}@origin"], repo)
+
+    assert identity.head_ref in JjClient(repo).visible_review_bookmark_targets()
+    assert run_main(repo, config_path, "submit", change_id) == 0
+    assert "divergent changes are not supported" not in capsys.readouterr().err
+
+    submitted = ReviewStateStore.for_repo(repo).load().submitted_baselines[change_id].commit_id
+    assert read_remote_ref(fake_repo.git_dir, identity.head_ref) == submitted
+    assert (submitted != old_commit) is rewrite
+
+
+def test_submit_rejects_a_conflicted_visible_review_bookmark(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state = ReviewStateStore.for_repo(repo).load()
+    change_id, identity = next(iter(state.review_identities.items()))
+    old_commit = state.submitted_baselines[change_id].commit_id
+    run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
+    rewritten = selected_stack(repo, change_id).head.commit_id
+    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "*"], repo)
+    run_command(["jj", "bookmark", "create", identity.head_ref, "-r", rewritten], repo)
+
+    assert run_main(repo, config_path, "submit", change_id) != 0
+    assert "divergent" in capsys.readouterr().err
+    assert read_remote_ref(fake_repo.git_dir, identity.head_ref) == old_commit
+
+
+@pytest.mark.parametrize(
+    ("rewrite", "other_bookmark", "expected"),
+    (
+        (False, False, "immutable commits"),
+        (True, False, "divergent changes are not supported"),
+        (True, True, "divergent changes are not supported"),
+    ),
+)
+def test_visible_review_bookmark_preserves_other_immutability(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    rewrite: bool,
+    other_bookmark: bool,
+    expected: str,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state = ReviewStateStore.for_repo(repo).load()
+    change_id = next(iter(state.review_identities))
+    baseline = state.submitted_baselines[change_id].commit_id
+    if rewrite:
+        run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
+    if other_bookmark:
+        run_command(
+            [
+                "git",
+                "--git-dir",
+                str(fake_repo.git_dir),
+                "update-ref",
+                "refs/heads/other-review-copy",
+                baseline,
+            ],
+            repo,
+        )
+    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "*"], repo)
+    if not other_bookmark:
+        run_command(
+            [
+                "jj",
+                "config",
+                "set",
+                "--repo",
+                'revset-aliases."immutable_heads()"',
+                f"builtin_immutable_heads() | {baseline}",
+            ],
+            repo,
+        )
+
+    assert run_main(repo, config_path, "submit", change_id) == 2
+    assert expected in capsys.readouterr().err
+
+
+def test_submit_does_not_claim_a_visible_bookmark_for_an_untracked_change(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    revision = selected_stack(repo).head
+    branch = f"jj-stack/feature-1-{revision.change_id[:8]}"
+    run_command(["jj", "bookmark", "create", branch, "-r", revision.commit_id], repo)
+
+    assert run_main(repo, config_path, "submit", "--dry-run", revision.change_id) == 1
+    assert f"Cannot claim visible bookmark {branch}" in capsys.readouterr().err
+    assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
 
 
 def test_submit_batches_stack_overview_comment_reads_with_graphql(

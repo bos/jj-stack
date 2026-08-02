@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 
 import pytest
 
-from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
-from jj_stack.models.review_state import ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.selected import select_review_path
-from jj_stack.ui import plain_text
 
 from ..support.integration_helpers import (
     commit_file,
@@ -95,7 +92,7 @@ def test_list_git_remotes_preserves_distinct_fetch_and_push_urls(tmp_path: Path)
     ("layout_flag", "exposure"),
     (("--no-colocate", "import"), ("--colocate", "fetch")),
 )
-def test_stale_raw_review_ref_is_rejected_after_broad_operations(
+def test_visible_review_bookmark_does_not_block_broad_operations(
     tmp_path: Path,
     layout_flag: str,
     exposure: str,
@@ -104,6 +101,8 @@ def test_stale_raw_review_ref_is_rejected_after_broad_operations(
     remote = tmp_path / "remote.git"
     run_command(["git", "init", "--bare", str(remote)], tmp_path)
     run_command(["jj", "git", "init", layout_flag, str(repo)], tmp_path)
+    commit_file(repo, "base", "base.txt")
+    run_command(["jj", "bookmark", "create", "main", "-r", "@-"], repo)
     commit_file(repo, "feature", "feature.txt")
     commit_id = _commit_id(repo, "@-")
     change_id = _change_id(repo, "@-")
@@ -114,6 +113,7 @@ def test_stale_raw_review_ref_is_rejected_after_broad_operations(
     run_command(["jj", "bookmark", "forget", branch], repo)
     run_command(["jj", "bookmark", "forget", "--include-remotes", branch], repo)
     run_command(["jj", "git", "export"], repo)
+    run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
     client = JjClient(repo)
     client.ensure_review_fetch_isolation(remote="origin")
 
@@ -129,42 +129,41 @@ def test_stale_raw_review_ref_is_rejected_after_broad_operations(
         ],
         repo,
     )
-    assert client.list_imported_review_bookmarks() == ()
+    assert client.visible_review_bookmark_targets() == {}
 
-    with pytest.raises(CliError) as exposed_raised:
-        if exposure == "fetch":
-            client.fetch_remote(remote="origin")
-        else:
-            with client.import_remote_review_ref(
-                remote="origin",
-                branch=branch,
-                expected_target=commit_id,
-                expected_change_id=change_id,
-            ):
-                pytest.fail("an imported stale review ref should prevent attachment")
+    if exposure == "fetch":
+        client.fetch_remote(remote="origin")
+    else:
+        with client.import_remote_review_ref(
+            remote="origin",
+            branch=branch,
+            expected_target=commit_id,
+            expected_change_id=change_id,
+        ) as imported:
+            assert imported.commit_id == commit_id
 
-    assert exposed_raised.value.hint is not None
-    imported_hint = plain_text(exposed_raised.value.hint)
-    forget = imported_hint.split("run ", maxsplit=1)[1].split(", then run ", maxsplit=1)[0]
-    export = imported_hint.split(", then run ", maxsplit=1)[1].split(".", maxsplit=1)[0]
-    assert client.list_imported_review_bookmarks() == (branch,)
+    assert set(client.visible_review_bookmark_targets()) == {branch}
     assert client.review_temp_artifacts().bookmark_targets == ()
     assert client.review_temp_artifacts().ref_target is None
-    run_command(shlex.split(forget), repo)
-    run_command(shlex.split(export), repo)
-    assert client.list_imported_review_bookmarks() == ()
 
-    client.fetch_remote(remote="origin")
-    with client.import_remote_review_ref(
-        remote="origin",
-        branch=branch,
-        expected_target=commit_id,
-        expected_change_id=change_id,
-    ) as imported:
-        assert imported.commit_id == commit_id
-    assert client.list_imported_review_bookmarks() == ()
-    assert client.review_temp_artifacts().bookmark_targets == ()
-    assert client.review_temp_artifacts().ref_target is None
+    state = ReviewState(
+        review_identities={
+            change_id: ReviewIdentity(
+                repository_owner="octo-org",
+                repository_name="stacked-review",
+                pr_number=1,
+                head_owner="octo-org",
+                head_ref=branch,
+            )
+        },
+        submitted_baselines={change_id: SubmittedBaseline(commit_id=commit_id)},
+    )
+
+    selected = select_review_path(jj_client=client, revset=change_id, state=state).stack.head
+
+    assert selected.change_id == change_id
+    assert selected.commit_id != commit_id
+    assert not selected.divergent
 
 
 @pytest.mark.parametrize("layout_flag", ("--colocate", "--no-colocate"))
@@ -201,7 +200,8 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     client = JjClient(repo)
 
     client.fetch_remote(remote="origin")
-    assert client.list_imported_review_bookmarks() == ()
+    visible_review_bookmarks = {branch: frozenset({old_commit})}
+    assert client.visible_review_bookmark_targets() == visible_review_bookmarks
     assert client.list_remote_branches(
         remote="origin",
         patterns=(f"refs/heads/{branch}",),
@@ -230,7 +230,7 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
         )
         == remote_only_change
     )
-    assert client.list_imported_review_bookmarks() == ()
+    assert client.visible_review_bookmark_targets() == visible_review_bookmarks
 
     git_root = Path(run_command(["jj", "git", "root"], repo).stdout.strip())
     temp_ref = "refs/heads/jj-stack-tmp/checkout"
@@ -301,7 +301,7 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
         )
         == {}
     )
-    assert client.list_imported_review_bookmarks() == ()
+    assert client.visible_review_bookmark_targets() == visible_review_bookmarks
     assert (git_root == repo / ".git") is (layout_flag == "--colocate")
 
 

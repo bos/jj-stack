@@ -81,11 +81,9 @@ jj-stack view
 
 `view` always checks live GitHub state when GitHub is reachable, and always observes each saved
 review branch directly on the remote — you only need the fetch to bring your local trunk up to
-date. Ordinary fetch excludes the review branches: `jj-stack` adds that exclusion to the
-remote's Git
-fetch configuration the first time it needs the remote, and says so, which is what keeps the
-review branches from being imported as persistent bookmarks. See the README for how to undo
-it.
+date. `jj-stack doctor --fix` can add an exclusion that keeps review branches from being imported
+as persistent bookmarks. Other commands honor the repository's configured fetch selection
+without changing it. See the README for how to undo the exclusion.
 
 If a change shows `saved PR #<n>, no PR found for branch`, `jj-stack` remembers submitting that
 change, but GitHub no longer reports pull request `#<n>` at all — it was deleted, the number is
@@ -353,24 +351,24 @@ Run `jj-stack sync <head-change-id>` first when merged changes still appear in t
 Use `cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then
 run plain `cleanup` to apply the listed actions.
 
-## A command reports an imported review bookmark
+## Review bookmarks are visible locally
 
-`jj-stack` reserves one whole branch namespace — `jj-stack/` unless you set `branch_prefix` —
-and its fetches exclude it. This diagnostic means a manual or non-isolated fetch imported a
-bookmark from that namespace, or a leftover backing Git ref was exposed during a `jj-stack`
-operation. Such a bookmark can make a review change immutable or ambiguous, which is why any name
-in the namespace is reported and not only the names `jj-stack` generates.
+`jj-stack` reserves one whole branch namespace — `jj-stack/` unless you set `branch_prefix`.
+`jj-stack doctor --fix` configures ordinary fetches to exclude it. `doctor` warns when that
+exclusion is missing, overridden, or review bookmarks are already visible.
 
-Move any local work to a bookmark outside the namespace, then forget the imported bookmark with
-the exact `jj bookmark forget --include-remotes ...` command from the diagnostic. Run the
-printed `jj git export` command next so the backing Git ref is also removed, then rerun
-`jj-stack`.
+A visible bookmark is not itself an error. If it exposes the exact commit saved for that review,
+`jj-stack` accepts it. If a local rewrite has replaced that commit, the saved commit is treated as
+the published version rather than another local change. The command still stops if the branch or
+pull request on GitHub has moved, or if another `jj` rule makes the selected commit immutable.
 
-If the diagnostic instead names an effective `remotes.<remote>.fetch-bookmarks` override, unset
-that exact setting first so `jj-stack` can keep the managed namespace isolated.
+An unknown bookmark is left untouched and does not block work on another stack. If it collides
+with the name for a new review, move any local work to a bookmark outside the reserved namespace,
+or forget the bookmark if it is only a stale imported copy. Then retry the command.
 
-If the reservation itself is missing — the case where an ordinary fetch could import the
-namespace in the first place — `jj-stack doctor --fix` restores it.
+Use `jj-stack doctor --fix` to restore the normal fetch exclusion. If `doctor` names an effective
+`remotes.<remote>.fetch-bookmarks` override, remove that setting if you want the exclusion to take
+effect.
 
 ## Another jj-stack operation is already running
 

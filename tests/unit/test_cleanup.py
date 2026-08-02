@@ -10,7 +10,7 @@ from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.observation import (
     RepositoryObservation,
     ReviewObservation,
@@ -127,7 +127,9 @@ def _fake_context(
         SimpleNamespace(
             jj_client=cast(JjClient, SimpleNamespace()) if jj_client is None else jj_client,
             state_store=(
-                cast(ReviewStateStore, SimpleNamespace()) if state_store is None else state_store
+                cast(ReviewStateStore, SimpleNamespace(load=ReviewState))
+                if state_store is None
+                else state_store
             ),
         ),
     )

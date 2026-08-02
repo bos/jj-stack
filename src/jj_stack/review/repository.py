@@ -8,6 +8,8 @@ from collections.abc import Sequence
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient, UnsupportedStackError
+from jj_stack.models.review_state import ReviewState
+from jj_stack.review.branches import prepare_visible_review_snapshots
 from jj_stack.review.path import (
     RepositoryPathObservation,
     RepositoryReviewPaths,
@@ -18,7 +20,7 @@ from jj_stack.review.path import (
 def observe_repository_paths(
     *,
     jj_client: JjClient,
-    tracked_change_ids: Sequence[str],
+    state: ReviewState,
     descendant_of: Sequence[str] = (),
     include_current_working_copy: bool = False,
 ) -> RepositoryReviewPaths:
@@ -38,6 +40,7 @@ def observe_repository_paths(
         if not descendant_of:
             raise ValueError("Working-copy dependency observation requires an exact ancestor.")
         candidates = f"({candidates} | (@ & {visible_scope}))"
+    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
     rows = jj_client.query_revisions_with_membership(
         f"trunk() | ({candidates}) | parents({candidates}) | @",
         membership_revsets=("trunk()", candidates, trunk_path),
@@ -71,7 +74,7 @@ def observe_repository_paths(
                 revision.commit_id for revision, flags in rows if flags[2]
             ),
             revisions=tuple(revision for revision, _flags in rows),
-            tracked_change_ids=frozenset(tracked_change_ids),
+            tracked_change_ids=frozenset(state.review_identities),
             trunk=trunk,
         )
     )

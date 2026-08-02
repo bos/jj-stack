@@ -269,8 +269,8 @@ def _emit_connected_stale_stacks_advisory(
         return
     repository_paths = observe_repository_paths(
         jj_client=context.jj_client,
-        tracked_change_ids=tuple(state.review_identities),
         descendant_of=selected_commit_ids,
+        state=state,
     )
     rendered_head_commit_ids = {stack.head.commit_id for stack in rendered_stacks}
     rendered_change_ids = {

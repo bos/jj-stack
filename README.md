@@ -76,21 +76,20 @@ jj-stack
 
 (This is a synonym for `jj-stack view`.)
 
-`jj-stack` reserves the `jj-stack/` branch namespace for the branches it pushes, and keeps them
-off your local bookmark view. `doctor --fix` sets this up; otherwise the first command that
-changes anything does it and tells you so:
+`jj-stack` reserves the `jj-stack/` branch namespace for the branches it pushes. `doctor --fix`
+adds a fetch exclusion that normally keeps those branches out of your local bookmark view. A
+missing exclusion is a warning, not a reason for other commands to stop.
 
-```text
-Reserved jj-stack/ for jj-stack and added fetch exclusion ^refs/heads/jj-stack/*.
-```
-
-A `--dry-run` will not set this up: it reports that the reservation is needed and stops, so make
-the reservation with `doctor --fix` before previewing anything.
-
-After that, neither `jj git fetch` nor `git fetch` brings `jj-stack/*` branches into this repo. Do
-not keep your own branches under `jj-stack/`. If the remote had no fetch configuration at all,
-`jj-stack` also writes the default `+refs/heads/*` refspec so the exclusion has something to
+After that, ordinary `jj git fetch` and `git fetch` exclude `jj-stack/*` branches. Do not keep
+your own branches under `jj-stack/`. If the remote had no fetch configuration at all,
+`doctor --fix` also writes the default `+refs/heads/*` refspec so the exclusion has something to
 exclude from.
+
+If another tool or a custom fetch setting makes a review bookmark visible, `jj-stack` checks it
+only when relevant. A bookmark exposing the exact saved review commit is accepted. After a local
+rewrite, that commit is treated as the published version rather than a competing local change.
+Unknown bookmarks are left alone, and `jj-stack` will not claim a colliding name for a new review.
+Trunk, tags, other untracked bookmarks, and custom `immutable_heads()` rules still apply normally.
 
 To undo the reservation, remove the exclusion from the Git repository backing `jj`, naming your
 own remote and prefix if they are not the defaults:
@@ -142,8 +141,8 @@ the whole stack as a comment on the head PR. This is very helpful to orient a re
 bodies.
 
 On first submit, `jj-stack` creates one stable, readable GitHub review branch per change, such as
-`jj-stack/add-the-api-qpvuntsm`. The branches stay on the Git remote rather than appearing as
-persistent bookmarks in your local `jj` view.
+`jj-stack/add-the-api-qpvuntsm`. The branches normally stay on the Git remote rather than
+appearing as persistent bookmarks in your local `jj` view.
 
 Inspect your stack again:
 

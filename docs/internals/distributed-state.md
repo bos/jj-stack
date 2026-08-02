@@ -14,8 +14,8 @@ have defined behavior but no dedicated current scenario.
 
 1. **Local `jj` view** — the commit DAG, change visibility/mutability, ordinary local bookmarks,
    and fetched non-review remote observations. Moved by the user's `jj` commands (rebase, squash,
-   abandon, new, describe), by ordinary fetch, and by `sync`. Managed review branches
-   are deliberately absent from this durable local view.
+   abandon, new, describe), by ordinary fetch, and by `sync`. Managed review branches are normally
+   excluded from this view, but a matching visible bookmark is tolerated as a published snapshot.
 2. **Remote Git refs** — the branch namespace of the GitHub repository. Moved by
    `jj-stack` atomic leased pushes, by anyone else's pushes (a teammate merging to `main`, an
    agent pushing a branch with plain git), and by branch deletion from the GitHub UI or `gh`.

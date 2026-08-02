@@ -5,7 +5,6 @@ from __future__ import annotations
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -204,7 +203,6 @@ async def _reached_trunk(
     try:
         context.jj_client.fetch_remote(
             remote=remote_name,
-            on_isolation_change=report_fetch_isolation,
         )
         trunk_commit_id = context.jj_client.resolve_revision("trunk()").commit_id
     except CliError, GithubClientError, JjCommandError:

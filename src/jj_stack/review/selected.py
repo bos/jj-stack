@@ -14,6 +14,7 @@ from jj_stack.jj.client import (
 )
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
+from jj_stack.review.branches import prepare_visible_review_snapshots
 from jj_stack.review.path import (
     SelectedPathObservation,
     SelectedReviewPath,
@@ -28,6 +29,8 @@ def select_review_path(
     revset: str | None = None,
 ) -> SelectedReviewPath:
     """Collect the bounded facts for one selector and project its parent path."""
+
+    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
 
     if revset is None:
         selector = "@ | @-"
@@ -81,6 +84,7 @@ def select_review_path_containing_change(
 ) -> SelectedReviewPath:
     """Project the unique ordinary path whose head descends from one tracked change."""
 
+    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
     linked_selector = _change_id_revset(change_id)
     trunk_path = "first_ancestors(trunk())"
     containing_heads = f"heads((({linked_selector}) ~ {trunk_path}):: ~ {trunk_path} ~ empty())"

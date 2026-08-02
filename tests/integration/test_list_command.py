@@ -148,6 +148,25 @@ def test_list_warns_when_tracked_stack_was_rewritten_without_moving(
     assert f"jj-stack submit {change_id[:8]}" in normalized_err
 
 
+def test_list_treats_a_visible_submitted_predecessor_as_published(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = selected_stack(repo).head.change_id
+    branch = ReviewStateStore.for_repo(repo).load().review_identities[change_id].head_ref
+    run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
+    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", branch], repo)
+
+    assert run_main(repo, config_path, "list", "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert len(payload["rows"]) == 1
+    assert [change["change_id"] for change in payload["rows"][0]["changes"]] == [change_id]
+
+
 def test_list_does_not_warn_when_tracked_stack_still_starts_at_mutable_trunk(
     tmp_path,
     monkeypatch,

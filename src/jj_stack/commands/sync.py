@@ -48,7 +48,6 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands.submit.command import print_selected_line, run_submit_async
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
@@ -122,9 +121,7 @@ def run_stack_convergence(
     try:
         prepared_status = prepare_status(
             context=context,
-            dry_run=dry_run,
             fetch_remote_state=fetch_remote_state,
-            on_fetch_isolation_change=report_fetch_isolation,
             re_resolve_after_remote_refresh=True,
             revset=revset,
         )

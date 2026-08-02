@@ -250,6 +250,7 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
             )
         if exit_code != 0:
             raise RuntimeError(f"submitted-stack template build failed: exit {exit_code}")
+        JjClient(repo).ensure_review_fetch_isolation(remote="origin")
 
         (template_root / "fake_repo.pkl").write_bytes(pickle.dumps(fake_repo))
         # The template directory may be renamed after the build completes, so

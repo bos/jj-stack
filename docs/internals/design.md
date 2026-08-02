@@ -122,8 +122,8 @@ show on its own that a mutation is safe.
 GitHub review is branch-based: every PR needs one head branch and one base branch. The `jj` DAG
 supplies neither, so `jj-stack` maintains remote branches purely as transport.
 
-Each tracked review change has exactly one remote Git branch used as its GitHub PR head. These
-branches live on the remote only and remain outside the local `jj` view.
+Each tracked review change has exactly one Git branch used as its GitHub PR head. These branches
+normally stay remote-only and outside the local `jj` view.
 
 The initial name is:
 
@@ -162,13 +162,21 @@ A repository reserves exactly one branch namespace for `jj-stack`'s managed bran
 `branch_prefix` — one lowercase path segment, `jj-stack` by default. Ordinary `jj` bookmarks
 outside that namespace behave normally.
 
-The namespace has to stay out of the local `jj` view. `jj`'s default `immutable_heads()` counts
-untracked remote bookmarks as immutable, so an ordinary fetch of the namespace would make every
-review branch target immutable, which takes the changes it points at out of review. `jj-stack`
-therefore excludes the whole namespace from the remote's fetch configuration.
+The namespace normally stays out of the local `jj` view. `jj`'s default `immutable_heads()` counts
+untracked remote bookmarks as immutable, so `doctor --fix` excludes the namespace from ordinary
+fetches. Missing or overridden fetch isolation is advisory; commands use the configured fetch
+selection without changing it and do not stop merely because a review bookmark is visible.
 
-Before fetching or mutating reviews, `jj-stack` stops if a bookmark in the namespace has reached
-the local `jj` view and names the repair. Plain `view` and `list` do not run this preflight.
+A visible bookmark matching one unambiguous saved review and its submitted baseline is supporting
+evidence for that review. For jj-stack's subprocesses, that exact untracked bookmark is removed
+from `jj`'s built-in immutable heads. Trunk, tags, another untracked bookmark at the commit, and
+additions in the user's `immutable_heads()` remain authoritative. If the baseline and exactly one
+local rewrite are visible and both are mutable after that exception, the baseline is the published
+snapshot rather than a competing local revision.
+
+An unknown or mismatched bookmark creates no ownership. It remains untouched and does not block an
+independent stack. `submit` refuses to claim a colliding visible name for a new review, while live
+remote target checks and exact leases continue to guard moves and deletion of tracked branches.
 
 ### GitHub stack objects
 

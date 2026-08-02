@@ -38,12 +38,14 @@ def test_checkout_bootstraps_tracking_without_importing_review_branches(
     assert "Fetched tip commit:" in captured.out
     assert ReviewStateStore.for_repo(repo).load() == expected
     client = JjClient(repo)
-    assert client.list_imported_review_bookmarks() == ()
+    assert set(client.visible_review_bookmark_targets()) == {
+        identity.head_ref for identity in expected.review_identities.values()
+    }
     review_temp = client.review_temp_artifacts()
     assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
 
 
-def test_checkout_without_fetch_rejects_an_imported_review_bookmark(
+def test_checkout_without_fetch_accepts_a_matching_visible_review_bookmark(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -56,11 +58,11 @@ def test_checkout_without_fetch_rejects_an_imported_review_bookmark(
     resolve_state_path(repo).unlink()
     run_command(["jj", "bookmark", "create", identity.head_ref, "-r", change_id], repo)
 
-    assert _main(repo, config_path, "checkout", "--pull-request", "1") == 1
+    assert _main(repo, config_path, "checkout", "--pull-request", "1") == 0
 
-    assert "reserved jj-stack/ namespace are imported locally" in capsys.readouterr().err
-    assert state_store.load().review_identities == {}
-    assert JjClient(repo).list_imported_review_bookmarks() == (identity.head_ref,)
+    assert "Updated local tracking for 1 review" in capsys.readouterr().out
+    assert state_store.load().review_identities == state.review_identities
+    assert set(JjClient(repo).visible_review_bookmark_targets()) == {identity.head_ref}
 
 
 def test_checkout_fetch_rejects_a_locally_rewritten_pull_request_without_importing(
@@ -80,8 +82,7 @@ def test_checkout_fetch_rejects_a_locally_rewritten_pull_request_without_importi
 
     captured = capsys.readouterr()
     unwrapped = " ".join(captured.err.split())
-    assert "already here at a different commit" in unwrapped
-    assert f"jj-stack relink 1 {change_id}" in unwrapped
+    assert "fetching it would leave two copies" in unwrapped
     assert len(JjClient(repo).query_revisions(f"change_id({change_id})")) == 1
 
 

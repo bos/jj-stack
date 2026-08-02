@@ -17,7 +17,6 @@ from jj_stack.errors import (
 from jj_stack.jj.client import (
     JjClient,
     JjCommandError,
-    ReviewFetchIsolationRequired,
     ReviewRefUpdate,
     StaleWorkspaceError,
 )
@@ -338,7 +337,6 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
-    changes = []
 
     def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert Path(kwargs["cwd"]) == Path("/repo")
@@ -373,15 +371,12 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
         raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
-    with pytest.raises(ReviewFetchIsolationRequired):
-        JjClient(Path("/repo")).ensure_review_fetch_isolation(
-            remote="origin",
-            dry_run=True,
-            on_change=changes.append,
-        )
+    result = JjClient(Path("/repo")).ensure_review_fetch_isolation(
+        remote="origin",
+        dry_run=True,
+    )
 
-    assert len(changes) == 1
-    assert changes[0].status == "required"
+    assert result.status == "required"
     assert all("config --add" not in " ".join(command) for command in seen_commands)
 
 
@@ -453,16 +448,7 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
         raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
-    changes = []
-
-    def record_change(change) -> None:
-        events.append("callback")
-        changes.append(change)
-
-    result = JjClient(Path("/repo")).ensure_review_fetch_isolation(
-        remote="origin",
-        on_change=record_change,
-    )
+    result = JjClient(Path("/repo")).ensure_review_fetch_isolation(remote="origin")
 
     replace_commands = [
         command
@@ -482,9 +468,8 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
             review_refspec,
         )
     ]
-    assert events == ["initial-read", "replace", "post-read", "callback"]
+    assert events == ["initial-read", "replace", "post-read"]
     assert result.status == "applied"
-    assert changes == [result]
 
 
 def test_review_fetch_isolation_reports_the_effective_override_origin(
@@ -524,10 +509,10 @@ def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
 
     monkeypatch.setattr(subprocess, "run", runner)
 
-    assert JjClient(Path("/repo")).list_imported_review_bookmarks() == (
-        "jj-stack/feature-abcdefgh",
-        "jj-stack/not-managed",
-    )
+    assert JjClient(Path("/repo")).visible_review_bookmark_targets() == {
+        "jj-stack/feature-abcdefgh": frozenset({"two"}),
+        "jj-stack/not-managed": frozenset({"one"}),
+    }
 
 
 def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects_drift(

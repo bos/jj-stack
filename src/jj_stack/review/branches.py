@@ -5,12 +5,16 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
-from jj_stack.models.review_state import ReviewIdentity
+from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision
+
+if TYPE_CHECKING:
+    from jj_stack.jj.client import JjClient
 
 _DEFAULT_SLUG = "change"
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
@@ -34,6 +38,26 @@ def review_branch_matches_change(branch: str, change_id: str) -> bool:
     """
 
     return branch.endswith(f"-{short_change_id(change_id)}")
+
+
+def prepare_visible_review_snapshots(
+    *,
+    jj_client: JjClient,
+    state: ReviewState,
+) -> None:
+    """Observe saved review bookmarks and narrow built-in bookmark immutability."""
+
+    visible = jj_client.visible_review_bookmark_targets()
+    claims: dict[str, list[tuple[str, str]]] = {}
+    for review in state.tracked_reviews():
+        branch = review.review_identity.head_ref
+        baseline = review.submitted_baseline.commit_id
+        if visible.get(branch) == frozenset({baseline}):
+            claims.setdefault(branch, []).append((review.change_id, baseline))
+    exact = {branch: items[0] for branch, items in claims.items() if len(items) == 1}
+    jj_client.accept_expected_review_bookmarks(
+        tuple((branch, change_id, commit_id) for branch, (change_id, commit_id) in exact.items())
+    )
 
 
 def generate_review_branch(revision: LocalRevision) -> str:

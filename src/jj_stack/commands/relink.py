@@ -9,7 +9,6 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.pull_request_refs import parse_repository_pull_request_reference
@@ -89,10 +88,6 @@ async def _run_relink_async(
     revision = stack.head
     remote = select_submit_remote(client.list_git_remotes())
     repository = require_github_repo(remote)
-    client.ensure_review_fetch_isolation(
-        remote=remote.name,
-        on_change=report_fetch_isolation,
-    )
     pull_number = parse_repository_pull_request_reference(
         reference=pull_request_reference,
         github_repository=repository,

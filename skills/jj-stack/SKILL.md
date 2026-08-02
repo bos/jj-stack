@@ -174,6 +174,8 @@ that is incomplete or needs attention (the output is still valid — read it);
 - jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.
 - Stale workspace: `jj workspace update-stale`.
 - Local recovery: `jj op log` and `jj undo`; never destructive git commands.
-- Imported review bookmark or interrupted checkout/sync leftovers: run `doctor`
-  and follow the exact recovery command it prints.
+- Visible review bookmarks: continue when they match saved reviews. Run `doctor --fix` to restore
+  the normal fetch exclusion; repair only a bookmark that the affected command identifies as a
+  collision or mismatch.
+- Interrupted checkout/sync leftovers: run `doctor` and follow its recovery guidance.
 - Auth or remote resolution unclear: `doctor`.

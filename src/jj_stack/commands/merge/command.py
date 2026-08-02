@@ -26,7 +26,6 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError
@@ -146,9 +145,7 @@ def _prepare_merge(
     prepared_status = prepare_status(
         containing_change_id=target_change_id,
         context=context,
-        dry_run=dry_run,
         fetch_remote_state=True,
-        on_fetch_isolation_change=report_fetch_isolation,
         re_resolve_after_remote_refresh=True,
         revset=revset,
     )

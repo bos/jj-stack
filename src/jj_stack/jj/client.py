@@ -6,7 +6,7 @@ import json
 import re
 import shlex
 import subprocess
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -60,25 +60,9 @@ ReviewFetchIsolationStatus = Literal["ready", "applied", "required"]
 
 @dataclass(frozen=True, slots=True)
 class ReviewFetchIsolation:
-    """Result of checking the remote-only review fetch boundary."""
+    """Result of checking the ordinary-fetch exclusion for review branches."""
 
     status: ReviewFetchIsolationStatus
-    remote: str
-    existing_count: int = 0
-
-
-class ReviewFetchIsolationRequired(CliError):
-    """Raised when a dry run needs a local fetch-isolation configuration change."""
-
-    def __init__(self, isolation: ReviewFetchIsolation) -> None:
-        self.isolation = isolation
-        change = "adding" if isolation.existing_count == 0 else "normalizing"
-        super().__init__(
-            t"Dry run would reserve {ui.bookmark(review_namespace())} for jj-stack by "
-            t"{change} {ui.code(review_fetch_refspec())} in remote "
-            t"{ui.bookmark(isolation.remote)}'s Git fetch refspecs.",
-            hint="Run the command without --dry-run once to apply this local configuration.",
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,7 +158,9 @@ class JjClient:
         cli_args: JjCliArgs = _NO_CLI_ARGS,
     ) -> None:
         self._repo_root = repo_root
+        self._base_cli_args = cli_args
         self._cli_args = cli_args
+        self._published_review_snapshots: dict[str, str] = {}
         self._config_strings: dict[str, str | None] = {}
         self._git_root: Path | None = None
 
@@ -229,11 +215,14 @@ class JjClient:
         """Return revisions with one containment flag per supplied revset."""
 
         try:
+            rows = self._query_revisions_with_membership(
+                revset,
+                membership_revsets=membership_revsets,
+            )
             return tuple(
-                self._query_revisions_with_membership(
-                    revset,
-                    membership_revsets=membership_revsets,
-                )
+                (projected, flags)
+                for revision, flags in rows
+                if (projected := self._project(revision))
             )
         except JjCommandError as error:
             friendly_error = _revset_resolution_error(selected_revset or revset, error)
@@ -257,7 +246,8 @@ class JjClient:
         for chunk in _chunked(ordered_change_ids):
             revisions = self._query_revisions(_change_ids_revset(chunk))
             for revision in revisions:
-                grouped.setdefault(revision.change_id, []).append(revision)
+                if projected := self._project(revision):
+                    grouped.setdefault(revision.change_id, []).append(projected)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
 
     def query_revisions_by_commit_ids(
@@ -534,7 +524,6 @@ class JjClient:
         *,
         remote: str,
         dry_run: bool = False,
-        on_change: Callable[[ReviewFetchIsolation], None] | None = None,
     ) -> ReviewFetchIsolation:
         """Ensure ordinary fetches cannot import jj-stack review branches."""
 
@@ -548,42 +537,32 @@ class JjClient:
                 unset = ui.cmd(
                     f"jj config unset --{override_origin.source} {shlex.quote(override_key)}"
                 )
-                hint = t"Remove the override with {unset}, then retry."
+                hint = t"Remove the override with {unset} to restore the normal exclusion."
             else:
                 hint = (
                     t"Remove that {override_origin.source} override from the jj invocation "
-                    t"or environment, then retry."
+                    t"or environment to restore the normal exclusion."
                 )
             raise CliError(
                 t"Effective jj setting {ui.code(override_key)} from {origin} overrides "
-                t"Git fetch refspecs, so jj-stack cannot keep "
-                t"{ui.bookmark(review_namespace())} remote-only.",
+                t"Git fetch refspecs and can import {ui.bookmark(review_namespace())} "
+                t"bookmarks.",
                 hint=hint,
             )
-
-        self._require_no_imported_review_bookmarks()
 
         config_key = f"remote.{remote}.fetch"
         configured = self._git_fetch_refspecs(remote)
         refspec = review_fetch_refspec()
         count = configured.count(refspec)
         if count == 1:
-            return ReviewFetchIsolation(
-                status="ready",
-                remote=remote,
-                existing_count=count,
-            )
+            return ReviewFetchIsolation(status="ready")
 
         status: ReviewFetchIsolationStatus = "required" if dry_run else "applied"
         result = ReviewFetchIsolation(
             status=status,
-            remote=remote,
-            existing_count=count,
         )
         if dry_run:
-            if on_change is not None:
-                on_change(result)
-            raise ReviewFetchIsolationRequired(result)
+            return result
 
         default_fetch_refspec = f"+refs/heads/*:refs/remotes/{remote}/*"
         if not configured:
@@ -614,63 +593,87 @@ class JjClient:
                 t"Git fetch configuration for remote {ui.bookmark(remote)} did not retain "
                 t"the required positive and negative refspecs."
             )
-        if on_change is not None:
-            on_change(result)
         return result
 
-    def _require_no_imported_review_bookmarks(self) -> None:
-        """Reject reserved-namespace bookmarks that have entered the local jj view."""
+    def visible_review_bookmark_targets(self) -> dict[str, frozenset[str]]:
+        """Return visible reserved-namespace bookmark targets grouped by name."""
 
-        imported = self.list_imported_review_bookmarks()
-        if not imported:
-            return
-        forget = ui.cmd(
-            "jj bookmark forget --include-remotes "
-            + " ".join(shlex.quote(name) for name in imported)
-        )
-        export = ui.cmd("jj git export")
-        raise CliError(
-            t"Bookmarks in the reserved {ui.bookmark(review_namespace())} namespace are "
-            t"imported locally: {ui.join(ui.bookmark, imported)}.",
-            hint=(
-                t"Move any work you need to keep to names outside "
-                t"{ui.bookmark(review_namespace())}, run {forget}, then run {export}. "
-                t"Then retry the command."
-            ),
-        )
+        targets_by_name: dict[str, set[str]] = {}
+        for raw in self._bookmark_rows(review_branch_glob()):
+            targets_by_name.setdefault(str(raw["name"]), set()).update(
+                _require_sequence(raw["target"])
+            )
+        return {name: frozenset(targets) for name, targets in sorted(targets_by_name.items())}
 
-    def list_imported_review_bookmarks(self) -> tuple[str, ...]:
-        """Return every reserved-namespace bookmark already imported into jj.
+    def accept_expected_review_bookmarks(
+        self,
+        bookmarks: Sequence[tuple[str, str, str]],
+    ) -> None:
+        """Keep exact expected remote bookmarks from making their snapshots immutable.
 
-        The fetch exclusion reserves the whole namespace, so this reports the whole namespace
-        too. An untracked remote bookmark here would make its target immutable, and a narrower
-        name test would leave that with no diagnostic.
+        The override narrows only jj's built-in untracked-remote rule. Trunk, tags, another
+        untracked bookmark, and additions in the user's `immutable_heads()` still apply.
         """
 
+        self._published_review_snapshots = {}
+        untracked: list[tuple[str, str]] = []
+        target_counts: dict[str, int] = {}
+        for raw in self._bookmark_rows():
+            if isinstance(raw.get("remote"), str) and "tracking_target" not in raw:
+                for target in _require_sequence(raw["target"]):
+                    untracked.append((str(raw["name"]), target))
+                    target_counts[target] = target_counts.get(target, 0) + 1
+        selectors = " | ".join(
+            f"(remote_bookmarks(exact:{json.dumps(name)}) & {_quote_revset_symbol(commit_id)})"
+            for name, _change_id, commit_id in sorted(bookmarks)
+            if (name, commit_id) in untracked and target_counts[commit_id] == 1
+        )
+        self._cli_args = self._base_cli_args
+        if selectors:
+            immutable_heads = f"trunk() | tags() | (untracked_remote_bookmarks() ~ ({selectors}))"
+            self._cli_args = JjCliArgs(
+                argv=(
+                    *self._base_cli_args.to_argv(),
+                    "--config",
+                    f'revset-aliases."builtin_immutable_heads()"={immutable_heads}',
+                )
+            )
+        revisions = self.query_revisions_by_change_ids(
+            tuple(change_id for _name, change_id, _commit_id in bookmarks)
+        )
+        self._published_review_snapshots = {
+            change_id: commit_id
+            for _name, change_id, commit_id in bookmarks
+            for matches in (revisions[change_id],)
+            for published in (
+                tuple(revision for revision in matches if revision.commit_id == commit_id),
+            )
+            for local in (
+                tuple(revision for revision in matches if revision.commit_id != commit_id),
+            )
+            if len(published) == 1 and not published[0].immutable
+            if len(local) == 1 and not local[0].immutable
+        }
+
+    def _bookmark_rows(self, *patterns: str) -> tuple[dict[str, object], ...]:
         stdout = self._run_jj(
-            (
-                "bookmark",
-                "list",
-                "--all-remotes",
-                "-T",
-                _BOOKMARK_TEMPLATE,
-                review_branch_glob(),
-            ),
+            ("bookmark", "list", "--all-remotes", "-T", _BOOKMARK_TEMPLATE, *patterns),
             ignore_working_copy=True,
         )
-        names: set[str] = set()
+        rows: list[dict[str, object]] = []
         for line in stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            raw = json.loads(stripped)
-            if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
+            raw = json.loads(line)
+            if (
+                not isinstance(raw, dict)
+                or not isinstance(raw.get("name"), str)
+                or not isinstance(raw.get("target"), list)
+                or not all(isinstance(target, str) for target in raw["target"])
+            ):
                 raise JjCommandError(
-                    t"Unexpected {ui.cmd('jj bookmark list')} payload while checking "
-                    t"the reserved review namespace."
+                    t"Unexpected {ui.cmd('jj bookmark list')} payload while checking bookmarks."
                 )
-            names.add(raw["name"])
-        return tuple(sorted(names))
+            rows.append(raw)
+        return tuple(rows)
 
     def review_temp_ref_target(self) -> str | None:
         """Return the exact temporary review-import ref target, if it exists."""
@@ -699,7 +702,6 @@ class JjClient:
         expected_change_id: str | None = None,
         expected_chain: Sequence[tuple[str, str, str]] = (),
         expected_parent_commit_id: str | None = None,
-        on_isolation_change: Callable[[ReviewFetchIsolation], None] | None = None,
     ) -> Iterator[LocalRevision]:
         """Import one exact remote review ref, then remove all temporary artifacts.
 
@@ -719,10 +721,6 @@ class JjClient:
             {chain_branch: target for chain_branch, target, _change_id in chain}
             if chain
             else {branch: expected_target}
-        )
-        self.ensure_review_fetch_isolation(
-            remote=remote,
-            on_change=on_isolation_change,
         )
         self._clear_review_temp_ref()
         try:
@@ -753,7 +751,6 @@ class JjClient:
                 expected_targets=expected_targets,
             )
             self._run_jj(("git", "import"), ignore_working_copy=True)
-            self._require_no_imported_review_bookmarks()
             revision = self.resolve_revision(_quote_revset_symbol(_REVIEW_TEMP_BOOKMARK))
             if revision.commit_id != expected_target:
                 raise JjCommandError(
@@ -783,7 +780,6 @@ class JjClient:
 
         if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", commit_id) is None:
             raise ValueError("remote commit ID must be a full SHA-1 or SHA-256 object ID")
-        self.ensure_review_fetch_isolation(remote=remote)
         configured_remote = self._git_remote(remote)
         try:
             change_id, _parents = self._read_git_commit_metadata(commit_id)
@@ -823,18 +819,10 @@ class JjClient:
         self,
         *,
         remote: str,
-        dry_run: bool = False,
-        on_isolation_change: Callable[[ReviewFetchIsolation], None] | None = None,
     ) -> None:
-        """Fetch ordinary repository state while excluding managed review branches."""
+        """Fetch ordinary repository state using its configured selection."""
 
-        self.ensure_review_fetch_isolation(
-            remote=remote,
-            dry_run=dry_run,
-            on_change=on_isolation_change,
-        )
         self._run_jj(("git", "fetch", "--remote", remote))
-        self._require_no_imported_review_bookmarks()
 
     def list_remote_branches(
         self,
@@ -917,7 +905,6 @@ class JjClient:
         ):
             raise ValueError("cannot delete a review ref that is expected to be absent")
 
-        self.ensure_review_fetch_isolation(remote=remote)
         configured_remote = self._git_remote(remote)
         actual_targets = self._list_remote_branches_at_url(
             fetch_url=configured_remote.fetch_url,
@@ -993,6 +980,14 @@ class JjClient:
 
         lines = self._query_template_lines(revset, _membership_scan_template(membership_revsets))
         return [_parse_revision_with_flags_line(line, len(membership_revsets)) for line in lines]
+
+    def _project(self, revision: LocalRevision) -> LocalRevision | None:
+        published = self._published_review_snapshots.get(revision.change_id)
+        if revision.commit_id == published:
+            return None
+        if published is not None:
+            return revision.model_copy(update={"divergent": False})
+        return revision
 
     def _query_template_lines(
         self,

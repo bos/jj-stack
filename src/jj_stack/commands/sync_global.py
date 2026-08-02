@@ -4,7 +4,6 @@ import jj_stack.console as console
 import jj_stack.github.resolution as github_resolution
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._fetch_isolation import report_fetch_isolation
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.jj.client import JjCommandError
@@ -38,8 +37,6 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
         )
     context.jj_client.fetch_remote(
         remote=target.remote.name,
-        dry_run=dry_run,
-        on_isolation_change=report_fetch_isolation,
     )
     trunk = context.jj_client.resolve_revision("trunk()")
     state = context.state_store.load()
