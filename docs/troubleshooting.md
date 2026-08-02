@@ -248,7 +248,7 @@ Possible causes:
 - required checks are pending or failing
 - a review or repository rule is not satisfied
 - the changes conflict
-- a ruleset requires a merge queue
+- GitHub rejected the direct merge or merge-queue request
 - your account cannot merge the pull request
 
 `jj-stack` does not judge any of these itself; it asks GitHub and reports the answer, quoting
@@ -274,9 +274,12 @@ What to do:
 - For an identical GitHub stack request already in progress, wait and rerun. Once it completes,
   the retry observes the terminal result.
 - A failed GitHub stack operation merges nothing.
-- `jj-stack` does not enqueue merge-queue work. If repository policy requires a queue, use the
-  repository's supported queue workflow, then run `jj-stack sync <head-change-id>` once GitHub
-  merges the work.
+- If the trunk branch uses a merge queue, `merge` succeeds once GitHub accepts the selected PRs
+  into it. This is not a merge failure and does not mean trunk changed. `view` and `list` show the
+  PRs as queued; wait for GitHub to merge them before running `sync`.
+- While a PR is queued, `submit` will not move its review branch or change the PR, and `sync`
+  leaves that selected stack alone. Wait for it to merge or remove it from the queue. Other
+  stacks remain usable.
 - An access-denied response is a permissions problem. Fix repository permissions before retrying.
 
 ## PRs for this stack exist on GitHub but `jj-stack` doesn't know about them
@@ -457,7 +460,7 @@ each time.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
   `jj-stack sync --all`.
 - `merge`: rerun the same explicit selector and merge method. A matching request still in progress
-  asks you to wait; a completed stack-merge request is observed on retry.
+  asks you to wait; a completed or enqueued request is observed on retry.
 
 `jj-stack sync <head-change-id>` handles commits rewritten by GitHub while keeping a review
 branch that a PR above still needs. `sync --all` checks independently tracked exact commits

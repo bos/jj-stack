@@ -283,7 +283,7 @@ These facts are re-derived and never need tool-owned durable state:
 - each change's current diff base and commit ID
 - each PR's desired base branch
 - whether a review branch needs to move after a rewrite
-- current PR lifecycle and GitHub stack membership
+- current PR lifecycle, merge-queue presence, and GitHub stack membership
 
 ### Stored review state
 
@@ -442,24 +442,38 @@ now closed or missing, it fails loudly and tells the user how to inspect or reop
 post-check detects GitHub-side changes that the pre-push model could not prevent; it never hides
 them by silently replacing tracking.
 
+An open PR currently in a merge queue is not updated. `submit` stops the selected stack before
+moving any review branch or changing any PR, and tells the user to wait for the queue or remove
+the PR from it. This does not restrict commands on independent stacks.
+
 ### Merge
 
 `merge` considers a contiguous prefix from the bottom of the selected stack. Candidates must be
 open and non-draft. The first draft or closed-unmerged review blocks itself and everything above.
 `--pull-request` truncates the candidate prefix at the selected linked PR.
 
-For a multi-PR review, GitHub receives one asynchronous group request for the selected prefix.
-Only a terminal merged result is success; rejection changes no local history, and a later `sync`
-observes whatever GitHub reports. A one-PR review uses the ordinary pull-request merge API.
+GitHub receives one asynchronous merge request for the selected prefix, whether it contains one
+PR or several. A multi-PR request acts on the matching GitHub stack. Every request passes the
+exact expected head commit of the top selected PR.
 
-The merge method comes from `--method`, otherwise from `merge_method` in repository
-configuration, otherwise from the repository's only allowed method. GitHub reports which methods a
-repository allows but never which to prefer, so a repository allowing several with none configured
-stops rather than choosing one. A configured method the repository does not allow is refused by
-name before any request goes out.
+Before the request, `merge` asks whether the trunk branch has a merge queue, using GitHub's merge
+queue object or a `MERGE_QUEUE` branch rule. If that lookup fails, `merge` follows the ordinary
+direct-merge path and lets the merge request report any policy rejection. It sends the explicit
+action `merge_queue` when a queue is found and `direct_merge` otherwise.
 
-Immediately before an ordinary single-PR merge, `jj-stack` retargets the candidate to trunk and
-passes the exact expected head commit.
+A terminal `merged` result means a direct merge completed. A terminal `enqueued` result means
+GitHub accepted the selected PRs into the queue; it is successful but does not imply that trunk
+changed or that `sync` should run yet. A rejection changes no local history, and a later command
+observes whatever GitHub reports.
+
+For a direct merge, the merge method comes from `--method`, otherwise from `merge_method` in
+repository configuration, otherwise from the repository's only allowed method. GitHub reports
+which methods a repository allows but never which to prefer, so a repository allowing several
+with none configured stops rather than choosing one. A configured method the repository does not
+allow is refused by name before any request goes out. A merge queue chooses its own method, so the
+request omits it; an explicit `--method` produces a warning and is ignored.
+
+Immediately before a single-PR merge or enqueue, `jj-stack` retargets the candidate to trunk.
 
 `merge` does not compare trunk commits before planning. Trunk advancing under a reviewed stack is
 routine, and GitHub merges a pull request whose base is behind unless it conflicts, so whether the
@@ -476,9 +490,10 @@ stack holds a copy of work already on trunk.
 A merge initiated through GitHub's UI, auto-merge, or another client is supported. A later
 `sync` on that stack reconciles it under the trunk-evidence rules below.
 
-`jj-stack` does not duplicate repository policy. It does not preflight approvals, checks,
-conflicts, merge queues, or auto-merge state across the repository. GitHub applies those rules to
-the requested GitHub stack or single-PR mutation, and `jj-stack` reports the result.
+`jj-stack` does not duplicate repository policy. Apart from choosing direct merge or queue
+routing for the trunk branch, it does not preflight approvals, checks, conflicts, or auto-merge
+state across the repository. GitHub applies those rules to the requested GitHub stack or
+single-PR mutation, and `jj-stack` reports the result.
 
 A rejection therefore has to explain itself. Because conflicts reach the user here rather than
 through a local preflight, a rejected merge names the way out: rebase onto trunk, resolve, and
@@ -520,6 +535,10 @@ baseline nor an exact GitHub stack head that this run may adopt.
 - rewriting it would not discard unpublished local work
 - no surviving change is divergent
 - no unreviewed change sits between reviewed survivors
+
+If any selected open PR is still in a merge queue, `sync` leaves the selected stack unchanged.
+Once GitHub no longer reports it queued, ordinary trunk evidence determines whether `sync`
+reconciles merged work or has nothing to do.
 
 It rebases surviving changes onto fetched trunk even when they contain conflicts. If a reviewed
 survivor remains conflicted, the local rebase stays in place but its review is not updated. The
@@ -574,6 +593,9 @@ The managed overview comment is rediscovered by an unambiguous body marker, neve
 comment ID. Ambiguous matches are left untouched. A one-PR review has no overview comment. New
 PRs are created in the requested draft state. Existing PRs become draft only with `--draft=all`
 and become ready only with `--open`; plain `submit --draft` never unpublishes an existing PR.
+With `--edit`, GitHub's current state and those command-wide defaults populate one editable draft
+choice per change. The validated document then determines each selected PR's draft state without
+adding local state.
 
 `--reviewers` and `--team-reviewers` request the named reviewers even when a PR is otherwise
 unchanged and never remove omitted reviewers. `--re-request` acts on an otherwise unchanged PR,
@@ -637,6 +659,9 @@ review-branch exclusion in remote fetch configuration. It never mutates GitHub.
 
 `view` and `list` are read-only. Both observe saved review branches directly on the remote and ask
 GitHub for current PR state, without fetching.
+
+Both report whether an open PR currently has a merge-queue entry. Queue presence is a transient
+GitHub observation, not saved tracking; position and intermediate queue phases are not modeled.
 
 Neither command guesses. A change with no saved review identity is reported as not submitted,
 even if a PR happens to use the branch name that change would generate.

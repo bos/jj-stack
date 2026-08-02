@@ -9,12 +9,13 @@ import pytest
 
 from jj_stack.commands.submit.descriptions import (
     _split_editor_command,
+    edit_pull_requests_in_editor,
     parse_description_edit_document,
     render_description_edit_document,
     resolve_generated_descriptions,
 )
 from jj_stack.commands.submit.models import GeneratedDescription
-from jj_stack.errors import CliError, UsageError
+from jj_stack.errors import CliError
 from jj_stack.jj.client import JjClient
 from tests.support.revision_helpers import make_revision
 
@@ -85,17 +86,27 @@ def _two_change_stack() -> tuple:
     return (bottom, top)
 
 
-def test_edit_document_round_trips_titles_and_bodies() -> None:
+def test_edit_document_round_trips_titles_bodies_and_draft_states() -> None:
     revisions = _two_change_stack()
     descriptions = {
         "bottomchange": GeneratedDescription(body="Bottom body.", title="feature 1"),
         "topchange": GeneratedDescription(body="", title="feature 2"),
     }
 
-    document = render_description_edit_document(descriptions=descriptions, revisions=revisions)
-    parsed = parse_description_edit_document(document, revisions=revisions)
+    drafts = {"bottomchange": True, "topchange": False}
 
-    assert parsed == descriptions
+    document = render_description_edit_document(
+        descriptions=descriptions,
+        drafts=drafts,
+        revisions=revisions,
+    )
+    parsed_descriptions, parsed_drafts = parse_description_edit_document(
+        document,
+        revisions=revisions,
+    )
+
+    assert parsed_descriptions == descriptions
+    assert parsed_drafts == drafts
     # The head change renders first, matching how view presents a stack.
     assert document.index("topchange") < document.index("bottomchange")
 
@@ -122,7 +133,10 @@ def test_edit_document_parse_rejects_repeated_change_section() -> None:
 
 def test_edit_document_parse_rejects_section_without_title() -> None:
     revisions = _two_change_stack()
-    document = "====== change topchange\nfeature 2\n====== change bottomchange\n\n   \n"
+    document = (
+        "====== change topchange\nJJ: Draft: no\nfeature 2\n"
+        "====== change bottomchange\nJJ: Draft: yes\n\n   \n"
+    )
 
     with pytest.raises(CliError, match="no title line"):
         parse_description_edit_document(document, revisions=revisions)
@@ -138,16 +152,24 @@ def test_edit_document_parse_rejects_content_before_first_separator() -> None:
         parse_description_edit_document(document, revisions=revisions)
 
 
-def test_edit_is_mutually_exclusive_with_describe_with(tmp_path: Path) -> None:
-    with pytest.raises(UsageError, match="--edit.*--describe-with"):
-        resolve_generated_descriptions(
-            descriptions=(),
-            describe_with="helper",
-            edit=True,
-            jj_client=JjClient(tmp_path),
-            revisions=_two_change_stack(),
-            selected_revset="@-",
-        )
+def test_edit_document_accepts_short_draft_states_case_insensitively() -> None:
+    bottom, top = _two_change_stack()
+    document = (
+        f"====== change {top.change_id}\nJJ: Draft: y\nfeature 2\n"
+        f"====== change {bottom.change_id}\nJJ: Draft: N\nfeature 1\n"
+    )
+
+    _, drafts = parse_description_edit_document(document, revisions=(bottom, top))
+
+    assert drafts == {bottom.change_id: False, top.change_id: True}
+
+
+def test_edit_document_rejects_invalid_draft_state_for_named_change() -> None:
+    revision = _two_change_stack()[0]
+    document = f"====== change {revision.change_id}\nJJ: Draft: maybe\nfeature 1\n"
+
+    with pytest.raises(CliError, match=f"{revision.change_id[:8]}.*maybe.*expected yes or no"):
+        parse_description_edit_document(document, revisions=(revision,))
 
 
 def test_windows_editor_command_preserves_backslashes(monkeypatch) -> None:
@@ -213,13 +235,19 @@ def test_edit_applies_editor_output_to_descriptions(monkeypatch, tmp_path: Path)
     descriptions, stack_description = resolve_generated_descriptions(
         descriptions=(),
         describe_with=None,
-        edit=True,
         jj_client=JjClient(tmp_path),
         revisions=_two_change_stack(),
         selected_revset="@-",
     )
+    descriptions, drafts = edit_pull_requests_in_editor(
+        descriptions=descriptions,
+        drafts={"bottomchange": True, "topchange": False},
+        jj_client=JjClient(tmp_path),
+        revisions=_two_change_stack(),
+    )
 
     assert stack_description is None
+    assert drafts == {"bottomchange": True, "topchange": False}
     assert descriptions["topchange"].title == "feature 2 [edited]"
     assert descriptions["bottomchange"].title == "feature 1"
     assert descriptions["bottomchange"].body == "Bottom body."
@@ -232,11 +260,12 @@ def test_edit_aborts_when_editor_exits_nonzero(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setenv("EDITOR", f"{sys.executable} {editor}")
 
     with pytest.raises(CliError, match="exited with status 3"):
-        resolve_generated_descriptions(
-            descriptions=(),
-            describe_with=None,
-            edit=True,
+        edit_pull_requests_in_editor(
+            descriptions={
+                "bottomchange": GeneratedDescription(body="Bottom body.", title="feature 1"),
+                "topchange": GeneratedDescription(body="", title="feature 2"),
+            },
+            drafts={"bottomchange": False, "topchange": False},
             jj_client=JjClient(tmp_path),
             revisions=_two_change_stack(),
-            selected_revset="@-",
         )

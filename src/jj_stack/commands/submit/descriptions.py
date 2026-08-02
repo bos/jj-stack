@@ -28,7 +28,6 @@ def resolve_generated_descriptions(
     *,
     descriptions: Sequence[str],
     describe_with: str | None,
-    edit: bool = False,
     jj_client: JjClient,
     revisions: tuple[LocalRevision, ...],
     selected_revset: str,
@@ -37,8 +36,6 @@ def resolve_generated_descriptions(
 
     if descriptions and describe_with is not None:
         raise UsageError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
-    if edit and describe_with is not None:
-        raise UsageError(t"Use either {ui.cmd('--edit')} or {ui.cmd('--describe-with')}.")
 
     if describe_with is None:
         default_descriptions = _default_pull_request_descriptions(
@@ -56,12 +53,6 @@ def resolve_generated_descriptions(
                 **default_descriptions,
                 **file_descriptions,
             }
-        if edit:
-            default_descriptions = _edit_descriptions_in_editor(
-                descriptions=default_descriptions,
-                jj_client=jj_client,
-                revisions=revisions,
-            )
         return default_descriptions, stack_description
 
     generated_descriptions = {
@@ -130,24 +121,28 @@ def _read_pull_request_template(repo_root: Path) -> str:
 
 _EDIT_SEPARATOR_PREFIX = "====== change "
 _EDIT_COMMENT_PREFIX = "JJ:"
+_EDIT_DRAFT_PREFIX = "JJ: Draft:"
 
 
 def render_description_edit_document(
     *,
     descriptions: dict[str, GeneratedDescription],
+    drafts: dict[str, bool],
     revisions: tuple[LocalRevision, ...],
 ) -> str:
     """Render the `--edit` document, head change first like `view`."""
 
     lines = [
-        "JJ: Edit pull request titles and bodies, then save and close the editor.",
+        "JJ: Edit pull request titles, bodies, and draft state, then save and close.",
+        "JJ: Change Draft to yes or no. The short forms y and n are also accepted.",
         "JJ: In each change section the first line is the title; the rest is the body.",
-        'JJ: Lines starting with "JJ:" are ignored. Do not edit the separator lines.',
+        'JJ: Other lines starting with "JJ:" are ignored. Do not edit the separators.',
     ]
     for revision in reversed(revisions):
         description = descriptions[revision.change_id]
         lines.append("")
         lines.append(f"{_EDIT_SEPARATOR_PREFIX}{revision.change_id}")
+        lines.append(f"{_EDIT_DRAFT_PREFIX} {'yes' if drafts[revision.change_id] else 'no'}")
         lines.append(description.title)
         if description.body:
             lines.append("")
@@ -159,15 +154,15 @@ def parse_description_edit_document(
     document: str,
     *,
     revisions: tuple[LocalRevision, ...],
-) -> dict[str, GeneratedDescription]:
+) -> tuple[dict[str, GeneratedDescription], dict[str, bool]]:
     """Parse an edited `--edit` document, failing closed on anything malformed."""
 
     known_change_ids = {revision.change_id for revision in revisions}
     sections: dict[str, list[str]] = {}
+    drafts: dict[str, bool] = {}
+    current_change_id: str | None = None
     current_section: list[str] | None = None
     for line in document.splitlines():
-        if line.startswith(_EDIT_COMMENT_PREFIX):
-            continue
         if line.startswith(_EDIT_SEPARATOR_PREFIX):
             change_id = line[len(_EDIT_SEPARATOR_PREFIX) :].strip()
             if change_id not in known_change_ids:
@@ -179,7 +174,28 @@ def parse_description_edit_document(
                 raise CliError(
                     t"Edited pull request descriptions repeat change {ui.change_id(change_id)}."
                 )
+            current_change_id = change_id
             current_section = sections[change_id] = []
+            continue
+        if line.startswith(_EDIT_DRAFT_PREFIX):
+            if current_change_id is None:
+                raise CliError("Edited draft state appears before the first change separator.")
+            if current_change_id in drafts:
+                raise CliError(
+                    t"Edited pull request repeats draft state for "
+                    t"{ui.change_id(current_change_id)}."
+                )
+            value = line[len(_EDIT_DRAFT_PREFIX) :].strip()
+            normalized = value.lower()
+            if normalized not in {"yes", "y", "no", "n"}:
+                raise CliError(
+                    t"Edited pull request draft state for "
+                    t"{ui.change_id(current_change_id)} is {ui.code(value or '(empty)')}; "
+                    t"expected yes or no (y or n also work)."
+                )
+            drafts[current_change_id] = normalized in {"yes", "y"}
+            continue
+        if line.startswith(_EDIT_COMMENT_PREFIX):
             continue
         if current_section is None:
             if line.strip():
@@ -198,6 +214,11 @@ def parse_description_edit_document(
                 t"Edited pull request descriptions are missing change "
                 t"{ui.change_id(revision.change_id)}."
             )
+        if revision.change_id not in drafts:
+            raise CliError(
+                t"Edited pull request is missing draft state for "
+                t"{ui.change_id(revision.change_id)}."
+            )
         title_index = 0
         while title_index < len(section) and not section[title_index].strip():
             title_index += 1
@@ -210,7 +231,7 @@ def parse_description_edit_document(
             body="\n".join(section[title_index + 1 :]).strip(),
             title=section[title_index].strip(),
         )
-    return parsed
+    return parsed, drafts
 
 
 def _resolve_editor_command(jj_client: JjClient) -> list[str]:
@@ -268,15 +289,17 @@ def _strip_surrounding_quotes(text: str) -> str:
     return text
 
 
-def _edit_descriptions_in_editor(
+def edit_pull_requests_in_editor(
     *,
     descriptions: dict[str, GeneratedDescription],
+    drafts: dict[str, bool],
     jj_client: JjClient,
     revisions: tuple[LocalRevision, ...],
-) -> dict[str, GeneratedDescription]:
+) -> tuple[dict[str, GeneratedDescription], dict[str, bool]]:
     editor_command = _resolve_editor_command(jj_client)
     document = render_description_edit_document(
         descriptions=descriptions,
+        drafts=drafts,
         revisions=revisions,
     )
     with tempfile.TemporaryDirectory(prefix="jj-stack-edit-") as tempdir:

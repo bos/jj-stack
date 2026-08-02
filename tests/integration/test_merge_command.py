@@ -29,6 +29,69 @@ from .submit_command_helpers import (
 pytestmark = pytest.mark.merge_recovery
 
 
+@pytest.mark.parametrize("stack_size", (1, 2))
+def test_merge_queue_accepts_single_and_stacked_reviews_without_a_merge_method(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    stack_size: int,
+) -> None:
+    if stack_size == 1:
+        repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    else:
+        repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=stack_size)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.merge_queue_enabled = True
+    stack = selected_stack(repo)
+    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
+
+    exit_code = run_main(repo, config_path, "merge", "--method", "rebase")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert fake_repo.stack_merge_requests == [
+        (stack_size, None, "merge_queue", stack.head.commit_id)
+    ]
+    assert all(fake_repo.pull_requests[number].is_queued for number in range(1, stack_size + 1))
+    assert all(
+        fake_repo.pull_requests[number].state == "open" for number in range(1, stack_size + 1)
+    )
+    assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
+    assert "ignoring --method" in captured.err
+    assert "Added to merge queue" in captured.out
+    assert "once the queue processes them" in captured.out
+    assert "jj-stack sync" not in captured.out
+
+
+def test_merge_queue_lookup_failure_falls_back_to_direct_merge(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    class QueueLookupFailureClient(GithubClient):
+        async def base_branch_uses_merge_queue(self, *, branch):
+            raise GithubClientError(f"could not inspect {branch}")
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.merge.command",),
+        client_type=QueueLookupFailureClient,
+    )
+
+    exit_code = run_main(repo, config_path, "merge")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert fake_repo.stack_merge_requests[0][2] == "direct_merge"
+    assert fake_repo.pull_requests[1].merged_at is not None
+
+
 def test_merge_accepts_a_stack_based_on_an_older_trunk(
     tmp_path: Path,
     monkeypatch,
@@ -75,7 +138,7 @@ def test_merge_draft_blocks_the_candidate_prefix(
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
 
 
-def test_stack_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
+def test_stack_merge_rebases_ready_prefix_and_reports_closed_boundary(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -90,19 +153,36 @@ def test_stack_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     survivor_before = fake_repo.ref_target(fake_repo.pull_requests[3].head_ref)
+
+    preview_exit_code = run_main(
+        repo,
+        config_path,
+        "merge",
+        "--dry-run",
+        "--pull-request",
+        "2",
+        "--method",
+        "rebase",
+    )
+    preview = capsys.readouterr()
+
+    assert preview_exit_code == 0, (preview.out, preview.err)
+    assert "merge PRs #1, #2" in preview.out
+    assert fake_repo.stack_merge_requests == []
+
     exit_code = run_main(
         repo,
         config_path,
         "merge",
-        "--pull-request",
-        "2",
         "--method",
         "rebase",
     )
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.stack_merge_requests == [(2, "rebase", stack_before.revisions[1].commit_id)]
+    assert fake_repo.stack_merge_requests == [
+        (2, "rebase", "direct_merge", stack_before.revisions[1].commit_id)
+    ]
     assert fake_repo.stack_merge_polls == [(2, "fake-stack-merge-1")]
     assert fake_repo.pull_requests[1].state == "closed"
     assert fake_repo.pull_requests[2].state == "closed"
@@ -111,6 +191,7 @@ def test_stack_merge_rebases_an_explicit_prefix_and_rewrites_the_survivor(
     assert fake_repo.ref_target(fake_repo.pull_requests[3].head_ref) != survivor_before
     assert read_remote_ref(fake_repo.git_dir, "main") != trunk_before
     assert "final trunk commit" in captured.out
+    assert "stop:" in captured.out
     assert "sync " in captured.out
     assert state_store.load() == state_before
     assert tuple(revision.commit_id for revision in selected_stack(repo).revisions) == tuple(
@@ -253,11 +334,13 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
             self,
             *,
             expected_head_sha,
+            merge_action,
             merge_method,
             pull_number,
         ):
             await super().submit_stack_merge(
                 expected_head_sha=expected_head_sha,
+                merge_action=merge_action,
                 merge_method=merge_method,
                 pull_number=pull_number,
             )
@@ -468,16 +551,18 @@ def test_merge_expected_head_guard_rejects_a_race(
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class HeadRaceClient(GithubClient):
-        async def merge_pull_request(
+        async def submit_stack_merge(
             self,
             *,
             expected_head_sha,
+            merge_action,
             pull_number,
             merge_method,
         ):
             update_remote_ref(fake_repo, branch=bookmark, target=trunk_before)
-            return await super().merge_pull_request(
+            return await super().submit_stack_merge(
                 expected_head_sha=expected_head_sha,
+                merge_action=merge_action,
                 pull_number=pull_number,
                 merge_method=merge_method,
             )

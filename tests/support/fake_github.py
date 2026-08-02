@@ -126,7 +126,8 @@ class FakeGithubPullRequestReview:
 @dataclass(slots=True)
 class FakeStackMergeOperation:
     expected_head_sha: str
-    merge_method: str
+    merge_action: str
+    merge_method: str | None
     pull_number: int
     uuid: str
     final_sha: str | None = None
@@ -176,9 +177,10 @@ class FakeGithubRepository:
     allow_merge_commit: bool = False
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
+    merge_queue_enabled: bool = False
     stack_merge_operations: dict[int, FakeStackMergeOperation] = field(default_factory=dict)
     stack_merge_polls: list[tuple[int, str]] = field(default_factory=list)
-    stack_merge_requests: list[tuple[int, str, str]] = field(default_factory=list)
+    stack_merge_requests: list[tuple[int, str | None, str, str]] = field(default_factory=list)
     auto_merge_reachable_heads: bool = True
     next_issue_comment_id: int = 1
     next_github_stack_number: int = 1
@@ -944,55 +946,6 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         repository.refresh_pull_request_state(pull_request)
         return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
 
-    @app.put("/repos/{owner}/{repo}/pulls/{pull_number}/merge")
-    async def merge_pull_request(
-        owner: str,
-        repo: str,
-        pull_number: int,
-        payload: Annotated[dict[str, object], Body(...)],
-    ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        pull_request = repository.pull_requests.get(pull_number)
-        if pull_request is None:
-            raise HTTPException(status_code=404, detail="Not Found")
-        if repository.stack_number_for_pull(pull_number) is not None:
-            raise HTTPException(
-                status_code=422,
-                detail="A stacked pull request must be merged through its stack.",
-            )
-        merge_method = payload.get("merge_method", "merge")
-        allowed_methods = {
-            "merge": repository.allow_merge_commit,
-            "rebase": repository.allow_rebase_merge,
-            "squash": repository.allow_squash_merge,
-        }
-        if not allowed_methods.get(str(merge_method), False):
-            raise HTTPException(
-                status_code=405,
-                detail=f"{merge_method} merges are not allowed on this repository.",
-            )
-        expected_head_sha = payload.get("sha")
-        live_head_sha = repository.ref_target(pull_request.head_ref)
-        if not isinstance(live_head_sha, str) or expected_head_sha != live_head_sha:
-            raise HTTPException(status_code=409, detail="Head branch was modified")
-        pull_request.head_sha = live_head_sha
-        repository.refresh_pull_request_state(pull_request)
-        if (
-            pull_request.state != "open"
-            or pull_request.is_draft
-            or pull_number in repository.unmergeable_pull_numbers
-        ):
-            raise HTTPException(status_code=405, detail="Pull Request is not mergeable")
-        merge_commit = repository.apply_pull_request_merge(
-            pull_request,
-            merge_method=str(merge_method),
-        )
-        return {
-            "merged": True,
-            "message": "Pull Request successfully merged",
-            "sha": merge_commit,
-        }
-
     @app.put("/repos/{owner}/{repo}/pulls/{pull_number}/merge-async")
     async def submit_stack_merge(
         owner: str,
@@ -1004,14 +957,19 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         pull_request = repository.pull_requests.get(pull_number)
         if pull_request is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        merge_method = _require_string(payload, "merge_method")
+        merge_action = _require_string(payload, "merge_action")
+        merge_method = _optional_string(payload, "merge_method")
         expected_head_sha = _require_string(payload, "sha")
         allowed = {
             "merge": repository.allow_merge_commit,
             "rebase": repository.allow_rebase_merge,
             "squash": repository.allow_squash_merge,
         }
-        if not allowed.get(merge_method, False):
+        if merge_action not in {"direct_merge", "merge_queue"}:
+            raise HTTPException(status_code=400, detail="Unknown merge action.")
+        if repository.merge_queue_enabled != (merge_action == "merge_queue"):
+            raise HTTPException(status_code=400, detail="Merge action does not match policy.")
+        if merge_action == "direct_merge" and not allowed.get(merge_method or "", False):
             raise HTTPException(status_code=400, detail="Merge method is not allowed.")
         live_head = repository.ref_target(pull_request.head_ref)
         if live_head != expected_head_sha:
@@ -1020,27 +978,37 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         if existing is not None:
             if (
                 existing.expected_head_sha != expected_head_sha
+                or existing.merge_action != merge_action
                 or existing.merge_method != merge_method
             ):
                 return JSONResponse(_stack_merge_payload(existing), status_code=409)
             status_code = 409 if existing.status == "pending" else 200
             return JSONResponse(_stack_merge_payload(existing), status_code=status_code)
         stack_number = repository.stack_number_for_pull(pull_number)
-        if stack_number is None:
-            raise HTTPException(status_code=400, detail="Target is not a GitHub stack member.")
-        stack = GithubStack.model_validate(
-            _stack_payload(repository, stack_number, _github_stacks(repository)[stack_number])
+        active_pull_numbers = (
+            GithubStack.model_validate(
+                _stack_payload(
+                    repository,
+                    stack_number,
+                    _github_stacks(repository)[stack_number],
+                )
+            ).active_pull_request_numbers
+            if stack_number is not None
+            else (pull_number,)
         )
-        if pull_number not in stack.active_pull_request_numbers or pull_request.is_draft:
+        if pull_number not in active_pull_numbers or pull_request.is_draft:
             raise HTTPException(status_code=400, detail="Target is not mergeable.")
         operation = FakeStackMergeOperation(
             expected_head_sha=expected_head_sha,
+            merge_action=merge_action,
             merge_method=merge_method,
             pull_number=pull_number,
             uuid=f"fake-stack-merge-{len(repository.stack_merge_operations) + 1}",
         )
         repository.stack_merge_operations[pull_number] = operation
-        repository.stack_merge_requests.append((pull_number, merge_method, expected_head_sha))
+        repository.stack_merge_requests.append(
+            (pull_number, merge_method, merge_action, expected_head_sha)
+        )
         return JSONResponse(_stack_merge_payload(operation), status_code=202)
 
     @app.get("/repos/{owner}/{repo}/pulls/{pull_number}/merge-async/{operation_uuid}")
@@ -1339,6 +1307,7 @@ def _stack_merge_payload(operation: FakeStackMergeOperation) -> dict[str, object
         "status": operation.status,
         "details": {
             "expected_head_sha": operation.expected_head_sha,
+            "merge_action": operation.merge_action,
             "merge_method": operation.merge_method,
             "message": operation.message,
             "sha": operation.final_sha,
@@ -1353,14 +1322,15 @@ def _complete_stack_merge(
 ) -> None:
     stack_number = repository.stack_number_for_pull(operation.pull_number)
     if stack_number is None:
-        operation.status = "failed"
-        operation.message = "The GitHub stack is no longer available."
-        return
-    stack = GithubStack.model_validate(
-        _stack_payload(repository, stack_number, _github_stacks(repository)[stack_number])
-    )
-    target_index = stack.active_pull_request_numbers.index(operation.pull_number)
-    candidate_numbers = stack.active_pull_request_numbers[: target_index + 1]
+        candidate_numbers = (operation.pull_number,)
+        survivors: tuple[int, ...] = ()
+    else:
+        stack = GithubStack.model_validate(
+            _stack_payload(repository, stack_number, _github_stacks(repository)[stack_number])
+        )
+        target_index = stack.active_pull_request_numbers.index(operation.pull_number)
+        candidate_numbers = stack.active_pull_request_numbers[: target_index + 1]
+        survivors = stack.active_pull_request_numbers[len(candidate_numbers) :]
     candidates = tuple(repository.pull_requests[number] for number in candidate_numbers)
     if any(
         pull_request.state != "open"
@@ -1371,6 +1341,12 @@ def _complete_stack_merge(
         operation.status = "failed"
         operation.message = "The GitHub stack prefix is not mergeable."
         return
+    if operation.merge_action == "merge_queue":
+        for pull_request in candidates:
+            pull_request.is_queued = True
+        operation.status = "enqueued"
+        operation.message = "Pull requests were added to the merge queue."
+        return
     for pull_request in candidates:
         if pull_request.base_ref != repository.default_branch:
             repository.update_pull_request_base(
@@ -1380,12 +1356,12 @@ def _complete_stack_merge(
     if operation.merge_method == "merge":
         repository.apply_merge_commit(candidates)
     else:
+        assert operation.merge_method is not None
         for pull_request in candidates:
             repository.apply_pull_request_merge(
                 pull_request,
                 merge_method=operation.merge_method,
             )
-    survivors = stack.active_pull_request_numbers[len(candidate_numbers) :]
     previous_base = repository.default_branch or "main"
     for pull_number in survivors:
         pull_request = repository.pull_requests[pull_number]
@@ -1479,6 +1455,15 @@ def _graphql_repository_payload(
     repository: FakeGithubRepository,
     web_origin: str,
 ) -> dict[str, object]:
+    if "BaseBranchMergeQueue" in query:
+        return {
+            "mergeQueue": ({"id": "merge-queue"} if repository.merge_queue_enabled else None),
+            "ref": {
+                "rules": {
+                    "nodes": ([{"type": "MERGE_QUEUE"}] if repository.merge_queue_enabled else [])
+                }
+            },
+        }
     lines = query.splitlines()
     ref_queries: list[tuple[str, str, str, int, frozenset[str]]] = []
     for index, line in enumerate(lines):

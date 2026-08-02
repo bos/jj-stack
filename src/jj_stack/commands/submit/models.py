@@ -95,6 +95,7 @@ class PendingPullRequestSync:
 
     base_branch: str
     discovered_pull_request: GithubPullRequest | None
+    draft: bool
     generated_description: GeneratedDescription
     prepared: PreparedSubmitRevision
 

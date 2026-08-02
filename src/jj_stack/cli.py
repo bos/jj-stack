@@ -229,7 +229,7 @@ def build_parser() -> ArgumentParser:
         submit_parser,
         "--edit",
         action="store_true",
-        help="Edit the planned pull request titles and bodies in your editor first",
+        help="Edit planned pull request titles, bodies, and draft states in your editor first",
     )
     submit_draft_mode = submit_parser.add_mutually_exclusive_group()
     add_help_argument(

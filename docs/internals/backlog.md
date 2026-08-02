@@ -42,20 +42,6 @@ High-level cases where this might help:
 - reducing unnecessary manual relinking when jj-stack can tell that a GitHub PR branch and
   a local change probably share the same underlying `jj` change identity
 
-## Merge queue integration
-
-_Benefit: medium — high value for teams that require queues, but not part of the current merge
-contract._
-
-Live evidence shows that GitHub accepts an asynchronous stack-merge request for processing
-under a queue ruleset, then returns a terminal failure requiring the queue. The ordinary PR API
-cannot enqueue that stack member either. `jj-stack` therefore reports the GitHub rejection and
-does not impose repository-wide queue or auto-merge restrictions.
-
-A future queue integration needs an explicit design for current-state observation, user-visible
-queued/running/failed states, and safe retry without durable intent, phases, or replay data. It
-must not make unrelated review mutations read-only merely because another PR is queued.
-
 ## Pre-Push Auto-Close Predictor — Out-of-Stack Base Coverage
 
 _Benefit: small — protects an unusual case (a PR base that already contains

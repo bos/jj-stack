@@ -187,6 +187,19 @@ async def _run_selected_convergence(
                 t"with {ui.cmd('jj-stack relink')} or republish it with "
                 t"{ui.cmd('jj-stack submit')}.",
             )
+        queued_pull_numbers = tuple(
+            pull_request.number
+            for revision in selected
+            if (pull_request := observation.reviews[revision.change_id].pull_request) is not None
+            and pull_request.normalize_state().state == "open"
+            and pull_request.is_queued
+        )
+        if queued_pull_numbers:
+            console.output(
+                t"Nothing to sync while the selected review is in the merge queue "
+                t"({ui.join(lambda number: f'PR #{number}', queued_pull_numbers)})."
+            )
+            return 0
         plan = build_selected_convergence_plan(
             context=context,
             github_stacks=github_stacks,

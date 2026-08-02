@@ -472,7 +472,14 @@ def _status_fragments(
         )
         fragments.append(ui.semantic_text(label, "warning", "heading"))
 
-    drafts = sum(1 for status in statuses if status.pr_draft is True)
+    queued = sum(1 for status in statuses if status.pr_queued is True)
+    if queued:
+        label = "queued" if queued == 1 else f"{queued} queued"
+        fragments.append(ui.semantic_text(label, "hint", "heading"))
+
+    drafts = sum(
+        1 for status in statuses if status.pr_draft is True and status.pr_queued is not True
+    )
     if drafts:
         label = "draft" if drafts == 1 else f"{drafts} drafts"
         fragments.append(ui.semantic_text(label, "hint", "heading"))
@@ -480,7 +487,9 @@ def _status_fragments(
     open_non_draft_decisions = tuple(
         status.pr_review_decision
         for status in statuses
-        if status.pr_lifecycle == "open" and status.pr_draft is False
+        if status.pr_lifecycle == "open"
+        and status.pr_draft is False
+        and status.pr_queued is not True
     )
     changes_requested = sum(
         1 for decision in open_non_draft_decisions if decision == "changes_requested"

@@ -65,6 +65,13 @@ def ensure_pull_request_syncs_are_safe(
         change_id = prepared_revision.revision.change_id
         review_identity = state.review_identities.get(change_id)
         submitted_baseline = state.submitted_baselines.get(change_id)
+        pull_request = pending_sync.discovered_pull_request
+        if pull_request is not None and pull_request.is_queued:
+            raise CliError(
+                t"PR #{pull_request.number} for {ui.change_id(change_id)} is in the merge "
+                t"queue, so submit will not change its review branch or pull request.",
+                hint="Wait for it to merge or remove it from the queue, then rerun submit.",
+            )
         _ensure_pull_request_link_is_consistent(
             branch=prepared_revision.branch,
             change_id=change_id,
@@ -74,7 +81,6 @@ def ensure_pull_request_syncs_are_safe(
             review_identity=review_identity,
             submitted_baseline=submitted_baseline,
         )
-        pull_request = pending_sync.discovered_pull_request
         if options.existing_only and (
             review_identity is None or submitted_baseline is None or pull_request is None
         ):
@@ -150,7 +156,7 @@ async def _sync_pull_request(
             pull_request = await _create_pull_request(
                 base_branch=pending_sync.base_branch,
                 body=body,
-                draft=(options.draft_mode in ("draft", "draft_all")),
+                draft=pending_sync.draft,
                 github_client=github_client,
                 head_branch=branch,
                 title=title,
@@ -178,17 +184,21 @@ async def _sync_pull_request(
                 )
             action = "updated"
 
-    if pull_request is not None and pull_request.state == "open":
-        if options.draft_mode == "open" and pull_request.is_draft:
+    if (
+        pull_request is not None
+        and pull_request.state == "open"
+        and pull_request.is_draft != pending_sync.draft
+    ):
+        if pending_sync.draft:
             if not run.dry_run:
-                pull_request = await _mark_pull_request_ready_for_review(
+                pull_request = await _convert_pull_request_to_draft(
                     github_client=github_client,
                     pull_request=pull_request,
                 )
             action = "updated"
-        elif options.draft_mode == "draft_all" and not pull_request.is_draft:
+        else:
             if not run.dry_run:
-                pull_request = await _convert_pull_request_to_draft(
+                pull_request = await _mark_pull_request_ready_for_review(
                     github_client=github_client,
                     pull_request=pull_request,
                 )

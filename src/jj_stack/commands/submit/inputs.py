@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.errors import CliError, ConflictedStackError
+from jj_stack.errors import CliError, ConflictedStackError, UsageError
 from jj_stack.github.resolution import select_submit_remote
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import resolve_review_branches
@@ -47,13 +47,14 @@ def prepare_submit_inputs(
     )
     preflight_conflicted_revisions(stack.revisions)
     preflight_private_commits(client, stack.revisions)
+    if options.edit and options.describe_with is not None:
+        raise UsageError(t"Use either {ui.cmd('--edit')} or {ui.cmd('--describe-with')}.")
     (
         generated_pull_request_descriptions,
         generated_stack_description,
     ) = resolve_generated_descriptions(
         descriptions=options.descriptions,
         describe_with=options.describe_with,
-        edit=options.edit,
         jj_client=client,
         selected_revset=stack.selected_revset,
         revisions=stack.revisions,

@@ -94,9 +94,10 @@ confirms after you explain that risk.
   selects the consecutive open, non-draft PRs from the bottom and requires
   every candidate to match the exact submitted commit. GitHub decides
   approvals, checks, conflicts, and repository policy. Multi-PR reviews use
-  one atomic bottom-prefix request; a one-PR review uses the ordinary PR API.
-  It never pushes trunk or rewrites local history. Run the selected
-  `sync <head-change-id>` printed after GitHub accepts anything.
+  one atomic bottom-prefix request; the same asynchronous API handles a one-PR
+  review. If trunk uses a merge queue, success means GitHub accepted the PRs
+  into the queue, not that they merged. It never pushes trunk or rewrites local
+  history. Wait for queued PRs to merge, then run `sync <head-change-id>`.
 - **Remove GitHub stack grouping:** `unstack --dry-run <head-change-id>`, then
   `unstack <head-change-id>`. When one GitHub stack spans several desired local
   paths, use the exact `unstack --stack <number>` command from the diagnostic.
@@ -164,11 +165,13 @@ that is incomplete or needs attention (the output is still valid — read it);
 
 ## When something goes wrong
 
-- `merge` rejected by GitHub: read the reported check, conflict, queue,
-  policy, or access reason, fix it, and rerun the same explicit
-  command. A terminal stack-merge failure merges nothing. A matching request already
-  pending should be allowed to finish, then observed by rerunning the same target
-  and method.
+- `merge` rejected by GitHub: read the reported check, conflict, policy, or
+  access reason, fix it, and rerun the same explicit command. A terminal
+  stack-merge failure merges nothing. A matching request already pending should
+  be allowed to finish, then observed by rerunning the same target and method.
+- Queued review: `view` and `list` report it. Do not submit or sync that stack
+  until GitHub merges it or the PR is removed from the queue. Independent stacks
+  remain usable.
 - Interrupted command: `view`, then rerun with an explicit change ID, revset,
   or `--pull-request` selector.
 - jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.

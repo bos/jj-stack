@@ -71,6 +71,24 @@ def test_view_json_reports_public_stack_status(
     assert "saved_pull_request" not in revision
 
 
+def test_view_and_list_show_queued_reviews(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.pull_requests[1].is_queued = True
+
+    assert run_main(repo, config_path, "view") == 0
+    viewed = capsys.readouterr()
+    assert "PR #1 queued" in viewed.out
+
+    assert run_main(repo, config_path, "list") == 0
+    listed = capsys.readouterr()
+    assert "queued" in listed.out
+
+
 def test_view_rejects_empty_working_copy_from_another_workspace(
     tmp_path: Path,
     monkeypatch,

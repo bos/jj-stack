@@ -49,6 +49,7 @@ class ReviewChangeStatus:
     remote_branch_matches_commit: bool | None
     pr_lifecycle: PullRequestLifecycle
     pr_draft: bool | None
+    pr_queued: bool | None
     pr_review_decision: PullRequestReviewDecision
     pr_lookup_error: bool = False
     pr_review_decision_error: str | None = None
@@ -129,6 +130,13 @@ def classify_review_change(
         pr_draft=_pull_request_draft(
             lifecycle=lifecycle,
             pull_request_lookup=pull_request_lookup,
+        ),
+        pr_queued=(
+            pull_request_lookup.pull_request.is_queued
+            if lifecycle == "open"
+            and pull_request_lookup is not None
+            and pull_request_lookup.pull_request is not None
+            else None
         ),
         pr_review_decision=_pull_request_review_decision(
             lifecycle=lifecycle,

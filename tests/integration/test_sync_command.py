@@ -49,6 +49,32 @@ def _simulate_stack_partial_merge(fake_repo) -> str:
     )
 
 
+def test_sync_leaves_a_partially_merged_queued_review_alone(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack_before = selected_stack(repo)
+    state_before = ReviewStateStore.for_repo(repo).load()
+    top_pull_request = fake_repo.pull_requests[2]
+    top_remote_before = fake_repo.ref_target(top_pull_request.head_ref)
+    fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+    top_pull_request.is_queued = True
+
+    exit_code = run_main(repo, config_path, "sync", stack_before.head.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "Nothing to sync" in captured.out
+    assert fake_repo.ref_target(top_pull_request.head_ref) == top_remote_before
+    assert tuple(revision.commit_id for revision in selected_stack(repo).revisions) == tuple(
+        revision.commit_id for revision in stack_before.revisions
+    )
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+
+
 def test_sync_dry_run_previews_rebase_and_skips_submit_preview(
     tmp_path: Path,
     monkeypatch,

@@ -258,6 +258,7 @@ def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() ->
             pull_request=SimpleNamespace(
                 html_url="https://github.test/octo/repo/pull/7",
                 is_draft=False,
+                is_queued=False,
                 number=7,
             ),
             review_decision=None,

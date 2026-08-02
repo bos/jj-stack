@@ -64,6 +64,8 @@ def _review_change_status(status: ReviewChangeStatus) -> str:
     if status.has_pull_request_lookup_failure:
         return "unknown"
     if status.pr_lifecycle == "open":
+        if status.pr_queued is True:
+            return "queued"
         if status.pr_draft is True:
             return "draft"
         if status.pr_review_decision == "approved":

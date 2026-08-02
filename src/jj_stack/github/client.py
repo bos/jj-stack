@@ -545,31 +545,47 @@ class GithubClient:
             response_name="convert pull request to draft",
         )
 
-    async def merge_pull_request(
-        self,
-        *,
-        expected_head_sha: str,
-        pull_number: int,
-        merge_method: str,
-    ) -> None:
-        response = await self._request(
-            "PUT",
-            f"{self._repo_path}/pulls/{pull_number}/merge",
-            json={"merge_method": merge_method, "sha": expected_head_sha},
+    async def base_branch_uses_merge_queue(self, *, branch: str) -> bool:
+        payload = await self._graphql_query(
+            _base_branch_merge_queue_query(),
+            response_name="base branch merge queue lookup",
+            variables={
+                **self._repository_variables,
+                "branch": branch,
+                "qualified": f"refs/heads/{branch}",
+            },
         )
-        self._expect_success(response)
+        repository = _graphql_repository_payload(
+            payload,
+            response_name="base branch merge queue lookup",
+        )
+        if repository.get("mergeQueue") is not None:
+            return True
+        ref = repository.get("ref")
+        rules = ref.get("rules") if isinstance(ref, dict) else None
+        nodes = rules.get("nodes") if isinstance(rules, dict) else None
+        return isinstance(nodes, list) and any(
+            isinstance(node, dict) and node.get("type") == "MERGE_QUEUE" for node in nodes
+        )
 
     async def submit_stack_merge(
         self,
         *,
         expected_head_sha: str,
-        merge_method: str,
+        merge_action: str,
+        merge_method: str | None,
         pull_number: int,
     ) -> GithubStackMergeSubmission:
+        body: dict[str, object] = {
+            "merge_action": merge_action,
+            "sha": expected_head_sha,
+        }
+        if merge_method is not None:
+            body["merge_method"] = merge_method
         response = await self._request(
             "PUT",
             f"{self._repo_path}/pulls/{pull_number}/merge-async",
-            json={"merge_method": merge_method, "sha": expected_head_sha},
+            json=body,
         )
         # 409 means GitHub already has an operation in flight for this pull request, not that
         # the merge conflicts.
@@ -957,6 +973,9 @@ def _pull_request_fields_fragment() -> str:
           number
           state
           isDraft
+          mergeQueueEntry {
+            id
+          }
           mergeCommit {
             oid
           }
@@ -970,6 +989,32 @@ def _pull_request_fields_fragment() -> str:
           headRefOid
           headRepositoryOwner {
             login
+          }
+        }
+        """
+    )
+
+
+def _base_branch_merge_queue_query() -> str:
+    return _graphql_document(
+        """
+        query BaseBranchMergeQueue(
+          $owner: String!,
+          $repo: String!,
+          $branch: String!,
+          $qualified: String!
+        ) {
+          repository(owner: $owner, name: $repo) {
+            mergeQueue(branch: $branch) {
+              id
+            }
+            ref(qualifiedName: $qualified) {
+              rules(first: 50) {
+                nodes {
+                  type
+                }
+              }
+            }
           }
         }
         """

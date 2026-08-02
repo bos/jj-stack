@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.status import PreparedStatus
@@ -26,6 +25,7 @@ class MergeResult:
     """Rendered merge result for one selected local stack."""
 
     actions: tuple[MergeAction, ...]
+    enqueued: bool
     selected_revset: str
     trunk_branch: str
     trunk_subject: str
@@ -65,10 +65,12 @@ class MergeExecutionInputs:
         self,
         *,
         actions: tuple[MergeAction, ...],
+        enqueued: bool = False,
         final_trunk_commit_id: str | None = None,
     ) -> MergeResult:
         return MergeResult(
             actions=actions,
+            enqueued=enqueued,
             final_trunk_commit_id=final_trunk_commit_id,
             selected_revset=self.selected_revset,
             trunk_branch=self.trunk_branch,
@@ -94,26 +96,3 @@ class MergePlan:
     boundary_action: MergeAction | None
     planned_revisions: tuple[MergeRevision, ...]
     reviewed_revisions: tuple[MergeRevision, ...]
-    trunk_branch: str
-
-    @property
-    def blocked(self) -> bool:
-        return not self.planned_revisions
-
-    def planned_actions(self) -> tuple[MergeAction, ...]:
-        if self.blocked:
-            return () if self.boundary_action is None else (self.boundary_action,)
-
-        actions = [
-            MergeAction(
-                kind="pull request",
-                body=t"merge PR #{revision.identity.pr_number} into "
-                t"{ui.bookmark(self.trunk_branch)} on GitHub for "
-                t"{revision.subject} {ui.change_id(revision.change_id)}",
-                status="planned",
-            )
-            for revision in self.planned_revisions
-        ]
-        if self.boundary_action is not None:
-            actions.append(self.boundary_action)
-        return tuple(actions)

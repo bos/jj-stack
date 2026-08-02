@@ -1036,7 +1036,9 @@ def _format_status_summary(
         review_decision = change_status.pr_review_decision
         if review_decision == "unknown" and lookup.review_decision_error is not None:
             review_decision = "none"
-        if change_status.pr_draft is True:
+        if change_status.pr_queued is True:
+            summary = f"{summary} queued"
+        elif change_status.pr_draft is True:
             pass
         elif review_decision == "approved":
             summary = f"{summary} approved"

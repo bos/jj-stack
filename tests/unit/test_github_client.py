@@ -241,7 +241,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
             assert "pr_9: pullRequest(number: 9)" in payload["query"]
             assert "pr_11: pullRequest(number: 11)" in payload["query"]
             assert "autoMergeRequest" not in payload["query"]
-            assert "mergeQueueEntry" not in payload["query"]
+            assert "mergeQueueEntry" in payload["query"]
         return httpxyz.Response(
             200,
             json={
@@ -253,7 +253,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
                             "body": "body 7",
                             "headRefName": "jj-stack/seven",
                             "headRepositoryOwner": {"login": "octo-org"},
-                            "mergeQueueEntry": None,
+                            "mergeQueueEntry": {"id": "queue-entry"},
                             "mergedAt": None,
                             "number": 7,
                             "state": "OPEN",
@@ -280,7 +280,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
             request=request,
         )
 
-    async def run_test() -> tuple[str, str, str | None, bool]:
+    async def run_test() -> tuple[str, str, str | None, bool, bool]:
         async with _github_client(handler) as client:
             pull_requests = await client.get_pull_requests_by_numbers(
                 pull_numbers=(7, 9, 11, *range(100, 124)),
@@ -293,6 +293,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
             pull_request_7.head.ref,
             pull_request_9.state,
             pull_request_7.head.label,
+            pull_request_7.is_queued,
             pull_requests[11] is None,
         )
 
@@ -301,8 +302,38 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
         "closed",
         "octo-org:jj-stack/seven",
         True,
+        True,
     )
     assert request_sizes == [25, 2]
+
+
+def test_github_client_detects_merge_queue_branch_rule() -> None:
+    def handler(request: httpxyz.Request) -> httpxyz.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["variables"] == {
+            "owner": "octo-org",
+            "repo": "stacked-review",
+            "branch": "main",
+            "qualified": "refs/heads/main",
+        }
+        return httpxyz.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {
+                        "mergeQueue": None,
+                        "ref": {"rules": {"nodes": [{"type": "MERGE_QUEUE"}]}},
+                    }
+                }
+            },
+            request=request,
+        )
+
+    async def run_test() -> bool:
+        async with _github_client(handler) as client:
+            return await client.base_branch_uses_merge_queue(branch="main")
+
+    assert asyncio.run(run_test())
 
 
 @pytest.mark.merge_recovery

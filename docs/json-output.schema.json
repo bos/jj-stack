@@ -47,6 +47,7 @@
         "unsubmitted",
         "submitted",
         "open",
+        "queued",
         "draft",
         "approved",
         "changes_requested",

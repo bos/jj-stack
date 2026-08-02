@@ -170,6 +170,29 @@ def test_submit_github_stack_recovers_lost_create_and_retries_blocked_append(
     )
 
 
+def test_submit_does_not_update_a_queued_review(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    revision = selected_stack(repo).head
+    pull_request = fake_repo.pull_requests[1]
+    pull_request.is_queued = True
+    remote_before = fake_repo.ref_target(pull_request.head_ref)
+    title_before = pull_request.title
+    run_command(["jj", "describe", "-r", revision.change_id, "-m", "renamed feature"], repo)
+
+    exit_code = run_main(repo, config_path, "submit")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "is in the merge queue" in captured.err
+    assert fake_repo.ref_target(pull_request.head_ref) == remote_before
+    assert pull_request.title == title_before
+
+
 def test_submit_recreates_github_stack_only_after_active_review_grows_to_two(
     tmp_path: Path,
     monkeypatch,
@@ -1966,3 +1989,59 @@ def test_submit_edit_malformed_document_aborts_before_mutation(
     assert empty_state.submitted_baselines == {}
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
     assert fake_repo.pull_requests == {}
+
+
+def test_submit_edit_sets_each_pull_request_draft_state(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    editor_command = _write_edit_editor(
+        tmp_path,
+        "toggle-first-draft.py",
+        [
+            "from pathlib import Path",
+            "import sys",
+            "",
+            "path = Path(sys.argv[-1])",
+            "text = path.read_text(encoding='utf-8')",
+            "path.write_text(",
+            "    text.replace('JJ: Draft: yes', 'JJ: Draft: n', 1),",
+            "    encoding='utf-8',",
+            ")",
+        ],
+    )
+    monkeypatch.delenv("VISUAL", raising=False)
+    monkeypatch.setenv("EDITOR", editor_command)
+
+    assert run_main(repo, config_path, "submit", "--draft", "--edit") == 0
+    capsys.readouterr()
+
+    assert fake_repo.pull_requests[1].is_draft
+    assert not fake_repo.pull_requests[2].is_draft
+
+    editor_command = _write_edit_editor(
+        tmp_path,
+        "reverse-drafts.py",
+        [
+            "from pathlib import Path",
+            "import sys",
+            "",
+            "path = Path(sys.argv[-1])",
+            "text = path.read_text(encoding='utf-8')",
+            "text = text.replace('JJ: Draft: no', 'JJ: Draft: y')",
+            "text = text.replace('JJ: Draft: yes', 'JJ: Draft: n')",
+            "path.write_text(text, encoding='utf-8')",
+        ],
+    )
+    monkeypatch.setenv("EDITOR", editor_command)
+
+    assert run_main(repo, config_path, "submit", "--edit") == 0
+    capsys.readouterr()
+
+    assert not fake_repo.pull_requests[1].is_draft
+    assert fake_repo.pull_requests[2].is_draft

@@ -22,10 +22,11 @@ or automated, such as invoking an LLM to generate these descriptions.
 --stack <revset>` for the selected stack. The helper must output JSON with string `title` and
 `body` fields.
 
-Use `--edit` to review and edit the planned pull request titles and bodies in your editor
-before anything is pushed. Saving the document continues the submit; a malformed document or
-a non-zero editor exit aborts it before any change is made. The editor is the one jj's
-`ui.editor` setting resolves to. `--edit` cannot be combined with `--describe-with`.
+Use `--edit` to review and edit the planned pull request titles, bodies, and draft states in your
+editor before anything is pushed. Each `JJ: Draft:` field accepts `yes` or `no`, with `y` and `n`
+as short forms. Saving the document continues the submit; a malformed document or a non-zero
+editor exit aborts it before any change is made. The editor is the one jj's `ui.editor` setting
+resolves to. `--edit` cannot be combined with `--describe-with`.
 
 The `--label`, `--reviewers`, and `--team-reviewers` flags accept comma-separated values and may
 be repeated. When passed, they override the corresponding configured defaults for this run.
@@ -77,6 +78,7 @@ from jj_stack.state.operation_lock import acquire_operation_lock
 
 from . import auto_close
 from .auto_close import retarget_review_bases_before_branch_push
+from .descriptions import edit_pull_requests_in_editor
 from .github_stack import (
     GithubStackPlan,
     apply_github_stack_plan,
@@ -279,6 +281,7 @@ def _build_submit_result(
 def _pending_pull_request_syncs(
     *,
     discovered_pull_requests: dict[str, GithubPullRequest | None],
+    drafts: dict[str, bool],
     generated_descriptions: dict[str, GeneratedDescription],
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
     trunk_branch: str,
@@ -289,11 +292,28 @@ def _pending_pull_request_syncs(
         PendingPullRequestSync(
             base_branch=prepared_revisions[index - 1].branch if index > 0 else trunk_branch,
             discovered_pull_request=discovered_pull_requests[prepared_revision.branch],
+            draft=drafts[prepared_revision.revision.change_id],
             generated_description=generated_descriptions[prepared_revision.revision.change_id],
             prepared=prepared_revision,
         )
         for index, prepared_revision in enumerate(prepared_revisions)
     )
+
+
+def _desired_draft_state(
+    *,
+    draft_mode: SubmitDraftMode,
+    pull_request: GithubPullRequest | None,
+) -> bool:
+    """Resolve the command-wide draft flags for one pull request."""
+
+    if pull_request is None:
+        return draft_mode in ("draft", "draft_all")
+    if draft_mode == "draft_all":
+        return True
+    if draft_mode == "open":
+        return False
+    return pull_request.is_draft
 
 
 def _recover_interrupted_first_submissions(
@@ -443,6 +463,28 @@ async def run_submit_async(
     )
     submitted_revisions: tuple[SubmittedRevision, ...] = ()
     async with build_github_client(repository=github_repository) as github_client:
+        generated_descriptions = prepared_inputs.generated_pull_request_descriptions
+        drafts: dict[str, bool] | None = None
+        if options.edit:
+            with console.spinner(description="Inspecting current draft states"):
+                editor_pull_requests = await discover_pull_requests_by_branch(
+                    github_client=github_client,
+                    branches=tuple(resolution.branch for resolution in branch_resolutions),
+                )
+            drafts = {
+                prepared.revision.change_id: _desired_draft_state(
+                    draft_mode=options.draft_mode,
+                    pull_request=editor_pull_requests[prepared.branch],
+                )
+                for prepared in prepared_revisions
+            }
+            generated_descriptions, drafts = edit_pull_requests_in_editor(
+                descriptions=generated_descriptions,
+                drafts=drafts,
+                jj_client=client,
+                revisions=stack.revisions,
+            )
+
         with console.spinner(description="Inspecting GitHub"):
             try:
                 (
@@ -467,10 +509,18 @@ async def run_submit_async(
                 remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,
             )
-
+        if drafts is None:
+            drafts = {
+                prepared.revision.change_id: _desired_draft_state(
+                    draft_mode=options.draft_mode,
+                    pull_request=discovered_pull_requests[prepared.branch],
+                )
+                for prepared in prepared_revisions
+            }
         pending_syncs = _pending_pull_request_syncs(
             discovered_pull_requests=discovered_pull_requests,
-            generated_descriptions=prepared_inputs.generated_pull_request_descriptions,
+            drafts=drafts,
+            generated_descriptions=generated_descriptions,
             prepared_revisions=prepared_revisions,
             trunk_branch=trunk_branch,
         )

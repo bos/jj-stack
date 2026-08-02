@@ -1,6 +1,6 @@
-# jj-stack
+# jj-stack: manage stacked GitHub PRs with jj
 
-`jj-stack` sends a linear stack of local `jj` changes to GitHub as a stack of dependent pull
+`jj-stack` manages a linear series of `jj` changes on GitHub as a stack of dependent pull
 requests.
 
 It is built for a rewrite-heavy review workflow made up of many small changes. Split a feature
@@ -42,7 +42,7 @@ eval "$(jj-stack completion zsh)"
 
 `bash` and `fish` work the same way.
 
-To invoke it as `jj stack ...` — mirroring GitHub's `gh stack ...` — add a jj alias:
+To invoke it as `jj stack ...` (mirroring GitHub's `gh stack ...`) add a jj alias:
 
 ```toml
 [aliases]
@@ -51,7 +51,7 @@ stack = ["util", "exec", "--", "jj-stack"]
 
 ### Before your first submit
 
-The happy path is a local `jj` stack that is ready to become a set of GitHub PRs:
+The happy path is a local `jj` stack of changes that is ready to become a set of GitHub PRs:
 
 - you are in a `jj` repo with a GitHub remote
 - `trunk()` resolves to the branch you want the bottom PR to target, usually `main`
@@ -59,14 +59,14 @@ The happy path is a local `jj` stack that is ready to become a set of GitHub PRs
 - the changes you want to submit are visible and mutable in `jj`
 - GitHub authentication works from this shell
 
-`jj-stack doctor` checks every one of those, plus the branch-namespace reservation described
-below, and names a fix for anything it finds. Run it once in a new repo:
+`jj-stack doctor` checks these to ensure you're good to go (and the branch-namespace setup
+below), and will identify a fix for anything it sees as missing. Run it once in a new repo:
 
 ```bash
 jj-stack doctor --fix
 ```
 
-Without `--fix` it only reports.
+(Without `--fix`, it will only report what it sees.)
 
 It's easy to learn what `jj-stack` will do. Inspect first:
 
@@ -76,9 +76,9 @@ jj-stack
 
 (This is a synonym for `jj-stack view`.)
 
-`jj-stack` reserves the `jj-stack/` branch namespace for the branches it pushes. `doctor --fix`
-adds a fetch exclusion that normally keeps those branches out of your local bookmark view. A
-missing exclusion is a warning, not a reason for other commands to stop.
+`jj-stack` reserves the `jj-stack/` branch namespace for the git branches it manages remotely on
+GitHub. `doctor --fix` adds a fetch exclusion that normally keeps those branches out of your local
+bookmark view. A missing exclusion is a warning, not a reason for other commands to stop.
 
 After that, ordinary `jj git fetch` and `git fetch` exclude `jj-stack/*` branches. Do not keep
 your own branches under `jj-stack/`. If the remote had no fetch configuration at all,
@@ -138,7 +138,16 @@ jj-stack submit --describe <change-id>=pr-body.md
 For a multi-change stack, you can use `--describe stack=stack-overview.md` to post an overview of
 the whole stack as a comment on the head PR. This is very helpful to orient a reviewer. See
 [Writing PR descriptions](docs/description-helpers.md) for the other ways to set titles and
-bodies.
+bodies and choose which PRs are drafts.
+
+To review every title and body and choose the draft state of each PR in one editor document:
+
+```bash
+jj-stack submit --edit
+```
+
+Each change section has a `JJ: Draft: yes` or `JJ: Draft: no` field. The short forms `y` and `n`
+work too. An invalid value aborts the submit before anything is pushed or changed on GitHub.
 
 On first submit, `jj-stack` creates one stable, readable GitHub review branch per change, such as
 `jj-stack/add-the-api-qpvuntsm`. The branches normally stay on the Git remote rather than
@@ -195,15 +204,19 @@ Your typical author loop is:
 3. Revise those changes locally as reviews come in.
 4. Re-run `jj-stack submit`.
 5. Once the bottom changes are ready, run `jj-stack merge`.
-6. Run the printed `jj-stack sync <head-change-id>` to reconcile local history.
+6. After GitHub reports them merged, run `jj-stack sync <head-change-id>` to reconcile local
+   history. A direct merge prints this command; after queueing, wait for GitHub first.
 
 `merge` asks GitHub to merge the consecutive open, non-draft PRs at the bottom of the stack. It
 requires every candidate to remain at the exact commit last submitted, but GitHub decides
 approvals, checks, conflicts, and repository policy. GitHub merges a selected multi-PR bottom
-portion as one operation. A one-PR review uses GitHub's ordinary pull-request merge API.
+portion as one operation. The same asynchronous API handles a one-PR review. If the trunk branch
+requires a merge queue, GitHub accepts the selected PRs into the queue instead of merging them
+immediately; `view` and `list` show them as queued.
 
-`merge` never pushes trunk, rewrites local history, or removes review tracking. Run
-`jj-stack sync <head-change-id>` after GitHub merges lower changes. It rebases the remaining
+`merge` never pushes trunk, rewrites local history, or removes review tracking. A queued result is
+successful but does not mean trunk changed, so wait for GitHub to merge it. Then run
+`jj-stack sync <head-change-id>`. It rebases the remaining
 selected changes onto `trunk()`, updates only PRs that already exist for them, and cleans up a
 merged PR when no local path still needs it. Conflicts remain local for you to resolve before
 their PRs are updated. Ordinary `jj` rewrite propagation may also rebase local descendants, but

@@ -274,12 +274,13 @@ Property families and their assertions live in [property-testing.md](property-te
 managed comment, falling back to REST pagination only for PRs whose first comment page
 is incomplete.
 
-Stack merge is `PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async`, whose body
-carries `merge_method` and the `sha` of the exact target PR head. An accepted request returns an
-operation UUID that the client polls to a terminal state. A concurrent `409` is decoded so a
-matching pending request can be distinguished from an unrelated conflict, but its UUID is never
-adopted, because the response body does not identify the target PR. The merge policy those
-requests serve is specified in [design.md](design.md).
+All merges use `PUT /repos/{owner}/{repo}/pulls/{target_pr}/merge-async`, for either one ordinary
+PR or a GitHub stack prefix. Its body carries the exact target-head `sha` and an explicit
+`merge_action`: `direct_merge` with a merge method, or `merge_queue` without one. The client polls
+an accepted operation UUID until GitHub reports `merged`, `enqueued`, or `failed`. A concurrent
+`409` is decoded so a matching pending request can be distinguished from an unrelated conflict,
+but its UUID is never adopted, because the response body does not identify the target PR. The
+merge policy those requests serve is specified in [design.md](design.md).
 
 The client reports endpoint results but does not decide stack topology, branch naming, or GitHub
 stack membership policy.
@@ -514,9 +515,10 @@ The fake server owns a real Git repo because many assertions are about actual re
 branch state, not just JSON responses.
 
 Its GitHub stack endpoints model ordered resource membership, historical merged prefixes, exact
-active suffix unstacking, create/append admission, and asynchronous merge submission and
-polling. The merge fixtures cover atomic failure, partial survivor rewrites, and terminal retry.
-They remain bounded contracts rather than a general GitHub stack emulator.
+active suffix unstacking, create/append admission, and asynchronous merge submission and polling.
+The merge fixtures cover direct merges, queue acceptance, atomic failure, partial survivor
+rewrites, and terminal retry. They remain bounded contracts rather than a general GitHub stack
+emulator.
 
 We use FastAPI for the fake server unless Starlette later proves to offer a clear
 concrete advantage for this test harness.

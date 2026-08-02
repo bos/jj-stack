@@ -4,9 +4,9 @@ Candidates are the consecutive open, non-draft pull requests from the bottom. Ea
 match the exact commit last submitted; GitHub decides whether reviews, checks, conflicts, and
 repository rules allow the merge.
 
-GitHub merges a multi-PR prefix together through its stack API. A one-PR review uses the
-ordinary pull-request API. This command does not update local history or remove review state; run
-the printed `jj-stack sync` command after GitHub merges anything.
+GitHub merges one PR or a multi-PR prefix through its asynchronous merge API. When the trunk
+branch uses a merge queue, the command adds the reviewed changes to that queue. This command does
+not update local history or remove review state.
 
 Common examples:
 
@@ -42,13 +42,12 @@ from jj_stack.review.status import prepare_status
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from .github_stack import (
-    build_github_stack_merge_plan,
-    check_github_stack_merge,
-    execute_github_stack_merge,
+    build_async_merge_plan,
+    check_async_merge,
+    execute_async_merge,
 )
 from .models import MergeExecutionInputs, MergeResult, PreparedMerge
 from .plan import build_merge_plan
-from .pull_requests import execute_single_pull_request_merge
 from .render import print_merge_result
 
 HELP = "Merge the reviewed changes at the bottom of a stack"
@@ -208,11 +207,27 @@ async def _stream_merge_async(
                 remote=remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )
-        resolved_merge_method = _resolve_merge_method(
-            configured=prepared_merge.context.config.merge_method,
-            merge_method=prepared_merge.merge_method,
-            repository_state=github_repository_state,
-        )
+        try:
+            uses_merge_queue = await github_client.base_branch_uses_merge_queue(
+                branch=trunk_branch
+            )
+        except GithubClientError:
+            uses_merge_queue = False
+        if uses_merge_queue:
+            if prepared_merge.merge_method is not None:
+                console.warning(
+                    t"The base branch {ui.bookmark(trunk_branch)} uses a merge queue; ignoring "
+                    t"{ui.cmd('--method')}."
+                )
+            merge_action = "merge_queue"
+            resolved_merge_method = None
+        else:
+            merge_action = "direct_merge"
+            resolved_merge_method = _resolve_merge_method(
+                configured=prepared_merge.context.config.merge_method,
+                merge_method=prepared_merge.merge_method,
+                repository_state=github_repository_state,
+            )
         try:
             observation = await observe_reviews(
                 change_ids=tuple(revision.change_id for revision in prepared.stack.revisions),
@@ -241,7 +256,7 @@ async def _stream_merge_async(
             tuple(revision.identity.pr_number for revision in plan.reviewed_revisions),
         )
         stacks = await selection.observe()
-        github_stack_merge = build_github_stack_merge_plan(
+        async_merge = build_async_merge_plan(
             plan,
             stacks,
             prepared_merge.target_change_id,
@@ -254,24 +269,30 @@ async def _stream_merge_async(
             trunk_subject=prepared.stack.trunk.subject,
         )
         if prepared_merge.dry_run:
-            if github_stack_merge is not None:
-                await check_github_stack_merge(execution, github_client, github_stack_merge)
-                return execution.result(
-                    actions=(github_stack_merge.action(resolved_merge_method),)
+            if async_merge.planned:
+                await check_async_merge(execution, github_client, async_merge)
+                action = async_merge.action(
+                    merge_action=merge_action,
+                    method=resolved_merge_method,
+                    trunk_branch=trunk_branch,
                 )
-            return execution.result(actions=plan.planned_actions())
-        if github_stack_merge is not None:
-            return await execute_github_stack_merge(
-                execution=execution,
-                github=github_client,
-                merge_method=resolved_merge_method,
-                github_stack_merge=github_stack_merge,
+                actions = (
+                    (action, async_merge.boundary_action)
+                    if async_merge.boundary_action is not None
+                    else (action,)
+                )
+                return execution.result(actions=actions)
+            return execution.result(
+                actions=(
+                    () if async_merge.boundary_action is None else (async_merge.boundary_action,)
+                )
             )
-        return await execute_single_pull_request_merge(
+        return await execute_async_merge(
             execution=execution,
-            github_client=github_client,
+            github=github_client,
+            merge_action=merge_action,
             merge_method=resolved_merge_method,
-            plan=plan,
+            merge=async_merge,
         )
 
 

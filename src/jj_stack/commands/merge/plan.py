@@ -82,7 +82,6 @@ def build_merge_plan(
         boundary_action=action,
         planned_revisions=tuple(candidates),
         reviewed_revisions=tuple(revision for revision in reviewed if revision is not None),
-        trunk_branch=trunk_branch,
     )
 
 

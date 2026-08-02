@@ -98,6 +98,7 @@ class GithubStackMergeDetails(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     expected_head_sha: str | None = None
+    merge_action: str | None = None
     merge_method: str | None = None
     message: str | None = None
     sha: str | None = None
@@ -110,7 +111,7 @@ class GithubStackMerge(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     details: GithubStackMergeDetails
-    status: Literal["failed", "merged", "pending"]
+    status: Literal["enqueued", "failed", "merged", "pending"]
 
 
 class GithubStackMergeSubmission(BaseModel):
@@ -135,6 +136,7 @@ class GithubPullRequest(BaseModel):
     head: GithubBranchRef
     html_url: str
     is_draft: bool = Field(default=False, alias="draft")
+    is_queued: bool = False
     merge_commit_sha: str | None = None
     merged_at: str | None = None
     node_id: str | None = None
@@ -164,6 +166,7 @@ class GithubPullRequest(BaseModel):
                 "sha": value.get("headRefOid"),
             },
             "html_url": value.get("url"),
+            "is_queued": value.get("mergeQueueEntry") is not None,
             "merge_commit_sha": _graphql_merge_commit_oid(value.get("mergeCommit")),
             "merged_at": value.get("mergedAt"),
             "node_id": value.get("id"),

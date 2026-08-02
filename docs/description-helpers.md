@@ -57,9 +57,15 @@ from the repository root.
 jj-stack submit --edit
 ```
 
-Opens your editor once, containing the planned title and body of every PR in the stack, ordered
-top-to-bottom the way `view` shows them, and pre-filled from the defaults above including any
-`--describe` files. What you save replaces those titles and bodies.
+Opens your editor once, containing the planned title, body, and draft state of every PR in the
+stack, ordered top-to-bottom the way `view` shows them, and pre-filled from the defaults above
+including any `--describe` files. What you save replaces those titles and bodies and applies the
+draft choices.
+
+Each change section has a `JJ: Draft: yes` or `JJ: Draft: no` field. Existing PRs start with their
+current GitHub state. New PRs start ready unless `--draft` supplies a draft default. `--draft=all`
+and `--open` also supply defaults before the editor opens. The field accepts `yes`, `y`, `no`, or
+`n`, case-insensitively.
 
 The editor comes from jj's `ui.editor` setting, then `$VISUAL`, then `$EDITOR`, and `--edit` fails
 if none of those is set. `ui.editor` may be a string or a list of arguments, as in jj. Unlike `jj`
@@ -68,7 +74,7 @@ itself, `jj-stack` does not read `$JJ_EDITOR` and has no built-in editor to fall
 `submit` aborts before changing anything — locally, on the remote, or on GitHub — if the
 editor cannot be launched or exits non-zero, or if the saved document has content before the first
 change separator, an unknown, repeated, or missing change section, or a section with no title
-line.
+line or valid draft field.
 
 `--edit` cannot be combined with `--describe-with`, since a helper already owns description
 authoring. It does compose with `--describe`.

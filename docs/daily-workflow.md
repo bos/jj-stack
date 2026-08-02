@@ -63,14 +63,16 @@ Each PR's title is the change's subject line, and its body is the rest of the ch
 description. When a description has no body, `submit` uses your repository's pull request
 template (for example `.github/PULL_REQUEST_TEMPLATE.md`) if one exists.
 
-To review and polish those titles and bodies in your editor before anything is pushed:
+To review the titles, bodies, and draft state of each PR in your editor before anything is
+pushed:
 
 ```bash
 jj-stack submit --edit
 ```
 
-Saving the document continues the submit; quitting the editor with a non-zero exit aborts it
-with nothing pushed.
+Each change section contains `JJ: Draft: yes` or `JJ: Draft: no`. Edit that value to choose which
+parts of a stack are ready for review; `y` and `n` work too. Saving the document continues the
+submit. An invalid value or a non-zero editor exit aborts with nothing pushed.
 
 If you already have a PR body in a Markdown file, attach it while submitting:
 
@@ -97,6 +99,9 @@ open PRs to draft, and `--open` marks existing drafts ready for review:
 ```bash
 jj-stack submit --open
 ```
+
+These flags provide the initial values when combined with `--edit`, where you can override the
+draft state for each PR.
 
 This matters for merging: `jj-stack merge` skips a draft PR and everything above it, so a draft
 left at the bottom of the stack blocks the whole merge.
@@ -188,8 +193,9 @@ jj-stack merge
 ```
 
 `merge` considers the consecutive open, non-draft PRs from the bottom of the stack. It does not
-try to duplicate GitHub's rules for approvals, checks, conflicts, merge queues, or repository
-policy. GitHub evaluates those rules when it handles the request.
+try to duplicate GitHub's rules for approvals, checks, conflicts, or repository policy. It only
+checks whether the trunk branch uses a merge queue so it can send the request by the right route.
+GitHub evaluates the remaining rules.
 
 If you rewrote a reviewed change, rerun `submit` before merging even when the diff is unchanged.
 `merge` accepts only the exact commit last sent for review when the review branch and PR still
@@ -235,8 +241,8 @@ To stop the selected bottom portion at one pull request:
 jj-stack merge --pull-request 7
 ```
 
-The merge method comes from repository settings when only one is enabled. When several are, set a
-default once:
+For a direct merge, the merge method comes from repository settings when only one is enabled.
+When several are, set a default once:
 
 ```bash
 jj config set --repo jj-stack.merge_method squash
@@ -249,17 +255,33 @@ jj-stack merge --method squash
 ```
 
 GitHub reports which methods a repository allows but never which one to prefer, which is why one
-of these is needed.
+of these is needed. A merge queue chooses the method itself. If you pass `--method` for a queued
+review, `jj-stack` warns and ignores it.
 
-GitHub merges a selected multi-PR bottom portion as one operation. A failed operation merges
-nothing. GitHub may rewrite the branches for PRs that remain above a partial selection. A one-PR
-review uses GitHub's ordinary pull-request merge API.
+GitHub handles both one-PR and multi-PR selections through its asynchronous merge API. A failed
+operation merges nothing. GitHub may rewrite the branches for PRs that remain above a partial
+selection.
+
+When trunk uses a merge queue, `merge` returns successfully once GitHub accepts the selected PRs:
+
+```text
+Added to merge queue:
+  ✓ GitHub merge request: add PRs #41, #42 to the merge queue for main
+GitHub will merge them once the queue processes them.
+```
+
+That result does not mean trunk changed. `view` and `list` show the PRs as queued. Wait for GitHub
+to merge them before running `sync`; there is no queue watcher in `jj-stack`.
 
 `merge` does not rewrite local history, refresh surviving PRs, or remove tracking. After GitHub
 merges anything, run the `jj-stack sync <head-change-id>` command printed in the result. If an
 identical stack request is already pending, wait and rerun the same explicit `merge` command; once
 GitHub
 finishes, the retry observes the completed result.
+
+While an open PR is queued, `submit` will not update its review branch or PR, and `sync` leaves
+the selected stack alone. Wait for it to merge or remove it from the queue first. Independent
+stacks remain usable.
 
 ## 7. Update a stack after GitHub merged lower PRs
 
