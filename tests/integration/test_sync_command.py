@@ -234,6 +234,27 @@ def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
     assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
 
 
+def test_sync_all_preserves_tracking_when_exact_pr_head_changed(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    (reviewed,) = selected_stack(repo).revisions
+    state_store = ReviewStateStore.for_repo(repo)
+    pull_request = fake_repo.pull_requests[1]
+    fake_repo.apply_merge_commit((pull_request,))
+    fake_repo.force_push_pull_request_head(pull_request)
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "no longer reports the submitted head" in captured.err
+    assert reviewed.change_id in state_store.load().review_identities
+
+
 def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     tmp_path: Path,
     monkeypatch,

@@ -21,6 +21,7 @@ from jj_stack.review.trunk_evidence import (
     CommitAncestry,
     TrackedReview,
     classify_commit_ancestries,
+    classify_exact_snapshot,
     classify_rewritten_result,
 )
 from jj_stack.ui import Message
@@ -95,6 +96,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             candidates=exact_candidates,
             github_stacks=github_stacks,
             pull_requests=pull_requests,
+            repository=target.repository,
             tracked_pull_numbers=frozenset(
                 identity.pr_number
                 for identity in state.review_identities.values()
@@ -106,20 +108,24 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             command=context,
             dry_run=dry_run,
             github=github,
-            remote_name=target.remote.name,
             trunk_branch=trunk_branch,
-            trunk_commit_id=trunk.commit_id,
         )
         results = await finish_reviews(
             candidates=eligible_exact,
             finish=finish_context,
+            pull_requests={
+                candidate.review_identity.pr_number: pull_request
+                for candidate in eligible_exact
+                if isinstance(
+                    pull_request := pull_requests.get(candidate.review_identity.pr_number),
+                    GithubPullRequest,
+                )
+            },
             skip_finish=terminal_required,
         )
-        results = await retire_reviews(
-            evidence={candidate.change_id: "exact" for candidate in eligible_exact},
+        results = retire_reviews(
             finish_results=results,
             finish=finish_context,
-            terminal_required=terminal_required,
         )
     render_finish_results(dry_run=dry_run, results=results)
     blocked = had_failure or any(result.outcome == "skipped" for result in results)
@@ -130,6 +136,7 @@ def _eligible_exact_candidates(
     candidates: tuple[TrackedReview, ...],
     github_stacks: tuple[GithubStack, ...],
     pull_requests: dict[int, GithubPullRequest | GithubClientError | None],
+    repository: github_resolution.GithubRepoAddress,
     tracked_pull_numbers: frozenset[int],
 ) -> tuple[tuple[TrackedReview, ...], frozenset[str]]:
     members = [member for stack in github_stacks for member in stack.pull_requests]
@@ -137,6 +144,27 @@ def _eligible_exact_candidates(
     terminal_required: set[str] = set()
     for candidate in candidates:
         number = candidate.review_identity.pr_number
+        pull_request = pull_requests.get(number)
+        if not isinstance(pull_request, GithubPullRequest):
+            reason = (
+                t"could not inspect its current review: {pull_request}"
+                if isinstance(pull_request, GithubClientError)
+                else t"GitHub no longer reports PR #{number}"
+            )
+            _warn_global_preserved(candidate, reason)
+            continue
+        evidence = classify_exact_snapshot(
+            ancestry="on_trunk",
+            candidate=candidate,
+            pull_request=pull_request,
+            repository=repository,
+        )
+        if not evidence.on_trunk:
+            _warn_global_preserved(
+                candidate,
+                evidence.reason or "the submitted review no longer matches",
+            )
+            continue
         matching = [member for member in members if member.number == number]
         if not matching:
             eligible.append(candidate)
@@ -145,7 +173,6 @@ def _eligible_exact_candidates(
             matching=matching,
             github_stacks=github_stacks,
             number=number,
-            pull_request=pull_requests.get(number),
             tracked_pull_numbers=tracked_pull_numbers,
         )
         if reason is not None:
@@ -161,7 +188,6 @@ def _github_stack_blocker(
     matching: list[GithubStackPullRequest],
     github_stacks: tuple[GithubStack, ...],
     number: int,
-    pull_request: object,
     tracked_pull_numbers: frozenset[int],
 ) -> Message | None:
     """Explain why a GitHub stack member cannot be retired repository-wide.
@@ -172,10 +198,6 @@ def _github_stack_blocker(
 
     if not matching[0].is_historical:
         return t"GitHub still lists PR #{number} as an active member of its stack"
-    if not isinstance(pull_request, GithubPullRequest):
-        return t"GitHub did not return usable data for PR #{number}"
-    if pull_request.normalize_state().state != "merged":
-        return t"GitHub does not report PR #{number} merged"
     if any(
         number in stack.pull_request_numbers
         and not set(stack.active_pull_request_numbers).isdisjoint(tracked_pull_numbers)

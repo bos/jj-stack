@@ -146,7 +146,6 @@ def test_merge_preconditions_reject_repository_drift() -> None:
             owner="other",
             repo="widgets",
         ),
-        fetched_trunk_commit_id=None,
         github_repository=_repository(
             allow_merge_commit=False,
             allow_rebase_merge=False,
@@ -158,7 +157,6 @@ def test_merge_preconditions_reject_repository_drift() -> None:
             fetch_url="https://github.test/acme/widgets.git",
             push_url="https://github.test/acme/widgets.git",
         ),
-        remote_trunk_target="trunk-commit",
         repository=expected_repository,
         reviews={},
     )

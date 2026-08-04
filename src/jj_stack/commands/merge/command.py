@@ -264,7 +264,6 @@ async def _stream_merge_async(
                 context=prepared_merge.context,
                 github_client=github_client,
                 remote_name=remote.name,
-                trunk_branch=trunk_branch,
             )
         except GithubClientError as error:
             raise CliError(

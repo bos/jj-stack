@@ -170,11 +170,9 @@ def _observation(
     pull_request = _pull_request()
     return RepositoryObservation(
         configured_repository=_REPOSITORY,
-        fetched_trunk_commit_id=None,
         github_repository=None,
         open_pull_requests_by_base={BRANCH: ()},
         remote=_REMOTE,
-        remote_trunk_target=None,
         repository=_REPOSITORY,
         reviews={
             CHANGE_ID: ReviewObservation(

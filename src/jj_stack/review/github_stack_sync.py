@@ -55,7 +55,6 @@ async def resolve_selected_github_stack_observation(
     remote_name: str,
     repository: GithubRepoAddress,
     selected: tuple[LocalRevision, ...],
-    trunk_branch: str,
 ) -> tuple[review_observation.RepositoryObservation, tuple[GithubStack, ...]]:
     state = context.state_store.load()
     selected_change_ids = {revision.change_id for revision in selected}
@@ -96,7 +95,6 @@ async def resolve_selected_github_stack_observation(
         context=context,
         github_client=github,
         remote_name=remote_name,
-        trunk_branch=trunk_branch,
     )
     return observation, stacks if any(map(_changed_review, observation.reviews.values())) else ()
 

@@ -17,9 +17,9 @@ Some local states stop `sync` before it rebases:
 - An unreviewed change sits between reviewed changes. `sync` updates existing pull requests but
   never creates the missing review.
 
-Before rebasing, `sync` also checks the configured remote, fetched trunk, saved pull request
-links, and GitHub stack membership. A missing, moved, closed, or ambiguous review stops the run
-before local history changes. The message names the state to inspect or repair.
+Before rebasing, `sync` also checks saved pull request links and GitHub stack membership. A
+missing, moved, closed, or ambiguous review stops the run before local history changes. The
+message names the state to inspect or repair.
 
 Conflicts do not prevent the local rebase. If a rebased review remains conflicted, `sync` leaves
 the conflict in local history and stops before updating that pull request. Resolve the conflict
@@ -57,6 +57,7 @@ from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import UnsupportedStackError
+from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.convergence import (
@@ -72,10 +73,7 @@ from jj_stack.review.finish import (
     retire_reviews,
 )
 from jj_stack.review.github_stack_sync import resolve_selected_github_stack_observation
-from jj_stack.review.observation import (
-    RepositoryObservation,
-    observe_reviews,
-)
+from jj_stack.review.observation import observe_reviews
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
 from jj_stack.review.trunk_evidence import TrackedReview
 from jj_stack.state.operation_lock import acquire_operation_lock
@@ -163,7 +161,6 @@ async def _run_selected_convergence(
             context=context,
             github_client=github,
             remote_name=target.remote.name,
-            trunk_branch=trunk_branch,
         )
         observation, github_stacks = await resolve_selected_github_stack_observation(
             context=context,
@@ -172,21 +169,7 @@ async def _run_selected_convergence(
             remote_name=target.remote.name,
             repository=target.repository,
             selected=selected,
-            trunk_branch=trunk_branch,
         )
-        error = _selected_observation_error(
-            observation=observation,
-            prepared_status=prepared_status,
-            target=target,
-            trunk_branch=trunk_branch,
-        )
-        if error is not None:
-            raise CliError(
-                error,
-                hint=t"Inspect the stack with {ui.cmd('jj-stack view')}, then repair it "
-                t"with {ui.cmd('jj-stack relink')} or republish it with "
-                t"{ui.cmd('jj-stack submit')}.",
-            )
         queued_pull_numbers = tuple(
             pull_request.number
             for revision in selected
@@ -213,6 +196,12 @@ async def _run_selected_convergence(
             dry_run=dry_run,
             github=github,
             plan=plan,
+            pull_requests={
+                pull_request.number: pull_request
+                for change in plan.on_trunk
+                if (pull_request := observation.reviews[change.candidate.change_id].pull_request)
+                is not None
+            },
             target=target,
             trunk_branch=trunk_branch,
             trunk_commit_id=prepared.stack.trunk.commit_id,
@@ -238,6 +227,7 @@ async def _apply_selected_plan(
     dry_run: bool,
     github: GithubClient,
     plan: SelectedConvergencePlan,
+    pull_requests: dict[int, GithubPullRequest],
     target: GithubTarget,
     trunk_branch: str,
     trunk_commit_id: str,
@@ -246,13 +236,12 @@ async def _apply_selected_plan(
         command=context,
         dry_run=dry_run,
         github=github,
-        remote_name=target.remote.name,
         trunk_branch=trunk_branch,
-        trunk_commit_id=trunk_commit_id,
     )
     results = await finish_reviews(
         candidates=tuple(change.candidate for change in plan.on_trunk),
         finish=finish_context,
+        pull_requests=pull_requests,
         skip_finish=frozenset(
             change.candidate.change_id
             for change in plan.on_trunk
@@ -340,14 +329,6 @@ async def _apply_selected_plan(
                 for change in plan.on_trunk
                 if change.revision is not None
                 and not change.revision.immutable
-                # Convergence already refused these, but repeat the work-loss check here because
-                # this is the step that actually discards commits.
-                and not (
-                    change.revision is not None
-                    and change.revision.holds_unpublished_edit(
-                        (change.candidate.submitted_baseline.commit_id,)
-                    )
-                )
                 and retirement_blocker(change.candidate) is None
             )
             if abandoned:
@@ -367,16 +348,10 @@ async def _apply_selected_plan(
         dry_run=dry_run,
         plan=plan,
     )
-    results = await retire_reviews(
-        evidence={change.candidate.change_id: change.evidence_kind for change in plan.on_trunk},
+    results = retire_reviews(
         finish_results=results,
         finish=finish_context,
         retirement_blocker=retirement_blocker,
-        terminal_required=frozenset(
-            change.candidate.change_id
-            for change in plan.on_trunk
-            if change.requires_terminal_pull_request
-        ),
     )
     render_finish_results(dry_run=dry_run, results=results)
     return finish_exit_code(base=update_result, results=results)
@@ -421,32 +396,6 @@ async def _update_selected_reviews(
         ) from error
     print_submit_result(result)
     return 0
-
-
-def _selected_observation_error(
-    *,
-    observation: RepositoryObservation,
-    prepared_status: PreparedStatus,
-    target: GithubTarget,
-    trunk_branch: str,
-) -> Message | None:
-    if (
-        observation.remote != target.remote
-        or observation.configured_repository != target.repository
-    ):
-        return "the configured Git remote changed during sync"
-    github_repository = observation.github_repository
-    assert github_repository is not None
-    if github_repository.full_name.casefold() != target.repository.full_name.casefold():
-        return "GitHub no longer reports the configured repository"
-    if github_repository.default_branch not in (None, "", trunk_branch):
-        return "GitHub no longer reports the selected trunk branch as its default"
-    expected_trunk = prepared_status.prepared.stack.trunk.commit_id
-    if observation.fetched_trunk_commit_id != expected_trunk:
-        return "fetched trunk changed during sync preparation"
-    if observation.remote_trunk_target != expected_trunk:
-        return "the live trunk ref moved after the fetch"
-    return None
 
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
