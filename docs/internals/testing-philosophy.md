@@ -35,8 +35,8 @@ coverage or make failures irreproducible.
 ## Bias toward off-happy-path coverage
 
 For this repo, do not assume the happy path is the main risk. Much of the real risk comes from
-broken environments, drift between systems, and stateful operations that interleave in
-surprising ways.
+broken environments, drift between systems, and ordinary but surprising sequences of stateful
+operations.
 
 When reviewing coverage, ask first:
 
@@ -45,8 +45,8 @@ When reviewing coverage, ask first:
 - what happens if `jj-stack`, `jj`, GitHub, local persistence, or subprocess state disagree?
 - what happens if the DAG shape is unusual because of rewrites, relinks, divergence, non-linear
   history, or deleted changes?
-- what happens if an operation is interrupted, retried, or followed by another command before
-  the world is consistent again?
+- what happens when one supported command or documented external action follows another before
+  all systems agree on the result?
 
 Prefer tests that show the tool fails closed, preserves work, and gives the user a recovery
 path.
@@ -58,7 +58,7 @@ Examples of high-value test scenarios:
 - surprising DAG topology or stack selection edge cases
 - interrupted operations and partial cleanup
 - stale, missing, or contradictory tracking state
-- drift or surprising interleaving across `jj-stack`, `jj`, GitHub, and
+- drift or surprising command and external-action sequences across `jj-stack`, `jj`, GitHub, and
   subprocess-visible state
 - recovery paths after a command discovers inconsistent state
 
@@ -69,8 +69,8 @@ worthwhile when the scenario is both plausible and important.
 
 Before adding an off-happy-path test, ask:
 
-- is this state reachable in real use, through supported commands, manual user actions, partial
-  failure, or normal tool drift?
+- is this state reachable in real use through ordinary sequences of supported commands,
+  documented user actions, observed partial failures, or normal tool drift?
 - if it happens, could it lose work, leave cross-system state inconsistent, block recovery, or
   confuse the user badly?
 - do we want a defined safe behavior here, rather than treating it as an internal bug where
@@ -82,6 +82,9 @@ If the answer to those questions is mostly no, do not add the test.
 Examples that usually do not deserve dedicated tests:
 
 - purely imaginary states with no believable path from real usage
+- pathological configurations outside the product contract with no believable ordinary user path;
+  documented rejections still deserve focused coverage when the CLI promises them
+- instruction-level race schedules without an observed trigger or documented platform contract
 - large cross-product matrices where one representative case proves the rule
 - internal corruption cases where the product does not promise graceful recovery and a crash is
   acceptable

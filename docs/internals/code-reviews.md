@@ -64,9 +64,16 @@ and every fix — including your own proposed fixes:
   or ordering dependency between durable writes requires a spec amendment in the same
   change, plus answers to: what deletes this state, and what happens if that deletion
   never runs? If recovering the new state would need another mechanism, reject it.
-- **Defenses require an observed trigger.** A reproduction, a live-API observation, or a
-  user report. "The other system might do X" earns a backlog entry naming the experiment
-  that would confirm it — never code.
+- **Defenses require an ordinary, observed trigger.** Name the supported command sequence,
+  documented user action, platform behavior, reproduction, or user report that reaches the state.
+  Pathological configurations outside the product contract with no believable ordinary user path,
+  and "the other system might do X," earn neither code nor test budget. At most, record the
+  experiment that would establish a real trigger.
+- **Test real workflows, not imagined instruction schedules.** Protect ordinary sequences of
+  commands and documented external actions. Bind irreversible external mutations to the identity
+  and version observed while planning when the platform supports a conditional write or lease.
+  Re-observe only when an earlier mutation invalidates a precondition or when an observed trigger
+  or platform contract requires it.
 - **Match guard strength to the cost hierarchy.** Name what a proposed guard actually
   protects, against the ranked kernel: lost commits > mutating the wrong PR or ref >
   guessed linkage > metadata consistency. Reconstructible state gets report-and-continue
@@ -165,7 +172,7 @@ Pay extra attention when a change touches:
 - unusual DAG topology or stack-selection edge cases
 - consistency across `jj-stack`, `jj`, GitHub, local persistence, and
   subprocess-visible state
-- interrupted operations or surprising command interleavings
+- interrupted operations or surprising sequences of commands and external actions
 
 In those areas, scrutinize the proposed test coverage closely.
 

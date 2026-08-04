@@ -9,8 +9,10 @@ compatibility code, migration code, or the like.
   Do not add a temporary parallel model with a promise to remove it in a later cleanup slice.
 - Define each jj-stack-owned durable policy fact once and store it one way. Shared observation or
   storage code must not create a second path for deciding or changing it.
-- Batch independent read-only facts, but keep dependent mutations in order and re-read their
-  preconditions immediately before changing state.
+- Batch independent read-only facts, but keep dependent mutations in order. Bind an irreversible
+  external mutation to the identity and version observed while planning when the platform
+  supports a conditional write or lease. Re-observe only when an earlier mutation invalidates a
+  precondition or when an observed trigger or platform contract requires it.
 - Apply the cumulative complexity budgets after every code slice. CI runs
   `uv run tools/check_complexity.py`; run it locally when the pinned `tokei` is installed. A
   budget increase is a design stop that requires explicit review, not routine maintenance of the
