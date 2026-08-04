@@ -86,6 +86,36 @@ def test_checkout_fetch_rejects_a_locally_rewritten_pull_request_without_importi
     assert len(JjClient(repo).query_revisions(f"change_id({change_id})")) == 1
 
 
+def test_checkout_fetch_rejects_a_rewritten_lower_pull_request(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    stack = selected_stack(repo)
+    bottom_change_id = stack.revisions[0].change_id
+    fake_repo.force_push_pull_request_head(fake_repo.pull_requests[1])
+    resolve_state_path(repo).unlink()
+    run_command(["jj", "abandon", stack.head.change_id], repo)
+    run_command(
+        [
+            "git",
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+        repo,
+    )
+    capsys.readouterr()
+
+    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2") == 1
+
+    assert "fetching it would leave two copies" in " ".join(capsys.readouterr().err.split())
+    assert len(JjClient(repo).query_revisions(f"change_id({bottom_change_id})")) == 1
+
+
 def test_checkout_pull_request_rejects_cross_repository_head(
     tmp_path: Path,
     monkeypatch,

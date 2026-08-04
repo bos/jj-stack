@@ -664,10 +664,11 @@ a rerun.
 ### Adoption and repair
 
 `checkout` adopts review state already on GitHub and never rewrites commits, restacks descendants,
-moves the workspace, or mutates PRs. Before `--fetch` imports anything, it reads the PR head's
-change ID from the remote object without creating a ref. If a visible local revision already has
-that change ID at another commit, it stops and names `relink`; importing would create a divergent
-copy that rerunning could not remove. Temporary refs and bookmarks are removed before return.
+moves the workspace, or mutates PRs. Before `--fetch` imports anything, it reads each PR head's
+change ID from the remote objects without creating refs. If a visible local revision already has
+one of those change IDs at another commit, it stops and names `relink`; importing would create a
+divergent copy that rerunning could not remove. Temporary refs and bookmarks are removed before
+return.
 
 `relink` explicitly replaces uncertain tracking for one change. It verifies the known PR and
 same-repository head branch, then saves the identity and exact observed remote target as one pair.

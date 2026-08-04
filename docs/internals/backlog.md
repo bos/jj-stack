@@ -71,27 +71,6 @@ corresponding failures prove important._
 - draft-state and review-rerequest failures
 - retry after an external GitHub change between attempts
 
-## Checkout import guard covers only the selected pull request
-
-_Benefit: medium — closes the remaining case where `checkout --fetch` can leave a divergent copy
-behind, but needs a decision about when the pull-request chain is read._
-
-`checkout --fetch --pull-request` now reads the selected PR head's change ID before importing and
-stops when a visible local revision already holds that change at another commit. The check covers
-the selected head only. Reproduced remaining case: on a two-PR stack, rewrite the bottom change
-and then abandon the top change. The selected head's change is no longer visible locally, so the
-guard returns early, the import proceeds, and the bottom change ends up permanently divergent with
-every rerun failing identically.
-
-Rewriting a change also rewrites its descendants, so the ordinary rewrite-since-submit case is
-already caught: the selected head's commit differs too. Reaching the gap needs the selected
-change absent or hidden while a lower one survives in rewritten form.
-
-Covering every head means reading the pull-request chain before the import. That walk currently
-runs after it, and only the chain read that follows the import is used for the tracking write. A
-pre-import walk would therefore either duplicate those requests or move the required read
-earlier. Decide which before implementing.
-
 ## `sync` strands a review branch that `cleanup` can no longer remove
 
 _Benefit: medium — leaves branches in the reserved namespace with no supported way to delete

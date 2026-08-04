@@ -72,6 +72,7 @@ async def _run_relink_async(
     revset: str | None,
 ) -> RelinkResult:
     client = context.jj_client
+    state = context.state_store.load()
     selected = resolve_selected_revset(
         command_label="relink",
         require_explicit=True,
@@ -80,7 +81,7 @@ async def _run_relink_async(
     stack = select_review_path(
         jj_client=client,
         revset=selected,
-        state=context.state_store.load(),
+        state=state,
     ).stack
     require_reviewable_revisions(stack.revisions)
     if not stack.revisions:
@@ -141,29 +142,7 @@ async def _run_relink_async(
     _ensure_relinkable_cached_link(
         change_id=revision.change_id,
         identity=identity,
-        state=context.state_store.load(),
-    )
-    async with build_github_client(repository=repository) as github_client:
-        fresh_pull_request, fresh_head_sha = await _load_exact_relink_pull_request(
-            change_id=revision.change_id,
-            github_client=github_client,
-            pull_number=pull_number,
-            repository_owner=repository.owner,
-        )
-    if (fresh_pull_request.head.ref, fresh_head_sha) != (branch, head_sha):
-        raise CliError(t"Pull request #{pull_number} changed while relink was preparing; retry.")
-    fresh_remote_target = client.list_remote_branches(
-        remote=remote.name,
-        patterns=(f"refs/heads/{branch}",),
-    ).get(branch)
-    if fresh_remote_target != head_sha:
-        raise CliError(
-            t"Remote branch {ui.bookmark(branch)} changed while relink was preparing; retry."
-        )
-    _ensure_relinkable_cached_link(
-        change_id=revision.change_id,
-        identity=identity,
-        state=context.state_store.load(),
+        state=state,
     )
     context.state_store.relink_review(
         revision.change_id,

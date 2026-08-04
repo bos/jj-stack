@@ -142,6 +142,7 @@ async def _checkout_pull_request_stack(
     pull_request_reference: str,
 ) -> CheckoutResult:
     client = context.jj_client
+    state = context.state_store.load()
     remote = select_submit_remote(client.list_git_remotes())
     repository = require_github_repo(remote)
     pull_number = parse_repository_pull_request_reference(
@@ -171,16 +172,22 @@ async def _checkout_pull_request_stack(
                 t"PR #{pull_number} and remote branch "
                 t"{ui.bookmark(top_pull_request.head.ref)} no longer identify the same commit."
             )
+        pull_requests = await _load_pull_request_chain(
+            github_client=github_client,
+            repository=repository,
+            top=top_pull_request,
+        )
 
         if fetch:
+            for pull_request in reversed(pull_requests):
+                _reject_locally_rewritten_change(
+                    client=client,
+                    head_sha=_require_pull_request_head_sha(pull_request),
+                    pull_number=pull_request.number,
+                    remote_name=remote.name,
+                )
             client.fetch_remote(
                 remote=remote.name,
-            )
-            _reject_locally_rewritten_change(
-                client=client,
-                head_sha=top_head_sha,
-                pull_number=pull_number,
-                remote_name=remote.name,
             )
             with client.import_remote_review_ref(
                 remote=remote.name,
@@ -194,7 +201,7 @@ async def _checkout_pull_request_stack(
                 stack = _discover_checkout_stack(
                     client=client,
                     revision=imported.commit_id,
-                    state=context.state_store.load(),
+                    state=state,
                 )
         else:
             matches = client.query_revisions_by_commit_ids((top_head_sha,))
@@ -210,33 +217,16 @@ async def _checkout_pull_request_stack(
             stack = _discover_checkout_stack(
                 client=client,
                 revision=top_head_sha,
-                state=context.state_store.load(),
+                state=state,
             )
 
-        # Only the chain read after this re-read is used for the tracking write below.
-        fresh_top = await _load_pull_request(
-            github_client=github_client,
-            pull_number=pull_number,
-        )
-        _validate_same_repository_managed_pull_request(
-            pull_request=fresh_top,
-            repository=repository,
-        )
-        await _require_unique_pull_request_head(
-            github_client=github_client,
-            pull_request=fresh_top,
-        )
-        pull_requests = await _load_pull_request_chain(
-            github_client=github_client,
-            repository=repository,
-            top=fresh_top,
-        )
         adopted_count = _save_checkout_tracking(
             context=context,
             pull_requests=pull_requests,
             remote_name=remote.name,
             repository=repository,
             stack=stack,
+            state=state,
         )
     return CheckoutResult(
         adopted_count=adopted_count,
@@ -385,6 +375,7 @@ def _save_checkout_tracking(
     remote_name: str,
     repository: GithubRepoAddress,
     stack: LocalStack,
+    state: ReviewState,
 ) -> int:
     pull_request_heads = tuple(
         _require_pull_request_head_sha(pull_request) for pull_request in pull_requests
@@ -424,7 +415,6 @@ def _save_checkout_tracking(
             ),
             SubmittedBaseline(commit_id=head_sha),
         )
-    state = context.state_store.load()
     _reject_duplicate_checkout_claims(
         current=state.review_identities,
         replacements={change_id: pair[0] for change_id, pair in replacements.items()},
