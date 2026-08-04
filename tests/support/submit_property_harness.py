@@ -5,7 +5,6 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +62,8 @@ def replay_lifecycle(
     scenario: LifecycleScenario,
 ) -> None:
     jj = JjClient(repo)
-    stack_size, merged_prefix = (4, 2) if scenario.template == "direct_merge" else (1, 1)
+    stack_size = scenario.stack_size
+    merged_prefix = scenario.merged_prefix
     labels = _create_initial_stack(repo, stack_size)
     assert run_cli(("submit",)) == 0
     baseline = _capture_submitted_baseline(repo, fake_repo, labels)
@@ -91,9 +91,27 @@ def replay_lifecycle(
         assert len(fake_repo.pull_requests) == 2
         return
     if scenario.template == "direct_merge":
-        fake_repo.allow_rebase_merge = True
-        assert run_cli(("merge", "--method", "rebase", "--pull-request", "2")) == 0
-        expected_request = (2, "rebase", "direct_merge", baseline["c2"].remote_target)
+        if scenario.merge_method == "rebase":
+            fake_repo.allow_rebase_merge = True
+        boundary = baseline[initial_label(merged_prefix)]
+        assert (
+            run_cli(
+                (
+                    "merge",
+                    "--method",
+                    scenario.merge_method,
+                    "--pull-request",
+                    str(boundary.pr_number),
+                )
+            )
+            == 0
+        )
+        expected_request = (
+            boundary.pr_number,
+            scenario.merge_method,
+            "direct_merge",
+            boundary.remote_target,
+        )
         assert fake_repo.stack_merge_requests == [expected_request]
     else:
         pull_request = fake_repo.pull_requests[1]
@@ -124,17 +142,22 @@ def replay_lifecycle(
             assert copy.immutable and not copy.divergent
             assert copy.commit_id == fake_repo.pull_requests[submitted.pr_number].merge_commit_sha
     previous_base = "main"
+    previous_commit = _remote_head(refs, "main")
     for index in range(merged_prefix + 1, stack_size + 1):
         label = initial_label(index)
         submitted = baseline[label]
         assert state.review_identities[submitted.change_id].pr_number == submitted.pr_number
         assert fake_repo.pull_requests[submitted.pr_number].state == "open"
         revision = jj.resolve_revision(submitted.change_id)
+        assert revision.parents == (previous_commit,)
+        if scenario.template == "direct_merge":
+            assert revision.commit_id != submitted.remote_target
         assert refs[f"refs/heads/{submitted.branch}"] == revision.commit_id
         assert state.submitted_baselines[submitted.change_id].commit_id == revision.commit_id
         assert fake_repo.pull_requests[submitted.pr_number].base_ref == previous_base
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
         previous_base = submitted.branch
+        previous_commit = revision.commit_id
     assert len(fake_repo.pull_requests) == stack_size
 
 
@@ -245,20 +268,19 @@ def replay_external_drift_scenario(
         )
 
     submit_revset = labels_to_change_ids[scenario.final_live_labels[-1]]
-    for drift in scenario.drifts:
-        revset_override = _apply_drift_operation(
-            baseline=baseline,
-            drift=drift,
-            fake_repo=fake_repo,
-            labels_to_change_ids=labels_to_change_ids,
-            repo=repo,
-            run_cli=run_cli,
-        )
-        discard_output()
-        if revset_override is not None:
-            submit_revset = revset_override
+    revset_override = _apply_drift_operation(
+        baseline=baseline,
+        drift=scenario.drift,
+        fake_repo=fake_repo,
+        labels_to_change_ids=labels_to_change_ids,
+        repo=repo,
+        run_cli=run_cli,
+    )
+    discard_output()
+    if revset_override is not None:
+        submit_revset = revset_override
 
-    if scenario.expected_outcome == "fail_closed":
+    if scenario.drift.spec.expected_outcome == "fail_closed":
         before_refs = _remote_refs(fake_repo.git_dir)
         before_github = _github_snapshot(fake_repo)
         before_imported_reviews = JjClient(repo).visible_review_bookmark_targets()
@@ -270,7 +292,7 @@ def replay_external_drift_scenario(
         discard_output()
 
         failure = (exit_code, diagnosis)
-        assert failure in scenario.expected_failures, (failure, scenario.trace)
+        assert failure in scenario.drift.spec.failures, (failure, scenario.trace)
         assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
         assert _github_snapshot(fake_repo) == before_github, scenario.trace
         assert fake_repo.pull_request_events == [], scenario.trace
@@ -1024,14 +1046,6 @@ def _apply_drift_operation(
     if drift.kind == "closed_pr":
         fake_repo.update_pull_request_state(
             fake_repo.pull_requests[submitted.pr_number],
-            state="closed",
-        )
-        return None
-    if drift.kind == "merged_pr":
-        pull_request = fake_repo.pull_requests[submitted.pr_number]
-        pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        fake_repo.update_pull_request_state(
-            pull_request,
             state="closed",
         )
         return None

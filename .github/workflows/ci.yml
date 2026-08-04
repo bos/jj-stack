@@ -89,6 +89,7 @@ jobs:
         run: >-
           tests/run_submit_property_scenarios.py 10 --random-seed -n auto
           --stack-join-scenarios 5
+          --lifecycle-scenarios 10
           --stack-move-scenarios 5
           --retry-scenarios 5
           --drift-scenarios 21

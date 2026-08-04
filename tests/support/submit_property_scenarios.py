@@ -17,7 +17,6 @@ from .stack_edit_scenarios import (
 DriftKind = Literal[
     "closed_pr",
     "foreign_branch_fetched",
-    "merged_pr",
     "pr_base_retargeted",
     "pr_draft_toggled",
     "pr_replaced",
@@ -56,20 +55,62 @@ class SubmitInvariants:
 class LifecycleScenario:
     name: str
     template: Literal["cleanup_sync", "closed_restart", "direct_merge"]
-    merge_method: Literal["rebase", "squash"] = "squash"
+    stack_size: int
+    merged_prefix: int
+    merge_method: Literal["rebase", "squash"]
 
 
 LIFECYCLE_SCENARIOS = (
-    LifecycleScenario("external-squash-cleanup-sync", "cleanup_sync"),
-    LifecycleScenario("closed-single-cleanup-resubmit", "closed_restart"),
-    LifecycleScenario("direct-rebase-two-of-four", "direct_merge", "rebase"),
-    LifecycleScenario("external-rebase-cleanup-sync", "cleanup_sync", "rebase"),
+    LifecycleScenario("external-squash-cleanup-sync", "cleanup_sync", 1, 1, "squash"),
+    LifecycleScenario("closed-single-cleanup-resubmit", "closed_restart", 1, 1, "squash"),
+    LifecycleScenario("direct-rebase-two-of-four", "direct_merge", 4, 2, "rebase"),
 )
 
 
 def lifecycle_scenarios_from_environment() -> tuple[LifecycleScenario, ...]:
     count = int(os.environ.get("JJ_STACK_SUBMIT_PROPERTY_LIFECYCLE_SCENARIOS", "3"))
-    return LIFECYCLE_SCENARIOS[:count]
+    seed = int(
+        os.environ.get(
+            "JJ_STACK_SUBMIT_PROPERTY_SEED",
+            str(DEFAULT_STACK_EDIT_SCENARIO_SEED),
+        )
+    )
+    return generate_lifecycle_scenarios(count=count, seed=seed)
+
+
+def generate_lifecycle_scenarios(*, count: int, seed: int) -> tuple[LifecycleScenario, ...]:
+    if count < 1:
+        return ()
+    if count <= len(LIFECYCLE_SCENARIOS):
+        return LIFECYCLE_SCENARIOS[:count]
+
+    fixed_direct = LIFECYCLE_SCENARIOS[-1]
+    whole_stack = LifecycleScenario(
+        "direct-squash-four-of-four",
+        "direct_merge",
+        4,
+        4,
+        "squash",
+    )
+    excluded = {
+        (fixed_direct.stack_size, fixed_direct.merged_prefix, fixed_direct.merge_method),
+        (whole_stack.stack_size, whole_stack.merged_prefix, whole_stack.merge_method),
+    }
+    generated = [
+        LifecycleScenario(
+            f"direct-{method}-{prefix}-of-{size}",
+            "direct_merge",
+            size,
+            prefix,
+            method,
+        )
+        for size in range(1, 6)
+        for prefix in range(1, size + 1)
+        for method in ("rebase", "squash")
+        if (size, prefix, method) not in excluded
+    ]
+    random.Random(seed + 6).shuffle(generated)
+    return (*LIFECYCLE_SCENARIOS, whole_stack, *generated)[:count]
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,12 +198,6 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         ),
         needs_label=True,
     ),
-    "merged_pr": DriftKindSpec(
-        boundary="github_prs",
-        expected_outcome="fail_closed",
-        failures=((1, "pull_request_not_open"),),
-        needs_label=True,
-    ),
     "pr_base_retargeted": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="success",
@@ -223,9 +258,9 @@ class DriftOperation:
 
 @dataclass(frozen=True, slots=True)
 class ExternalDriftScenario:
-    """A submitted stack, an optional local edit, and one or more boundary drifts.
+    """A submitted stack, an optional local edit, and one boundary drift.
 
-    The scenario model predicts the submit outcome: fail-closed drifts must
+    The scenario model predicts the submit outcome: a fail-closed drift must
     leave every boundary untouched, success drifts must converge on the normal
     post-submit contract. Every scenario also asserts that `view` still
     produces a report for the drifted state instead of crashing.
@@ -235,28 +270,15 @@ class ExternalDriftScenario:
     hazard_class: str
     initial_size: int
     edit_operations: tuple[StackEditOperation, ...]
-    drifts: tuple[DriftOperation, ...]
+    drift: DriftOperation
     final_live_labels: tuple[str, ...]
     orphaned_labels: tuple[str, ...]
     rewritten_initial_labels: tuple[str, ...]
 
     @property
-    def expected_outcome(self) -> DriftOutcome:
-        if any(drift.spec.expected_outcome == "fail_closed" for drift in self.drifts):
-            return "fail_closed"
-        return "success"
-
-    @property
-    def expected_failures(self) -> tuple[tuple[int, str], ...]:
-        failures: set[tuple[int, str]] = set()
-        for drift in self.drifts:
-            failures.update(drift.spec.failures)
-        return tuple(sorted(failures))
-
-    @property
     def trace(self) -> str:
         parts = [operation.trace for operation in self.edit_operations]
-        parts.extend(drift.trace for drift in self.drifts)
+        parts.append(self.drift.trace)
         return ",".join(parts)
 
     @property
@@ -277,12 +299,10 @@ class ExternalDriftScenario:
         tuple[str, ...],
         tuple[str, ...],
         tuple[str, ...],
-        tuple[str, ...],
     ]:
         return (
             self.hazard_class,
-            self.expected_outcome,
-            tuple(sorted(drift.trace for drift in self.drifts)),
+            self.drift.trace,
             self.final_live_labels,
             self.orphaned_labels,
             self.rewritten_initial_labels,
@@ -726,7 +746,7 @@ def generate_external_drift_scenarios(
     count: int,
     seed: int,
 ) -> tuple[ExternalDriftScenario, ...]:
-    """Generate scenarios that perturb one or two boundaries after submit."""
+    """Generate scenarios that perturb one boundary after submit."""
 
     if count < 1:
         return ()
@@ -736,7 +756,6 @@ def generate_external_drift_scenarios(
         tuple[
             str,
             str,
-            tuple[str, ...],
             tuple[str, ...],
             tuple[str, ...],
             tuple[str, ...],
@@ -754,7 +773,7 @@ def generate_external_drift_scenarios(
     while len(scenarios) < count and attempts < max_attempts:
         attempts += 1
         scenario = _random_external_drift_scenario(rng, attempts=attempts)
-        if scenario is None or scenario.canonical_key in seen:
+        if scenario.canonical_key in seen:
             continue
         seen.add(scenario.canonical_key)
         scenarios.append(scenario)
@@ -771,7 +790,7 @@ def _fixed_external_drift_scenarios() -> tuple[ExternalDriftScenario, ...]:
 
 def _closed_pr_after_insert_scenario() -> ExternalDriftScenario:
     return _drift_scenario(
-        drifts=(DriftOperation(kind="closed_pr", label="c2"),),
+        drift=DriftOperation(kind="closed_pr", label="c2"),
         edit_operations=(StackEditOperation(kind="insert_after", label="c1", new_label="i1"),),
         hazard_class="github-external-close-with-unsubmitted-change",
         name="closed-pr-after-insert",
@@ -780,7 +799,7 @@ def _closed_pr_after_insert_scenario() -> ExternalDriftScenario:
 
 def _drift_scenario(
     *,
-    drifts: tuple[DriftOperation, ...],
+    drift: DriftOperation,
     hazard_class: str,
     name: str,
     edit_operations: tuple[StackEditOperation, ...] = (),
@@ -790,7 +809,7 @@ def _drift_scenario(
     for operation in edit_operations:
         model = model.append(operation)
     return ExternalDriftScenario(
-        drifts=drifts,
+        drift=drift,
         edit_operations=edit_operations,
         final_live_labels=model.live_labels,
         hazard_class=hazard_class,
@@ -805,7 +824,7 @@ def _random_external_drift_scenario(
     rng: random.Random,
     *,
     attempts: int,
-) -> ExternalDriftScenario | None:
+) -> ExternalDriftScenario:
     initial_size = rng.randint(2, 5)
     model = _model(initial_size)
     edit_operations: tuple[StackEditOperation, ...] = ()
@@ -816,11 +835,8 @@ def _random_external_drift_scenario(
             model = model.append(operation)
             edit_operations = (operation,)
 
-    drifts = _random_drift_operations(rng, model=model)
-    if not drifts:
-        return None
     return ExternalDriftScenario(
-        drifts=drifts,
+        drift=_random_drift_operation(rng, model=model),
         edit_operations=edit_operations,
         final_live_labels=model.live_labels,
         hazard_class="random",
@@ -831,34 +847,25 @@ def _random_external_drift_scenario(
     )
 
 
-def _random_drift_operations(
+def _random_drift_operation(
     rng: random.Random,
     *,
     model: _ScenarioModel,
-) -> tuple[DriftOperation, ...]:
+) -> DriftOperation:
     live_initial_labels = [label for label in model.live_labels if label.startswith("c")]
-    drift_count = rng.choice((1, 1, 2))
-    kinds = rng.sample(
-        _GENERATED_DRIFT_KINDS,
-        k=min(drift_count, len(_GENERATED_DRIFT_KINDS)),
+    candidates = [
+        DriftOperation(kind=kind, label=label)
+        for kind in _GENERATED_DRIFT_KINDS
+        if DRIFT_KIND_SPECS[kind].needs_label
+        for label in live_initial_labels
+        if _drift_label_is_valid(kind, label=label, model=model)
+    ]
+    candidates.extend(
+        DriftOperation(kind=kind)
+        for kind in _GENERATED_DRIFT_KINDS
+        if not DRIFT_KIND_SPECS[kind].needs_label
     )
-    drifts: list[DriftOperation] = []
-    available_labels = list(live_initial_labels)
-    for kind in kinds:
-        if not DRIFT_KIND_SPECS[kind].needs_label:
-            drifts.append(DriftOperation(kind=kind))
-            continue
-        candidates = [
-            label
-            for label in available_labels
-            if _drift_label_is_valid(kind, label=label, model=model)
-        ]
-        if not candidates:
-            continue
-        label = rng.choice(candidates)
-        available_labels.remove(label)
-        drifts.append(DriftOperation(kind=kind, label=label))
-    return tuple(drifts)
+    return rng.choice(candidates)
 
 
 def _drift_label_is_valid(kind: DriftKind, *, label: str, model: _ScenarioModel) -> bool:

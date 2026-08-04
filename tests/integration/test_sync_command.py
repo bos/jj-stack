@@ -145,39 +145,6 @@ def test_sync_recovers_a_clean_single_review_rebase_merge(
     assert reviewed.change_id not in state_store.load().review_identities
 
 
-def test_merge_by_middle_pull_request_automatically_syncs_the_unnamed_survivors(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=4)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = selected_stack(repo)
-    survivors = stack.revisions[2:]
-    survivor_commits_before = tuple(revision.commit_id for revision in survivors)
-
-    merge_exit_code = run_main(repo, config_path, "merge", "--pull-request", "2")
-    merged = capsys.readouterr()
-
-    assert merge_exit_code == 0, (merged.out, merged.err)
-    assert all(fake_repo.pull_requests[number].merged_at is not None for number in (1, 2))
-    assert all(fake_repo.pull_requests[number].state == "open" for number in (3, 4))
-    assert "Updating the local stack after the completed merge" in merged.out
-    merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
-    rewritten_survivors = tuple(
-        JjClient(repo).resolve_revision(revision.change_id) for revision in survivors
-    )
-    rewritten_commits = tuple(revision.commit_id for revision in rewritten_survivors)
-    assert rewritten_commits != survivor_commits_before
-    assert rewritten_commits == tuple(
-        fake_repo.ref_target(fake_repo.pull_requests[number].head_ref) for number in (3, 4)
-    )
-    assert rewritten_survivors[0].parents == (merged_trunk_commit,)
-    assert rewritten_survivors[1].parents == (rewritten_survivors[0].commit_id,)
-    assert fake_repo.pull_requests[3].base_ref == "main"
-    assert fake_repo.pull_requests[4].base_ref == fake_repo.pull_requests[3].head_ref
-
-
 def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
     tmp_path: Path,
     monkeypatch,

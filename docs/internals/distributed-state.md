@@ -4,10 +4,11 @@ Status: current drift model. [design.md](design.md) defines product behavior.
 
 `jj-stack` coordinates three systems that can move independently. Drift bugs arise when they
 disagree. Local tracking records what `jj-stack` previously did; it is not another independently
-moving system. This file names the supported external transitions and the required behavior for
-each kind of drift. The property harness ([property-testing.md](property-testing.md)) generates
-the rows marked "property" below; focused command tests cover the rows marked "deterministic."
-Rows marked "specified" have defined behavior but no dedicated current scenario.
+moving system. This file inventories the external transitions covered by tests; it does not
+define product behavior. The property harness ([property-testing.md](property-testing.md))
+generates the rows marked "property" below; focused command tests cover the rows marked
+"deterministic." Rows marked "specified" are defined in [design.md](design.md) but have no
+dedicated current scenario.
 
 ## Independently moving systems
 
@@ -44,7 +45,6 @@ the generated scenario code records only the source expected to produce the prim
 | Drift kind | Affected input(s) | `submit` outcome | Coverage |
 | --- | --- | --- | --- |
 | `closed_pr` | GitHub PRs | fail closed (exit 1) | property |
-| `merged_pr` | GitHub PRs | fail closed (1) | property |
 | `pr_replaced` | GitHub PRs | fail closed (1) | property |
 | `repository_retargeted` | config, GitHub | fail closed (1) | specified |
 | `head_ref_renamed` | GitHub PRs | fail closed (1) | specified |
@@ -69,7 +69,9 @@ the *local* stack:
   rewrite already replaced, the fetch resurrects the hidden predecessor and the change
   becomes divergent; even resolving the change ID to a single revision fails.
 
-## Required behavior per drift class
+## Assertions made by drift coverage
+
+The harness applies the rules from [design.md](design.md) through these shared assertions:
 
 - **Repairable drift.** Drift that cannot corrupt review identity is repaired or ignored by the
   next `submit`: bases are recomputed from the DAG, trunk advances are irrelevant to review-branch

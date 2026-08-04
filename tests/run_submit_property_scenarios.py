@@ -7,6 +7,7 @@ import os
 import secrets
 import shlex
 import subprocess
+import sys
 from argparse import ArgumentParser, ArgumentTypeError
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -87,7 +88,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--lifecycle-scenarios",
         type=_non_negative_int,
-        help="Number of completed-command lifecycle scenarios to run (default: all 4).",
+        help="Number of completed-command lifecycle scenarios to run (default: all 3).",
     )
     parser.add_argument(
         "-n",
@@ -100,9 +101,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Skip uv sync --locked before running pytest.",
     )
-    args, pytest_args = parser.parse_known_args(argv)
-    if pytest_args and pytest_args[0] == "--":
-        pytest_args = pytest_args[1:]
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    separator = arguments.index("--") if "--" in arguments else len(arguments)
+    args = parser.parse_args(arguments[:separator])
+    pytest_args = arguments[separator + 1 :] if separator < len(arguments) else []
     _validate_jobs(args.jobs, parser)
 
     if not args.no_sync:
@@ -134,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     env["JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"] = str(drift_scenarios)
     lifecycle_scenarios = args.lifecycle_scenarios
     env["JJ_STACK_SUBMIT_PROPERTY_LIFECYCLE_SCENARIOS"] = str(
-        4 if lifecycle_scenarios is None else lifecycle_scenarios
+        3 if lifecycle_scenarios is None else lifecycle_scenarios
     )
     seed = secrets.randbits(32) if args.random_seed else args.seed
     if seed is None:

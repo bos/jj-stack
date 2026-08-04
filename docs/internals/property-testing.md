@@ -28,11 +28,11 @@ testing should spend its budget on those cross-system invariants.
 - Catch transient damage, not only final state. The fake GitHub server should record PR
   state-transition events, and property tests should fail if a selected-stack PR ever
   transitions closed or merged during a successful resubmit.
-- Include external-drift coverage driven by an explicit transition model. A separate
-  scenario family perturbs the external systems or local `jj` view after initial submit, using
-  only transitions an ordinary user, teammate, or agent can perform. The model predicts whether
-  `submit` must fail closed without mutating any boundary or succeed with the normal contract,
-  and every drifted state must still produce a `view` report instead of a crash. See
+- Include external-drift coverage driven by an explicit transition model. A separate scenario
+  family applies one external or local drift after initial submit, using only transitions an
+  ordinary user, teammate, or agent can perform. The model predicts whether `submit` must fail
+  closed without mutating any boundary or succeed with the normal contract, and every drifted
+  state must still produce a `view` report instead of a crash. See
   [distributed-state.md](distributed-state.md) for the sources-of-state model behind the
   vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
@@ -133,10 +133,10 @@ the `view` warning after a reviewed path gains a sibling.
 
 Stack-edit scenarios cover successful repair after supported local DAG rewrites. They do
 not cover behavior when another source of state has moved independently. The external-drift
-family starts from a submitted, approved stack, optionally applies one local stack edit
-from the stack-edit vocabulary, then applies one drift operation from a typed transition
-vocabulary. Each drift kind is data: the boundary it mutates, whether it targets one
-submitted change, and the modeled `submit` outcome.
+family starts from a submitted, approved stack, optionally applies one local stack edit from the
+stack-edit vocabulary, then applies one drift operation from a typed transition vocabulary. Each
+drift kind is data: the boundary it mutates, whether it targets one submitted change, and the
+modeled `submit` outcome.
 [distributed-state.md](distributed-state.md) owns the drift inventory and expected outcomes.
 
 Fail-closed kinds (for example an externally closed, merged, or replaced PR, a drifted or deleted
@@ -162,14 +162,16 @@ unclassified error. Exact diagnostic wording stays out of scope.
 
 ## Merge and sync coverage
 
-Merge and post-merge convergence use focused deterministic integration tests rather than the
-stack-edit generator. A small lifecycle family covers cleanup, restart, and automatic sync;
-expanded runs add rebase cleanup. The deterministic tests cover exact submitted-head validation,
-bottom-prefix selection, draft and closed boundaries, atomic stack-merge failure, partial stack
-merge survivor rewrites, terminal retry, historical-member cleanup, and selected or
-repository-wide sync eligibility.
+Merge and post-merge convergence use focused deterministic integration tests and a bounded
+lifecycle family rather than the stack-edit generator. The three fixed lifecycle cases cover
+cleanup, restart, and automatic sync after a partial rebase merge. Expanded runs sample the
+finite direct-merge grid: stack sizes one through five, every nonempty bottom prefix, and rebase
+or squash. A whole-stack squash merge is the first expanded representative. Focused tests cover
+exact submitted-head validation, bottom-prefix selection, draft and closed boundaries, atomic
+stack-merge failure, terminal retry, historical-member cleanup, and selected or repository-wide
+sync eligibility.
 
-The stack-merge tests assert both final Git and PR state and the significant API events. A
+The lifecycle cases assert final Git and PR state and the significant merge request. A
 terminal stack-merge failure changes nothing. A successful partial request may change survivor
 heads and bases. A terminal direct `merge` validates and converges that transition before
 returning, including when a middle pull request names the merge boundary but higher survivors
@@ -255,7 +257,8 @@ $ tests/run_submit_property_scenarios.py 500
 ```
 
 The runner's `--help` lists family counts, seeds, workers, environment setup, and
-additional pytest arguments.
+additional pytest arguments. Pytest arguments must follow a literal `--`; unknown arguments
+before it are runner errors.
 
 `--random-seed` generates one seed and uses it for both scenario generation and
 pytest-randomly ordering. The runner prints a complete reproduction invocation with the

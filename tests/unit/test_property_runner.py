@@ -1,3 +1,5 @@
+import pytest
+
 from tests import run_submit_property_scenarios as property_runner
 
 
@@ -31,3 +33,18 @@ def test_reproduction_command_preserves_scenario_budgets_and_pytest_filter() -> 
         option_index = command.index(option)
         assert command[option_index + 1] == env[environment_name]
     assert command[-4:] == ("--no-sync", "--", "-k", "external_drift")
+
+
+def test_runner_requires_separator_before_pytest_arguments(monkeypatch) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def run(command, **_kwargs):
+        commands.append(tuple(command))
+        return property_runner.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(property_runner.subprocess, "run", run)
+
+    assert property_runner.main(("1", "--no-sync", "--", "-k", "external_drift")) == 0
+    assert commands[0][-2:] == ("-k", "external_drift")
+    with pytest.raises(SystemExit):
+        property_runner.main(("1", "--no-sync", "-k", "external_drift"))

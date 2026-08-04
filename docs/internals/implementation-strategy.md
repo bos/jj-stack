@@ -446,9 +446,10 @@ Implemented local coverage includes:
 
 - unit tests for parsing, planning, and model behavior
 - local integration tests against the fake GitHub server and a real backing Git repo
-- five fixed generated/property cases that replay the integration harness in the default suite
-- focused merge and recovery cases, including atomic stack-merge failure, partial survivor
-  rewrites, terminal retry, single-PR merge topology, and multi-PR rewriting-merge convergence
+- eight fixed generated/property cases that replay the integration harness in the default suite,
+  including three completed-command lifecycle cases
+- focused merge and recovery cases, including atomic stack-merge failure, terminal retry, and
+  single-PR merge topology
 
 Local tests are the default.
 
