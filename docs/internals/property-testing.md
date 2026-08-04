@@ -1,7 +1,7 @@
 # Property-based stack testing
 
-`jj-stack` has a distributed state boundary: the local `jj` DAG, local review
-tracking, remote Git branches, and GitHub PR state can temporarily disagree. The most
+`jj-stack` has a distributed state boundary: the local `jj` DAG, remote Git branches, and GitHub
+PR state can temporarily disagree. Local tracking records what `jj-stack` previously did. The most
 expensive failures are not wrong text output; they are cases where a normal stack edit
 causes GitHub to close, merge, replace, or misbase an existing review. Property-based
 testing should spend its budget on those cross-system invariants.
@@ -29,11 +29,10 @@ testing should spend its budget on those cross-system invariants.
   state-transition events, and property tests should fail if a selected-stack PR ever
   transitions closed or merged during a successful resubmit.
 - Include external-drift coverage driven by an explicit transition model. A separate
-  scenario family perturbs the boundaries after initial submit — GitHub PR state, remote
-  branch state, saved tracking state, and the local `jj` view — using only transitions an
-  ordinary user, teammate, or agent can perform. The model predicts whether `submit` must
-  fail closed without mutating any boundary or succeed with the normal contract, and every
-  drifted state must still produce a `view` report instead of a crash. See
+  scenario family perturbs the external systems or local `jj` view after initial submit, using
+  only transitions an ordinary user, teammate, or agent can perform. The model predicts whether
+  `submit` must fail closed without mutating any boundary or succeed with the normal contract,
+  and every drifted state must still produce a `view` report instead of a crash. See
   [distributed-state.md](distributed-state.md) for the sources-of-state model behind the
   vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
@@ -135,30 +134,27 @@ the `view` warning after a reviewed path gains a sibling.
 Stack-edit scenarios cover successful repair after supported local DAG rewrites. They do
 not cover behavior when another source of state has moved independently. The external-drift
 family starts from a submitted, approved stack, optionally applies one local stack edit
-from the stack-edit vocabulary, then applies one or two drift operations from a typed
-transition vocabulary. Each drift kind is data: the boundary it mutates, whether it targets one
+from the stack-edit vocabulary, then applies one drift operation from a typed transition
+vocabulary. Each drift kind is data: the boundary it mutates, whether it targets one
 submitted change, and the modeled `submit` outcome.
 [distributed-state.md](distributed-state.md) owns the drift inventory and expected outcomes.
 
-Fail-closed kinds (for example an externally closed, merged, or replaced PR, a corrupted
-saved PR number, a drifted or deleted remote review branch, or a foreign branch fetch that makes
-a stack change immutable or divergent) must produce a contractual exit code and one of the
-kind's expected diagnoses while leaving every boundary untouched: no remote ref changes, no
-local DAG changes, no PR, review, or comment mutations, and unchanged loaded tracking records.
-That includes keeping a newly inserted change free of remote review branches and tracking when an
-older submitted change makes preflight fail. The structured diagnosis comes from the CLI's
+Fail-closed kinds (for example an externally closed, merged, or replaced PR, a drifted or deleted
+remote review branch, or a foreign branch fetch that makes a stack change immutable or divergent)
+must produce a contractual exit code and one of the kind's expected diagnoses without mutating
+remote refs, the local DAG, PRs, reviews, comments, or tracking.
+That includes keeping a newly inserted change free of remote review branches and tracking when
+an older submitted change makes preflight fail. The structured diagnosis comes from the CLI's
 fail-closed error: a `DriftError` condition or `unsupported_stack:<reason>` captured from the
 error handed to the top-level printer. A stop that fired for the wrong reason cannot pass on exit
-code alone. Each drift kind owns explicit allowed `(exit code, diagnosis)` pairs;
-composed scenarios union those pairs without accepting a code from one drift beside the
-diagnosis from another. Success kinds (external trunk advance, an externally retargeted
-PR base, an external draft toggle) must reach the full successful-submit result.
+code alone. Each drift kind owns explicit allowed `(exit code, diagnosis)` pairs. Success kinds
+(external trunk advance, an externally retargeted PR base, an external draft toggle) must reach
+the full successful-submit result.
 
 Drift transitions stay faithful to the platform: deleting a remote review branch also
 closes its PR because GitHub does, and a replacement PR created outside the tool shares
-the original head branch. The generator composes drifts only in reachable combinations —
-label-targeted drifts pick distinct live submitted changes. Conflict and merge-commit boundaries
-are covered by focused deterministic command tests.
+the original head branch. Conflict and merge-commit boundaries are covered by focused
+deterministic command tests.
 
 Every drift scenario, fail-closed or successful, ends by running `view` on the drifted
 selection and requiring a report exit (`0`, `2`, or `10`) rather than a crash or an

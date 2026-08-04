@@ -29,21 +29,6 @@ One mutable copy beside an immutable copy on fetched trunk is different: that is
 result of fetching a GitHub rebase merge, and a change ID, including a short prefix, or a linked
 PR selects the mutable local copy.
 
-## A command says a PR is claimed by multiple tracked records
-
-The message is `PR #<n> is claimed by multiple tracked records (...)` or `PR #<n> is linked to
-multiple local changes.` Two saved records point at the same pull request, so `jj-stack` cannot
-tell which local change owns it. An explicit revset does not help here; the tracking has to be
-repaired.
-
-Find the records, then drop the wrong one or reattach it:
-
-```bash
-jj-stack list
-jj-stack unstack --local <head-change-id>
-jj-stack relink <pr> <change-id>
-```
-
 ## `view` says it cannot find a trunk bookmark
 
 Possible causes:

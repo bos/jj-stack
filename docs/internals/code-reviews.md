@@ -35,7 +35,7 @@ Also remember current project reality:
 Many bugs here come from interactions between loosely coupled systems. Pay extra attention to:
 
 - interrupted operations that leave work half-applied or hard to recover
-- mismatch or drift between `jj-stack` tracking state, `jj`, GitHub
+- tracking left behind by an interrupted command while `jj`, remote refs, or GitHub advanced
 - states where recovery paths fail and the user can no longer get back to something sane
 - unusual DAG topology, including rewrites, relinks, local deletions, and non-linear history
 - cases where only one selected stack should matter, but surrounding history can interfere
@@ -167,7 +167,7 @@ missing tests are justified.
 
 Pay extra attention when a change touches:
 
-- broken repo state or recovery paths
+- repo states produced by supported commands, documented external actions, or observed failures
 - bad, missing, contradictory, or partially applied config
 - unusual DAG topology or stack-selection edge cases
 - consistency across `jj-stack`, `jj`, GitHub, local persistence, and

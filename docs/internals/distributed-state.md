@@ -2,15 +2,14 @@
 
 Status: current drift model. [design.md](design.md) defines product behavior.
 
-`jj-stack` coordinates four sources of state that can move independently. Drift bugs arise when
-they disagree. This file names those sources, the supported transitions that move them, the
-agreements required for a healthy review, and the required behavior for each kind of drift. The
-property harness ([property-testing.md](property-testing.md)) generates the rows marked "property"
-below; `DRIFT_KIND_SPECS` in `tests/support/submit_property_scenarios.py` is that generated
-inventory. Focused command tests cover the rows marked "deterministic." Rows marked "specified"
-have defined behavior but no dedicated current scenario.
+`jj-stack` coordinates three systems that can move independently. Drift bugs arise when they
+disagree. Local tracking records what `jj-stack` previously did; it is not another independently
+moving system. This file names the supported external transitions and the required behavior for
+each kind of drift. The property harness ([property-testing.md](property-testing.md)) generates
+the rows marked "property" below; focused command tests cover the rows marked "deterministic."
+Rows marked "specified" have defined behavior but no dedicated current scenario.
 
-## The four sources of state
+## Independently moving systems
 
 1. **Local `jj` view** — the commit DAG, change visibility/mutability, ordinary local bookmarks,
    and fetched non-review remote observations. Moved by the user's `jj` commands (rebase, squash,
@@ -25,14 +24,11 @@ have defined behavior but no dedicated current scenario.
    through the UI or `gh`, and by GitHub itself: it auto-closes an open PR whose head
    becomes reachable from its base, closes PRs whose head branch is deleted, and records
    GitHub stack transitions.
-4. **Tracking store** — the `ReviewIdentity` and `SubmittedBaseline` records described in
-   [design.md](design.md). Moved by the commands that design.md allows to change an identity or
-   advance a baseline; status observation never writes any of them.
 
 What each source determines, and what a healthy link between them requires, are specified in
-[design.md](design.md) — this file does not restate them. All four move independently, so any
-pair can disagree, and every mutation rechecks the sources it depends on rather than trusting an
-earlier observation.
+[design.md](design.md) — this file does not restate them. The `ReviewIdentity` and
+`SubmittedBaseline` records described there are jj-stack-owned evidence. A failed or interrupted
+command can leave them behind an external mutation, but supported commands are their only writer.
 
 ## Legal transitions worth modeling
 
@@ -58,7 +54,6 @@ the generated scenario code records only the source expected to produce the prim
 | `remote_branch_drift` | remote refs | fail closed (1) | property |
 | `remote_branch_deleted` | remote refs, GitHub PRs | fail closed (1) | property |
 | `trunk_advanced` | remote refs | success | property |
-| `wrong_saved_pr_number` | tracking store | fail closed (1) | property |
 | `foreign_branch_fetched` | remote refs, local `jj` | fail closed (2) | property |
 | `conflicted_rebase` | local `jj` | fail closed (3) | deterministic |
 | `merge_commit` | local `jj` | fail closed (2) | deterministic |
@@ -85,12 +80,10 @@ the *local* stack:
   ordered: stack shape and conflicts (local), then remote ref safety, then PR discovery and
   saved-link consistency, all before the mutation phase begins. The diagnostic carries a
   structured condition (`DriftError.condition` for
-  remote-ref, PR, and tracking-store checks; `UnsupportedStackError.reason` and
+  remote-ref, PR, and saved-link checks; `UnsupportedStackError.reason` and
   `ConflictedStackError` for local shape), so the harness asserts *which* check fired,
   not just the exit code — a stop for the wrong reason names the wrong repair path and
   must fail the model.
-- **Recheck before mutation.** Planning observations never permit a later mutation, per safety
-  rule 4, *merge what was reviewed*, in [design.md](design.md).
 - **Inspection must still report.** `view` must produce a report or a targeted
   diagnostic for every reachable drifted state — exit `0`, `2`, or `10` — never a
   traceback or an unclassified subprocess error.
@@ -105,5 +98,4 @@ The commands that can reattach or retire review identity — `checkout`, `relink
 The valuable check is whether the real `jj` binary, fake GitHub server, and CLI agree on the same
 result. A separate formal model would need to reproduce `jj` rewrites, fetch-induced immutability,
 and GitHub auto-close behavior without replaying the implementation boundary. The current
-executable harness checks those predictions directly. Possible extensions for concurrent commands
-or multiple remotes belong in [backlog.md](backlog.md).
+executable harness checks those predictions directly.

@@ -181,10 +181,8 @@ repositories.
 `doctor --fix` installs the negative Git refspec for the reserved namespace. Commands that fetch
 use the repository's configured selection without changing it. A matching saved branch and
 baseline narrow `builtin_immutable_heads()` only when that branch is the sole untracked remote
-bookmark at its commit. The exception is bound to the exact target, and the user's full
-`immutable_heads()` expression still decides whether another rule keeps either copy immutable.
-Review projection accepts only the bounded two-copy case containing the exact baseline and one
-mutable local rewrite.
+bookmark at its commit. The exception is bound to the exact target. Review projection accepts
+only the bounded two-copy case containing the exact baseline and one mutable local rewrite.
 
 Review observation uses direct `git ls-remote` against the fetch URL, without importing refs or
 bookmarks. Explicit `checkout` attachment fetches one exact remote ref into a fixed temporary Git
@@ -216,9 +214,7 @@ local and remote state, it decides:
 - which remote mutations are required
 - which operations are hard errors
 
-Reviewability comes from `jj` state, not tool-local policy: the planner respects the
-repo's configured `immutable_heads()` boundary via `jj`'s `immutable()` / `mutable()`
-semantics.
+Reviewability comes from `jj`'s `immutable()` / `mutable()` semantics, not tool-local policy.
 
 Derived per-change review state lives in `review/change_status.py`. `ReviewChangeStatus` is a pure
 classifier over local revision state, saved tracking, remote refs, and already-loaded PR data. It
@@ -262,8 +258,8 @@ sequence.
 GraphQL in chunks of 25, and then checks any reported merge-result commits in another batched
 ancestry read. If a GraphQL batch fails, bounded REST requests preserve a separate result for each
 PR. Missing commits and failed PR reads therefore remain local to their tracked changes. These
-initial reads are diagnostic only: PR updates and local retirement still run one candidate at a
-time, with fresh observations before each change.
+reads produce the candidate results; PR updates and local retirement then run one candidate at a
+time.
 
 `submit` predicts GitHub auto-close risk before pushing rewritten review branches. The behavioral
 rule belongs to the submission algorithm in [design.md](design.md); the implementation uses one
@@ -335,13 +331,10 @@ repository lock; queued and blocked results return without doing so:
 
 `sync` uses the same fixed temporary attachment as checkout for one additional
 purpose: after a stack merge rewrites the active suffix, it validates every active raw Git commit
-and parent, reobserves the whole branch set, then imports the exact top into jj. It rebases only
-trailing local descendants, abandons the replaced local active copies, and advances every adopted
-baseline together through the state store's existing pair compare-and-swap. It
-reobserves the branch set again before leaving the attachment. If that check fails, the updated
-baselines let a retry adopt the newer exact chain while historical tracking remains until
-survivor submit succeeds. No review bookmark survives; the exact imported commits become the
-local unbookmarked survivor chain.
+and parent, then imports the exact top into jj. It rebases only trailing local descendants,
+abandons the replaced local active copies, and advances every adopted baseline together. No
+review bookmark survives; the exact imported commits become the local unbookmarked survivor
+chain.
 
 State saves are atomic but not fsync durable. The saved identity prevents action on a different PR
 or branch, while the baseline records the exact reviewed commit. If a reconstructible cleanup
@@ -362,23 +355,21 @@ tracking separately. The same projection supplies path membership to the tracked
 orphan selection, and cleanup, and finds only paths descending from the revisions rendered by
 the connected-`view` advisory. `review/change_status.py` classifies each change and enumerates
 orphaned records; `commands/_stale_stacks.py` renders stale-stack advisories. Selected projection
-supplies `view` and mutation targets. All paths preserve malformed or unmatched saved identities
-for explicit repair rather than changing them during inspection. The command behavior is
-specified in [design.md](design.md).
+supplies `view` and mutation targets. The command behavior is specified in
+[design.md](design.md).
 
 Selected cleanup begins from either a local stack or saved pull request identity. Orphan cleanup
 therefore uses the same repository cleanup pass after selection instead of a separate mutation
 path. `review/observation.py` batches raw observations of saved identity and baseline pairs,
-exact PR numbers, unique head claims, and open base-ref dependents. It does not create a second
+exact PR numbers, and open base-ref dependents. It does not create a second
 exact-PR resolution path.
 
 Cleanup is one lifecycle-driven pass over the selected complete identity/baseline pairs. With no
-selector it uses every saved pair in the repository.
-It observes the exact saved PR, prepares branch and comment cleanup for a closed or merged match,
-and rereads the PR, its unique head claim, open base-ref dependents, remote ref, GitHub stack
-membership, and tracking records at their mutation boundaries. Local jj descendants remain
-`sync` evidence, not cleanup evidence. Shared code supplies observation and artifact mutation
-without a second set of eligibility rules.
+selector it uses every saved pair in the repository. It observes the exact saved PR and prepares
+branch and comment cleanup for a closed or merged match. Exact remote-ref leases bind branch
+deletion to the target observed while planning. Local jj descendants remain `sync` evidence, not
+cleanup evidence. Shared code supplies observation and artifact mutation without a second set of
+eligibility rules.
 
 ## Data model
 
@@ -592,10 +583,9 @@ When possible, diagnostics point to the exact recovery action:
 - `jj-stack cleanup`
 - `jj workspace update-stale`
 
-Unreadable JSON and invalid top-level shape, version, or envelope fail the load. Individual
-malformed or missing identity and baseline records are isolated and reported, so unrelated
-reviews remain usable; a command needing the damaged record fails closed until `relink` replaces
-it.
+Unreadable JSON and an invalid shape, version, envelope, identity, or baseline fail the whole
+load. The error explains how to move the file aside and re-adopt reviews with `checkout` or
+`relink`.
 
 Process exit codes are formalized and implemented; the contract lives in
 [design.md](./design.md) ("Exit codes") with the user-facing table in

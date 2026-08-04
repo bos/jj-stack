@@ -66,12 +66,7 @@ change's current commit ID, remote branch name, and diff base are not part of it
 "Visible mutable" follows `jj`'s own revsets:
 
 - visible: the commit is in `visible()`, not a hidden predecessor
-- mutable: the commit is in `mutable()`, with immutability defined by the repository's
-  `immutable_heads()`
-
-By default, `trunk()`, tags, and untracked remote bookmarks define immutable history. If the
-repository customizes `immutable_heads()`, `jj-stack` honors that rather than maintaining a
-competing notion of what is safe to review or rewrite.
+- mutable: the commit is in `mutable()`
 
 A commit meeting those conditions is *reviewable*: eligible to become a review change. Two extra
 eligibility rules apply to the working copy. An empty working-copy commit is not reviewable, and
@@ -174,10 +169,10 @@ selection without changing it and do not stop merely because a review bookmark i
 
 A visible bookmark matching one unambiguous saved review and its submitted baseline is supporting
 evidence for that review. For jj-stack's subprocesses, that exact untracked bookmark is removed
-from `jj`'s built-in immutable heads. Trunk, tags, another untracked bookmark at the commit, and
-additions in the user's `immutable_heads()` remain authoritative. If the baseline and exactly one
-local rewrite are visible and both are mutable after that exception, the baseline is the published
-snapshot rather than a competing local revision.
+from `jj`'s built-in immutable heads. Trunk, tags, and another untracked bookmark at the commit
+remain authoritative. If the baseline and exactly one local rewrite are visible and both are
+mutable after that exception, the baseline is the published snapshot rather than a competing
+local revision.
 
 An unknown or mismatched bookmark creates no ownership. It remains untouched and does not block an
 independent stack. `submit` refuses to claim a colliding visible name for a new review, while live
@@ -221,8 +216,7 @@ evidence, and mutation rules.
   retire tracking for changes whose work is on trunk. It never creates a PR.
 - **`sync --all`** performs weaker repository-wide reconciliation. It may retarget and close
   reviews proven on trunk by exact submitted-commit evidence, but never rewrites local stacks or
-  submits work. A tracking record or GitHub review that cannot be read does not block independent
-  candidates.
+  submits work. A GitHub review that cannot be read does not block independent candidates.
 - **`merge`** is the only command that asks GitHub to merge. It never pushes trunk. After GitHub
   completes a direct merge, it immediately performs the same selected-stack reconciliation as
   `sync`; queue acceptance leaves local history alone.
@@ -246,8 +240,8 @@ There is no standalone `rebase` command; `jj` owns general descendant rewrites.
 `sync`, `merge`, and `checkout --fetch` run `jj git fetch` themselves before they act. A direct
 `merge` fetches once while preparing the GitHub request and again after GitHub completes it so
 local reconciliation observes the result. No other command fetches, so when local trunk is stale
-the user runs `jj git fetch`. **Fetched trunk** below always means `trunk()` as evaluated after the
-running command's relevant fetch.
+the user runs `jj git fetch`. **Fetched trunk** below always means `trunk()` as evaluated after
+the running command's relevant fetch.
 
 ## Sources of truth
 
@@ -267,11 +261,12 @@ Within the supported scope, these rules are ordered; a lower rule never weakens 
 1. **Never lose work.** `jj` can undo almost any local mistake; GitHub cannot undo every remote
    mutation. Protect local commits first and treat destructive GitHub operations explicitly.
 2. **Check the target.** Before changing a branch, PR, GitHub stack, or repository, confirm it is
-   the intended one and use a guard that fails if it moves underneath the command.
+   the intended one. Bind the mutation to that identity and version when the platform supports a
+   conditional write or lease.
 3. **Never guess.** Ambiguous linkage stops the command. Never guess which PR belongs to a change
    or silently adopt one that appeared in place of another.
-4. **Merge what was reviewed.** Merge only the exact commit submitted for review, and re-confirm
-   PR identity and head immediately before every irreversible merge step.
+4. **Merge what was reviewed.** Merge only the exact commit submitted for review, using GitHub's
+   expected-head check to bind the request to that commit.
 5. **Stay in the selected stack.** Stack-scoped commands mutate only selected reviews. Observation
    may include the surrounding GitHub resource needed to prove that mutation safe. Repository-wide
    mutation must be requested through an explicit repository-wide mode.
@@ -310,19 +305,14 @@ Two named checks recur throughout the policies:
 - **snapshot match**: an identity match whose live PR head SHA also equals
   `SubmittedBaseline.commit_id`
 
-Neither check permits mutation alone. Each mutating policy says which other facts must be read
-and when they must be rechecked.
+Neither check permits mutation alone. Each mutating policy says which other facts it requires.
 
 Commands never replace a tracked missing, closed, moved, or ambiguous PR automatically. A merged
 tracked PR directs the user to `sync`; other broken links remain untouched for explicit repair or
 cleanup. Once cleanup removes a closed review's tracking, `submit` ignores historical closed or
 merged PRs for that branch and creates a fresh PR. An open untracked PR still requires `relink`.
 
-Recording a submitted commit cannot replace PR identity: the write fails if the identity changed
-underneath it. A missing or invalid per-change record is isolated and reported with `relink` as
-its repair.
-
-An unreadable or unsupported top-level state file blocks commands that load it. The diagnostic
+An unreadable, invalid, or unsupported state file blocks commands that load it. The diagnostic
 names the exact path and explains how to move it aside before re-adopting reviews through
 `checkout` or `relink`.
 
@@ -415,10 +405,10 @@ The command-specific planning requirements are:
 - `sync --all` requires a snapshot match before retargeting, closing, or removing a saved review.
 - cleanup requires a snapshot match before deleting artifacts or removing saved links.
 
-Immediately before each irreversible action, the command rereads its required facts. A remote
-swap, repository retarget, renamed head, moved branch, missing PR, or replacement PR fails closed
-and names `relink` or `unstack --local`, depending on whether the user needs to repair or forget
-the saved link.
+When the platform supports a conditional write or lease, the mutation is bound to the identity
+and version observed while planning. A remote swap, repository retarget, renamed head, moved
+branch, missing PR, or replacement PR found during planning fails closed and names `relink` or
+`unstack --local`, depending on whether the user needs to repair or forget the saved link.
 
 Only review creation, `relink`, and `checkout` create or replace identity. `unstack --local`
 deletes it explicitly; `sync`, `sync --all`, and cleanup remove it after checking live evidence.
@@ -606,9 +596,9 @@ members to change.
 Merged members do not have to be selected. If selected PRs appear only as history, one matching
 GitHub stack may be observed without mutation; more than one is ambiguous and stops the command.
 
-An active unselected member, two active GitHub stacks in one selection, or membership that
-changes during the command fails before branch or PR mutation. The diagnostic names the exact
-`jj-stack unstack --stack <number>` command when removing the grouping can unblock the operation.
+An active unselected member or two active GitHub stacks in one selection fails before branch or
+PR mutation. The diagnostic names the exact `jj-stack unstack --stack <number>` command when
+removing the grouping can unblock the operation.
 
 `submit`, `merge`, `sync`, and `unstack` use this rule. Cleanup instead checks each
 candidate and never deletes a branch needed by an active GitHub stack member.
@@ -642,8 +632,7 @@ removed.
 `unstack` removes one exact GitHub stack grouping and leaves every pull request, review branch,
 overview comment, and tracking record unchanged. With `--stack <number>`, GitHub is the source of
 the selected resource and no local tracking is required. Otherwise the selected local review
-stack must identify one coherent GitHub stack. The command rereads exact membership immediately
-before asking GitHub to remove it. Rerunning it after the grouping is gone is safe.
+stack must identify one coherent GitHub stack. Rerunning it after the grouping is gone is safe.
 
 `unstack --local` removes local tracking for the selected local review stack only. It never
 touches GitHub or local history and is the one explicit way to forget a review without trunk
@@ -662,16 +651,15 @@ A pair is eligible only when:
 
 - GitHub reports the exact saved PR closed or merged
 - for a merged PR, no visible mutable local copy still needs `sync`
-- no other tracked change claims its branch
 - no open PR in the same repository uses the saved head ref as its base
 - no active member of a GitHub stack still needs the branch
 
 Local descendants do not substitute for the open-PR base check. A visible mutable copy of merged
 work is evidence for `sync`, not deletion of a GitHub branch or tracking.
 
-Identity and baseline are removed only after artifact cleanup succeeds. A tracking record or PR
-that cannot be inspected is skipped. Once mutation starts, a failure stops cleanup and leaves
-later records for a rerun.
+Identity and baseline are removed only after artifact cleanup succeeds. A PR that cannot be
+inspected is skipped. Once mutation starts, a failure stops cleanup and leaves later records for
+a rerun.
 
 ### Adoption and repair
 

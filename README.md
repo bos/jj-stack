@@ -89,7 +89,7 @@ If another tool or a custom fetch setting makes a review bookmark visible, `jj-s
 only when relevant. A bookmark exposing the exact saved review commit is accepted. After a local
 rewrite, that commit is treated as the published version rather than a competing local change.
 Unknown bookmarks are left alone, and `jj-stack` will not claim a colliding name for a new review.
-Trunk, tags, other untracked bookmarks, and custom `immutable_heads()` rules still apply normally.
+Trunk, tags, and other untracked bookmarks still apply normally.
 
 To undo the reservation, remove the exclusion from the Git repository backing `jj`, naming your
 own remote and prefix if they are not the defaults:

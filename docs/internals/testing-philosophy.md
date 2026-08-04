@@ -38,11 +38,11 @@ For this repo, do not assume the happy path is the main risk. Much of the real r
 broken environments, drift between systems, and ordinary but surprising sequences of stateful
 operations.
 
-When reviewing coverage, ask first:
+When reviewing coverage, ask first whether an ordinary command, documented external action, or
+observed partial failure can produce the state. For reachable states, ask:
 
-- what happens if the repo is already in a bad state?
-- what happens if config is missing, invalid, contradictory, or only partially applied?
-- what happens if `jj-stack`, `jj`, GitHub, local persistence, or subprocess state disagree?
+- what happens if config is missing, invalid, or conflicts with the repository?
+- what happens if `jj`, remote refs, and GitHub disagree?
 - what happens if the DAG shape is unusual because of rewrites, relinks, divergence, non-linear
   history, or deleted changes?
 - what happens when one supported command or documented external action follows another before
@@ -53,11 +53,11 @@ path.
 
 Examples of high-value test scenarios:
 
-- broken or unexpected repo state
+- unexpected repo state produced by an ordinary `jj` operation
 - bad config, missing config, or config that conflicts with actual state
 - surprising DAG topology or stack selection edge cases
 - interrupted operations and partial cleanup
-- stale, missing, or contradictory tracking state
+- tracking left behind by an observed partial command or explicitly removed by the user
 - drift or surprising command and external-action sequences across `jj-stack`, `jj`, GitHub, and
   subprocess-visible state
 - recovery paths after a command discovers inconsistent state
@@ -155,9 +155,9 @@ forwarding or help-output checks for every alias.
 ## Keep the suite fast
 
 The test suite is a product asset too. Prefer focused fixtures, direct setup, and one strong
-hostile-state representative over expensive end-to-end setup or exhaustive combinations. Do not
-pay for broad scenario matrices unless each added case protects a meaningfully different failure
-mode.
+off-happy-path representative over expensive end-to-end setup or exhaustive combinations. Do
+not pay for broad scenario matrices unless each added case protects a meaningfully different
+failure mode.
 
 ## Low-value test patterns
 
