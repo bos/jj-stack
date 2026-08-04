@@ -25,7 +25,7 @@ class ReviewObservation:
     baseline: SubmittedBaseline | None
     head_pull_requests: tuple[GithubPullRequest, ...]
     identity: ReviewIdentity | None
-    local_revision: LocalRevision | None
+    local_revisions: tuple[LocalRevision, ...]
     pull_request: GithubPullRequest | None
     remote_review_target: str | None
 
@@ -119,7 +119,7 @@ async def observe_reviews(
                 by_head.get(identity.head_ref, ()) if identity is not None else ()
             ),
             identity=identity,
-            local_revision=(matches[0] if len(matches) == 1 else None),
+            local_revisions=matches,
             pull_request=(numbered.get(identity.pr_number) if identity is not None else None),
             remote_review_target=(
                 remote_targets.get(identity.head_ref) if identity is not None else None

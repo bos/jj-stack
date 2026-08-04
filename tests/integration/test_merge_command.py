@@ -237,6 +237,45 @@ def test_stack_merge_commit_uses_one_group_result_that_sync_can_retire(
     assert JjClient(repo).resolve_revision("@").parents == (merge_commit,)
 
 
+@pytest.mark.parametrize("merge_method", ("rebase", "squash"))
+def test_stack_rewriting_merge_sync_retires_pre_merge_copies(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    merge_method: str,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.allow_rebase_merge = True
+    fake_repo.github_stacks = {7: (1, 2)}
+    state_store = ReviewStateStore.for_repo(repo)
+    stack = selected_stack(repo)
+
+    merge_exit_code = run_main(repo, config_path, "merge", "--method", merge_method)
+    merged = capsys.readouterr()
+    final_trunk = fake_repo.pull_requests[2].merge_commit_sha
+
+    assert merge_exit_code == 0, (merged.out, merged.err)
+    assert final_trunk == read_remote_ref(fake_repo.git_dir, "main")
+
+    sync_exit_code = run_main(repo, config_path, "sync", stack.head.change_id)
+    synced = capsys.readouterr()
+
+    assert sync_exit_code == 0, (synced.out, synced.err)
+    assert state_store.load().review_identities == {}
+    assert JjClient(repo).resolve_revision("@").parents == (final_trunk,)
+    copies = JjClient(repo).query_revisions_by_change_ids(
+        tuple(revision.change_id for revision in stack.revisions)
+    )
+    if merge_method == "rebase":
+        assert all(
+            len(revisions) == 1 and revisions[0].immutable and not revisions[0].divergent
+            for revisions in copies.values()
+        )
+    else:
+        assert all(not revisions for revisions in copies.values())
+
+
 def test_stack_merge_terminal_failure_is_atomic(
     tmp_path: Path,
     monkeypatch,

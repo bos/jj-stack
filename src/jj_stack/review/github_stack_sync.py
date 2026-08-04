@@ -109,8 +109,7 @@ def _changed_review(observed: review_observation.ReviewObservation) -> bool:
         pull_request.normalize_state().state == "merged"
         or pull_request.head.sha != baseline.commit_id
         or observed.remote_review_target != baseline.commit_id
-        or observed.local_revision is not None
-        and observed.local_revision.immutable
+        or any(revision.immutable for revision in observed.local_revisions)
     )
 
 
@@ -172,6 +171,18 @@ def build_selected_github_stack_sync(
             observation=observation,
         )
         if member.is_historical:
+            selected_revision = selected_by_change_id.get(candidate.change_id)
+            editable = tuple(
+                revision
+                for revision in observation.reviews[candidate.change_id].local_revisions
+                if not revision.immutable
+            )
+            if selected_revision is None and len(editable) > 1:
+                raise CliError(
+                    t"Historical stack member {ui.change_id(candidate.change_id)} has more "
+                    t"than one editable local revision.",
+                    hint=t"Resolve the divergent change with {ui.cmd('jj')}, then rerun sync.",
+                )
             historical.append(
                 _historical_review(
                     candidate=candidate,
@@ -179,7 +190,7 @@ def build_selected_github_stack_sync(
                     member=member,
                     pull_request=pull_request,
                     repository=repository,
-                    revision=observation.reviews[candidate.change_id].local_revision,
+                    revision=selected_revision or (editable[0] if editable else None),
                     trunk_commit_id=trunk_commit_id,
                 )
             )

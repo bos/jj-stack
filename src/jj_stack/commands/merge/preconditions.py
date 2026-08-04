@@ -116,7 +116,7 @@ def _local_precondition_error(
     """Explain why the local change and its review branch do not match the plan."""
 
     identity = observed.identity
-    local = observed.local_revision
+    local_revisions = observed.local_revisions
     label = planned.change_id
     if (
         identity != planned.identity
@@ -124,12 +124,13 @@ def _local_precondition_error(
         or identity.repository_key != expected_repository.repository_key
     ):
         return f"saved PR tracking for {label} changed"
-    if local is None:
+    if not local_revisions:
         return f"{label} is no longer visible locally"
     # Stack discovery normally rejects a divergent change first; this covers one that diverged
     # after the plan was built.
-    if local.divergent:
+    if len(local_revisions) > 1 or local_revisions[0].divergent:
         return f"{label} has more than one visible revision"
+    local = local_revisions[0]
     # Conflicts come before the commit comparison: a rebase that conflicts also changes the
     # commit, and resolving is what has to happen first either way.
     if local.conflict:

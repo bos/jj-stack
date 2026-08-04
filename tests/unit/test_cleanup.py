@@ -180,7 +180,7 @@ def _observation(
                 baseline=_BASELINE,
                 head_pull_requests=(pull_request,),
                 identity=identity,
-                local_revision=None,
+                local_revisions=(),
                 pull_request=pull_request,
                 remote_review_target=remote_target,
             )

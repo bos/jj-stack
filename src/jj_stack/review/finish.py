@@ -269,6 +269,8 @@ async def _fresh_retirement_blocker(
         for revision in local_revisions
     ):
         return t"{ui.change_id(candidate.change_id)} has unpublished local edits"
+    if any(not revision.immutable for revision in local_revisions):
+        return t"{ui.change_id(candidate.change_id)} still has an editable local revision"
     observation, reason = await observe_tracked_review(candidate, finish)
     if reason is not None or observation is None:
         return reason

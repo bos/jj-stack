@@ -13,7 +13,7 @@ governed_c901 = 0
 
 [pytest]
 fixed_property = 8
-merge_recovery = 52
+merge_recovery = 54
 
 [labels]
 production = "Production"
