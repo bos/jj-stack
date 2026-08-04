@@ -19,6 +19,7 @@ from .integration_helpers import commit_file, run_command, selected_stack, write
 from .submit_property_scenarios import (
     DriftOperation,
     ExternalDriftScenario,
+    LifecycleScenario,
     StackEditOperation,
     StackEditScenario,
     StackJoinScenario,
@@ -52,6 +53,89 @@ class SubmittedBaseline:
     review_identity: ReviewIdentity
     remote_target: str
     submitted_baseline: StoredBaseline
+
+
+def replay_lifecycle(
+    fake_repo: FakeGithubRepository,
+    repo: Path,
+    run_cli: CliRunner,
+    read_output: OutputDiscarder,
+    scenario: LifecycleScenario,
+) -> None:
+    jj = JjClient(repo)
+    stack_size, merged_prefix = (4, 2) if scenario.template == "direct_merge" else (1, 1)
+    labels = _create_initial_stack(repo, stack_size)
+    assert run_cli(("submit",)) == 0
+    baseline = _capture_submitted_baseline(repo, fake_repo, labels)
+    _approve_initial_pull_requests(fake_repo, baseline)
+    head_id = labels[initial_label(stack_size)]
+    state_store = ReviewStateStore.for_repo(repo)
+    read_output()
+    if scenario.template == "closed_restart":
+        old = baseline["c1"]
+        old_pr = fake_repo.pull_requests[old.pr_number]
+        fake_repo.update_pull_request_state(old_pr, state="closed")
+        assert run_cli(("cleanup", head_id)) == 0
+        assert old.change_id not in state_store.load().review_identities
+        assert f"refs/heads/{old.branch}" not in _remote_refs(fake_repo.git_dir)
+        assert run_cli(("submit", head_id)) == 0
+        fresh = state_store.load().review_identities[old.change_id]
+        assert fresh.pr_number != old.pr_number
+        assert fake_repo.pull_requests[fresh.pr_number].state == "open"
+        assert fake_repo.pull_requests[fresh.pr_number].base_ref == "main"
+        refs = _remote_refs(fake_repo.git_dir)
+        revision = jj.resolve_revision(old.change_id)
+        assert refs[f"refs/heads/{fresh.head_ref}"] == revision.commit_id
+        assert old_pr.state == "closed" and old_pr.merged_at is None
+        _assert_approval_review_preserved(fake_repo, old.pr_number, "c1")
+        assert len(fake_repo.pull_requests) == 2
+        return
+    if scenario.template == "direct_merge":
+        fake_repo.allow_rebase_merge = True
+        assert run_cli(("merge", "--method", "rebase", "--pull-request", "2")) == 0
+        expected_request = (2, "rebase", "direct_merge", baseline["c2"].remote_target)
+        assert fake_repo.stack_merge_requests == [expected_request]
+    else:
+        pull_request = fake_repo.pull_requests[1]
+        fake_repo.apply_pull_request_merge(pull_request, merge_method=scenario.merge_method)
+        state_before, refs_before = state_store.load(), _remote_refs(fake_repo.git_dir)
+        fake_repo.pull_request_events.clear()
+        assert run_cli(("cleanup", head_id)) == 0
+        output = " ".join(" ".join(read_output()).split())
+        assert f"sync {head_id}" in output, output
+        assert state_store.load() == state_before
+        assert _remote_refs(fake_repo.git_dir) == refs_before
+        assert fake_repo.pull_request_events == []
+        assert run_cli(("sync", head_id)) == 0
+    state = state_store.load()
+    refs = _remote_refs(fake_repo.git_dir)
+    for index in range(1, merged_prefix + 1):
+        label = initial_label(index)
+        submitted = baseline[label]
+        assert submitted.change_id not in state.review_identities
+        assert fake_repo.pull_requests[submitted.pr_number].merged_at is not None
+        _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
+        copies = jj.query_revisions_by_change_ids((submitted.change_id,))[submitted.change_id]
+        if scenario.merge_method == "squash":
+            assert not copies
+        else:
+            assert len(copies) == 1
+            copy = copies[0]
+            assert copy.immutable and not copy.divergent
+            assert copy.commit_id == fake_repo.pull_requests[submitted.pr_number].merge_commit_sha
+    previous_base = "main"
+    for index in range(merged_prefix + 1, stack_size + 1):
+        label = initial_label(index)
+        submitted = baseline[label]
+        assert state.review_identities[submitted.change_id].pr_number == submitted.pr_number
+        assert fake_repo.pull_requests[submitted.pr_number].state == "open"
+        revision = jj.resolve_revision(submitted.change_id)
+        assert refs[f"refs/heads/{submitted.branch}"] == revision.commit_id
+        assert state.submitted_baselines[submitted.change_id].commit_id == revision.commit_id
+        assert fake_repo.pull_requests[submitted.pr_number].base_ref == previous_base
+        _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
+        previous_base = submitted.branch
+    assert len(fake_repo.pull_requests) == stack_size
 
 
 def _dissolve_github_stacks(

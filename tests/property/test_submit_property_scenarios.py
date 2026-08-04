@@ -15,17 +15,20 @@ from tests.support.integration_helpers import init_fake_github_repo
 from tests.support.submit_property_harness import (
     replay_external_drift_scenario,
     replay_failed_submit_retry_scenario,
+    replay_lifecycle,
     replay_stack_join_scenario,
     replay_stack_move_scenario,
     replay_successful_stack_edit_scenario,
 )
 from tests.support.submit_property_scenarios import (
     ExternalDriftScenario,
+    LifecycleScenario,
     StackEditScenario,
     StackJoinScenario,
     StackMoveScenario,
     SubmitRetryScenario,
     external_drift_scenarios_from_environment,
+    lifecycle_scenarios_from_environment,
     stack_edit_scenarios_from_environment,
     stack_join_scenarios_from_environment,
     stack_move_scenarios_from_environment,
@@ -45,11 +48,23 @@ STACK_JOIN_SCENARIOS = stack_join_scenarios_from_environment()
 STACK_MOVE_SCENARIOS = stack_move_scenarios_from_environment()
 SUBMIT_RETRY_SCENARIOS = submit_retry_scenarios_from_environment()
 EXTERNAL_DRIFT_SCENARIOS = external_drift_scenarios_from_environment()
+LIFECYCLE_SCENARIOS = lifecycle_scenarios_from_environment()
 RETRY_CONFIG_LINES = [
     'labels = ["needs-review"]',
     'reviewers = ["alice"]',
     'team_reviewers = ["platform"]',
 ]
+
+
+@pytest.mark.parametrize("scenario", LIFECYCLE_SCENARIOS, ids=lambda scenario: scenario.name)
+def test_lifecycles(tmp_path, monkeypatch, capsys, scenario: LifecycleScenario) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    def run_cli(args):
+        return run_main(repo, config_path, *args)
+
+    replay_lifecycle(fake_repo, repo, run_cli, capsys.readouterr, scenario)
 
 
 @pytest.mark.parametrize(

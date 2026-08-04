@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
@@ -25,49 +23,6 @@ from .submit_command_helpers import (
     remote_refs,
     run_main,
 )
-
-
-@pytest.mark.merge_recovery
-@pytest.mark.parametrize("merge_method", ("rebase", "squash"))
-def test_cleanup_preserves_merged_review_until_sync_reconciles_local_copy(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-    merge_method: str,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    reviewed = selected_stack(repo).head
-    state_store = ReviewStateStore.for_repo(repo)
-    state_before = state_store.load()
-    identity = state_before.review_identities[reviewed.change_id]
-    pull_request = fake_repo.pull_requests[identity.pr_number]
-    if merge_method == "rebase":
-        landed_commit = fake_repo.apply_rebase_merge(pull_request)
-    else:
-        landed_commit = fake_repo.apply_squash_merge(pull_request)
-
-    cleanup_exit_code = run_main(repo, config_path, "cleanup")
-    cleaned = capsys.readouterr()
-
-    assert cleanup_exit_code == 0, (cleaned.out, cleaned.err)
-    assert f"sync {reviewed.change_id}" in " ".join(cleaned.out.split())
-    assert state_store.load() == state_before
-    assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
-
-    sync_exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
-    synced = capsys.readouterr()
-
-    assert sync_exit_code == 0, (synced.out, synced.err)
-    assert reviewed.change_id not in state_store.load().review_identities
-    copies = JjClient(repo).query_revisions_by_change_ids((reviewed.change_id,))[
-        reviewed.change_id
-    ]
-    if merge_method == "rebase":
-        assert tuple(copy.commit_id for copy in copies) == (landed_commit,)
-        assert copies[0].immutable
-    else:
-        assert copies == ()
 
 
 def test_cleanup_removes_closed_review_after_local_change_is_abandoned(

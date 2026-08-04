@@ -33,7 +33,6 @@ SubmitRetryFailurePoint = Literal[
     "update_pull_request",
     "pull_request_metadata",
 ]
-
 DEFAULT_STACK_EDIT_SCENARIO_SEED = 8675309
 MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
 
@@ -52,6 +51,26 @@ class SubmitInvariants:
     initial_size: int
     orphaned_labels: tuple[str, ...]
     trace: str
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleScenario:
+    name: str
+    template: Literal["cleanup_sync", "closed_restart", "direct_merge"]
+    merge_method: Literal["rebase", "squash"] = "squash"
+
+
+LIFECYCLE_SCENARIOS = (
+    LifecycleScenario("external-squash-cleanup-sync", "cleanup_sync"),
+    LifecycleScenario("closed-single-cleanup-resubmit", "closed_restart"),
+    LifecycleScenario("direct-rebase-two-of-four", "direct_merge", "rebase"),
+    LifecycleScenario("external-rebase-cleanup-sync", "cleanup_sync", "rebase"),
+)
+
+
+def lifecycle_scenarios_from_environment() -> tuple[LifecycleScenario, ...]:
+    count = int(os.environ.get("JJ_STACK_SUBMIT_PROPERTY_LIFECYCLE_SCENARIOS", "3"))
+    return LIFECYCLE_SCENARIOS[:count]
 
 
 @dataclass(frozen=True, slots=True)

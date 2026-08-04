@@ -38,7 +38,7 @@ testing should spend its budget on those cross-system invariants.
   vocabulary.
 - Make failures reproducible. Every generated scenario must have a stable name and a
   compact operation trace that can be copied into a deterministic regression test.
-- Keep the default suite fast. `./check.py` runs a fixed five-case property corpus; larger
+- Keep the default suite fast. `./check.py` runs a fixed eight-case property corpus; larger
   generated or randomized pools remain opt-in.
 - Use all available workers when exploration is widened. Scenario modules expose generated cases
   as ordinary data so pytest can distribute them across cores.
@@ -167,7 +167,8 @@ unclassified error. Exact diagnostic wording stays out of scope.
 ## Merge and sync coverage
 
 Merge and post-merge convergence use focused deterministic integration tests rather than the
-submit property generator. The tested boundaries include exact submitted-head validation,
+stack-edit generator. A small lifecycle family covers cleanup, restart, and automatic sync;
+expanded runs add rebase cleanup. The deterministic tests cover exact submitted-head validation,
 bottom-prefix selection, draft and closed boundaries, atomic stack-merge failure, partial stack
 merge survivor rewrites, terminal retry, historical-member cleanup, and selected or
 repository-wide sync eligibility.
@@ -237,8 +238,8 @@ For the submitted stack as a whole:
 - fake GitHub recorded no close, merge, or reopen event for any originally submitted PR
 - fake GitHub recorded no base-retarget event for orphaned PRs
 
-The default suite runs five fixed scenarios: one stack edit, one merge, one move, one submit
-retry, and one drift case. Their defined names and counts live in
+The default suite runs eight fixed scenarios: five stack-edit, cross-stack, retry, and drift
+representatives plus three completed-command lifecycle cases. Their names and counts live in
 `tests/support/submit_property_scenarios.py`; larger deterministic pools remain opt-in.
 
 ## Efficiency

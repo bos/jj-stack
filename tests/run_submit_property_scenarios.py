@@ -25,6 +25,7 @@ _REPRODUCTION_SCENARIO_OPTIONS = (
     ),
     ("--retry-scenarios", "JJ_STACK_SUBMIT_PROPERTY_RETRY_SCENARIOS"),
     ("--drift-scenarios", "JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"),
+    ("--lifecycle-scenarios", "JJ_STACK_SUBMIT_PROPERTY_LIFECYCLE_SCENARIOS"),
 )
 
 
@@ -84,6 +85,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--lifecycle-scenarios",
+        type=_non_negative_int,
+        help="Number of completed-command lifecycle scenarios to run (default: all 4).",
+    )
+    parser.add_argument(
         "-n",
         "--jobs",
         default="auto",
@@ -126,6 +132,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if drift_scenarios is None:
         drift_scenarios = max(20, args.scenarios // 5)
     env["JJ_STACK_SUBMIT_PROPERTY_DRIFT_SCENARIOS"] = str(drift_scenarios)
+    lifecycle_scenarios = args.lifecycle_scenarios
+    env["JJ_STACK_SUBMIT_PROPERTY_LIFECYCLE_SCENARIOS"] = str(
+        4 if lifecycle_scenarios is None else lifecycle_scenarios
+    )
     seed = secrets.randbits(32) if args.random_seed else args.seed
     if seed is None:
         seed = DEFAULT_PROPERTY_SEED

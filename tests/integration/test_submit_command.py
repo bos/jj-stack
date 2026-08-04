@@ -1406,32 +1406,6 @@ def test_submit_requires_relink_after_state_loss(
 
 
 @pytest.mark.merge_recovery
-def test_submit_starts_fresh_review_after_closed_review_cleanup(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = selected_stack(repo).head.change_id
-    state_store = ReviewStateStore.for_repo(repo)
-
-    fake_repo.pull_requests[1].state = "closed"
-    assert run_main(repo, config_path, "cleanup", change_id) == 0
-    capsys.readouterr()
-
-    exit_code = run_main(repo, config_path, "submit", change_id)
-    captured = capsys.readouterr()
-    refreshed_identity = state_store.load().review_identities[change_id]
-
-    assert exit_code == 0, (captured.out, captured.err)
-    assert "PR #2" in captured.out
-    assert refreshed_identity.pr_number == 2
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[2].state == "open"
-
-
-@pytest.mark.merge_recovery
 def test_submit_names_sync_when_tracked_review_is_merged(
     tmp_path: Path,
     monkeypatch,
