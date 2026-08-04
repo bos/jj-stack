@@ -463,30 +463,14 @@ async def run_submit_async(
         state=state,
         state_store=state_store,
     )
+    tracked_pull_requests = {
+        identity.head_ref: identity.pr_number
+        for prepared in prepared_revisions
+        if (identity := state.review_identities.get(prepared.revision.change_id)) is not None
+    }
     submitted_revisions: tuple[SubmittedRevision, ...] = ()
     async with build_github_client(repository=github_repository) as github_client:
         generated_descriptions = prepared_inputs.generated_pull_request_descriptions
-        drafts: dict[str, bool] | None = None
-        if options.edit:
-            with console.spinner(description="Inspecting current draft states"):
-                editor_pull_requests = await discover_pull_requests_by_branch(
-                    github_client=github_client,
-                    branches=tuple(resolution.branch for resolution in branch_resolutions),
-                )
-            drafts = {
-                prepared.revision.change_id: _desired_draft_state(
-                    draft_mode=options.draft_mode,
-                    pull_request=editor_pull_requests[prepared.branch],
-                )
-                for prepared in prepared_revisions
-            }
-            generated_descriptions, drafts = edit_pull_requests_in_editor(
-                descriptions=generated_descriptions,
-                drafts=drafts,
-                jj_client=client,
-                revisions=stack.revisions,
-            )
-
         with console.spinner(description="Inspecting GitHub"):
             try:
                 (
@@ -498,6 +482,7 @@ async def run_submit_async(
                     discover_pull_requests_by_branch(
                         github_client=github_client,
                         branches=tuple(resolution.branch for resolution in branch_resolutions),
+                        tracked_pull_requests=tracked_pull_requests,
                     ),
                     github_client.list_stacks(),
                 )
@@ -511,14 +496,13 @@ async def run_submit_async(
                 remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,
             )
-        if drafts is None:
-            drafts = {
-                prepared.revision.change_id: _desired_draft_state(
-                    draft_mode=options.draft_mode,
-                    pull_request=discovered_pull_requests[prepared.branch],
-                )
-                for prepared in prepared_revisions
-            }
+        drafts = {
+            prepared.revision.change_id: _desired_draft_state(
+                draft_mode=options.draft_mode,
+                pull_request=discovered_pull_requests[prepared.branch],
+            )
+            for prepared in prepared_revisions
+        }
         pending_syncs = _pending_pull_request_syncs(
             discovered_pull_requests=discovered_pull_requests,
             drafts=drafts,
@@ -532,6 +516,20 @@ async def run_submit_async(
             repository_key=github_repository.repository_key,
             state=mutation_run.state,
         )
+        if options.edit:
+            generated_descriptions, drafts = edit_pull_requests_in_editor(
+                descriptions=generated_descriptions,
+                drafts=drafts,
+                jj_client=client,
+                revisions=stack.revisions,
+            )
+            pending_syncs = _pending_pull_request_syncs(
+                discovered_pull_requests=discovered_pull_requests,
+                drafts=drafts,
+                generated_descriptions=generated_descriptions,
+                prepared_revisions=prepared_revisions,
+                trunk_branch=trunk_branch,
+            )
         pushes_review_branches = any(
             revision.remote_action == "pushed" for revision in prepared_revisions
         )

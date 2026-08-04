@@ -192,25 +192,16 @@ def test_preflight_private_commits_rejects_blocked_revision() -> None:
         preflight_private_commits(PrivateCommitClient(), (private,))
 
 
-@pytest.mark.parametrize(
-    ("states", "message"),
-    (
-        (("open", "open"), "multiple pull requests"),
-        (("closed",), "in state closed"),
-    ),
-)
-def test_discovered_pull_request_must_be_unique_and_open(
-    states: tuple[str, ...],
-    message: str,
-) -> None:
+def test_discovered_pull_request_must_have_only_one_open_review() -> None:
     pull_requests = tuple(
         _github_pull_request(number=number, state=state)
-        for number, state in enumerate(states, start=1)
+        for number, state in enumerate(("open", "open"), start=1)
     )
-    with pytest.raises(CliError, match=message):
+    with pytest.raises(CliError, match="multiple pull requests"):
         _select_discovered_pull_request(
             head_label="octo-org:jj-stack/foo",
             pull_requests=pull_requests,
+            tracked_pull_number=None,
         )
 
 

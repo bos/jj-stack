@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import jj_stack.ui as ui
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
@@ -25,6 +25,7 @@ async def discover_pull_requests_by_branch(
     *,
     github_client: GithubClient,
     branches: tuple[str, ...],
+    tracked_pull_requests: Mapping[str, int],
 ) -> dict[str, GithubPullRequest | None]:
     if not branches:
         return {}
@@ -40,6 +41,7 @@ async def discover_pull_requests_by_branch(
         branch: _select_discovered_pull_request(
             head_label=f"{github_client.repository.owner}:{branch}",
             pull_requests=discovered_pull_requests.get(branch, ()),
+            tracked_pull_number=tracked_pull_requests.get(branch),
         )
         for branch in branches
     }
@@ -325,8 +327,24 @@ def _select_discovered_pull_request(
     *,
     head_label: str,
     pull_requests: tuple[GithubPullRequest, ...],
+    tracked_pull_number: int | None,
 ) -> GithubPullRequest | None:
-    if len(pull_requests) > 1:
+    open_pull_requests = tuple(
+        pull_request for pull_request in pull_requests if pull_request.state == "open"
+    )
+    tracked_pull_request = next(
+        (
+            pull_request
+            for pull_request in pull_requests
+            if pull_request.number == tracked_pull_number
+        ),
+        None,
+    )
+    if len(open_pull_requests) > 1 or (
+        open_pull_requests
+        and tracked_pull_request is not None
+        and open_pull_requests[0].number != tracked_pull_request.number
+    ):
         raise DriftError(
             t"GitHub reports multiple pull requests for head branch {ui.bookmark(head_label)}.",
             condition="pull_request_ambiguous",
@@ -335,20 +353,7 @@ def _select_discovered_pull_request(
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
-    if not pull_requests:
-        return None
-    pull_request = pull_requests[0]
-    if pull_request.state != "open":
-        raise DriftError(
-            t"GitHub reports pull request #{pull_request.number} for head branch "
-            t"{ui.bookmark(head_label)} in state {pull_request.state}.",
-            condition="pull_request_not_open",
-            hint=(
-                t"Inspect the PR link with {ui.cmd('view')} and repair it "
-                t"with {ui.cmd('relink')} before submitting again."
-            ),
-        )
-    return pull_request
+    return tracked_pull_request or (open_pull_requests[0] if open_pull_requests else None)
 
 
 def _ensure_pull_request_link_is_consistent(
@@ -425,6 +430,19 @@ def _ensure_pull_request_link_is_consistent(
             t"saved head owner and branch.",
             condition="saved_pull_request_mismatch",
             hint=t"Inspect it, then repair the intended review with {ui.cmd('relink')}.",
+        )
+    if discovered_pull_request.state != "open":
+        hint = (
+            t"Run {ui.cmd(f'jj-stack sync {change_id}')} to update the local stack."
+            if discovered_pull_request.state == "merged"
+            else t"Reopen the PR, or run {ui.cmd(f'jj-stack cleanup {change_id}')} before "
+            t"starting a new review."
+        )
+        raise DriftError(
+            t"PR #{discovered_pull_request.number} for {ui.change_id(change_id)} is "
+            t"{discovered_pull_request.state} and cannot be updated.",
+            condition="pull_request_not_open",
+            hint=hint,
         )
     if (
         expected_remote_target is None

@@ -105,8 +105,11 @@ If the change instead shows `remembered PR #<n>`, the PR does still exist. `view
 advisory when it has moved to another head branch, and `jj-stack relink <pr> <change-id>` points
 the change at it.
 
-If GitHub reports a remembered PR as closed or merged, decide what outcome you
-want before choosing a command:
+If GitHub reports a remembered PR as merged, run `jj-stack sync <change-id>` to update the local
+stack and retire tracking for the merged review.
+
+If GitHub reports a remembered PR as closed, decide what outcome you want before choosing a
+command:
 
 - To keep reviewing the same PR, reopen it on GitHub and rerun `jj-stack view <change-id>`.
 - To attach a different open PR to the change, use `jj-stack relink <pr> <change-id>`. That PR

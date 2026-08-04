@@ -313,9 +313,10 @@ Two named checks recur throughout the policies:
 Neither check permits mutation alone. Each mutating policy says which other facts must be read
 and when they must be rechecked.
 
-Commands never replace a missing, closed, moved, or ambiguous PR automatically. They leave the
-tracking untouched and direct the user to `relink`, to forget a missing or incorrect link with
-`unstack --local`, or to close and clean up an old review before a fresh `submit`.
+Commands never replace a tracked missing, closed, moved, or ambiguous PR automatically. A merged
+tracked PR directs the user to `sync`; other broken links remain untouched for explicit repair or
+cleanup. Once cleanup removes a closed review's tracking, `submit` ignores historical closed or
+merged PRs for that branch and creates a fresh PR. An open untracked PR still requires `relink`.
 
 Recording a submitted commit cannot replace PR identity: the write fails if the identity changed
 underneath it. A missing or invalid per-change record is isolated and reported with `relink` as
