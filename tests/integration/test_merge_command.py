@@ -309,48 +309,6 @@ def test_stack_merge_terminal_failure_is_atomic(
     assert state_store.load() == state_before
 
 
-@pytest.mark.parametrize("dry_run", (False, True))
-def test_stack_merge_reobserves_lower_heads_before_request(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-    dry_run: bool,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.auto_merge_reachable_heads = False
-    fake_repo.github_stacks = {7: (1, 2)}
-    trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class LowerHeadRaceClient(GithubClient):
-        async def get_stack(self, *, stack_number):
-            stack = await super().get_stack(stack_number=stack_number)
-            update_remote_ref(
-                fake_repo,
-                branch=fake_repo.pull_requests[1].head_ref,
-                target=trunk_before,
-            )
-            return stack
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.merge.command",),
-        client_type=LowerHeadRaceClient,
-    )
-
-    exit_code = run_main(repo, config_path, "merge", *(("--dry-run",) if dry_run else ()))
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "last submitted commit" in captured.err
-    assert fake_repo.stack_merge_requests == []
-    assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
-    assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
-
-
 def test_stack_merge_recovers_only_from_a_terminal_retry(
     tmp_path: Path,
     monkeypatch,

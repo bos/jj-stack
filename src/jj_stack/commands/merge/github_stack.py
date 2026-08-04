@@ -9,8 +9,8 @@ import jj_stack.ui as ui
 from jj_stack.commands._github_stack_safety import selected_github_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.models.github import GithubPullRequest, GithubStack, GithubStackMerge
-from jj_stack.review.observation import observe_reviews
+from jj_stack.models.github import GithubStack, GithubStackMerge
+from jj_stack.review.observation import RepositoryObservation
 from jj_stack.ui import Message
 
 from .models import MergeAction, MergeExecutionInputs, MergePlan, MergeResult, MergeRevision
@@ -20,7 +20,6 @@ from .preconditions import merge_precondition_error
 @dataclass(frozen=True, slots=True)
 class AsyncMergePlan:
     resource: GithubStack | None
-    active: tuple[MergeRevision, ...]
     boundary_action: MergeAction | None
     planned: tuple[MergeRevision, ...]
 
@@ -79,11 +78,9 @@ def build_async_merge_plan(
             )
         return AsyncMergePlan(
             resource=None,
-            active=merge_plan.reviewed_revisions,
             boundary_action=merge_plan.boundary_action,
             planned=merge_plan.planned_revisions,
         )
-    active = tuple(by_pull[number] for number in resource.active_pull_request_numbers)
     if merge_plan.planned_revisions:
         planned_numbers = tuple(
             revision.identity.pr_number for revision in merge_plan.planned_revisions
@@ -96,7 +93,6 @@ def build_async_merge_plan(
             )
         return AsyncMergePlan(
             resource,
-            active,
             merge_plan.boundary_action,
             merge_plan.planned_revisions,
         )
@@ -110,8 +106,8 @@ def build_async_merge_plan(
     if target_change_id in change_ids:
         stop = change_ids.index(target_change_id) + 1
     if not stop or merge_plan.reviewed_revisions[: len(historical)] != historical:
-        return AsyncMergePlan(resource, active, merge_plan.boundary_action, ())
-    return AsyncMergePlan(resource, active, None, historical[:stop])
+        return AsyncMergePlan(resource, merge_plan.boundary_action, ())
+    return AsyncMergePlan(resource, None, historical[:stop])
 
 
 async def execute_async_merge(
@@ -126,25 +122,18 @@ async def execute_async_merge(
         return execution.result(
             actions=(() if merge.boundary_action is None else (merge.boundary_action,))
         )
-    pull_request = await check_async_merge(execution, github, merge)
-    if merge.resource is None and pull_request.base.ref != execution.trunk_branch:
+    if merge.resource is None and merge.target.base_ref != execution.trunk_branch:
         try:
             await github.update_pull_request(
-                pull_number=pull_request.number,
+                pull_number=merge.target.identity.pr_number,
                 base=execution.trunk_branch,
             )
         except GithubClientError as error:
             raise CliError(
-                t"Could not retarget PR #{pull_request.number} to "
+                t"Could not retarget PR #{merge.target.identity.pr_number} to "
                 t"{ui.bookmark(execution.trunk_branch)}",
                 hint="Resolve the GitHub error above, then rerun merge.",
             ) from error
-        await check_async_merge(
-            execution,
-            github,
-            merge,
-            expected_bases=(execution.trunk_branch,),
-        )
     try:
         submission = await github.submit_stack_merge(
             expected_head_sha=merge.target.commit_id,
@@ -216,65 +205,30 @@ async def execute_async_merge(
     )
 
 
-async def check_async_merge(
+def validate_terminal_retry(
+    *,
     execution: MergeExecutionInputs,
     github: GithubClient,
     merge: AsyncMergePlan,
-    expected_bases: tuple[str, ...] | None = None,
-) -> GithubPullRequest:
-    resource = (
-        await github.get_stack(stack_number=merge.resource.number)
-        if merge.resource is not None
-        else None
-    )
-    revisions = merge.planned if merge.terminal_retry else merge.active
-    inactive = revisions if merge.terminal_retry else merge.active[len(merge.planned) :]
-    observation = await observe_reviews(
-        change_ids=tuple(revision.change_id for revision in revisions),
-        context=execution.context,
-        github_client=github,
-        remote_name=execution.remote_name,
-        trunk_branch=execution.trunk_branch,
-    )
+    observation: RepositoryObservation,
+) -> None:
+    """Validate a completed server operation from the observation that found it."""
+
+    revisions = merge.planned
     error = merge_precondition_error(
-        inactive_allowed=frozenset(revision.change_id for revision in inactive),
-        expected_bases={
-            revision.change_id: (
-                expected_bases
-                if expected_bases is not None
-                else (
-                    (revision.base_ref, execution.trunk_branch)
-                    if resource is None
-                    else (revision.base_ref,)
-                )
-            )
-            for revision in revisions
-        },
+        inactive_allowed=frozenset(revision.change_id for revision in revisions),
+        expected_bases={},
         expected_repository=github.repository,
         expected_trunk_branch=execution.trunk_branch,
         observation=observation,
         remote_name=execution.remote_name,
         revisions=revisions,
     )
-    stack_changed = (
-        resource is not None
-        and merge.resource is not None
-        and resource.pull_request_numbers != merge.resource.pull_request_numbers
-    )
-    if error or stack_changed:
-        location = (
-            t"GitHub stack #{resource.number}"
-            if resource is not None
-            else t"PR #{merge.target.identity.pr_number}"
-        )
+    if error:
         raise CliError(
-            error or t"{location} changed after planning.",
-            hint=t"Rerun {ui.cmd('jj-stack merge')} to plan against the current stack.",
+            error,
+            hint=t"Resolve the mismatch, then rerun {ui.cmd('jj-stack merge')}.",
         )
-    pull_request = observation.reviews[merge.target.change_id].pull_request
-    if pull_request is None:
-        raise AssertionError("Merge preconditions require the target pull request.")
-    return pull_request
 
 
 async def _terminal(

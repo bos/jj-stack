@@ -17,7 +17,11 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._cleanup_actions import check_tracked_review
-from jj_stack.commands._github_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import (
+    GithubStackSelection,
+    dissolve_github_stack,
+    selected_github_stack,
+)
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
@@ -127,11 +131,6 @@ async def _run_github_unstack(
             if github_stack is None:
                 console.output(t"No GitHub stack grouping #{stack_number} was found.")
                 return 0
-            selection = GithubStackSelection(
-                github_client,
-                github_stack.pull_request_numbers,
-            )
-            observed = (github_stack,)
         else:
             state, change_ids, pull_numbers = _resolve_local_github_stack(
                 context=context,
@@ -150,12 +149,13 @@ async def _run_github_unstack(
             )
             selection = GithubStackSelection(github_client, pull_numbers)
             observed = await selection.active_stacks()
+            github_stack = selected_github_stack(
+                selected_pull_numbers=pull_numbers,
+                stacks=observed,
+            )
 
-        github_stack = (
-            await selection.recheck_active_suffix(observed=observed)
-            if dry_run
-            else await selection.dissolve_exact(observed=observed)
-        )
+        if github_stack is not None and not dry_run:
+            await dissolve_github_stack(github_client=github_client, stack=github_stack)
 
     if github_stack is None:
         console.output("No GitHub stack grouping was found for the selected pull requests.")

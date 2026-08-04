@@ -69,6 +69,26 @@ def selected_github_stack(
     return stack
 
 
+async def dissolve_github_stack(
+    *,
+    github_client: GithubClient,
+    stack: GithubStack,
+) -> None:
+    """Dissolve an observed stack and reject an incomplete mutation result."""
+
+    try:
+        remaining = await github_client.unstack(stack_number=stack.number)
+    except GithubClientError as error:
+        raise CliError(t"Could not remove GitHub stack grouping #{stack.number}.") from error
+    if remaining is not None:
+        members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
+        raise CliError(
+            t"GitHub stack #{stack.number} still contains {members}.",
+            hint=t"Resolve its locked pull requests, then retry "
+            t"{ui.cmd(f'jj-stack unstack --stack {stack.number}')}.",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class GithubStackSelection:
     """Live stack membership for one exact ordered PR selection."""
@@ -112,52 +132,3 @@ class GithubStackSelection:
             t"GitHub stack #{stack_number} blocks this jj-stack operation.",
             hint=t"Run {ui.cmd(f'jj-stack unstack --stack {stack_number}')} and retry.",
         )
-
-    async def dissolve_exact(
-        self,
-        *,
-        observed: tuple[GithubStack, ...] | None = None,
-    ) -> GithubStack | None:
-        """Dissolve one exact selected resource before mutating its pull requests."""
-
-        current = await self.recheck_active_suffix(observed=observed)
-        if current is None:
-            return None
-        try:
-            remaining = await self.github_client.unstack(stack_number=current.number)
-        except GithubClientError as error:
-            raise CliError(
-                t"Could not remove GitHub stack grouping #{current.number}."
-            ) from error
-        if remaining is not None:
-            members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
-            raise CliError(
-                t"GitHub stack #{current.number} still contains {members}.",
-                hint=t"Resolve its locked pull requests, then retry "
-                t"{ui.cmd(f'jj-stack unstack --stack {current.number}')}.",
-            )
-        return current
-
-    async def recheck_active_suffix(
-        self,
-        *,
-        observed: tuple[GithubStack, ...] | None = None,
-    ) -> GithubStack | None:
-        """Return the current resource after confirming its active membership."""
-
-        stacks = observed if observed is not None else await self.active_stacks()
-        if not stacks:
-            return None
-        stack = selected_github_stack(selected_pull_numbers=self.pull_numbers, stacks=stacks)
-        assert stack is not None
-        try:
-            current = await self.github_client.get_stack(stack_number=stack.number)
-        except GithubClientError as error:
-            raise CliError(t"Could not inspect GitHub stack #{stack.number}.") from error
-        if current.pull_request_numbers != stack.pull_request_numbers:
-            raise CliError(
-                t"GitHub stack #{stack.number} changed before jj-stack could remove its "
-                t"grouping.",
-                hint=t"Retry {ui.cmd(f'jj-stack unstack --stack {stack.number}')}.",
-            )
-        return current

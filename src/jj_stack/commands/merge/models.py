@@ -55,7 +55,6 @@ class PreparedMerge:
 class MergeExecutionInputs:
     """Mutation dependencies independent of normal stack/status preparation."""
 
-    context: CommandContext
     remote_name: str
     selected_revset: str
     trunk_branch: str

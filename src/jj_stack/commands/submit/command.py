@@ -49,7 +49,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._github_stack_safety import GithubStackSelection
+from jj_stack.commands._github_stack_safety import dissolve_github_stack
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError
 from jj_stack.formatting import short_change_id
@@ -587,10 +587,7 @@ async def run_submit_async(
         )
         if github_stack_plan.action == "replace" and not dry_run:
             assert (github_stack := github_stack_plan.affected_stack) is not None
-            await GithubStackSelection(
-                github_client,
-                github_stack.pull_request_numbers,
-            ).dissolve_exact(observed=(github_stack,))
+            await dissolve_github_stack(github_client=github_client, stack=github_stack)
             github_stack_plan = GithubStackPlan("create" if len(pending_syncs) > 1 else "none")
         if not dry_run:
             # GitHub has no transaction spanning review branches, pull requests, and stack
