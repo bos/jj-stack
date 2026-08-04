@@ -384,11 +384,6 @@ it, or clean up the stale saved review, then run `list` again.
 `jj-stack` takes one lock per repository so two mutating commands cannot interleave. If another
 `jj-stack` is genuinely running, wait for it to finish.
 
-A variant of the message says the recorded holder is no longer running. That means the record of
-who took the lock is stale while the lock itself is still held. The operating system holds the
-lock and drops it when the owning process exits, so waiting a moment and rerunning the command is
-the whole fix. Do not delete anything by hand.
-
 ## You want to close a stack without merging it
 
 Cause:

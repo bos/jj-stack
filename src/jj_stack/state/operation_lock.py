@@ -15,7 +15,6 @@ from types import TracebackType
 from typing import BinaryIO
 
 from jj_stack.errors import CliError
-from jj_stack.system import pid_is_alive
 
 LOCK_FILENAME = "operation.lock"
 HOLDER_FILENAME = "operation-lock.json"
@@ -116,9 +115,6 @@ def try_acquire_operation_lock(
         return None
 
     try:
-        stale_holder = read_operation_lock_holder(holder_path.parent)
-        if stale_holder is not None and not pid_is_alive(stale_holder.pid):
-            holder_path.unlink(missing_ok=True)
         holder = OperationLockHolder(
             command=command,
             pid=os.getpid(),
@@ -218,12 +214,6 @@ def _write_holder(holder_path: Path, holder: OperationLockHolder) -> None:
 def _operation_lock_busy_message(holder: OperationLockHolder | None) -> str:
     if holder is None:
         return "Another jj-stack operation is already running."
-    if not pid_is_alive(holder.pid):
-        return (
-            f"Operation lock is held but the recorded {holder.command} holder "
-            f"(PID {holder.pid}, started {holder.started_at}) is no longer running. "
-            f"Wait for the previous process to exit or retry shortly."
-        )
     return (
         f"Another jj-stack {holder.command} operation is already running "
         f"(PID {holder.pid}, started {holder.started_at})."
