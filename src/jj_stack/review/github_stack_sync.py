@@ -195,7 +195,8 @@ def build_selected_github_stack_sync(
                 )
             )
             continue
-        if selected_by_change_id[candidate.change_id].immutable:
+        selected_revision = selected_by_change_id[candidate.change_id]
+        if selected_revision.immutable and selected_revision.commit_id != member.head.sha:
             raise CliError(
                 t"GitHub still lists PR #{member.number} as active in stack #{stack.number}, "
                 t"but {ui.change_id(candidate.change_id)} is already immutable here, so this "
@@ -203,7 +204,7 @@ def build_selected_github_stack_sync(
                 hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then "
                 t"rerun sync once it reports the merge.",
             )
-        if selected_by_change_id[candidate.change_id].holds_unpublished_edit(
+        if selected_revision.holds_unpublished_edit(
             (candidate.submitted_baseline.commit_id, member.head.sha)
         ):
             raise CliError(
