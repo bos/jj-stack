@@ -244,12 +244,7 @@ def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
     stack = selected_stack(repo)
     middle_change_id = stack.revisions[1].change_id
     state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    state_store.retire_review(
-        middle_change_id,
-        expected_identity=state.review_identities[middle_change_id],
-        expected_baseline=state.submitted_baselines[middle_change_id],
-    )
+    state_store.retire_review(middle_change_id)
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()

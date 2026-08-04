@@ -152,7 +152,6 @@ def _resolve_merge_target(
 ) -> tuple[str | None, str | None]:
     if pull_request is not None:
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
-            action_name="merge",
             jj_client=context.jj_client,
             pull_request_reference=pull_request,
             revset=revset,
@@ -186,12 +185,6 @@ def _prepare_merge(
         revset=revset,
     )
     prepared = prepared_status.prepared
-    for revision in prepared.stack.revisions:
-        if prepared.state.issues_for(revision.change_id):
-            raise CliError(
-                t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
-                hint=t"Repair it with {ui.cmd('relink')} before merging the review.",
-            )
     if prepared.remote is None:
         message = prepared.remote_error or t"Could not determine which Git remote to use."
         raise CliError(

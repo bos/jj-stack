@@ -160,17 +160,13 @@ async def _run_relink_async(
         raise CliError(
             t"Remote branch {ui.bookmark(branch)} changed while relink was preparing; retry."
         )
-    state = context.state_store.load()
     _ensure_relinkable_cached_link(
         change_id=revision.change_id,
         identity=identity,
-        state=state,
+        state=context.state_store.load(),
     )
     context.state_store.relink_review(
         revision.change_id,
-        expected_identity=state.review_identities.get(revision.change_id),
-        expected_baseline=state.submitted_baselines.get(revision.change_id),
-        expected_issues=state.issues_for(revision.change_id),
         identity=identity,
         baseline=SubmittedBaseline(commit_id=head_sha),
     )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import jj_stack.ui as ui
-from jj_stack.errors import CliError, DriftError
+from jj_stack.errors import DriftError
 from jj_stack.models.git import GitRemote
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalStack
@@ -24,17 +24,11 @@ def prepare_submit_revisions(
 
     prepared: list[PreparedSubmitRevision] = []
     for resolution, revision in zip(branch_resolutions, stack.revisions, strict=True):
-        identity = state.review_identities.get(revision.change_id)
-        baseline = state.submitted_baselines.get(revision.change_id)
+        review = state.tracked_review(revision.change_id)
         remote_target = remote_targets.get(resolution.branch)
 
-        if identity is not None:
-            if baseline is None:
-                raise CliError(
-                    t"Saved PR tracking for {ui.change_id(revision.change_id)} has no last "
-                    t"submitted commit.",
-                    hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
-                )
+        if review is not None:
+            identity = review.review_identity
             if identity.head_ref != resolution.branch:
                 raise DriftError(
                     t"Saved PR tracking for {ui.change_id(revision.change_id)} names branch "
@@ -53,7 +47,10 @@ def prepare_submit_revisions(
                         t"{ui.cmd('jj-stack cleanup')}, and submit it again."
                     ),
                 )
-            if remote_target not in {baseline.commit_id, revision.commit_id}:
+            if remote_target not in {
+                review.submitted_baseline.commit_id,
+                revision.commit_id,
+            }:
                 raise DriftError(
                     t"Review branch "
                     t"{ui.bookmark(f'{resolution.branch}@{remote.name}')} points to an "
@@ -64,12 +61,6 @@ def prepare_submit_revisions(
                         t"before submitting again."
                     ),
                 )
-        elif baseline is not None:
-            raise CliError(
-                t"Saved PR tracking for {ui.change_id(revision.change_id)} has a last "
-                t"submitted commit but no pull request identity.",
-                hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
-            )
         elif resolution.recovered_target is not None:
             if remote_target != resolution.recovered_target:
                 raise DriftError(

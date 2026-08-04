@@ -24,7 +24,6 @@ DriftKind = Literal[
     "remote_branch_deleted",
     "remote_branch_drift",
     "trunk_advanced",
-    "wrong_saved_pr_number",
 ]
 DriftOutcome = Literal["fail_closed", "success"]
 SubmitRetryFailurePoint = Literal[
@@ -123,8 +122,8 @@ class DriftKindSpec:
     """Transition metadata for one external-drift kind.
 
     `boundary` names the state-holder the drift mutates: `github_prs` (the PR
-    database), `remote_refs` (the remote Git branch namespace), `tracking_store`
-    (jj-stack's saved beliefs), or `local_jj` (the local DAG and bookmark view).
+    database), `remote_refs` (the remote Git branch namespace), or `local_jj`
+    (the local DAG and bookmark view).
     `expected_outcome` is the model's verdict for a submit issued after the
     drift. Fail-closed kinds carry the contractual `(exit code, diagnosis)`
     pairs the CLI may report: a `DriftError` condition, an
@@ -133,7 +132,7 @@ class DriftKindSpec:
     repair path — from satisfying the model.
     """
 
-    boundary: Literal["github_prs", "local_jj", "remote_refs", "tracking_store"]
+    boundary: Literal["github_prs", "local_jj", "remote_refs"]
     expected_outcome: DriftOutcome
     failures: tuple[tuple[int, str], ...]
     needs_label: bool
@@ -199,12 +198,6 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
         expected_outcome="success",
         failures=(),
         needs_label=False,
-    ),
-    "wrong_saved_pr_number": DriftKindSpec(
-        boundary="tracking_store",
-        expected_outcome="fail_closed",
-        failures=((1, "saved_pull_request_mismatch"),),
-        needs_label=True,
     ),
 }
 

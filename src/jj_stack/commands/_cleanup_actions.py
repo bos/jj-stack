@@ -91,12 +91,6 @@ def check_tracked_review(
             t"different GitHub repository; point the remote back at it, or reattach the "
             t"change with {ui.cmd('jj-stack relink')}"
         )
-    elif change_id in observation.duplicate_claim_change_ids:
-        reason = (
-            t"cannot inspect saved PR #{pull_request_number} because multiple tracked changes "
-            t"claim its PR number or branch; find them with {ui.cmd('jj-stack list')} and drop "
-            t"the wrong one with {ui.cmd('jj-stack unstack --local')}"
-        )
     elif pull_request is None:
         reason = (
             t"PR #{pull_request_number} is no longer on GitHub; attach a replacement with "

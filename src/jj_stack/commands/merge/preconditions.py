@@ -35,10 +35,6 @@ def merge_precondition_error(
         return "GitHub no longer reports the planned repository"
     if github_repository.default_branch not in (None, "", expected_trunk_branch):
         return "GitHub no longer reports the planned trunk branch as its default"
-    if any(
-        revision.change_id in observation.duplicate_claim_change_ids for revision in revisions
-    ):
-        return "multiple saved changes now claim the same pull request or review branch"
     for revision in revisions:
         error = _review_precondition_error(
             expected_bases=expected_bases.get(revision.change_id, ()),

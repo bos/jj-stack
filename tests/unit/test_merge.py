@@ -146,7 +146,6 @@ def test_merge_preconditions_reject_repository_drift() -> None:
             owner="other",
             repo="widgets",
         ),
-        duplicate_claim_change_ids=frozenset(),
         fetched_trunk_commit_id=None,
         github_repository=_repository(
             allow_merge_commit=False,

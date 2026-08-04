@@ -10,7 +10,7 @@ from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review import status as status_module
 from jj_stack.review.path import SelectedReviewPath
@@ -82,7 +82,8 @@ def test_prepare_status_observes_only_exact_saved_review_branches(monkeypatch) -
     state = ReviewState(
         review_identities={
             first.change_id: _identity(head_ref="jj-stack/feature-1-aaaaaaaa"),
-        }
+        },
+        submitted_baselines={first.change_id: SubmittedBaseline(commit_id=first.commit_id)},
     )
     client = _PrepareStatusClient(
         _stack_for_status(first, second),
@@ -108,12 +109,14 @@ def test_prepare_status_reloads_saved_branch_after_fetch(monkeypatch) -> None:
         change_id="aaaaaaaa1234",
     )
     stale_state = ReviewState(
-        review_identities={revision.change_id: _identity(head_ref="jj-stack/stale", pr_number=1)}
+        review_identities={revision.change_id: _identity(head_ref="jj-stack/stale", pr_number=1)},
+        submitted_baselines={revision.change_id: SubmittedBaseline(commit_id=revision.commit_id)},
     )
     refreshed_state = ReviewState(
         review_identities={
             revision.change_id: _identity(head_ref="jj-stack/refreshed", pr_number=2)
-        }
+        },
+        submitted_baselines={revision.change_id: SubmittedBaseline(commit_id=revision.commit_id)},
     )
     client = _PrepareStatusClient(
         _stack_for_status(revision),
@@ -146,7 +149,8 @@ def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) 
                 head_ref="jj-stack/feature-1-aaaaaaaa",
                 pr_number=1,
             )
-        }
+        },
+        submitted_baselines={revision.change_id: SubmittedBaseline(commit_id=revision.commit_id)},
     )
     client = _PrepareStatusClient(
         _stack_for_status(revision),

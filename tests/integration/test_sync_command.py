@@ -19,7 +19,7 @@ from ..support.integration_helpers import (
     selected_stack,
     write_file,
 )
-from ..support.submit_property_harness import advance_remote_trunk, update_remote_ref
+from ..support.submit_property_harness import update_remote_ref
 from .submit_command_helpers import (
     configure_submit_environment,
     read_remote_ref,
@@ -553,7 +553,6 @@ def test_sync_all_requires_terminal_stack_merge_for_exact_stack_member(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     first, second = selected_stack(repo).revisions
     state_store = ReviewStateStore.for_repo(repo)
-    second_baseline = state_store.load().submitted_baselines[second.change_id]
     fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.auto_merge_reachable_heads = False
     update_remote_ref(fake_repo, branch="main", target=first.commit_id)
@@ -574,35 +573,6 @@ def test_sync_all_requires_terminal_stack_merge_for_exact_stack_member(
     assert "still lists PR #1 as an active member" in " ".join(blocked.err.split())
     assert first.change_id in state_store.load().review_identities
     assert fake_repo.pull_requests[1].state == "open"
-
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[1].merged_at = "2026-07-23T12:00:00Z"
-    fake_repo.pull_requests[1].merge_commit_sha = first.commit_id
-    advance_remote_trunk(fake_repo)
-    remote_survivor = fake_repo.rewrite_pull_request_onto_base(
-        fake_repo.pull_requests[2],
-        base_ref="main",
-    )
-    state_path = resolve_state_path(repo)
-    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-    raw_state["submitted_baselines"].pop(second.change_id)
-    write_file(state_path, json.dumps(raw_state))
-    applied_exit = run_main(repo, config_path, "sync", "--all")
-    applied = capsys.readouterr()
-
-    assert applied_exit == 1
-    assert "still has active members tracked here" in " ".join(applied.err.split())
-    assert first.change_id in state_store.load().review_identities
-
-    raw_state["submitted_baselines"][second.change_id] = second_baseline.model_dump(mode="json")
-    write_file(state_path, json.dumps(raw_state))
-    selected_exit = run_main(repo, config_path, "sync", second.change_id)
-    selected = capsys.readouterr()
-
-    assert selected_exit == 0, (selected.out, selected.err)
-    assert first.change_id not in state_store.load().review_identities
-    assert state_store.load().submitted_baselines[second.change_id].commit_id == remote_survivor
-    assert fake_repo.github_stacks == {7: (1, 2)}
 
 
 def test_sync_does_not_trust_active_stack_head_drift_without_merged_history(

@@ -35,7 +35,12 @@ from jj_stack.models.github import (
     GithubPullRequestReview,
     GithubPullRequestReviewUser,
 )
-from jj_stack.models.review_state import ReviewState, SubmittedBaseline
+from jj_stack.models.review_state import (
+    ReviewIdentity,
+    ReviewState,
+    SubmittedBaseline,
+    TrackedReview,
+)
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import ResolvedReviewBranch
 from tests.support.review_state import make_review_identity
@@ -133,8 +138,7 @@ def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
             discovered_pull_request=None,
             expected_remote_target="commit-17",
             repository_key=("octo-org", "stacked-review"),
-            review_identity=identity,
-            submitted_baseline=SubmittedBaseline(commit_id="commit-17"),
+            tracked_review=_tracked_review(identity),
         )
 
 
@@ -148,8 +152,7 @@ def test_pull_request_link_rejects_a_saved_review_from_another_repository() -> N
             discovered_pull_request=None,
             expected_remote_target="commit-17",
             repository_key=("octo-org", "other-repo"),
-            review_identity=identity,
-            submitted_baseline=SubmittedBaseline(commit_id="commit-17"),
+            tracked_review=_tracked_review(identity),
         )
 
 
@@ -168,9 +171,20 @@ def test_pull_request_link_rejects_remote_and_pr_head_mismatch() -> None:
             discovered_pull_request=pull_request,
             expected_remote_target="remote-commit",
             repository_key=("octo-org", "stacked-review"),
-            review_identity=identity,
-            submitted_baseline=SubmittedBaseline(commit_id="remote-commit"),
+            tracked_review=_tracked_review(identity, commit_id="remote-commit"),
         )
+
+
+def _tracked_review(
+    identity: ReviewIdentity,
+    *,
+    commit_id: str = "commit-17",
+) -> TrackedReview:
+    return TrackedReview(
+        change_id="abcdefghijk",
+        review_identity=identity,
+        submitted_baseline=SubmittedBaseline(commit_id=commit_id),
+    )
 
 
 def test_preflight_private_commits_rejects_blocked_revision() -> None:

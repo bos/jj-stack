@@ -200,7 +200,6 @@ async def observe_tracked_review(
     if (
         review.identity != candidate.review_identity
         or review.baseline != candidate.submitted_baseline
-        or candidate.change_id in observation.duplicate_claim_change_ids
     ):
         return None, "saved PR tracking changed while checking the merged PR"
     return observation, None
@@ -241,8 +240,6 @@ async def retire_reviews(
             try:
                 context.state_store.retire_review(
                     candidate.change_id,
-                    expected_identity=candidate.review_identity,
-                    expected_baseline=candidate.submitted_baseline,
                 )
             except (OSError, RuntimeError, ValueError) as error:
                 results[index] = replace(result, retirement_failure=error_message(error))

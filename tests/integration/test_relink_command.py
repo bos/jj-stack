@@ -83,8 +83,6 @@ def test_relink_replaces_stale_submitted_commit_with_remote_pr_head(
     baseline = initial_state.submitted_baselines[change_id]
     state_store.relink_review(
         change_id,
-        expected_identity=identity,
-        expected_baseline=baseline,
         identity=identity,
         baseline=baseline.model_copy(update={"commit_id": stale_submitted_commit}),
     )

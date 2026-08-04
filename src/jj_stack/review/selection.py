@@ -69,10 +69,8 @@ def resolve_orphaned_pull_request(
     live-link path handle it) or when no matching tracked record exists (let
     the live-link path raise its targeted diagnostic).
 
-    Raises `CliError` when two or more tracked records claim the same pull
-    request number. The tracking data is ambiguous; the user must discard an
-    incorrect claim or relink it before `cleanup --pull-request` can act,
-    because there is no single orphan target to clean up.
+    Raises `CliError` when two or more tracked records claim the same pull request number. This
+    can happen when tracking remains from a repository used before the remote was retargeted.
 
     The membership check matches what `list` renders as an `orphan` row: a visible revision
     outside the supported review stacks should still be cleaned up through this path rather than
@@ -94,8 +92,8 @@ def resolve_orphaned_pull_request(
         raise AmbiguousSelectionError(
             t"PR #{pull_request_number} is claimed by multiple tracked records ({rendered}).",
             hint=(
-                t"Discard an incorrect claim with {ui.cmd('unstack --local')} or repair it "
-                t"with {ui.cmd('relink')} before retrying."
+                t"Use the change ID to select the intended review, or point the remote at its "
+                t"repository before retrying."
             ),
         )
     change_id = matching_change_ids[0]
@@ -127,14 +125,12 @@ def resolve_pull_request_number(
 
 def resolve_linked_change_for_pull_request(
     *,
-    action_name: str,
     jj_client: JjClient,
     pull_request_reference: str,
     revset: str | None,
 ) -> tuple[int, str]:
     """Resolve `--pull-request` to one linked visible local change ID."""
 
-    action_label = action_name.capitalize()
     if revset is not None:
         raise UsageError(
             t"Use either {ui.cmd('<revset>')} or {ui.cmd('--pull-request')}, not both."
@@ -160,7 +156,8 @@ def resolve_linked_change_for_pull_request(
     if len(matching_change_ids) > 1:
         raise AmbiguousSelectionError(
             t"PR #{pull_request_number} is linked to multiple local changes.",
-            hint=t"{action_label} by explicit revision after repairing the links.",
+            hint=t"Use an explicit change ID after pointing the remote at the intended "
+            t"repository.",
         )
 
     return pull_request_number, matching_change_ids[0]

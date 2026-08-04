@@ -14,7 +14,6 @@ from jj_stack.config import AppConfig, load_config
 from jj_stack.errors import CliError
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
-from jj_stack.models.review_state import ReviewStateRecordIssue
 from jj_stack.review.branches import (
     install_review_namespace,
 )
@@ -86,32 +85,7 @@ def bootstrap_context(
             repository=repository,
         ),
         repo_root=repo_root,
-        state_store=ReviewStateStore.for_repo(
-            repo_root,
-            issue_reporter=_report_review_state_issues,
-        ),
-    )
-
-
-def _report_review_state_issues(
-    issues: tuple[ReviewStateRecordIssue, ...],
-) -> None:
-    for issue in issues:
-        component = (
-            "pull request details"
-            if issue.record_type == "review_identity"
-            else "last submitted commit"
-        )
-        console.warning(
-            t"Saved {component} for {ui.change_id(issue.change_id)} is unavailable; "
-            t"unrelated reviews will continue."
-        )
-    console.warning(
-        ui.prefixed_line(
-            "Hint: ",
-            t"Run {ui.cmd('jj-stack relink --help')} to replace an unavailable record "
-            t"from its live pull request.",
-        )
+        state_store=ReviewStateStore.for_repo(repo_root),
     )
 
 

@@ -279,45 +279,6 @@ def test_cleanup_rechecks_open_dependents_before_deleting_branch(
     assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
 
 
-def test_cleanup_blocks_duplicate_saved_pr_claims_before_deleting_artifacts(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = selected_stack(repo)
-    bottom_change_id, head_change_id = (revision.change_id for revision in stack.revisions)
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    bottom_identity = state.review_identities[bottom_change_id]
-    head_identity = state.review_identities[head_change_id]
-    head_baseline = state.submitted_baselines[head_change_id]
-    state_store.relink_review(
-        head_change_id,
-        expected_identity=head_identity,
-        expected_baseline=head_baseline,
-        identity=head_identity.model_copy(update={"pr_number": bottom_identity.pr_number}),
-        baseline=head_baseline,
-    )
-    ambiguous_state = state_store.load()
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[2].state = "closed"
-
-    exit_code = run_main(repo, config_path, "cleanup")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "multiple tracked changes claim its PR number or branch" in " ".join(
-        captured.out.split()
-    )
-    assert "pull request:" in captured.out
-    assert "close:" not in captured.out
-    assert state_store.load() == ambiguous_state
-    for identity in ambiguous_state.review_identities.values():
-        assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
-
-
 def test_cleanup_isolates_malformed_review_observation(
     tmp_path: Path,
     monkeypatch,

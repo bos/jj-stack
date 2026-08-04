@@ -24,7 +24,7 @@ from jj_stack.github.error_messages import github_target_unavailable_messages
 from jj_stack.github.resolution import GithubTarget, resolve_github_target
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubStack
-from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.models.review_state import ReviewState
 from jj_stack.review.observation import observe_reviews
 from jj_stack.review.selected import select_review_path
 from jj_stack.review.selection import (
@@ -201,18 +201,11 @@ def _resolve_local_github_stack(
     change_ids: list[str] = []
     pull_numbers: list[int] = []
     for revision in stack.revisions:
-        identity = state.review_identities.get(revision.change_id)
-        baseline = state.submitted_baselines.get(revision.change_id)
-        if identity is None and baseline is None:
+        review = state.tracked_review(revision.change_id)
+        if review is None:
             continue
-        if identity is None or baseline is None:
-            raise CliError(
-                t"Cannot inspect the saved pull request for "
-                t"{ui.change_id(revision.change_id)} because its details are incomplete.",
-                hint=t"Run {ui.cmd('relink')} to repair the saved review before retrying.",
-            )
         change_ids.append(revision.change_id)
-        pull_numbers.append(identity.pr_number)
+        pull_numbers.append(review.review_identity.pr_number)
     return state, tuple(change_ids), tuple(pull_numbers)
 
 
@@ -270,33 +263,22 @@ def _run_local_unstack(
             state=state,
         ).stack
     actions: list[LocalUnstackAction] = []
-    forgotten: list[tuple[str, ReviewIdentity, SubmittedBaseline]] = []
+    forgotten: list[str] = []
     for revision in stack.revisions:
-        review_identity = state.review_identities.get(revision.change_id)
-        submitted_baseline = state.submitted_baselines.get(revision.change_id)
-        if review_identity is None and submitted_baseline is None:
+        review = state.tracked_review(revision.change_id)
+        if review is None:
             continue
-        if review_identity is None or submitted_baseline is None:
-            raise CliError(
-                t"Cannot forget the saved pull request for {ui.change_id(revision.change_id)} "
-                t"because its details are incomplete.",
-                hint=t"Run {ui.cmd('relink')} to repair the saved review before retrying.",
-            )
-        forgotten.append((revision.change_id, review_identity, submitted_baseline))
+        forgotten.append(revision.change_id)
         actions.append(
             LocalUnstackAction(
-                branch=review_identity.head_ref,
+                branch=review.review_identity.head_ref,
                 change_id=revision.change_id,
                 subject=revision.subject,
             )
         )
     if actions and not dry_run:
-        for change_id, review_identity, submitted_baseline in forgotten:
-            context.state_store.retire_review(
-                change_id,
-                expected_identity=review_identity,
-                expected_baseline=submitted_baseline,
-            )
+        for change_id in forgotten:
+            context.state_store.retire_review(change_id)
     return LocalUnstackResult(actions=tuple(actions), dry_run=dry_run)
 
 
@@ -309,7 +291,6 @@ def _resolve_local_revset(
 ) -> str | None:
     if pull_request is not None:
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
-            action_name=action_name,
             jj_client=context.jj_client,
             pull_request_reference=pull_request,
             revset=revset,

@@ -115,7 +115,6 @@ def _run_list(
     context: CommandContext,
 ) -> int:
     state = context.state_store.load()
-    state_incomplete = bool(state.record_issues)
     if state.review_identities:
         with console.spinner(description="Inspecting local stacks"):
             repository_paths = observe_repository_paths(
@@ -145,10 +144,10 @@ def _run_list(
                     indent=2,
                 )
             )
-            return EXIT_INCOMPLETE if state_incomplete else 0
+            return 0
         if not orphan_rows:
             console.output("No stacks.")
-            return EXIT_INCOMPLETE if state_incomplete else 0
+            return 0
         color_when = context.jj_client.resolve_color_when(
             cli_color=requested_color_mode(),
             stdout_is_tty=sys.stdout.isatty(),
@@ -166,7 +165,7 @@ def _run_list(
             )
         )
         _emit_orphan_hint(orphan_rows)
-        return EXIT_INCOMPLETE if state_incomplete else 0
+        return 0
     github_target = resolve_github_target(context.jj_client.list_git_remotes())
     with console.spinner(description="Inspecting review branches"):
         observed_remote_targets = observe_remote_targets_for_status(
@@ -213,7 +212,7 @@ def _run_list(
                 indent=2,
             )
         )
-        return EXIT_INCOMPLETE if state_incomplete or any(row.incomplete for row in rows) else 0
+        return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
     color_when = context.jj_client.resolve_color_when(
         cli_color=requested_color_mode(),
         stdout_is_tty=sys.stdout.isatty(),
@@ -235,7 +234,7 @@ def _run_list(
     )
     _emit_orphan_hint(orphan_rows)
     _emit_stale_stacks_advisory(discovered=ordered, state=state)
-    return EXIT_INCOMPLETE if state_incomplete or any(row.incomplete for row in rows) else 0
+    return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
 
 
 def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:

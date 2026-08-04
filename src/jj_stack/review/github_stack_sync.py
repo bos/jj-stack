@@ -286,7 +286,6 @@ def _validated_member_pull_request(
     if (
         observed is None
         or observed.identity != identity
-        or candidate.change_id in observation.duplicate_claim_change_ids
         or pull_request is None
         or not identity.matches_pull_request(pull_request)
         or pull_request.head.ref != member.head.ref

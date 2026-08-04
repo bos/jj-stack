@@ -17,7 +17,6 @@ from jj_stack.review.finish import (
     retire_reviews,
 )
 from jj_stack.review.github_stack_sync import observe_github_stacks
-from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.review.trunk_evidence import (
     CommitAncestry,
     TrackedReview,
@@ -40,20 +39,8 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
     )
     trunk = context.jj_client.resolve_revision("trunk()")
     state = context.state_store.load()
-    had_failure = bool(state.record_issues)
-    for issue in state.record_issues:
-        condition = "incomplete" if issue.validation_error.endswith(" is missing.") else "invalid"
-        component = (
-            "pull request details are"
-            if issue.record_type == "review_identity"
-            else "last submitted commit is"
-        )
-        console.warning(
-            t"Skip {ui.change_id(issue.change_id)}: its saved {component} {condition}; "
-            t"repair the tracking with {ui.cmd('relink')}."
-        )
+    had_failure = False
     all_candidates = state.tracked_reviews()
-    duplicate_change_ids = duplicate_review_claim_change_ids(state.review_identities)
     ancestry_by_commit_id = classify_commit_ancestries(
         commit_ids=tuple(candidate.submitted_baseline.commit_id for candidate in all_candidates),
         context=context,
@@ -98,7 +85,6 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
                     ancestry=ancestry,
                     candidate=candidate,
                     context=context,
-                    duplicate=candidate.change_id in duplicate_change_ids,
                     merge_ancestry=merge_ancestry,
                     pull_request=pull_request,
                     repository=target.repository,
@@ -204,13 +190,10 @@ def _report_global_nonexact_candidate(
     ancestry: CommitAncestry,
     candidate: TrackedReview,
     context: CommandContext,
-    duplicate: bool,
     merge_ancestry: dict[str, CommitAncestry],
     pull_request: GithubPullRequest | GithubClientError | None,
     repository: github_resolution.GithubRepoAddress,
 ) -> bool:
-    if duplicate:
-        return _warn_global_preserved(candidate, "another tracked change claims the same review")
     if not isinstance(pull_request, GithubPullRequest):
         reason = (
             t"could not inspect its current review: {pull_request}"

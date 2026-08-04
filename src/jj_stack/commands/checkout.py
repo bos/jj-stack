@@ -125,8 +125,6 @@ def _checkout_saved_stack(
         revision
         for revision in stack.revisions
         if state.review_identities.get(revision.change_id) is None
-        or state.submitted_baselines.get(revision.change_id) is None
-        or state.issues_for(revision.change_id)
     )
     if incomplete:
         raise CliError(
@@ -442,14 +440,6 @@ def _save_checkout_tracking(
     if not changed_count:
         return 0
     context.state_store.relink_reviews(
-        expected={
-            change_id: (
-                state.review_identities.get(change_id),
-                state.submitted_baselines.get(change_id),
-            )
-            for change_id in replacements
-        },
-        expected_issues={change_id: state.issues_for(change_id) for change_id in replacements},
         replacements=replacements,
     )
     return changed_count

@@ -8,11 +8,7 @@ from pathlib import Path
 import pytest
 
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.state.store import (
-    ReviewStateConflictError,
-    ReviewStateError,
-    ReviewStateStore,
-)
+from jj_stack.state.store import ReviewStateError, ReviewStateStore
 
 CHANGE_ID = "abcdefghijklmno"
 OTHER_CHANGE_ID = "qrstuvwxyzabcde"
@@ -73,8 +69,6 @@ def test_atomic_relink_failure_preserves_original_pair(
     with pytest.raises(ReviewStateError, match="simulated replace failure"):
         store.relink_review(
             CHANGE_ID,
-            expected_identity=identity,
-            expected_baseline=baseline,
             identity=ReviewIdentity(
                 repository_owner=identity.repository_owner,
                 repository_name=identity.repository_name,
@@ -89,223 +83,33 @@ def test_atomic_relink_failure_preserves_original_pair(
     assert not tuple(tmp_path.glob("state.json.*.tmp"))
 
 
-def test_batch_relink_conflict_changes_no_review_pair(tmp_path: Path) -> None:
-    store = ReviewStateStore(tmp_path / "state.json")
-    first_identity = _identity()
-    second_identity = _identity(change_id=OTHER_CHANGE_ID, pr_number=18)
-    old_baseline = SubmittedBaseline(commit_id="old")
-    raced_baseline = SubmittedBaseline(commit_id="raced")
-    store.create_review(CHANGE_ID, identity=first_identity, baseline=old_baseline)
-    store.create_review(OTHER_CHANGE_ID, identity=second_identity, baseline=old_baseline)
-    store.relink_review(
-        OTHER_CHANGE_ID,
-        expected_identity=second_identity,
-        expected_baseline=old_baseline,
-        identity=second_identity,
-        baseline=raced_baseline,
-    )
-
-    with pytest.raises(ReviewStateConflictError):
-        store.relink_reviews(
-            expected={
-                CHANGE_ID: (first_identity, old_baseline),
-                OTHER_CHANGE_ID: (second_identity, old_baseline),
-            },
-            replacements={
-                CHANGE_ID: (_identity(pr_number=19), SubmittedBaseline(commit_id="new-1")),
-                OTHER_CHANGE_ID: (
-                    _identity(change_id=OTHER_CHANGE_ID, pr_number=20),
-                    SubmittedBaseline(commit_id="new-2"),
-                ),
-            },
-        )
-
-    state = store.load()
-    assert state.review_identities[CHANGE_ID] == first_identity
-    assert state.submitted_baselines[CHANGE_ID] == old_baseline
-    assert state.submitted_baselines[OTHER_CHANGE_ID] == raced_baseline
-
-
-def test_stale_expected_identity_cannot_retire_pair(tmp_path: Path) -> None:
-    store = ReviewStateStore(tmp_path / "state.json")
-    identity = _identity()
-    baseline = SubmittedBaseline(commit_id="abc123")
-    original = store.create_review(CHANGE_ID, identity=identity, baseline=baseline)
-
-    with pytest.raises(ReviewStateConflictError, match="reload and retry"):
-        store.retire_review(
-            CHANGE_ID,
-            expected_identity=_identity(pr_number=99),
-            expected_baseline=baseline,
-        )
-
-    assert store.load() == original
-
-
-def test_store_isolates_identity_v1_inside_schema_four(tmp_path: Path) -> None:
-    state_path = tmp_path / "state.json"
-    legacy_identity = _identity().model_dump(mode="json")
-    legacy_identity["version"] = 1
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": 4,
-                "review_identities": {CHANGE_ID: legacy_identity},
-                "submitted_baselines": {
-                    CHANGE_ID: SubmittedBaseline(commit_id="abc123").model_dump(mode="json")
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    state = ReviewStateStore(state_path).load()
-
-    assert CHANGE_ID not in state.review_identities
-    assert [(issue.record_type, issue.change_id) for issue in state.record_issues] == [
-        ("review_identity", CHANGE_ID)
-    ]
-
-
-def test_store_isolates_identity_with_wrong_branch_suffix(tmp_path: Path) -> None:
-    state_path = tmp_path / "state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": 4,
-                "review_identities": {
-                    CHANGE_ID: _identity(change_id=OTHER_CHANGE_ID).model_dump(mode="json")
-                },
-                "submitted_baselines": {
-                    CHANGE_ID: SubmittedBaseline(commit_id="abc123").model_dump(mode="json")
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    state = ReviewStateStore(state_path).load()
-
-    assert CHANGE_ID not in state.review_identities
-    assert state.issues_for(CHANGE_ID)[0].record_type == "review_identity"
-
-
-def test_unrelated_write_preserves_invalid_record_as_opaque_json(tmp_path: Path) -> None:
-    state_path = tmp_path / "state.json"
-    invalid_identity = {"version": 7, "nested": ["do", {"not": "interpret"}]}
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": 4,
-                "review_identities": {
-                    OTHER_CHANGE_ID: invalid_identity,
-                    CHANGE_ID: _identity().model_dump(mode="json"),
-                },
-                "submitted_baselines": {
-                    CHANGE_ID: SubmittedBaseline(commit_id="abc123").model_dump(mode="json")
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    store = ReviewStateStore(state_path)
-    loaded = store.load()
-
-    store.relink_review(
-        CHANGE_ID,
-        expected_identity=loaded.review_identities[CHANGE_ID],
-        expected_baseline=loaded.submitted_baselines[CHANGE_ID],
-        identity=loaded.review_identities[CHANGE_ID],
-        baseline=SubmittedBaseline(commit_id="def456"),
-    )
-
-    rendered = json.loads(state_path.read_text(encoding="utf-8"))
-    assert rendered["review_identities"][OTHER_CHANGE_ID] == invalid_identity
-
-
-def test_relink_replaces_only_exact_observed_invalid_record(tmp_path: Path) -> None:
-    state_path = tmp_path / "state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": 4,
-                "review_identities": {CHANGE_ID: {"version": 9}},
-                "submitted_baselines": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-    store = ReviewStateStore(state_path)
-    observed = store.load()
-    rendered = json.loads(state_path.read_text(encoding="utf-8"))
-    rendered["review_identities"][CHANGE_ID] = {"version": 8}
-    state_path.write_text(json.dumps(rendered), encoding="utf-8")
-
-    with pytest.raises(ReviewStateConflictError):
-        store.relink_review(
-            CHANGE_ID,
-            expected_identity=None,
-            expected_baseline=None,
-            expected_issues=observed.issues_for(CHANGE_ID),
-            identity=_identity(),
-            baseline=SubmittedBaseline(commit_id="abc123"),
-        )
-
-    current = store.load()
-    with pytest.raises(ReviewStateConflictError):
-        store.relink_review(
-            CHANGE_ID,
-            expected_identity=None,
-            expected_baseline=None,
-            expected_issues=tuple(
-                issue.model_copy(update={"change_id": OTHER_CHANGE_ID})
-                for issue in current.issues_for(CHANGE_ID)
-            ),
-            identity=_identity(),
-            baseline=SubmittedBaseline(commit_id="abc123"),
-        )
-    repaired = store.relink_review(
-        CHANGE_ID,
-        expected_identity=None,
-        expected_baseline=None,
-        expected_issues=current.issues_for(CHANGE_ID),
-        identity=_identity(),
-        baseline=SubmittedBaseline(commit_id="abc123"),
-    )
-    assert repaired.review_identities == {CHANGE_ID: _identity()}
-
-
 @pytest.mark.parametrize(
-    ("observed_baselines", "concurrent_baselines"),
-    (({}, {CHANGE_ID: None}), ({CHANGE_ID: None}, {})),
+    "mutate",
+    (
+        lambda state: state["review_identities"][CHANGE_ID].pop("version"),
+        lambda state: state["submitted_baselines"].clear(),
+        lambda state: state["review_identities"].update(
+            {CHANGE_ID: _identity(change_id=OTHER_CHANGE_ID).model_dump(mode="json")}
+        ),
+    ),
 )
-def test_relink_rejects_concurrent_transition_between_missing_and_null(
-    tmp_path: Path,
-    observed_baselines: dict[str, object],
-    concurrent_baselines: dict[str, object],
-) -> None:
+def test_store_rejects_invalid_complete_file(tmp_path: Path, mutate) -> None:
     state_path = tmp_path / "state.json"
-    identity = _identity()
-    payload = {
+    state = {
         "version": 4,
-        "review_identities": {CHANGE_ID: identity.model_dump(mode="json")},
-        "submitted_baselines": observed_baselines,
+        "review_identities": {CHANGE_ID: _identity().model_dump(mode="json")},
+        "submitted_baselines": {
+            CHANGE_ID: SubmittedBaseline(commit_id="abc123").model_dump(mode="json")
+        },
     }
-    state_path.write_text(json.dumps(payload), encoding="utf-8")
-    store = ReviewStateStore(state_path)
-    observed = store.load()
-    payload["submitted_baselines"] = concurrent_baselines
-    state_path.write_text(json.dumps(payload), encoding="utf-8")
+    mutate(state)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
 
-    with pytest.raises(ReviewStateConflictError):
-        store.relink_review(
-            CHANGE_ID,
-            expected_identity=identity,
-            expected_baseline=observed.submitted_baselines.get(CHANGE_ID),
-            expected_issues=observed.issues_for(CHANGE_ID),
-            identity=identity,
-            baseline=SubmittedBaseline(commit_id="abc123"),
-        )
+    with pytest.raises(ReviewStateError, match="Invalid jj-stack data") as caught:
+        ReviewStateStore(state_path).load()
+
+    assert caught.value.hint is not None
+    assert "mv -i" in str(caught.value.hint)
 
 
 def test_store_rejects_schema_two_without_migration(tmp_path: Path) -> None:

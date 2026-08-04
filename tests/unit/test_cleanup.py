@@ -170,7 +170,6 @@ def _observation(
     pull_request = _pull_request()
     return RepositoryObservation(
         configured_repository=_REPOSITORY,
-        duplicate_claim_change_ids=frozenset(),
         fetched_trunk_commit_id=None,
         github_repository=None,
         open_pull_requests_by_base={BRANCH: ()},

@@ -229,14 +229,7 @@ def _selected_target(
             hint=t"Point jj-stack at a GitHub remote, then rerun. "
             t"{ui.cmd('jj-stack doctor')} reports what it found.",
         )
-    selected = prepared_status.prepared.stack.revisions
-    for revision in selected:
-        if prepared_status.prepared.state.issues_for(revision.change_id):
-            raise CliError(
-                t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
-                hint=t"Repair it with {ui.cmd('relink')} before syncing this path.",
-            )
-    return target, selected
+    return target, prepared_status.prepared.stack.revisions
 
 
 async def _apply_selected_plan(
@@ -361,13 +354,6 @@ async def _apply_selected_plan(
                 context.jj_client.abandon_revisions(abandoned)
             if github_stack_survivors:
                 context.state_store.relink_reviews(
-                    expected={
-                        survivor.candidate.change_id: (
-                            survivor.candidate.review_identity,
-                            survivor.candidate.submitted_baseline,
-                        )
-                        for survivor in github_stack_survivors
-                    },
                     replacements={
                         survivor.candidate.change_id: (
                             survivor.candidate.review_identity,

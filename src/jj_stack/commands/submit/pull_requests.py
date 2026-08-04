@@ -9,7 +9,12 @@ from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError, DriftError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubPullRequest, GithubPullRequestReview
-from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.models.review_state import (
+    ReviewIdentity,
+    ReviewState,
+    SubmittedBaseline,
+    TrackedReview,
+)
 
 from .models import (
     PendingPullRequestSync,
@@ -65,8 +70,7 @@ def ensure_pull_request_syncs_are_safe(
     for pending_sync in pending_syncs:
         prepared_revision = pending_sync.prepared
         change_id = prepared_revision.revision.change_id
-        review_identity = state.review_identities.get(change_id)
-        submitted_baseline = state.submitted_baselines.get(change_id)
+        tracked_review = state.tracked_review(change_id)
         pull_request = pending_sync.discovered_pull_request
         if pull_request is not None and pull_request.is_queued:
             head_change_id = pending_syncs[-1].prepared.revision.change_id
@@ -84,12 +88,9 @@ def ensure_pull_request_syncs_are_safe(
             discovered_pull_request=pending_sync.discovered_pull_request,
             expected_remote_target=prepared_revision.expected_remote_target,
             repository_key=repository_key,
-            review_identity=review_identity,
-            submitted_baseline=submitted_baseline,
+            tracked_review=tracked_review,
         )
-        if options.existing_only and (
-            review_identity is None or submitted_baseline is None or pull_request is None
-        ):
+        if options.existing_only and (tracked_review is None or pull_request is None):
             raise CliError(
                 t"Cannot sync {ui.change_id(change_id)} without its existing pull request.",
                 hint=t"Repair the review link with {ui.cmd('relink')} before retrying.",
@@ -363,16 +364,9 @@ def _ensure_pull_request_link_is_consistent(
     discovered_pull_request: GithubPullRequest | None,
     expected_remote_target: str | None,
     repository_key: tuple[str, str],
-    review_identity: ReviewIdentity | None,
-    submitted_baseline: SubmittedBaseline | None,
+    tracked_review: TrackedReview | None,
 ) -> None:
-    if review_identity is None:
-        if submitted_baseline is not None:
-            raise CliError(
-                t"Saved PR tracking for {ui.change_id(change_id)} has a last submitted "
-                t"commit but no pull request number or branch.",
-                hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
-            )
+    if tracked_review is None:
         if discovered_pull_request is not None:
             raise DriftError(
                 t"GitHub already reports PR #{discovered_pull_request.number} for "
@@ -381,11 +375,7 @@ def _ensure_pull_request_link_is_consistent(
                 hint=t"Adopt that PR explicitly with {ui.cmd('relink')} before submitting.",
             )
         return
-    if submitted_baseline is None:
-        raise CliError(
-            t"Saved PR tracking for {ui.change_id(change_id)} has no last submitted commit.",
-            hint=t"Repair it with {ui.cmd('relink')} before submitting again.",
-        )
+    review_identity = tracked_review.review_identity
     if review_identity.repository_key != repository_key:
         raise DriftError(
             t"Saved PR tracking for {ui.change_id(change_id)} belongs to a different GitHub "

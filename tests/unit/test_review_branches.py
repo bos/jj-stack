@@ -10,6 +10,7 @@ from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import (
     ResolvedReviewBranch,
+    ensure_new_review_branches_unclaimed,
     ensure_unique_review_branches,
     generate_review_branch,
     resolve_review_branches,
@@ -87,6 +88,35 @@ def test_review_branch_resolution_rejects_multiple_changes_on_same_branch() -> N
 
     with pytest.raises(CliError, match="multiple changes to the same branch"):
         ensure_unique_review_branches(resolutions)
+
+
+def test_review_branch_resolution_rejects_new_branch_claimed_by_another_stack() -> None:
+    existing_change_id = "abcdefgh-one"
+    new_change_id = "abcdefgh-two"
+    branch = "jj-stack/shared-abcdefgh"
+
+    identities = {existing_change_id: _identity(head_ref=branch)}
+    resolutions = resolve_review_branches(
+        revisions=(_revision(change_id=new_change_id, description="shared"),),
+        review_identities=identities,
+    )
+
+    with pytest.raises(CliError, match="Cannot create a review on saved branch"):
+        ensure_new_review_branches_unclaimed(
+            resolutions,
+            identities,
+            ("octo-org", "stacked-review"),
+        )
+
+    ensure_new_review_branches_unclaimed(
+        resolutions,
+        {
+            existing_change_id: identities[existing_change_id].model_copy(
+                update={"repository_name": "another-repository"}
+            )
+        },
+        ("octo-org", "stacked-review"),
+    )
 
 
 def _identity(*, head_ref: str) -> ReviewIdentity:

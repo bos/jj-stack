@@ -96,6 +96,31 @@ def resolve_review_branches(
     return resolutions
 
 
+def ensure_new_review_branches_unclaimed(
+    resolutions: tuple[ResolvedReviewBranch, ...],
+    review_identities: Mapping[str, ReviewIdentity],
+    repository_key: tuple[str, str],
+) -> None:
+    saved_by_branch = {
+        identity.head_ref: change_id
+        for change_id, identity in review_identities.items()
+        if identity.repository_key == repository_key
+    }
+    collisions = tuple(
+        resolution.branch
+        for resolution in resolutions
+        if resolution.change_id not in review_identities
+        and resolution.branch in saved_by_branch
+        and saved_by_branch[resolution.branch] != resolution.change_id
+    )
+    if collisions:
+        raise CliError(
+            t"Cannot create a review on saved branch {ui.join(ui.bookmark, collisions)}.",
+            hint=t"Run {ui.cmd('jj-stack list')} to find the change that owns it, then clean "
+            t"up that review or change the new change's subject.",
+        )
+
+
 def ensure_unique_review_branches(
     resolutions: tuple[ResolvedReviewBranch, ...],
 ) -> None:

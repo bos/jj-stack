@@ -181,8 +181,7 @@ def submitted_state_disagreement(
             review_identity = state.review_identities.get(revision.change_id)
             if review_identity is None:
                 continue
-            baseline = state.submitted_baselines.get(revision.change_id)
-            if baseline is not None and baseline.commit_id != revision.commit_id:
+            if state.submitted_baselines[revision.change_id].commit_id != revision.commit_id:
                 disagreements.append(revision.change_id)
     return tuple(disagreements)
 

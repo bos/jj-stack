@@ -35,7 +35,6 @@ class RepositoryObservation:
     """Fresh review facts shared by mutation policies."""
 
     configured_repository: github_resolution.GithubRepoAddress | None
-    duplicate_claim_change_ids: frozenset[str]
     fetched_trunk_commit_id: str | None
     github_repository: GithubRepository | None
     open_pull_requests_by_base: Mapping[str, tuple[GithubPullRequest, ...]] | None
@@ -48,7 +47,7 @@ class RepositoryObservation:
 def duplicate_review_claim_change_ids(
     identities: Mapping[str, ReviewIdentity],
 ) -> frozenset[str]:
-    """Invalidate every change participating in a duplicate PR or head claim."""
+    """Return every change participating in a duplicate PR or head claim."""
 
     values = identities.values()
     pr_claims = Counter((item.repository_key, item.pr_number) for item in values)
@@ -80,9 +79,9 @@ async def observe_reviews(
     store = context.state_store if context is not None else state_store
     assert store is not None
     state = store.load()
-    claim_identities = state.review_identities
     identities = {
-        change_id: claim_identities.get(change_id) for change_id in dict.fromkeys(change_ids)
+        change_id: state.review_identities.get(change_id)
+        for change_id in dict.fromkeys(change_ids)
     }
     repository = github_client.repository
     known_identities = tuple(identity for identity in identities.values() if identity is not None)
@@ -135,7 +134,6 @@ async def observe_reviews(
     fetched_commit = fetched_trunks[0].commit_id if len(fetched_trunks) == 1 else None
     return RepositoryObservation(
         configured_repository=github_resolution.parse_github_repo(remote) if remote else None,
-        duplicate_claim_change_ids=duplicate_review_claim_change_ids(claim_identities),
         fetched_trunk_commit_id=fetched_commit,
         github_repository=github_repository,
         open_pull_requests_by_base=by_base,

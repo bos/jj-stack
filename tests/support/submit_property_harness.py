@@ -1057,19 +1057,6 @@ def _apply_drift_operation(
     if drift.kind == "pr_draft_toggled":
         fake_repo.pull_requests[submitted.pr_number].is_draft = True
         return None
-    if drift.kind == "wrong_saved_pr_number":
-        state_store = ReviewStateStore.for_repo(repo)
-        state = state_store.load()
-        identity = state.review_identities[submitted.change_id]
-        stored_baseline = state.submitted_baselines[submitted.change_id]
-        state_store.relink_review(
-            submitted.change_id,
-            expected_identity=identity,
-            expected_baseline=stored_baseline,
-            identity=identity.model_copy(update={"pr_number": 999_999}),
-            baseline=stored_baseline,
-        )
-        return None
     if drift.kind == "remote_branch_drift":
         drift_target = next(
             candidate.remote_target

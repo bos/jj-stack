@@ -12,7 +12,7 @@ from jj_stack.commands.relink import (
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 
 
 @pytest.mark.parametrize(
@@ -46,7 +46,8 @@ def test_relink_rejects_duplicate_saved_pr_or_branch_claim_in_same_repository() 
     state = ReviewState(
         review_identities={
             "other-change": _identity(pr_number=2),
-        }
+        },
+        submitted_baselines={"other-change": SubmittedBaseline(commit_id="other-commit")},
     )
 
     with pytest.raises(CliError, match="already linked"):

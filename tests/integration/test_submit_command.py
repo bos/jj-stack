@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -1459,77 +1458,6 @@ def test_submit_fails_closed_when_cached_pull_request_is_missing_on_github(
     assert state_store.load() == initial_state
     assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
     assert fake_repo.pull_requests == {}
-
-
-def test_submit_stops_before_push_when_saved_link_mismatch_has_pending_rewrite(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """A damaged PR link must stop `submit` before the rewritten branch is pushed.
-
-    Promoted from the property scenario `rewrite:c2,wrong_saved_pr_number:c2`:
-    the link-consistency check used to run inside the pull-request sync phase,
-    after local bookmarks moved and review branches were force-pushed.
-    """
-
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    bookmark = initial_state.review_identities[change_id].head_ref
-    initial_remote_target = read_remote_ref(fake_repo.git_dir, bookmark)
-
-    run_command(["jj", "describe", "-r", change_id, "-m", "feature 1 rewritten"], repo)
-    identity = initial_state.review_identities[change_id]
-    baseline = initial_state.submitted_baselines[change_id]
-    state_store.relink_review(
-        change_id,
-        expected_identity=identity,
-        expected_baseline=baseline,
-        identity=identity.model_copy(update={"pr_number": 999_999}),
-        baseline=baseline,
-    )
-    corrupted_state = state_store.load()
-
-    exit_code = run_main(repo, config_path, "submit", change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "Saved pull request #999999 does not match" in captured.err
-    assert state_store.load() == corrupted_state
-    assert read_remote_ref(fake_repo.git_dir, bookmark) == initial_remote_target
-    assert fake_repo.pull_requests[1].title == "feature 1"
-
-
-@pytest.mark.merge_recovery
-def test_submit_rejects_isolated_malformed_identity_before_github_mutation(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
-    state_path = resolve_state_path(repo)
-    raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-    raw_state["review_identities"][change_id] = {"version": 9}
-    write_file(state_path, json.dumps(raw_state))
-    remote_refs_before = remote_refs(fake_repo.git_dir)
-    fake_repo.pull_request_events.clear()
-
-    exit_code = run_main(repo, config_path, "submit", change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "relink" in captured.err
-    assert remote_refs(fake_repo.git_dir) == remote_refs_before
-    assert fake_repo.pull_request_events == []
-    assert json.loads(state_path.read_text(encoding="utf-8")) == raw_state
 
 
 def test_submit_fails_closed_when_github_reports_multiple_pull_requests(

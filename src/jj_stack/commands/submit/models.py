@@ -132,23 +132,18 @@ class SubmitMutationRun:
 
         if self.dry_run:
             return
-        expected_identity = self.state.review_identities.get(change_id)
-        expected_baseline = self.state.submitted_baselines.get(change_id)
-        if expected_identity is None and expected_baseline is None:
+        current = self.state.tracked_review(change_id)
+        if current is None:
             self.state = self.state_store.create_review(
                 change_id,
                 identity=identity,
                 baseline=baseline,
             )
             return
-        if expected_identity is None or expected_baseline is None:
-            raise RuntimeError(f"Incomplete review state for {change_id}.")
-        if identity != expected_identity:
+        if identity != current.review_identity:
             raise RuntimeError(f"Review identity changed during submit for {change_id}.")
         self.state = self.state_store.relink_review(
             change_id,
-            expected_identity=expected_identity,
-            expected_baseline=expected_baseline,
             identity=identity,
             baseline=baseline,
         )

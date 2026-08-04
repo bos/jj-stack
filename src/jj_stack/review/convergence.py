@@ -49,20 +49,6 @@ def build_selected_convergence_plan(
 ) -> SelectedConvergencePlan:
     selected = prepared_status.prepared.stack.revisions
     state = prepared_status.prepared.state
-    # Stated once for the whole selection. Enforcing it per change meant two checks that each
-    # missed a population: the evidence path never saw a GitHub-stack survivor, and the survivor
-    # path never saw a change whose work is already on trunk.
-    ambiguous = tuple(
-        revision.change_id
-        for revision in selected
-        if revision.change_id in observation.duplicate_claim_change_ids
-    )
-    if ambiguous:
-        raise CliError(
-            t"Multiple saved changes claim the review for {ui.join(ui.change_id, ambiguous)}.",
-            hint=t"Run {ui.cmd('jj-stack list')} to find them, then drop the wrong one with "
-            t"{ui.cmd('jj-stack unstack --local')}.",
-        )
     stack_history, stack_survivor_reviews = build_selected_github_stack_sync(
         context=context,
         github_stacks=github_stacks,

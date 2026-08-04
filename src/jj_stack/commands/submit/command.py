@@ -66,6 +66,7 @@ from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.branches import (
     ResolvedReviewBranch,
+    ensure_new_review_branches_unclaimed,
     ensure_unique_review_branches,
     review_branch_glob,
     review_branch_matches_change,
@@ -430,6 +431,11 @@ async def run_submit_async(
         remote=remote,
         resolutions=prepared_inputs.branch_resolutions,
         state_identities=state.review_identities,
+    )
+    ensure_new_review_branches_unclaimed(
+        branch_resolutions,
+        state.review_identities,
+        github_repository.repository_key,
     )
     visible_bookmarks = client.visible_review_bookmark_targets()
     collisions = tuple(

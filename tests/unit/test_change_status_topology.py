@@ -78,14 +78,6 @@ def test_submitted_state_disagreement_flags_rewritten_commit() -> None:
     assert submitted_state_disagreement(state, (stack,)) == ("change-a",)
 
 
-def test_submitted_state_disagreement_skips_records_without_saved_baseline() -> None:
-    a = _revision("change-a")
-    stack = _stack(a)
-    state = ReviewState(review_identities={"change-a": _identity()})
-
-    assert submitted_state_disagreement(state, (stack,)) == ()
-
-
 def _orphan_record(
     *,
     pr_number: int = 42,
@@ -101,7 +93,10 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
             "change-live": _identity(pr_number=1),
             "change-orphan": _orphan_record(),
         },
-        submitted_baselines={"change-live": SubmittedBaseline(commit_id="commit-change-live")},
+        submitted_baselines={
+            "change-live": SubmittedBaseline(commit_id="commit-change-live"),
+            "change-orphan": SubmittedBaseline(commit_id="commit-change-orphan"),
+        },
     )
 
     orphans = enumerate_orphaned_records(state, (stack,))
@@ -110,7 +105,12 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
 
 
 def test_enumerate_orphaned_records_reports_every_active_record_with_a_pr() -> None:
-    state = ReviewState(review_identities={"change-orphan": _orphan_record()})
+    state = ReviewState(
+        review_identities={"change-orphan": _orphan_record()},
+        submitted_baselines={
+            "change-orphan": SubmittedBaseline(commit_id="commit-change-orphan")
+        },
+    )
 
     orphans = enumerate_orphaned_records(state, ())
 

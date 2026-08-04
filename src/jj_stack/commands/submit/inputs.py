@@ -35,12 +35,6 @@ def prepare_submit_inputs(
         state=state,
     ).stack
     require_reviewable_revisions(stack.revisions)
-    for revision in stack.revisions:
-        if state.issues_for(revision.change_id):
-            raise CliError(
-                t"Saved review state for {ui.change_id(revision.change_id)} is malformed.",
-                hint=t"Repair it with {ui.cmd('relink')} before submitting the review.",
-            )
     branch_resolutions = resolve_review_branches(
         revisions=stack.revisions,
         review_identities=state.review_identities,

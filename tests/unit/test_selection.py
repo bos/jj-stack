@@ -7,7 +7,7 @@ import pytest
 from jj_stack.errors import EXIT_AMBIGUOUS, CliError
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
+from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
@@ -40,7 +40,8 @@ def test_resolve_orphaned_pull_request_uses_supported_stack_membership(monkeypat
                 head_ref="jj-stack/change-1",
                 pr_number=17,
             )
-        }
+        },
+        submitted_baselines={"change-1": SubmittedBaseline(commit_id="commit-1")},
     )
     jj_client = _JjClientStub(
         _REPO_ROOT,
@@ -66,25 +67,26 @@ def test_resolve_orphaned_pull_request_uses_supported_stack_membership(monkeypat
     ) == (17, "change-1")
 
 
-def test_resolve_orphaned_pull_request_fails_closed_on_multiple_matches() -> None:
+def test_resolve_orphaned_pull_request_fails_closed_across_repositories() -> None:
+    first = _identity(pr_number=17)
     state = ReviewState(
         review_identities={
-            "change-1": _identity(pr_number=17),
-            "change-2": _identity(pr_number=17),
-        }
+            "change-1": first,
+            "change-2": first.model_copy(update={"repository_name": "previous-repository"}),
+        },
+        submitted_baselines={
+            "change-1": SubmittedBaseline(commit_id="commit-1"),
+            "change-2": SubmittedBaseline(commit_id="commit-2"),
+        },
     )
-    jj_client = _JjClientStub(_REPO_ROOT)
 
-    with pytest.raises(
-        CliError,
-        match=r"PR #17 is claimed by multiple tracked records \(change-1, change-2\)\.",
-    ) as excinfo:
+    with pytest.raises(CliError, match="claimed by multiple tracked records") as excinfo:
         resolve_orphaned_pull_request(
-            jj_client=cast(JjClient, jj_client),
+            jj_client=cast(JjClient, _JjClientStub(_REPO_ROOT)),
             pull_request_reference="17",
             state=state,
         )
-    assert "Discard an incorrect claim with unstack --local" in str(excinfo.value)
+
     assert excinfo.value.exit_code == EXIT_AMBIGUOUS
 
 

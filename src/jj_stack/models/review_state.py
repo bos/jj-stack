@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from jj_stack.models.github import GithubPullRequest
-
-ReviewStateRecordType = Literal["review_identity", "submitted_baseline"]
 
 
 class ReviewIdentity(BaseModel):
@@ -52,56 +50,45 @@ class SubmittedBaseline(BaseModel):
     commit_id: str
 
 
-class ReviewStateRecordIssue(BaseModel):
-    """One opaque tracking record that could not be validated independently."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    record_type: ReviewStateRecordType
-    change_id: str
-    fingerprint: str
-    validation_error: str
-
-
 class ReviewState(BaseModel):
-    """Validated tracking records plus non-persisted record diagnostics."""
+    """Validated review tracking records."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Literal[4] = 4
     review_identities: dict[str, ReviewIdentity] = Field(default_factory=dict)
     submitted_baselines: dict[str, SubmittedBaseline] = Field(default_factory=dict)
-    record_issues: tuple[ReviewStateRecordIssue, ...] = Field(
-        default=(),
-        exclude=True,
-        repr=False,
-    )
 
-    def issues_for(self, change_id: str) -> tuple[ReviewStateRecordIssue, ...]:
-        """Return isolated record problems for one exact change ID."""
-
-        return tuple(issue for issue in self.record_issues if issue.change_id == change_id)
+    @model_validator(mode="after")
+    def _require_complete_pairs(self) -> Self:
+        if self.review_identities.keys() != self.submitted_baselines.keys():
+            raise ValueError(
+                "Review identities and submitted baselines must have identical keys."
+            )
+        return self
 
     def tracked_review(self, change_id: str) -> TrackedReview | None:
-        """Return one tracked review, or None when either record is absent."""
+        """Return one tracked review, or None when the change is untracked."""
 
         identity = self.review_identities.get(change_id)
-        baseline = self.submitted_baselines.get(change_id)
-        if identity is None or baseline is None:
+        if identity is None:
             return None
         return TrackedReview(
             change_id=change_id,
             review_identity=identity,
-            submitted_baseline=baseline,
+            submitted_baseline=self.submitted_baselines[change_id],
         )
 
     def tracked_reviews(self) -> tuple[TrackedReview, ...]:
         """Return every tracked review in stable change-ID order."""
 
         return tuple(
-            review
+            TrackedReview(
+                change_id=change_id,
+                review_identity=self.review_identities[change_id],
+                submitted_baseline=self.submitted_baselines[change_id],
+            )
             for change_id in sorted(self.review_identities)
-            if (review := self.tracked_review(change_id)) is not None
         )
 
 

@@ -267,7 +267,6 @@ def _resolve_status_selector(
 ) -> _ResolvedViewSelector:
     if selector.kind == "pull_request":
         pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
-            action_name="view",
             jj_client=context.jj_client,
             pull_request_reference=selector.value,
             revset=None,

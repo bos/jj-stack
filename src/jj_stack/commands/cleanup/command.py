@@ -282,17 +282,7 @@ def _run_local_cleanup_pass(
         review_identity = prepared_cleanup.state.review_identities.get(change_id)
         if review_identity is None:
             continue
-        submitted_baseline = prepared_cleanup.state.submitted_baselines.get(change_id)
-        if submitted_baseline is None:
-            record_action(
-                CleanupAction(
-                    kind="tracking",
-                    status="skipped",
-                    body=t"leave {ui.change_id(change_id)} tracked because its last submitted "
-                    t"commit is unavailable; run {ui.cmd('relink')} to repair PR tracking",
-                )
-            )
-            continue
+        submitted_baseline = prepared_cleanup.state.submitted_baselines[change_id]
         local_observation = local_observations.get(
             change_id,
             LocalCleanupObservation(
@@ -594,8 +584,6 @@ async def _apply_tracked_review_cleanup(
     else:
         prepared_cleanup.context.state_store.retire_review(
             prepared_change.change_id,
-            expected_identity=identity,
-            expected_baseline=baseline,
         )
         record_action(action)
     return False

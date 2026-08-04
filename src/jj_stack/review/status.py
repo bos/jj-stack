@@ -304,7 +304,6 @@ async def stream_status_async(
     selected_revset = prepared_status.selected_revset
     github_repository = prepared_status.github_repository
     github_repository_error = prepared_status.github_repository_error
-    state_incomplete = bool(prepared.state.record_issues)
     submitted_disagreements = submitted_state_disagreement(
         prepared.state,
         (prepared.stack,),
@@ -347,7 +346,7 @@ async def stream_status_async(
         return StatusResult(
             github_error=None,
             github_repository=github_repository,
-            incomplete=state_incomplete,
+            incomplete=False,
             remote=prepared.remote,
             remote_error=None,
             revisions=(),
@@ -365,7 +364,7 @@ async def stream_status_async(
         return StatusResult(
             github_error=None,
             github_repository=github_repository,
-            incomplete=state_incomplete or _status_is_incomplete(fallback_revisions),
+            incomplete=_status_is_incomplete(fallback_revisions),
             remote=prepared.remote,
             remote_error=None,
             revisions=fallback_revisions,
@@ -409,7 +408,7 @@ async def stream_status_async(
     return StatusResult(
         github_error=None,
         github_repository=github_repository,
-        incomplete=state_incomplete or _status_is_incomplete(display_revisions),
+        incomplete=_status_is_incomplete(display_revisions),
         remote=prepared.remote,
         remote_error=None,
         revisions=display_revisions,
