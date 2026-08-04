@@ -11,7 +11,6 @@ from jj_stack.errors import (
     EXIT_AMBIGUOUS,
     EXIT_USAGE,
     CliError,
-    DriftError,
     resolve_exit_code,
 )
 from jj_stack.jj.client import (
@@ -515,11 +514,10 @@ def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
     }
 
 
-def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects_drift(
+def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
-    observed_target = "old"
     old_branch = "jj-stack/old-aaaaaaaa"
     new_branch = "jj-stack/new-bbbbbbbb"
     old_ref = f"refs/heads/{old_branch}"
@@ -553,17 +551,6 @@ def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects
                     "origin https://github.test/octo-org/repo.git "
                     "(push: git@github.test:octo-org/repo.git)\n"
                 ),
-                stderr="",
-            )
-        if invocation[3:6] == (
-            "ls-remote",
-            "--refs",
-            "https://github.test/octo-org/repo.git",
-        ) and invocation[6:] in ((old_ref, new_ref), (old_ref,)):
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                stdout=f"{observed_target}\t{old_ref}\n",
                 stderr="",
             )
         if invocation[3:] == (
@@ -600,20 +587,6 @@ def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push_and_rejects
 
     pushes = [command for command in seen_commands if command[3:4] == ("push",)]
     assert len(pushes) == 1
-
-    observed_target = "stale"
-    with pytest.raises(DriftError, match="changed before the atomic push"):
-        client.mutate_remote_review_refs(
-            remote="origin",
-            updates=(
-                ReviewRefUpdate(
-                    branch=old_branch,
-                    expected_target="old",
-                    desired_target="updated-again",
-                ),
-            ),
-        )
-    assert len([command for command in seen_commands if command[3:4] == ("push",)]) == 1
 
 
 def test_remote_change_id_inspection_fetches_an_object_without_creating_a_ref(

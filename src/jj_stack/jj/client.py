@@ -706,7 +706,6 @@ class JjClient:
         """Import one exact remote review ref, then remove all temporary artifacts.
 
         An expected chain guards every member's raw Git change ID and first-parent ancestry.
-        Remote targets are rechecked immediately before jj import and after a successful yield.
         """
 
         ref = review_branch_ref(branch)
@@ -717,11 +716,6 @@ class JjClient:
             or len({item[0] for item in chain}) != len(chain)
         ):
             raise ValueError("invalid expected remote review chain")
-        expected_targets = (
-            {chain_branch: target for chain_branch, target, _change_id in chain}
-            if chain
-            else {branch: expected_target}
-        )
         self._clear_review_temp_ref()
         try:
             configured_remote = self._git_remote(remote)
@@ -746,10 +740,6 @@ class JjClient:
                     if actual_change_id != change_id or parents != (expected_parent,):
                         raise CliError("Imported review heads no longer form the expected stack.")
                     expected_parent = target
-            self._require_remote_branch_targets_at_url(
-                fetch_url=configured_remote.fetch_url,
-                expected_targets=expected_targets,
-            )
             self._run_jj(("git", "import"), ignore_working_copy=True)
             revision = self.resolve_revision(_quote_revset_symbol(_REVIEW_TEMP_BOOKMARK))
             if revision.commit_id != expected_target:
@@ -763,10 +753,6 @@ class JjClient:
                     t"{ui.change_id(expected_change_id)}."
                 )
             yield revision
-            self._require_remote_branch_targets_at_url(
-                fetch_url=configured_remote.fetch_url,
-                expected_targets=expected_targets,
-            )
         finally:
             self._clear_review_temp_ref()
 
@@ -861,36 +847,13 @@ class JjClient:
             branches[ref.removeprefix("refs/heads/")] = commit_id
         return branches
 
-    def _require_remote_branch_targets_at_url(
-        self,
-        *,
-        fetch_url: str,
-        expected_targets: dict[str, str],
-    ) -> None:
-        observed = self._list_remote_branches_at_url(
-            fetch_url=fetch_url,
-            patterns=tuple(review_branch_ref(branch) for branch in expected_targets),
-        )
-        for branch, expected_target in expected_targets.items():
-            actual_target = observed.get(branch)
-            if actual_target != expected_target:
-                raise DriftError(
-                    t"Remote branch {ui.bookmark(branch)} no longer points to the expected "
-                    t"commit.",
-                    condition=(
-                        "remote_branch_moved"
-                        if actual_target is not None
-                        else "remote_branch_missing"
-                    ),
-                )
-
     def mutate_remote_review_refs(
         self,
         *,
         remote: str,
         updates: Sequence[ReviewRefUpdate],
     ) -> None:
-        """Freshly verify and atomically apply a complete review-ref update set."""
+        """Atomically apply a complete review-ref update set with exact leases."""
 
         ordered_updates = tuple(updates)
         if not ordered_updates:
@@ -905,26 +868,10 @@ class JjClient:
         ):
             raise ValueError("cannot delete a review ref that is expected to be absent")
 
-        configured_remote = self._git_remote(remote)
-        actual_targets = self._list_remote_branches_at_url(
-            fetch_url=configured_remote.fetch_url,
-            patterns=refs,
-        )
-        for update in ordered_updates:
-            actual_target = actual_targets.get(update.branch)
-            if actual_target == update.expected_target:
-                continue
-            condition = (
-                "remote_branch_missing" if actual_target is None else "remote_branch_moved"
-            )
-            raise DriftError(
-                t"Remote branch {ui.bookmark(update.branch)} changed before the atomic push.",
-                condition=condition,
-            )
-
         if all(update.desired_target == update.expected_target for update in ordered_updates):
             return
 
+        configured_remote = self._git_remote(remote)
         # Carry only the leased review refs: tag auto-follow would publish unrelated local
         # tags, and a pre-push hook was never invoked when this went through `jj git push`.
         command = ["push", "--atomic", "--no-follow-tags", "--no-verify"]

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_stack.jj.client import JjClient, ReviewRefUpdate
+from jj_stack.jj.client import JjClient, JjCommandError, ReviewRefUpdate
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.review.selected import select_review_path
 
@@ -279,6 +279,53 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
         patterns=(f"refs/heads/{branch}", f"refs/heads/{created_branch}"),
     ) == {branch: new_commit, created_branch: new_commit}
 
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(remote),
+            "update-ref",
+            f"refs/heads/{branch}",
+            old_commit,
+        ],
+        repo,
+    )
+    stale_targets = {branch: old_commit, created_branch: new_commit}
+    with pytest.raises(JjCommandError):
+        client.mutate_remote_review_refs(
+            remote="origin",
+            updates=(
+                ReviewRefUpdate(
+                    branch=branch,
+                    desired_target=None,
+                    expected_target=new_commit,
+                ),
+                ReviewRefUpdate(
+                    branch=created_branch,
+                    desired_target=None,
+                    expected_target=new_commit,
+                ),
+            ),
+        )
+    assert (
+        client.list_remote_branches(
+            remote="origin",
+            patterns=(f"refs/heads/{branch}", f"refs/heads/{created_branch}"),
+        )
+        == stale_targets
+    )
+
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(remote),
+            "update-ref",
+            f"refs/heads/{branch}",
+            new_commit,
+        ],
+        repo,
+    )
     client.mutate_remote_review_refs(
         remote="origin",
         updates=(

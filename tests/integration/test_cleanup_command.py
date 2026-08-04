@@ -5,7 +5,6 @@ from pathlib import Path
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
-from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
 
 from ..support.integration_helpers import (
@@ -348,55 +347,6 @@ def test_cleanup_preserves_open_orphan_record_and_remote_branch(
     assert change_id in refreshed_state.review_identities
     assert refreshed_state.review_identities[change_id].head_ref == bookmark
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
-
-
-def test_cleanup_apply_keeps_remote_branch_when_target_changes_mid_delete(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    initial_state = state_store.load()
-    bookmark = initial_state.review_identities[change_id].head_ref
-
-    fake_repo.pull_requests[1].state = "closed"
-    run_command(["jj", "abandon", change_id], repo)
-
-    original_mutate = JjClient.mutate_remote_review_refs
-
-    def mutate_with_race(self, *, remote: str, updates) -> None:
-        run_command(
-            [
-                "git",
-                "--git-dir",
-                str(fake_repo.git_dir),
-                "update-ref",
-                f"refs/heads/{bookmark}",
-                read_remote_ref(fake_repo.git_dir, "main"),
-            ],
-            fake_repo.git_dir.parent,
-        )
-        original_mutate(self, remote=remote, updates=updates)
-
-    monkeypatch.setattr(
-        "jj_stack.jj.client.JjClient.mutate_remote_review_refs",
-        mutate_with_race,
-    )
-
-    exit_code = run_main(repo, config_path, "cleanup")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert change_id in state_store.load().review_identities
-    assert read_remote_ref(fake_repo.git_dir, bookmark) == read_remote_ref(
-        fake_repo.git_dir, "main"
-    )
-    assert "changed before the atomic push" in captured.err
 
 
 def test_cleanup_removes_overview_comment_for_closed_pull_request(
