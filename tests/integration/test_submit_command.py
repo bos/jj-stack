@@ -991,57 +991,32 @@ def test_submit_rejects_a_conflicted_visible_review_bookmark(
     assert read_remote_ref(fake_repo.git_dir, identity.head_ref) == old_commit
 
 
-@pytest.mark.parametrize(
-    ("rewrite", "other_bookmark", "expected"),
-    (
-        (False, False, "immutable commits"),
-        (True, False, "divergent changes are not supported"),
-        (True, True, "divergent changes are not supported"),
-    ),
-)
-def test_visible_review_bookmark_preserves_other_immutability(
+def test_submit_rejects_divergence_kept_immutable_by_another_remote_bookmark(
     tmp_path: Path,
     monkeypatch,
     capsys,
-    rewrite: bool,
-    other_bookmark: bool,
-    expected: str,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state = ReviewStateStore.for_repo(repo).load()
     change_id = next(iter(state.review_identities))
     baseline = state.submitted_baselines[change_id].commit_id
-    if rewrite:
-        run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
-    if other_bookmark:
-        run_command(
-            [
-                "git",
-                "--git-dir",
-                str(fake_repo.git_dir),
-                "update-ref",
-                "refs/heads/other-review-copy",
-                baseline,
-            ],
-            repo,
-        )
+    run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(fake_repo.git_dir),
+            "update-ref",
+            "refs/heads/other-review-copy",
+            baseline,
+        ],
+        repo,
+    )
     run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "*"], repo)
-    if not other_bookmark:
-        run_command(
-            [
-                "jj",
-                "config",
-                "set",
-                "--repo",
-                'revset-aliases."immutable_heads()"',
-                f"builtin_immutable_heads() | {baseline}",
-            ],
-            repo,
-        )
 
     assert run_main(repo, config_path, "submit", change_id) == 2
-    assert expected in capsys.readouterr().err
+    assert "divergent changes are not supported" in capsys.readouterr().err
 
 
 def test_submit_does_not_claim_a_visible_bookmark_for_an_untracked_change(

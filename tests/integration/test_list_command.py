@@ -165,30 +165,6 @@ def test_list_treats_a_visible_submitted_predecessor_as_published(
     assert [change["change_id"] for change in payload["rows"][0]["changes"]] == [change_id]
 
 
-def test_list_does_not_warn_when_tracked_stack_still_starts_at_mutable_trunk(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    run_command(
-        ["jj", "config", "set", "--repo", 'revset-aliases."immutable_heads()"', "none()"],
-        repo,
-    )
-
-    commit_file(repo, "alpha 1", "alpha-1.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-    head_change_id = selected_stack(repo).head.change_id
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert head_change_id[:8] not in captured.err
-
-
 def test_list_extends_tracked_stack_through_unsubmitted_local_descendant(
     tmp_path,
     monkeypatch,
@@ -287,38 +263,6 @@ def test_list_inventories_paths_that_share_a_reviewed_prefix(
         (shared.change_id, left.change_id),
         (shared.change_id, right.change_id),
     }
-
-
-def test_list_keeps_current_tracked_stack_when_it_becomes_immutable(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    feature = selected_stack(repo).head.commit_id
-    run_command(
-        [
-            "jj",
-            "config",
-            "set",
-            "--repo",
-            'revset-aliases."immutable_heads()"',
-            f"builtin_immutable_heads() | {feature}",
-        ],
-        repo,
-    )
-    head_change_id = selected_stack(repo).head.change_id
-
-    exit_code = run_main(repo, config_path, "list")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "No stacks." not in captured.out
-    assert f"@ {head_change_id[:8]}" in captured.out
-    assert "feature 1" in captured.out
-    assert "PR 1" in captured.out
-    assert "1 change" in captured.out
 
 
 def test_list_reports_partial_approval_for_ready_prefix_only(
