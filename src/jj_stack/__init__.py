@@ -1,6 +1,9 @@
 """Stacked GitHub review tooling for jj."""
 
 from importlib.metadata import PackageNotFoundError, version
+from time import perf_counter
+
+PROCESS_START = perf_counter()
 
 try:
     __version__ = version("jj-stack")

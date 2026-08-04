@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import jj_stack
 import jj_stack.console as console_module
 import jj_stack.jj.colors as jj_colors_module
 import jj_stack.ui as ui_module
@@ -26,31 +27,20 @@ def test_time_output_prefix_uses_prefix_and_timestamp_semantic_style(
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
-    monkeypatch.setattr(console_module.time, "perf_counter", lambda: 0.0)
+    monkeypatch.setattr(jj_stack, "PROCESS_START", 10.0)
+    monkeypatch.setattr(console_module.time, "perf_counter", lambda: 12.5)
 
-    console_cls = import_module("rich.console").Console
+    output = StringIO()
     with console_module.configured_console(
-        stdout=StringIO(),
+        stdout=output,
         stderr=StringIO(),
         color_mode="always",
         repository=repository,
         time_output=True,
     ):
-        console = console_cls(width=40)
-        lines = console.render_lines(
-            console_module._TimePrefixedRenderable(
-                renderable="timed",
-                end="",
-                prefix_style=console_module.semantic_style("prefix", "timestamp"),
-                start=0.0,
-            ),
-            console.options,
-            pad=False,
-        )
+        console_module.output("timed")
 
-    prefix_segment = lines[0][0]
-    assert prefix_segment.text == "[0.000000] "
-    assert prefix_segment.style == _style_cls()(color="cyan", bold=True)
+    assert output.getvalue() == "\x1b[1;36m[2.500000] \x1b[0mtimed\n"
 
 
 def test_semantic_style_uses_machine_readable_jj_config(

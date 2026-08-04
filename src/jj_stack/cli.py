@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import builtins
-import io
 import logging
 import re
 import subprocess
 import sys
-import time
 from argparse import (
     SUPPRESS,
     ArgumentParser,
@@ -37,7 +34,6 @@ import jj_stack.commands.view as view_command
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack import __version__
-from jj_stack.bootstrap import APP_START
 from jj_stack.cli_help import (
     HelpCommand,
     add_help_argument,
@@ -1135,65 +1131,11 @@ def _time_output(*, enabled: bool):
         yield
         return
 
-    original_print = builtins.print
-    at_line_start: dict[int, bool] = {}
-
-    def timed_print(*args, **kwargs) -> None:
-        elapsed = time.perf_counter() - APP_START
-        destination = kwargs.pop("file", sys.stdout)
-        flush = kwargs.pop("flush", False)
-        end = kwargs.get("end", "\n")
-        buffer = io.StringIO()
-        original_print(*args, file=buffer, flush=False, **kwargs)
-        rendered = buffer.getvalue()
-        if rendered:
-            prefix = f"[{elapsed:0.6f}] "
-            key = id(destination)
-            rendered_output, next_at_line_start = _prefix_rendered_output(
-                rendered,
-                prefix=prefix,
-                at_line_start=at_line_start.get(key, True),
-            )
-            destination.write(rendered_output)
-            at_line_start[key] = next_at_line_start
-        elif end:
-            key = id(destination)
-            rendered_output, next_at_line_start = _prefix_rendered_output(
-                end,
-                prefix=f"[{elapsed:0.6f}] ",
-                at_line_start=at_line_start.get(key, True),
-            )
-            destination.write(rendered_output)
-            at_line_start[key] = next_at_line_start
-        if flush:
-            destination.flush()
-
-    builtins.print = timed_print  # noqa: B010
     bootstrap.time_output_active = True
     try:
         yield
     finally:
         bootstrap.time_output_active = False
-        builtins.print = original_print  # noqa: B010
-
-
-def _prefix_rendered_output(
-    rendered: str,
-    *,
-    prefix: str,
-    at_line_start: bool,
-) -> tuple[str, bool]:
-    if not rendered:
-        return "", at_line_start
-
-    chunks: list[str] = []
-    current_at_line_start = at_line_start
-    for chunk in rendered.splitlines(keepends=True):
-        if current_at_line_start:
-            chunks.append(prefix)
-        chunks.append(chunk)
-        current_at_line_start = chunk.endswith("\n")
-    return "".join(chunks), current_at_line_start
 
 
 def _normalize_cli_args(argv: Sequence[str]) -> list[str]:

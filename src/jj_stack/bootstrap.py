@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import jj_stack
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.config import AppConfig, load_config
@@ -23,8 +24,6 @@ _MINIMUM_JJ_VERSION = (0, 43, 0)
 _MINIMUM_JJ_VERSION_STRING = "0.43.0"
 _jj_version_verified = False
 
-APP_START = time.perf_counter()
-
 time_output_active: bool = False
 
 
@@ -35,7 +34,7 @@ class _ElapsedFormatter(logging.Formatter):
         base = super().format(record)
         if not time_output_active:
             return base
-        elapsed = time.perf_counter() - APP_START
+        elapsed = time.perf_counter() - jj_stack.PROCESS_START
         return console.style_time_prefix(f"[{elapsed:0.6f}] ") + base
 
 

@@ -6,16 +6,13 @@
 #   `configured_console()` context manager. Command modules should not need to manage
 #   console objects directly.
 #
-# - The module keeps stdout and stderr console setup in one place so we can
-#   migrate commands from `print(...)` incrementally without spreading Rich
-#   policy across the codebase.
+# - The module keeps stdout and stderr console setup in one place so command
+#   modules do not spread Rich policy across the codebase.
 #
 # - `markup=False` remains the default so arbitrary user-facing text does not
 #   need per-call Rich escaping.
 #
-# - Optional time-prefixing stays here even though most commands still use the
-#   legacy `print` shim today. We are likely to need the same behavior again as
-#   command output moves onto these helpers.
+# - Optional time-prefixing lives here alongside the output it affects.
 
 from __future__ import annotations
 
@@ -44,6 +41,7 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
+import jj_stack
 import jj_stack.ui as ui
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.colors import SemanticStyles, load_semantic_styles
@@ -174,12 +172,10 @@ class _ConfiguredConsole:
         *,
         prefix_style: Style | None,
         start: float | None,
-        time_output: bool,
     ) -> None:
         self._console = console
         self._prefix_style = prefix_style
         self._start = start
-        self._time_output = time_output
 
     def print(
         self,
@@ -199,7 +195,7 @@ class _ConfiguredConsole:
         soft_wrap=None,
         new_line_start: bool = False,
     ) -> None:
-        if not self._time_output or self._start is None:
+        if self._start is None:
             self._console.print(
                 *objects,
                 sep=sep,
@@ -304,7 +300,6 @@ def _build_console(
     *,
     semantic_styles: SemanticStyles | None,
     time_output: bool,
-    start: float | None,
 ) -> _ConfiguredConsole:
     return _ConfiguredConsole(
         console,
@@ -313,8 +308,7 @@ def _build_console(
             if semantic_styles is None
             else semantic_styles.for_labels(("prefix", "timestamp"))
         ),
-        start=start,
-        time_output=time_output,
+        start=jj_stack.PROCESS_START if time_output else None,
     )
 
 
@@ -328,7 +322,6 @@ def _build_consoles(
     stdout: IO[str] | None = None,
     time_output: bool = False,
 ) -> tuple[_ConfiguredConsole, _ConfiguredConsole, SemanticStyles | None]:
-    start = time.perf_counter() if time_output else None
     stdout_console = _raw_console(sys.stdout if stdout is None else stdout, color_mode=color_mode)
     stderr_console = _raw_console(sys.stderr if stderr is None else stderr, color_mode=color_mode)
     # Semantic styles exist only to color output, and reading them costs one
@@ -344,13 +337,11 @@ def _build_consoles(
             stdout_console,
             semantic_styles=semantic_styles,
             time_output=time_output,
-            start=start,
         ),
         _build_console(
             stderr_console,
             semantic_styles=semantic_styles,
             time_output=time_output,
-            start=start,
         ),
         semantic_styles,
     )
