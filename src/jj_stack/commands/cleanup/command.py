@@ -68,7 +68,10 @@ from .shared import (
     _render_cleanup_action_header,
     _render_cleanup_postamble,
 )
-from .stale import LocalCleanupObservation, _local_cleanup_observations
+from .stale import (
+    LocalCleanupObservation,
+    _local_cleanup_observations,
+)
 
 HELP = "Remove review artifacts that are no longer in use"
 
@@ -293,11 +296,13 @@ def _run_local_cleanup_pass(
         local_observation = local_observations.get(
             change_id,
             LocalCleanupObservation(
+                has_mutable_copy=False,
                 stale_reason="local change was not inspected",
             ),
         )
         prepared_change = PreparedCleanupChange(
             change_id=change_id,
+            has_mutable_copy=local_observation.has_mutable_copy,
             review_identity=review_identity,
             stale_reason=local_observation.stale_reason,
             submitted_baseline=submitted_baseline,
@@ -405,14 +410,14 @@ async def _cleanup_tracked_review(
     """Plan and apply one cleanup, returning whether a partial failure must stop the pass."""
 
     identity = prepared_change.review_identity
-    open_review, update, blocker_action = _review_cleanup_update(
+    review_state, update, blocker_action = _review_cleanup_update(
         observation=initial_observation,
         prepared_change=prepared_change,
     )
     if blocker_action is not None:
         record_action(blocker_action)
         return False
-    if open_review:
+    if review_state == "open":
         if prepared_change.stale_reason is not None:
             record_action(
                 CleanupAction(
@@ -421,6 +426,17 @@ async def _cleanup_tracked_review(
                     body=t"preserve open orphan PR #{identity.pr_number}",
                 )
             )
+        return False
+    if review_state == "merged" and prepared_change.has_mutable_copy:
+        record_action(
+            CleanupAction(
+                kind="tracking",
+                status="skipped",
+                body=t"preserve merged PR #{identity.pr_number} for "
+                t"{ui.change_id(prepared_change.change_id)}; run "
+                t"{ui.cmd(f'sync {prepared_change.change_id}')} before cleanup",
+            )
+        )
         return False
     stack_blocker = await github_stack_cleanup_blocker(
         github_client=github_client,
@@ -464,7 +480,7 @@ def _review_cleanup_update(
     *,
     observation: RepositoryObservation,
     prepared_change: PreparedCleanupChange,
-) -> tuple[bool, ReviewRefUpdate | None, CleanupAction | None]:
+) -> tuple[str, ReviewRefUpdate | None, CleanupAction | None]:
     """Check the exact review and derive its remote branch deletion."""
 
     identity = prepared_change.review_identity
@@ -476,11 +492,11 @@ def _review_cleanup_update(
         submitted_baseline=prepared_change.submitted_baseline,
     )
     if blocker is not None:
-        return False, None, _cleanup_action(blocker)
+        return "blocked", None, _cleanup_action(blocker)
     if pull_request is None:
         raise AssertionError("Exact cleanup lookup must return a pull request.")
     if pull_request.state == "open":
-        return True, None, None
+        return "open", None, None
     _pull_request, update, blocker = plan_review_cleanup(
         allowed_states=frozenset({"closed", "merged"}),
         change_id=prepared_change.change_id,
@@ -488,7 +504,7 @@ def _review_cleanup_update(
         review_identity=identity,
         submitted_baseline=prepared_change.submitted_baseline,
     )
-    return False, update, None if blocker is None else _cleanup_action(blocker)
+    return pull_request.state, update, None if blocker is None else _cleanup_action(blocker)
 
 
 async def _preflight_cleanup_overview_comment(

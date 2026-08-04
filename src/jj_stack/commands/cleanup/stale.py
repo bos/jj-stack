@@ -12,6 +12,7 @@ from jj_stack.review.repository import observe_repository_paths
 class LocalCleanupObservation:
     """Why one tracked change is stale locally, if it is."""
 
+    has_mutable_copy: bool
     stale_reason: str | None
 
 
@@ -28,11 +29,13 @@ def _local_cleanup_observations(
         revisions = matched_revisions.get(change_id, ())
         if not revisions:
             observations[change_id] = LocalCleanupObservation(
+                has_mutable_copy=False,
                 stale_reason="no visible local change matches that cached change ID",
             )
             continue
         if len(revisions) > 1:
             observations[change_id] = LocalCleanupObservation(
+                has_mutable_copy=any(not revision.immutable for revision in revisions),
                 stale_reason="multiple visible revisions still share that change ID",
             )
             continue
@@ -40,11 +43,13 @@ def _local_cleanup_observations(
         revision = revisions[0]
         if not revision.is_reviewable():
             observations[change_id] = LocalCleanupObservation(
+                has_mutable_copy=not revision.immutable,
                 stale_reason="local change is no longer reviewable",
             )
             continue
 
         observations[change_id] = LocalCleanupObservation(
+            has_mutable_copy=True,
             stale_reason=None,
         )
 
@@ -68,6 +73,7 @@ def _local_cleanup_observations(
     for revision in candidate_revisions:
         if revision.commit_id not in supported_commit_ids:
             observations[revision.change_id] = LocalCleanupObservation(
+                has_mutable_copy=True,
                 stale_reason="local change no longer participates in a supported stack",
             )
     return observations

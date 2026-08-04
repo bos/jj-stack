@@ -109,7 +109,7 @@ confirms after you explain that risk.
   `cleanup --dry-run <head-change-id>`, then `cleanup <head-change-id>`. For an
   orphan from `list`, use `cleanup --pull-request <pr>`; after the user closes
   every orphan, use `cleanup --pull-request orphans`.
-- **Collect closed or merged leftovers:** `cleanup --dry-run`, then `cleanup`.
+- **Collect closed or already-synced merged leftovers:** `cleanup --dry-run`, then `cleanup`.
   It checks each exact saved PR and removes only verified artifacts for
   closed or merged reviews. Open reviews and open orphans are preserved;
   mismatched or unavailable GitHub state blocks that record.

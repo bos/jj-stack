@@ -70,6 +70,7 @@ class PreparedCleanupChange:
     """Locally prepared cleanup state for one complete tracked review."""
 
     change_id: str
+    has_mutable_copy: bool
     review_identity: ReviewIdentity
     stale_reason: str | None
     submitted_baseline: SubmittedBaseline

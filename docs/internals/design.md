@@ -660,12 +660,13 @@ two records.
 A pair is eligible only when:
 
 - GitHub reports the exact saved PR closed or merged
+- for a merged PR, no visible mutable local copy still needs `sync`
 - no other tracked change claims its branch
 - no open PR in the same repository uses the saved head ref as its base
 - no active member of a GitHub stack still needs the branch
 
-Local descendants do not substitute for the open-PR base check. Descendant visibility is evidence
-for `sync`, not deletion of a GitHub branch.
+Local descendants do not substitute for the open-PR base check. A visible mutable copy of merged
+work is evidence for `sync`, not deletion of a GitHub branch or tracking.
 
 Identity and baseline are removed only after artifact cleanup succeeds. A tracking record or PR
 that cannot be inspected is skipped. Once mutation starts, a failure stops cleanup and leaves

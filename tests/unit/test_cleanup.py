@@ -76,9 +76,11 @@ def test_local_cleanup_observations_flag_changes_outside_supported_stacks(
     )
 
     assert observations["live-change"] == stale_module.LocalCleanupObservation(
+        has_mutable_copy=True,
         stale_reason=None,
     )
     assert observations["stale-change"] == stale_module.LocalCleanupObservation(
+        has_mutable_copy=True,
         stale_reason="local change no longer participates in a supported stack",
     )
 

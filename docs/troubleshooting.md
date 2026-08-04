@@ -364,8 +364,9 @@ jj-stack cleanup
 ```
 
 Run `jj-stack sync <head-change-id>` first when merged changes still appear in the local stack.
-Use `cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then
-run plain `cleanup` to apply the listed actions.
+Cleanup preserves their review branches and tracking so sync can still identify what landed. Use
+`cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then run plain
+`cleanup` to apply the listed actions.
 
 ## Review bookmarks are visible locally
 
