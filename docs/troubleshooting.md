@@ -375,6 +375,10 @@ Use `jj-stack doctor --fix` to restore the normal fetch exclusion. If `doctor` n
 `remotes.<remote>.fetch-bookmarks` override, remove that setting if you want the exclusion to take
 effect.
 
+If `jj-stack list` says that a saved review branch is linked to several changes, it still shows
+every stack but skips live details for the affected changes. Relink the PR to the change that owns
+it, or clean up the stale saved review, then run `list` again.
+
 ## Another jj-stack operation is already running
 
 `jj-stack` takes one lock per repository so two mutating commands cannot interleave. If another

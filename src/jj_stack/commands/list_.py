@@ -45,7 +45,6 @@ from jj_stack.review.change_status import (
 )
 from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.status import (
-    PreparedRevision,
     PreparedStack,
     PullRequestLookup,
     ReviewStatusRevision,
@@ -133,6 +132,13 @@ def _run_list(
         discovered,
         current_review_commit_id=current_review_commit_id,
     )
+    duplicate_branches = duplicate_review_branch_claims(
+        (identity.head_ref, revision.change_id)
+        for stack in ordered
+        for revision in stack.revisions
+        if (identity := state.review_identities.get(revision.change_id)) is not None
+    )
+    duplicate_branch_names = frozenset(duplicate_branches)
     orphan_rows = tuple(
         _build_orphan_row(orphan) for orphan in enumerate_orphaned_records(state, ordered)
     )
@@ -170,6 +176,7 @@ def _run_list(
     with console.spinner(description="Inspecting review branches"):
         observed_remote_targets = observe_remote_targets_for_status(
             context=context,
+            excluded_branches=duplicate_branch_names,
             remote=github_target.remote,
             stacks=ordered,
             state=state,
@@ -191,8 +198,14 @@ def _run_list(
             )
             for stack in ordered
         )
-    _ensure_unique_repo_branches(prepared_discovered)
+    for branch, change_ids in sorted(duplicate_branches.items()):
+        console.warning(
+            t"Review branch {ui.bookmark(branch)} is saved for changes "
+            t"{ui.join(ui.change_id, change_ids)}. Live GitHub details for those changes "
+            t"were not inspected."
+        )
     pull_request_lookups, github_error = _load_pull_request_lookups(
+        excluded_branches=duplicate_branch_names,
         github_target=github_target,
         prepared_discovered=prepared_discovered,
     )
@@ -205,6 +218,7 @@ def _run_list(
         )
         for item in prepared_discovered
     )
+    incomplete = bool(duplicate_branches) or any(row.incomplete for row in rows)
     if as_json:
         console.output(
             json.dumps(
@@ -212,7 +226,7 @@ def _run_list(
                 indent=2,
             )
         )
-        return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
+        return EXIT_INCOMPLETE if incomplete else 0
     color_when = context.jj_client.resolve_color_when(
         cli_color=requested_color_mode(),
         stdout_is_tty=sys.stdout.isatty(),
@@ -234,7 +248,7 @@ def _run_list(
     )
     _emit_orphan_hint(orphan_rows)
     _emit_stale_stacks_advisory(discovered=ordered, state=state)
-    return EXIT_INCOMPLETE if any(row.incomplete for row in rows) else 0
+    return EXIT_INCOMPLETE if incomplete else 0
 
 
 def _build_orphan_row(orphan: OrphanedRecord) -> OrphanRow:
@@ -545,15 +559,21 @@ def _pull_request_numbers_from_revisions(
 
 def _load_pull_request_lookups(
     *,
+    excluded_branches: frozenset[str],
     github_target: GithubTarget | UnresolvedGithubTarget,
     prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
 ) -> tuple[dict[str, PullRequestLookup], ErrorMessage | None]:
     if not isinstance(github_target, GithubTarget):
         return {}, None
 
-    prepared_revisions_by_branch = _tracked_prepared_revisions_by_branch(
-        prepared_discovered=prepared_discovered
-    )
+    prepared_revisions_by_branch = {
+        branch: revision
+        for item in prepared_discovered
+        for revision in item.prepared.status_revisions
+        if revision.review_identity is not None
+        and (branch := revision.branch) is not None
+        and branch not in excluded_branches
+    }
     if not prepared_revisions_by_branch:
         return {}, None
 
@@ -574,49 +594,12 @@ def _load_pull_request_lookups(
         return {}, error_message(error)
 
 
-def _tracked_prepared_revisions_by_branch(
-    *,
-    prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
-) -> dict[str, PreparedRevision]:
-    prepared_revisions_by_branch: dict[str, PreparedRevision] = {}
-    for item in prepared_discovered:
-        for prepared_revision in item.prepared.status_revisions:
-            branch = prepared_revision.branch
-            if prepared_revision.review_identity is None or branch is None:
-                continue
-            prepared_revisions_by_branch[branch] = prepared_revision
-    return prepared_revisions_by_branch
-
-
 def _format_pull_request_summary(numbers: tuple[int, ...]) -> str:
     if not numbers:
         return ""
     if len(numbers) == 1:
         return f"PR {numbers[0]}"
     return f"{len(numbers)} PRs"
-
-
-def _ensure_unique_repo_branches(
-    prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
-) -> None:
-    duplicates = duplicate_review_branch_claims(
-        (prepared_revision.branch, prepared_revision.revision.change_id)
-        for item in prepared_discovered
-        for prepared_revision in item.prepared.status_revisions
-        if prepared_revision.branch is not None
-    )
-    if not duplicates:
-        return
-
-    collisions = ui.join(
-        lambda item: t"{ui.bookmark(item[0])} for changes {ui.join(ui.change_id, item[1])}",
-        sorted(duplicates.items()),
-    )
-    raise CliError(
-        t"Could not safely inspect stacks: multiple changes resolve to the same "
-        t"review branch: {collisions}.",
-        hint="Repair the saved review linkage before retrying.",
-    )
 
 
 def _stack_table(

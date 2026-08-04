@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import ClassVar
 
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -341,7 +339,7 @@ def test_list_reports_partial_approval_for_ready_prefix_only(
     assert "1 approved, open" in captured.out
 
 
-def test_list_batches_remote_and_github_lookup_across_repo_stacks(
+def test_list_skips_colliding_branches_without_blocking_other_stack_lookups(
     tmp_path,
     monkeypatch,
     capsys,
@@ -349,47 +347,46 @@ def test_list_batches_remote_and_github_lookup_across_repo_stacks(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "feature 2", "feature-2.txt")
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
+    change_ids = [selected_stack(repo).head.change_id]
+    for number in range(2, 5):
+        run_command(["jj", "new", "main"], repo)
+        commit_file(repo, f"feature {number}", f"feature-{number}.txt")
+        change_ids.append(selected_stack(repo).head.change_id)
+        assert run_main(repo, config_path, "submit") == 0
+        capsys.readouterr()
 
-    class CountingGithubClient(GithubClient):
-        pull_request_lookup_calls: ClassVar[list[tuple[str, ...]]] = []
-
-        async def get_pull_requests_by_head_refs(self, *, head_refs):
-            self.pull_request_lookup_calls.append(tuple(sorted(head_refs)))
-            return await super().get_pull_requests_by_head_refs(head_refs=head_refs)
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.list_", "jj_stack.review.status"),
-        client_type=CountingGithubClient,
+    state_store = ReviewStateStore.for_repo(repo)
+    state = state_store.load()
+    collided_branch = state.review_identities[change_ids[0]].head_ref
+    # A real collision needs matching random eight-character change-ID prefixes; bypass only the
+    # suffix check to construct the equivalent saved state cheaply.
+    monkeypatch.setattr("jj_stack.state.store.review_branch_matches_change", lambda *_: True)
+    state_store.relink_review(
+        change_ids[1],
+        identity=state.review_identities[change_ids[1]].model_copy(
+            update={"head_ref": collided_branch}
+        ),
+        baseline=state.submitted_baselines[change_ids[1]],
     )
-    original_list_remote_branches = JjClient.list_remote_branches
-    remote_branch_calls: list[tuple[str, ...]] = []
 
-    def list_remote_branches_once(self, *, remote, patterns=()):
-        remote_branch_calls.append(tuple(patterns))
-        return original_list_remote_branches(self, remote=remote, patterns=patterns)
-
-    monkeypatch.setattr(JjClient, "list_remote_branches", list_remote_branches_once)
-
-    exit_code = run_main(repo, config_path, "list")
+    exit_code = run_main(repo, config_path, "list", "--json")
     captured = capsys.readouterr()
+    changes = {
+        change["change_id"]: change
+        for row in json.loads(captured.out)["rows"]
+        for change in row["changes"]
+    }
 
-    assert exit_code == 0
-    assert "feature 1" in captured.out
-    assert "feature 2" in captured.out
-    assert "1 change" in captured.out
-    assert len(CountingGithubClient.pull_request_lookup_calls) == 1
-    assert len(CountingGithubClient.pull_request_lookup_calls[0]) == 2
-    assert len(remote_branch_calls) == 1
-    assert len(remote_branch_calls[0]) == 2
-    assert all(pattern.startswith("refs/heads/jj-stack/") for pattern in remote_branch_calls[0])
+    assert exit_code == EXIT_INCOMPLETE
+    assert collided_branch in captured.err
+    assert all(change_id[:8] in captured.err for change_id in change_ids[:2])
+    assert "Live GitHub details for those changes were not inspected" in captured.err
+    assert [changes[change_id]["pull_request"]["number"] for change_id in change_ids[:2]] == [
+        1,
+        2,
+    ]
+    assert all(changes[change_id]["status"] == "submitted" for change_id in change_ids[:2])
+    assert all(changes[change_id]["status"] == "open" for change_id in change_ids[2:])
 
 
 def test_list_reports_no_stacks_when_state_is_empty(

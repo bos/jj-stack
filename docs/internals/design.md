@@ -706,9 +706,10 @@ A per-change lookup failure marks only that row unresolved and produces an incom
 failure before any rows can be built returns its own exit code. `list` includes orphaned PRs as
 separate rows.
 
-`view` and `list` decide incompleteness from one shared per-change rule: an unmerged divergent
+`view` and `list` decide most incompleteness from one shared per-change rule: an unmerged divergent
 change, an ambiguous PR, a failed PR lookup, or a saved PR link the branch no longer resolves.
-One repository therefore cannot report complete from one command and incomplete from the other.
+When several local changes claim one saved branch, `list` warns, skips live inspection for that
+branch, and exits 10 rather than assigning its remote or PR state to the wrong change.
 Because a divergent change has several visible copies, every change-ID query selects all of them
 rather than resolving a bare change-ID symbol, which `jj` rejects as ambiguous.
 

@@ -468,6 +468,7 @@ def prepare_stack_for_status(
 def observe_remote_targets_for_status(
     *,
     context: CommandContext,
+    excluded_branches: frozenset[str] = frozenset(),
     remote: GitRemote | None,
     stacks: tuple[LocalStack, ...],
     state: ReviewState,
@@ -482,7 +483,7 @@ def observe_remote_targets_for_status(
             for stack in stacks
             for revision in stack.revisions
             for identity in (state.review_identities.get(revision.change_id),)
-            if identity is not None
+            if identity is not None and identity.head_ref not in excluded_branches
         )
     )
     if not branches:
