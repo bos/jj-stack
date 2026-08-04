@@ -60,18 +60,20 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             remote=target.remote,
             trunk_commit_id=trunk.commit_id,
         )
-        pull_requests = await github.get_pull_requests_by_numbers_independently(
-            pull_numbers=tuple(
-                candidate.review_identity.pr_number for candidate in all_candidates
+        try:
+            pull_requests = await github.get_pull_requests_by_numbers(
+                pull_numbers=tuple(
+                    candidate.review_identity.pr_number for candidate in all_candidates
+                )
             )
-        )
+        except GithubClientError as error:
+            raise CliError("Could not inspect tracked pull requests") from error
         github_stacks = await observe_github_stacks(github=github) if exact_candidates else ()
         merge_ancestry = classify_commit_ancestries(
             commit_ids=tuple(
                 pull_request.merge_commit_sha
                 for pull_request in pull_requests.values()
-                if isinstance(pull_request, GithubPullRequest)
-                and pull_request.merge_commit_sha is not None
+                if pull_request is not None and pull_request.merge_commit_sha is not None
             ),
             context=context,
             trunk_commit_id=trunk.commit_id,
@@ -116,10 +118,8 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             pull_requests={
                 candidate.review_identity.pr_number: pull_request
                 for candidate in eligible_exact
-                if isinstance(
-                    pull_request := pull_requests.get(candidate.review_identity.pr_number),
-                    GithubPullRequest,
-                )
+                if (pull_request := pull_requests.get(candidate.review_identity.pr_number))
+                is not None
             },
             skip_finish=terminal_required,
         )
@@ -135,7 +135,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
 def _eligible_exact_candidates(
     candidates: tuple[TrackedReview, ...],
     github_stacks: tuple[GithubStack, ...],
-    pull_requests: dict[int, GithubPullRequest | GithubClientError | None],
+    pull_requests: dict[int, GithubPullRequest | None],
     repository: github_resolution.GithubRepoAddress,
     tracked_pull_numbers: frozenset[int],
 ) -> tuple[tuple[TrackedReview, ...], frozenset[str]]:
@@ -145,13 +145,8 @@ def _eligible_exact_candidates(
     for candidate in candidates:
         number = candidate.review_identity.pr_number
         pull_request = pull_requests.get(number)
-        if not isinstance(pull_request, GithubPullRequest):
-            reason = (
-                t"could not inspect its current review: {pull_request}"
-                if isinstance(pull_request, GithubClientError)
-                else t"GitHub no longer reports PR #{number}"
-            )
-            _warn_global_preserved(candidate, reason)
+        if pull_request is None:
+            _warn_global_preserved(candidate, t"GitHub no longer reports PR #{number}")
             continue
         evidence = classify_exact_snapshot(
             ancestry="on_trunk",
@@ -213,16 +208,14 @@ def _report_global_nonexact_candidate(
     candidate: TrackedReview,
     context: CommandContext,
     merge_ancestry: dict[str, CommitAncestry],
-    pull_request: GithubPullRequest | GithubClientError | None,
+    pull_request: GithubPullRequest | None,
     repository: github_resolution.GithubRepoAddress,
 ) -> bool:
-    if not isinstance(pull_request, GithubPullRequest):
-        reason = (
-            t"could not inspect its current review: {pull_request}"
-            if isinstance(pull_request, GithubClientError)
-            else t"GitHub no longer reports PR #{candidate.review_identity.pr_number}"
+    if pull_request is None:
+        return _warn_global_preserved(
+            candidate,
+            t"GitHub no longer reports PR #{candidate.review_identity.pr_number}",
         )
-        return _warn_global_preserved(candidate, reason)
     rewritten = classify_rewritten_result(
         candidate=candidate,
         merge_result_ancestry=merge_ancestry.get(pull_request.merge_commit_sha or ""),

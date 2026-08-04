@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 import jj_stack.commands.sync as sync_command
-from jj_stack.errors import CliError
+from jj_stack.errors import EXIT_GITHUB, CliError
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateError, ReviewStateStore, resolve_state_path
 
@@ -253,6 +254,28 @@ def test_sync_all_preserves_tracking_when_exact_pr_head_changed(
     assert exit_code == 1
     assert "no longer reports the submitted head" in captured.err
     assert reviewed.change_id in state_store.load().review_identities
+
+
+def test_sync_all_reports_batch_pull_request_failure_without_traceback(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+
+    async def fail_batch_lookup(self, *, pull_numbers):
+        raise GithubClientError("GitHub pull request batch lookup failed: unavailable")
+
+    monkeypatch.setattr(GithubClient, "get_pull_requests_by_numbers", fail_batch_lookup)
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_GITHUB
+    assert "Could not inspect tracked pull requests" in captured.err
+    assert "unavailable" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_sync_converges_stack_history_and_adopts_rewritten_survivor(

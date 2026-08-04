@@ -256,10 +256,8 @@ sequence.
 
 `sync --all` reads submitted-commit ancestry in chunks of up to 200 commits, reads PRs through
 GraphQL in chunks of 25, and then checks any reported merge-result commits in another batched
-ancestry read. If a GraphQL batch fails, bounded REST requests preserve a separate result for each
-PR. Missing commits and failed PR reads therefore remain local to their tracked changes. These
-reads produce the candidate results; PR updates and local retirement then run one candidate at a
-time.
+ancestry read. These reads produce the candidate results; PR updates and local retirement then
+run one candidate at a time.
 
 `submit` predicts GitHub auto-close risk before pushing rewritten review branches. The behavioral
 rule belongs to the submission algorithm in [design.md](design.md); the implementation uses one
