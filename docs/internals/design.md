@@ -49,9 +49,11 @@ The normal lifecycle is:
 2. Use `jj-stack view` to inspect the stack, and `jj-stack list` to see all stacks.
 3. Use `jj-stack submit` to create or refresh the PRs for that selected stack.
 4. After another local rewrite, run `submit` again; existing reviews follow their change IDs.
-5. Use `jj-stack merge` to ask GitHub to merge a reviewed prefix from the bottom.
-6. Run `jj-stack sync` for that selected stack. It fetches GitHub's result, then reconciles the
-   remaining local changes and reviews with what reached trunk.
+5. Use `jj-stack merge` to ask GitHub to merge a reviewed prefix from the bottom. When GitHub
+   completes a direct merge, the same command fetches its result and reconciles the remaining
+   local changes and reviews with what reached trunk.
+6. After a queued merge, or a merge completed outside `jj-stack`, run `jj-stack sync` for that
+   selected stack once GitHub has finished.
 
 ## Core concepts
 
@@ -218,8 +220,9 @@ evidence, and mutation rules.
   reviews proven on trunk by exact submitted-commit evidence, but never rewrites local stacks or
   submits work. A tracking record or GitHub review that cannot be read does not block independent
   candidates.
-- **`merge`** is the only command that asks GitHub to merge. It never pushes trunk or rewrites
-  local history.
+- **`merge`** is the only command that asks GitHub to merge. It never pushes trunk. After GitHub
+  completes a direct merge, it immediately performs the same selected-stack reconciliation as
+  `sync`; queue acceptance leaves local history alone.
 - **`unstack`** removes GitHub's stack grouping while leaving its pull requests open. A GitHub
   stack number selects the remote resource directly; otherwise a local review stack selects its
   matching GitHub stack. `--local` only forgets local tracking and does not change GitHub.
@@ -237,9 +240,11 @@ evidence, and mutation rules.
 
 There is no standalone `rebase` command; `jj` owns general descendant rewrites.
 
-`sync`, `merge`, and `checkout --fetch` run `jj git fetch` themselves before they act. No other
-command fetches, so the user runs `jj git fetch` when local trunk is stale. **Fetched trunk**
-below always means `trunk()` as evaluated after the running command's own fetch.
+`sync`, `merge`, and `checkout --fetch` run `jj git fetch` themselves before they act. A direct
+`merge` fetches once while preparing the GitHub request and again after GitHub completes it so
+local reconciliation observes the result. No other command fetches, so when local trunk is stale
+the user runs `jj git fetch`. **Fetched trunk** below always means `trunk()` as evaluated after the
+running command's relevant fetch.
 
 ## Sources of truth
 
@@ -449,14 +454,20 @@ post-check detects GitHub-side changes that the pre-push model could not prevent
 them by silently replacing tracking.
 
 An open PR currently in a merge queue is not updated. `submit` stops the selected stack before
-moving any review branch or changing any PR, and tells the user to wait for the queue or remove
-the PR from it. This does not restrict commands on independent stacks.
+moving any review branch or changing any PR, and tells the user to wait for GitHub to merge it.
+This does not restrict commands on independent stacks.
 
 ### Merge
 
 `merge` considers a contiguous prefix from the bottom of the selected stack. Candidates must be
 open and non-draft. The first draft or closed-unmerged review blocks itself and everything above.
 `--pull-request` truncates the candidate prefix at the selected linked PR.
+
+A pull request selector still selects the complete local stack containing that PR; it changes
+only the merge boundary. After a direct prefix merge, automatic reconciliation therefore covers
+the unmerged changes above that boundary too, including survivor commits GitHub rewrote. An exact
+revision expression retains its ordinary exact-head selection and cannot omit active members of
+the GitHub stack.
 
 GitHub receives one asynchronous merge request for the selected prefix, whether it contains one
 PR or several. A multi-PR request acts on the matching GitHub stack. Every request passes the
@@ -467,10 +478,21 @@ queue object or a `MERGE_QUEUE` branch rule. If that lookup fails, `merge` follo
 direct-merge path and lets the merge request report any policy rejection. It sends the explicit
 action `merge_queue` when a queue is found and `direct_merge` otherwise.
 
-A terminal `merged` result means a direct merge completed. A terminal `enqueued` result means
-GitHub accepted the selected PRs into the queue; it is successful but does not imply that trunk
-changed or that `sync` should run yet. A rejection changes no local history, and a later command
-observes whatever GitHub reports.
+A terminal `merged` result means a direct merge completed. `merge` then fetches and runs selected
+stack reconciliation before returning. A terminal `enqueued` result means GitHub accepted the
+selected PRs into the queue; it is successful but does not imply that trunk changed or that
+`sync` should run yet. A rejection changes no local history, and a later command observes
+whatever GitHub reports.
+
+Automatic reconciliation identifies the containing stack by the full change ID of the head
+resolved before the merge request. It does not reinterpret the original revision expression
+after fetching the changed trunk.
+
+GitHub merge success and local reconciliation are separate outcomes. If GitHub completes the
+merge but the automatic sync stops, `merge` returns the sync failure status, says that the GitHub
+merge must not be retried, and preserves the ordinary observational recovery path. The next
+`sync` rereads GitHub, fetched trunk, the local DAG, and tracking rather than resuming saved
+operation state.
 
 For a direct merge, the merge method comes from `--method`, otherwise from `merge_method` in
 repository configuration, otherwise from the repository's only allowed method. GitHub reports

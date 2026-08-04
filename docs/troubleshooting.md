@@ -276,9 +276,24 @@ What to do:
   into it. This is not a merge failure and does not mean trunk changed. `view` and `list` show the
   PRs as queued; wait for GitHub to merge them before running `sync`.
 - While a PR is queued, `submit` will not move its review branch or change the PR, and `sync`
-  leaves that selected stack alone. Wait for it to merge or remove it from the queue. Other
-  stacks remain usable.
+  leaves that selected stack alone. Wait for it to merge. Other stacks remain usable.
 - An access-denied response is a permissions problem. Fix repository permissions before retrying.
+
+## `merge` completed on GitHub but could not update the local stack
+
+The pull requests are already merged. Do not rerun `merge`: the command's nonzero exit describes
+the later local sync failure, not a failed GitHub merge.
+
+Follow the recovery instruction printed with the error. If it does not name a more specific
+command, inspect and continue from current state with:
+
+```bash
+jj-stack view <head-change-id>
+jj-stack sync <head-change-id>
+```
+
+No merge journal needs repairing. `sync` fetches again and derives the remaining work from
+GitHub, trunk, the local `jj` DAG, and tracking.
 
 ## PRs for this stack exist on GitHub but `jj-stack` doesn't know about them
 
@@ -457,8 +472,9 @@ each time.
   `jj-stack sync <head-change-id>`.
 - `sync --all`: preview with `jj-stack sync --all --dry-run`, then run
   `jj-stack sync --all`.
-- `merge`: rerun the same explicit selector and merge method. A matching request still in progress
-  asks you to wait; a completed or enqueued request is observed on retry.
+- `merge`: rerun the same explicit selector and merge method only when GitHub did not complete the
+  request. A matching request still in progress asks you to wait. If GitHub completed the merge
+  but automatic sync stopped, do not rerun `merge`; follow the printed local recovery instead.
 
 `jj-stack sync <head-change-id>` handles commits rewritten by GitHub while keeping a review
 branch that a PR above still needs. `sync --all` checks independently tracked exact commits

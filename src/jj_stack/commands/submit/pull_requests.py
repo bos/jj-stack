@@ -67,10 +67,14 @@ def ensure_pull_request_syncs_are_safe(
         submitted_baseline = state.submitted_baselines.get(change_id)
         pull_request = pending_sync.discovered_pull_request
         if pull_request is not None and pull_request.is_queued:
+            head_change_id = pending_syncs[-1].prepared.revision.change_id
             raise CliError(
                 t"PR #{pull_request.number} for {ui.change_id(change_id)} is in the merge "
-                t"queue, so submit will not change its review branch or pull request.",
-                hint="Wait for it to merge or remove it from the queue, then rerun submit.",
+                t"queue, so submit made no changes. Any new changes above it remain "
+                t"unsubmitted.",
+                hint=t"Wait for the queued changes to merge, then run "
+                t"{ui.cmd(f'jj-stack sync {head_change_id}')} followed by "
+                t"{ui.cmd(f'jj-stack submit {head_change_id}')}.",
             )
         _ensure_pull_request_link_is_consistent(
             branch=prepared_revision.branch,

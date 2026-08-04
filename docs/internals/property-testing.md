@@ -174,10 +174,11 @@ repository-wide sync eligibility.
 
 The stack-merge tests assert both final Git and PR state and the significant API events. A
 terminal stack-merge failure changes nothing. A successful partial request may change survivor
-heads and bases, but `merge` does not rewrite local history; `sync` validates and
-converges that remote
-transition. These are bounded command contracts, not generated merge property families or a
-durable recovery state machine.
+heads and bases. A terminal direct `merge` validates and converges that transition before
+returning, including when a middle pull request names the merge boundary but higher survivors
+were not named by the user. Queue acceptance leaves local history alone, and a remote-success /
+local-failure case proves the outcomes remain distinguishable. These are bounded command
+contracts, not generated merge property families or a durable recovery state machine.
 
 ## Interrupted-submit retry harness
 

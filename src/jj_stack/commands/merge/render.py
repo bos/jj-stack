@@ -40,16 +40,11 @@ def print_merge_result(result: MergeResult) -> None:
         )
     if result.enqueued:
         console.output("GitHub will merge them once the queue processes them.")
-    elif result.applied:
-        console.output(
-            t"GitHub accepted one or more merges. Run "
-            t"{ui.cmd(f'jj-stack sync {result.selected_revset}')} to update the local stack."
-        )
 
 
 def _result_header(result: MergeResult) -> str:
     if result.enqueued:
-        return "Added to merge queue:"
+        return "In merge queue:"
     if result.applied:
         return "Applied merge actions:"
     if result.blocked:

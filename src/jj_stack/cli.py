@@ -68,7 +68,8 @@ changes, and clean up after a review. Keep creating and editing changes with `jj
 handles the GitHub review workflow around them.
 
 Running `jj-stack` with no command shows the current stack. A typical workflow is
-`jj-stack submit`, `jj-stack view`, `jj-stack merge`, then the printed `jj-stack sync` command.
+`jj-stack submit`, `jj-stack view`, then `jj-stack merge`. A completed direct merge updates the
+local stack; a queued or externally completed merge is reconciled later with `jj-stack sync`.
 """
 _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
 _REORDERABLE_GLOBAL_OPTIONS_WITH_VALUES = frozenset({"--repository", "--color"})
@@ -365,7 +366,7 @@ def build_parser() -> ArgumentParser:
         merge_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
-        help="Merge up to and including this pull request number or URL, and no further",
+        help=("Merge this PR and all PRs below it; after a direct merge, sync the entire stack"),
     )
     add_help_argument(
         merge_parser,

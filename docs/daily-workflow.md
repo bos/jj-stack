@@ -243,6 +243,9 @@ To stop the selected bottom portion at one pull request:
 jj-stack merge --pull-request 7
 ```
 
+That pull request sets only the merge boundary. After a direct merge, `merge` still updates the
+whole local stack containing it, including higher changes whose review branches GitHub rewrote.
+
 For a direct merge, the merge method comes from repository settings when only one is enabled.
 When several are, set a default once:
 
@@ -264,31 +267,38 @@ GitHub handles both one-PR and multi-PR selections through its asynchronous merg
 operation merges nothing. GitHub may rewrite the branches for PRs that remain above a partial
 selection.
 
-When trunk uses a merge queue, `merge` returns successfully once GitHub accepts the selected PRs:
+When trunk uses a merge queue, `merge` returns successfully once GitHub reports that the selected
+PRs are in the queue:
 
 ```text
-Added to merge queue:
-  ✓ GitHub merge request: add PRs #41, #42 to the merge queue for main
+In merge queue:
+  ✓ GitHub merge request: PRs #41, #42 are queued for main through commit abc123
 GitHub will merge them once the queue processes them.
 ```
 
 That result does not mean trunk changed. `view` and `list` show the PRs as queued. Wait for GitHub
 to merge them before running `sync`; there is no queue watcher in `jj-stack`.
 
-`merge` does not rewrite local history, refresh surviving PRs, or remove tracking. After GitHub
-merges anything, run the `jj-stack sync <head-change-id>` command printed in the result. If an
-identical stack request is already pending, wait and rerun the same explicit `merge` command; once
-GitHub
-finishes, the retry observes the completed result.
+When a direct merge completes, `merge` fetches the result, removes the merged local changes,
+rebases any selected survivors, and updates their existing PRs before returning. If that local
+update stops, the command says that GitHub already completed the merge; do not run `merge` again.
+It continues with the containing-stack head that it resolved before merging, even if the original
+selector was a revision expression whose meaning changed with trunk. Follow its recovery
+instructions, which may include rerunning `sync` with that head change ID.
 
-While an open PR is queued, `submit` will not update its review branch or PR, and `sync` leaves
-the selected stack alone. Wait for it to merge or remove it from the queue first. Independent
-stacks remain usable.
+If an identical stack request is already pending, wait and rerun the same explicit `merge`
+command. Once GitHub finishes, the retry observes the completed result and updates the local
+stack.
+
+While an open PR is queued, `submit` makes no changes to its selected stack. New local changes
+above the queued PR remain unsubmitted. Wait for the queued changes to merge, run `sync` with the
+new head change ID, then run `submit` with that same change ID. `sync` also leaves a queued stack
+alone. Independent stacks remain usable.
 
 ## 7. Update a stack after GitHub merged lower PRs
 
-Use `sync` with the stack's head change ID after `merge`, or whenever GitHub merged lower PRs
-through different commit IDs and your local stack still contains the old commits:
+Use `sync` with the stack's head change ID after a queued or externally completed merge, or when
+automatic sync stopped and your local stack still contains old merged commits:
 
 ```bash
 jj-stack sync <head-change-id>
@@ -421,10 +431,7 @@ jj-stack submit
 # edit in jj
 jj-stack submit
 jj-stack merge
-jj-stack sync <head-change-id>
 ```
-
-Use the head change ID printed by `merge`.
 
 ## When something goes wrong
 
@@ -452,10 +459,9 @@ jj-stack sync <head-change-id>
 jj-stack sync --all --dry-run
 jj-stack sync --all
 
-# merge after GitHub accepted one or more PRs: reconcile, then retry if desired
+# merge completed on GitHub but automatic sync stopped: reconcile; do not rerun merge
 jj-stack sync --dry-run <head-change-id>
 jj-stack sync <head-change-id>
-jj-stack merge <head-change-id>
 ```
 
 Use explicit selectors after a failure, not a naked command that falls back to

@@ -37,13 +37,16 @@ class AsyncMergePlan:
     def action(
         self,
         *,
+        enqueued: bool = False,
         merge_action: str,
         method: str | None,
         trunk_branch: str,
     ) -> MergeAction:
         number_list = ", ".join(f"#{revision.identity.pr_number}" for revision in self.planned)
         pull_requests = f"PR {number_list}" if len(self.planned) == 1 else f"PRs {number_list}"
-        if merge_action == "merge_queue":
+        if merge_action == "merge_queue" and enqueued:
+            body = t"{pull_requests} are queued for {ui.bookmark(trunk_branch)} through "
+        elif merge_action == "merge_queue":
             body = (
                 t"add {pull_requests} to the merge queue for {ui.bookmark(trunk_branch)} through "
             )
@@ -348,6 +351,7 @@ def _enqueued_result(
 ) -> MergeResult:
     action = replace(
         merge.action(
+            enqueued=True,
             merge_action=merge_action,
             method=None,
             trunk_branch=execution.trunk_branch,

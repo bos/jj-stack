@@ -30,6 +30,8 @@ Notes:
   together with the payload. See [json-output.md](json-output.md).
 - Commands that mutate review state (`submit`, `merge`, `sync`, `unstack`, `cleanup`) exit 1 when
   they ran but had to stop before completing every action; command output names what blocked them.
+- A direct `merge` can complete on GitHub and still return a nonzero code when its automatic local
+  sync stops. The output distinguishes those outcomes and says not to retry the merge.
 - `sync` may finish its local rebase before exiting 3. Its message says whether to resolve the
   conflicts and continue with `submit`.
 - Exit 2 covers selections `jj-stack` cannot review as a linear stack: a merge commit, a divergent

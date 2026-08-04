@@ -4,9 +4,13 @@ Candidates are the consecutive open, non-draft pull requests from the bottom. Ea
 match the exact commit last submitted; GitHub decides whether reviews, checks, conflicts, and
 repository rules allow the merge.
 
-GitHub merges one PR or a multi-PR prefix through its asynchronous merge API. When the trunk
-branch uses a merge queue, the command adds the reviewed changes to that queue. This command does
-not update local history or remove review state.
+For a direct merge, the command waits for GitHub to finish. It then fetches trunk, removes the
+merged changes from the local stack, rebases any remaining changes onto the updated trunk, and
+updates their existing pull requests.
+
+When the trunk branch uses a merge queue, the command adds the changes to the queue and exits as
+soon as GitHub accepts them. It does not wait for them to merge or update the local stack. After
+GitHub finishes, run `jj-stack sync <head-change-id>`.
 
 Common examples:
 
@@ -27,6 +31,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._github_stack_safety import GithubStackSelection
+from jj_stack.commands.sync import run_stack_convergence
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
@@ -104,7 +109,39 @@ def _run_merge(
         )
     result = asyncio.run(_stream_merge_async(prepared_merge=prepared_merge))
     print_merge_result(result)
-    return 1 if result.blocked else 0
+    if result.blocked:
+        return 1
+    if result.enqueued or not result.applied:
+        return 0
+    sync_change_id = prepared_merge.prepared_status.prepared.stack.head.change_id
+    console.output("Updating the local stack after the completed merge:")
+    try:
+        exit_code = run_stack_convergence(
+            context=context,
+            dry_run=False,
+            fetch_remote_state=True,
+            revset=sync_change_id,
+        )
+    except BaseException as error:
+        _warn_incomplete_post_merge_sync(sync_change_id)
+        if isinstance(error, GithubClientError):
+            raise CliError(
+                "Could not update the local stack after the completed merge.",
+                hint=t"Resolve the GitHub error, then run "
+                t"{ui.cmd(f'jj-stack sync {sync_change_id}')}",
+            ) from error
+        raise
+    if exit_code:
+        _warn_incomplete_post_merge_sync(sync_change_id)
+    return exit_code
+
+
+def _warn_incomplete_post_merge_sync(sync_change_id: str) -> None:
+    console.warning(
+        t"GitHub completed the merge, but the local stack update did not finish. Do not run "
+        t"{ui.cmd('jj-stack merge')} again. Continue with "
+        t"{ui.cmd(f'jj-stack sync {sync_change_id}')}."
+    )
 
 
 def _resolve_merge_target(

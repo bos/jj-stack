@@ -58,9 +58,22 @@ def test_merge_queue_accepts_single_and_stacked_reviews_without_a_merge_method(
     )
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert "ignoring --method" in captured.err
-    assert "Added to merge queue" in captured.out
+    assert "In merge queue" in captured.out
+    assert "are queued for main" in captured.out
+    assert "Added to merge queue" not in captured.out
     assert "once the queue processes them" in captured.out
     assert "jj-stack sync" not in captured.out
+
+    repeated_exit_code = run_main(repo, config_path, "merge")
+    repeated = capsys.readouterr()
+
+    assert repeated_exit_code == 0, (repeated.out, repeated.err)
+    assert "In merge queue" in repeated.out
+    assert "are queued for main" in repeated.out
+    assert "Added to merge queue" not in repeated.out
+    assert fake_repo.stack_merge_requests == [
+        (stack_size, None, "merge_queue", stack.head.commit_id)
+    ]
 
 
 def test_merge_queue_lookup_failure_falls_back_to_direct_merge(
@@ -138,68 +151,55 @@ def test_merge_draft_blocks_the_candidate_prefix(
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
 
 
-def test_stack_merge_rebases_ready_prefix_and_reports_closed_boundary(
+def test_stack_merge_reports_github_failure_during_automatic_sync(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.allow_rebase_merge = True
-    fake_repo.github_stacks = {7: (1, 2, 3)}
-    fake_repo.pull_requests[3].state = "closed"
     state_store = ReviewStateStore.for_repo(repo)
     stack_before = selected_stack(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-    survivor_before = fake_repo.ref_target(fake_repo.pull_requests[3].head_ref)
+    app = create_app(FakeGithubState.single_repository(fake_repo))
 
-    preview_exit_code = run_main(
-        repo,
-        config_path,
-        "merge",
-        "--dry-run",
-        "--pull-request",
-        "2",
-        "--method",
-        "rebase",
+    class SyncRepositoryFailureClient(GithubClient):
+        async def get_repository(self):
+            raise GithubClientError("sync repository lookup failed")
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.sync",),
+        client_type=SyncRepositoryFailureClient,
     )
-    preview = capsys.readouterr()
 
-    assert preview_exit_code == 0, (preview.out, preview.err)
-    assert "merge PRs #1, #2" in preview.out
-    assert fake_repo.stack_merge_requests == []
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "merge",
-        "--method",
-        "rebase",
-    )
+    exit_code = run_main(repo, config_path, "merge")
     captured = capsys.readouterr()
 
-    assert exit_code == 0, (captured.out, captured.err)
+    assert exit_code == 4
     assert fake_repo.stack_merge_requests == [
-        (2, "rebase", "direct_merge", stack_before.revisions[1].commit_id)
+        (1, "squash", "direct_merge", stack_before.head.commit_id)
     ]
-    assert fake_repo.stack_merge_polls == [(2, "fake-stack-merge-1")]
     assert fake_repo.pull_requests[1].state == "closed"
-    assert fake_repo.pull_requests[2].state == "closed"
-    assert fake_repo.pull_requests[3].state == "closed"
-    assert fake_repo.pull_requests[3].base_ref == "main"
-    assert fake_repo.ref_target(fake_repo.pull_requests[3].head_ref) != survivor_before
     assert read_remote_ref(fake_repo.git_dir, "main") != trunk_before
     assert "final trunk commit" in captured.out
-    assert "stop:" in captured.out
-    assert "sync " in captured.out
+    assert "Updating the local stack after the completed merge" in captured.out
+    error = " ".join(captured.err.split())
+    assert "GitHub completed the merge, but the local stack update did not finish" in error
+    assert "Do not run jj-stack merge again" in error
+    assert f"jj-stack sync {stack_before.head.change_id}" in error
+    assert "Could not update the local stack after the completed merge" in error
+    assert "request failed (sync repository lookup failed)" in error
     assert state_store.load() == state_before
     assert tuple(revision.commit_id for revision in selected_stack(repo).revisions) == tuple(
         revision.commit_id for revision in stack_before.revisions
     )
 
 
-def test_stack_merge_commit_uses_one_group_result_that_sync_can_retire(
+def test_stack_merge_commit_uses_resolved_head_for_automatic_sync(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -217,6 +217,7 @@ def test_stack_merge_commit_uses_one_group_result_that_sync_can_retire(
         "merge",
         "--method",
         "merge",
+        "heads(trunk()..@-)",
     )
     merged = capsys.readouterr()
     merge_commit = fake_repo.pull_requests[1].merge_commit_sha
@@ -229,16 +230,13 @@ def test_stack_merge_commit_uses_one_group_result_that_sync_can_retire(
         fake_repo.is_ancestor(revision.commit_id, merge_commit) for revision in stack.revisions
     )
 
-    sync_exit_code = run_main(repo, config_path, "sync", stack.head.change_id)
-    synced = capsys.readouterr()
-
-    assert sync_exit_code == 0, (synced.out, synced.err)
+    assert "Updating the local stack after the completed merge" in merged.out
     assert state_store.load().review_identities == {}
     assert JjClient(repo).resolve_revision("@").parents == (merge_commit,)
 
 
 @pytest.mark.parametrize("merge_method", ("rebase", "squash"))
-def test_stack_rewriting_merge_sync_retires_pre_merge_copies(
+def test_stack_rewriting_merge_automatically_retires_pre_merge_copies(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -258,10 +256,7 @@ def test_stack_rewriting_merge_sync_retires_pre_merge_copies(
     assert merge_exit_code == 0, (merged.out, merged.err)
     assert final_trunk == read_remote_ref(fake_repo.git_dir, "main")
 
-    sync_exit_code = run_main(repo, config_path, "sync", stack.head.change_id)
-    synced = capsys.readouterr()
-
-    assert sync_exit_code == 0, (synced.out, synced.err)
+    assert "Updating the local stack after the completed merge" in merged.out
     assert state_store.load().review_identities == {}
     assert JjClient(repo).resolve_revision("@").parents == (final_trunk,)
     copies = JjClient(repo).query_revisions_by_change_ids(
@@ -365,7 +360,6 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.github_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
-    state_before = state_store.load()
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     class LostResponseClient(GithubClient):
@@ -417,7 +411,10 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     assert fake_repo.stack_merge_polls == []
     assert len(fake_repo.stack_merge_requests) == 1
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("closed", "closed")
-    assert state_store.load() == state_before
+    assert state_store.load().review_identities == {}
+    assert JjClient(repo).resolve_revision("@").parents == (
+        read_remote_ref(fake_repo.git_dir, "main"),
+    )
 
 
 def test_stack_merge_requires_a_resource_for_a_multi_pr_review(

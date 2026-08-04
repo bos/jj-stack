@@ -96,8 +96,9 @@ confirms after you explain that risk.
   approvals, checks, conflicts, and repository policy. Multi-PR reviews use
   one atomic bottom-prefix request; the same asynchronous API handles a one-PR
   review. If trunk uses a merge queue, success means GitHub accepted the PRs
-  into the queue, not that they merged. It never pushes trunk or rewrites local
-  history. Wait for queued PRs to merge, then run `sync <head-change-id>`.
+  into the queue, not that they merged. A completed direct merge automatically
+  fetches and syncs the selected local stack; it never pushes trunk. Wait for
+  queued PRs to merge, then run `sync <head-change-id>`.
 - **Remove GitHub stack grouping:** `unstack --dry-run <head-change-id>`, then
   `unstack <head-change-id>`. When one GitHub stack spans several desired local
   paths, use the exact `unstack --stack <number>` command from the diagnostic.
@@ -149,8 +150,9 @@ you see.
 4. Apply review feedback in the change it belongs to: edit the lower `jj`
    change, let descendants rebase, then `view` and `submit`. Do not patch a
    higher change to avoid touching a lower one.
-5. When bottom changes are ready, `merge --dry-run`, then `merge`, followed
-   by the printed `sync <head-change-id>`.
+5. When bottom changes are ready, `merge --dry-run`, then `merge`. A completed
+   direct merge updates the local stack automatically. After a queued merge,
+   run `sync <head-change-id>` once GitHub finishes.
 6. If `trunk()` merely advanced, use plain `jj rebase`. `sync` is for
    ancestors already merged on GitHub under exact or rewritten commit IDs.
 
@@ -169,9 +171,11 @@ that is incomplete or needs attention (the output is still valid — read it);
   access reason, fix it, and rerun the same explicit command. A terminal
   stack-merge failure merges nothing. A matching request already pending should
   be allowed to finish, then observed by rerunning the same target and method.
+- Direct merge completed but automatic sync failed: do not rerun `merge`.
+  Follow the reported recovery instructions; `sync <head-change-id>` can
+  continue from current GitHub, trunk, local, and tracking observations.
 - Queued review: `view` and `list` report it. Do not submit or sync that stack
-  until GitHub merges it or the PR is removed from the queue. Independent stacks
-  remain usable.
+  until GitHub merges it. Independent stacks remain usable.
 - Interrupted command: `view`, then rerun with an explicit change ID, revset,
   or `--pull-request` selector.
 - jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.

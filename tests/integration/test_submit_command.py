@@ -170,27 +170,36 @@ def test_submit_github_stack_recovers_lost_create_and_retries_blocked_append(
     )
 
 
-def test_submit_does_not_update_a_queued_review(
+def test_submit_leaves_new_suffix_unsubmitted_while_an_ancestor_is_queued(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    revision = selected_stack(repo).head
     pull_request = fake_repo.pull_requests[1]
     pull_request.is_queued = True
-    remote_before = fake_repo.ref_target(pull_request.head_ref)
-    title_before = pull_request.title
-    run_command(["jj", "describe", "-r", revision.change_id, "-m", "renamed feature"], repo)
+    remote_before = remote_refs(fake_repo.git_dir)
+    state_store = ReviewStateStore.for_repo(repo)
+    state_before = state_store.load()
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+    head_change_id = selected_stack(repo).head.change_id
 
     exit_code = run_main(repo, config_path, "submit")
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "is in the merge queue" in captured.err
-    assert fake_repo.ref_target(pull_request.head_ref) == remote_before
-    assert pull_request.title == title_before
+    error = " ".join(captured.err.split())
+    assert "is in the merge queue" in error
+    assert "submit made no changes" in error
+    assert "new changes above it remain unsubmitted" in error
+    assert f"jj-stack sync {head_change_id}" in error
+    assert f"jj-stack submit {head_change_id}" in error
+    assert "remove PR #1 from the queue" not in error
+    assert tuple(fake_repo.pull_requests) == (1,)
+    assert remote_refs(fake_repo.git_dir) == remote_before
+    assert state_store.load() == state_before
 
 
 def test_submit_recreates_github_stack_only_after_active_review_grows_to_two(

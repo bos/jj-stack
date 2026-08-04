@@ -316,7 +316,8 @@ state directory contains no operation journal, merge note, phase, selector, path
 resource ID, or recovery checkpoint.
 
 Merge and recovery share current-state observation rather than a durable operation state
-machine:
+machine. A terminal direct merge invokes selected convergence under the merge command's existing
+repository lock; queued and blocked results return without doing so:
 
 - `commands/merge/` checks and asks GitHub to merge one selected review path
 - `commands/sync.py` repairs a selected stack
@@ -516,9 +517,9 @@ branch state, not just JSON responses.
 
 Its GitHub stack endpoints model ordered resource membership, historical merged prefixes, exact
 active suffix unstacking, create/append admission, and asynchronous merge submission and polling.
-The merge fixtures cover direct merges, queue acceptance, atomic failure, partial survivor
-rewrites, and terminal retry. They remain bounded contracts rather than a general GitHub stack
-emulator.
+The merge fixtures cover direct merge convergence, queue acceptance, atomic failure, a middle-PR
+boundary with higher survivor rewrites, a post-merge local failure, and terminal retry. They
+remain bounded contracts rather than a general GitHub stack emulator.
 
 We use FastAPI for the fake server unless Starlette later proves to offer a clear
 concrete advantage for this test harness.

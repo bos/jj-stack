@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -145,38 +144,37 @@ def test_sync_recovers_a_clean_single_review_rebase_merge(
     assert reviewed.change_id not in state_store.load().review_identities
 
 
-def test_merge_prints_a_short_sync_target_that_converges_the_local_stack(
+def test_merge_by_middle_pull_request_automatically_syncs_the_unnamed_survivors(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=4)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.pull_requests[2].is_draft = True
     stack = selected_stack(repo)
-    top_change_id = stack.revisions[1].change_id
-    top_commit_id = stack.revisions[1].commit_id
-    abbreviated_change_id = top_change_id[:8]
+    survivors = stack.revisions[2:]
+    survivor_commits_before = tuple(revision.commit_id for revision in survivors)
 
-    merge_exit_code = run_main(repo, config_path, "merge", abbreviated_change_id)
+    merge_exit_code = run_main(repo, config_path, "merge", "--pull-request", "2")
     merged = capsys.readouterr()
-    assert merge_exit_code == 0
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].state == "open"
-    assert JjClient(repo).resolve_revision(top_change_id).commit_id == top_commit_id
-    match = re.search(r"jj-stack sync\s+([k-z]+)", merged.out)
-    assert match is not None, merged.out
-    assert match.group(1) == abbreviated_change_id
 
-    sync_exit_code = run_main(repo, config_path, "sync", match.group(1))
-    captured = capsys.readouterr()
-
-    assert sync_exit_code == 0, (captured.out, captured.err)
+    assert merge_exit_code == 0, (merged.out, merged.err)
+    assert all(fake_repo.pull_requests[number].merged_at is not None for number in (1, 2))
+    assert all(fake_repo.pull_requests[number].state == "open" for number in (3, 4))
+    assert "Updating the local stack after the completed merge" in merged.out
     merged_trunk_commit = read_remote_ref(fake_repo.git_dir, "main")
-    rewritten_top = JjClient(repo).resolve_revision(top_change_id)
-    assert rewritten_top.parents == (merged_trunk_commit,)
-    assert fake_repo.pull_requests[2].base_ref == "main"
-    assert fake_repo.pull_requests[2].state == "open"
+    rewritten_survivors = tuple(
+        JjClient(repo).resolve_revision(revision.change_id) for revision in survivors
+    )
+    rewritten_commits = tuple(revision.commit_id for revision in rewritten_survivors)
+    assert rewritten_commits != survivor_commits_before
+    assert rewritten_commits == tuple(
+        fake_repo.ref_target(fake_repo.pull_requests[number].head_ref) for number in (3, 4)
+    )
+    assert rewritten_survivors[0].parents == (merged_trunk_commit,)
+    assert rewritten_survivors[1].parents == (rewritten_survivors[0].commit_id,)
+    assert fake_repo.pull_requests[3].base_ref == "main"
+    assert fake_repo.pull_requests[4].base_ref == fake_repo.pull_requests[3].head_ref
 
 
 def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
