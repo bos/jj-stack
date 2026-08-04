@@ -177,6 +177,7 @@ def prepare_status(
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
     containing_change_id: str | None = None,
+    inspection_mode: bool = False,
 ) -> PreparedStatus:
     """Resolve local status inputs before any GitHub network inspection."""
 
@@ -194,6 +195,7 @@ def prepare_status(
         remote=github_target.remote,
         revset=revset,
         state=state,
+        inspection_mode=inspection_mode,
     )
     if fetched_remote_state:
         state = state_store.load()
@@ -227,6 +229,7 @@ def _resolve_selected_stack(
     remote: GitRemote | None,
     revset: str | None,
     state: ReviewState,
+    inspection_mode: bool,
 ) -> tuple[SelectedReviewPath, bool]:
     """Resolve the selected stack, fetching remote state first when requested.
 
@@ -247,10 +250,12 @@ def _resolve_selected_stack(
         if containing_change_id is not None:
             return select_review_path_containing_change(
                 change_id=containing_change_id,
+                inspection_mode=inspection_mode,
                 jj_client=jj_client,
                 state=state,
             )
         return select_review_path(
+            inspection_mode=inspection_mode,
             jj_client=jj_client,
             revset=revset,
             state=state,

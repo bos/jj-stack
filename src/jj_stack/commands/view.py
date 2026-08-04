@@ -316,14 +316,16 @@ def _prepare_status_for_revset(
     revset: str | None,
 ) -> PreparedStatus:
     try:
-        return prepare_status(
+        prepared_status = prepare_status(
             context=context,
             containing_change_id=containing_change_id,
             fetch_remote_state=False,
+            inspection_mode=True,
             revset=revset,
         )
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
+    return prepared_status
 
 
 def _prepare_status_with_spinner(
@@ -333,11 +335,48 @@ def _prepare_status_with_spinner(
     revset: str | None,
 ) -> PreparedStatus:
     with console.spinner(description="Inspecting jj stack"):
-        return _prepare_status_for_revset(
+        prepared_status = _prepare_status_for_revset(
             containing_change_id=containing_change_id,
             context=context,
             revset=revset,
         )
+    for warning in _local_history_warnings(prepared_status):
+        console.warning(warning)
+    return prepared_status
+
+
+def _local_history_warnings(prepared_status: PreparedStatus) -> tuple[ui.Message, ...]:
+    """Describe selected local states that inspection tolerates but review mutation rejects."""
+
+    warnings: list[ui.Message] = []
+    for revision in prepared_status.prepared.stack.revisions:
+        change_id = ui.change_id(revision.change_id)
+        if len(revision.parents) > 1:
+            warnings.append(
+                t"Change {change_id} is a merge commit. Showing its first-parent path; "
+                t"commands that change review state require a linear stack."
+            )
+        if revision.is_working_copy and revision.empty:
+            warnings.append(
+                t"Change {change_id} is an empty working-copy commit. Showing it for inspection; "
+                t"it cannot be submitted for review."
+            )
+        elif revision.is_working_copy and not revision.description.strip():
+            warnings.append(
+                t"Change {change_id} has no description. Showing it for inspection, but it "
+                t"cannot be submitted until it is described with {ui.cmd('jj describe')}."
+            )
+        if revision.divergent:
+            warnings.append(
+                t"Change {change_id} has divergent local commits. Showing the selected path; "
+                t"commands that change review state will stop until the divergence is resolved."
+            )
+        if revision.conflict:
+            warnings.append(
+                t"Change {change_id} has unresolved conflicts. Showing it for inspection; "
+                t"submit and merge remain blocked until the conflicts are resolved."
+            )
+    return tuple(warnings)
 
 
 def _status_heading(selector: ViewSelector) -> ui.Message:

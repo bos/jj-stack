@@ -6,6 +6,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ConflictedStackError, UsageError
 from jj_stack.github.resolution import select_submit_remote
+from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import resolve_review_branches
 from jj_stack.review.selected import require_reviewable_revisions, select_review_path
@@ -22,13 +23,12 @@ def prepare_submit_inputs(
     *,
     context: CommandContext,
     options: SubmitOptions,
+    state: ReviewState,
 ) -> PreparedSubmitInputs:
     """Load local submit state before any GitHub mutation begins."""
 
     client = context.jj_client
-    state_store = context.state_store
     remote = select_submit_remote(client.list_git_remotes())
-    state = state_store.load()
     stack = select_review_path(
         jj_client=client,
         revset=options.revset,

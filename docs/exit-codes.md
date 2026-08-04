@@ -34,10 +34,13 @@ Notes:
   sync stops. The output distinguishes those outcomes and says not to retry the merge.
 - `sync` may finish its local rebase before exiting 3. Its message says whether to resolve the
   conflicts and continue with `submit`.
-- Exit 2 covers selections `jj-stack` cannot review as a linear stack: a merge commit, a divergent
+- Exit 2 covers selections a command cannot use as a review stack: a merge commit, a divergent
   change, a hidden or immutable commit, an empty or undescribed working copy, a path that never
-  reaches `trunk()`, and a repository with no trunk bookmark configured. The message names the
-  offending change where there is one; the trunk and working-copy cases have no change to name.
+  reaches `trunk()`, and a repository with no trunk bookmark configured. `view` makes a
+  best-effort exception when it can resolve a first-parent path through a merge, working-copy
+  issue, divergence, or conflict: it prints the report and a warning instead. Unresolvable
+  selection or trunk boundaries still fail. The message names the offending change where there
+  is one; the trunk and working-copy cases have no change to name.
 - Exit 6 means rerun with an explicit revision or repair an incorrect saved PR attachment with
   `relink`.
 - `doctor` exits 0 when every check passed, warned, or was fixed, and 1 when any check failed. A

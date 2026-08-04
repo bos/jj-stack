@@ -32,6 +32,7 @@ def test_view_skips_duplicate_stack(
                         commit_id="shared-base" if revset in {"foo", "bar"} else f"base-{revset}"
                     ),
                     head=SimpleNamespace(change_id=change_ids[-1]),
+                    revisions=(),
                 ),
                 state=ReviewState(),
                 status_revisions=tuple(
@@ -95,6 +96,7 @@ def test_view_continues_after_selector_error(
                 stack=SimpleNamespace(
                     base_parent=SimpleNamespace(commit_id=f"base-{revset}"),
                     head=SimpleNamespace(change_id=f"{revset}-head"),
+                    revisions=(),
                 ),
                 state=ReviewState(),
                 status_revisions=(
@@ -168,6 +170,7 @@ def test_view_json_continues_after_selector_error(
                 stack=SimpleNamespace(
                     base_parent=SimpleNamespace(commit_id=f"base-{revset}"),
                     head=SimpleNamespace(change_id=f"{revset}-head"),
+                    revisions=(),
                 ),
                 state=ReviewState(),
                 status_revisions=(

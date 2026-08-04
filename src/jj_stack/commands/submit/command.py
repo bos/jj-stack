@@ -399,10 +399,12 @@ async def run_submit_async(
         context=context,
         options=options,
     )
+    state = state_store.load()
     with console.spinner(description="Preparing submit"):
         prepared_inputs = prepare_submit_inputs(
             context=context,
             options=options,
+            state=state,
         )
     if on_prepared is not None:
         on_prepared(

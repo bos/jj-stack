@@ -16,6 +16,7 @@ from ..support.integration_helpers import (
     init_fake_github_repo_with_submitted_stack,
     run_command,
     selected_stack,
+    write_file,
 )
 from ..support.json_schema import assert_json_output_matches_schema
 from ..support.output_assertions import assert_output_contains
@@ -89,7 +90,7 @@ def test_view_and_list_show_queued_reviews(
     assert "queued" in listed.out
 
 
-def test_view_rejects_empty_working_copy_from_another_workspace(
+def test_view_warns_and_reports_empty_working_copy_from_another_workspace(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -116,33 +117,63 @@ def test_view_rejects_empty_working_copy_from_another_workspace(
     exit_code = run_main(repo, config_path, "view", other_working_copy.change_id)
     captured = capsys.readouterr()
 
-    assert exit_code == EXIT_NO_STACK
+    assert exit_code == 0, captured.err
+    assert other_working_copy.change_id[:8] in captured.out
+    assert other_working_copy.change_id[:8] in captured.err
     assert "empty working-copy commit" in captured.err
 
 
-def test_view_rejects_empty_working_copy_inside_stack_from_another_workspace(
+def test_view_warns_and_reports_merge_commit_first_parent_path(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature left", "left.txt")
+    left = selected_stack(repo).head
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "feature right", "right.txt")
+    right = selected_stack(repo).head
+    run_command(["jj", "new", "-m", "merge head", left.commit_id, right.commit_id], repo)
+    merge = JjClient(repo).resolve_revision("@")
+
+    exit_code = run_main(repo, config_path, "view", "@")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, captured.err
+    assert "merge head" in captured.out
+    assert "feature left" in captured.out
+    assert merge.change_id[:8] in captured.err
+    assert "first-parent" in captured.err
+
+
+def test_view_warns_and_reports_undescribed_working_copy_inside_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
     feature_change_id = selected_stack(repo).head.change_id
-    base_workspace = tmp_path / "base-workspace"
+    undescribed_workspace = tmp_path / "undescribed-workspace"
     run_command(
         [
             "jj",
             "workspace",
             "add",
             "--name",
-            "base",
+            "undescribed",
             "--revision",
             feature_change_id,
-            str(base_workspace),
+            str(undescribed_workspace),
         ],
         repo,
     )
-    empty_base = JjClient(base_workspace).resolve_revision("@")
+    write_file(undescribed_workspace / "undescribed.txt", "undescribed\n")
+    run_command(["jj", "status"], undescribed_workspace)
+    undescribed = JjClient(undescribed_workspace).resolve_revision("@")
     child_workspace = tmp_path / "child-workspace"
     run_command(
         [
@@ -152,7 +183,7 @@ def test_view_rejects_empty_working_copy_inside_stack_from_another_workspace(
             "--name",
             "child",
             "--revision",
-            empty_base.change_id,
+            undescribed.change_id,
             str(child_workspace),
         ],
         repo,
@@ -162,10 +193,39 @@ def test_view_rejects_empty_working_copy_inside_stack_from_another_workspace(
 
     exit_code = run_main(repo, config_path, "view", child_change_id)
     captured = capsys.readouterr()
+    warning = " ".join(captured.err.split())
 
-    assert exit_code == EXIT_NO_STACK
-    assert empty_base.change_id[:8] in captured.err
-    assert "empty working-copy commits are not reviewable" in captured.err
+    assert exit_code == 0, captured.err
+    assert "feature 2" in captured.out
+    assert undescribed.change_id[:8] in captured.out
+    assert undescribed.change_id[:8] in warning
+    assert "no description" in warning
+
+
+def test_view_warns_and_reports_conflicted_rebase(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature conflict", "shared.txt")
+    change_id = selected_stack(repo).head.change_id
+    run_command(["jj", "new", "main"], repo)
+    write_file(repo / "shared.txt", "trunk conflict\n")
+    run_command(["jj", "commit", "-m", "trunk conflict"], repo)
+    run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
+    run_command(["jj", "rebase", "-s", change_id, "-d", "main"], repo)
+    conflicted = JjClient(repo).resolve_revision(change_id)
+    assert conflicted.conflict
+
+    exit_code = run_main(repo, config_path, "view", change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, captured.err
+    assert "feature conflict" in captured.out
+    assert conflicted.change_id[:8] in captured.err
+    assert "conflict" in captured.err
 
 
 def test_view_identity_selectors_show_the_complete_containing_stack(

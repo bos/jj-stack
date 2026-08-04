@@ -540,7 +540,9 @@ def test_list_and_view_agree_that_a_divergent_change_is_an_incomplete_report(
     list_exit_code = run_main(repo, config_path, "list")
     list_output = capsys.readouterr().out
     view_exit_code = run_main(repo, config_path, "view")
+    view_output = capsys.readouterr()
 
     assert "divergent" in list_output
     assert list_exit_code == EXIT_INCOMPLETE
     assert view_exit_code == EXIT_INCOMPLETE
+    assert "divergent" in view_output.err

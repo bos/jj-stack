@@ -24,6 +24,7 @@ from jj_stack.review.path import (
 
 def select_review_path(
     *,
+    inspection_mode: bool = False,
     jj_client: JjClient,
     state: ReviewState,
     revset: str | None = None,
@@ -68,6 +69,7 @@ def select_review_path(
         selector_flag=1,
         state=state,
         use_default=revset is None,
+        inspection_mode=inspection_mode,
     )
     if revset is None and path.stack.head.current_working_copy:
         return _replace_selected_revset(path, "@")
@@ -78,6 +80,7 @@ def select_review_path(
 
 def select_review_path_containing_change(
     *,
+    inspection_mode: bool = False,
     change_id: str,
     jj_client: JjClient,
     state: ReviewState,
@@ -104,6 +107,7 @@ def select_review_path_containing_change(
         selector_flag=2,
         state=state,
         use_default=False,
+        inspection_mode=inspection_mode,
     )
     heads = tuple(revision for revision, flags in rows if flags[1])
     selected_revset = heads[0].change_id if len(heads) == 1 else change_id
@@ -114,6 +118,7 @@ def select_review_path_containing_change(
         selector_flag=1,
         state=state,
         use_default=False,
+        inspection_mode=inspection_mode,
     )
 
 
@@ -170,6 +175,7 @@ def _observe_path_rows(
 
 def _project_rows(
     *,
+    inspection_mode: bool,
     rows: tuple[tuple[LocalRevision, tuple[bool, ...]], ...],
     selected_revset: str,
     select_mutable_copy: bool,
@@ -204,7 +210,7 @@ def _project_rows(
     path_flag = len(rows[0][1]) - 2
     trunk_flag = len(rows[0][1]) - 1
     path_revisions = tuple(revision for revision, flags in rows if flags[path_flag])
-    if any(len(revision.parents) > 1 for revision in path_revisions):
+    if not inspection_mode and any(len(revision.parents) > 1 for revision in path_revisions):
         raise UnsupportedStackError(
             "Unsupported stack shape: merge commits are not supported.",
             reason="merge_commit",
@@ -229,11 +235,17 @@ def _project_rows(
             trunk=trunk,
         )
     )
-    _validate_selected_path(path)
+    _validate_selected_path(path, inspection_mode=inspection_mode)
     return path
 
 
-def _validate_selected_path(path: SelectedReviewPath) -> None:
+def _validate_selected_path(
+    path: SelectedReviewPath,
+    *,
+    inspection_mode: bool,
+) -> None:
+    if inspection_mode:
+        return
     for revision in path.stack.revisions:
         if revision.is_working_copy and revision.empty:
             raise UnsupportedStackError.stack_shape(

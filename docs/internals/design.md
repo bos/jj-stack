@@ -84,11 +84,14 @@ nearest commit on `trunk()`'s first-parent chain. That commit is the stack's bas
 itself part of the stack. A reviewed side parent of a merge commit on trunk therefore remains in
 the selected path until `sync` reconciles it.
 
-`jj-stack` supports only linear stacks, so the walk follows each commit's sole parent. A merge
-commit inside the selected chain is rejected, as is a divergent review change. Unresolved
-conflicts are a separate matter: they do not break the shape, so `view` and `list` report a
-conflicted change. `submit` and `merge` refuse to act on one. `sync` may rebase it locally but
-does not update its review until the conflict is resolved.
+Commands that change review state support only linear stacks, so their walk follows each commit's
+sole parent. They reject a merge commit inside the selected chain and a divergent review change.
+`view` is best-effort inspection: it reports the first-parent path through a merge and warns about
+the omitted shape rather than requiring a rewrite before showing output. Unresolved conflicts do
+not break the shape, so `view` and `list` report a conflicted change. `submit` and `merge` refuse
+to act on one. `sync` may leave a conflicted rebase in the local DAG, but it does not move that
+change's review branch or update its pull request. After resolving the conflicts, the user runs
+`submit` to send the new commit for review.
 
 Commands plan review mutations from the selected chain. Other visible children elsewhere in the
 DAG are not an error. A `sync` rebase may also move descendants when `jj` propagates a rewrite,
@@ -364,7 +367,9 @@ Remote hostnames are deliberately ignored, without safety checks. Only `github.c
 supported.
 
 Stack lifecycle commands default to `@` when the working-copy change has a nonblank description
-and contents, and to `@-` otherwise. Explicit empty or undescribed working-copy selections fail.
+and contents, and to `@-` otherwise. A command that changes review state rejects an explicitly
+selected empty or undescribed working-copy change. `view` includes one on the selected path and
+warns that it cannot be submitted.
 `view` may accept several selectors. An arbitrary revision expression selects the exact revision
 it resolves to as the stack head. A bare change ID, including a prefix that identifies one
 logical change, or a linked pull request identifies the complete local stack containing that
@@ -698,6 +703,13 @@ Inspection tolerates history exposed by fetch rather than immediately declaring 
 `view` walks past immutable or divergent side copies of merged changes. A merged PR still in the
 local stack becomes a `cleanup needed` row naming `sync`. Only when no supported
 linear walk remains does `view` stop with a targeted diagnostic.
+
+Local review eligibility never prevents an otherwise resolvable `view` report. Empty or
+undescribed working-copy changes, divergent changes, conflicts, and merge commits are shown with
+warnings that explain which mutation remains blocked. A merge is projected through its first
+parent, which the warning states explicitly. These warnings do not make an otherwise complete
+report incomplete; divergence and unresolved remote observations retain their existing
+incomplete-report rules. Mutation commands continue to reject unsupported selections.
 
 A per-change lookup failure marks only that row unresolved and produces an incomplete report. A
 failure before any rows can be built returns its own exit code. `list` includes orphaned PRs as

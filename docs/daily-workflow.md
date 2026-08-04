@@ -33,6 +33,12 @@ This is the same command as `jj-stack view`.
 This is a good go-to command whenever you are unsure what your stack looks like or what you have
 submitted for review.
 
+If the selected history is not currently eligible for review, `view` still prints the useful
+local and GitHub state it can resolve. Empty or undescribed working-copy changes, divergent
+changes, conflicts, and merge commits produce warnings instead of blocking inspection. For a
+merge, the report follows the first-parent path. Commands that change review state remain strict
+and tell you what must be resolved first.
+
 In a large or busy project, you'll often be working on multiple stacks at a time. If you want a
 repo-wide inventory of the stacks you have in flight, use the `list` command (or its short alias
 `ls`):
