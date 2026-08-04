@@ -95,7 +95,6 @@ async def _sync_overview_comment(
         await delete_stack_overview_comment(
             comment_id=existing_comment.id,
             github_client=github_client,
-            pull_request_number=pull_request_number,
         )
         return None
     if existing_comment is not None:

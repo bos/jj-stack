@@ -6,7 +6,6 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
-from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.state.store import ReviewStateStore
 
 from ..support.integration_helpers import (
@@ -233,52 +232,6 @@ def test_cleanup_preserves_closed_review_branch_used_by_open_pull_request(
     assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
 
 
-def test_cleanup_rechecks_open_dependents_before_deleting_branch(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = selected_stack(repo).head.change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    identity = state.review_identities[change_id]
-    fake_repo.pull_requests[identity.pr_number].state = "closed"
-    run_command(["jj", "abandon", change_id], repo)
-    calls = 0
-
-    async def dependents_appear_before_delete(self, *, base_refs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return dict.fromkeys(base_refs, ())
-        dependent = GithubPullRequest(
-            base=GithubBranchRef(ref=identity.head_ref),
-            head=GithubBranchRef(ref="manual/late-dependent"),
-            html_url="https://github.test/octo-org/stacked-review/pull/2",
-            number=2,
-            state="open",
-            title="late dependent",
-        )
-        return {ref: (dependent,) for ref in base_refs}
-
-    monkeypatch.setattr(
-        GithubClient,
-        "get_open_pull_requests_by_base_refs",
-        dependents_appear_before_delete,
-    )
-
-    exit_code = run_main(repo, config_path, "cleanup")
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert calls == 2
-    assert "open PR #2 still" in " ".join(captured.out.split())
-    assert state_store.load() == state
-    assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
-
-
 def test_cleanup_isolates_malformed_review_observation(
     tmp_path: Path,
     monkeypatch,
@@ -351,7 +304,7 @@ def test_cleanup_stops_later_reviews_after_partial_mutation_failure(
     )
 
     async def reject_comment_delete(**_kwargs) -> bool:
-        raise CliError("comment changed during cleanup")
+        raise CliError("comment deletion failed")
 
     monkeypatch.setattr(
         "jj_stack.commands._cleanup_actions.delete_stack_overview_comment",
@@ -363,7 +316,7 @@ def test_cleanup_stops_later_reviews_after_partial_mutation_failure(
     refreshed_state = state_store.load()
 
     assert exit_code == 1
-    assert "comment changed during cleanup" in captured.out
+    assert "comment deletion failed" in captured.out
     assert blocking_change_id in refreshed_state.review_identities
     assert later_change_id in refreshed_state.review_identities
     assert f"refs/heads/{blocking_identity.head_ref}" not in remote_refs(fake_repo.git_dir)
@@ -503,7 +456,7 @@ def test_cleanup_blocks_ambiguous_overview_comments_before_mutation(
     assert f"refs/heads/{identity.head_ref}" in remote_refs(fake_repo.git_dir)
 
 
-def test_cleanup_blocks_live_pull_request_head_drift_before_mutation(
+def test_cleanup_blocks_pull_request_head_drift_observed_during_planning(
     tmp_path: Path,
     monkeypatch,
     capsys,

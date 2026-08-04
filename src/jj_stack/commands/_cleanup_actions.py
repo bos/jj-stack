@@ -8,7 +8,6 @@ from typing import Literal
 
 import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.bootstrap import CommandContext
 from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -21,11 +20,7 @@ from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.review.branches import review_branch_matches_change
-from jj_stack.review.observation import (
-    RepositoryObservation,
-    observe_reviews,
-)
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.review.observation import RepositoryObservation
 from jj_stack.ui import Message, plain_text
 
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -46,19 +41,6 @@ class ReviewMutationAction:
         """Return the plain-text form of this action body."""
 
         return plain_text(self.body)
-
-
-def github_observation_blocker() -> ReviewMutationAction:
-    """Return the shared user-facing blocker for unavailable GitHub facts."""
-
-    return ReviewMutationAction(
-        kind="tracking",
-        body=(
-            "cannot inspect pull requests tracked by jj-stack without live GitHub state; "
-            "fix GitHub access and retry"
-        ),
-        status="blocked",
-    )
 
 
 def check_tracked_review(
@@ -150,39 +132,6 @@ def check_tracked_review(
     )
 
 
-async def check_current_tracked_pull_request(
-    *,
-    allowed_states: frozenset[str],
-    change_id: str,
-    github_client: GithubClient,
-    require_no_open_dependents: bool = False,
-    retry_command: str = "cleanup",
-    review_identity: ReviewIdentity,
-    state_store: ReviewStateStore,
-    submitted_baseline: SubmittedBaseline,
-) -> tuple[GithubPullRequest | None, ReviewMutationAction | None]:
-    """Check one unchanged tracking pair with all saved claims in context."""
-
-    try:
-        observation = await observe_reviews(
-            change_ids=(change_id,),
-            github_client=github_client,
-            include_open_dependents=require_no_open_dependents,
-            state_store=state_store,
-        )
-    except GithubClientError:
-        return None, github_observation_blocker()
-    return check_tracked_review(
-        allowed_states=allowed_states,
-        change_id=change_id,
-        observation=observation,
-        require_no_open_dependents=require_no_open_dependents,
-        retry_command=retry_command,
-        review_identity=review_identity,
-        submitted_baseline=submitted_baseline,
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class OverviewCommentLookup:
     """Resolution of the managed overview comment on one pull request.
@@ -225,36 +174,22 @@ async def find_overview_comment(
 
 async def apply_overview_comment_cleanup(
     *,
-    change_id: str,
     dry_run: bool,
     github_client: GithubClient,
     lookup: OverviewCommentLookup,
-    review_identity: ReviewIdentity,
-    state_store: ReviewStateStore,
-    submitted_baseline: SubmittedBaseline,
+    pull_request_number: int,
 ) -> tuple[tuple[ReviewMutationAction, ...], bool]:
-    """Delete one preflighted overview comment through a fresh PR boundary."""
+    """Delete one overview comment identified during cleanup planning."""
 
     comment = lookup.comment
     if comment is None:
         return (), True
     deleted = True
     if not dry_run:
-        _pull_request, blocker = await check_current_tracked_pull_request(
-            allowed_states=frozenset({"closed", "merged"}),
-            change_id=change_id,
-            github_client=github_client,
-            review_identity=review_identity,
-            state_store=state_store,
-            submitted_baseline=submitted_baseline,
-        )
-        if blocker is not None:
-            return (blocker,), False
         try:
             deleted = await delete_stack_overview_comment(
                 comment_id=comment.id,
                 github_client=github_client,
-                pull_request_number=review_identity.pr_number,
             )
         except CliError as error:
             return (
@@ -265,13 +200,12 @@ async def apply_overview_comment_cleanup(
                 ),
             ), False
     action_body = (
-        f"delete {STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} from "
-        f"PR #{review_identity.pr_number}"
+        f"delete {STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} from PR #{pull_request_number}"
     )
     if not dry_run and not deleted:
         action_body = (
             f"{STACK_OVERVIEW_COMMENT_LABEL} #{comment.id} already absent from "
-            f"PR #{review_identity.pr_number}"
+            f"PR #{pull_request_number}"
         )
     return (
         ReviewMutationAction(
@@ -438,81 +372,6 @@ async def github_stack_cleanup_blocker(
     except CliError as error:
         return ReviewMutationAction(kind="remote branch", body=str(error), status="blocked")
     return None
-
-
-async def check_current_review_cleanup(
-    *,
-    change_id: str,
-    context: CommandContext,
-    expected_update: ReviewRefUpdate | None,
-    github_client: GithubClient,
-    remote_name: str,
-    retry_command: str = "cleanup",
-    review_identity: ReviewIdentity,
-    submitted_baseline: SubmittedBaseline,
-) -> ReviewMutationAction | None:
-    """Check one review cleanup against current remote state."""
-
-    current_update, blocker = await prepare_current_review_cleanup(
-        allowed_states=frozenset({"closed", "merged"}),
-        change_id=change_id,
-        context=context,
-        github_client=github_client,
-        remote_name=remote_name,
-        retry_command=retry_command,
-        review_identity=review_identity,
-        submitted_baseline=submitted_baseline,
-    )
-    if blocker is not None:
-        return blocker
-    if current_update != expected_update:
-        return ReviewMutationAction(
-            kind="remote branch",
-            body=t"remote branch {ui.bookmark(review_identity.head_ref)} changed during "
-            t"cleanup; reload and retry",
-            status="blocked",
-        )
-    return None
-
-
-async def prepare_current_review_cleanup(
-    *,
-    allowed_states: frozenset[str],
-    change_id: str,
-    context: CommandContext,
-    github_client: GithubClient,
-    remote_name: str,
-    retry_command: str = "cleanup",
-    review_identity: ReviewIdentity,
-    submitted_baseline: SubmittedBaseline,
-) -> tuple[ReviewRefUpdate | None, ReviewMutationAction | None]:
-    """Recheck one cleanup and derive its exact leased ref deletion."""
-
-    try:
-        observation = await observe_reviews(
-            change_ids=(change_id,),
-            context=context,
-            github_client=github_client,
-            include_open_dependents=True,
-            remote_name=remote_name,
-        )
-    except GithubClientError:
-        return None, github_observation_blocker()
-    _pull_request, update, blocker = plan_review_cleanup(
-        allowed_states=allowed_states,
-        change_id=change_id,
-        observation=observation,
-        retry_command=retry_command,
-        review_identity=review_identity,
-        submitted_baseline=submitted_baseline,
-    )
-    if blocker is not None:
-        return None, blocker
-    blocker = await github_stack_cleanup_blocker(
-        github_client=github_client,
-        pull_number=review_identity.pr_number,
-    )
-    return update, blocker
 
 
 def apply_remote_branch_cleanup(

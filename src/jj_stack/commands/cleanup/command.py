@@ -27,7 +27,6 @@ from jj_stack.commands._cleanup_actions import (
     ReviewMutationAction,
     apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
-    check_current_review_cleanup,
     check_tracked_review,
     find_overview_comment,
     github_stack_cleanup_blocker,
@@ -442,19 +441,6 @@ async def _cleanup_tracked_review(
     )
     if overview_lookup is None:
         return False
-    if not prepared_cleanup.dry_run:
-        mutation_blocker = await check_current_review_cleanup(
-            change_id=prepared_change.change_id,
-            context=prepared_cleanup.context,
-            expected_update=update,
-            github_client=github_client,
-            remote_name=remote_name,
-            review_identity=prepared_change.review_identity,
-            submitted_baseline=prepared_change.submitted_baseline,
-        )
-        if mutation_blocker is not None:
-            record_action(_cleanup_action(mutation_blocker))
-            return False
     return await _apply_tracked_review_cleanup(
         branch_update=update,
         overview_lookup=overview_lookup,
@@ -533,8 +519,6 @@ async def _apply_tracked_review_cleanup(
 ) -> bool:
     """Apply checked cleanup, returning whether a partial failure must stop the pass."""
 
-    identity = prepared_change.review_identity
-    baseline = prepared_change.submitted_baseline
     mutation_started = not prepared_cleanup.dry_run and (
         branch_update is not None or overview_lookup.comment is not None
     )
@@ -546,31 +530,15 @@ async def _apply_tracked_review_cleanup(
         update=branch_update,
     )
     comment_actions, comments_current = await apply_overview_comment_cleanup(
-        change_id=prepared_change.change_id,
         dry_run=prepared_cleanup.dry_run,
         github_client=github_client,
         lookup=overview_lookup,
-        review_identity=identity,
-        state_store=prepared_cleanup.context.state_store,
-        submitted_baseline=baseline,
+        pull_request_number=prepared_change.review_identity.pr_number,
     )
     for action in comment_actions:
         record_action(_cleanup_action(action))
     if not comments_current:
         return mutation_started
-    if not prepared_cleanup.dry_run:
-        blocker = await check_current_review_cleanup(
-            change_id=prepared_change.change_id,
-            context=prepared_cleanup.context,
-            expected_update=None,
-            github_client=github_client,
-            remote_name=remote_name,
-            review_identity=identity,
-            submitted_baseline=baseline,
-        )
-        if blocker is not None:
-            record_action(_cleanup_action(blocker))
-            return mutation_started
     reason = (
         f" ({prepared_change.stale_reason})" if prepared_change.stale_reason is not None else ""
     )
