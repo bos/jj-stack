@@ -87,7 +87,9 @@ def select_review_path_containing_change(
     prepare_visible_review_snapshots(jj_client=jj_client, state=state)
     linked_selector = _change_id_revset(change_id)
     trunk_path = "first_ancestors(trunk())"
-    containing_heads = f"heads((({linked_selector}) ~ {trunk_path}):: ~ {trunk_path} ~ empty())"
+    nonempty_descendants = f"((({linked_selector}) ~ {trunk_path}):: ~ {trunk_path}) ~ empty()"
+    selected_empty_change = f"({linked_selector}) & empty()"
+    containing_heads = f"heads(({nonempty_descendants}) | ({selected_empty_change}))"
     rows = _observe_path_rows(
         jj_client=jj_client,
         selector=containing_heads,
@@ -262,4 +264,12 @@ def _change_id_revset(change_id: str) -> str:
 
 
 def _is_full_change_id(value: str) -> bool:
-    return len(value) == 32 and all("k" <= character <= "z" for character in value)
+    return len(value) == 32 and is_change_id_prefix(value)
+
+
+def is_change_id_prefix(value: str | None) -> bool:
+    """Return whether a bare selector has jj change-ID syntax."""
+
+    return (
+        value is not None and bool(value) and all("k" <= character <= "z" for character in value)
+    )

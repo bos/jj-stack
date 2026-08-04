@@ -107,7 +107,7 @@ def test_only_explicit_revision_selection_can_project_a_sole_trunk_copy() -> Non
     )
 
     assert explicit.stack.revisions == ()
-    with pytest.raises(CliError, match="no mutable local copy"):
+    with pytest.raises(CliError, match="already on trunk"):
         project_selected_path(
             _observation(
                 head=trunk_copy,

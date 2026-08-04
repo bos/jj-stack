@@ -296,8 +296,8 @@ def build_parser() -> ArgumentParser:
             selectors=lambda args: args.view_selectors,
         ),
         revset_help=(
-            "Revsets or change IDs to inspect; can be mixed with --pull-request selectors; "
-            "defaults to the current stack"
+            "Revsets select an exact stack head; change IDs select their complete containing "
+            "stack; can be mixed with --pull-request selectors; defaults to the current stack"
         ),
         revset_nargs="*",
     )
@@ -306,7 +306,10 @@ def build_parser() -> ArgumentParser:
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
         action="append",
-        help="Inspect the stack for this PR number or URL; repeat to inspect several stacks",
+        help=(
+            "Inspect the complete stack containing this PR number or URL; repeat to inspect "
+            "several stacks"
+        ),
     )
     view_parser.add_argument(
         "--json",

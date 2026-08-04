@@ -12,9 +12,9 @@ Common examples:
 - `jj-stack view` inspects the stack ending at `@` when the working-copy change is described and
   nonempty, otherwise `@-`.
 
-- `jj-stack view --pull-request 123` finds the local stack for one linked PR.
+- `jj-stack view --pull-request 123` finds the complete local stack containing one linked PR.
 
-- `jj-stack view <head-change-id>` selects another stack explicitly.
+- `jj-stack view <change-id>` finds the complete local stack containing that change.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._json_status import review_change_json
-from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, error_message
 from jj_stack.formatting import (
     RenderableRevision,
@@ -43,9 +42,12 @@ from jj_stack.github.error_messages import (
     remote_unavailable_message,
 )
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import UnsupportedStackError
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
-from jj_stack.models.stack import LocalStack
+from jj_stack.jj.client import (
+    JjCommandError,
+    UnsupportedStackError,
+    divergent_change_id_from_error,
+)
+from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.review.branches import (
     is_review_branch,
     review_branch_glob,
@@ -54,7 +56,7 @@ from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
 )
-from jj_stack.review.repository import observe_repository_paths
+from jj_stack.review.selected import is_change_id_prefix
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
     resolve_selected_revset,
@@ -90,6 +92,7 @@ class ViewSelector:
 class _ResolvedViewSelector:
     note: ui.Message | None
     revset: str | None
+    containing_change_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,19 +155,12 @@ def _run_status(
             prepared_status=prepared_status,
             verbose=verbose,
         )
-        _emit_connected_stale_stacks_advisory(
-            context=context,
-            rendered_stacks=(prepared_status.prepared.stack,),
-            state=prepared_status.prepared.state,
-        )
         return exit_code
 
     exit_code = 0
     multi_selector = len(selectors) > 1
     rendered_stack_keys: set[tuple[str, ...]] = set()
-    rendered_stacks: list[LocalStack] = []
     json_stacks: list[dict[str, object]] = []
-    state: ReviewState | None = None
     printed_blocks = 0
     for selector in selectors:
         try:
@@ -173,6 +169,7 @@ def _run_status(
                 selector=selector,
             )
             prepared_status = _prepare_status_with_spinner(
+                containing_change_id=resolved_selector.containing_change_id,
                 context=context,
                 revset=resolved_selector.revset,
             )
@@ -202,9 +199,6 @@ def _run_status(
         if stack_key in rendered_stack_keys:
             continue
         rendered_stack_keys.add(stack_key)
-        rendered_stacks.append(prepared_status.prepared.stack)
-        state = prepared_status.prepared.state
-
         if as_json:
             rendered, incomplete = _json_prepared_status(
                 prepared_status=prepared_status,
@@ -238,58 +232,7 @@ def _run_status(
             )
         )
         return exit_code
-    if state is not None:
-        _emit_connected_stale_stacks_advisory(
-            context=context,
-            rendered_stacks=tuple(rendered_stacks),
-            state=state,
-        )
     return exit_code
-
-
-def _emit_connected_stale_stacks_advisory(
-    *,
-    context: CommandContext,
-    rendered_stacks: tuple[LocalStack, ...],
-    state: ReviewState,
-) -> None:
-    """Hint that connected stacks changed since their last successful submit.
-
-    This intentionally walks only descendants of the stack(s) view rendered.
-    Repo-wide stale-stack warnings belong to `list`; plain `view` should not
-    inspect or warn about unrelated review work.
-    """
-
-    if not state.review_identities:
-        return
-    selected_commit_ids = tuple(
-        revision.commit_id for stack in rendered_stacks for revision in stack.revisions
-    )
-    if not selected_commit_ids:
-        return
-    repository_paths = observe_repository_paths(
-        jj_client=context.jj_client,
-        descendant_of=selected_commit_ids,
-        state=state,
-    )
-    rendered_head_commit_ids = {stack.head.commit_id for stack in rendered_stacks}
-    rendered_change_ids = {
-        revision.change_id for stack in rendered_stacks for revision in stack.revisions
-    }
-    other_stacks = tuple(
-        path.stack
-        for path in repository_paths.paths
-        if path.stack.head.commit_id not in rendered_head_commit_ids
-        and path.tracked_change_ids - rendered_change_ids
-    )
-    if not other_stacks:
-        return
-    emit_stale_stacks_advisory(
-        stacks=other_stacks,
-        state=state,
-        single_subject="Other tracked stack",
-        plural_subject="Other tracked stacks",
-    )
 
 
 def _normalize_status_selectors(
@@ -331,27 +274,51 @@ def _resolve_status_selector(
         )
         return _ResolvedViewSelector(
             note=t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}",
-            revset=resolved_revset,
+            revset=None,
+            containing_change_id=resolved_revset,
         )
+    resolved_revset = resolve_selected_revset(
+        command_label="view",
+        default_revset=None,
+        require_explicit=False,
+        revset=selector.value,
+    )
+    containing_change_id = _change_id_selector(
+        context=context,
+        value=resolved_revset,
+    )
     return _ResolvedViewSelector(
         note=None,
-        revset=resolve_selected_revset(
-            command_label="view",
-            default_revset=None,
-            require_explicit=False,
-            revset=selector.value,
-        ),
+        revset=None if containing_change_id is not None else resolved_revset,
+        containing_change_id=containing_change_id,
     )
+
+
+def _change_id_selector(*, context: CommandContext, value: str | None) -> str | None:
+    """Recognize a bare change ID without misclassifying a bookmark."""
+
+    if not is_change_id_prefix(value):
+        return None
+    assert value is not None
+    try:
+        revision = context.jj_client.resolve_revision(value)
+    except JjCommandError as error:
+        if divergent_change_id_from_error(error) == value:
+            return value
+        raise
+    return value if revision.change_id.startswith(value) else None
 
 
 def _prepare_status_for_revset(
     *,
+    containing_change_id: str | None = None,
     context: CommandContext,
     revset: str | None,
 ) -> PreparedStatus:
     try:
         return prepare_status(
             context=context,
+            containing_change_id=containing_change_id,
             fetch_remote_state=False,
             revset=revset,
         )
@@ -361,11 +328,13 @@ def _prepare_status_for_revset(
 
 def _prepare_status_with_spinner(
     *,
+    containing_change_id: str | None = None,
     context: CommandContext,
     revset: str | None,
 ) -> PreparedStatus:
     with console.spinner(description="Inspecting jj stack"):
         return _prepare_status_for_revset(
+            containing_change_id=containing_change_id,
             context=context,
             revset=revset,
         )

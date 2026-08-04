@@ -66,10 +66,13 @@ merge, GitHub may keep them in that group as history, so the remaining PR can st
 existing group. The local DAG decides which changes belong together; the grouping on GitHub
 follows from it.
 
-Commands follow the selected change's parent chain. A reviewed change can be a common ancestor of
-several local paths; operating on one path leaves its siblings alone. The only extra constraint
-comes from an existing GitHub stack: if GitHub groups active PRs into one unit for an operation,
-`jj-stack` stops rather than changing only an unsafe subset of that group.
+Most commands follow the selected change's parent chain. `view` treats a bare change ID or linked
+PR as the identity of a stack member and shows the complete containing stack instead. If the
+local DAG has several possible containing heads, the identity is ambiguous and `view` stops.
+An arbitrary revset still names an exact stack head.
+
+The existing GitHub stack remains a safety boundary: if GitHub groups active PRs into one unit
+for an operation, `jj-stack` stops rather than changing only an unsafe subset of that group.
 
 ## Practical rule
 

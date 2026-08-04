@@ -360,12 +360,18 @@ supported.
 
 Stack lifecycle commands default to `@` when the working-copy change has a nonblank description
 and contents, and to `@-` otherwise. Explicit empty or undescribed working-copy selections fail.
-`view` may accept several selectors. A revision expression selects the exact revision it
-resolves to. A change ID, including a prefix that identifies one logical change, or a linked pull
-request instead selects the unique mutable copy outside fetched trunk's first-parent path, so
-fetching an ordinary rebase result does not hide the local path. As defined for local review
-stacks, the sole immutable reviewed side parent from a stack merge remains selectable outside
-that path until `sync`. `relink` requires both the change and PR.
+`view` may accept several selectors. An arbitrary revision expression selects the exact revision
+it resolves to as the stack head. A bare change ID, including a prefix that identifies one
+logical change, or a linked pull request identifies the complete local stack containing that
+change. The containing stack ends at the unique visible head descended from the selected change;
+several such heads are ambiguous and selection fails closed.
+
+Logical selection first selects the unique mutable copy outside fetched trunk's first-parent
+path, so fetching an ordinary rebase result does not hide the local path. As defined for local
+review stacks, the sole immutable reviewed side parent from a stack merge remains selectable
+outside that path until `sync`. Other commands retain their action-specific selection boundary;
+for example, `merge --pull-request` merges only through the selected PR. `relink` requires both
+the change and PR.
 
 Three modes deliberately reach beyond one selected stack:
 
@@ -717,8 +723,7 @@ wait for their own explicit commands.
 
 Stacks not yet resubmitted may still show old overview comments. That is expected:
 `submit` does not mutate stacks outside its selection. `list` identifies stale reviews across the
-repository. `view` does so only for another path that shares an observed revision with the
-selected path. Both compare each baseline with the current change and name the stack to refresh.
+repository by comparing each baseline with the current change and naming the stack to refresh.
 Close orphaned PRs on GitHub, then remove their leftovers with
 `cleanup --pull-request <pr>`.
 

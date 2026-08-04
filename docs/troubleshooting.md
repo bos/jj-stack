@@ -184,11 +184,9 @@ but it did not remove the shared change or its tracking because the other path s
 Run each `jj-stack sync <head-change-id>` command printed by the message. After every dependent
 path has moved to trunk, the last run can remove the old local change and its tracking.
 
-## `list` or `view` says another stack changed since its last submit
+## `list` says another stack changed since its last submit
 
 `list` checks every stack known to local tracking. It does not discover GitHub-only stacks.
-`view` checks another locally tracked stack only when that stack is built on top of a change in
-the stack you are inspecting.
 
 Possible causes:
 

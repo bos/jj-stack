@@ -166,10 +166,12 @@ jj-stack view --pull-request 7
 
 (You can use `-p` as an alias for `--pull-request`.)
 
-A change ID, including a short prefix, and a linked PR continue to select the mutable local copy
-after you fetch an ordinary GitHub rebase merge. If two mutable copies of that change are
-visible, `jj-stack` stops; use `jj log -r 'change_id(<change-id>)'` to inspect them and choose or
-reconcile the copy you want.
+A change ID, including a short prefix, and a linked PR show the complete local stack containing
+that change. An arbitrary revset instead selects the exact revision at which the displayed stack
+ends. After you fetch an ordinary GitHub rebase merge, a change ID or PR selects the remaining
+local revision instead of the landed commit. If two local revisions or several containing paths
+are visible, `jj-stack` stops; use `jj log -r 'change_id(<change-id>)'` to inspect them and choose
+or reconcile the path you want.
 
 If you want to inspect several stacks in one run, pass several selectors in
 the order you want them shown:
@@ -405,11 +407,9 @@ jj-stack unstack --local <head-change-id>
 
 If `jj-stack list` says another tracked stack changed since its last submit, either run
 `jj-stack submit <head-change-id>` to refresh the PR branches or run
-`jj-stack view <head-change-id>` to inspect first. `view` only emits this warning for another
-stack when its local path shares a change with the stack you are inspecting, such as two paths
-created by splitting above a reviewed change. A stack that only shares trunk stays silent.
-`view` also calls out which tracked changes no longer match their last submitted commits, and
-whether `jj-stack sync <head-change-id>` is needed first.
+`jj-stack view <head-change-id>` to inspect first. `view` also calls out which tracked changes in
+the selected stack no longer match their last submitted commits, and whether
+`jj-stack sync <head-change-id>` is needed first.
 
 ## Short version
 
