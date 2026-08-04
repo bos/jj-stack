@@ -88,7 +88,7 @@ jobs:
       - name: Run submit property smoke scenarios
         run: >-
           tests/run_submit_property_scenarios.py 10 --random-seed -n auto
-          --stack-merge-scenarios 5
+          --stack-join-scenarios 5
           --stack-move-scenarios 5
           --retry-scenarios 5
           --drift-scenarios 21
