@@ -417,7 +417,7 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     )
 
 
-def test_stack_merge_requires_a_resource_for_a_multi_pr_review(
+def test_stack_merge_requires_a_resource_only_when_a_multi_pr_merge_can_proceed(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -438,6 +438,18 @@ def test_stack_merge_requires_a_resource_for_a_multi_pr_review(
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert state_store.load() == state_before
+
+    head_change_id = selected_stack(repo).head.change_id
+    fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+
+    retry_exit_code = run_main(repo, config_path, "merge")
+    retry = capsys.readouterr()
+
+    assert retry_exit_code == 1
+    assert "already merged" in retry.out
+    assert f"jj-stack sync {head_change_id[:8]}" in retry.out
+    assert "Run submit" not in retry.err
+    assert fake_repo.stack_merge_requests == []
 
 
 def test_ordinary_merge_methods_create_distinct_commit_topology(

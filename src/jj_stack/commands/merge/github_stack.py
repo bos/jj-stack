@@ -72,7 +72,7 @@ def build_async_merge_plan(
     }
     resource = selected_github_stack(selected_pull_numbers=tuple(by_pull), stacks=stacks)
     if resource is None:
-        if len(by_pull) > 1:
+        if len(by_pull) > 1 and merge_plan.planned_revisions:
             raise CliError(
                 "GitHub did not report a stack for this multi-PR review.",
                 hint=t"Run {ui.cmd('submit')} before merging.",
