@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
@@ -8,9 +7,6 @@ from typing import cast
 import pytest
 
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands.submit.auto_close import (
-    verify_no_unexpected_pull_request_closures,
-)
 from jj_stack.commands.submit.command import (
     _resolve_submit_options,
 )
@@ -27,7 +23,6 @@ from jj_stack.commands.submit.pull_requests import (
 from jj_stack.commands.submit.revisions import prepare_submit_revisions
 from jj_stack.config import AppConfig
 from jj_stack.errors import CliError
-from jj_stack.github.client import GithubClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import (
     GithubBranchRef,
@@ -231,25 +226,6 @@ def test_reviewers_to_re_request_uses_latest_actionable_state_per_reviewer() -> 
     assert _reviewers_to_re_request(reviews) == ["erin"]
 
 
-@pytest.mark.parametrize("refetched", (None, "closed"))
-def test_submit_detects_pull_request_that_is_no_longer_open(
-    refetched: str | None,
-) -> None:
-    client = _RefetchPullRequestsClient(
-        refetched={
-            2: (None if refetched is None else _github_pull_request(number=2, state=refetched))
-        },
-    )
-
-    with pytest.raises(CliError):
-        asyncio.run(
-            verify_no_unexpected_pull_request_closures(
-                discovered_pull_requests={"jj-stack/foo": _github_pull_request(number=2)},
-                github_client=cast(GithubClient, client),
-            )
-        )
-
-
 def test_resolve_submit_options_prefers_cli_values_over_config() -> None:
     context = cast(
         CommandContext,
@@ -334,18 +310,6 @@ def _reviews(*specs: tuple[int, str, str]) -> tuple[GithubPullRequestReview, ...
         )
         for review_id, login, state in specs
     )
-
-
-class _RefetchPullRequestsClient:
-    def __init__(self, *, refetched: dict[int, GithubPullRequest | None]) -> None:
-        self._refetched = refetched
-
-    async def get_pull_requests_by_numbers(
-        self,
-        *,
-        pull_numbers,
-    ) -> dict[int, GithubPullRequest | None]:
-        return {number: self._refetched.get(number) for number in pull_numbers}
 
 
 def _github_pull_request(

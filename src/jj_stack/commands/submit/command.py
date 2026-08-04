@@ -647,11 +647,6 @@ async def run_submit_async(
                     revisions=submitted_revisions,
                 ),
             )
-            await auto_close.verify_no_unexpected_pull_request_closures(
-                discovered_pull_requests=discovered_pull_requests,
-                github_client=github_client,
-            )
-
     return _build_submit_result(
         client=client,
         dry_run=dry_run,

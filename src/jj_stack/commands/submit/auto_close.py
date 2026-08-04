@@ -1,4 +1,4 @@
-"""Predict and detect GitHub's reachability-based pull request auto-close."""
+"""Prevent GitHub's reachability-based pull request auto-close."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
-from jj_stack.models.github import GithubPullRequest
 
 from .models import PendingPullRequestSync, PreparedSubmitRevision
 
@@ -107,75 +106,3 @@ async def _retarget_review_base_before_branch_push(
             t"Could not retarget PR #{pull_request.number} to "
             t"{ui.bookmark(trunk_branch)} before pushing review branches"
         ) from error
-
-
-async def verify_no_unexpected_pull_request_closures(
-    *,
-    discovered_pull_requests: dict[str, GithubPullRequest | None],
-    github_client: GithubClient,
-) -> None:
-    """Detect open→closed and open→missing transitions and raise loudly.
-
-    `submit` never closes pull requests on purpose. Any PR that was open at the
-    start of this run and is no longer open by the end means a GitHub destructive
-    default fired in a way the pre-push predictor did not anticipate (typically
-    the head-contained-in-base auto-close) or the PR vanished entirely (deleted
-    or transferred). Surface either case loudly rather than persist state that
-    hides the loss.
-    """
-
-    initially_open_numbers = sorted(
-        {
-            pull_request.number
-            for pull_request in discovered_pull_requests.values()
-            if pull_request is not None and pull_request.state == "open"
-        }
-    )
-    if not initially_open_numbers:
-        return
-    try:
-        refetched = await github_client.get_pull_requests_by_numbers(
-            pull_numbers=initially_open_numbers,
-        )
-    except GithubClientError as error:
-        raise CliError(
-            "Could not refetch pull request states for the post-submit safety check"
-        ) from error
-
-    closed_numbers: list[int] = []
-    missing_numbers: list[int] = []
-    for number in initially_open_numbers:
-        pull_request = refetched.get(number)
-        if pull_request is None:
-            missing_numbers.append(number)
-            continue
-        if pull_request.state != "open":
-            closed_numbers.append(number)
-    if not closed_numbers and not missing_numbers:
-        return
-
-    message_parts: list[ui.Message] = []
-    if closed_numbers:
-        closed_rendered = ", ".join(f"#{number}" for number in closed_numbers)
-        message_parts.append(
-            t"Pull request(s) {closed_rendered} were open at the start of this submit "
-            t"but are closed by the end. GitHub closes a pull request automatically "
-            t"when its head commit becomes reachable from the base branch during a "
-            t"push. Reopen those pull requests on GitHub now to keep their existing "
-            t"reviews."
-        )
-    if missing_numbers:
-        missing_rendered = ", ".join(f"#{number}" for number in missing_numbers)
-        if message_parts:
-            message_parts.append(" ")
-        message_parts.append(
-            t"Pull request(s) {missing_rendered} were open at the start of this "
-            t"submit but GitHub no longer reports them. Inspect those pull requests "
-            t"on GitHub to see whether they were deleted or transferred."
-        )
-    message_parts.append(" ")
-    message_parts.append(
-        t"Once the affected pull requests are restored, rerunning "
-        t"{ui.cmd('jj-stack submit')} is safe and will restore the stacked bases."
-    )
-    raise CliError(tuple(message_parts))

@@ -444,11 +444,6 @@ rewrite, `submit` may temporarily retarget selected PRs to prevent GitHub from a
 whose new base contains its head. An interruption may leave bases at their old value, trunk, or
 the desired parent; a rerun finishes the update without replacing PRs.
 
-After all planned work, `submit` refetches every selected PR that was open at the start. If one is
-now closed or missing, it fails loudly and tells the user how to inspect or reopen it. This
-post-check detects GitHub-side changes that the pre-push model could not prevent; it never hides
-them by silently replacing tracking.
-
 An open PR currently in a merge queue is not updated. `submit` stops the selected stack before
 moving any review branch or changing any PR, and tells the user to wait for GitHub to merge it.
 This does not restrict commands on independent stacks.
