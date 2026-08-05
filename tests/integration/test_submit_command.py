@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_stack.errors import EXIT_CONFLICTS, EXIT_GITHUB, EXIT_USAGE
+from jj_stack.errors import EXIT_CONFLICTS, EXIT_GITHUB, EXIT_INCOMPLETE, EXIT_USAGE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_MARKER,
@@ -1017,6 +1017,11 @@ def test_submit_rejects_divergence_kept_immutable_by_another_remote_bookmark(
 
     assert run_main(repo, config_path, "submit", change_id) == 2
     assert "divergent changes are not supported" in capsys.readouterr().err
+
+    assert run_main(repo, config_path, "view", change_id) == EXIT_INCOMPLETE
+    captured = capsys.readouterr()
+    assert "feature rewritten" in captured.out
+    assert "divergent" in captured.err
 
 
 def test_submit_does_not_claim_a_visible_bookmark_for_an_untracked_change(

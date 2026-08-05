@@ -100,7 +100,7 @@ def select_review_path_containing_change(
         extra_membership_revsets=(linked_selector,),
         extra_revisions=(linked_selector,),
     )
-    _project_rows(
+    selected_change_path = _project_rows(
         rows=rows,
         selected_revset=change_id,
         select_mutable_copy=True,
@@ -110,8 +110,14 @@ def select_review_path_containing_change(
         inspection_mode=inspection_mode,
     )
     heads = tuple(revision for revision, flags in rows if flags[1])
-    selected_revset = heads[0].change_id if len(heads) == 1 else change_id
+    containing_heads = _heads_containing_commit(
+        commit_id=selected_change_path.stack.head.commit_id,
+        heads=heads,
+        revisions=tuple(revision for revision, _flags in rows),
+    )
+    selected_revset = containing_heads[0].change_id if len(containing_heads) == 1 else change_id
     return _project_rows(
+        candidate_commit_ids=frozenset(head.commit_id for head in containing_heads),
         rows=rows,
         selected_revset=selected_revset,
         select_mutable_copy=False,
@@ -175,6 +181,7 @@ def _observe_path_rows(
 
 def _project_rows(
     *,
+    candidate_commit_ids: frozenset[str] | None = None,
     inspection_mode: bool,
     rows: tuple[tuple[LocalRevision, tuple[bool, ...]], ...],
     selected_revset: str,
@@ -194,7 +201,12 @@ def _project_rows(
             reason="trunk_resolved_to_root",
         )
 
-    candidates = tuple(revision for revision, flags in rows if flags[selector_flag])
+    candidates = tuple(
+        revision
+        for revision, flags in rows
+        if flags[selector_flag]
+        and (candidate_commit_ids is None or revision.commit_id in candidate_commit_ids)
+    )
     if not candidates:
         raise CliError(
             t"Revset {ui.revset(selected_revset)} did not resolve to a visible revision."
@@ -237,6 +249,26 @@ def _project_rows(
     )
     _validate_selected_path(path, inspection_mode=inspection_mode)
     return path
+
+
+def _heads_containing_commit(
+    *,
+    commit_id: str,
+    heads: tuple[LocalRevision, ...],
+    revisions: tuple[LocalRevision, ...],
+) -> tuple[LocalRevision, ...]:
+    revisions_by_commit_id = {revision.commit_id: revision for revision in revisions}
+    containing: list[LocalRevision] = []
+    for head in heads:
+        current = head
+        while current.commit_id != commit_id and current.parents:
+            parent = revisions_by_commit_id.get(current.parents[0])
+            if parent is None:
+                break
+            current = parent
+        if current.commit_id == commit_id:
+            containing.append(head)
+    return tuple(containing)
 
 
 def _validate_selected_path(
