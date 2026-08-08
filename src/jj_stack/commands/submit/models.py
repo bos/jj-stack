@@ -22,6 +22,7 @@ RemoteBranchAction = Literal["pushed", "up to date"]
 class SubmitOptions:
     """Parsed submit options after CLI normalization."""
 
+    base_revset: str | None
     descriptions: tuple[str, ...]
     describe_with: str | None
     draft_mode: SubmitDraftMode

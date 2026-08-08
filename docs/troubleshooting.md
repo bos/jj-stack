@@ -153,6 +153,33 @@ jj rebase -r '<bottom-change-id>::<head-change-id>' -o 'trunk()'
 Use the bounded bottom-to-head revset so sibling paths are not rewritten. Then run
 `jj-stack submit <head-change-id>` to refresh the existing PRs.
 
+## `submit --base` says the parent review is not an exact open snapshot
+
+The reviewed parent is read-only input to a child submit. Its local commit, last submitted
+commit, review branch, and live PR head must all match, and the PR must still be open.
+
+If the parent changed locally, submit the parent review first, then repeat the child submit with
+`--base`.
+
+If the remote review branch moved or disappeared, `jj-stack` leaves it untouched and cannot
+repair it automatically. This is a manual hard stop: externally restore the exact branch named
+in the error to the immutable submitted commit ID that it prints, then repeat the exact child
+submit command. Do not restore the branch to the parent's mutable change ID.
+
+If the PR identity rather than its branch target moved, inspect the saved and live identities
+before using `jj-stack relink`; do not restore a branch merely to make an unrelated PR match.
+
+If the exact change named by `--base` has merged, sync its parent review and move exactly the
+child range onto trunk instead. Do this even when a higher change in that review remains open:
+
+```bash
+jj-stack sync <parent-head-change-id>
+jj rebase -r '<child-bottom-change-id>::<child-head-change-id>' -o 'trunk()'
+jj-stack submit <child-head-change-id>
+```
+
+Do not pass `--base` to that last submit: the child is now an ordinary trunk-based review.
+
 ## `sync` rebased the stack but reported conflicts
 
 `sync` can rebase a change that was already conflicted, and a clean change can become
@@ -331,8 +358,9 @@ Run the exact command from the diagnostic, which has this form:
 jj-stack unstack --stack <number>
 ```
 
-This removes only GitHub's grouping and leaves every PR open. Then submit each local path
-separately.
+This removes only GitHub's grouping and leaves every PR open. Submit a trunk-based result
+normally. At a reviewed fork, leave the fork in its parent review and submit each outgoing child
+with `--base <fork-change-id> <child-head-change-id>`.
 
 ## Old review branches remain after merging or closing
 

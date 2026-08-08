@@ -15,6 +15,7 @@ from jj_stack.models.review_state import (
     SubmittedBaseline,
     TrackedReview,
 )
+from jj_stack.ui import Message
 
 from .models import (
     PendingPullRequestSync,
@@ -82,7 +83,7 @@ def ensure_pull_request_syncs_are_safe(
                 t"{ui.cmd(f'jj-stack sync {head_change_id}')} followed by "
                 t"{ui.cmd(f'jj-stack submit {head_change_id}')}.",
             )
-        _ensure_pull_request_link_is_consistent(
+        ensure_pull_request_link_is_consistent(
             branch=prepared_revision.branch,
             change_id=change_id,
             discovered_pull_request=pending_sync.discovered_pull_request,
@@ -357,7 +358,7 @@ def _select_discovered_pull_request(
     return tracked_pull_request or (open_pull_requests[0] if open_pull_requests else None)
 
 
-def _ensure_pull_request_link_is_consistent(
+def ensure_pull_request_link_is_consistent(
     *,
     branch: str,
     change_id: str,
@@ -365,6 +366,7 @@ def _ensure_pull_request_link_is_consistent(
     expected_remote_target: str | None,
     repository_key: tuple[str, str],
     tracked_review: TrackedReview | None,
+    merged_hint: Message | None = None,
 ) -> None:
     if tracked_review is None:
         if discovered_pull_request is not None:
@@ -403,6 +405,7 @@ def _ensure_pull_request_link_is_consistent(
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
+    discovered_pull_request = discovered_pull_request.normalize_state()
     if review_identity.pr_number != discovered_pull_request.number:
         raise DriftError(
             t"Saved pull request #{review_identity.pr_number} does not match the PR "
@@ -423,7 +426,9 @@ def _ensure_pull_request_link_is_consistent(
         )
     if discovered_pull_request.state != "open":
         hint = (
-            t"Run {ui.cmd(f'jj-stack sync {change_id}')} to update the local stack."
+            merged_hint
+            if discovered_pull_request.state == "merged" and merged_hint is not None
+            else t"Run {ui.cmd(f'jj-stack sync {change_id}')} to update the local stack."
             if discovered_pull_request.state == "merged"
             else t"Reopen the PR, or run {ui.cmd(f'jj-stack cleanup {change_id}')} before "
             t"starting a new review."

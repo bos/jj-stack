@@ -79,6 +79,11 @@ nearest commit on `trunk()`'s first-parent chain. That commit is the stack's bas
 itself part of the stack. A reviewed side parent of a merge commit on trunk therefore remains in
 the selected path until `sync` reconciles it.
 
+`submit --base B H` is the one explicit exception to the trunk boundary. `B` must be on that
+single-parent chain below `H`; the command selects `(B, H]` and treats `B` as read-only base
+context rather than part of the submitted stack. This boundary is command input, not saved
+topology. Every later child submit must name it again.
+
 Commands that change review state support only linear stacks, so their walk follows each commit's
 sole parent. They reject a merge commit inside the selected chain and a divergent review change.
 `view` is best-effort inspection: it reports the first-parent path through a merge and warns about
@@ -148,6 +153,7 @@ description changed.
 The GitHub base branch for a review change is:
 
 - the parent review change's remote branch when the parent is in the local review stack
+- the explicit reviewed base's remote branch for the bottom change selected by `submit --base`
 - otherwise the trunk branch
 
 `trunk()` defines the lower bound of a stack without specifying a GitHub branch name. For GitHub
@@ -428,6 +434,26 @@ Only commands that successfully send or adopt a specific reviewed commit may rep
 `submit` publishes only the selected stack, bottom-up. It creates missing PRs, moves existing
 review branches, updates PR bases and content, and refreshes GitHub stack membership.
 
+`submit --base B H` publishes only `(B, H]`. `B` must be an ancestor of `H` on the exact
+single-parent path and is excluded from every mutation. The base is accepted only when its local
+commit, submitted baseline, remote review branch, and live PR head are the same commit; its saved
+identity must uniquely match an open live PR. The bottom selected PR targets that review branch.
+A one-change selection remains an ordinary PR, while two or more selected PRs form their own
+native GitHub stack.
+
+An externally moved or missing base review branch is never overwritten by `submit`. `jj-stack`
+cannot repair it automatically: the user must externally restore that exact branch to its saved
+immutable submitted commit before retrying. The retry revalidates the base from live
+observations.
+
+No boundary is stored or inferred. A later child refresh repeats `--base`; omitting it invokes
+ordinary trunk-bounded submit and may include or regroup the parent path. One command never
+updates the parent review or another child. The exact named base alone controls the lifecycle:
+while its PR remains open, a child refresh repeats the same `--base`; once it lands, even if a
+higher change in the parent review survives, `submit --base` stops. After syncing the parent, the
+user rebases exactly the child range onto `trunk()`, runs ordinary `submit` without `--base`, and
+can then merge that review. `submit` never cascades this transition across related reviews.
+
 All selected review branches move in one atomic push. Every update carries the exact target
 `jj-stack` observed for that remote ref, including expected absence for a new branch. If any ref
 moved, the whole push fails; there is no sequential fallback. `jj-stack` never takes over a
@@ -679,6 +705,10 @@ review-branch exclusion in remote fetch configuration. It never mutates GitHub.
 `view` and `list` are read-only. Both observe saved review branches directly on the remote and ask
 GitHub for current PR state, without fetching.
 
+Both commands project paths from the local `jj` DAG. One projected path may therefore show
+changes that explicit submit boundaries placed in several native GitHub reviews. Inspection does
+not segment the path by GitHub resource or infer an omitted submit boundary.
+
 Both report whether an open PR currently has a merge-queue entry. Queue presence is a transient
 GitHub observation, not saved tracking; position and intermediate queue phases are not modeled.
 
@@ -730,14 +760,16 @@ stack command still updates reviews for one selected chain, and ambiguous linkag
 closed. Local `jj` rewrites may propagate to descendants on another path. Reviews on that path
 wait for their own explicit commands.
 
-- **Move changes between stacks**: dissolve any existing GitHub stack spanning more than one
-  resulting path, then submit one resulting stack to update that chain. Moved changes retain their
-  PRs and recalculate bases from their new parents.
+- **Move changes between reviews**: dissolve any existing GitHub stack whose active members would
+  be divided between the resulting reviews. Moved changes retain their PRs and recalculate bases
+  from their new parents. A result based on trunk uses ordinary `submit`; a result whose lower
+  bound is reviewed change `B` uses `submit --base B H`, leaving `B` in its existing review.
 - **Split one stack into several**: each maximal linear path appears separately in repository
   inventory. The paths may contain the same observed reviewed ancestors; tracking annotates those
-  paths but does not create or join them. If one existing GitHub stack spans active reviews on
-  more than one desired path, the user removes the grouping with the named
-  `jj-stack unstack --stack <number>` command and submits each path separately.
+  paths but does not put a shared PR in several GitHub stacks. The shared fork remains in its
+  parent review; each outgoing child is submitted as `(fork, head]` with explicit `--base`. If one
+  existing GitHub stack spans active reviews that are now divided, the user removes the grouping
+  with the named `jj-stack unstack --stack <number>` command before those bounded submits.
 - **Join several stacks into one**: dissolve the existing GitHub stacks, then submit the resulting
   chain. It reuses reviews by change ID, recalculates every base, and produces one overview
   comment on the new head.

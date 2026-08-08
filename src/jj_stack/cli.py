@@ -203,6 +203,12 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         submit_parser,
+        "--base",
+        metavar="REVISION",
+        help="Submit only changes after this reviewed ancestor, using its review branch as base",
+    )
+    add_help_argument(
+        submit_parser,
         "--dry-run",
         action="store_true",
         help="Preview the submit without pushing branches or changing pull requests",

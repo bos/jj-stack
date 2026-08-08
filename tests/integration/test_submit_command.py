@@ -28,6 +28,7 @@ from ..support.integration_helpers import (
     selected_stack,
     write_file,
 )
+from ..support.submit_property_harness import update_remote_ref
 from .submit_command_helpers import (
     configure_submit_environment,
     issue_comments,
@@ -101,6 +102,409 @@ def test_submit_keeps_one_pr_ordinary_until_github_stack_is_needed(
     assert tuple(fake_repo.pull_requests) == (1, 2)
     assert fake_repo.github_stacks == {1: (1, 2)}
     assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
+
+
+@pytest.mark.parametrize(("child_size", "base_index"), ((1, -1), (2, 0)))
+def test_submit_explicit_base_creates_and_updates_only_the_child_review(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    child_size: int,
+    base_index: int,
+) -> None:
+    """A forked review must not regroup or update its already-submitted parent review."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    parent = selected_stack(repo)
+    parent_base = parent.revisions[base_index]
+    parent_snapshot = {
+        number: (pull_request.base_ref, pull_request.head_ref, pull_request.title)
+        for number, pull_request in fake_repo.pull_requests.items()
+    }
+    if parent_base != parent.head:
+        run_command(["jj", "new", parent_base.change_id], repo)
+    for number in range(1, child_size + 1):
+        commit_file(repo, f"child {number}", f"child-{number}.txt")
+    child_head = selected_stack(repo).head
+
+    if parent_base != parent.head:
+        rejected_refs = remote_refs(fake_repo.git_dir)
+        rejected_stacks = dict(fake_repo.github_stacks)
+        rejected_state = ReviewStateStore.for_repo(repo).load()
+        assert (
+            run_main(
+                repo,
+                config_path,
+                "submit",
+                "--base",
+                parent.head.change_id,
+                child_head.change_id,
+            )
+            == 1
+        )
+        rejected = capsys.readouterr()
+        assert "is not an ancestor of the selected head" in rejected.err
+        assert tuple(fake_repo.pull_requests) == (1, 2)
+        assert remote_refs(fake_repo.git_dir) == rejected_refs
+        assert fake_repo.github_stacks == rejected_stacks
+        assert ReviewStateStore.for_repo(repo).load() == rejected_state
+
+    description_options: tuple[str, ...] = ()
+    if child_size == 2:
+        helper = tmp_path / "child-describe.py"
+        write_file(
+            helper,
+            "#!/usr/bin/env python3\n"
+            "import json\n"
+            "import sys\n"
+            "print(json.dumps({'title': sys.argv[1], 'body': sys.argv[2]}))\n",
+        )
+        helper.chmod(0o755)
+        description_options = ("--describe-with", str(helper))
+    exit_code = run_main(
+        repo,
+        config_path,
+        "submit",
+        *description_options,
+        "--base",
+        parent_base.change_id,
+        child_head.change_id,
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    state = ReviewStateStore.for_repo(repo).load()
+    parent_branch = state.review_identities[parent_base.change_id].head_ref
+    child_revisions = selected_stack(repo, child_head.change_id).revisions[-child_size:]
+    child_pull_numbers = tuple(
+        state.review_identities[revision.change_id].pr_number for revision in child_revisions
+    )
+    assert child_pull_numbers == tuple(range(3, 3 + child_size))
+    assert fake_repo.pull_requests[child_pull_numbers[0]].base_ref == parent_branch
+    for previous, current in zip(child_pull_numbers, child_pull_numbers[1:], strict=False):
+        assert (
+            fake_repo.pull_requests[current].base_ref
+            == fake_repo.pull_requests[previous].head_ref
+        )
+    expected_stacks = {(1, 2)}
+    if child_size == 2:
+        expected_stacks.add((3, 4))
+        bounded_revset = f"{parent_base.commit_id}..{child_head.commit_id}"
+        assert bounded_revset in _overview_comments(fake_repo, child_pull_numbers[-1])[0].body
+    assert set(fake_repo.github_stacks.values()) == expected_stacks
+    assert {
+        number: (pull_request.base_ref, pull_request.head_ref, pull_request.title)
+        for number, pull_request in fake_repo.pull_requests.items()
+        if number <= 2
+    } == parent_snapshot
+
+    if child_size == 2:
+        fake_repo.update_pull_request_base(
+            fake_repo.pull_requests[child_pull_numbers[0]],
+            base_ref="main",
+        )
+        dry_run_state = ReviewStateStore.for_repo(repo).load()
+        dry_run_refs = remote_refs(fake_repo.git_dir)
+        dry_run_stacks = dict(fake_repo.github_stacks)
+        assert (
+            run_main(
+                repo,
+                config_path,
+                "submit",
+                "--dry-run",
+                "--base",
+                parent_base.change_id,
+                child_head.change_id,
+            )
+            == 0
+        )
+        capsys.readouterr()
+        assert fake_repo.pull_requests[child_pull_numbers[0]].base_ref == "main"
+        assert ReviewStateStore.for_repo(repo).load() == dry_run_state
+        assert remote_refs(fake_repo.git_dir) == dry_run_refs
+        assert fake_repo.github_stacks == dry_run_stacks
+
+    run_command(["jj", "edit", child_head.change_id], repo)
+    write_file(repo / "child-update.txt", "updated\n")
+    assert (
+        run_main(
+            repo,
+            config_path,
+            "submit",
+            "--base",
+            parent_base.change_id,
+            child_head.change_id,
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert tuple(fake_repo.pull_requests) == tuple(range(1, 3 + child_size))
+    assert set(fake_repo.github_stacks.values()) == expected_stacks
+    assert fake_repo.pull_requests[child_pull_numbers[0]].base_ref == parent_branch
+    assert {
+        number: (pull_request.base_ref, pull_request.head_ref, pull_request.title)
+        for number, pull_request in fake_repo.pull_requests.items()
+        if number <= 2
+    } == parent_snapshot
+
+    if child_size == 2:
+        existing_reviews = {
+            number: (pull_request.base_ref, pull_request.head_ref, pull_request.title)
+            for number, pull_request in fake_repo.pull_requests.items()
+        }
+        run_command(["jj", "new", parent_base.change_id], repo)
+        commit_file(repo, "sibling 1", "sibling-1.txt")
+        commit_file(repo, "sibling 2", "sibling-2.txt")
+        sibling_head = selected_stack(repo).head
+        assert (
+            run_main(
+                repo,
+                config_path,
+                "submit",
+                "--base",
+                parent_base.change_id,
+                sibling_head.change_id,
+            )
+            == 0
+        )
+        capsys.readouterr()
+        sibling_state = ReviewStateStore.for_repo(repo).load()
+        sibling_revisions = selected_stack(repo, sibling_head.change_id).revisions[-2:]
+        sibling_pull_numbers = tuple(
+            sibling_state.review_identities[revision.change_id].pr_number
+            for revision in sibling_revisions
+        )
+        assert sibling_pull_numbers == (5, 6)
+        assert fake_repo.pull_requests[5].base_ref == parent_branch
+        assert fake_repo.pull_requests[6].base_ref == fake_repo.pull_requests[5].head_ref
+        assert set(fake_repo.github_stacks.values()) == {(1, 2), (3, 4), (5, 6)}
+        assert {
+            number: (pull_request.base_ref, pull_request.head_ref, pull_request.title)
+            for number, pull_request in fake_repo.pull_requests.items()
+            if number <= 4
+        } == existing_reviews
+
+
+def test_submit_landed_interior_base_requires_the_child_to_move_to_trunk(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A higher parent survivor must not become the inferred replacement child base."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    parent = selected_stack(repo)
+    landed_base, parent_survivor = parent.revisions
+    run_command(["jj", "new", landed_base.change_id], repo)
+    commit_file(repo, "child 1", "child-1.txt")
+    child_bottom = selected_stack(repo).head
+    commit_file(repo, "child 2", "child-2.txt")
+    child_head = selected_stack(repo).head
+    assert (
+        run_main(
+            repo,
+            config_path,
+            "submit",
+            "--base",
+            landed_base.change_id,
+            child_head.change_id,
+        )
+        == 0
+    )
+    capsys.readouterr()
+    state_with_child = ReviewStateStore.for_repo(repo).load()
+    child_pull_numbers = tuple(
+        state_with_child.review_identities[revision.change_id].pr_number
+        for revision in (child_bottom, child_head)
+    )
+    assert child_pull_numbers == (3, 4)
+    assert set(fake_repo.github_stacks.values()) == {(1, 2), (3, 4)}
+
+    fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+    fake_repo.rewrite_pull_request_onto_base(fake_repo.pull_requests[2], base_ref="main")
+    survivor_pull_request = fake_repo.pull_requests[2]
+    survivor_before = (
+        survivor_pull_request.base_ref,
+        survivor_pull_request.head_ref,
+        survivor_pull_request.head_sha,
+        survivor_pull_request.state,
+    )
+    refs_before = remote_refs(fake_repo.git_dir)
+    stacks_before = dict(fake_repo.github_stacks)
+    state_before = ReviewStateStore.for_repo(repo).load()
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "submit",
+        "--base",
+        landed_base.change_id,
+        child_head.change_id,
+    )
+    captured = capsys.readouterr()
+    rendered = " ".join((captured.out + captured.err).split())
+    child_bottom_id = child_bottom.change_id[:8]
+    child_head_id = child_head.change_id[:8]
+
+    assert exit_code == 1
+    assert "Sync the parent review first" in rendered
+    assert f"jj rebase -r '{child_bottom_id}::{child_head_id}' -o 'trunk()'" in rendered
+    assert f"jj-stack submit {child_head_id}" in rendered
+    assert "without --base" in rendered
+    assert parent_survivor.change_id not in rendered
+    assert (
+        survivor_pull_request.base_ref,
+        survivor_pull_request.head_ref,
+        survivor_pull_request.head_sha,
+        survivor_pull_request.state,
+    ) == survivor_before
+    assert remote_refs(fake_repo.git_dir) == refs_before
+    assert fake_repo.github_stacks == stacks_before
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+
+    assert run_main(repo, config_path, "sync", parent_survivor.change_id) == 0
+    capsys.readouterr()
+    state_after_sync = ReviewStateStore.for_repo(repo).load()
+    survivor_after_sync = JjClient(repo).resolve_revision(parent_survivor.change_id)
+    survivor_pull_request = fake_repo.pull_requests[2]
+    survivor_snapshot = (
+        survivor_pull_request.base_ref,
+        survivor_pull_request.head_ref,
+        survivor_pull_request.head_sha,
+        read_remote_ref(fake_repo.git_dir, survivor_pull_request.head_ref),
+        fake_repo.stack_number_for_pull(2),
+        state_after_sync.review_identities[parent_survivor.change_id],
+        state_after_sync.submitted_baselines[parent_survivor.change_id],
+    )
+    assert survivor_after_sync.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert survivor_pull_request.base_ref == "main"
+    assert (
+        survivor_pull_request.base_ref,
+        survivor_pull_request.head_ref,
+        survivor_pull_request.head_sha,
+        survivor_pull_request.state,
+    ) == survivor_before
+    assert fake_repo.github_stacks == stacks_before
+    assert (
+        state_after_sync.review_identities[parent_survivor.change_id]
+        == (state_before.review_identities[parent_survivor.change_id])
+    )
+
+    run_command(
+        [
+            "jj",
+            "rebase",
+            "-r",
+            f"{child_bottom.change_id}::{child_head.change_id}",
+            "-o",
+            "trunk()",
+        ],
+        repo,
+    )
+    assert run_main(repo, config_path, "submit", child_head.change_id) == 0
+    capsys.readouterr()
+
+    child_bottom_pull = fake_repo.pull_requests[child_pull_numbers[0]]
+    child_head_pull = fake_repo.pull_requests[child_pull_numbers[1]]
+    assert child_bottom_pull.base_ref == "main"
+    assert child_head_pull.base_ref == child_bottom_pull.head_ref
+    parent_stack_number = fake_repo.stack_number_for_pull(2)
+    child_stack_number = fake_repo.stack_number_for_pull(3)
+    assert parent_stack_number is not None
+    assert child_stack_number is not None
+    assert parent_stack_number == survivor_snapshot[4]
+    assert fake_repo.github_stacks[parent_stack_number] == (1, 2)
+    assert fake_repo.github_stacks[child_stack_number] == (3, 4)
+    assert parent_stack_number != child_stack_number
+    state_after_child_submit = ReviewStateStore.for_repo(repo).load()
+    assert tuple(
+        state_after_child_submit.review_identities[revision.change_id]
+        for revision in (child_bottom, child_head)
+    ) == tuple(
+        state_with_child.review_identities[revision.change_id]
+        for revision in (child_bottom, child_head)
+    )
+    assert (
+        survivor_pull_request.base_ref,
+        survivor_pull_request.head_ref,
+        survivor_pull_request.head_sha,
+        read_remote_ref(fake_repo.git_dir, survivor_pull_request.head_ref),
+        fake_repo.stack_number_for_pull(2),
+        state_after_child_submit.review_identities[parent_survivor.change_id],
+        state_after_child_submit.submitted_baselines[parent_survivor.change_id],
+    ) == survivor_snapshot
+
+
+@pytest.mark.parametrize("drift", ("local", "remote", "merged"))
+def test_submit_explicit_base_requires_an_exact_open_parent_review(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    drift: str,
+) -> None:
+    """A child must not be attached to a stale parent snapshot or a review that already landed."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    parent = selected_stack(repo).head
+    parent_identity = ReviewStateStore.for_repo(repo).load().review_identities[parent.change_id]
+    commit_file(repo, "child 1", "child-1.txt")
+    child = selected_stack(repo).head
+    if drift == "local":
+        run_command(["jj", "edit", parent.change_id], repo)
+        write_file(repo / "parent-update.txt", "updated\n")
+        run_command(["jj", "status"], repo)
+    elif drift == "remote":
+        # The fake otherwise treats a temporary head-at-base state as a merged PR. Real
+        # GitHub does not reliably perform that idealized transition after a direct push.
+        fake_repo.auto_merge_reachable_heads = False
+        update_remote_ref(
+            fake_repo,
+            branch=parent_identity.head_ref,
+            target=read_remote_ref(fake_repo.git_dir, "main"),
+        )
+    else:
+        fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+    remote_before = remote_refs(fake_repo.git_dir)
+    stacks_before = dict(fake_repo.github_stacks)
+    state_before = ReviewStateStore.for_repo(repo).load()
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "submit",
+        "--base",
+        parent.change_id,
+        child.change_id,
+    )
+    captured = capsys.readouterr()
+    rendered = " ".join((captured.out + captured.err).split())
+
+    assert exit_code == 1
+    if drift == "local":
+        assert "changed since its last submit" in rendered
+        assert f"jj-stack submit --base {parent.change_id} {child.change_id}" in rendered
+    elif drift == "remote":
+        branch = parent_identity.head_ref
+        submitted_target = state_before.submitted_baselines[parent.change_id].commit_id
+        assert "no longer points to the submitted commit" in rendered
+        assert f"{branch}@origin" in rendered
+        assert f"immutable submitted commit ID {submitted_target}" in rendered
+        assert "jj-stack left it untouched" in rendered
+        assert "cannot repair it automatically" in rendered
+        assert f"jj-stack submit --base {parent.change_id} {child.change_id}" in rendered
+    else:
+        child_id = child.change_id[:8]
+        assert "Sync the parent review first" in rendered
+        assert f"jj rebase -r '{child_id}::{child_id}' -o 'trunk()'" in rendered
+        assert f"jj-stack submit {child_id}" in rendered
+        assert "without --base" in rendered
+    assert tuple(fake_repo.pull_requests) == (1,)
+    assert remote_refs(fake_repo.git_dir) == remote_before
+    assert fake_repo.github_stacks == stacks_before
+    assert ReviewStateStore.for_repo(repo).load() == state_before
 
 
 def test_submit_github_stack_recovers_lost_create_and_retries_blocked_append(

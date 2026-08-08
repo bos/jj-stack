@@ -16,9 +16,9 @@ from jj_stack.commands.submit.models import (
     SubmitOptions,
 )
 from jj_stack.commands.submit.pull_requests import (
-    _ensure_pull_request_link_is_consistent,
     _reviewers_to_re_request,
     _select_discovered_pull_request,
+    ensure_pull_request_link_is_consistent,
 )
 from jj_stack.commands.submit.revisions import prepare_submit_revisions
 from jj_stack.config import AppConfig
@@ -127,7 +127,7 @@ def test_pull_request_link_rejects_missing_discovered_pull_request() -> None:
     identity = make_review_identity(head_ref="jj-stack/foo-abcdefgh", pr_number=17)
 
     with pytest.raises(CliError, match="GitHub no longer reports a PR"):
-        _ensure_pull_request_link_is_consistent(
+        ensure_pull_request_link_is_consistent(
             branch=identity.head_ref,
             change_id="abcdefghijk",
             discovered_pull_request=None,
@@ -141,7 +141,7 @@ def test_pull_request_link_rejects_a_saved_review_from_another_repository() -> N
     identity = make_review_identity(head_ref="jj-stack/foo-abcdefgh", pr_number=17)
 
     with pytest.raises(CliError, match="belongs to a different GitHub repository"):
-        _ensure_pull_request_link_is_consistent(
+        ensure_pull_request_link_is_consistent(
             branch=identity.head_ref,
             change_id="abcdefghijk",
             discovered_pull_request=None,
@@ -160,7 +160,7 @@ def test_pull_request_link_rejects_remote_and_pr_head_mismatch() -> None:
     )
 
     with pytest.raises(CliError, match="remote branch no longer identify the same commit"):
-        _ensure_pull_request_link_is_consistent(
+        ensure_pull_request_link_is_consistent(
             branch=identity.head_ref,
             change_id="abcdefghijk",
             discovered_pull_request=pull_request,
@@ -254,6 +254,7 @@ def test_resolve_submit_options_prefers_cli_values_over_config() -> None:
 
 def _submit_options() -> SubmitOptions:
     return SubmitOptions(
+        base_revset=None,
         descriptions=(),
         describe_with=None,
         draft_mode="default",

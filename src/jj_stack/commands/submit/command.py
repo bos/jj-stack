@@ -38,6 +38,9 @@ Common examples:
 - `jj-stack submit` creates or refreshes its pull requests.
 
 - `jj-stack submit <head-change-id>` selects another stack explicitly.
+
+- `jj-stack submit --base <parent-change-id> <child-head-change-id>` submits only the changes
+  after an exact open parent review. Repeat `--base` whenever that child review is refreshed.
 """
 
 from __future__ import annotations
@@ -51,7 +54,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._github_stack_safety import dissolve_github_stack
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, DriftError
 from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import (
@@ -100,6 +103,7 @@ from .models import (
 from .overview_comments import stack_overview_comment_bodies, sync_stack_overview_comments
 from .pull_requests import (
     discover_pull_requests_by_branch,
+    ensure_pull_request_link_is_consistent,
     ensure_pull_request_syncs_are_safe,
     sync_pull_requests,
 )
@@ -114,6 +118,7 @@ _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
 
 def submit(
     *,
+    base: str | None,
     cli_args: JjCliArgs,
     debug: bool,
     descriptions: Sequence[str] | None,
@@ -138,6 +143,7 @@ def submit(
         debug=debug,
     )
     options = _submit_options_from_cli(
+        base=base,
         descriptions=descriptions,
         describe_with=describe_with,
         draft=draft,
@@ -194,6 +200,7 @@ def print_selected_line(selected_change_id: str, selected_subject: str) -> None:
 
 def _submit_options_from_cli(
     *,
+    base: str | None,
     descriptions: Sequence[str] | None,
     describe_with: str | None,
     draft: bool,
@@ -214,6 +221,7 @@ def _submit_options_from_cli(
         revset=revset,
     )
     return SubmitOptions(
+        base_revset=base,
         descriptions=tuple(descriptions or ()),
         describe_with=describe_with,
         draft_mode=_submit_draft_mode(
@@ -281,17 +289,19 @@ def _build_submit_result(
 
 def _pending_pull_request_syncs(
     *,
+    bottom_base_branch: str,
     discovered_pull_requests: dict[str, GithubPullRequest | None],
     drafts: dict[str, bool],
     generated_descriptions: dict[str, GeneratedDescription],
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
-    trunk_branch: str,
 ) -> tuple[PendingPullRequestSync, ...]:
     """Build the desired pull-request sync plan for the submitted stack."""
 
     return tuple(
         PendingPullRequestSync(
-            base_branch=prepared_revisions[index - 1].branch if index > 0 else trunk_branch,
+            base_branch=(
+                prepared_revisions[index - 1].branch if index > 0 else bottom_base_branch
+            ),
             discovered_pull_request=discovered_pull_requests[prepared_revision.branch],
             draft=drafts[prepared_revision.revision.change_id],
             generated_description=generated_descriptions[prepared_revision.revision.change_id],
@@ -416,6 +426,11 @@ async def run_submit_async(
     remote = prepared_inputs.remote
     stack = prepared_inputs.stack
     state = prepared_inputs.state
+    explicit_base = stack.base_parent if options.base_revset is not None else None
+    tracked_base = state.tracked_review(explicit_base.change_id) if explicit_base else None
+    if explicit_base is not None and tracked_base is None:
+        raise AssertionError("Prepared explicit base requires a tracked review.")
+    base_branch = tracked_base.review_identity.head_ref if tracked_base is not None else None
 
     if not stack.revisions:
         return _build_submit_result(
@@ -451,9 +466,17 @@ async def run_submit_async(
             hint=t"Move work you need to keep outside the reserved namespace, or forget a stale "
             t"bookmark, then retry.",
         )
+    review_branches = tuple(
+        dict.fromkeys(
+            (
+                *(resolution.branch for resolution in branch_resolutions),
+                *((base_branch,) if base_branch is not None else ()),
+            )
+        )
+    )
     remote_targets = client.list_remote_branches(
         remote=remote.name,
-        patterns=tuple(f"refs/heads/{resolution.branch}" for resolution in branch_resolutions),
+        patterns=tuple(f"refs/heads/{branch}" for branch in review_branches),
     )
     prepared_revisions = prepare_submit_revisions(
         branch_resolutions=branch_resolutions,
@@ -474,6 +497,10 @@ async def run_submit_async(
         for prepared in prepared_revisions
         if (identity := state.review_identities.get(prepared.revision.change_id)) is not None
     }
+    if tracked_base is not None:
+        tracked_pull_requests[tracked_base.review_identity.head_ref] = (
+            tracked_base.review_identity.pr_number
+        )
     submitted_revisions: tuple[SubmittedRevision, ...] = ()
     async with build_github_client(repository=github_repository) as github_client:
         generated_descriptions = prepared_inputs.generated_pull_request_descriptions
@@ -487,7 +514,7 @@ async def run_submit_async(
                     github_client.get_repository(),
                     discover_pull_requests_by_branch(
                         github_client=github_client,
-                        branches=tuple(resolution.branch for resolution in branch_resolutions),
+                        branches=review_branches,
                         tracked_pull_requests=tracked_pull_requests,
                     ),
                     github_client.list_stacks(),
@@ -502,6 +529,44 @@ async def run_submit_async(
                 remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,
             )
+        bottom_base_branch = trunk_branch
+        if explicit_base is not None and tracked_base is not None and base_branch is not None:
+            expected_base_commit = tracked_base.submitted_baseline.commit_id
+            if remote_targets.get(base_branch) != expected_base_commit:
+                remote_branch = f"{base_branch}@{remote.name}"
+                child_retry = (
+                    f"jj-stack submit --base {explicit_base.change_id} {stack.head.change_id}"
+                )
+                raise DriftError(
+                    t"Review branch {ui.bookmark(remote_branch)} no longer "
+                    t"points to the submitted commit for base "
+                    t"{ui.change_id(explicit_base.change_id)}. jj-stack left it untouched and "
+                    t"cannot repair it automatically.",
+                    condition="remote_branch_moved",
+                    hint=(
+                        t"Externally restore {ui.bookmark(remote_branch)} to immutable submitted "
+                        t"commit ID {ui.semantic_text(expected_base_commit, 'commit_id')}, then "
+                        t"run {ui.cmd(child_retry)}."
+                    ),
+                )
+            child_bottom = short_change_id(stack.revisions[0].change_id)
+            child_head = short_change_id(stack.head.change_id)
+            child_rebase = f"jj rebase -r '{child_bottom}::{child_head}' -o 'trunk()'"
+            ensure_pull_request_link_is_consistent(
+                branch=base_branch,
+                change_id=explicit_base.change_id,
+                discovered_pull_request=discovered_pull_requests[base_branch],
+                expected_remote_target=expected_base_commit,
+                repository_key=github_repository.repository_key,
+                tracked_review=tracked_base,
+                merged_hint=(
+                    t"Sync the parent review first, rebase only the child review with "
+                    t"{ui.cmd(child_rebase)}, and then run "
+                    t"{ui.cmd(f'jj-stack submit {child_head}')} without "
+                    t"{ui.cmd('--base')}."
+                ),
+            )
+            bottom_base_branch = base_branch
         drafts = {
             prepared.revision.change_id: _desired_draft_state(
                 draft_mode=options.draft_mode,
@@ -510,11 +575,11 @@ async def run_submit_async(
             for prepared in prepared_revisions
         }
         pending_syncs = _pending_pull_request_syncs(
+            bottom_base_branch=bottom_base_branch,
             discovered_pull_requests=discovered_pull_requests,
             drafts=drafts,
             generated_descriptions=generated_descriptions,
             prepared_revisions=prepared_revisions,
-            trunk_branch=trunk_branch,
         )
         ensure_pull_request_syncs_are_safe(
             options=options,
@@ -530,11 +595,11 @@ async def run_submit_async(
                 revisions=stack.revisions,
             )
             pending_syncs = _pending_pull_request_syncs(
+                bottom_base_branch=bottom_base_branch,
                 discovered_pull_requests=discovered_pull_requests,
                 drafts=drafts,
                 generated_descriptions=generated_descriptions,
                 prepared_revisions=prepared_revisions,
-                trunk_branch=trunk_branch,
             )
         pushes_review_branches = any(
             revision.remote_action == "pushed" for revision in prepared_revisions

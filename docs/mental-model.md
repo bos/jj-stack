@@ -64,13 +64,22 @@ a transport layer; the main authoring model is still local `jj` history.
 A review first submitted with one change remains one ordinary PR. Once the review has at least
 two PRs, `jj-stack` registers their order with GitHub's stack feature. After lower PRs
 merge, GitHub may keep them in that group as history, so the remaining PR can still belong to the
-existing group. The local DAG decides which changes belong together; the grouping on GitHub
-follows from it.
+existing group. The local DAG decides change order and ancestry. An ordinary trunk boundary or an
+explicit `submit --base` boundary decides which selected changes form one GitHub review.
+
+An explicit `submit --base <parent> <head>` makes the changes after that reviewed parent a
+separate GitHub review. The boundary applies only to that command and is never saved, so repeat
+`--base` when refreshing the child. After that exact base lands, use a bounded `jj rebase` to move
+only the child range onto `trunk()`, then submit it normally, even if higher parent work remains.
 
 Most commands follow the selected change's parent chain. `view` treats a bare change ID or linked
 PR as the identity of a stack member and shows the complete containing stack instead. If the
 local DAG has several possible containing heads, the identity is ambiguous and `view` stops.
 An arbitrary revset still names an exact stack head.
+
+`view` and `list` project those local DAG paths, so one report can contain changes belonging to
+several native GitHub reviews. They display observed review membership but do not divide a path
+into inferred review segments.
 
 The existing GitHub stack remains a safety boundary: if GitHub groups active PRs into one unit
 for an operation, `jj-stack` stops rather than changing only an unsafe subset of that group.

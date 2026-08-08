@@ -112,6 +112,39 @@ draft state for each PR.
 This matters for merging: `jj-stack merge` skips a draft PR and everything above it, so a draft
 left at the bottom of the stack blocks the whole merge.
 
+### Start a separate review from a reviewed change
+
+To keep a child path in its own GitHub review, name the reviewed parent explicitly:
+
+```bash
+jj-stack submit --base <parent-change-id> <child-head-change-id>
+```
+
+Only the changes after the parent through the child head are submitted. The parent PR is not
+changed. A one-change child is an ordinary PR; a child with two or more changes is a separate
+GitHub stack. This also supports two sibling reviews based on the same parent: run one bounded
+submit for each child head.
+
+The boundary is not saved. Repeat `--base <parent-change-id>` every time you refresh that child.
+Without it, ordinary `submit` follows the whole path to `trunk()` and may include or regroup the
+parent review.
+
+Do not merge the child while it is based on the parent review. Merge the parent first. After a
+direct merge, `jj-stack merge` tries to sync it automatically; after a queued or external merge,
+run `jj-stack sync <parent-head-change-id>` when GitHub finishes.
+
+The exact change passed to `--base` controls this transition. Keep repeating that base while its
+PR is open. Once it lands, move exactly the child range onto trunk and refresh it as an ordinary
+review, even if a higher change in the parent review remains open:
+
+```bash
+jj rebase -r '<child-bottom-change-id>::<child-head-change-id>' -o 'trunk()'
+jj-stack submit <child-head-change-id>
+```
+
+The bounded revset leaves sibling paths alone. The ordinary submit changes the bottom child PR's
+base to trunk; the child can then be merged normally.
+
 ## 4. Revise locally as reviews come in
 
 During review, you can make any changes you want with `jj`. Split, squash, reorder, or rewrite
@@ -125,8 +158,9 @@ jj-stack submit
 
 If a rewrite splits, moves, or combines changes from existing GitHub stacks, `submit` may tell
 you that an existing GitHub stack no longer matches the selected local path. Run every exact
-`jj-stack unstack --stack <number>` command in that diagnostic to remove the old grouping, then
-submit each resulting local stack.
+`jj-stack unstack --stack <number>` command in that diagnostic to remove the old grouping. Submit
+a trunk-based result normally. At a reviewed fork, leave the fork in its parent review and submit
+each outgoing child with `--base <fork-change-id> <child-head-change-id>`.
 
 ```bash
 jj-stack unstack --stack <number>

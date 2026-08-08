@@ -411,6 +411,7 @@ def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> No
 
 def _sync_submit_options(*, dry_run: bool, revset: str) -> SubmitOptions:
     return SubmitOptions(
+        base_revset=None,
         descriptions=(),
         describe_with=None,
         draft_mode="default",
