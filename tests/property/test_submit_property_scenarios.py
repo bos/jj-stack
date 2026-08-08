@@ -126,7 +126,7 @@ def test_submit_property_stack_join_preserves_review_identity(
     STACK_MOVE_SCENARIOS,
     ids=lambda scenario: scenario.name,
 )
-def test_submit_property_stack_move_updates_selected_stack_only(
+def test_submit_property_stack_move_refreshes_both_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

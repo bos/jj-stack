@@ -623,14 +623,14 @@ def test_submit_recreates_github_stack_only_after_active_review_grows_to_two(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.github_stacks == {}
+    assert fake_repo.github_stacks == {7: (1,)}
     assert fake_repo.pull_requests[1].merged_at is not None
     assert fake_repo.pull_requests[2].state == "open"
     assert fake_repo.pull_requests[2].base_ref == "main"
 
     commit_file(repo, "feature 3", "feature-3.txt")
     assert run_main(repo, config_path, "submit") == 0
-    assert fake_repo.github_stacks == {2: (2, 3)}
+    assert fake_repo.github_stacks == {2: (2, 3), 7: (1,)}
 
 
 def test_submit_appends_to_active_suffix_after_historical_prefix(
@@ -828,7 +828,7 @@ def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
     assert len(fake_repo.pull_requests) == 4
 
 
-def test_submit_squash_blocks_until_old_github_stack_is_dissolved(
+def test_submit_squash_dissolves_and_rebuilds_github_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -878,11 +878,13 @@ def test_submit_squash_blocks_until_old_github_stack_is_dissolved(
     exit_code = run_main(repo, config_path, "submit", surviving_stack.head.change_id)
     captured = capsys.readouterr()
 
-    refreshed_state = ReviewStateStore.for_repo(repo).load()
-    assert exit_code == 1
-    assert "keeps #2 active outside the selected stack" in captured.err
-    assert "jj-stack unstack --stack 1" in captured.err
-    assert refreshed_state == initial_state
+    assert exit_code == 0, captured.err
+    assert fake_repo.github_stacks == {2: (1, 3)}
+    _assert_stack_pull_requests_match_dag(
+        fake_repo=fake_repo,
+        repo=repo,
+        stack=surviving_stack,
+    )
     orphaned_pr = fake_repo.pull_requests[orphaned_pr_number]
     assert orphaned_pr.state == "open"
     assert orphaned_pr.merged_at is None
@@ -891,7 +893,7 @@ def test_submit_squash_blocks_until_old_github_stack_is_dissolved(
     assert len(fake_repo.pull_requests) == 3
 
 
-def test_submit_split_path_blocks_until_github_stack_is_dissolved(
+def test_submit_split_path_rebuilds_selected_github_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -926,12 +928,11 @@ def test_submit_split_path_blocks_until_github_stack_is_dissolved(
     exit_code = run_main(repo, config_path, "submit", change_ids[3])
     captured = capsys.readouterr()
 
-    assert exit_code == 1
-    assert "keeps #2 active outside the selected stack" in captured.err
-    assert "jj-stack unstack --stack 1" in captured.err
+    assert exit_code == 0, captured.err
+    assert fake_repo.github_stacks == {2: (1, 3, 4)}
+    _assert_stack_pull_requests_match_dag(fake_repo=fake_repo, repo=repo, stack=fork_stack)
 
     refreshed_state = ReviewStateStore.for_repo(repo).load()
-    assert refreshed_state == submitted_state
     assert deferred_pull_request.base_ref == shared_base_ref
     assert deferred_pull_request.head_ref == deferred_identity.head_ref
     assert deferred_pull_request.state == "open"
@@ -947,6 +948,83 @@ def test_submit_split_path_blocks_until_github_stack_is_dissolved(
         if event.pull_request_number == deferred_identity.pr_number
     ] == deferred_events
     assert len(fake_repo.pull_requests) == 4
+
+
+def test_submit_shrinking_stack_to_one_pr_dissolves_grouping(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    stack = selected_stack(repo)
+    bottom, top = stack.revisions
+
+    monkeypatch.setenv("JJ_EDITOR", "true")
+    run_command(["jj", "squash", "--from", top.change_id, "--into", bottom.change_id], repo)
+    survivor = selected_stack(repo, bottom.change_id)
+
+    assert run_main(repo, config_path, "submit", survivor.head.change_id) == 0
+    assert fake_repo.github_stacks == {}
+    _assert_stack_pull_requests_match_dag(fake_repo=fake_repo, repo=repo, stack=survivor)
+
+
+def test_submit_explicit_nonmaximal_prefix_does_not_truncate_github_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    bottom = selected_stack(repo).revisions[0]
+    state_before = ReviewStateStore.for_repo(repo).load()
+    refs_before = remote_refs(fake_repo.git_dir)
+
+    exit_code = run_main(
+        repo,
+        config_path,
+        "submit",
+        f'change_id("{bottom.change_id}")',
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "selected path stops before its local head" in captured.err
+    assert fake_repo.github_stacks == {1: (1, 2, 3)}
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert remote_refs(fake_repo.git_dir) == refs_before
+
+
+def test_submit_cross_stack_move_rejects_destination_first_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "source 1", "source-1.txt")
+    commit_file(repo, "source 2", "source-2.txt")
+    source = selected_stack(repo)
+    assert run_main(repo, config_path, "submit", source.head.change_id) == 0
+    capsys.readouterr()
+
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "destination", "destination.txt")
+    destination = selected_stack(repo)
+    assert run_main(repo, config_path, "submit", destination.head.change_id) == 0
+    capsys.readouterr()
+
+    run_command(
+        ["jj", "rebase", "-r", source.head.change_id, "-A", destination.revisions[0].change_id],
+        repo,
+    )
+    moved_destination = selected_stack(repo, source.head.change_id)
+    state_before = ReviewStateStore.for_repo(repo).load()
+    refs_before = remote_refs(fake_repo.git_dir)
+    assert run_main(repo, config_path, "submit", moved_destination.head.change_id) == 1
+    assert "other local path" in capsys.readouterr().err
+    assert fake_repo.github_stacks == {1: (1, 2)}
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert remote_refs(fake_repo.git_dir) == refs_before
 
 
 def test_submit_uses_readable_review_branch_names(

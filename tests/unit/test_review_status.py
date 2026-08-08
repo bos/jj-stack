@@ -367,6 +367,7 @@ def _patch_selected_path(
     state: ReviewState,
 ) -> None:
     selected_path = SelectedReviewPath(
+        is_maximal=True,
         stack=client.stack,
         tracked_change_ids=frozenset(state.review_identities).intersection(
             revision.change_id for revision in client.stack.revisions

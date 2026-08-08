@@ -52,9 +52,7 @@ def test_github_stack_splits_history_and_rejects_nonprefix_history() -> None:
         GithubStack.model_validate({"number": 7, "pull_requests": [active, historical]})
 
 
-def test_github_stack_requires_two_members_and_defaults_missing_merge_state_to_active() -> None:
-    """GitHub rejects one-member resources and may omit `merged_at` from valid members."""
-
+def test_github_stack_defaults_missing_merge_state_to_active() -> None:
     stack = GithubStack.model_validate(
         {
             "number": 7,
@@ -67,12 +65,3 @@ def test_github_stack_requires_two_members_and_defaults_missing_merge_state_to_a
 
     assert stack.active_pull_request_numbers == (1, 2)
     assert stack.historical_pull_request_numbers == ()
-    with pytest.raises(ValueError, match="at least 2"):
-        GithubStack.model_validate(
-            {
-                "number": 8,
-                "pull_requests": [
-                    {"head": {"ref": "jj-stack/one", "sha": "head-one"}, "number": 1}
-                ],
-            }
-        )

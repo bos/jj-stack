@@ -83,11 +83,8 @@ Replay follows the same shape for every scenario:
 6. Apply the scenario operations with real `jj` commands.
 7. Rediscover the selected live stack from the current DAG and assert that its
    `change_id` order matches the scenario model. Subjects are diagnostics only.
-8. Dissolve any existing GitHub stack that includes active reviews outside the selected path,
-   or when the selection combines more than one existing GitHub stack. This models the exact
-   `jj-stack unstack --stack` recovery named by `submit`.
-9. Run `submit` again on the new stack head.
-10. Assert the cross-system invariants.
+8. Run `submit` again on the new stack head, allowing it to reconcile GitHub grouping.
+9. Assert the cross-system invariants.
 
 The replay model must track stable `change_id`s for initial and inserted changes.
 Subjects and filenames are only labels that make failure output readable.
@@ -116,15 +113,15 @@ represented in the current model.
 
 Two harness families cover edits that involve more than one submitted stack:
 
-- **Join:** dissolve the two existing GitHub stacks, then submit the combined stack. Reuse every
-  PR and approval by `change_id`; recompute heads and bases; store no topology.
-- **Move:** dissolve existing GitHub stacks that span the resulting paths, then submit the
-  destination stack. Reuse the moved change's PR; leave the source remainder unchanged.
+- **Join:** submit the combined maximal path directly. Reuse every PR and approval by
+  `change_id`; recompute heads and bases; store no topology.
+- **Move:** submit the nonempty source remainder first, then the destination path. Reuse the
+  moved change's PR and refresh both resulting paths.
 
 Both families assert that no original PR is unexpectedly closed, merged, or replaced. Selected PR
-bases are recomputed; PRs in the source remainder must not receive a base-retarget event. Fixed
-cases cover joining two stacks and moving a middle change while leaving a nonempty source
-remainder. Expanded runs vary directions, sizes, and insertion points.
+bases, branch targets, and submitted baselines are recomputed for both resulting paths. Fixed cases
+cover joining two stacks and moving a middle change while leaving a nonempty source remainder.
+Expanded runs vary directions, sizes, and insertion points.
 
 Focused deterministic tests cover resubmitting after `jj split` creates an additional change and
 the `view` warning after a reviewed path gains a sibling.

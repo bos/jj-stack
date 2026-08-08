@@ -195,6 +195,9 @@ def _observation(
     tracked_change_ids: frozenset[str] = frozenset(),
 ) -> SelectedPathObservation:
     return SelectedPathObservation(
+        candidate_commit_ids=frozenset(
+            revision.commit_id for revision in revisions if revision.commit_id != trunk.commit_id
+        ),
         current_working_copy_commit_id=None,
         fetched_trunk_commit_ids=fetched_trunk_commit_ids or frozenset({trunk.commit_id}),
         revisions=revisions,

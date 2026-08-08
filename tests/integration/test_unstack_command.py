@@ -96,7 +96,8 @@ def test_unstack_locked_grouping_stops_without_closing_or_forgetting(
 
     class LockedStackClient(GithubClient):
         async def unstack(self, *, stack_number):
-            return await self.get_stack(stack_number=stack_number)
+            fake_repo.pull_requests[1].is_queued = True
+            return await super().unstack(stack_number=stack_number)
 
     patch_github_client_builders(
         monkeypatch,
@@ -108,10 +109,14 @@ def test_unstack_locked_grouping_stops_without_closing_or_forgetting(
 
     exit_code = run_main(repo, config_path, "unstack", "--stack", "7")
     captured = capsys.readouterr()
+    retry_exit_code = run_main(repo, config_path, "unstack", "--stack", "7")
+    retry = capsys.readouterr()
 
     assert exit_code == 1
-    assert "GitHub stack #7 still contains #1, #2" in _combined_output(captured)
-    assert fake_repo.github_stacks == {7: (1, 2)}
+    assert "GitHub stack #7 still contains #1" in _combined_output(captured)
+    assert retry_exit_code == 1, retry
+    assert "could not remove any pull requests" in _combined_output(retry).lower()
+    assert fake_repo.github_stacks == {7: (1,)}
     assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
     assert state_store.load() == state_before
 

@@ -100,9 +100,8 @@ confirms after you explain that risk.
   fetches and syncs the selected local stack; it never pushes trunk. Wait for
   queued PRs to merge, then run `sync <head-change-id>`.
 - **Remove GitHub stack grouping:** `unstack --dry-run <head-change-id>`, then
-  `unstack <head-change-id>`. When one GitHub stack spans several desired local
-  paths, use the exact `unstack --stack <number>` command from the diagnostic.
-  Pull requests remain open.
+  `unstack <head-change-id>`. Use this when the grouping itself should be removed;
+  pull requests remain open.
 - **Close a stack without merging:** inspect it, remove its GitHub grouping,
   then run `gh pr close <pr>` for each explicit PR number the user wants closed.
 - **Remove a closed stack's branches, comments, and saved links:**
@@ -114,8 +113,9 @@ confirms after you explain that risk.
   closed or merged reviews. Open reviews and open orphans are preserved;
   mismatched or unavailable GitHub state blocks that record.
 - **Forget saved PR links without changing GitHub:** `unstack --local`.
-- **Change PR base/head because the stack shape changed:** reshape with `jj`,
-  then `submit --dry-run` and `submit`.
+- **Change stack shape:** reshape with `jj`, then `submit --dry-run` and
+  `submit`; it reconciles GitHub grouping automatically. For a cross-stack move,
+  submit the source stack before the destination stack.
 - **Recover after GitHub merges:** `sync --dry-run <head-change-id>`, then
   `sync <head-change-id>` chains the repair — fetch, remove merged ancestors,
   rebase selected survivors, and update their existing PRs. GitHub rebase

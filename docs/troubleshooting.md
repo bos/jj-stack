@@ -347,20 +347,17 @@ jj-stack submit
 For a stack of several PRs, relink attaches the one you name; rerun `jj-stack submit` and follow
 the guidance it prints for any remaining untracked branch.
 
-## `submit` says a GitHub stack keeps other PRs active outside the selected stack
+## `submit` says to submit another local path first
 
-GitHub still groups PRs that your local `jj` history now places on separate paths. `jj-stack`
-stops because updating only part of that GitHub group would be unsafe.
+You moved a change from one submitted stack into another. GitHub still groups the moved PR with
+the source stack, so refreshing the destination first would require changing only part of that
+group while also updating another submitted review.
 
-Run the exact command from the diagnostic, which has this form:
+Submit the remaining source stack first, then submit the destination stack. Both commands reuse
+the existing PRs; you do not need to run `unstack` yourself.
 
-```bash
-jj-stack unstack --stack <number>
-```
-
-This removes only GitHub's grouping and leaves every PR open. Submit a trunk-based result
-normally. At a reviewed fork, leave the fork in its parent review and submit each outgoing child
-with `--base <fork-change-id> <child-head-change-id>`.
+At a reviewed fork, leave the fork in its parent review and submit each outgoing child with
+`--base <fork-change-id> <child-head-change-id>`.
 
 ## Old review branches remain after merging or closing
 
@@ -431,6 +428,8 @@ with `gh`:
 ```bash
 gh pr close <pr>
 ```
+
+If GitHub reports locked PRs, remove any queued PRs from the merge queue and rerun `unstack`.
 
 The saved PR links remain in place. Remove the closed reviews' branches, comments, and saved links
 with:

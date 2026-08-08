@@ -806,6 +806,16 @@ def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         stacks = _github_stacks(repository)
         if stack_number not in stacks:
             raise HTTPException(status_code=404, detail="Not Found")
+        members = stacks[stack_number]
+        prs = repository.pull_requests
+        retained = tuple(
+            number for number in members if prs[number].is_queued or prs[number].merged_at
+        )
+        if retained == members and any(prs[number].is_queued for number in members):
+            raise HTTPException(status_code=422, detail="No pull requests can be removed.")
+        if retained:
+            stacks[stack_number] = retained
+            return JSONResponse(_stack_payload(repository, stack_number, retained))
         del stacks[stack_number]
         return Response(status_code=204)
 
@@ -1253,12 +1263,10 @@ def _github_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...
     # GitHub refuses to put one pull request in two stacks: creating a second reports
     # "Pull requests #N are already part of a stack" (422, confirmed against the API). Tests
     # assign this mapping directly, so refuse the impossible shape here rather than let a fixture
-    # justify production code defending against it.
+    # justify production code defending against it. Unstack can leave one member.
     seen: set[int] = set()
     for members in repository.github_stacks.values():
-        assert len(members) >= 2, (
-            f"fake GitHub was given a one-member stack {members}, which GitHub rejects"
-        )
+        assert len(members) >= 1, f"fake GitHub was given an empty stack {members}"
         overlap = seen.intersection(members)
         assert not overlap, (
             f"fake GitHub was given pull requests {sorted(overlap)} in more than one stack, "

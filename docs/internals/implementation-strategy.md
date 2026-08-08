@@ -321,11 +321,12 @@ repository lock; queued and blocked results return without doing so:
 - `review/finish.py` finalizes merged PRs and removes saved tracking
 - `review/convergence.py` checks whether another visible stack still needs that tracking
 - `review/github_stack_sync.py` validates historical stack members and survivor transitions
-- `commands/_github_stack_safety.py` owns the one stack membership decision:
-  `selected_github_stack` resolves the single resource a selected review set belongs to and
-  requires every active member of it to be selected. `submit`, `merge`, `sync`,
-  `unstack`, and cleanup call it and derive their own consequence from the resource it returns;
-  none of them repeats the decision
+- `commands/_github_stack_safety.py` owns strict stack selection for `merge`, `sync`, `unstack`,
+  and cleanup: `selected_github_stack` resolves one resource and requires all active members to
+  be selected
+- `commands/submit/github_stack.py` purely plans submit's broader reconciliation: one maximal
+  path may replace a partially selected resource, while complete resources may be joined; the
+  command dissolves the returned resources in deterministic order before changing PR bases
 
 `sync` uses the same fixed temporary attachment as checkout for one additional
 purpose: after a stack merge rewrites the active suffix, it validates every active raw Git commit
@@ -517,10 +518,11 @@ concrete advantage for this test harness.
 ## Live GitHub evidence
 
 There is no credentialed live suite. Approved disposable-repository experiments established the
-stack creation, append, unstack, historical-member, asynchronous merge, queue-rejection,
-merge-method, expected-head, and Git `change-id` contracts modeled by the fake. Future live checks
-still require explicit credentials, a disposable repository, and separate approval for external
-mutations.
+stack creation, append, locked-member unstack, historical-member, asynchronous merge,
+queue-rejection, merge-method, expected-head, and Git `change-id` contracts modeled by the fake.
+A later experiment also confirmed that GitHub rejects both enabling auto-merge on a stacked PR
+and creating a stack from an auto-merge-enabled PR. Future live checks still require explicit
+credentials, a disposable repository, and separate approval for external mutations.
 
 ## Development workflow
 

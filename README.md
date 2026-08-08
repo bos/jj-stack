@@ -251,12 +251,9 @@ jj-stack cleanup --pull-request orphans --dry-run
 jj-stack cleanup --pull-request orphans
 ```
 
-If GitHub still groups PRs that your local history now puts on different paths, remove that
-grouping without closing the PRs:
-
-```bash
-jj-stack unstack --stack <number>
-```
+`submit` automatically refreshes GitHub's grouping after you delete, reorder, split, or combine
+changes. When moving a change between submitted stacks, submit the source stack first and the
+destination stack second.
 
 To sweep review branches, stack overview comments, and tracking that no closed or merged review
 still needs, across the whole repository:

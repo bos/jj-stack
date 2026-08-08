@@ -109,6 +109,7 @@ class PreparedSubmitInputs:
     client: JjClient
     generated_pull_request_descriptions: dict[str, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
+    is_maximal_path: bool
     remote: GitRemote
     stack: LocalStack
     state: ReviewState

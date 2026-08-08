@@ -79,9 +79,15 @@ async def dissolve_github_stack(
     try:
         remaining = await github_client.unstack(stack_number=stack.number)
     except GithubClientError as error:
+        if error.status_code == 422:
+            raise CliError(
+                t"GitHub could not remove any pull requests from stack #{stack.number}.",
+                hint=t"Resolve its locked pull requests, then retry "
+                t"{ui.cmd(f'jj-stack unstack --stack {stack.number}')}",
+            ) from None
         raise CliError(t"Could not remove GitHub stack grouping #{stack.number}.") from error
-    if remaining is not None:
-        members = ", ".join(f"#{number}" for number in remaining.pull_request_numbers)
+    if remaining is not None and remaining.active_pull_request_numbers:
+        members = ", ".join(f"#{number}" for number in remaining.active_pull_request_numbers)
         raise CliError(
             t"GitHub stack #{stack.number} still contains {members}.",
             hint=t"Resolve its locked pull requests, then retry "

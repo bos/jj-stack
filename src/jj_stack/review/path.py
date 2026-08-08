@@ -12,6 +12,7 @@ from jj_stack.models.stack import LocalRevision, LocalStack
 class SelectedPathObservation:
     """Immutable facts needed to derive one selected parent path."""
 
+    candidate_commit_ids: frozenset[str]
     current_working_copy_commit_id: str | None
     fetched_trunk_commit_ids: frozenset[str]
     revisions: tuple[LocalRevision, ...]
@@ -26,6 +27,7 @@ class SelectedPathObservation:
 class SelectedReviewPath:
     """One ordinary selected path annotated by existing tracking."""
 
+    is_maximal: bool
     stack: LocalStack
     tracked_change_ids: frozenset[str]
 
@@ -62,7 +64,11 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
             selected_revset=observation.selected_revset,
             trunk=observation.trunk,
         )
-        return SelectedReviewPath(stack=stack, tracked_change_ids=frozenset())
+        return SelectedReviewPath(
+            is_maximal=False,
+            stack=stack,
+            tracked_change_ids=frozenset(),
+        )
 
     revisions_by_commit_id = {
         revision.commit_id: revision
@@ -79,6 +85,10 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
 
     revisions = tuple(reversed(head_first))
     path_change_ids = frozenset(revision.change_id for revision in revisions)
+    candidates = _ordinary_candidates(
+        candidate_commit_ids=observation.candidate_commit_ids,
+        revisions_by_commit_id=revisions_by_commit_id,
+    )
     stack = LocalStack(
         base_parent=current,
         head=selected,
@@ -87,6 +97,7 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
         trunk=observation.trunk,
     )
     return SelectedReviewPath(
+        is_maximal=selected.commit_id in _maximal_candidate_commit_ids(candidates),
         stack=stack,
         tracked_change_ids=observation.tracked_change_ids & path_change_ids,
     )
@@ -101,27 +112,12 @@ def project_repository_paths(
         revision.commit_id: revision
         for revision in sorted(observation.revisions, key=lambda item: item.commit_id)
     }
-    candidate_commit_ids = observation.candidate_commit_ids & revisions_by_commit_id.keys()
-    candidates = {
-        commit_id: revisions_by_commit_id[commit_id]
-        for commit_id in candidate_commit_ids
-        if (
-            not revisions_by_commit_id[commit_id].is_working_copy
-            or bool(revisions_by_commit_id[commit_id].description.strip())
-        )
-        and not revisions_by_commit_id[commit_id].hidden
-        and len(revisions_by_commit_id[commit_id].parents) == 1
-        and not (
-            revisions_by_commit_id[commit_id].is_working_copy
-            and revisions_by_commit_id[commit_id].empty
-        )
-    }
-    parent_commit_ids = {
-        revision.parents[0] for revision in candidates.values() if revision.parents
-    }
-    heads = tuple(
-        candidates[commit_id] for commit_id in sorted(candidates.keys() - parent_commit_ids)
+    candidates = _ordinary_candidates(
+        candidate_commit_ids=observation.candidate_commit_ids,
+        revisions_by_commit_id=revisions_by_commit_id,
     )
+    maximal_commit_ids = _maximal_candidate_commit_ids(candidates)
+    heads = tuple(candidates[commit_id] for commit_id in sorted(maximal_commit_ids))
 
     paths: list[SelectedReviewPath] = []
     for head in heads:
@@ -134,6 +130,7 @@ def project_repository_paths(
         path_change_ids = frozenset(revision.change_id for revision in revisions)
         paths.append(
             SelectedReviewPath(
+                is_maximal=True,
                 stack=LocalStack(
                     base_parent=current,
                     head=head,
@@ -148,6 +145,36 @@ def project_repository_paths(
         current_review_commit_id=observation.current_review_commit_id,
         paths=tuple(paths),
     )
+
+
+def _maximal_candidate_commit_ids(
+    candidates: dict[str, LocalRevision],
+) -> frozenset[str]:
+    parent_commit_ids = {
+        revision.parents[0] for revision in candidates.values() if revision.parents
+    }
+    return frozenset(candidates.keys() - parent_commit_ids)
+
+
+def _ordinary_candidates(
+    *,
+    candidate_commit_ids: frozenset[str],
+    revisions_by_commit_id: dict[str, LocalRevision],
+) -> dict[str, LocalRevision]:
+    return {
+        commit_id: revisions_by_commit_id[commit_id]
+        for commit_id in candidate_commit_ids & revisions_by_commit_id.keys()
+        if (
+            not revisions_by_commit_id[commit_id].is_working_copy
+            or bool(revisions_by_commit_id[commit_id].description.strip())
+        )
+        and not revisions_by_commit_id[commit_id].hidden
+        and len(revisions_by_commit_id[commit_id].parents) == 1
+        and not (
+            revisions_by_commit_id[commit_id].is_working_copy
+            and revisions_by_commit_id[commit_id].empty
+        )
+    }
 
 
 def _select_revision(observation: SelectedPathObservation) -> LocalRevision:

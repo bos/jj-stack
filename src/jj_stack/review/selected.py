@@ -157,12 +157,18 @@ def _observe_path_rows(
     trunk_path = "first_ancestors(trunk())"
     off_trunk = f"({selector}) ~ {trunk_path}"
     ancestors = f"first_ancestors({off_trunk})"
+    candidate_neighborhood = f"(visible() & (({selector}) | children({selector})))"
+    candidate_revisions = (
+        f"((({candidate_neighborhood}) ~ {trunk_path} ~ working_copies()) "
+        f"| (@ & {candidate_neighborhood}))"
+    )
     query = " | ".join(
         (
             "trunk()",
             f"({selector})",
             f"({ancestors}) ~ {trunk_path}",
             f"heads(({ancestors}) & {trunk_path})",
+            candidate_revisions,
             *extra_revisions,
         )
     )
@@ -172,6 +178,7 @@ def _observe_path_rows(
             "trunk()",
             selector,
             *extra_membership_revsets,
+            candidate_revisions,
             ancestors,
             trunk_path,
         ),
@@ -221,6 +228,7 @@ def _project_rows(
     )
     path_flag = len(rows[0][1]) - 2
     trunk_flag = len(rows[0][1]) - 1
+    candidate_flag = path_flag - 1
     path_revisions = tuple(revision for revision, flags in rows if flags[path_flag])
     if not inspection_mode and any(len(revision.parents) > 1 for revision in path_revisions):
         raise UnsupportedStackError(
@@ -235,6 +243,9 @@ def _project_rows(
         )
     path = project_selected_path(
         SelectedPathObservation(
+            candidate_commit_ids=frozenset(
+                revision.commit_id for revision, flags in rows if flags[candidate_flag]
+            ),
             current_working_copy_commit_id=current_working_copy_commit_id,
             fetched_trunk_commit_ids=frozenset(
                 revision.commit_id for revision, flags in rows if flags[trunk_flag]
@@ -298,6 +309,7 @@ def _replace_selected_revset(
     selected_revset: str,
 ) -> SelectedReviewPath:
     return SelectedReviewPath(
+        is_maximal=path.is_maximal,
         stack=path.stack.model_copy(update={"selected_revset": selected_revset}),
         tracked_change_ids=path.tracked_change_ids,
     )

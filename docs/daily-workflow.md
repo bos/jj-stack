@@ -156,15 +156,15 @@ Once the local stack looks right again, refresh GitHub:
 jj-stack submit
 ```
 
-If a rewrite splits, moves, or combines changes from existing GitHub stacks, `submit` may tell
-you that an existing GitHub stack no longer matches the selected local path. Run every exact
-`jj-stack unstack --stack <number>` command in that diagnostic to remove the old grouping. Submit
-a trunk-based result normally. At a reviewed fork, leave the fork in its parent review and submit
-each outgoing child with `--base <fork-change-id> <child-head-change-id>`.
+`submit` automatically refreshes GitHub's grouping after you delete, reorder, split, or combine
+changes. If only one PR remains, it removes the grouping and leaves that PR open.
 
-```bash
-jj-stack unstack --stack <number>
-```
+At a reviewed fork, leave the fork in its parent review and submit each outgoing child with
+`--base <fork-change-id> <child-head-change-id>`.
+
+When moving a change between two submitted stacks, submit the source stack first and the
+destination stack second. The first command releases the moved PR from its old grouping; the
+second joins it to the destination. A destination-first attempt stops before changing anything.
 
 If you want to ask prior reviewers to take another look after you've addressed feedback, run:
 

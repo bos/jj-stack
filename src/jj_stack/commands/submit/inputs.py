@@ -30,10 +30,15 @@ def prepare_submit_inputs(
 
     client = context.jj_client
     remote = select_submit_remote(client.list_git_remotes())
+    path = select_review_path(
+        jj_client=client,
+        revset=options.revset,
+        state=state,
+    )
     stack = _select_submit_stack(
         base_revset=options.base_revset,
         jj_client=client,
-        revset=options.revset,
+        stack=path.stack,
         state=state,
     )
     if options.base_revset is not None:
@@ -77,6 +82,7 @@ def prepare_submit_inputs(
         client=client,
         generated_pull_request_descriptions=generated_pull_request_descriptions,
         generated_stack_description=generated_stack_description,
+        is_maximal_path=path.is_maximal,
         remote=remote,
         stack=stack,
         state=state,
@@ -87,16 +93,11 @@ def _select_submit_stack(
     *,
     base_revset: str | None,
     jj_client: JjClient,
-    revset: str | None,
+    stack: LocalStack,
     state: ReviewState,
 ) -> LocalStack:
     """Select the ordinary path, optionally excluding one explicit reviewed ancestor."""
 
-    stack = select_review_path(
-        jj_client=jj_client,
-        revset=revset,
-        state=state,
-    ).stack
     if base_revset is None:
         return stack
     base = select_review_path(

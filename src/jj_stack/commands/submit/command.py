@@ -642,6 +642,7 @@ async def run_submit_async(
         )
         github_stack_plan = plan_github_stack(
             desired=desired_pull_numbers,
+            is_maximal_path=prepared_inputs.is_maximal_path,
             observed_stacks=observed_stacks,
             pull_numbers_requiring_base_update={
                 pull_request.number
@@ -651,8 +652,8 @@ async def run_submit_async(
             },
         )
         if github_stack_plan.action == "replace" and not dry_run:
-            assert (github_stack := github_stack_plan.affected_stack) is not None
-            await dissolve_github_stack(github_client=github_client, stack=github_stack)
+            for github_stack in github_stack_plan.affected_stacks:
+                await dissolve_github_stack(github_client=github_client, stack=github_stack)
             github_stack_plan = GithubStackPlan("create" if len(pending_syncs) > 1 else "none")
         if not dry_run:
             # GitHub has no transaction spanning review branches, pull requests, and stack

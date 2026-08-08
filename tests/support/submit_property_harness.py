@@ -161,17 +161,6 @@ def replay_lifecycle(
     assert len(fake_repo.pull_requests) == stack_size
 
 
-def _dissolve_github_stacks(
-    *,
-    fake_repo: FakeGithubRepository,
-    stack_numbers: tuple[int, ...],
-) -> None:
-    """Model explicit `jj-stack unstack --stack` actions chosen by the scenario."""
-
-    for stack_number in stack_numbers:
-        fake_repo.github_stacks.pop(stack_number, None)
-
-
 def replay_successful_stack_edit_scenario(
     *,
     discard_output: OutputDiscarder,
@@ -186,7 +175,6 @@ def replay_successful_stack_edit_scenario(
 
     assert submit(None) == 0
     discard_output()
-    initial_stack_numbers = tuple(fake_repo.github_stacks)
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
     fake_repo.pull_request_events.clear()
@@ -205,10 +193,6 @@ def replay_successful_stack_edit_scenario(
         repo=repo,
         labels=scenario.final_live_labels,
         labels_to_change_ids=labels_to_change_ids,
-    )
-    _dissolve_github_stacks(
-        fake_repo=fake_repo,
-        stack_numbers=initial_stack_numbers if scenario.orphaned_labels else (),
     )
     assert submit(stack.head.change_id) == 0
     discard_output()
@@ -248,7 +232,6 @@ def replay_external_drift_scenario(
 
     assert run_cli(("submit",)) == 0
     discard_output()
-    initial_stack_numbers = tuple(fake_repo.github_stacks)
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
 
@@ -261,12 +244,6 @@ def replay_external_drift_scenario(
             operation=operation,
         )
     assert tuple(live_labels) == scenario.final_live_labels
-    if scenario.orphaned_labels:
-        _dissolve_github_stacks(
-            fake_repo=fake_repo,
-            stack_numbers=initial_stack_numbers,
-        )
-
     submit_revset = labels_to_change_ids[scenario.final_live_labels[-1]]
     revset_override = _apply_drift_operation(
         baseline=baseline,
@@ -486,8 +463,6 @@ def replay_stack_join_scenario(
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers = tuple(sorted(fake_repo.github_stacks))
-
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
     fake_repo.pull_request_events.clear()
@@ -509,10 +484,6 @@ def replay_stack_join_scenario(
         labels_to_change_ids=labels_to_change_ids,
     )
 
-    _dissolve_github_stacks(
-        fake_repo=fake_repo,
-        stack_numbers=initial_stack_numbers,
-    )
     assert submit(joined_stack.head.change_id) == 0
     discard_output()
 
@@ -544,8 +515,6 @@ def replay_stack_move_scenario(
     labels_to_change_ids.update(_create_labeled_stack(repo, scenario.second_stack_labels))
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
-    initial_stack_numbers = tuple(sorted(fake_repo.github_stacks))
-
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
     _approve_initial_pull_requests(fake_repo, baseline)
     fake_repo.pull_request_events.clear()
@@ -566,17 +535,16 @@ def replay_stack_move_scenario(
         labels=scenario.selected_labels,
         labels_to_change_ids=labels_to_change_ids,
     )
+    source_stack = None
     if scenario.deferred_labels:
-        _discover_stack_for_labels(
+        source_stack = _discover_stack_for_labels(
             repo=repo,
             labels=scenario.deferred_labels,
             labels_to_change_ids=labels_to_change_ids,
         )
+        assert submit(source_stack.head.change_id) == 0
+        discard_output()
 
-    _dissolve_github_stacks(
-        fake_repo=fake_repo,
-        stack_numbers=initial_stack_numbers,
-    )
     assert submit(selected_stack.head.change_id) == 0
     discard_output()
 
@@ -589,12 +557,21 @@ def replay_stack_move_scenario(
         stack=selected_stack,
         strict_base_events=True,
     )
-    _assert_deferred_labels_untouched(
-        baseline=baseline,
-        deferred_labels=scenario.deferred_labels,
-        fake_repo=fake_repo,
-        repo=repo,
-    )
+    if source_stack is not None:
+        _assert_successful_submit_invariants(
+            baseline=baseline,
+            fake_repo=fake_repo,
+            invariants=SubmitInvariants(
+                final_live_labels=scenario.deferred_labels,
+                initial_size=scenario.initial_size,
+                orphaned_labels=(),
+                trace=scenario.trace,
+            ),
+            labels_to_change_ids=labels_to_change_ids,
+            repo=repo,
+            stack=source_stack,
+            strict_base_events=True,
+        )
 
 
 def _create_initial_stack(repo: Path, initial_size: int) -> dict[str, str]:
@@ -924,6 +901,9 @@ def _assert_successful_submit_invariants(
         assert pull_request.title == subject_for_label(label)
         assert state.submitted_baselines[revision.change_id].commit_id == revision.commit_id
 
+    if len(expected_base_by_pr_number) >= 2:
+        assert tuple(expected_base_by_pr_number) in fake_repo.github_stacks.values()
+
     for label in invariants.orphaned_labels:
         submitted = baseline[label]
         review_identity = state.review_identities[submitted.change_id]
@@ -986,35 +966,6 @@ def _assert_no_transient_damage_events(
             assert event.kind != "base", event
         if strict_base_events and event.kind == "base":
             assert event.pull_request_number in expected_changed_base_pr_numbers, event
-
-
-def _assert_deferred_labels_untouched(
-    *,
-    baseline: dict[str, SubmittedBaseline],
-    deferred_labels: tuple[str, ...],
-    fake_repo: FakeGithubRepository,
-    repo: Path,
-) -> None:
-    state = ReviewStateStore.for_repo(repo).load()
-    remote_heads = _remote_refs(fake_repo.git_dir)
-    deferred_pr_numbers = {baseline[label].pr_number for label in deferred_labels}
-    for label in deferred_labels:
-        submitted = baseline[label]
-        review_identity = state.review_identities[submitted.change_id]
-        submitted_baseline = state.submitted_baselines[submitted.change_id]
-        pull_request = fake_repo.pull_requests[submitted.pr_number]
-        assert review_identity == submitted.review_identity
-        assert submitted_baseline == submitted.submitted_baseline
-        assert _remote_head(remote_heads, submitted.branch) == submitted.remote_target
-        assert pull_request.base_ref == submitted.pr_base_ref
-        assert pull_request.head_ref == submitted.branch
-        assert pull_request.merged_at is None
-        assert pull_request.state == "open"
-        _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
-
-    for event in fake_repo.pull_request_events:
-        if event.pull_request_number in deferred_pr_numbers:
-            assert event.kind != "base", event
 
 
 def _assert_retry_metadata(fake_repo: FakeGithubRepository) -> None:

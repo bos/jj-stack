@@ -20,13 +20,35 @@ def test_selected_path_observes_linear_history_from_default_head(tmp_path: Path)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
 
-    stack = select_review_path(
+    path = select_review_path(
         jj_client=JjClient(repo),
         state=ReviewState(),
-    ).stack
+    )
+    stack = path.stack
 
+    assert path.is_maximal
     assert stack.selected_revset == "@-"
     assert [revision.subject for revision in stack.revisions] == ["feature 1", "feature 2"]
+
+
+@pytest.mark.parametrize("working_copy", ("empty", "undescribed"))
+def test_selected_path_maximality_ignores_excluded_working_copy_child(
+    tmp_path: Path,
+    working_copy: str,
+) -> None:
+    repo = init_repo(tmp_path)
+    commit_file(repo, "feature", "feature.txt")
+    feature = _current_parent_commit_id(repo)
+    if working_copy == "undescribed":
+        (repo / "working-copy.txt").write_text("work\n", encoding="utf-8")
+
+    path = select_review_path(
+        jj_client=JjClient(repo),
+        revset=feature,
+        state=ReviewState(),
+    )
+
+    assert path.is_maximal
 
 
 def test_selected_path_ignores_off_path_reviewable_child(tmp_path: Path) -> None:

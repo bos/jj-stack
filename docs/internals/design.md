@@ -454,6 +454,13 @@ higher change in the parent review survives, `submit --base` stops. After syncin
 user rebases exactly the child range onto `trunk()`, runs ordinary `submit` without `--base`, and
 can then merge that review. `submit` never cascades this transition across related reviews.
 
+When the selected maximal local path no longer matches GitHub's grouping, `submit` first
+dissolves the affected GitHub stacks. It may replace one partially selected GitHub stack, which
+covers deletion and splitting, or any number of completely selected GitHub stacks, which covers
+joining stacks. Resources are dissolved in stack-number order. A rerun observes any work that
+completed before an interruption and continues from current state. A review with one remaining
+active PR is left as an ordinary PR because GitHub stacks require at least two members.
+
 All selected review branches move in one atomic push. Every update carries the exact target
 `jj-stack` observed for that remote ref, including expected absence for a new branch. If any ref
 moved, the whole push fails; there is no sequential fallback. `jj-stack` never takes over a
@@ -610,24 +617,30 @@ and bases only while a merged tracked member of the same GitHub stack proves the
 
 ### GitHub stack membership
 
-Every active member of a GitHub stack touched by a selected mutation must belong to the selected
-local parent chain. A selected operation may touch at most one GitHub stack that still has active
-members to change.
+`merge`, `sync`, and `unstack` require every active member of the one GitHub stack they touch to
+belong to the selected local parent chain. Cleanup instead checks each candidate and never
+deletes a branch needed by an active GitHub stack member.
+
+`submit` reconciles GitHub grouping from the selected local path. It may dissolve any number of
+GitHub stacks whose active members are all selected. It may also dissolve one partially selected
+GitHub stack when the selection is a maximal local path and touches no other GitHub stack. A
+non-maximal selection could silently truncate a still-valid stack, so it stops before mutation.
+Likewise, a selection that partly overlaps one GitHub stack while including any previously
+submitted review outside that resource stops; the user submits the source path first, then the
+destination path.
 
 Merged members do not have to be selected. If selected PRs appear only as history, one matching
 GitHub stack may be observed without mutation; more than one is ambiguous and stops the command.
 
-An active unselected member or two active GitHub stacks in one selection fails before branch or
-PR mutation. The diagnostic names the exact `jj-stack unstack --stack <number>` command when
-removing the grouping can unblock the operation.
-
-`submit`, `merge`, `sync`, and `unstack` use this rule. Cleanup instead checks each
-candidate and never deletes a branch needed by an active GitHub stack member.
+For strict commands, an active unselected member or two active GitHub stacks in one selection
+fails before mutation. The diagnostic names the exact `jj-stack unstack --stack <number>`
+command when removing the grouping can unblock the operation.
 
 Changing the base of an active GitHub stack member requires dissolving that GitHub stack first
 because GitHub offers no single-member removal. `jj-stack` asks GitHub to dissolve the exact
-observed resource. If GitHub retains a queued, auto-merge, or otherwise locked active member, the
-operation stops before changing any branch or base.
+observed resource. If GitHub retains a queued or otherwise locked active member, the operation
+stops before changing any branch or base. Historical merged members may remain in the resource;
+they do not block the mutation because they are no longer active.
 
 ### Derived artifacts
 
@@ -760,19 +773,20 @@ stack command still updates reviews for one selected chain, and ambiguous linkag
 closed. Local `jj` rewrites may propagate to descendants on another path. Reviews on that path
 wait for their own explicit commands.
 
-- **Move changes between reviews**: dissolve any existing GitHub stack whose active members would
-  be divided between the resulting reviews. Moved changes retain their PRs and recalculate bases
-  from their new parents. A result based on trunk uses ordinary `submit`; a result whose lower
-  bound is reviewed change `B` uses `submit --base B H`, leaving `B` in its existing review.
+- **Move changes between reviews**: submit the source path first, then the destination path. The
+  first submit dissolves grouping that still includes the moved change; the second joins the
+  complete destination reviews. Moved changes retain their PRs and recalculate bases from their
+  new parents. A trunk-based result uses ordinary `submit`; a result whose lower bound is reviewed
+  change `B` uses `submit --base B H`. Destination-first submission stops before mutation.
 - **Split one stack into several**: each maximal linear path appears separately in repository
   inventory. The paths may contain the same observed reviewed ancestors; tracking annotates those
   paths but does not put a shared PR in several GitHub stacks. The shared fork remains in its
-  parent review; each outgoing child is submitted as `(fork, head]` with explicit `--base`. If one
-  existing GitHub stack spans active reviews that are now divided, the user removes the grouping
-  with the named `jj-stack unstack --stack <number>` command before those bounded submits.
-- **Join several stacks into one**: dissolve the existing GitHub stacks, then submit the resulting
-  chain. It reuses reviews by change ID, recalculates every base, and produces one overview
-  comment on the new head.
+  parent review; each outgoing child is submitted as `(fork, head]` with explicit `--base`.
+  Submitting the first bounded path dissolves the old grouping and rebuilds that path; each other
+  path waits for its own submit.
+- **Join several stacks into one**: submitting the resulting chain dissolves every completely
+  selected GitHub stack and creates the joined grouping. It reuses reviews by change ID,
+  recalculates every base, and produces one overview comment on the new head.
 
 Stacks not yet resubmitted may still show old overview comments. That is expected:
 `submit` does not mutate stacks outside its selection. `list` identifies stale reviews across the
