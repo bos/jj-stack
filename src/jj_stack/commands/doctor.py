@@ -207,12 +207,23 @@ def _check_review_fetch_isolation(
             detail = (detail, t" {error.hint}")
         return CheckResult("review branch fetch", "warn", detail)
     if isolation.status == "required":
+        if isolation.problem == "missing":
+            problem_detail = (
+                t"missing {ui.code(review_fetch_refspec())} exclusion; ",
+                t"add it with {ui.cmd('jj-stack doctor --fix')}.",
+            )
+        elif isolation.problem == "duplicate":
+            problem_detail = (
+                t"found multiple {ui.code(review_fetch_refspec())} exclusions; ",
+                t"keep one with {ui.cmd('jj-stack doctor --fix')}.",
+            )
+        else:
+            raise AssertionError("required fetch isolation has no problem")
         return CheckResult(
             "review branch fetch",
             "warn",
             (
-                t"missing or duplicated {ui.code(review_fetch_refspec())} exclusion; ",
-                t"apply it with {ui.cmd('jj-stack doctor --fix')}.",
+                problem_detail,
                 visible_detail,
             ),
         )

@@ -56,6 +56,7 @@ class JjCommandError(CliError):
 
 
 ReviewFetchIsolationStatus = Literal["ready", "applied", "required"]
+ReviewFetchIsolationProblem = Literal["missing", "duplicate"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,7 @@ class ReviewFetchIsolation:
     """Result of checking the ordinary-fetch exclusion for review branches."""
 
     status: ReviewFetchIsolationStatus
+    problem: ReviewFetchIsolationProblem | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -557,11 +559,12 @@ class JjClient:
         refspec = review_fetch_refspec()
         count = configured.count(refspec)
         if count == 1:
-            return ReviewFetchIsolation(status="ready")
+            return ReviewFetchIsolation(status="ready", problem=None)
 
         status: ReviewFetchIsolationStatus = "required" if dry_run else "applied"
         result = ReviewFetchIsolation(
             status=status,
+            problem="missing" if count == 0 else "duplicate",
         )
         if dry_run:
             return result

@@ -400,6 +400,7 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
     )
 
     assert result.status == "required"
+    assert result.problem == "missing"
     assert all("config --add" not in " ".join(command) for command in seen_commands)
 
 
@@ -493,6 +494,7 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
     ]
     assert events == ["initial-read", "replace", "post-read"]
     assert result.status == "applied"
+    assert result.problem == "duplicate"
 
 
 def test_review_fetch_isolation_reports_the_effective_override_origin(

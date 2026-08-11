@@ -8,6 +8,7 @@ import jj_stack.commands.doctor as doctor_mod
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
+from jj_stack.review.branches import review_fetch_refspec
 from jj_stack.state.operation_lock import read_operation_lock_holder
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -97,8 +98,33 @@ def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
     output = " ".join(capsys.readouterr().out.split())
 
     assert exit_code == 0
+    assert f"missing {review_fetch_refspec()} exclusion" in output
+    assert "multiple" not in output
     assert "jj-stack doctor --fix" in output
     assert "without --dry-run" not in output
+
+
+def test_doctor_distinguishes_duplicate_fetch_exclusions(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
+    client = JjClient(repo)
+    client.ensure_review_fetch_isolation(remote="origin")
+    run_command(
+        ["git", "config", "--add", "remote.origin.fetch", review_fetch_refspec()],
+        repo,
+    )
+
+    exit_code = run_main(repo, config_path, "doctor")
+    output = " ".join(capsys.readouterr().out.split())
+
+    assert exit_code == 0
+    assert f"multiple {review_fetch_refspec()} exclusions" in output
+    assert "keep one with jj-stack doctor --fix" in output
+    assert "missing" not in output
 
 
 def test_doctor_fix_applies_the_review_fetch_exclusion(
