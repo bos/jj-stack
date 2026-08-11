@@ -164,6 +164,7 @@ def test_load_config_surfaces_cli_args_through_to_jj(
             "jj",
             "--config",
             "jj-stack.logging.level=INFO",
+            "--ignore-working-copy",
             "config",
             "list",
             "jj-stack",

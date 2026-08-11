@@ -167,6 +167,30 @@ def test_resolve_color_when_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
     assert unconfigured.resolve_color_when(stdout_is_tty=False) == "never"
 
 
+def test_first_post_bootstrap_jj_call_uses_normal_snapshot_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_commands: list[tuple[str, ...]] = []
+
+    def run(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        observed_commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    client = JjClient(Path("/repo"))
+
+    client.read_jj_stack_config_list_output()
+    client.enable_initial_working_copy_snapshot()
+    client.list_git_remotes()
+    client.list_git_remotes()
+
+    assert observed_commands == [
+        ("jj", "--ignore-working-copy", "config", "list", "jj-stack"),
+        ("jj", "git", "remote", "list"),
+        ("jj", "--ignore-working-copy", "git", "remote", "list"),
+    ]
+
+
 def test_find_private_commits_returns_matching_revisions(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         ("jj", "config", "get", "git.private-commits"): "description(private)\n",

@@ -1131,12 +1131,12 @@ def test_submit_defaults_to_a_described_nonempty_working_copy(
     commit_file(repo, "committed path", "committed.txt")
     committed_path = selected_stack(repo).head
     run_command(["jj", "new", shared.change_id], repo)
-    write_file(repo / "working-copy.txt", "working copy\n")
     run_command(["jj", "describe", "-m", "selected path"], repo)
-    selected = JjClient(repo).resolve_revision("@")
+    write_file(repo / "working-copy.txt", "working copy\n")
 
     exit_code = run_main(repo, config_path, "submit")
     captured = capsys.readouterr()
+    selected = JjClient(repo).resolve_revision("@")
     state = ReviewStateStore.for_repo(repo).load()
 
     assert exit_code == 0, captured.err

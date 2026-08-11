@@ -72,6 +72,7 @@ def bootstrap_context(
     repo_root = resolve_repo_root(repository or Path.cwd())
     jj_client = JjClient(repo_root, cli_args=cli_args)
     config = load_config(jj_client=jj_client)
+    jj_client.enable_initial_working_copy_snapshot()
     configure_logging(debug=debug, configured_level=config.logging.level)
     install_review_namespace(config.branch_prefix)
 

@@ -8,13 +8,41 @@ from pathlib import Path
 import pytest
 
 import jj_stack
+import jj_stack.cli as cli_module
 import jj_stack.console as console_module
 import jj_stack.jj.colors as jj_colors_module
 import jj_stack.ui as ui_module
+from jj_stack.jj.cli_args import JjCliArgs
 
 
 def _style_cls():
     return import_module("rich.style").Style
+
+
+def test_cli_color_config_read_ignores_working_copy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run(command, **kwargs):
+        assert command == [
+            "jj",
+            "--ignore-working-copy",
+            "config",
+            "get",
+            "ui.color",
+        ]
+        assert kwargs["cwd"] == tmp_path
+        return subprocess.CompletedProcess(command, 0, stdout="debug\n", stderr="")
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+
+    assert (
+        cli_module._load_configured_jj_color(
+            repository=tmp_path,
+            cli_args=JjCliArgs(),
+        )
+        == "debug"
+    )
 
 
 def test_time_output_prefix_uses_prefix_and_timestamp_semantic_style(

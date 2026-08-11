@@ -37,10 +37,9 @@ requires restructuring that has not yet paid for itself._
 Applied so far: the `jj --version` gate and `get_config_string` reads are
 cached per process/client, and semantic color styles are only loaded when a
 console can actually emit color. The remaining fixed per-invocation reads
-(`config list jj-stack` as the working-copy snapshot anchor, `git remote
-list`, `bookmark list --all-remotes`, plus one `ui.color` read each from
-pre-bootstrap console setup and the repo-scoped client) each answer a live
-question once and were left alone.
+(`config list jj-stack`, `git remote list`, `bookmark list --all-remotes`, plus
+one `ui.color` read each from pre-bootstrap console setup and the repo-scoped
+client) each answer a live question once and were left alone.
 
 Evaluated and deferred: batching per-revision `jj log -r <rev> --limit 1`
 display renders into one call. A combined revset renders a connected graph

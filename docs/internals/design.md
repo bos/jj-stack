@@ -204,6 +204,12 @@ Repository-wide discovery omits all working-copy commits so the inventory does n
 which workspace ran it. A stack command defaults to `@` when that workspace's working-copy
 change is described and nonempty, and to `@-` otherwise.
 
+Bootstrap-only `jj` calls ignore the working copy. The first repository operation uses `jj`'s
+normal lifecycle and snapshots current filesystem edits; later calls ignore the working copy.
+Fetch, rebase, and abandon retain the normal lifecycle because they may import colocated Git refs
+or rewrite and update `@`. Thus config and presentation reads never cause incidental snapshots,
+while repository operations preserve `jj`'s snapshot and checkout semantics.
+
 If `jj` reports that a workspace is stale, the command stops and tells the user to run
 `jj workspace update-stale`.
 

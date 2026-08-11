@@ -642,7 +642,7 @@ def _load_configured_jj_color(
     )
     try:
         completed = subprocess.run(
-            ["jj", *cli_args.to_argv(), "config", "get", "ui.color"],
+            ["jj", *cli_args.to_argv(), "--ignore-working-copy", "config", "get", "ui.color"],
             capture_output=True,
             check=False,
             cwd=cwd,

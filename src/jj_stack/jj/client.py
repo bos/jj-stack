@@ -163,6 +163,7 @@ class JjClient:
         self._published_review_snapshots: dict[str, str] = {}
         self._config_strings: dict[str, str | None] = {}
         self._git_root: Path | None = None
+        self._initial_working_copy_snapshot_pending = False
 
     @property
     def repo_root(self) -> Path:
@@ -340,7 +341,7 @@ class JjClient:
         if key in self._config_strings:
             return self._config_strings[key]
         try:
-            value = self._run_jj(("config", "get", key), ignore_working_copy=True)
+            value = self._run_jj(("config", "get", key))
         except JjCommandError:
             value = ""
         stripped = value.strip()
@@ -357,9 +358,12 @@ class JjClient:
         responsible for parsing the TOML-dotted-key output.
         """
 
-        # Keep this as the initial repo-scoped jj command during bootstrap so jj
-        # snapshots the working copy once before later read-only calls ignore it.
         return self._run_jj(("config", "list", "jj-stack"))
+
+    def enable_initial_working_copy_snapshot(self) -> None:
+        """Let the first post-bootstrap jj command use jj's normal working-copy lifecycle."""
+
+        self._initial_working_copy_snapshot_pending = True
 
     def show_with_stat(self, revset: str) -> str:
         """Return raw stdout from ``jj show --stat -r <revset>``.
@@ -369,7 +373,7 @@ class JjClient:
         error message.
         """
 
-        return self._run_jj(("show", "--stat", "-r", revset), ignore_working_copy=True)
+        return self._run_jj(("show", "--stat", "-r", revset))
 
     def resolve_color_when(
         self,
@@ -398,7 +402,6 @@ class JjClient:
 
         stdout = self._run_jj(
             (
-                "--ignore-working-copy",
                 "--no-pager",
                 "--color",
                 color_when,
@@ -465,7 +468,6 @@ class JjClient:
             revset = _change_ids_revset(chunk)
             stdout = self._run_jj(
                 (
-                    "--ignore-working-copy",
                     "--no-pager",
                     "--color",
                     color_when,
@@ -504,7 +506,7 @@ class JjClient:
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
         """List configured Git remotes for the repository."""
 
-        stdout = self._run_jj(("git", "remote", "list"), ignore_working_copy=True)
+        stdout = self._run_jj(("git", "remote", "list"))
         remotes: list[GitRemote] = []
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -657,8 +659,7 @@ class JjClient:
 
     def _bookmark_rows(self, *patterns: str) -> tuple[dict[str, object], ...]:
         stdout = self._run_jj(
-            ("bookmark", "list", "--all-remotes", "-T", _BOOKMARK_TEMPLATE, *patterns),
-            ignore_working_copy=True,
+            ("bookmark", "list", "--all-remotes", "-T", _BOOKMARK_TEMPLATE, *patterns)
         )
         rows: list[dict[str, object]] = []
         for line in stdout.splitlines():
@@ -740,7 +741,7 @@ class JjClient:
                     if actual_change_id != change_id or parents != (expected_parent,):
                         raise CliError("Imported review heads no longer form the expected stack.")
                     expected_parent = target
-            self._run_jj(("git", "import"), ignore_working_copy=True)
+            self._run_jj(("git", "import"))
             revision = self.resolve_revision(_quote_revset_symbol(_REVIEW_TEMP_BOOKMARK))
             if revision.commit_id != expected_target:
                 raise JjCommandError(
@@ -808,7 +809,8 @@ class JjClient:
     ) -> None:
         """Fetch ordinary repository state using its configured selection."""
 
-        self._run_jj(("git", "fetch", "--remote", remote))
+        # Normal fetch also imports backing-Git ref changes in a colocated repository.
+        self._run_jj(("git", "fetch", "--remote", remote), manage_working_copy=True)
 
     def list_remote_branches(
         self,
@@ -903,7 +905,10 @@ class JjClient:
             and revision.empty
             and revision.parents == (selected_head,)
         )
-        self._run_jj(("rebase", "-r", "|".join(ordered_revisions), "-d", destination))
+        self._run_jj(
+            ("rebase", "-r", "|".join(ordered_revisions), "-d", destination),
+            manage_working_copy=True,
+        )
 
     def abandon_revisions(self, revsets: Sequence[str]) -> None:
         """Abandon revisions; jj rebases descendants and drops pointing bookmarks."""
@@ -911,7 +916,7 @@ class JjClient:
         ordered_revsets = tuple(revsets)
         if not ordered_revsets:
             return
-        self._run_jj(("abandon", *ordered_revsets))
+        self._run_jj(("abandon", *ordered_revsets), manage_working_copy=True)
 
     def _query_revisions(self, revset: str, *, limit: int | None = None) -> list[LocalRevision]:
         lines = self._query_template_lines(revset, _COMMIT_TEMPLATE, limit=limit)
@@ -946,11 +951,15 @@ class JjClient:
         command = ["log", "--no-graph", "-r", revset, "-T", template]
         if limit is not None:
             command.extend(["--limit", str(limit)])
-        stdout = self._run_jj(command, ignore_working_copy=True)
+        stdout = self._run_jj(command)
         return [stripped for line in stdout.splitlines() if (stripped := line.strip())]
 
-    def _run_jj(self, args: Sequence[str], *, ignore_working_copy: bool = False) -> str:
-        extra_args = ("--ignore-working-copy",) if ignore_working_copy else ()
+    def _run_jj(self, args: Sequence[str], *, manage_working_copy: bool = False) -> str:
+        """Run jj without touching the working copy unless the caller explicitly requires it."""
+
+        use_working_copy = manage_working_copy or self._initial_working_copy_snapshot_pending
+        self._initial_working_copy_snapshot_pending = False
+        extra_args = () if use_working_copy else ("--ignore-working-copy",)
         return self._run_command(
             ["jj", *self._cli_args.to_argv(), *extra_args, *args],
             missing_tool_message=t"{ui.cmd('jj')} is not installed or is not on PATH.",
@@ -974,7 +983,7 @@ class JjClient:
         """Resolve the exact Git object store used by this jj repository."""
 
         if self._git_root is None:
-            rendered = self._run_jj(("git", "root"), ignore_working_copy=True).strip()
+            rendered = self._run_jj(("git", "root")).strip()
             if not rendered:
                 raise JjCommandError(f"{ui.cmd('jj git root')} returned an empty path.")
             self._git_root = Path(rendered)
@@ -1003,10 +1012,7 @@ class JjClient:
     def _effective_config_origin(self, key: str) -> _ConfigOrigin | None:
         """Return the effective origin for one jj config key, if it is set."""
 
-        stdout = self._run_jj(
-            ("config", "list", key, "-T", _CONFIG_ORIGIN_TEMPLATE),
-            ignore_working_copy=True,
-        )
+        stdout = self._run_jj(("config", "list", key, "-T", _CONFIG_ORIGIN_TEMPLATE))
         lines = tuple(line for line in stdout.splitlines() if line.strip())
         if not lines:
             return None
@@ -1036,10 +1042,7 @@ class JjClient:
     def _local_bookmark_targets(self, bookmark: str) -> tuple[str, ...]:
         """Return targets of one exact local bookmark, excluding remote entries."""
 
-        stdout = self._run_jj(
-            ("bookmark", "list", "-T", _BOOKMARK_TEMPLATE, bookmark),
-            ignore_working_copy=True,
-        )
+        stdout = self._run_jj(("bookmark", "list", "-T", _BOOKMARK_TEMPLATE, bookmark))
         targets: list[str] = []
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -1063,11 +1066,8 @@ class JjClient:
 
         try:
             if self._local_bookmark_targets(_REVIEW_TEMP_BOOKMARK):
-                self._run_jj(
-                    ("bookmark", "forget", _REVIEW_TEMP_BOOKMARK),
-                    ignore_working_copy=True,
-                )
-                self._run_jj(("git", "export"), ignore_working_copy=True)
+                self._run_jj(("bookmark", "forget", _REVIEW_TEMP_BOOKMARK))
+                self._run_jj(("git", "export"))
         finally:
             raw_target = self.review_temp_ref_target()
             try:
