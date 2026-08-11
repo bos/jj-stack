@@ -2,9 +2,9 @@
 
 ## What this directory is
 
-`docs/internals/` contains design notes, implementation strategy, test
-philosophy, and a backlog. These files are written primarily by and for
-agents working on the codebase. Most users will never open this directory.
+`docs/internals/` contains design notes, implementation strategy, test philosophy, and a backlog.
+These files are written for contributors and maintainers. Most users will never open this
+directory.
 
 ## What belongs here
 

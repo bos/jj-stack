@@ -1,200 +1,98 @@
 # Testing philosophy
 
-When changing or reviewing tests, optimize for coverage that protects real failures. That
-usually means tests that cover off-happy-path behavior, not just the clean success case.
+Tests should protect behavior or constraints that would matter if they broke. The goal is a small,
+high-signal suite, not a catalog of every state the code can represent.
 
-## Gate for every test change
+## Gate for every test
 
 A test is worthwhile only if it protects at least one of:
 
-- a user-visible behavior that would matter if broken
-- a hard constraint from `jj`, GitHub, subprocess execution, or local persistence
-- a realistic regression or failure mode
-- a broken or surprising state the tool must handle safely
-- a core invariant listed in [AGENTS.md](../../AGENTS.md)
+- important user-visible behavior
+- a core invariant from [design.md](design.md) or [AGENTS.md](../../AGENTS.md)
+- a hard constraint imposed by `jj`, GitHub, subprocesses, or local persistence
+- a plausible regression, partial failure, or recovery path
 
-Do not treat repo-authored docs, comments, or existing tests as sufficient justification by
-themselves. They are hints, not proof that something is worth testing.
+Before adding or retaining a case:
 
-Before adding or retaining a test case:
+1. Name the user-reachable failure and its practical harm.
+2. Search unit, integration, property, and any approved live evidence for overlapping coverage.
+3. Explain what distinct bug this case would catch.
+4. Choose the cheapest layer that exposes that bug.
 
-1. Name the user-reachable regression and its practical harm.
-2. Search existing unit, integration, live, and property coverage. If an existing test would
-   fail for the same bug, update or consolidate it instead of adding another case.
-3. State the distinct failure the new case catches. Parameter rows and fixed generated scenarios
-   count as separate cases.
-4. Only then choose the cheapest layer that exposes that failure.
+If another test would fail for the same reason, consolidate them. Parameter rows and fixed
+generated scenarios count as separate cases. Fixtures, helpers, and generators are justified by
+the useful cases they enable, not by their own implementation complexity.
 
-If you cannot answer those clearly, do not add or retain the test. A unit test is cheaper, not
-automatically worthwhile. Do not preserve a low-value case merely by moving it down a layer.
+## Prefer realistic failures
 
-Fixtures, helpers, and generators inherit their justification from the worthwhile cases they
-enable. Test support code directly only when its failure could silently invalidate meaningful
-coverage or make failures irreproducible.
+The main risks in this project are disagreement among the local `jj` DAG, remote refs, GitHub, and
+local tracking. Useful cases include:
 
-## Bias toward off-happy-path coverage
+- configuration lookup failures, invalid values, or settings inconsistent with the repository
+- ordinary rewrites, relinks, divergence, conflicts, and nonlinear history
+- interrupted commands and partial cleanup
+- a supported command or documented external action following another before all systems agree
+- recovery after a command detects inconsistent state
 
-For this repo, do not assume the happy path is the main risk. Much of the real risk comes from
-broken environments, drift between systems, and ordinary but surprising sequences of stateful
-operations.
+Do not add coverage for a state merely because it is imaginable. Require an ordinary supported
+workflow, an observed failure, or documented platform behavior that can reach it. Prefer one
+representative over a large cross-product matrix.
 
-When reviewing coverage, ask first whether an ordinary command, documented external action, or
-observed partial failure can produce the state. For reachable states, ask:
+Usually skip:
 
-- what happens if config is missing, invalid, or conflicts with the repository?
-- what happens if `jj`, remote refs, and GitHub disagree?
-- what happens if the DAG shape is unusual because of rewrites, relinks, divergence, non-linear
-  history, or deleted changes?
-- what happens when one supported command or documented external action follows another before
-  all systems agree on the result?
+- corrupt internal records that no supported command can write
+- pathological configuration outside the product contract
+- contrived operation interleavings with no observed trigger
+- third-party failures the tool cannot handle or recover from
+- several tests that restate the same rule at different layers
 
-Prefer tests that show the tool fails closed, preserves work, and gives the user a recovery
-path.
+## Test outcomes, not mechanisms
 
-Examples of high-value test scenarios:
+Assert what a user or external system can observe: the `jj` DAG, GitHub state, remote refs, exit
+codes, and useful diagnostics. Avoid pinning private phases, helper calls, request order, or saved
+fields unless that internal value is itself the safety boundary under test.
 
-- unexpected repo state produced by an ordinary `jj` operation
-- bad config, missing config, or config that conflicts with actual state
-- surprising DAG topology or stack selection edge cases
-- interrupted operations and partial cleanup
-- tracking left behind by an observed partial command or explicitly removed by the user
-- drift or surprising command and external-action sequences across `jj-stack`, `jj`, GitHub, and
-  subprocess-visible state
-- recovery paths after a command discovers inconsistent state
+For interrupted operations, prefer a test that interrupts the command, runs the documented retry,
+and checks the final state and external effects. If every interruption point needs different
+recovery, treat that as a design problem rather than expanding the test matrix.
 
-## Apply backpressure to speculative coverage
+Build fixtures through supported commands, documented user actions, or realistic external
+mutations. Hand-written internal state is appropriate only when testing state-file validation or
+another explicit persistence contract.
 
-Do not add a test just because something could go wrong in theory. A failure-mode test is
-worthwhile when the scenario is both plausible and important.
+When the product removes a guarantee or mechanism, remove tests that exist only to preserve it.
+Existing tests are evidence of past intent, not a reason to keep unnecessary behavior.
 
-Before adding an off-happy-path test, ask:
+## Choose the right layer
 
-- is this state reachable in real use through ordinary sequences of supported commands,
-  documented user actions, observed partial failures, or normal tool drift?
-- if it happens, could it lose work, leave cross-system state inconsistent, block recovery, or
-  confuse the user badly?
-- do we want a defined safe behavior here, rather than treating it as an internal bug where
-  crashing is acceptable?
-- can we cover the risk with one targeted test rather than a large matrix?
+- **Unit or component tests** cover parsing, planning, models, and adapters with controlled
+  collaborators. Temporary files and in-process HTTP transports can still belong here.
+- **Local integration tests** run the CLI with real `jj` and Git repositories and the fake GitHub
+  server. Use them when confidence depends on revsets, DAG or workspace behavior, subprocesses,
+  or cross-system transitions.
 
-If the answer to those questions is mostly no, do not add the test.
+No credentialed live suite exists. Assumptions that depend on real GitHub require a separately
+approved experiment in a disposable repository. Record any known fake-server difference beside
+the affected fake behavior and test.
 
-Examples that usually do not deserve dedicated tests:
+If a behavior has both component and integration risk, keep one representative integration test
+and only the unit cases that protect additional decisions. CLI parsing tests are useful when
+parsing, normalization, rejection, or selector precedence is the behavior at risk; aliases do not
+need separate forwarding tests.
 
-- purely imaginary states with no believable path from real usage
-- pathological configurations outside the product contract with no believable ordinary user path;
-  documented rejections still deserve focused coverage when the CLI promises them
-- instruction-level race schedules without an observed trigger or documented platform contract
-- large cross-product matrices where one representative case proves the rule
-- internal corruption cases where the product does not promise graceful recovery and a crash is
-  acceptable
-- third-party failures we do not handle and cannot usefully recover from
+## Keep the suite useful
 
-The point is not to test every bad thing that could happen. The point is to
-test the bad things that are plausible and costly.
+Prefer focused fixtures, direct setup, and clear assertions. Avoid tests that primarily:
 
-## Keep tests from ratcheting complexity
-
-Tests can accidentally make an unnecessary mechanism look permanent. These rules keep coverage
-focused on behavior users need rather than implementation history:
-
-- **Tests pin contracts, not mechanisms.** Before asserting on internal state — saved
-  records, phases, journal contents — restate the assertion as an outcome another system
-  could observe: GitHub state, the jj DAG, an exit code plus its message. If it cannot be
-  restated, the test is pinning a mechanism, and it will defend that mechanism against
-  future deletion.
-- **Prefer recovery outcomes over interruption matrices.** For interruptible operations, the
-  high-value test interrupts the command, runs the documented recovery, and asserts the final
-  state plus exactly-once external effects. One such property can replace many tests tied to
-  individual interruption points. If every point needs different recovery, file a design bug
-  rather than expanding the matrix.
-- **Fixtures must be user-reachable.** Construct test states through
-  supported commands, external-system mutations, or documented user actions. If a state
-  can only be constructed by forging internal records no command writes, the scenario may
-  not be real; the fixture is a smell pointing at either a phantom state or a missing
-  command.
-- **Deleting a guarantee deletes its tests, by policy.** When the spec removes a
-  guarantee, the tests enshrining it are removed in the same change, and "this test would
-  fail" is never an argument for keeping the guarantee.
-- **Name the fake's idealizations.** Where the fake diverges from the real system,
-  record the divergence explicitly so the affected behavior families are known to be
-  untestable locally rather than silently green. Each named gap should point at a live
-  check or a stricter fake mode that would establish the real contract.
-
-Checked-in complexity and test-count budgets are defined in `complexity-budget.toml` and enforced
-by `tools/check_complexity.py`. A proposed test beyond a budget must replace overlapping coverage
-in the same change. More tests do not compensate for a mechanism whose reachable state space is
-too large.
-
-## Choosing the right layer
-
-After a case passes the worthwhile-test gate, use the narrowest layer that exercises the behavior
-at risk. This repo currently has two implemented layers and one planned boundary:
-
-- **Unit/component:** parsing, planning, models, and one adapter with controlled collaborators.
-  Temporary files and an in-process HTTP transport can still be unit-level.
-- **Local integration:** the CLI against real `jj` and Git repositories and the fake GitHub
-  server. Use this when confidence depends on revsets, DAG or workspace behavior, subprocesses,
-  or cross-component state transitions.
-- **Live (planned):** opt-in checks against real GitHub. Until this layer exists, uncertain
-  external behavior needs a separately approved experiment and must remain conditional if that
-  experiment is not run.
-
-An unusual repo state does not automatically require integration coverage. Discovering or
-constructing it through real `jj` belongs in integration; deciding what to do with an
-already-modeled state belongs in unit/component coverage.
-
-If behavior has both component and boundary risk, keep one representative integration test plus
-only the unit cases that protect distinct decisions. Do not repeat the same matrix at both
-layers.
-
-CLI parsing tests are worthwhile when parsing, normalization, rejection, or selector ordering is
-the behavior at risk. Fold simple aliases into an existing behavior test; do not add standalone
-forwarding or help-output checks for every alias.
-
-## Keep the suite fast
-
-The test suite is a product asset too. Prefer focused fixtures, direct setup, and one strong
-off-happy-path representative over expensive end-to-end setup or exhaustive combinations. Do
-not pay for broad scenario matrices unless each added case protects a meaningfully different
-failure mode.
-
-## Low-value test patterns
-
-Avoid tests that primarily:
-
-- pin exact presentation unless the exact form is required for machine consumption, command
-  syntax, or safe recovery
-- assert that a thin wrapper forwards arguments to a mocked helper
+- pin presentation that is not a machine or recovery contract
+- prove that a wrapper forwards arguments to a mocked helper
 - restate private implementation details
-- duplicate coverage already provided at a more meaningful layer
-- cover only the happy path when the real risk is failure handling or drift
-- snapshot generated text or scripts when only general behavior matters
+- snapshot generated text when semantic assertions would suffice
+- exercise only a trivial happy path while the real risk is failure handling
 
-## Reviewing existing tests
+Test names should state the protected rule, not merely list setup details. A failure should be
+understandable from the name and assertions without reconstructing the entire fixture.
 
-When reviewing an existing test, ask:
-
-- what real regression would this catch?
-- would another existing test already fail for the same bug?
-- is this still the narrowest layer that matches the real risk?
-- does the test assert a meaningful outcome, or only an internal branch,
-  helper call, or forwarded argument?
-- would a failure be easy to understand from the test name and assertions?
-
-If you cannot answer those clearly, the test should usually be renamed, moved to the right layer,
-consolidated, or deleted.
-
-Test names should explain the rule being protected, not just the setup.
-
-Prefer names like:
-
-- `test_cleanup_skips_overview_comment_lookup_when_open_pr_still_has_remote_branch`
-- `test_status_reports_divergent_stack_with_targeted_jj_guidance`
-
-Avoid names that only enumerate setup details without stating the policy or
-reason the behavior matters.
-
-Bias toward fewer, higher-signal tests by removing or consolidating low-value, speculative, or
-redundant coverage. Do not cut tests that protect plausible failure paths, recovery behavior, or
-important cross-system invariants.
+Checked-in complexity and test-count limits live in `complexity-budget.toml` and are enforced by
+`tools/check_complexity.py`. A new test beyond a limit must replace overlapping coverage in the
+same change. More tests do not compensate for an unnecessarily complicated design.

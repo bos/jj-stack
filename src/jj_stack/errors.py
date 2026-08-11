@@ -118,9 +118,8 @@ class ConflictedStackError(CliError):
     exit_code = EXIT_CONFLICTS
 
 
-# Which pre-mutation verification check failed when cross-system drift made review
-# identity unprovable. The vocabulary matches docs/internals/distributed-state.md so
-# fail-closed stops that share an exit code stay distinguishable.
+# Which pre-mutation verification check failed when cross-system drift made review identity
+# unprovable. The property harness uses this to distinguish stops that share an exit code.
 type DriftCondition = Literal[
     "pull_request_ambiguous",
     "pull_request_not_open",

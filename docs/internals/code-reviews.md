@@ -1,182 +1,113 @@
 # Code review guidelines
 
-Use this when reviewing `jj-stack` changes or when asking a subagent to do a code review pass.
+Use this guide for reviews of code, tests, and documentation in this repository.
 
-## Primary goal
+## What a review should find
 
-Optimize for finding:
+Prioritize issues that could cause:
 
-- likely regressions
-- user-visible surprises
-- violations of core invariants
-- gaps in test coverage for subtle logic
-- bad layering
-- unnecessary complexity
+- lost work or mutation of the wrong pull request or branch
+- surprising user-visible behavior
+- violations of the invariants in [design.md](design.md)
+- broken or unclear recovery after a partial failure
+- unnecessary complexity or poor component boundaries
+- meaningful performance regressions
 
-## Start from the spec and the actual project constraints
+Do not spend the review budget on compatibility scaffolding. The project is under active
+development and has no legacy formats or behavior to preserve.
 
-Before raising a finding, anchor yourself in:
+## Start with the product rules
 
-- `docs/internals/design.md`, the single canonical product specification
-- repo invariants from `AGENTS.md`
-- explicit product decisions already made in the thread
+Read [design.md](design.md) and the repository [AGENTS.md](../../AGENTS.md) before reviewing a
+behavior change. A change can be internally consistent and still be too complicated, surprising,
+or hard for a `jj` user to understand.
 
-If a change is internally consistent but still seems overly complex, surprising, or hard for a jj
-user to understand, flag that. Internal coherence is not enough.
+Pay particular attention to interactions among the local `jj` DAG, remote refs, GitHub, and local
+tracking. Common failures include:
 
-Also remember current project reality:
+- an interrupted command leaving some mutations applied and others pending
+- tracking that no longer agrees with `jj`, a remote ref, or GitHub
+- recovery that cannot reach a safe state on a rerun
+- unusual DAG shapes after rewrites, relinks, local deletion, or divergence
+- a stack-scoped command being affected by unrelated history
+- cleanup deleting an artifact that another review still needs
 
-- this repo is under heavy development
-- there is no meaningful backwards-compatibility burden yet
-- migration code, legacy shims, and speculative guardrails are not a virtue
+## Keep fixes simple
 
-## Focus on major recurring bug classes
+Before asking for another guard, saved field, or recovery path, check whether the mechanism that
+creates the troublesome state can be removed or simplified. Use these questions:
 
-Many bugs here come from interactions between loosely coupled systems. Pay extra attention to:
+1. Can an ordinary supported workflow, observed failure, or documented platform behavior reach
+   this state? If not, do not add code or a test for it.
+2. Is an existing rule merely missing at one call site? Share that rule instead of creating a
+   variant.
+3. Would deleting the proposed or existing mechanism also delete the failure mode?
+4. Does a persisted field have one owner, one representation, and a clear deletion rule? New
+   durable state requires a design change, not a local defensive patch.
+5. Does every fail-closed error give a concrete next step when recovery is possible?
+6. Is this the third consecutive hardening change in the same subsystem? If so, revisit the
+   design instead of adding another patch.
+7. Does a replacement remove the old path in the same change?
 
-- interrupted operations that leave work half-applied or hard to recover
-- tracking left behind by an interrupted command while `jj`, remote refs, or GitHub advanced
-- states where recovery paths fail and the user can no longer get back to something sane
-- unusual DAG topology, including rewrites, relinks, local deletions, and non-linear history
-- cases where only one selected stack should matter, but surrounding history can interfere
-- non-happy-path interactions between commands or subsystems
-- cleanup behavior that might delete or preserve the wrong artifacts
+Match safeguards to the harm they prevent. The priority order is lost commits, mutation of the
+wrong PR or ref, guessed linkage, then inconsistencies in reconstructible metadata. Do not build
+an elaborate recovery system to protect data that can be observed again.
 
-These are much higher-value than generic style concerns.
+The limits in `complexity-budget.toml` are design constraints. Review changes to the limits,
+governed paths, and test markers as carefully as production code. CI runs
+`uv run tools/check_complexity.py`; run it locally when the pinned `tokei` version is installed.
+Moving the same logic into a helper or neighboring module is not a reduction in complexity.
 
-## Guard against complexity spirals
+## Review the user experience
 
-This repo's worst historical failure mode was not a bug; it was a feedback loop: a
-defensive patch created states only the defense could produce, those states needed their
-own guards, the spec canonized each guard, and tests made every mechanism look
-load-bearing. Reviews are the main brake on that loop. Apply these tests to every finding
-and every fix — including your own proposed fixes:
+Assume the user knows `jj`, Git, and GitHub, but not this tool's implementation.
 
-- **The self-inflicted-state test.** For any new guard, saved field, or recovery path,
-  ask: can the state it handles arise in a world without our machinery? If it exists only
-  because of a mechanism we added, the finding is against the mechanism, not the missing
-  guard. Sharpest form: would deleting the mechanism also delete the failure mode?
-- **Rule-completion over rule-addition.** When a site is broken, first look for an
-  existing rule elsewhere in the codebase that the site failed to apply, and apply that
-  one, shared. A finding that proposes a new variant of an existing predicate or guard is
-  itself a defect in the finding.
-- **New durable state is a spec event, not a bugfix.** Any persisted field, phase enum,
-  or ordering dependency between durable writes requires a spec amendment in the same
-  change, plus answers to: what deletes this state, and what happens if that deletion
-  never runs? If recovering the new state would need another mechanism, reject it.
-- **Defenses require an ordinary, observed trigger.** Name the supported command sequence,
-  documented user action, platform behavior, reproduction, or user report that reaches the state.
-  Pathological configurations outside the product contract with no believable ordinary user path,
-  and "the other system might do X," earn neither code nor test budget. At most, record the
-  experiment that would establish a real trigger.
-- **Test real workflows, not imagined instruction schedules.** Protect ordinary sequences of
-  commands and documented external actions. Bind irreversible external mutations to the identity
-  and version observed while planning when the platform supports a conditional write or lease.
-  Re-observe only when an earlier mutation invalidates a precondition or when an observed trigger
-  or platform contract requires it.
-- **Match guard strength to the cost hierarchy.** Name what a proposed guard actually
-  protects, against the ranked kernel: lost commits > mutating the wrong PR or ref >
-  guessed linkage > metadata consistency. Reconstructible state gets report-and-continue
-  or repair-on-retry behavior, not exact-match validation; a guard stronger than its tier is
-  complexity to delete, not rigor. Every fail-closed stop must name a runnable next
-  step — "fix it manually" with no command means the design is incomplete.
-- **Rate of hardening is itself a finding.** If the change under review is the third or
-  later consecutive hardening of the same area, the correct review output is "stop
-  patching; re-derive the theory," escalated as a design question — not approval of one
-  more locally defensible fix.
-- **Replacement includes deletion.** A change that introduces a new state, authority, or
-  recovery mechanism without deleting the one it supersedes is unfinished. Do not accept
-  "cleanup later" as complexity credit.
-- **One jj-stack-owned durable policy fact has one authority and one representation.** Sharing
-  low-level observation or persistence is useful; preserving two policy-bearing paths is not. If
-  both old and new paths can decide or mutate the same fact, require the change to choose one.
+Treat docs, help, diagnostics, and ordinary output as part of correctness. Check for:
 
-The checked-in limits in `complexity-budget.toml` are a measurable design stop. Reviewers must
-compare production, test, and total code-line counts, Ruff `C901` findings, and
-recovery-module size with those limits. A budget breach is a design finding. Moving the same
-policy into a helper, wrapper, or neighboring package does not count as simplification. CI runs
-`uv run tools/check_complexity.py`; run it locally when the pinned `tokei` is installed. Edits to
-`complexity-budget.toml`, the governed path list, or either pytest budget marker require the same
-scrutiny as an implementation change. The gate caps marked tests; reviewers remain responsible
-for marking every case in the bounded merge-and-recovery corpus.
+- an unclear explanation of what happened or what to do next
+- implementation terminology in user-facing text
+- wording that overstates destructive behavior
+- noisy output or inconsistent behavior across similar commands
+- disagreement among the code, help, and documentation
 
-## Review the user experience directly
+Internal docs should also use plain English. Project-specific terms are useful only when they
+name a real type or enduring rule and are defined where they first appear.
 
-Assume the user knows jj, git, and GitHub, but is not a power user of them, or of this tool.
+## Check performance
 
-Flag behavior or wording that makes the tool harder to learn, less safe, or harder to recover
-from. In particular, check whether a user could understand what happened and what to do next.
+Flag work that adds visible latency or scales poorly with repository size, including:
 
-Treat docs, help text, and CLI output as part of correctness. Review them for:
+- history-wide scans where a bounded query would work
+- repeated `jj` or GitHub calls that could be batched or run concurrently
+- serial network requests with no ordering dependency
+- algorithms that grow poorly with stack or repository size
 
-- approachability to a newcomer
-- internal jargon that leaks implementation details
-- wording that is technically true but hard to understand
-- scary wording that overstates destructive behavior
-- output that adds noise instead of clarity
-- inconsistency across commands that should feel uniform
-- drift between what the docs say and what commands do, and also across docs and help
+Account for `jj` process startup and GitHub latency, not just in-process cost.
 
-Prefer language that matches how a jj user thinks, not how the implementation is structured.
+## Check maintainability
 
-Internal docs also need attention. They can easily accumulate incidental implementation details
-that become irrelevant but clutter context. Agents can develop bizarre insular terminology that
-mean nothing to a human reader. These docs too should be approachable and understandable.
+Look for:
 
-## Performance matters
-
-Flag changes that may create user-visible latency, unnecessary subprocess overhead, or work that
-scales poorly with repo size.
-
-Examples:
-
-- O(all history) scans
-- operations that could be batched or run concurrently
-- poor algorithmic choices
-- failure to account for `jj` startup overhead in a large repo, or slow GitHub responses
-
-Some past changes introduced multiple calls to `jj`, or to the GitHub REST API, when one batched
-`jj` call or a single GraphQL query would have been much faster.
-
-## Review code for product need and maintainability
-
-Subtle behaviors should be documented in the code and should also show up in commit descriptions.
-
-Pay attention to:
-
-- dead code or variables
-- "nearly dead code": small helper functions with just one caller
+- dead or nearly dead code
 - duplicate non-trivial logic
-- poor layering, or code being added to the wrong module
-- obtuse function or variable naming
-- modules being invented to just contain one or two things
-- small validation or guardrail code that hardens behavior without a real user need
+- policy in adapters or rendering code
+- vague names or modules that contain only one small forwarding layer
+- validation that has no demonstrated user need
 
-## Bad smells
+Prefer precise types in domain APIs. Dynamic types and casts are sometimes necessary at argparse,
+async-protocol, or untrusted-JSON boundaries; they should be narrowed immediately. Flag `Any`,
+`object`, `cast`, or `getattr` when they leak into domain logic or conceal a missing model.
 
-Agents sometimes introduce sloppy practices:
+## Review tests by risk
 
-- `Any` or `object` in a type signature, when a more specific type would be appropriate
-- `cast(...)` or `getattr`: occasionally okay in the test suite, with a high bar; effectively
-  *never* okay in the main `src` tree
+Follow [testing-philosophy.md](testing-philosophy.md). Give extra scrutiny to changes involving:
 
-## Testing
+- states produced by supported commands or documented external actions
+- configuration lookup failures, invalid values, or settings inconsistent with the repository
+- unusual DAG topology and stack selection
+- consistency among `jj`, remote refs, GitHub, and local tracking
+- interrupted operations and recovery
 
-Use [testing-philosophy.md](testing-philosophy.md) as the guide for judging whether added or
-missing tests are justified.
-
-Pay extra attention when a change touches:
-
-- repo states produced by supported commands, documented external actions, or observed failures
-- bad, missing, contradictory, or partially applied config
-- unusual DAG topology or stack-selection edge cases
-- consistency across `jj-stack`, `jj`, GitHub, local persistence, and
-  subprocess-visible state
-- interrupted operations or surprising sequences of commands and external actions
-
-In those areas, scrutinize the proposed test coverage closely.
-
-## Respect the current stage of the product
-
-Be wary of review comments that push for backwards-compatibility scaffolding or complexity
-without a demonstrated need. If the simplest design fits the stated product goals, prefer it.
+Require coverage for a distinct, plausible failure at the narrowest useful layer. Do not ask for
+large matrices, exact request-order assertions, or speculative race schedules without an observed
+trigger or documented platform contract.

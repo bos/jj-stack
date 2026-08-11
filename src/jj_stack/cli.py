@@ -472,8 +472,8 @@ def build_parser() -> ArgumentParser:
         "--all",
         action="store_true",
         help=(
-            "Across all stacks, clean up tracking for every pull request whose submitted commit "
-            "is already on trunk; never rebases or changes local commits"
+            "Across all stacks, finish reviews whose submitted commit is already on trunk and "
+            "remove their saved PR links; never rebases or changes local commits"
         ),
     )
 

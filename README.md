@@ -51,13 +51,14 @@ stack = ["util", "exec", "--", "jj-stack"]
 
 ### Before your first submit
 
-The happy path is a local `jj` stack of changes that is ready to become a set of GitHub PRs:
+You'll typically start with a local series of `jj` changes that is ready to become a stack of
+GitHub PRs:
 
 - you are in a `jj` repo with a GitHub remote
 - `trunk()` resolves to the branch you want the bottom PR to target, usually `main`
 - your stack is linear
 - the changes you want to submit are visible and mutable in `jj`
-- GitHub authentication works from this shell
+- GitHub authentication works from your shell
 
 `jj-stack doctor` checks these to ensure you're good to go (and the branch-namespace setup
 below), and will identify a fix for anything it sees as missing. Run it once in a new repo:
@@ -204,8 +205,9 @@ Your typical author loop is:
 3. Revise those changes locally as reviews come in.
 4. Re-run `jj-stack submit`.
 5. Once the bottom changes are ready, run `jj-stack merge`.
-6. After GitHub reports them merged, run `jj-stack sync <head-change-id>` to reconcile local
-   history. A direct merge prints this command; after queueing, wait for GitHub first.
+6. If you perform a direct merge, it updates local history and the remaining PRs before it
+   returns. After a queued merge or a merge that you kick off elsewhere, wait for GitHub and run
+   `jj-stack sync <head-change-id>`.
 
 `merge` asks GitHub to merge the consecutive open, non-draft PRs at the bottom of the stack. It
 requires every candidate to remain at the exact commit last submitted, but GitHub decides
@@ -214,13 +216,15 @@ portion as one operation. The same asynchronous API handles a one-PR review. If 
 requires a merge queue, GitHub accepts the selected PRs into the queue instead of merging them
 immediately; `view` and `list` show them as queued.
 
-`merge` never pushes trunk, rewrites local history, or removes review tracking. A queued result is
-successful but does not mean trunk changed, so wait for GitHub to merge it. Then run
-`jj-stack sync <head-change-id>`. It rebases the remaining
-selected changes onto `trunk()`, updates only PRs that already exist for them, and cleans up a
-merged PR when no local path still needs it. Conflicts remain local for you to resolve before
-their PRs are updated. Ordinary `jj` rewrite propagation may also rebase local descendants, but
-`sync` updates reviews only for the selected stack. Preview it with
+`merge` never pushes trunk. After a direct merge, it fetches the result and performs the same
+selected-stack update as `sync`; a failure in that local step tells you to run `sync` rather than
+retry the GitHub merge. A queued result is successful but does not mean trunk changed, so wait for
+GitHub to merge it and then run `jj-stack sync <head-change-id>`.
+
+`sync` rebases the remaining selected changes onto `trunk()`, updates only PRs that already exist
+for them, and removes saved PR links when no local path still needs them. Conflicts remain local
+for you to resolve before their PRs are updated. Ordinary `jj` rewrite propagation may also rebase
+local descendants, but `sync` updates reviews only for the selected stack. Preview it with
 `jj-stack sync --dry-run <head-change-id>`; if a rebase is needed, the later PR-update plan is
 available only after you run `sync`.
 
@@ -345,29 +349,10 @@ The key point is that you get to keep thinking in terms of local logical changes
 manages the GitHub branches, pull requests, and their small amount of local tracking, and that's
 it.
 
-## Why use it with coding agents?
+## Coding agent integration
 
-Like people, coding agents produce better, more easily reviewed work when a task is split
-into smaller, self-contained steps.
-
-Any reviewer, human or not, will have an easier time with a series of incremental changes. This
-matters even more when review feedback needs to be applied to one part of a stack without
-obscuring the rest of the work.
-
-- Agents work best when tasks are decomposed. A stacked review lets an agent revise only
-  the changes that are wrong, and their descendants as needed, then resubmit.
-
-- Smaller PRs are far easier for both humans and agents to re-read after feedback.
-  Context windows are bigger in 2026, but agent attention is still limited, and human
-  attention feels under ever more strain.
-
-- Validation is more easily staged. It's easier to approve and merge good changes while others
-  are still in flux.
-
-- Mutable local history is more valuable with agents. Agent-produced first drafts often need
-  reshaping, and `jj` is the best tool to rework changes and history before refreshing GitHub.
-
-### AI agent integration
+Small, self-contained changes are easier for people and coding agents to review and revise. The
+bundled skill teaches an agent to preserve that structure while using `jj-stack`.
 
 If you use coding agents, install the bundled `jj-stack` skill so they know how to work with a
 `jj` stack:
@@ -407,17 +392,6 @@ reduces its impact with:
 
 `jj-stack` also batches calls to `jj` and minimizes the amount of work those calls must
 do.
-
-## Development note
-
-This project has been developed with heavy coding agent assistance; almost all code is
-agent-written. Nevertheless, I've provided heavy oversight.
-
-- quality of the user experience is paramount
-- user-facing docs are managed separately from generated implementation work
-- the test suite covers the main workflows and failure modes
-- performance has been a major focus, with close attention to concurrent and batched
-  operations to hide costs such as roundtrips to the GitHub API
 
 ## Focus and future
 
