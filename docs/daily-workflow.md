@@ -335,10 +335,11 @@ above the queued PR remain unsubmitted. Wait for the queued changes to merge, ru
 new head change ID, then run `submit` with that same change ID. `sync` also leaves a queued stack
 alone. Independent stacks remain usable.
 
-## 7. Update a stack after GitHub merged lower PRs
+## 7. Apply completed GitHub merges locally
 
-Use `sync` with the stack's head change ID after a queued or externally completed merge, or when
-automatic sync stopped and your local stack still contains old merged commits:
+Use `sync` to apply completed GitHub merges to the selected local stack and refresh the PRs that
+remain. Run it after a queued or external merge, or when automatic sync stopped and your local
+stack still contains old merged commits:
 
 ```bash
 jj-stack sync <head-change-id>
@@ -346,8 +347,8 @@ jj-stack sync <head-change-id>
 
 `sync` fetches trunk, verifies which lower PRs GitHub merged, rebases the remaining selected
 changes, and updates only PRs that already exist for them. It does not open a PR for trailing WIP
-or update reviews outside the selected stack. As with any `jj` rewrite, rebasing a selected change
-may also rebase its local descendants.
+or update reviews outside the selected stack. If you have more local changes built on top of the
+selected stack, `jj` rebases those changes too so they remain on top.
 
 GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
 `sync` handles either result without pretending the new GitHub commit is the old local change.
@@ -392,7 +393,9 @@ jj rebase -r '<bottom-change-id>::<head-change-id>' -o 'trunk()'
 The bounded revset matters when the bottom change also has sibling descendants.
 
 Use `jj-stack sync --dry-run <head-change-id>` to preview merged changes and any cleanup or
-rebase. When a rebase is needed, the later PR-update plan is available only after you run `sync`.
+rebase. If a rebase is needed, the preview cannot show the resulting PR updates because the
+rebased commits do not exist yet. The real `sync` computes those updates after the rebase.
+
 `sync --all` checks every locally tracked PR and cleans up those whose exact submitted commits are
 already on trunk. It may retarget and close those PRs and remove their tracking data, but it never
 rewrites or submits a stack. When GitHub created a different commit, `sync --all` leaves tracking
@@ -499,7 +502,7 @@ jj-stack sync <head-change-id>
 jj-stack sync --all --dry-run
 jj-stack sync --all
 
-# merge completed on GitHub but automatic sync stopped: reconcile; do not rerun merge
+# merge completed on GitHub but automatic sync stopped: apply it; do not rerun merge
 jj-stack sync --dry-run <head-change-id>
 jj-stack sync <head-change-id>
 ```

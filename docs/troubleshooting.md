@@ -118,13 +118,15 @@ What to do:
 jj-stack sync <head-change-id>
 ```
 
-`jj-stack sync <head-change-id>` verifies which lower PRs GitHub merged, rebases the remaining
-changes above the current `trunk()`, and updates only PRs that already exist for them. Use
+`sync` applies the completed GitHub merges to the selected local stack and refreshes the PRs that
+remain. It verifies which lower PRs merged, rebases the remaining changes above the current
+`trunk()`, and updates only PRs that already exist for them. Use
 `jj-stack sync --dry-run <head-change-id>` first to preview merged changes and any cleanup or
-rebase. If a rebase is needed, its later PR-update plan is available only after you run `sync`.
-When a stack merge rewrote the PRs that remain open, `sync` adopts those exact reviewed commits
-and rebases trailing local work above them. Ordinary `jj` rewrite propagation may also rebase
-local descendants, but `sync` updates reviews only for the selected stack.
+rebase. If a rebase is needed, the preview cannot show the resulting PR updates because the
+rebased commits do not exist yet. The real `sync` computes those updates after the rebase.
+
+When a stack merge rewrote the PRs that remain open, `sync` adopts those exact reviewed commits.
+It rebases any later local work so it remains on top, but updates PRs only for the selected stack.
 
 ## Reviewed work is on trunk but an earlier local change remains
 
@@ -143,7 +145,7 @@ remains, run `jj-stack cleanup` instead.
 
 ## Trunk advanced, but none of your stack merged
 
-`sync` is for reconciling GitHub merge results. If `trunk()` merely moved forward, rebase the
+`sync` applies completed GitHub merges locally. If `trunk()` merely moved forward, rebase the
 selected local path with `jj`:
 
 ```bash

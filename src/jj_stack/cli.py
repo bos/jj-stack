@@ -65,7 +65,7 @@ handles the GitHub review workflow around them.
 
 Running `jj-stack` with no command shows the current stack. A typical workflow is
 `jj-stack submit`, `jj-stack view`, then `jj-stack merge`. A completed direct merge updates the
-local stack; a queued or externally completed merge is reconciled later with `jj-stack sync`.
+local stack; apply a queued or externally completed merge later with `jj-stack sync`.
 """
 _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
 _REORDERABLE_GLOBAL_OPTIONS_WITH_VALUES = frozenset({"--repository", "--color"})

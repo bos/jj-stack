@@ -194,7 +194,7 @@ async def execute_async_merge(
     if terminal.status != "merged" or terminal.details.sha is None:
         raise CliError(
             "GitHub reported the stack merge as merged without a final trunk commit.",
-            hint=t"Run {ui.cmd('jj-stack sync')} to reconcile whatever GitHub actually did.",
+            hint=t"Run {ui.cmd('jj-stack sync')} to apply whatever GitHub completed locally.",
         )
     return _applied_result(
         execution,

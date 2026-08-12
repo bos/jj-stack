@@ -238,7 +238,8 @@ def _require_history(stack: GithubStack, tracked: set[int]) -> None:
             t"here, so this repository cannot prove what GitHub did to the reviews in it.",
             hint=t"Inspect it with {ui.cmd('jj-stack view')}. Attach a merged member that "
             t"belongs here with {ui.cmd('jj-stack relink')}; if nothing in the stack has merged, "
-            t"there is nothing for sync to reconcile, so rebase with {ui.cmd('jj rebase')} "
+            t"there is no completed merge for sync to apply, so rebase with "
+            t"{ui.cmd('jj rebase')} "
             t"instead.",
         )
 

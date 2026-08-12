@@ -221,12 +221,17 @@ selected-stack update as `sync`; a failure in that local step tells you to run `
 retry the GitHub merge. A queued result is successful but does not mean trunk changed, so wait for
 GitHub to merge it and then run `jj-stack sync <head-change-id>`.
 
-`sync` rebases the remaining selected changes onto `trunk()`, updates only PRs that already exist
-for them, and removes saved PR links when no local path still needs them. Conflicts remain local
-for you to resolve before their PRs are updated. Ordinary `jj` rewrite propagation may also rebase
-local descendants, but `sync` updates reviews only for the selected stack. Preview it with
-`jj-stack sync --dry-run <head-change-id>`; if a rebase is needed, the later PR-update plan is
-available only after you run `sync`.
+`sync` applies completed GitHub merges to the selected local stack and refreshes the PRs that
+remain. It removes the merged changes, rebases the unmerged changes onto `trunk()`, and updates
+their existing PRs. If the rebase leaves conflicts, `sync` stops before updating those PRs.
+Resolve the conflicts with `jj`, then run `jj-stack submit <head-change-id>`.
+
+If you have more local changes on top of your stack, `jj` rebases those changes too so they
+remain on top. `sync` does not update any PRs for that extra work.
+
+Use `jj-stack sync --dry-run <head-change-id>` to preview. If a rebase is needed, a dry run
+cannot show the resulting PR updates because the rebased commits do not exist yet. The real
+`sync` computes those updates after the rebase.
 
 When `list` or `view` says a tracked stack changed since the last submit, inspect that
 stack directly:
@@ -275,6 +280,7 @@ its setup and GitHub access and names a fix for what it finds.
 User guides live under [docs](docs/README.md):
 
 - [Mental model](docs/mental-model.md)
+- [`jj-stack` and `gh stack`](docs/gh-stack-comparison.md)
 - [Daily workflow](docs/daily-workflow.md)
 - [Writing PR descriptions](docs/description-helpers.md)
 - [Troubleshooting](docs/troubleshooting.md)
@@ -331,23 +337,6 @@ requests are otherwise unchanged. Existing reviewers that are omitted are left i
 
 For authentication, `jj-stack` checks `GITHUB_TOKEN`, then `GH_TOKEN`, then falls back
 to `gh auth token` if `gh`, the GitHub CLI, is installed and authenticated.
-
-## Why use it
-
-The standard GitHub code review model gets awkward once a feature wants to be reviewed as a
-series of dependent steps, especially when intermediate steps need revision.
-
-While you could model that with plain Git branches, the bookkeeping quickly becomes unwieldy.
-`jj-stack` takes a different approach:
-
-- your local `jj` DAG determines the stack
-- history stays mutable in `jj`
-- GitHub gets the review branches and PRs it needs
-- when you modify an intermediate change, `jj-stack` does the PR and branch wrangling
-
-The key point is that you get to keep thinking in terms of local logical changes. `jj-stack`
-manages the GitHub branches, pull requests, and their small amount of local tracking, and that's
-it.
 
 ## Coding agent integration
 

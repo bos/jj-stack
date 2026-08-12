@@ -5,6 +5,8 @@ requests while keeping history easy to revise.
 
 - [Mental Model](mental-model.md)
   Understand what stays in `jj` and what `jj-stack` owns on GitHub.
+- [`jj-stack` and `gh stack`](gh-stack-comparison.md)
+  Understand why `gh stack`'s branch-based workflow is cumbersome in a `jj` repository.
 - [Daily Workflow](daily-workflow.md)
   The normal author loop for submit, review, merge, sync, and cleanup.
 - [Writing PR Descriptions](description-helpers.md)

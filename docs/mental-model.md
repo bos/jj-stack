@@ -92,5 +92,5 @@ When in doubt:
 - use `jj-stack view` to inspect the matching GitHub PR stack
 - use `jj-stack submit` to refresh that PR stack
 - use `jj-stack merge` to ask GitHub to merge the reviewed bottom changes
-- use `jj-stack sync <head-change-id>` after a queued or externally completed merge, or to
-  continue when automatic sync reports a local problem
+- use `jj-stack sync <head-change-id>` to apply a queued or externally completed merge locally
+  and refresh the PRs that remain, or to continue when automatic sync reports a local problem

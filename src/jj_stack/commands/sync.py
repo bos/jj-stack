@@ -1,4 +1,4 @@
-"""Update a stack after GitHub merges, or finish reviews on trunk with `sync --all`.
+"""Apply completed GitHub merges to a local stack and refresh the PRs that remain.
 
 `sync` fetches trunk and proves which reviewed changes reached it. It then rebases the remaining
 changes, updates only their existing pull requests, and removes saved links that no local path
@@ -79,7 +79,7 @@ from jj_stack.review.trunk_evidence import TrackedReview
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
-HELP = "Update a stack after GitHub merges or finish reviews already on trunk"
+HELP = "Apply completed GitHub merges locally and refresh the PRs that remain"
 
 
 def sync(
