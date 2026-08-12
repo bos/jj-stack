@@ -61,8 +61,8 @@ stack number as the command requires. Do not repair ambiguity by guessing.
 - Use `unstack --local <head-change-id>` only to forget saved links without changing GitHub,
   review branches, PRs, or local history.
 
-If the main skill's tracking check finds no match, absence after tracking loss does not prove a
-GitHub PR is unmanaged. Inspect and adopt the known PR before any direct GitHub mutation.
+When recovering known lost tracking, inspect and adopt the known PR before any direct GitHub
+mutation.
 
 Do not overwrite or recreate a missing, moved, foreign, or ambiguous review branch. Follow the
 reported `relink` or `unstack --local` path. If a direct structural GitHub mutation already

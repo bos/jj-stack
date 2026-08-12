@@ -11,7 +11,7 @@ requests while keeping history easy to revise.
   The normal author loop for submit, review, merge, sync, and cleanup.
 - [Configuration](configuration.md)
   Set repository defaults, choose the review branch namespace, configure authentication, and
-  enable the `jj stack` command alias.
+  configure coding agents or the `jj stack` command alias.
 - [Writing PR Descriptions](description-helpers.md)
   Overriding the derived title and body with files, an editor, or a helper program.
 - [Troubleshooting](troubleshooting.md)

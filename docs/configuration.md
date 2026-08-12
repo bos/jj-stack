@@ -53,6 +53,32 @@ jj config set --repo jj-stack.branch_prefix my-reviews
 `jj-stack` checks `GITHUB_TOKEN`, then `GH_TOKEN`, then falls back to `gh auth token` when the
 GitHub CLI is installed and authenticated.
 
+## Coding agent setup
+
+Installing the jj-stack skill makes its workflow available to an agent. An agent might select
+the skill automatically when a request matches its description, but a persistent instruction is
+the more reliable way to check whether this local repository uses jj-stack.
+
+Add this guidance to the repository's agent instructions, or to personal instructions when it
+should apply to every jj repository you open:
+
+```markdown
+## jj-stack
+
+Before any GitHub pull request or branch task in a jj repository, run `jj-stack in-use`. If it
+exits 0, load and follow the jj-stack skill. If it exits 1, continue without that skill. For any
+other exit, stop and report the error. Cache the result for the repository. Check when the task
+arises, not at session startup.
+```
+
+Codex reads repository `AGENTS.md` files and personal guidance from `~/.codex/AGENTS.md`. Claude
+Code reads `CLAUDE.md`; that file can import shared guidance with `@AGENTS.md`. A personal
+`~/.claude/CLAUDE.md` can similarly import `@../.codex/AGENTS.md`.
+
+The predicate prints nothing and makes no changes. Its positive result means a valid jj-stack
+tracking file exists for this local jj repository, even when it currently contains no tracked
+reviews. `view` and `list` do not create that file and are not adoption probes.
+
 ## `jj stack` command alias
 
 To invoke `jj-stack` as `jj stack`, add a `jj` command alias:

@@ -2,10 +2,10 @@
 name: jj-stack
 license: Apache-2.0
 description: >
-  Manage stacked GitHub review for jj with jj-stack. Use when inspecting,
-  creating, submitting, refreshing, revising, merging, cleaning up, or
-  recovering stacked pull requests for local jj changes, and before mutating
-  any GitHub pull request or branch with gh or the GitHub API in a jj repo.
+  Manage stacked GitHub review for jj with jj-stack. Use when explicitly
+  requested, or after jj-stack in-use succeeds, for GitHub pull request or
+  branch tasks in a jj repository, including inspection, submission, refresh,
+  revision, merging, cleanup, and recovery.
 ---
 
 # jj-stack
@@ -39,29 +39,23 @@ command they use before any direct GitHub mutation.
    stack, and never create, delete, or force-push its review branches by
    hand. Closing a known pull request with GitHub or `gh pr close` is supported;
    use `jj-stack unstack` for GitHub stack grouping.
-2. **Check tracking before the first `gh` or API write in a repo.** Run
-   `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json` for one PR. A matching
-   PR or `branch` field proves tracking; a bare change with `status: unsubmitted` does not. Cache
-   the answer for the session. Do this lazily — the trigger is a pending GitHub write, not
-   entering a repo. These commands exit 10 when they print an incomplete report; read the JSON
-   before concluding anything. If tracking is absent or ambiguous, stop and read
-   [recovery workflows](references/recovery.md) before writing.
-3. **Use jj-stack for stack changes.** Once jj-stack is detected anywhere
-   in a repo, use it for stack-level PR work in that repo: status, submit,
-   refresh, base/head changes caused by stack rewrites, merging, cleanup,
-   importing, relinking, and recovery. `gh` remains fine for reads, closing
-   known pull requests, and
-   collaboration metadata, but not for deciding or changing stack shape.
-4. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`,
+2. **Honor local adoption.** `jj-stack in-use` exits 0 without output when this local repository
+   has valid jj-stack tracking, 1 without output when it does not, and 11 with an error when the
+   result cannot be determined. A successful probe makes jj-stack the owner of stack-level PR
+   work in that repository: status, submit, refresh, base/head changes caused by stack rewrites,
+   merging, cleanup, importing, relinking, and recovery. Exit 1 does not prevent an explicit
+   request to start using jj-stack. Do not substitute `view` or `list`; they report review state,
+   not local adoption.
+3. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`,
    `cleanup`, or `unstack`, and preview with `--dry-run` whenever the next
    step is uncertain.
-5. **Select explicitly after anything ambiguous.** `submit` defaults to the
+4. **Select explicitly after anything ambiguous.** `submit` defaults to the
    stack ending at `@` when the working-copy change is described and nonempty,
    otherwise `@-`. After an interrupted command, or in a
    multi-stack repo, pass a change ID, revset, or `--pull-request` selector.
    Prefer change IDs in user-facing summaries; use commit IDs only when a
    concrete immutable snapshot matters.
-6. **Stay non-interactive.** Do not use `submit --edit`, `checkout --pick`, or
+5. **Stay non-interactive.** Do not use `submit --edit`, `checkout --pick`, or
    an interactive `--describe-with` helper; those open an editor or prompt on
    stdin for humans. Pass `--describe` files and explicit selectors instead.
 
@@ -77,8 +71,8 @@ command they use before any direct GitHub mutation.
 
 ## Using `gh` on a managed stack
 
-**Reads are always fine**: `gh pr view`, `gh pr list`, `gh pr checks`,
-`gh pr diff`, and other read-only queries.
+**Supplementary reads are fine** after using jj-stack for managed stack status and structure:
+`gh pr view`, `gh pr list`, `gh pr checks`, `gh pr diff`, and other read-only queries.
 
 **Collaboration writes are fine when the user asks**: comments, reviews,
 labels, assignees, milestones, reviewer requests, draft/ready state, and
@@ -136,7 +130,8 @@ GitHub state, and branches still needed as PR bases remain untouched.
 not a supported stack; 3 unresolved conflicts; 4 GitHub auth/API failure;
 5 invalid arguments; 6 ambiguous selector (fails closed — use `relink` to
 repair an incorrect attachment or select explicitly); 10 `view`/`list` printed a report
-that is incomplete or needs attention (the output is still valid — read it);
+that is incomplete or needs attention (the output is still valid — read it); 11 `in-use`
+could not determine its result;
 130 interrupted.
 
 ## When something goes wrong
