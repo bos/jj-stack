@@ -40,14 +40,12 @@ command they use before any direct GitHub mutation.
    hand. Closing a known pull request with GitHub or `gh pr close` is supported;
    use `jj-stack unstack` for GitHub stack grouping.
 2. **Check tracking before the first `gh` or API write in a repo.** Run
-   `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json`
-   for one PR. A matching PR or `branch` field proves tracking; a bare
-   change with `status: unsubmitted` does not. Absence does not prove a GitHub
-   PR is unmanaged after local tracking loss: run
-   `checkout --pull-request <pr> --fetch` and inspect again. Cache the answer
-   for the session. Do this lazily — the trigger is a pending GitHub write, not
-   entering a repo. These commands exit 10 when they print a report that is
-   incomplete or needs attention; read the JSON before concluding anything.
+   `jj-stack list --json`, or `jj-stack view --pull-request <pr> --json` for one PR. A matching
+   PR or `branch` field proves tracking; a bare change with `status: unsubmitted` does not. Cache
+   the answer for the session. Do this lazily — the trigger is a pending GitHub write, not
+   entering a repo. These commands exit 10 when they print an incomplete report; read the JSON
+   before concluding anything. If tracking is absent or ambiguous, stop and read
+   [recovery workflows](references/recovery.md) before writing.
 3. **Use jj-stack for stack changes.** Once jj-stack is detected anywhere
    in a repo, use it for stack-level PR work in that repo: status, submit,
    refresh, base/head changes caused by stack rewrites, merging, cleanup,
@@ -66,6 +64,16 @@ command they use before any direct GitHub mutation.
 6. **Stay non-interactive.** Do not use `submit --edit`, `checkout --pick`, or
    an interactive `--describe-with` helper; those open an editor or prompt on
    stdin for humans. Pass `--describe` files and explicit selectors instead.
+
+## Load references when needed
+
+- Read [multi-stack workflows](references/multi-stack.md) before acting on a forked local DAG,
+  a child review based on another review, a move between stacks, a split or join, or a command
+  that would change more than one GitHub stack.
+- Read [recovery workflows](references/recovery.md) after an interrupted or externally completed
+  operation, a direct structural GitHub mutation, lost or ambiguous tracking, an orphaned review,
+  a GitHub grouping mismatch, or any task involving `sync --all`, `unstack --stack`, `checkout`,
+  `relink`, or starting reviews over.
 
 ## Using `gh` on a managed stack
 
@@ -90,53 +98,6 @@ mutations. These desync local changes, review branches, and tracking data. Map
 the intent to a jj-stack command instead; use `gh` only if the user explicitly
 confirms after you explain that risk.
 
-- **Merge reviewed bottom changes:** `merge --dry-run`, then `merge`. It
-  selects the consecutive open, non-draft PRs from the bottom and requires
-  every candidate to match the exact submitted commit. GitHub decides
-  approvals, checks, conflicts, and repository policy. Multi-PR reviews use
-  one atomic bottom-prefix request; the same asynchronous API handles a one-PR
-  review. If trunk uses a merge queue, success means GitHub accepted the PRs
-  into the queue, not that they merged. A completed direct merge automatically
-  fetches and syncs the selected local stack; it never pushes trunk. Wait for
-  queued PRs to merge, then run `sync <head-change-id>`.
-- **Remove GitHub stack grouping:** `unstack --dry-run <head-change-id>`, then
-  `unstack <head-change-id>`. Use this when the grouping itself should be removed;
-  pull requests remain open.
-- **Close a stack without merging:** inspect it, remove its GitHub grouping,
-  then run `gh pr close <pr>` for each explicit PR number the user wants closed.
-- **Remove a closed stack's branches, comments, and saved links:**
-  `cleanup --dry-run <head-change-id>`, then `cleanup <head-change-id>`. For an
-  orphan from `list`, use `cleanup --pull-request <pr>`; after the user closes
-  every orphan, use `cleanup --pull-request orphans`.
-- **Collect closed or already-synced merged leftovers:** `cleanup --dry-run`, then `cleanup`.
-  It checks each exact saved PR and removes only verified artifacts for
-  closed or merged reviews. Open reviews and open orphans are preserved;
-  mismatched or unavailable GitHub state blocks that record.
-- **Forget saved PR links without changing GitHub:** `unstack --local`.
-- **Change stack shape:** reshape with `jj`, then `submit --dry-run` and
-  `submit`; it reconciles GitHub grouping automatically. For a cross-stack move,
-  submit the source stack before the destination stack.
-- **Recover after GitHub merges:** `sync --dry-run <head-change-id>`, then
-  `sync <head-change-id>` chains the repair — fetch, remove merged ancestors,
-  rebase selected survivors, and update their existing PRs. GitHub rebase
-  merges preserve jj change IDs; squash merges do not, and `sync` handles both
-  from the fetched merge result.
-- **Adopt existing PRs into local tracking:**
-  `checkout --pull-request <pr> --fetch` for a whole stack (fetches the reviewed
-  commits and saves tracking without moving the working copy, rewriting
-  existing changes, or touching GitHub), or
-  `relink <pr> <revset>` for one PR/change link.
-- **Fresh PRs for the same local changes:** remove the GitHub grouping, close
-  the old PRs with explicit `gh pr close` commands, run
-  `cleanup --dry-run <revset>` then `cleanup <revset>`, and finally
-  `submit <revset>`. There is no restart flag; submitting before cleanup does
-  not replace the saved reviews.
-
-If a direct GitHub mutation already happened, do not rebuild changes or PRs
-by hand. Inspect with `list --json`, `view --pull-request <pr> --json`, and
-`doctor`, then choose `checkout`, `relink`, `submit`, `unstack`, or `cleanup` from what
-you see.
-
 ## Everyday flow
 
 1. Build or revise the stack with `jj`. Each change is one reviewable PR:
@@ -150,11 +111,24 @@ you see.
 4. Apply review feedback in the change it belongs to: edit the lower `jj`
    change, let descendants rebase, then `view` and `submit`. Do not patch a
    higher change to avoid touching a lower one.
-5. When bottom changes are ready, `merge --dry-run`, then `merge`. A completed
-   direct merge updates the local stack automatically. After a queued merge,
-   run `sync <head-change-id>` once GitHub finishes.
+5. When bottom changes are ready, run `merge --dry-run`, then `merge`. It selects
+   consecutive open, non-draft PRs from the bottom and requires their exact submitted commits.
+   GitHub decides approvals, checks, conflicts, and repository policy. A completed direct merge
+   updates the local stack automatically; it never pushes trunk. After a queued merge, run
+   `sync <head-change-id>` once GitHub finishes.
 6. If `trunk()` merely advanced, use plain `jj rebase`. `sync` is for
    ancestors already merged on GitHub under exact or rewritten commit IDs.
+
+## Closing and cleanup
+
+To close a stack without merging, inspect it, run `unstack --dry-run <head-change-id>` and
+`unstack <head-change-id>`, then close each explicit PR with `gh pr close <pr>`. Preserve saved
+links until `cleanup --dry-run <head-change-id>` and `cleanup <head-change-id>` verify and remove
+the closed stack's branches, managed comments, and tracking.
+
+Run `cleanup --dry-run`, then `cleanup`, to collect eligible closed or already-synced merged
+leftovers across the repository. Open reviews, open orphans, mismatched identities, unavailable
+GitHub state, and branches still needed as PR bases remain untouched.
 
 ## Exit codes
 
@@ -167,22 +141,7 @@ that is incomplete or needs attention (the output is still valid — read it);
 
 ## When something goes wrong
 
-- `merge` rejected by GitHub: read the reported check, conflict, policy, or
-  access reason, fix it, and rerun the same explicit command. A terminal
-  stack-merge failure merges nothing. A matching request already pending should
-  be allowed to finish, then observed by rerunning the same target and method.
-- Direct merge completed but automatic sync failed: do not rerun `merge`.
-  Follow the reported recovery instructions; `sync <head-change-id>` can
-  continue from current GitHub, trunk, local, and tracking observations.
-- Queued review: `view` and `list` report it. Do not submit or sync that stack
-  until GitHub merges it. Independent stacks remain usable.
-- Interrupted command: `view`, then rerun with an explicit change ID, revset,
-  or `--pull-request` selector.
-- jj-stack reports ambiguity (exit 6): stop and ask for a concrete selector.
-- Stale workspace: `jj workspace update-stale`.
-- Local recovery: `jj op log` and `jj undo`; never destructive git commands.
-- Visible review bookmarks: continue when they match saved reviews. Run `doctor --fix` to restore
-  the normal fetch exclusion; repair only a bookmark that the affected command identifies as a
-  collision or mismatch.
-- Interrupted checkout/sync leftovers: run `doctor` and follow its recovery guidance.
-- Auth or remote resolution unclear: `doctor`.
+Stop on ambiguity and ask for a concrete selector. Use `jj workspace update-stale` for a stale
+workspace and `jj op log` or `jj undo` for local recovery; never use destructive Git commands.
+For every other abnormal lifecycle state, read [recovery workflows](references/recovery.md)
+before acting.
