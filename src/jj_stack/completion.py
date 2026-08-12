@@ -92,12 +92,10 @@ def validate_jj_alias(value: str) -> str:
 def _build_completion_spec(parser: ArgumentParser) -> CompletionSpec:
     subparsers_action = _find_subparsers_action(parser)
     commands: list[CompletionCommand] = []
-    visible_by_parser_id: dict[int, bool] = {}
     for choice_action in subparsers_action._choices_actions:
         name = choice_action.dest
         command_parser = subparsers_action.choices[name]
         visible = choice_action.help != SUPPRESS
-        visible_by_parser_id[id(command_parser)] = visible
         commands.append(
             CompletionCommand(
                 name=name,
@@ -113,7 +111,7 @@ def _build_completion_spec(parser: ArgumentParser) -> CompletionSpec:
         commands.append(
             CompletionCommand(
                 name=name,
-                visible=visible_by_parser_id.get(id(command_parser), True),
+                visible=False,
                 options=_extract_options(command_parser),
                 positional_choices=_extract_positional_choices(command_parser),
             )

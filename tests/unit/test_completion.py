@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from jj_stack.cli import build_parser, main
-from jj_stack.completion import emit_shell_completion
+from jj_stack.completion import _build_completion_spec, emit_shell_completion
 
 
 @pytest.mark.parametrize(
@@ -19,6 +19,15 @@ def test_emit_shell_completion_smoke(shell: str, marker: str) -> None:
 
     assert marker in script
     assert "jj-stack" in script
+
+
+def test_completion_suggests_canonical_commands_but_accepts_typed_aliases() -> None:
+    spec = _build_completion_spec(build_parser())
+
+    assert {"submit", "view", "list"} <= set(spec.visible_command_names)
+    for alias in ("sub", "status", "st", "v", "ls"):
+        assert alias not in spec.visible_command_names
+        assert alias in spec.all_command_names
 
 
 @pytest.mark.parametrize(
