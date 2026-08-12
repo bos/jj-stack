@@ -1,11 +1,8 @@
 # jj-stack: manage stacked GitHub PRs with jj
 
-`jj-stack` manages a linear series of `jj` changes on GitHub as a stack of dependent pull
-requests.
-
-It is built for a rewrite-heavy review workflow made up of many small changes. Split a feature
-into a series of nicely contained parts, keep editing your changes in `jj`, and let `jj-stack`
-keep the matching GitHub PR stack up to date.
+`jj-stack` turns a linear series of local `jj` changes into a stack of GitHub pull requests.
+Rewrite, split, squash, or reorder the changes with `jj`, then let `jj-stack` update the
+matching PRs.
 
 ## Quick start
 
@@ -24,17 +21,10 @@ keep the matching GitHub PR stack up to date.
 uv tool install git+https://github.com/bos/jj-stack
 ```
 
-To upgrade later, rerun that command with `--force`. After the first release,
-`uv tool install jj-stack` and `uv tool upgrade jj-stack` will work instead.
+To upgrade, rerun that command with `--force`. If the command is not on your shell `PATH`, run
+`uv tool update-shell`.
 
-If `jj-stack` is not on your shell `PATH`, run:
-
-```bash
-uv tool update-shell
-```
-
-For tab completion, add the output of `jj-stack completion` to your shell startup file, for
-example:
+For tab completion, add the output of `jj-stack completion` to your shell startup file:
 
 ```bash
 eval "$(jj-stack completion zsh)"
@@ -42,331 +32,96 @@ eval "$(jj-stack completion zsh)"
 
 `bash` and `fish` work the same way.
 
-To invoke it as `jj stack ...` (mirroring GitHub's `gh stack ...`) add a jj alias:
+To invoke it as `jj stack` and complete that alias too, see
+[Configuration](docs/configuration.md).
 
-```toml
-[aliases]
-stack = ["util", "exec", "--", "jj-stack"]
-```
+### Submit your first stack
 
-### Before your first submit
-
-You'll typically start with a local series of `jj` changes that is ready to become a stack of
-GitHub PRs:
-
-- you are in a `jj` repo with a GitHub remote
-- `trunk()` resolves to the branch you want the bottom PR to target, usually `main`
-- your stack is linear
-- the changes you want to submit are visible and mutable in `jj`
-- GitHub authentication works from your shell
-
-`jj-stack doctor` checks these to ensure you're good to go (and the branch-namespace setup
-below), and will identify a fix for anything it sees as missing. Run it once in a new repo:
+Start with a linear series of local `jj` changes on top of `trunk()`. In a new repository, check
+the setup and apply the safe local fixes:
 
 ```bash
 jj-stack doctor --fix
 ```
 
-(Without `--fix`, it will only report what it sees.)
-
-It's easy to learn what `jj-stack` will do. Inspect first:
+Inspect the stack that ends at your working copy:
 
 ```bash
 jj-stack
 ```
 
-(This is a synonym for `jj-stack view`.)
-
-`jj-stack` reserves the `jj-stack/` branch namespace for the git branches it manages remotely on
-GitHub. `doctor --fix` adds a fetch exclusion that normally keeps those branches out of your local
-bookmark view. A missing exclusion is a warning, not a reason for other commands to stop.
-
-After that, ordinary `jj git fetch` and `git fetch` exclude `jj-stack/*` branches. Do not keep
-your own branches under `jj-stack/`. If the remote had no fetch configuration at all,
-`doctor --fix` also writes the default `+refs/heads/*` refspec so the exclusion has something to
-exclude from.
-
-If another tool or a custom fetch setting makes a review bookmark visible, `jj-stack` checks it
-only when relevant. A bookmark exposing the exact saved review commit is accepted. After a local
-rewrite, that commit is treated as the published version rather than a competing local change.
-Unknown bookmarks are left alone, and `jj-stack` will not claim a colliding name for a new review.
-Trunk, tags, and other untracked bookmarks still apply normally.
-
-To undo the reservation, remove the exclusion from the Git repository backing `jj`, naming your
-own remote and prefix if they are not the defaults:
-
-```bash
-git --git-dir "$(jj git root)" config --unset --fixed-value \
-  remote.origin.fetch '^refs/heads/jj-stack/*'
-```
-
-To reserve a different namespace, set `branch_prefix` before your first submit. Changing it later
-leaves branches already pushed under the old prefix outside the reserved namespace, where
-`jj-stack` will neither update nor delete them:
-
-```bash
-jj config set --repo jj-stack.branch_prefix my-reviews
-```
-
-### Two-minute first run
-
-Suppose you have a few local changes stacked on top of `trunk()`:
-
-- refactor the shared model
-- add the API
-- add the UI
-
-Preview the submit plan without changing anything:
+Preview the changes that submitting would make, then create one GitHub PR per local change:
 
 ```bash
 jj-stack submit --dry-run
-```
-
-Submit the stack to GitHub:
-
-```bash
 jj-stack submit
 ```
 
-`submit` also accepts the short alias `sub`.
-
-If you have already written a PR body in a Markdown file, pass it when submitting:
-
-```bash
-jj-stack submit --describe <change-id>=pr-body.md
-```
-
-For a multi-change stack, you can use `--describe stack=stack-overview.md` to post an overview of
-the whole stack as a comment on the head PR. This is very helpful to orient a reviewer. See
-[Writing PR descriptions](docs/description-helpers.md) for the other ways to set titles and
-bodies and choose which PRs are drafts.
-
-To review every title and body and choose the draft state of each PR in one editor document:
-
-```bash
-jj-stack submit --edit
-```
-
-Each change section has a `JJ: Draft: yes` or `JJ: Draft: no` field. The short forms `y` and `n`
-work too. An invalid value aborts the submit before anything is pushed or changed on GitHub.
-
-On first submit, `jj-stack` creates one stable, readable GitHub review branch per change, such as
-`jj-stack/add-the-api-qpvuntsm`. The branches normally stay on the Git remote rather than
-appearing as persistent bookmarks in your local `jj` view.
-
-Inspect your stack again:
-
-```bash
-jj-stack
-```
-
-At this point you should have one GitHub PR per local change, with each PR based on the
-review branch below it. Edit your changes locally with `jj`, run `jj-stack submit`
-again, and the PR stack will be refreshed.
-
-If you are juggling more than one local stack in the same repo:
-
-```bash
-jj-stack list
-```
-
-`list` also accepts the short alias `ls`.
+Revise the changes locally with `jj` and rerun `jj-stack submit` whenever the stack is ready to
+refresh. Use `jj-stack list` to see every tracked stack in the repository.
 
 ## Mental model
 
-The unit of review is one local `jj` change. The local `jj` DAG determines which changes are in
-the stack and their order.
-
-On GitHub:
-
-- each `jj` change gets one review branch
-- each review branch gets one PR
-- each PR targets the review branch below it, except the bottom PR, which targets trunk
-
-For example:
+The local `jj` DAG determines which changes form a stack and their order. On GitHub, each change
+gets a stable review branch and a PR; every PR targets the review branch below it, except the
+bottom PR, which targets trunk by default:
 
 ```text
-jj-stack/add-ui-...        -> PR #3 (base: jj-stack/add-api-...)
-jj-stack/add-api-...       -> PR #2 (base: jj-stack/refactor-model-...)
-jj-stack/refactor-model... -> PR #1 (base: main)
-main                       -> trunk
+jj-stack/add-ui-...         -> PR #3 (base: jj-stack/add-api-...)
+jj-stack/add-api-...        -> PR #2 (base: jj-stack/refactor-model-...)
+jj-stack/refactor-model-... -> PR #1 (base: main)
+main                        -> trunk
 ```
 
-When you rewrite an intermediate change in `jj`, `jj-stack` updates the matching review branch
-and PR, along with the changes that depend on it, instead of asking you to maintain a stack of
-Git branches by hand.
+The review branches normally stay out of your local bookmark view. When you rewrite a change,
+`jj-stack` updates its existing branch and PR, along with the changes that depend on it.
 
-## Core workflow
-
-Your typical author loop is:
+## Everyday workflow
 
 1. Write code as a series of local `jj` changes.
 2. Run `jj-stack submit`.
-3. Revise those changes locally as reviews come in.
-4. Re-run `jj-stack submit`.
-5. Once the bottom changes are ready, run `jj-stack merge`.
-6. If you perform a direct merge, it updates local history and the remaining PRs before it
-   returns. After a queued merge or a merge that you kick off elsewhere, wait for GitHub and run
+3. Revise, add, remove, or reorder the changes locally as reviews come in.
+4. Run `jj-stack submit` again to refresh GitHub.
+5. Run `jj-stack merge` when the changes at the bottom are ready.
+6. After a queued or externally initiated merge finishes, run
    `jj-stack sync <head-change-id>`.
 
-`merge` asks GitHub to merge the consecutive open, non-draft PRs at the bottom of the stack. It
-requires every candidate to remain at the exact commit last submitted, but GitHub decides
-approvals, checks, conflicts, and repository policy. GitHub merges a selected multi-PR bottom
-portion as one operation. The same asynchronous API handles a one-PR review. If the trunk branch
-requires a merge queue, GitHub accepts the selected PRs into the queue instead of merging them
-immediately; `view` and `list` show them as queued.
+`view`, `submit`, `merge`, and `sync` accept a change ID when you need to select a stack other
+than the one ending at the working copy. `submit`, `merge`, `sync`, and `cleanup` support
+`--dry-run` where a useful preview is possible.
 
-`merge` never pushes trunk. After a direct merge, it fetches the result and performs the same
-selected-stack update as `sync`; a failure in that local step tells you to run `sync` rather than
-retry the GitHub merge. A queued result is successful but does not mean trunk changed, so wait for
-GitHub to merge it and then run `jj-stack sync <head-change-id>`.
-
-`sync` applies completed GitHub merges to the selected local stack and refreshes the PRs that
-remain. It removes the merged changes, rebases the unmerged changes onto `trunk()`, and updates
-their existing PRs. If the rebase leaves conflicts, `sync` stops before updating those PRs.
-Resolve the conflicts with `jj`, then run `jj-stack submit <head-change-id>`.
-
-If you have more local changes on top of your stack, `jj` rebases those changes too so they
-remain on top. `sync` does not update any PRs for that extra work.
-
-Use `jj-stack sync --dry-run <head-change-id>` to preview. If a rebase is needed, a dry run
-cannot show the resulting PR updates because the rebased commits do not exist yet. The real
-`sync` computes those updates after the rebase.
-
-When `list` or `view` says a tracked stack changed since the last submit, inspect that
-stack directly:
-
-```bash
-jj-stack view <head-change-id>
-```
-
-The status output will show whether the next step is `jj-stack submit` or
-`jj-stack sync <head-change-id>`.
-
-If `list` shows an `orphan` row, tracking remains for a PR whose local change is no longer part
-of any current stack. Close it on GitHub or with `gh`, then remove the review branch, stack
-overview comment, and saved PR link it left behind:
-
-```bash
-gh pr close <pr>
-jj-stack cleanup --pull-request <pr> --dry-run
-jj-stack cleanup --pull-request <pr>
-```
-
-Use `--pull-request orphans` to preview or clean up every orphan in one operation:
-
-```bash
-jj-stack cleanup --pull-request orphans --dry-run
-jj-stack cleanup --pull-request orphans
-```
-
-`submit` automatically refreshes GitHub's grouping after you delete, reorder, split, or combine
-changes. When moving a change between submitted stacks, submit the source stack first and the
-destination stack second.
-
-To sweep review branches, stack overview comments, and tracking that no closed or merged review
-still needs, across the whole repository:
-
-```bash
-jj-stack cleanup --dry-run
-jj-stack cleanup
-```
-
-`cleanup` leaves open reviews alone. If a repository ever looks wrong, `jj-stack doctor` checks
-its setup and GitHub access and names a fix for what it finds.
+See the [daily workflow](docs/daily-workflow.md) for draft PRs, descriptions, merge queues,
+cleanup, and working with multiple stacks.
 
 ## Learn more
 
-User guides live under [docs](docs/README.md):
-
 - [Mental model](docs/mental-model.md)
-- [`jj-stack` and `gh stack`](docs/gh-stack-comparison.md)
 - [Daily workflow](docs/daily-workflow.md)
+- [Configuration](docs/configuration.md)
 - [Writing PR descriptions](docs/description-helpers.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [`jj-stack` and `gh stack`](docs/gh-stack-comparison.md)
 - [JSON output](docs/json-output.md)
 - [Exit codes](docs/exit-codes.md)
 
-The built-in help is the flag reference:
+The built-in help is the canonical flag reference:
 
 ```bash
 jj-stack --help
-jj-stack submit --help
-```
-
-To include advanced repair commands and hidden global options:
-
-```bash
+jj-stack <command> --help
 jj-stack help --all
 ```
 
-Like `jj`, `jj-stack` accepts `--color=always|never|debug|auto`. `always` forces color
-even if `NO_COLOR` is set. Without that flag, `jj-stack` follows your `jj` `ui.color`
-setting.
-
-## Configuration
-
-For most use, `jj-stack` needs no configuration. It reads repository and change information
-through `jj`, and reads review state from GitHub.
-
-Repo-level defaults save repeating the same flags. Set them with `jj config edit --repo`:
-
-```toml
-[jj-stack]
-reviewers = ["octocat"]
-team_reviewers = ["reviewers"]
-labels = ["needs-review"]
-merge_method = "squash"
-```
-
-- `reviewers` are GitHub usernames, and `team_reviewers` are team slugs as GitHub spells them,
-  without the organization prefix.
-- `merge_method` is `merge`, `rebase`, or `squash`. Set it when the repository allows more than
-  one: GitHub reports which methods it allows but not which one you want, so without it
-  `jj-stack merge` asks you to pass `--method` every time. A method the repository does not
-  allow is refused before anything is sent to GitHub.
-- `branch_prefix` names the reserved branch namespace, described under
-  [Before your first submit](#before-your-first-submit).
-
-`jj-stack submit` can override the reviewer and label defaults with `--reviewers`,
-`--team-reviewers`, and `--label`, and `jj-stack merge` overrides `merge_method` with
-`--method`.
-
-Passing `--reviewers` or `--team-reviewers` also applies those review requests when the pull
-requests are otherwise unchanged. Existing reviewers that are omitted are left in place.
-
-For authentication, `jj-stack` checks `GITHUB_TOKEN`, then `GH_TOKEN`, then falls back
-to `gh auth token` if `gh`, the GitHub CLI, is installed and authenticated.
-
 ## Coding agent integration
 
-Small, self-contained changes are easier for people and coding agents to review and revise. The
-bundled skill teaches an agent to preserve that structure while using `jj-stack`.
-
-If you use coding agents, install the bundled `jj-stack` skill so they know how to work with a
-`jj` stack:
+Install the bundled skill to teach coding agents to work with local `jj` stacks and refresh their
+GitHub PRs safely:
 
 ```bash
 gh skill install bos/jj-stack jj-stack
 ```
 
-The skill is separate from the `uv` installation. It teaches agents to use `jj` for local stack
-edits, read machine-readable status from `jj-stack`, and refresh GitHub through `submit`.
-
-To install it for a specific agent or scope, pass the corresponding `gh skill install` flags.
-For example, to install it for Codex at user scope:
-
-```bash
-gh skill install bos/jj-stack jj-stack --agent codex --scope user
-```
-
-When developing the skill locally, install from this checkout:
-
-```bash
-gh skill install . jj-stack --from-local --agent codex --scope user --force
-```
-
-The source skill lives at `skills/jj-stack/SKILL.md`.
+The [skill source](skills/jj-stack/SKILL.md) contains the workflow it teaches.
 
 ## Performance
 
@@ -381,15 +136,3 @@ reduces its impact with:
 
 `jj-stack` also batches calls to `jj` and minimizes the amount of work those calls must
 do.
-
-## Focus and future
-
-`jj-stack` is intentionally focused:
-
-- `jj` has best-in-class mutable history
-- `jj-stack` is GitHub only, at least for now
-- linear stacks only
-- one PR per change ID
-
-`jj-stack` registers every multi-PR review as a GitHub stack and asks GitHub to merge
-the selected prefix together. A review with one PR remains an ordinary pull request.

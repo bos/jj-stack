@@ -85,18 +85,15 @@ connected to its PR even when the change is rewritten or renamed.
 
 ## Can the tools manage the same stack?
 
-I do not recommend trying to mix `jj-stack` and `gh stack` in a single repo. Commands such as
+I do not recommend trying to mix `jj-stack` and `gh stack` in a single jj repo. Commands such as
 `gh stack rebase`, `push`, `sync`, and `submit` expect to manage the review branches directly.
-For example, `gh stack` moving a branch that `jj-stack` manages would cause `jj-stack` to stop
-rather than overwrite the unexpected remote state.
+As an example, using `gh stack` to move a branch that `jj-stack` manages would cause `jj-stack`
+to stop rather than overwrite the unexpected remote state.
 
-That said, the GitHub review and merge experience *is* shared. The while point is that you can
+That said, the GitHub review and merge experience *is* the same. The whole point is that you can
 review a `jj-stack` stack in GitHub, and a merge performed in the GitHub UI or by another client
 can be reconciled afterward with:
 
 ```bash
 jj-stack sync <head-change-id>
 ```
-
-There is no need to run `gh stack link` for PRs submitted by `jj-stack`; every multi-PR review is
-already registered as a GitHub stack.

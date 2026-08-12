@@ -9,6 +9,9 @@ requests while keeping history easy to revise.
   Understand why `gh stack`'s branch-based workflow is cumbersome in a `jj` repository.
 - [Daily Workflow](daily-workflow.md)
   The normal author loop for submit, review, merge, sync, and cleanup.
+- [Configuration](configuration.md)
+  Set repository defaults, choose the review branch namespace, configure authentication, and
+  enable the `jj stack` command alias.
 - [Writing PR Descriptions](description-helpers.md)
   Overriding the derived title and body with files, an editor, or a helper program.
 - [Troubleshooting](troubleshooting.md)
