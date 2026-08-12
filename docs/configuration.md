@@ -52,3 +52,26 @@ jj config set --repo jj-stack.branch_prefix my-reviews
 
 `jj-stack` checks `GITHUB_TOKEN`, then `GH_TOKEN`, then falls back to `gh auth token` when the
 GitHub CLI is installed and authenticated.
+
+## `jj stack` command alias
+
+To invoke `jj-stack` as `jj stack`, add a `jj` command alias:
+
+```toml
+[aliases]
+stack = ["util", "exec", "--", "jj-stack"]
+```
+
+If you use an alias, replace the ordinary `jj-stack completion` line in your shell setup as
+follows, which will allow `jj stack` to complete properly:
+
+```bash
+eval "$(jj-stack completion zsh --jj-alias stack)"
+```
+
+If you want to name your alias something else, e.g. `stk`, simply use that name in both the
+`jj` config and your shell init script.
+
+`bash` and `fish` work the same way. The generated script completes both `jj-stack` and
+`jj stack`, while leaving other `jj` commands with their existing completion. If no `jj`
+completion is installed, it uses `jj`'s dynamic completion as the fallback.

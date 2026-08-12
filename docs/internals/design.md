@@ -236,7 +236,9 @@ evidence, and mutation rules.
   the user knows the identity but the tool cannot prove it.
 - **`doctor`** reports setup, connectivity, and observable leftovers from interrupted local
   operations. `--fix` applies only the local repairs it names.
-- **`completion`** prints shell completion scripts and inspects nothing.
+- **`completion`** prints shell completion scripts and inspects nothing. With `--jj-alias`, the
+  script also completes that `jj` command alias as `jj-stack` while preserving completion for
+  other `jj` commands.
 
 There is no standalone `rebase` command; `jj` owns general descendant rewrites.
 

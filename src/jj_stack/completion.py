@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from argparse import SUPPRESS, Action, ArgumentParser, _SubParsersAction
 from dataclasses import dataclass
 
 _DIRECTORY_OPTION_DESTS = frozenset({"repository"})
 _FILE_OPTION_DESTS = frozenset({"config"})
+_JJ_ALIAS_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
 
 @dataclass(frozen=True)
@@ -56,17 +58,35 @@ class CompletionSpec:
         return tuple(dict.fromkeys(flags))
 
 
-def emit_shell_completion(parser: ArgumentParser, shell: str) -> str:
+def emit_shell_completion(
+    parser: ArgumentParser,
+    shell: str,
+    *,
+    jj_alias: str | None = None,
+) -> str:
     """Render a shell completion script for the requested shell."""
 
+    if jj_alias is not None:
+        validate_jj_alias(jj_alias)
     spec = _build_completion_spec(parser)
     if shell == "bash":
-        return _render_bash_completion(spec)
+        return _render_bash_completion(spec, jj_alias=jj_alias)
     if shell == "zsh":
-        return _render_zsh_completion(spec)
+        return _render_zsh_completion(spec, jj_alias=jj_alias)
     if shell == "fish":
-        return _render_fish_completion(spec)
+        return _render_fish_completion(spec, jj_alias=jj_alias)
     raise ValueError(f"Unsupported shell: {shell}")
+
+
+def validate_jj_alias(value: str) -> str:
+    """Return a shell-safe jj command alias or reject it."""
+
+    if _JJ_ALIAS_RE.fullmatch(value) is None:
+        raise ValueError(
+            "A jj alias must start with a lowercase letter and contain only lowercase letters, "
+            "digits, and single dashes."
+        )
+    return value
 
 
 def _build_completion_spec(parser: ArgumentParser) -> CompletionSpec:
@@ -155,7 +175,11 @@ def _option_value_kind(action: Action) -> str:
     return "none"
 
 
-def _render_bash_completion(spec: CompletionSpec) -> str:
+def _render_bash_completion(
+    spec: CompletionSpec,
+    *,
+    jj_alias: str | None = None,
+) -> str:
     lines = [
         "_jj_stack_completion_visible_commands() {",
         f'    printf "%s" "{_join_words(spec.visible_command_names)}"',
@@ -279,11 +303,14 @@ def _render_bash_completion(spec: CompletionSpec) -> str:
             "complete -F _jj_stack jj-stack",
         ]
     )
-    return "\n".join(lines) + "\n"
+    script = "\n".join(lines) + "\n"
+    if jj_alias is not None:
+        script += "\n" + _render_bash_jj_alias(jj_alias)
+    return script
 
 
-def _render_zsh_completion(spec: CompletionSpec) -> str:
-    return (
+def _render_zsh_completion(spec: CompletionSpec, *, jj_alias: str | None = None) -> str:
+    script = (
         "#compdef jj-stack\n"
         "\n"
         "autoload -U +X bashcompinit || return 1\n"
@@ -291,28 +318,137 @@ def _render_zsh_completion(spec: CompletionSpec) -> str:
         "\n"
         f"{_render_bash_completion(spec)}"
     )
+    if jj_alias is not None:
+        script += "\n" + _render_zsh_jj_alias(jj_alias)
+    return script
 
 
-def _render_fish_completion(spec: CompletionSpec) -> str:
+def _render_bash_jj_alias(alias: str) -> str:
+    return f"""_jj_stack_jj_alias_active() {{
+    (( COMP_CWORD > 1 )) && [[ "${{COMP_WORDS[1]}}" == "{alias}" ]]
+}}
+
+if ! declare -F _clap_complete_jj >/dev/null && ! declare -F _jj >/dev/null; then
+    source <(COMPLETE=bash jj)
+fi
+
+_jj_stack_jj_dispatch() {{
+    if _jj_stack_jj_alias_active; then
+        _jj_stack "$@"
+    elif declare -F _clap_complete_jj >/dev/null; then
+        _clap_complete_jj "$@"
+    elif declare -F _jj >/dev/null; then
+        _jj "$@"
+    fi
+}}
+
+if declare -F _clap_complete_jj >/dev/null; then
+    if [[ "${{BASH_VERSINFO[0]}}" -eq 4 && "${{BASH_VERSINFO[1]}}" -ge 4 \
+        || "${{BASH_VERSINFO[0]}}" -gt 4 ]]; then
+        complete -o nospace -o bashdefault -o nosort -F _jj_stack_jj_dispatch jj
+    else
+        complete -o nospace -o bashdefault -F _jj_stack_jj_dispatch jj
+    fi
+else
+    complete -F _jj_stack_jj_dispatch jj
+fi
+"""
+
+
+def _render_zsh_jj_alias(alias: str) -> str:
+    return f"""_jj_stack_jj_alias_active() {{
+    (( CURRENT > 2 )) && [[ "${{words[2]}}" == "{alias}" ]]
+}}
+
+if (( ! $+functions[_clap_dynamic_completer_jj] && ! $+functions[_jj] )); then
+    source <(COMPLETE=zsh jj)
+fi
+
+_jj_stack_jj_dispatch() {{
+    if _jj_stack_jj_alias_active; then
+        _bash_complete -F _jj_stack
+    elif (( $+functions[_clap_dynamic_completer_jj] )); then
+        _clap_dynamic_completer_jj
+    elif (( $+functions[_jj] )); then
+        _jj
+    else
+        _default
+    fi
+}}
+
+compdef _jj_stack_jj_dispatch jj
+"""
+
+
+def _render_fish_completion(spec: CompletionSpec, *, jj_alias: str | None = None) -> str:
     lines = ["complete -c jj-stack -f"]
     top_level_condition = "__fish_use_subcommand"
     for option in spec.top_level_options:
-        lines.append(_fish_option_line(option, condition=top_level_condition))
+        lines.append(_fish_option_line(option, command="jj-stack", condition=top_level_condition))
     for command in spec.commands:
         if command.visible:
             lines.append(f"complete -c jj-stack -n '{top_level_condition}' -a '{command.name}'")
     for command in spec.commands:
         condition = f"__fish_seen_subcommand_from {command.name}"
         for option in command.options:
-            lines.append(_fish_option_line(option, condition=condition))
+            lines.append(_fish_option_line(option, command="jj-stack", condition=condition))
         if command.positional_choices:
             choices = _join_words(command.positional_choices)
             lines.append(f"complete -c jj-stack -n '{condition}' -a '{choices}'")
+    script = "\n".join(lines) + "\n"
+    if jj_alias is not None:
+        script += "\n" + _render_fish_jj_alias(spec, jj_alias)
+    return script
+
+
+def _render_fish_jj_alias(spec: CompletionSpec, alias: str) -> str:
+    active = "__jj_stack_jj_alias_active"
+    at_root = "__jj_stack_jj_alias_at_root"
+    command_names = " ".join(spec.all_command_names)
+    lines = [
+        f"""function {active}
+    set -l words (commandline --current-process --tokenize --cut-at-cursor)
+    test (count $words) -ge 2; and test "$words[2]" = "{alias}"
+end
+
+function {at_root}
+    {active}; or return 1
+    not __fish_seen_subcommand_from {command_names}
+end""",
+        "",
+        "set -l __jj_stack_saved_jj_completions (complete -c jj)",
+        "complete -e -c jj",
+        "if test (count $__jj_stack_saved_jj_completions) -eq 0",
+        "    complete --keep-order --exclusive --command jj \\",
+        f"        --condition 'not {active}' \\",
+        "        --arguments '(COMPLETE=fish jj -- (commandline --current-process \\",
+        "            --tokenize --cut-at-cursor) (commandline --current-token))'",
+        "else",
+        "    for definition in $__jj_stack_saved_jj_completions",
+        f'''        eval "$definition -n 'not {active}'"''',
+        "    end",
+        "end",
+        "set -e __jj_stack_saved_jj_completions",
+        "",
+        f"complete -c jj -n '{active}' -f",
+    ]
+    for option in spec.top_level_options:
+        lines.append(_fish_option_line(option, command="jj", condition=at_root))
+    for command in spec.commands:
+        if command.visible:
+            lines.append(f"complete -c jj -n '{at_root}' -a '{command.name}'")
+    for command in spec.commands:
+        condition = f"{active}; and __fish_seen_subcommand_from {command.name}"
+        for option in command.options:
+            lines.append(_fish_option_line(option, command="jj", condition=condition))
+        if command.positional_choices:
+            choices = _join_words(command.positional_choices)
+            lines.append(f"complete -c jj -n '{condition}' -a '{choices}'")
     return "\n".join(lines) + "\n"
 
 
-def _fish_option_line(option: CompletionOption, *, condition: str) -> str:
-    pieces = ["complete", "-c", "jj-stack", "-n", f"'{condition}'"]
+def _fish_option_line(option: CompletionOption, *, command: str, condition: str) -> str:
+    pieces = ["complete", "-c", command, "-n", f"'{condition}'"]
     short_flag = next((flag[1:] for flag in option.flags if flag.startswith("-")), None)
     long_flag = next((flag[2:] for flag in option.flags if flag.startswith("--")), None)
     if short_flag is not None and len(short_flag) == 1:

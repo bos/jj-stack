@@ -9,6 +9,7 @@ import sys
 from argparse import (
     SUPPRESS,
     ArgumentParser,
+    ArgumentTypeError,
     HelpFormatter,
     Namespace,
     _SubParsersAction,
@@ -41,7 +42,7 @@ from jj_stack.cli_help import (
     emit_top_level_help,
     normalized_help_text,
 )
-from jj_stack.completion import emit_shell_completion
+from jj_stack.completion import emit_shell_completion, validate_jj_alias
 from jj_stack.console import RequestedColorMode, configured_console, rich_color_mode
 from jj_stack.errors import (
     EXIT_INTERRUPTED,
@@ -74,7 +75,8 @@ _COMPLETION_HELP = "Print shell completion setup for bash, zsh, or fish"
 _HELP_HELP = "Show top-level help, or help for one command"
 _COMPLETION_DESCRIPTION = """
 Print the shell completion script for bash, zsh, or fish. This only prints
-local shell setup text and does not inspect the repository or GitHub.
+local shell setup text and does not inspect the repository or GitHub. Pass
+`--jj-alias NAME` to also complete a jj command alias that runs jj-stack.
 """
 _HELP_DESCRIPTION = """
 Show top-level help or the detailed help for one command. Use `--all` to also
@@ -502,6 +504,12 @@ def build_parser() -> ArgumentParser:
         "shell",
         choices=("bash", "zsh", "fish"),
         help="Shell to generate completion support for",
+    )
+    completion_parser.add_argument(
+        "--jj-alias",
+        metavar="NAME",
+        type=_parse_jj_alias,
+        help="Also complete jj NAME as jj-stack while preserving other jj completions",
     )
     help_parser = _add_command_parser(
         subcommands,
@@ -1127,8 +1135,19 @@ def _forward_handler(
 def _completion_handler(args: Namespace) -> int:
     # soft_wrap keeps the shell from receiving a script wrapped to the console width, which
     # splits long case patterns mid-word and makes it unparseable.
-    console.output(emit_shell_completion(build_parser(), args.shell), end="", soft_wrap=True)
+    console.output(
+        emit_shell_completion(build_parser(), args.shell, jj_alias=args.jj_alias),
+        end="",
+        soft_wrap=True,
+    )
     return 0
+
+
+def _parse_jj_alias(value: str) -> str:
+    try:
+        return validate_jj_alias(value)
+    except ValueError as error:
+        raise ArgumentTypeError(str(error)) from error
 
 
 @contextmanager
