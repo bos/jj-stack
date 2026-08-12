@@ -47,7 +47,7 @@ def test_load_config_parses_resolved_jj_stack_section(
 ) -> None:
     stdout = "\n".join(
         [
-            'jj-stack.branch_prefix = "my-reviews"',
+            'jj-stack.branch_prefix = "Team/reviews_v2"',
             'jj-stack.reviewers = ["octocat"]',
             'jj-stack.team_reviewers = ["platform"]',
             'jj-stack.labels = ["needs-review"]',
@@ -59,7 +59,7 @@ def test_load_config_parses_resolved_jj_stack_section(
     config = load_config(jj_client=JjClient(tmp_path))
 
     assert config.logging.level == "INFO"
-    assert config.branch_prefix == "my-reviews"
+    assert config.branch_prefix == "Team/reviews_v2"
     assert config.reviewers == ["octocat"]
     assert config.team_reviewers == ["platform"]
     assert config.labels == ["needs-review"]
@@ -170,25 +170,3 @@ def test_load_config_surfaces_cli_args_through_to_jj(
             "jj-stack",
         )
     ]
-
-
-@pytest.mark.parametrize(
-    "prefix",
-    (
-        "",
-        "team/reviews",
-        "Reviews",
-        "-reviews",
-        "reviews-",
-        "my--reviews",
-        # jj-stack already owns this namespace for its temporary checkout bookmark.
-        "jj-stack-tmp",
-    ),
-)
-def test_load_config_rejects_a_branch_prefix_that_cannot_name_the_namespace(
-    prefix: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_config_output(monkeypatch, tmp_path, f"jj-stack.branch_prefix = {prefix!r}\n")
-
-    with pytest.raises(CliError, match="branch_prefix"):
-        load_config(jj_client=JjClient(tmp_path))

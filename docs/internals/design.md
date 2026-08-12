@@ -159,8 +159,8 @@ at `trunk()`. A `trunk()` that falls back to `root()` cannot be resolved this wa
 ### The reserved branch namespace
 
 A repository reserves exactly one branch namespace for `jj-stack`'s managed branches, named by
-`branch_prefix` — one lowercase path segment, `jj-stack` by default. Ordinary `jj` bookmarks
-outside that namespace behave normally.
+`branch_prefix` (`jj-stack` by default). The configured value is used as-is. Ordinary `jj`
+bookmarks outside that namespace behave normally.
 
 The namespace normally stays out of the local `jj` view. `jj`'s default `immutable_heads()` counts
 untracked remote bookmarks as immutable, so `doctor --fix` excludes the namespace from ordinary

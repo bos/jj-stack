@@ -33,8 +33,6 @@ from jj_stack.review.branches import (
     review_namespace,
 )
 
-TEMP_BOOKMARK_PREFIX = "jj-stack-tmp"
-
 _COMMIT_TEMPLATE = (
     r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '
     r'json(parents.map(|p| p.commit_id())) ++ "\t" ++ '
@@ -46,7 +44,7 @@ _COMMIT_TEMPLATE = (
 )
 _SCAN_TEMPLATE_PREFIX = _COMMIT_TEMPLATE.removesuffix(r'"\n"') + r'"\t" ++ '
 _BOOKMARK_TEMPLATE = r'json(self) ++ "\n"'
-_REVIEW_TEMP_BOOKMARK = f"{TEMP_BOOKMARK_PREFIX}/checkout"
+_REVIEW_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
 _REVIEW_TEMP_REF = f"refs/heads/{_REVIEW_TEMP_BOOKMARK}"
 _CONFIG_ORIGIN_TEMPLATE = r'json(source) ++ "\t" ++ json(path) ++ "\n"'
 
