@@ -56,6 +56,20 @@ class ReviewStateStore:
 
         return self._load_state()
 
+    def is_in_use(self) -> bool:
+        """Return whether a valid tracking file exists without creating one."""
+
+        try:
+            self._path.lstat()
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise ReviewStateError(
+                f"Could not inspect jj-stack data path {self._path}: {error}"
+            ) from error
+        self._load_state()
+        return True
+
     def create_review(
         self,
         change_id: str,

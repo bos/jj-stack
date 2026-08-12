@@ -25,6 +25,7 @@ import jj_stack.bootstrap as bootstrap
 import jj_stack.commands.checkout as checkout_command
 import jj_stack.commands.cleanup.command as cleanup_command
 import jj_stack.commands.doctor as doctor_command
+import jj_stack.commands.in_use as in_use_command
 import jj_stack.commands.list_ as list_command
 import jj_stack.commands.merge.command as merge_command
 import jj_stack.commands.relink as relink_command
@@ -102,6 +103,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
             HelpCommand("sync", sync_command.HELP),
             HelpCommand("checkout", checkout_command.HELP),
             HelpCommand("doctor", doctor_command.HELP),
+            HelpCommand("in-use", in_use_command.HELP),
         ),
     ),
     (
@@ -492,6 +494,14 @@ def build_parser() -> ArgumentParser:
         help="Apply the local repairs doctor can make safely, instead of only reporting them",
     )
 
+    _add_command_parser(
+        subcommands,
+        command="in-use",
+        help_text=normalized_help_text(in_use_command.HELP),
+        description_text=in_use_command.__doc__ or "",
+        handler=_forward_handler(in_use_command.in_use),
+    )
+
     completion_parser = _add_command_parser(
         subcommands,
         command="completion",
@@ -693,7 +703,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.normalized_argv = tuple(normalized_argv)
     if args.command in _VIEW_COMMANDS:
         args.view_selectors = () if view_args is None else view_args.selectors
-    effective_color = args.color
+    effective_color = "never" if args.command == "in-use" else args.color
     if effective_color is None:
         effective_color = _load_configured_jj_color(
             repository=args.repository,

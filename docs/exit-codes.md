@@ -7,13 +7,14 @@ matches; codes 7-9 are reserved because their `gh stack` meanings have no jj-sta
 | Code | Meaning |
 |-----:|---------|
 | 0 | Success. |
-| 1 | Any other failure, including a command stopped by a blocked action. |
+| 1 | `in-use`: jj-stack is not in use; otherwise any other failure. |
 | 2 | The selection does not form a supported review stack. |
 | 3 | Unresolved conflicts prevented a review update. |
 | 4 | GitHub authentication, network, or API failure. |
 | 5 | Invalid command-line arguments. |
 | 6 | A selector matched more than one target, so the command failed closed. |
 | 10 | `view` or `list` printed an incomplete report. |
+| 11 | `in-use` could not determine the result. |
 | 130 | Interrupted. |
 
 Notes:
@@ -26,6 +27,9 @@ Notes:
   completed; the report can still contain work to do, such as an orphaned PR or a stack that has
   changed since submit. When the command cannot produce a report at all, including when the only
   selector given fails to resolve, it fails with one of the error codes instead.
+- `in-use` prints nothing. Exit 0 means a valid local tracking file exists; exit 1 means no
+  tracking file exists. Exit 11 reports an error such as running outside a jj repository or
+  finding invalid tracking data.
 - With `--json`, exit 10 still comes with a valid payload on stdout; read the exit code
   together with the payload. See [json-output.md](json-output.md).
 - Commands that mutate review state (`submit`, `merge`, `sync`, `unstack`, `cleanup`) exit 1 when

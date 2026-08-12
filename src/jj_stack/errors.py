@@ -19,6 +19,7 @@ EXIT_GITHUB = 4
 EXIT_USAGE = 5
 EXIT_AMBIGUOUS = 6
 EXIT_INCOMPLETE = 10
+EXIT_PROBE = 11
 EXIT_INTERRUPTED = 130
 
 
@@ -104,6 +105,12 @@ class UsageError(CliError):
     """Invalid command-line arguments or flag combinations."""
 
     exit_code = EXIT_USAGE
+
+
+class ProbeError(CliError):
+    """A local predicate could not be evaluated."""
+
+    exit_code = EXIT_PROBE
 
 
 class AmbiguousSelectionError(CliError):

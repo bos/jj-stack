@@ -18,7 +18,9 @@ The model is small:
 - the local stack is rediscovered from the `jj` DAG on every run, not from a saved parent map
 
 The only per-change state `jj-stack` saves locally is the PR and branch attached to each change
-and the exact commit last sent for review. Everything else is observed or derived.
+and the exact commit last sent for review. The existence of that repository's tracking file is
+also the durable local signal that the repository has adopted jj-stack. Everything else is
+observed or derived.
 
 Three goals shape the design beyond that model: stacked GitHub PRs should feel natural in a `jj`
 workflow, the tool should be easy to use, and review branch names should stay stable across
@@ -236,6 +238,8 @@ evidence, and mutation rules.
   the user knows the identity but the tool cannot prove it.
 - **`doctor`** reports setup, connectivity, and observable leftovers from interrupted local
   operations. `--fix` applies only the local repairs it names.
+- **`in-use`** silently reports whether a valid tracking file exists for this local repository.
+  It does not snapshot the working copy, read GitHub, or create tracking.
 - **`completion`** prints shell completion scripts and inspects nothing. With `--jj-alias`, the
   script also completes that `jj` command alias as `jj-stack` while preserving completion for
   other `jj` commands.
@@ -338,6 +342,10 @@ A typo of a known key is rejected with a suggestion; unrelated keys are ignored.
 
 Tracking lives in the user's state directory and is shared by every workspace for the repository.
 Nothing is stored in the working tree or `.jj/` internals.
+
+The first successful tracking write creates the repository's tracking file and marks the local
+repository as having adopted jj-stack. The file remains when the last review pair is removed, so
+adoption outlives individual review stacks. `view`, `list`, and `in-use` never create it.
 
 ### Concurrency and interruption
 
@@ -711,6 +719,10 @@ review-branch exclusion in remote fetch configuration. It never mutates GitHub.
 
 ### Inspection
 
+`in-use` is a silent local predicate. It exits 0 when the repository has a valid tracking file
+and 1 when the file is absent. An invalid file or failure to locate a jj repository is an error,
+not a negative result, and exits 11.
+
 `view` and `list` are read-only. For local stack rows, both observe saved review branches directly
 on the remote and ask GitHub for current PR state without fetching. Orphan rows in `list` show
 saved identity only; they do not claim to report the PR's live state.
@@ -804,13 +816,15 @@ extension, the code matches. Codes 7-9 remain reserved because their `gh stack` 
 `jj-stack` equivalent.
 
 - `0` — success
-- `1` — any other failure, including a lifecycle command blocked before completion
+- `1` — `in-use` found no local adoption; otherwise any other failure, including a lifecycle
+  command blocked before completion
 - `2` — the selection does not form a supported local review stack
 - `3` — unresolved conflicts block the requested operation
 - `4` — GitHub authentication, network, or API failure
 - `5` — invalid command-line arguments
 - `6` — a selector matched more than one target
 - `10` — `view` or `list` printed an incomplete report
+- `11` — `in-use` could not determine its result
 - `130` — interrupted
 
 The user-facing table lives in [docs/exit-codes.md](../exit-codes.md).
