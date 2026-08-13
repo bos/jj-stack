@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
 import jj_stack.ui as ui
 from jj_stack.errors import (
     EXIT_NO_STACK,
@@ -33,23 +35,28 @@ from jj_stack.review.branches import (
     review_namespace,
 )
 
-_COMMIT_TEMPLATE = (
-    r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '
-    r'json(parents.map(|p| p.commit_id())) ++ "\t" ++ '
-    r'json(empty) ++ "\t" ++ json(divergent) ++ "\t" ++ '
-    r'json(current_working_copy) ++ "\t" ++ '
-    r'json(working_copies.map(|wc| wc.name())) ++ "\t" ++ '
-    r'json(self.hidden()) ++ "\t" ++ '
-    r'json(immutable) ++ "\t" ++ json(self.conflict()) ++ "\n"'
+_REVISION_JSON_FIELDS = (
+    r'"\"change_id\":" ++ json(change_id) ++ '
+    r'",\"commit_id\":" ++ json(commit_id) ++ '
+    r'",\"description\":" ++ json(description) ++ '
+    r'",\"parents\":" ++ json(parents.map(|p| p.commit_id())) ++ '
+    r'",\"empty\":" ++ json(empty) ++ '
+    r'",\"divergent\":" ++ json(divergent) ++ '
+    r'",\"current_working_copy\":" ++ json(current_working_copy) ++ '
+    r'",\"working_copy_workspaces\":" ++ json(working_copies.map(|wc| wc.name())) ++ '
+    r'",\"hidden\":" ++ json(self.hidden()) ++ '
+    r'",\"immutable\":" ++ json(immutable) ++ '
+    r'",\"conflict\":" ++ json(self.conflict())'
 )
-_SCAN_TEMPLATE_PREFIX = _COMMIT_TEMPLATE.removesuffix(r'"\n"') + r'"\t" ++ '
+_COMMIT_TEMPLATE = r'"{" ++ ' + _REVISION_JSON_FIELDS + r' ++ "}\n"'
 _BOOKMARK_TEMPLATE = r'json(self) ++ "\n"'
 _REVIEW_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
 _REVIEW_TEMP_REF = f"refs/heads/{_REVIEW_TEMP_BOOKMARK}"
-_CONFIG_ORIGIN_TEMPLATE = r'json(source) ++ "\t" ++ json(path) ++ "\n"'
+_CONFIG_ORIGIN_TEMPLATE = r'json(self) ++ "\n"'
 _WORKSPACE_TEMPLATE = (
-    r'json(name) ++ "\t" ++ if(root, json(root.absolute()), "null") ++ "\t" ++ '
-    r'json(target.current_working_copy()) ++ "\n"'
+    r'"{\"name\":" ++ json(name) ++ '
+    r'",\"root\":" ++ if(root, json(root.absolute()), "null") ++ '
+    r'",\"current\":" ++ json(target.current_working_copy()) ++ "}\n"'
 )
 
 
@@ -86,19 +93,37 @@ class ReviewTempArtifacts:
     ref_target: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class JjWorkspace:
+class JjWorkspace(BaseModel):
     """A named jj workspace and its recorded working-copy location."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
 
     name: str
     root: Path | None
     current: bool
 
 
-@dataclass(frozen=True, slots=True)
-class _ConfigOrigin:
+class _ConfigOrigin(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+
     source: str
     path: str
+
+
+class _BookmarkRow(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+
+    name: str
+    target: tuple[str, ...]
+    remote: str | None = None
+    tracking_target: tuple[str, ...] | None = None
+
+
+class _RevisionScan(BaseModel):
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    revision: LocalRevision
+    membership: tuple[bool, ...]
 
 
 UnsupportedStackReason = Literal[
@@ -223,35 +248,11 @@ class JjClient:
         """Return named workspaces with any working-copy roots recorded by jj."""
 
         stdout = self._run_jj(("workspace", "list", "-T", _WORKSPACE_TEMPLATE))
-        workspaces: list[JjWorkspace] = []
-        for line in stdout.splitlines():
-            if not line.strip():
-                continue
-            try:
-                name_json, root_json, current_json = line.split("\t")
-                name = json.loads(name_json)
-                root = json.loads(root_json)
-                current = json.loads(current_json)
-            except (ValueError, json.JSONDecodeError) as error:
-                raise JjCommandError(
-                    t"{ui.cmd('jj workspace list')} output has unexpected format: {line!r}"
-                ) from error
-            if (
-                not isinstance(name, str)
-                or not (root is None or isinstance(root, str))
-                or not isinstance(current, bool)
-            ):
-                raise JjCommandError(
-                    t"{ui.cmd('jj workspace list')} output has unexpected values: {line!r}"
-                )
-            workspaces.append(
-                JjWorkspace(
-                    name=name,
-                    root=None if root is None else Path(root),
-                    current=current,
-                )
-            )
-        return tuple(workspaces)
+        return _parse_json_lines(
+            stdout,
+            command="jj workspace list",
+            model=JjWorkspace,
+        )
 
     def query_revisions_with_membership(
         self,
@@ -593,11 +594,7 @@ class JjClient:
                 _BOOKMARK_TEMPLATE,
             )
         )
-        return tuple(
-            str(row["name"])
-            for row in _parse_bookmark_rows(stdout)
-            if row.get("remote") == remote
-        )
+        return tuple(row.name for row in _parse_bookmark_rows(stdout) if row.remote == remote)
 
     def ensure_review_fetch_isolation(
         self,
@@ -680,10 +677,8 @@ class JjClient:
         """Return visible reserved-namespace bookmark targets grouped by name."""
 
         targets_by_name: dict[str, set[str]] = {}
-        for raw in self._bookmark_rows(review_branch_glob()):
-            targets_by_name.setdefault(str(raw["name"]), set()).update(
-                _require_sequence(raw["target"])
-            )
+        for row in self._bookmark_rows(review_branch_glob()):
+            targets_by_name.setdefault(row.name, set()).update(row.target)
         return {name: frozenset(targets) for name, targets in sorted(targets_by_name.items())}
 
     def accept_expected_review_bookmarks(
@@ -699,10 +694,10 @@ class JjClient:
         self._published_review_snapshots = {}
         untracked: list[tuple[str, str]] = []
         target_counts: dict[str, int] = {}
-        for raw in self._bookmark_rows():
-            if isinstance(raw.get("remote"), str) and "tracking_target" not in raw:
-                for target in _require_sequence(raw["target"]):
-                    untracked.append((str(raw["name"]), target))
+        for row in self._bookmark_rows():
+            if row.remote is not None and row.tracking_target is None:
+                for target in row.target:
+                    untracked.append((row.name, target))
                     target_counts[target] = target_counts.get(target, 0) + 1
         selectors = " | ".join(
             f"(remote_bookmarks(exact:{json.dumps(name)}) & {_quote_revset_symbol(commit_id)})"
@@ -736,7 +731,7 @@ class JjClient:
             if len(local) == 1 and not local[0].immutable
         }
 
-    def _bookmark_rows(self, *patterns: str) -> tuple[dict[str, object], ...]:
+    def _bookmark_rows(self, *patterns: str) -> tuple[_BookmarkRow, ...]:
         stdout = self._run_jj(
             ("bookmark", "list", "--all-remotes", "-T", _BOOKMARK_TEMPLATE, *patterns)
         )
@@ -1091,44 +1086,24 @@ class JjClient:
                 t"{ui.cmd('jj config list')} returned multiple effective values for "
                 t"{ui.code(key)}."
             )
-        source_json, separator, path_json = lines[0].partition("\t")
-        if not separator:
-            raise JjCommandError(
-                t"{ui.cmd('jj config list')} returned an unexpected config-origin payload."
-            )
-        try:
-            source = json.loads(source_json)
-            path = json.loads(path_json)
-        except json.JSONDecodeError as error:
-            raise JjCommandError(
-                t"{ui.cmd('jj config list')} returned invalid config-origin JSON."
-            ) from error
-        if not isinstance(source, str) or not isinstance(path, str):
-            raise JjCommandError(
-                t"{ui.cmd('jj config list')} returned invalid config-origin fields."
-            )
-        return _ConfigOrigin(source=source, path=path)
+        return _parse_json_line(
+            lines[0],
+            command="jj config list",
+            model=_ConfigOrigin,
+        )
 
     def _local_bookmark_targets(self, bookmark: str) -> tuple[str, ...]:
         """Return targets of one exact local bookmark, excluding remote entries."""
 
         stdout = self._run_jj(("bookmark", "list", "-T", _BOOKMARK_TEMPLATE, bookmark))
         targets: list[str] = []
-        for line in stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            raw = json.loads(stripped)
-            if (
-                not isinstance(raw, dict)
-                or raw.get("name") != bookmark
-                or ("remote" in raw and raw["remote"] is not None)
-            ):
+        for row in _parse_bookmark_rows(stdout):
+            if row.name != bookmark or row.remote is not None:
                 raise JjCommandError(
                     t"Unexpected {ui.cmd('jj bookmark list')} payload while checking "
                     t"{ui.bookmark(bookmark)}."
                 )
-            targets.extend(_require_sequence(raw.get("target", ())))
+            targets.extend(row.target)
         return tuple(dict.fromkeys(targets))
 
     def _clear_review_temp_ref(self) -> None:
@@ -1186,8 +1161,6 @@ class JjClient:
         return completed.stdout
 
 
-_EXPECTED_FIELD_COUNT = 11
-
 _HTTP_URL_AUTHORITY_PATTERN = re.compile(
     r"(?P<scheme>https?://)(?P<authority>[^/\s'\"<>]+)",
     re.IGNORECASE,
@@ -1239,112 +1212,67 @@ def divergent_change_id_from_error(error: JjCommandError) -> str | None:
     return match.group(1) if match is not None else None
 
 
-def _parse_bookmark_rows(stdout: str) -> tuple[dict[str, object], ...]:
-    rows: list[dict[str, object]] = []
-    for line in stdout.splitlines():
-        raw = json.loads(line)
-        if (
-            not isinstance(raw, dict)
-            or not isinstance(raw.get("name"), str)
-            or not isinstance(raw.get("target"), list)
-            or not all(isinstance(target, str) for target in raw["target"])
-        ):
-            raise JjCommandError(
-                t"Unexpected {ui.cmd('jj bookmark list')} payload while checking bookmarks."
-            )
-        rows.append(raw)
-    return tuple(rows)
+def _parse_json_line[Row: BaseModel](
+    line: str,
+    *,
+    command: str,
+    model: type[Row],
+) -> Row:
+    try:
+        return model.model_validate_json(line)
+    except ValidationError as error:
+        raise JjCommandError(t"{ui.cmd(command)} returned invalid structured output.") from error
+
+
+def _parse_json_lines[Row: BaseModel](
+    stdout: str,
+    *,
+    command: str,
+    model: type[Row],
+) -> tuple[Row, ...]:
+    return tuple(
+        _parse_json_line(line, command=command, model=model)
+        for line in stdout.splitlines()
+        if line.strip()
+    )
+
+
+def _parse_bookmark_rows(stdout: str) -> tuple[_BookmarkRow, ...]:
+    return _parse_json_lines(
+        stdout,
+        command="jj bookmark list",
+        model=_BookmarkRow,
+    )
 
 
 def _parse_revision_line(line: str) -> LocalRevision:
-    parts = line.split("\t")
-    if len(parts) != _EXPECTED_FIELD_COUNT:
-        raise JjCommandError(
-            t"{ui.cmd('jj log')} output has unexpected format: expected {_EXPECTED_FIELD_COUNT} "
-            t"tab-separated fields, got {len(parts)}. Raw line: {line!r}"
-        )
-    (
-        change_id_json,
-        commit_id_json,
-        description_json,
-        parents_json,
-        empty_json,
-        divergent_json,
-        working_copy_json,
-        working_copy_workspaces_json,
-        hidden_json,
-        immutable_json,
-        conflict_json,
-    ) = parts
-    try:
-        parents_raw = json.loads(parents_json)
-        if not isinstance(parents_raw, list):
-            raise JjCommandError(
-                t"{ui.cmd('jj log')} output has unexpected field types: "
-                t"parents field is not a JSON array. Raw line: {line!r}"
-            )
-        working_copy_workspaces_raw = json.loads(working_copy_workspaces_json)
-        if not isinstance(working_copy_workspaces_raw, list) or not all(
-            isinstance(workspace, str) for workspace in working_copy_workspaces_raw
-        ):
-            raise JjCommandError(
-                t"{ui.cmd('jj log')} output has unexpected field types: "
-                t"working-copy workspaces field is not a JSON string array. Raw line: {line!r}"
-            )
-        return LocalRevision(
-            change_id=json.loads(change_id_json),
-            commit_id=json.loads(commit_id_json),
-            conflict=json.loads(conflict_json),
-            current_working_copy=json.loads(working_copy_json),
-            description=json.loads(description_json),
-            divergent=json.loads(divergent_json),
-            empty=json.loads(empty_json),
-            hidden=json.loads(hidden_json),
-            immutable=json.loads(immutable_json),
-            parents=tuple(parents_raw),
-            working_copy_workspaces=tuple(working_copy_workspaces_raw),
-        )
-    except json.JSONDecodeError as error:
-        raise JjCommandError(
-            t"{ui.cmd('jj log')} output contains invalid JSON: {error}. Raw line: {line!r}"
-        ) from error
+    return _parse_json_line(line, command="jj log", model=LocalRevision)
 
 
 def _parse_revision_with_flags_line(
     line: str,
     flag_count: int,
 ) -> tuple[LocalRevision, tuple[bool, ...]]:
-    expected_field_count = _EXPECTED_FIELD_COUNT + flag_count
-    parts = line.split("\t")
-    if len(parts) != expected_field_count:
+    scan = _parse_json_line(line, command="jj log", model=_RevisionScan)
+    if len(scan.membership) != flag_count:
         raise JjCommandError(
-            t"{ui.cmd('jj log')} output has unexpected format: expected "
-            t"{expected_field_count} tab-separated fields, got {len(parts)}. "
-            t"Raw line: {line!r}"
+            t"{ui.cmd('jj log')} output has {len(scan.membership)} membership flags; "
+            t"expected {flag_count}."
         )
-    revision = _parse_revision_line("\t".join(parts[:_EXPECTED_FIELD_COUNT]))
-    try:
-        flags = tuple(bool(json.loads(part)) for part in parts[_EXPECTED_FIELD_COUNT:])
-    except json.JSONDecodeError as error:
-        raise JjCommandError(
-            t"{ui.cmd('jj log')} output contains invalid JSON: {error}. Raw line: {line!r}"
-        ) from error
-    return revision, flags
-
-
-def _require_sequence(value: object) -> Sequence[str]:
-    if not isinstance(value, list | tuple):
-        raise JjCommandError(
-            t"Unexpected {ui.cmd('jj bookmark list')} payload: expected a sequence."
-        )
-    return tuple(str(item) for item in value if item is not None)
+    return scan.revision, scan.membership
 
 
 def _membership_scan_template(membership_revsets: Sequence[str]) -> str:
-    flags = r' ++ "\t" ++ '.join(
+    flags = r' ++ "," ++ '.join(
         f"json(self.contained_in({json.dumps(revset)}))" for revset in membership_revsets
     )
-    return _SCAN_TEMPLATE_PREFIX + flags + r' ++ "\n"'
+    return (
+        r'"{\"revision\":{" ++ '
+        + _REVISION_JSON_FIELDS
+        + r' ++ "},\"membership\":[" ++ '
+        + flags
+        + r' ++ "]}\n"'
+    )
 
 
 def _short_change_id_render_template(*, min_len: int) -> str:

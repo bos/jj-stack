@@ -14,10 +14,12 @@ from jj_stack.errors import (
     resolve_exit_code,
 )
 from jj_stack.jj.client import (
+    _COMMIT_TEMPLATE,
     JjClient,
     JjCommandError,
     ReviewRefUpdate,
     StaleWorkspaceError,
+    _membership_scan_template,
 )
 from jj_stack.models.stack import LocalRevision
 from tests.support.revision_helpers import make_revision
@@ -39,26 +41,27 @@ def _revision_line(
     working_copy_workspaces: list[str] | None = None,
     immutable: bool = False,
 ) -> str:
-    import json
-
-    fields = [
-        json.dumps(change_id),
-        json.dumps(commit_id),
-        json.dumps(description),
-        json.dumps(parents),
-        "true" if empty else "false",
-        "true" if divergent else "false",
-        "true" if working_copy else "false",
+    return (
         json.dumps(
-            working_copy_workspaces
-            if working_copy_workspaces is not None
-            else (["default"] if working_copy else [])
-        ),
-        "true" if hidden else "false",
-        "true" if immutable else "false",
-        "true" if conflict else "false",
-    ]
-    return "\t".join(fields) + "\n"
+            {
+                "change_id": change_id,
+                "commit_id": commit_id,
+                "conflict": conflict,
+                "current_working_copy": working_copy,
+                "description": description,
+                "divergent": divergent,
+                "empty": empty,
+                "hidden": hidden,
+                "immutable": immutable,
+                "parents": parents,
+                "working_copy_workspaces": working_copy_workspaces
+                if working_copy_workspaces is not None
+                else (["default"] if working_copy else []),
+            },
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
 
 
 class _AmbiguousRevsetClient(JjClient):
@@ -506,7 +509,10 @@ def test_review_fetch_isolation_reports_the_effective_override_origin(
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout='"repo"\t"/repo/.jj/repo/config.toml"\n',
+            stdout=(
+                '{"name":"remotes.origin.fetch","value":[],"source":"repo",'
+                '"path":"/repo/.jj/repo/config.toml","is_overridden":false}\n'
+            ),
             stderr="",
         )
 
@@ -751,36 +757,25 @@ def test_temp_ref_cleanup_removes_raw_ref_when_forgetting_bookmark_fails(
 
 
 def _template() -> str:
-    return (
-        r'json(change_id) ++ "\t" ++ json(commit_id) ++ "\t" ++ json(description) ++ "\t" ++ '
-        r'json(parents.map(|p| p.commit_id())) ++ "\t" ++ '
-        r'json(empty) ++ "\t" ++ json(divergent) ++ "\t" ++ '
-        r'json(current_working_copy) ++ "\t" ++ '
-        r'json(working_copies.map(|wc| wc.name())) ++ "\t" ++ '
-        r'json(self.hidden()) ++ "\t" ++ '
-        r'json(immutable) ++ "\t" ++ json(self.conflict()) ++ "\n"'
-    )
+    return _COMMIT_TEMPLATE
 
 
 def _trunk_scan_template() -> str:
-    return _scan_template_prefix() + r'json(self.contained_in("trunk()")) ++ "\n"'
+    return _membership_scan_template(("trunk()",))
 
 
 def _selection_scan_template(selection_revset: str) -> str:
-    return (
-        _scan_template_prefix()
-        + r'json(self.contained_in("trunk()")) ++ "\t" ++ json(self.contained_in('
-        + json.dumps(selection_revset)
-        + r')) ++ "\n"'
-    )
-
-
-def _scan_template_prefix() -> str:
-    return _template().removesuffix(r'"\n"') + r'"\t" ++ '
+    return _membership_scan_template(("trunk()", selection_revset))
 
 
 def _revision_with_flag_line(revision_line: str, *, is_trunk: bool) -> str:
-    return revision_line.removesuffix("\n") + f"\t{'true' if is_trunk else 'false'}\n"
+    return (
+        json.dumps(
+            {"revision": json.loads(revision_line), "membership": [is_trunk]},
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
 
 
 def _revision_with_two_flags_line(
@@ -790,9 +785,14 @@ def _revision_with_two_flags_line(
     is_selected: bool,
 ) -> str:
     return (
-        revision_line.removesuffix("\n")
-        + f"\t{'true' if is_trunk else 'false'}\t"
-        + f"{'true' if is_selected else 'false'}\n"
+        json.dumps(
+            {
+                "revision": json.loads(revision_line),
+                "membership": [is_trunk, is_selected],
+            },
+            separators=(",", ":"),
+        )
+        + "\n"
     )
 
 

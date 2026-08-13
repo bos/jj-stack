@@ -301,9 +301,7 @@ def _checked_out_workspace_hint(
         workspace = known.get(name)
         if workspace is None or (workspace.root is None and not workspace.current):
             hint.append(
-                t"For {ui.code(name)}, jj has no recorded path. Locate it with "
-                t"{ui.cmd('jj workspace list')}, change to that directory, and run "
-                t"{ui.cmd("jj new 'trunk()'")}.\n"
+                t"For {ui.code(name)}, run {ui.cmd("jj new 'trunk()'")} in that workspace.\n"
             )
             continue
         root = str(workspace.root or context.repo_root)
