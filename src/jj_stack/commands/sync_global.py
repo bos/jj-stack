@@ -4,6 +4,7 @@ import jj_stack.console as console
 import jj_stack.github.resolution as github_resolution
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
+from jj_stack.commands.cleanup.command import cleanup_tracked_reviews
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.jj.client import JjCommandError
@@ -11,10 +12,8 @@ from jj_stack.models.github import GithubPullRequest, GithubStack, GithubStackPu
 from jj_stack.review.convergence import dependent_path_commands
 from jj_stack.review.finish import (
     FinishContext,
-    finish_exit_code,
     finish_reviews,
     render_finish_results,
-    retire_reviews,
 )
 from jj_stack.review.github_stack_sync import observe_github_stacks
 from jj_stack.review.trunk_evidence import (
@@ -107,7 +106,6 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
         )
         had_failure = had_failure or len(eligible_exact) != len(exact_candidates)
         finish_context = FinishContext(
-            command=context,
             dry_run=dry_run,
             github=github,
             trunk_branch=trunk_branch,
@@ -123,13 +121,25 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> int:
             },
             skip_finish=terminal_required,
         )
-        results = retire_reviews(
-            finish_results=results,
-            finish=finish_context,
+        render_finish_results(dry_run=dry_run, results=results)
+        cleanup_result = await cleanup_tracked_reviews(
+            change_ids=tuple(
+                result.candidate.change_id for result in results if result.outcome != "skipped"
+            ),
+            context=context,
+            dry_run=dry_run,
+            github_client=github,
+            github_target=target,
+            planned_detached_dependents=frozenset(
+                result.candidate.review_identity.pr_number for result in results
+            ),
         )
-    render_finish_results(dry_run=dry_run, results=results)
-    blocked = had_failure or any(result.outcome == "skipped" for result in results)
-    return finish_exit_code(base=1 if blocked else 0, results=results)
+    blocked = (
+        had_failure
+        or any(result.outcome == "skipped" for result in results)
+        or any(action.status == "blocked" for action in cleanup_result.actions)
+    )
+    return 1 if blocked else 0
 
 
 def _eligible_exact_candidates(
@@ -185,7 +195,7 @@ def _github_stack_blocker(
     number: int,
     tracked_pull_numbers: frozenset[int],
 ) -> Message | None:
-    """Explain why a GitHub stack member cannot be retired repository-wide.
+    """Explain why a GitHub stack member cannot be finished repository-wide.
 
     Each cause is reported on its own. Naming them together left the reader to guess which of
     them applied when the code already knew.

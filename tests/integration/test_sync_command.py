@@ -10,7 +10,7 @@ import jj_stack.commands.sync as sync_command
 from jj_stack.errors import EXIT_GITHUB, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
-from jj_stack.state.store import ReviewStateError, ReviewStateStore, resolve_state_path
+from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.integration_helpers import (
     commit_file,
@@ -129,6 +129,7 @@ def test_sync_recovers_a_clean_single_review_rebase_merge(
     reviewed = selected_stack(repo).head
     state_store = ReviewStateStore.for_repo(repo)
     identity = state_store.load().review_identities[reviewed.change_id]
+    review_branch = identity.head_ref
     landed_commit_id = fake_repo.apply_rebase_merge(fake_repo.pull_requests[identity.pr_number])
 
     exit_code = run_main(repo, config_path, "sync", reviewed.change_id)
@@ -142,63 +143,29 @@ def test_sync_recovers_a_clean_single_review_rebase_merge(
     assert copies[0].immutable
     assert JjClient(repo).resolve_revision("@").parents == (landed_commit_id,)
     assert reviewed.change_id not in state_store.load().review_identities
+    assert f"refs/heads/{review_branch}" not in remote_refs(fake_repo.git_dir)
 
 
-def test_sync_reports_a_failed_tracking_removal_in_its_exit_status(
+def test_sync_all_finishes_and_cleans_an_exact_review(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    """A failed durable write must not look like a clean run to a scripted caller."""
-
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    on_trunk, top = selected_stack(repo).revisions
-    _squash_merge_pull_request(fake_repo, 1)
-
-    def fail_retire(*_args: object, **_kwargs: object) -> None:
-        raise ReviewStateError("Could not write jj-stack data file /x/state.json")
-
-    monkeypatch.setattr(ReviewStateStore, "retire_review", fail_retire)
-
-    exit_code = run_main(repo, config_path, "sync", top.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    unwrapped = " ".join(captured.out.split())
-    assert "could not remove tracking" in unwrapped
-    assert "jj-stack cleanup" in unwrapped
-    # The store's own hint must not be spliced into this line.
-    assert "Move the file aside" not in unwrapped
-    assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
-
-
-def test_sync_all_reports_a_failed_tracking_removal_in_its_exit_status(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """Repository-wide recovery computes its own exit status and needs the same rule."""
-
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     (on_trunk,) = selected_stack(repo).revisions
-    # Global recovery acts only on an exact submitted commit reachable from trunk, which a
-    # merge commit produces and a squash merge does not.
+    state_store = ReviewStateStore.for_repo(repo)
+    review_branch = state_store.load().review_identities[on_trunk.change_id].head_ref
     fake_repo.apply_merge_commit((fake_repo.pull_requests[1],))
     capsys.readouterr()
-
-    def fail_retire(*_args: object, **_kwargs: object) -> None:
-        raise ReviewStateError("Could not write jj-stack data file /x/state.json")
-
-    monkeypatch.setattr(ReviewStateStore, "retire_review", fail_retire)
 
     exit_code = run_main(repo, config_path, "sync", "--all")
     captured = capsys.readouterr()
 
-    assert exit_code == 1
-    assert "could not remove tracking" in " ".join(captured.out.split())
-    assert on_trunk.change_id in ReviewStateStore.for_repo(repo).load().review_identities
+    assert exit_code == 0, (captured.out, captured.err)
+    assert fake_repo.pull_requests[1].state == "closed"
+    assert on_trunk.change_id not in state_store.load().review_identities
+    assert f"refs/heads/{review_branch}" not in remote_refs(fake_repo.git_dir)
 
 
 def test_sync_all_preserves_tracking_when_exact_pr_head_changed(

@@ -347,9 +347,10 @@ jj-stack sync <head-change-id>
 
 `sync` fetches trunk, verifies which lower PRs GitHub merged, rebases the remaining selected
 changes, and updates only PRs that already exist for them. It does not open a PR for trailing WIP
-or update reviews outside the selected stack. If you have more local changes built on top of the
-selected stack, `jj` rebases those changes too so they remain on top. Its output describes those
-sync actions, even when no reviews remain.
+or update reviews outside the selected stack. After that succeeds, the same command removes
+merged review branches, overview comments, and tracking that are no longer needed. If you have
+more local changes built on top of the selected stack, `jj` rebases those changes too so they
+remain on top. Its output describes those sync and cleanup actions, even when no reviews remain.
 
 GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
 `sync` handles either result without pretending the new GitHub commit is the old local change.
@@ -398,10 +399,10 @@ rebase. If a rebase is needed, the preview cannot show the resulting PR updates 
 rebased commits do not exist yet. The real `sync` computes those updates after the rebase.
 
 `sync --all` checks every locally tracked PR and cleans up those whose exact submitted commits are
-already on trunk. It may retarget and close those PRs and remove their tracking data, but it never
-rewrites or submits a stack. When GitHub created a different commit, `sync --all` leaves tracking
-in place and prints a
-`jj-stack sync <head-change-id>` command for each affected stack.
+already on trunk. It may retarget and close those PRs, then remove their branches, overview
+comments, and tracking data, but it never rewrites or submits a stack. When GitHub created a
+different commit, `sync --all` leaves tracking in place and prints the selected `jj-stack sync`
+command for each affected stack.
 
 ## 8. Close a stack without merging it
 

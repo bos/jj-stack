@@ -6,7 +6,6 @@ from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.finish import ReviewFinishResult, finish_exit_code
 from jj_stack.review.trunk_evidence import (
     TrackedReview,
     classify_exact_snapshot,
@@ -158,26 +157,6 @@ def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
 
         assert result.on_trunk is on_trunk
         assert on_trunk or result.reason is not None
-
-
-def test_finish_exit_code_separates_a_deliberate_skip_from_a_failed_write() -> None:
-    """Tracking a dependent stack still needs is preserved on purpose, not a failure."""
-
-    candidate = _candidate()
-    preserved = ReviewFinishResult(
-        candidate=candidate,
-        outcome="finished",
-        retirement_skip_reason="another local stack still uses this merged change",
-    )
-    failed = ReviewFinishResult(
-        candidate=candidate,
-        outcome="finished",
-        retirement_failure="state file is read-only",
-    )
-
-    assert finish_exit_code(base=0, results=(preserved,)) == 0
-    assert finish_exit_code(base=1, results=(preserved,)) == 1
-    assert finish_exit_code(base=0, results=(failed,)) == 1
 
 
 def _revision(*, commit_id: str, immutable: bool = False) -> LocalRevision:

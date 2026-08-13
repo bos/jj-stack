@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
 
@@ -19,8 +20,10 @@ from ..support.integration_helpers import (
 from ..support.submit_property_harness import advance_remote_trunk, update_remote_ref
 from .submit_command_helpers import (
     configure_submit_environment,
+    issue_comments,
     patch_github_client_builders,
     read_remote_ref,
+    remote_refs,
     run_main,
 )
 
@@ -249,6 +252,13 @@ def test_stack_rewriting_merge_automatically_retires_pre_merge_copies(
     fake_repo.github_stacks = {7: (1, 2)}
     state_store = ReviewStateStore.for_repo(repo)
     stack = selected_stack(repo)
+    fake_repo.create_issue_comment(
+        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstack overview",
+        issue_number=2,
+    )
+    assert any(
+        STACK_OVERVIEW_COMMENT_MARKER in comment.body for comment in issue_comments(fake_repo, 2)
+    )
 
     merge_exit_code = run_main(repo, config_path, "merge", "--method", merge_method)
     merged = capsys.readouterr()
@@ -259,6 +269,12 @@ def test_stack_rewriting_merge_automatically_retires_pre_merge_copies(
 
     assert "Updating the local stack after the completed merge" in merged.out
     assert state_store.load().review_identities == {}
+    assert not any(
+        ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)
+    )
+    assert not any(
+        STACK_OVERVIEW_COMMENT_MARKER in comment.body for comment in issue_comments(fake_repo, 2)
+    )
     assert JjClient(repo).resolve_revision("@").parents == (final_trunk,)
     copies = JjClient(repo).query_revisions_by_change_ids(
         tuple(revision.change_id for revision in stack.revisions)

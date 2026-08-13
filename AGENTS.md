@@ -67,8 +67,6 @@ compatibility code, migration code, or the like.
 - If behavior changes, update `design.md` and the user docs in the same change and make sure tests
   pass. Update `implementation-strategy.md` only for an architecture, tooling, or test-layer
   change; use `jj` commits for slice history.
-- Non-blocking design debt, architecture follow-ups, and deferred ideas belong in
-  [docs/internals/backlog.md](docs/internals/backlog.md).
 
 # Testing
 

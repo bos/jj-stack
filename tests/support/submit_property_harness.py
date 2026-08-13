@@ -131,6 +131,7 @@ def replay_lifecycle(
         label = initial_label(index)
         submitted = baseline[label]
         assert submitted.change_id not in state.review_identities
+        assert f"refs/heads/{submitted.branch}" not in refs
         assert fake_repo.pull_requests[submitted.pr_number].merged_at is not None
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
         copies = jj.query_revisions_by_change_ids((submitted.change_id,))[submitted.change_id]

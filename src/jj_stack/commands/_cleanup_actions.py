@@ -48,7 +48,7 @@ def check_tracked_review(
     allowed_states: frozenset[str],
     change_id: str,
     observation: RepositoryObservation,
-    preview_closed_dependents: frozenset[int] = frozenset(),
+    preview_detached_dependents: frozenset[int] = frozenset(),
     require_no_open_dependents: bool = False,
     retry_command: str = "cleanup",
     review_identity: ReviewIdentity,
@@ -109,7 +109,7 @@ def check_tracked_review(
         observed_dependents = open_pull_requests_by_base.get(review_identity.head_ref, ())
         dependents = tuple(
             filter(
-                lambda item: item.number not in preview_closed_dependents,
+                lambda item: item.number not in preview_detached_dependents,
                 observed_dependents,
             )
         )
@@ -289,7 +289,7 @@ def plan_review_cleanup(
     allowed_states: frozenset[str],
     change_id: str,
     observation: RepositoryObservation,
-    preview_closed_dependents: frozenset[int] = frozenset(),
+    preview_detached_dependents: frozenset[int] = frozenset(),
     retry_command: str = "cleanup",
     review_identity: ReviewIdentity,
     submitted_baseline: SubmittedBaseline,
@@ -300,7 +300,7 @@ def plan_review_cleanup(
         allowed_states=allowed_states,
         change_id=change_id,
         observation=observation,
-        preview_closed_dependents=preview_closed_dependents,
+        preview_detached_dependents=preview_detached_dependents,
         require_no_open_dependents=True,
         retry_command=retry_command,
         review_identity=review_identity,

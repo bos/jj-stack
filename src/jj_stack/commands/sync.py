@@ -1,9 +1,9 @@
 """Apply completed GitHub merges to a local stack and refresh the PRs that remain.
 
 `sync` fetches trunk and proves which reviewed changes reached it. It then rebases the remaining
-changes, updates only their existing pull requests, and removes saved links that no local path
-still needs. A completed direct `merge` invokes the same selected-stack update. Neither path
-creates a pull request.
+changes, updates only their existing pull requests, and removes the merged reviews' branches,
+comments, and saved links. A completed direct `merge` invokes the same selected-stack update.
+Neither path creates a pull request.
 
 Some local states stop `sync` before it rebases:
 
@@ -29,12 +29,12 @@ Rebasing a `jj` change also rebases its descendants. This may move local work ab
 stack, but `sync` updates pull requests only for the selected stack.
 
 A different local path may share a merged change with the stack being synced. If that path still
-uses the old local change, `sync` leaves the change and its tracking in place. It prints the other
-stack to sync next. A rerun observes work already completed and continues from there.
+uses the old local change, `sync` leaves the change in place and prints the other stack to sync
+next. A rerun observes work already completed and continues from there.
 
-`sync --all` never rebases or submits. It checks every locally tracked pull request and removes
-tracking for those whose submitted commit is already on trunk. For stacks that need a rebase, it
-prints a `jj-stack sync <head-change-id>` command instead.
+`sync --all` never rebases or submits. It checks every locally tracked pull request and finishes
+those whose submitted commit is already on trunk. For stacks that need a rebase, it prints a
+`jj-stack sync <head-change-id>` command instead.
 
 Use plain `jj rebase` when trunk merely advanced and nothing in the stack merged.
 """
@@ -48,6 +48,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.commands.cleanup.command import cleanup_tracked_reviews
 from jj_stack.commands.submit.command import print_selected_line, run_submit_async
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
@@ -63,21 +64,19 @@ from jj_stack.models.stack import LocalRevision
 from jj_stack.review.convergence import (
     SelectedConvergencePlan,
     build_selected_convergence_plan,
-    rewritten_retirement_blocker,
+    rewritten_removal_blocker,
 )
 from jj_stack.review.finish import (
     FinishContext,
-    finish_exit_code,
+    ReviewFinishResult,
     finish_reviews,
     render_finish_results,
-    retire_reviews,
 )
 from jj_stack.review.github_stack_sync import resolve_selected_github_stack_observation
 from jj_stack.review.observation import observe_reviews
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
 from jj_stack.review.trunk_evidence import TrackedReview
 from jj_stack.state.operation_lock import acquire_operation_lock
-from jj_stack.ui import Message
 
 HELP = "Apply completed GitHub merges locally and refresh the PRs that remain"
 
@@ -233,7 +232,6 @@ async def _apply_selected_plan(
     trunk_commit_id: str,
 ) -> int:
     finish_context = FinishContext(
-        command=context,
         dry_run=dry_run,
         github=github,
         trunk_branch=trunk_branch,
@@ -251,13 +249,6 @@ async def _apply_selected_plan(
     rebase_revision_ids = (
         tuple(revision.commit_id for revision in plan.survivors) if plan.on_trunk else ()
     )
-
-    def retirement_blocker(candidate: TrackedReview) -> Message | None:
-        return rewritten_retirement_blocker(
-            candidate=candidate,
-            context=context,
-            plan=plan,
-        )
 
     if not dry_run:
         github_stack_survivors = plan.github_stack_survivors
@@ -329,7 +320,12 @@ async def _apply_selected_plan(
                 for change in plan.on_trunk
                 if change.revision is not None
                 and not change.revision.immutable
-                and retirement_blocker(change.candidate) is None
+                and rewritten_removal_blocker(
+                    candidate=change.candidate,
+                    context=context,
+                    plan=plan,
+                )
+                is None
             )
             if abandoned:
                 context.jj_client.abandon_revisions(abandoned)
@@ -348,13 +344,62 @@ async def _apply_selected_plan(
         dry_run=dry_run,
         plan=plan,
     )
-    results = retire_reviews(
-        finish_results=results,
-        finish=finish_context,
-        retirement_blocker=retirement_blocker,
-    )
     render_finish_results(dry_run=dry_run, results=results)
-    return finish_exit_code(base=update_result, results=results)
+    return await _cleanup_reconciled_reviews(
+        context=context,
+        dry_run=dry_run,
+        finish_results=results,
+        github=github,
+        plan=plan,
+        target=target,
+        update_result=update_result,
+    )
+
+
+async def _cleanup_reconciled_reviews(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    finish_results: tuple[ReviewFinishResult, ...],
+    github: GithubClient,
+    plan: SelectedConvergencePlan,
+    target: GithubTarget,
+    update_result: int,
+) -> int:
+    """Clean artifacts only after the selected local update has succeeded."""
+
+    if update_result != 0:
+        return update_result
+    cleanup_candidates: list[TrackedReview] = []
+    for result in finish_results:
+        if result.outcome == "skipped":
+            continue
+        blocker = rewritten_removal_blocker(
+            candidate=result.candidate,
+            context=context,
+            plan=plan,
+        )
+        if blocker is not None:
+            console.output(
+                t"  ! leave {ui.change_id(result.candidate.change_id)} tracked: {blocker}"
+            )
+            continue
+        cleanup_candidates.append(result.candidate)
+    review_identities = context.state_store.load().review_identities
+    cleanup_result = await cleanup_tracked_reviews(
+        change_ids=tuple(candidate.change_id for candidate in cleanup_candidates),
+        context=context,
+        dry_run=dry_run,
+        github_client=github,
+        github_target=target,
+        planned_detached_dependents=frozenset(
+            identity.pr_number
+            for revision in plan.reviewed_survivors
+            if (identity := review_identities.get(revision.change_id)) is not None
+        ),
+        planned_local_removals=frozenset(candidate.change_id for candidate in cleanup_candidates),
+    )
+    return 1 if any(action.status == "blocked" for action in cleanup_result.actions) else 0
 
 
 async def _update_selected_reviews(

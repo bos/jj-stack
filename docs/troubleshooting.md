@@ -91,7 +91,7 @@ advisory when it has moved to another head branch, and `jj-stack relink <pr> <ch
 the change at it.
 
 If GitHub reports a remembered PR as merged, run `jj-stack sync <change-id>` to update the local
-stack and retire tracking for the merged review.
+stack and remove the merged review's branch, overview comment, and tracking.
 
 If GitHub reports a remembered PR as closed, decide what outcome you want before choosing a
 command:
@@ -366,22 +366,20 @@ At a reviewed fork, leave the fork in its parent review and submit each outgoing
 Possible causes:
 
 - you closed PRs on GitHub, but the follow-up cleanup hasn't run yet
-- GitHub merged the PRs, but `jj-stack sync` or a later `cleanup` has not run yet
+- GitHub merged the PRs, but `jj-stack sync` has not run yet
 - another visible stack still needs the saved review link
-- `cleanup` could not confirm that a branch or comment is unused, so it left it alone and said so
+- the cleanup performed by `sync` could not confirm that a branch or comment is unused, so it left
+  it alone and said so
 
 What to do:
 
 ```bash
 jj-stack sync <head-change-id>
-jj-stack cleanup --dry-run # optional
-jj-stack cleanup
 ```
 
-Run `jj-stack sync <head-change-id>` first when merged changes still appear in the local stack.
-Cleanup preserves their review branches and tracking so sync can still identify what landed. Use
-`cleanup --dry-run` to preview any remaining branch, comment, or tracking removal, then run plain
-`cleanup` to apply the listed actions.
+`sync` updates the local stack and performs cleanup in the same command. If local reconciliation
+already succeeded but cleanup reported a blocker or failure, fix the cause it named and run the
+printed cleanup command to retry only the unfinished removal.
 
 ## Review bookmarks are visible locally
 

@@ -2,9 +2,8 @@
 
 ## What this directory is
 
-`docs/internals/` contains design notes, implementation strategy, test philosophy, and a backlog.
-These files are written for contributors and maintainers. Most users will never open this
-directory.
+`docs/internals/` contains design notes, implementation strategy, and test philosophy. These files
+are written for contributors and maintainers. Most users will never open this directory.
 
 ## What belongs here
 
@@ -15,13 +14,9 @@ directory.
   *strategy* changes (new tool, new component boundary, new test layer), not
   for every landed implementation change.
 - `testing-philosophy.md` — what kinds of tests to write and why.
-- `backlog.md` — non-blocking follow-up items: design debt, deferred features,
-  open architecture questions. It does not define behavior; add to it rather
-  than leaving TODOs in code.
-
 Only `design.md` defines product behavior. Other documents explain implementation, testing,
-review practice, or deferred work. Accepted plans guide their scoped work but do not change
-behavior until `design.md` is updated.
+or review practice. Accepted plans guide their scoped work but do not change behavior until
+`design.md` is updated.
 
 ## Vocabulary
 
@@ -40,9 +35,6 @@ internal terminology as permission to make user-facing docs or help harder to un
   a behavioral invariant. It is not a changelog.
 - **implementation-strategy.md**: update only when the build, test, or
   component strategy changes. `jj log` is the changelog; this file is not.
-- **backlog.md**: add items here instead of leaving inline TODOs or comments
-  about future work in the code.
-
 ## What not to put here
 
 These files are not a changelog, a commit log summary, or a task list for the

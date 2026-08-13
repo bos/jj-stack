@@ -35,10 +35,10 @@ why, not how the tool is built. If a section starts sounding like it is
 explaining implementation decisions, move that reasoning to `docs/internals/`.
 
 **`docs/internals/`** — internal notes read primarily by agents and
-contributors. Design decisions, implementation strategy, test philosophy,
-backlog. These files freely use internal vocabulary and can reference code
-structure, data models, and architectural tradeoffs. Most users will never
-open this directory.
+contributors. Design decisions, implementation strategy, and test philosophy.
+These files freely use internal vocabulary and can reference code structure,
+data models, and architectural tradeoffs. Most users will never open this
+directory.
 
 ## Built-in `--help` text
 

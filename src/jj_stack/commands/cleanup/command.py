@@ -150,6 +150,53 @@ def _run_cleanup_command(
     return 1 if any(action.status == "blocked" for action in result.actions) else 0
 
 
+async def cleanup_tracked_reviews(
+    *,
+    change_ids: tuple[str, ...],
+    context: CommandContext,
+    dry_run: bool,
+    github_client: GithubClient,
+    github_target: GithubTarget,
+    planned_detached_dependents: frozenset[int] = frozenset(),
+    planned_local_removals: frozenset[str] = frozenset(),
+) -> CleanupResult:
+    """Run the cleanup implementation for reviews reconciled by another command."""
+
+    state = context.state_store.load()
+    if not dry_run:
+        context.state_store.require_writable()
+    prepared_cleanup = PreparedCleanup(
+        context=context,
+        github_target=github_target,
+        dry_run=dry_run,
+        selected_change_ids=change_ids,
+        state=state,
+    )
+    local_observations = _local_cleanup_observations(
+        change_ids=change_ids,
+        context=context,
+    )
+    if dry_run:
+        local_observations.update(
+            {
+                change_id: LocalCleanupObservation(
+                    has_mutable_copy=False,
+                    stale_reason=None,
+                )
+                for change_id in planned_local_removals
+            }
+        )
+    return await _run_cleanup_async(
+        github_client=github_client,
+        on_action=_build_action_streamer(
+            header=_render_cleanup_action_header(dry_run=dry_run),
+        ),
+        prepared_cleanup=prepared_cleanup,
+        preview_detached_dependents=(planned_detached_dependents if dry_run else frozenset()),
+        local_observations=local_observations,
+    )
+
+
 def _prepare_cleanup(
     *,
     context: CommandContext,
@@ -231,8 +278,10 @@ def _resolve_cleanup_change_ids(
 
 async def _run_cleanup_async(
     *,
+    github_client: GithubClient | None = None,
     on_action: Callable[[CleanupAction], None] | None,
     prepared_cleanup: PreparedCleanup,
+    preview_detached_dependents: frozenset[int] = frozenset(),
     local_observations: dict[str, LocalCleanupObservation],
 ) -> CleanupResult:
     recorder = ActionRecorder[CleanupAction](on_action=on_action)
@@ -243,13 +292,23 @@ async def _run_cleanup_async(
     )
     github_target = prepared_cleanup.github_target
     if isinstance(github_target, GithubTarget) and prepared_changes:
-        async with build_github_client(repository=github_target.repository) as github_client:
+        if github_client is not None:
             await _run_tracked_review_cleanup_pass(
                 github_client=github_client,
                 prepared_changes=prepared_changes,
                 prepared_cleanup=prepared_cleanup,
+                preview_detached_dependents=preview_detached_dependents,
                 record_action=recorder.record,
             )
+        else:
+            async with build_github_client(repository=github_target.repository) as client:
+                await _run_tracked_review_cleanup_pass(
+                    github_client=client,
+                    prepared_changes=prepared_changes,
+                    prepared_cleanup=prepared_cleanup,
+                    preview_detached_dependents=preview_detached_dependents,
+                    record_action=recorder.record,
+                )
     elif prepared_changes:
         for prepared_change in prepared_changes:
             recorder.record(
@@ -305,6 +364,7 @@ async def _run_tracked_review_cleanup_pass(
     github_client: GithubClient,
     prepared_changes: tuple[PreparedCleanupChange, ...],
     prepared_cleanup: PreparedCleanup,
+    preview_detached_dependents: frozenset[int] = frozenset(),
     record_action: Callable[[CleanupAction], None],
 ) -> None:
     """Clean closed exact review records while preserving open or ambiguous ones."""
@@ -340,6 +400,7 @@ async def _run_tracked_review_cleanup_pass(
             initial_observation=observation,
             prepared_change=prepared_change,
             prepared_cleanup=prepared_cleanup,
+            preview_detached_dependents=preview_detached_dependents,
             record_action=record_action,
             remote_name=remote_name,
         )
@@ -393,6 +454,7 @@ async def _cleanup_tracked_review(
     initial_observation: RepositoryObservation,
     prepared_change: PreparedCleanupChange,
     prepared_cleanup: PreparedCleanup,
+    preview_detached_dependents: frozenset[int],
     record_action: Callable[[CleanupAction], None],
     remote_name: str,
 ) -> bool:
@@ -402,6 +464,7 @@ async def _cleanup_tracked_review(
     review_state, update, blocker_action = _review_cleanup_update(
         observation=initial_observation,
         prepared_change=prepared_change,
+        preview_detached_dependents=preview_detached_dependents,
     )
     if blocker_action is not None:
         record_action(blocker_action)
@@ -456,6 +519,7 @@ def _review_cleanup_update(
     *,
     observation: RepositoryObservation,
     prepared_change: PreparedCleanupChange,
+    preview_detached_dependents: frozenset[int] = frozenset(),
 ) -> tuple[str, ReviewRefUpdate | None, CleanupAction | None]:
     """Check the exact review and derive its remote branch deletion."""
 
@@ -477,6 +541,7 @@ def _review_cleanup_update(
         allowed_states=frozenset({"closed", "merged"}),
         change_id=prepared_change.change_id,
         observation=observation,
+        preview_detached_dependents=preview_detached_dependents,
         review_identity=identity,
         submitted_baseline=prepared_change.submitted_baseline,
     )

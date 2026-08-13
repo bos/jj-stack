@@ -2,7 +2,7 @@
 
 This is the canonical product specification for `jj-stack`.
 Implementation structure belongs in `implementation-strategy.md`; testing guidance belongs in the
-testing and review documents; deferred questions belong in `backlog.md`.
+testing and review documents.
 
 ## Summary
 
@@ -218,20 +218,21 @@ evidence, and mutation rules.
   publishes a never-submitted change.
 - **`sync`** reconciles the selected stack after
   reviewed work lands. It may rewrite surviving local changes, update their existing reviews, and
-  retire tracking for changes whose work is on trunk. It never creates a PR.
+  clean up merged reviews after the local update succeeds. It never creates a PR.
 - **`sync --all`** performs weaker repository-wide reconciliation. It may retarget and close
-  reviews proven on trunk by exact submitted-commit evidence, but never rewrites local stacks or
-  submits work. A GitHub review that cannot be read does not block independent candidates.
+  reviews proven on trunk by exact submitted-commit evidence and clean up their artifacts, but
+  never rewrites local stacks or submits work. A GitHub review that cannot be read does not block
+  independent candidates.
 - **`merge`** is the only command that asks GitHub to merge. It never pushes trunk. After GitHub
   completes a direct merge, it immediately performs the same selected-stack reconciliation as
   `sync`; queue acceptance leaves local history alone.
 - **`unstack`** removes GitHub's stack grouping while leaving its pull requests open. A GitHub
   stack number selects the remote resource directly; otherwise a local review stack selects its
   matching GitHub stack. `--local` only forgets local tracking and does not change GitHub.
-- **`cleanup`** removes eligible branches, managed overview comments, and tracking left by closed
-  or merged reviews. With no selector it checks the repository; a revision or pull request limits
-  it to the named review. It is optional housekeeping, not part of correctness or local-history
-  recovery.
+- **`cleanup`** removes eligible branches, managed overview comments, and tracking for closed or
+  merged reviews. `sync` invokes the same operation after reconciling merged work. The standalone
+  command handles closed reviews and cleanup retries; with no selector it checks the repository,
+  while a revision or pull request limits it to the named review.
 - **`checkout`** adopts review state already on GitHub. It sets up tracking but does not move the
   workspace or rewrite local commits.
 - **`relink`** attaches one known PR and same-repository head branch to one selected change when
@@ -413,7 +414,7 @@ The command-specific planning requirements are:
 - `merge` requires the current local commit and remote review ref both to equal
   `SubmittedBaseline.commit_id`, plus a live snapshot match. Tree or diff equivalence is not
   sufficient.
-- `sync --all` requires a snapshot match before retargeting, closing, or removing a saved review.
+- `sync --all` requires a snapshot match before retargeting, closing, or cleaning up a review.
 - cleanup requires a snapshot match before deleting artifacts or removing saved links.
 
 When the platform supports a conditional write or lease, the mutation is bound to the identity
@@ -422,7 +423,9 @@ branch, missing PR, or replacement PR found during planning fails closed and nam
 `unstack --local`, depending on whether the user needs to repair or forget the saved link.
 
 Only review creation, `relink`, and `checkout` create or replace identity. `unstack --local`
-deletes it explicitly; `sync`, `sync --all`, and cleanup remove it after checking live evidence.
+deletes it explicitly. Cleanup is the only operation that deletes identity after checking live
+evidence and removing review artifacts; `sync` and `sync --all` invoke that operation rather than
+deleting tracking themselves.
 
 Only commands that successfully send or adopt a specific reviewed commit may replace
 `SubmittedBaseline` for the same review identity:
@@ -607,11 +610,13 @@ another local path still depends on a merged revision after that rewrite, `sync`
 revision and its tracking in place and names each other stack that still needs `sync`. It never
 updates reviews outside the selected chain.
 
-Tracking for changes on trunk is removed only after survivor updates succeed and no local path
-still needs it. A failure after local convergence leaves completed work in place; a rerun observes
-the current DAG, tracking, and GitHub state and continues from there. `sync` never rebases merely
-because trunk advanced; ordinary `jj rebase` owns that workflow. Its output describes
-reconciliation, not submission, including when no reviews survive.
+After survivor updates succeed, `sync` invokes cleanup for merged reviews that no local path still
+needs. Cleanup removes each eligible review branch and managed overview comment before it removes
+the corresponding tracking. A blocked or failed cleanup leaves tracking for a retry. A failure
+after local convergence leaves completed work in place; a rerun observes the current DAG,
+tracking, and GitHub state and continues from there. `sync` never rebases merely because trunk
+advanced; ordinary `jj rebase` owns that workflow. Its output describes reconciliation and
+cleanup, not submission, including when no reviews survive.
 
 GitHub preserves `jj`'s `change-id` commit header through rebase merges of PRs, but not squash
 merges. A matching full change ID on fetched trunk identifies the successor rather than
@@ -684,9 +689,9 @@ in place, so `submit` does not silently reuse a closed review and `cleanup` can 
 branches and comments belong to it. Starting reviews over means closing the old pull requests,
 running selected cleanup, and then submitting again.
 
-Cleanup acts only on one complete identity/baseline pair. It may remove the managed overview
-comment, the exact saved review ref only while it still points to the expected commit, and the
-two records.
+Cleanup acts only on one complete identity/baseline pair, whether it runs directly or at the end
+of `sync`. It may remove the managed overview comment, the exact saved review ref only while it
+still points to the expected commit, and the two records.
 
 A pair is eligible only when:
 

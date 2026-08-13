@@ -26,10 +26,11 @@ Each review branch is named `<prefix>/<subject-slug>-<short-change-id>`, where `
 `jj-stack` unless the repo sets `branch_prefix`. The readable subject hints at the change's
 purpose; the suffix ties the name to its stable change ID. The branches normally stay on the Git
 remote, so they do not clutter local `jj` bookmark output. `jj-stack` creates them for review and
-can remove them later with `jj-stack cleanup` after their pull requests close or merge. When
-GitHub completes a direct merge, `jj-stack merge` immediately fetches and brings local history in
-line with it. After a queued merge or a merge completed through another client, run
-`jj-stack sync <head-change-id>` once GitHub finishes.
+removes them while syncing merged reviews. Use `jj-stack cleanup` directly for reviews you closed
+without merging or to retry an interrupted cleanup. When GitHub completes a direct merge,
+`jj-stack merge` immediately fetches and brings local history in line with it. After a queued
+merge or a merge completed through another client, run `jj-stack sync <head-change-id>` once
+GitHub finishes.
 
 ## Stack structure
 

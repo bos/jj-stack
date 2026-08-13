@@ -217,7 +217,7 @@ def _require_no_divergent_survivors(plan: SelectedConvergencePlan) -> None:
             )
 
 
-def rewritten_retirement_blocker(
+def rewritten_removal_blocker(
     *,
     candidate: TrackedReview,
     context: CommandContext,
