@@ -372,8 +372,6 @@ async def _update_selected_reviews(
     if not plan.reviewed_survivors:
         if plan.survivors:
             console.output("No existing reviews to update; trailing work remains local.")
-        else:
-            console.output("Nothing to submit: everything in this stack has merged.")
         return 0
     head_change_id = plan.reviewed_survivors[-1].change_id
     try:

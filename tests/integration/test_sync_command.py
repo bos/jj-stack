@@ -99,7 +99,7 @@ def test_sync_dry_run_previews_rebase_and_skips_submit_preview(
     assert fake_repo.pull_requests[2].base_ref == original_base_ref
 
 
-def test_sync_reports_nothing_to_submit_when_whole_stack_merged(
+def test_sync_finishes_when_whole_stack_merged(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -112,7 +112,6 @@ def test_sync_reports_nothing_to_submit_when_whole_stack_merged(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert "Nothing to submit: everything in this stack has merged." in captured.out
     assert JjClient(repo).resolve_revision("@").parents == (
         read_remote_ref(fake_repo.git_dir, "main"),
     )

@@ -348,7 +348,8 @@ jj-stack sync <head-change-id>
 `sync` fetches trunk, verifies which lower PRs GitHub merged, rebases the remaining selected
 changes, and updates only PRs that already exist for them. It does not open a PR for trailing WIP
 or update reviews outside the selected stack. If you have more local changes built on top of the
-selected stack, `jj` rebases those changes too so they remain on top.
+selected stack, `jj` rebases those changes too so they remain on top. Its output describes those
+sync actions, even when no reviews remain.
 
 GitHub may preserve a change as it merges or create a different commit, as a squash merge does.
 `sync` handles either result without pretending the new GitHub commit is the old local change.

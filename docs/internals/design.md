@@ -610,7 +610,8 @@ updates reviews outside the selected chain.
 Tracking for changes on trunk is removed only after survivor updates succeed and no local path
 still needs it. A failure after local convergence leaves completed work in place; a rerun observes
 the current DAG, tracking, and GitHub state and continues from there. `sync` never rebases merely
-because trunk advanced; ordinary `jj rebase` owns that workflow.
+because trunk advanced; ordinary `jj rebase` owns that workflow. Its output describes
+reconciliation, not submission, including when no reviews survive.
 
 GitHub preserves `jj`'s `change-id` commit header through rebase merges of PRs, but not squash
 merges. A matching full change ID on fetched trunk identifies the successor rather than

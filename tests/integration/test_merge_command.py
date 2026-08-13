@@ -231,6 +231,7 @@ def test_stack_merge_commit_uses_resolved_head_for_automatic_sync(
     )
 
     assert "Updating the local stack after the completed merge" in merged.out
+    assert "submit" not in merged.out
     assert state_store.load().review_identities == {}
     assert JjClient(repo).resolve_revision("@").parents == (merge_commit,)
 
