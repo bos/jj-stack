@@ -644,7 +644,8 @@ async def _apply_tracked_review_cleanup(
     action = CleanupAction(
         kind="tracking",
         status="planned" if prepared_cleanup.dry_run else "applied",
-        body=t"remove tracking for {ui.change_id(prepared_change.change_id)}{reason}",
+        body=t"forget PR #{prepared_change.review_identity.pr_number} for "
+        t"{ui.change_id(prepared_change.change_id)}{reason}",
     )
     if prepared_cleanup.dry_run:
         record_action(action)

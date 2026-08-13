@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shlex
+import sys
 from dataclasses import dataclass
 
 import jj_stack.ui as ui
@@ -122,6 +124,7 @@ def build_selected_convergence_plan(
         )
 
     _require_no_unpublished_edits(tuple(on_trunk))
+    _require_no_checked_out_merged_changes(tuple(on_trunk), context=context)
     reviewed: list[LocalRevision] = []
     saw_unreviewed = False
     for revision in survivors:
@@ -261,17 +264,124 @@ def _require_no_unpublished_edits(
             )
 
 
+def _require_no_checked_out_merged_changes(
+    changes: tuple[OnTrunkChange, ...],
+    *,
+    context: CommandContext,
+) -> None:
+    for item in changes:
+        revision = item.revision
+        if revision is None or not revision.is_working_copy:
+            continue
+        workspaces = revision.working_copy_workspaces
+        if not workspaces:
+            location = "the current workspace"
+        elif len(workspaces) == 1:
+            location = t"workspace {ui.code(workspaces[0])}"
+        else:
+            location = t"workspaces {ui.join(ui.code, workspaces)}"
+        raise CliError(
+            t"Cannot remove merged {ui.change_id(item.candidate.change_id)} because it is "
+            t"checked out in {location}.",
+            hint=_checked_out_workspace_hint(workspaces=workspaces, context=context),
+        )
+
+
+def _checked_out_workspace_hint(
+    *,
+    workspaces: tuple[str, ...],
+    context: CommandContext,
+) -> Message:
+    known = {workspace.name: workspace for workspace in context.jj_client.list_workspaces()}
+    if not workspaces:
+        workspaces = tuple(workspace.name for workspace in known.values() if workspace.current)
+    hint: list[Message] = ["Move off the merged change in each workspace:\n"]
+    disposable: list[tuple[str, str]] = []
+    for name in workspaces:
+        workspace = known.get(name)
+        if workspace is None or (workspace.root is None and not workspace.current):
+            hint.append(
+                t"For {ui.code(name)}, jj has no recorded path. Locate it with "
+                t"{ui.cmd('jj workspace list')}, change to that directory, and run "
+                t"{ui.cmd("jj new 'trunk()'")}.\n"
+            )
+            continue
+        root = str(workspace.root or context.repo_root)
+        command = _workspace_move_command(root=root, platform=sys.platform)
+        shell = " (PowerShell)" if sys.platform == "win32" else ""
+        hint.append(t"For {ui.code(name)} at {ui.code(root)}{shell}:\n  {ui.cmd(command)}\n")
+        if not workspace.current:
+            disposable.append((name, root))
+
+    if disposable:
+        hint.append(
+            "Alternatively, forget and move to the trash any workspace that is no longer "
+            "needed:\n"
+        )
+        for name, root in disposable:
+            command = _workspace_disposal_command(name=name, root=root, platform=sys.platform)
+            shell = " (PowerShell)" if sys.platform == "win32" else ""
+            hint.append(t"For {ui.code(name)}{shell}:\n  {ui.cmd(command)}\n")
+    hint.append("Then rerun the same sync command.")
+    return tuple(hint)
+
+
+def _workspace_move_command(*, root: str, platform: str) -> str:
+    if platform == "win32":
+        return (
+            f"Push-Location -LiteralPath {_powershell_quote(root)}; try {{ "
+            "jj new 'trunk()' } finally { Pop-Location }"
+        )
+    return f"(cd {shlex.quote(root)} && jj new {shlex.quote('trunk()')})"
+
+
+def _workspace_disposal_command(*, name: str, root: str, platform: str) -> str:
+    if platform == "win32":
+        quoted_name = _powershell_quote(name)
+        quoted_root = _powershell_quote(root)
+        return (
+            f"jj workspace forget -- {quoted_name}; if ($LASTEXITCODE -eq 0) {{ "
+            "Add-Type -AssemblyName Microsoft.VisualBasic; "
+            "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory("
+            f"{quoted_root}, "
+            "[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, "
+            "[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin) }"
+        )
+    trash_command = "trash" if platform == "darwin" else "gio trash"
+    return f"(jj workspace forget -- {shlex.quote(name)} && {trash_command} {shlex.quote(root)})"
+
+
+def _powershell_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def dependent_path_commands(
     *,
     ancestor_commit_id: str,
     context: CommandContext,
     excluded_change_ids: set[str] | None = None,
 ) -> Message | None:
+    heads = dependent_path_heads(
+        ancestor_commit_id=ancestor_commit_id,
+        context=context,
+        excluded_change_ids=excluded_change_ids,
+    )
+    if not heads:
+        return None
+    return t"run {ui.join(lambda r: ui.cmd(f'jj-stack sync {r.change_id[:8]}'), heads)}"
+
+
+def dependent_path_heads(
+    *,
+    ancestor_commit_id: str,
+    context: CommandContext,
+    excluded_change_ids: set[str] | None = None,
+) -> tuple[LocalRevision, ...]:
     excluded_changes = excluded_change_ids or set()
     repository_paths = observe_repository_paths(
         jj_client=context.jj_client,
         descendant_of=(ancestor_commit_id,),
-        include_current_working_copy=True,
+        include_working_copies=True,
         state=context.state_store.load(),
     )
     heads_by_commit_id: dict[str, LocalRevision] = {}
@@ -286,7 +396,4 @@ def dependent_path_commands(
         )
         if head is not None:
             heads_by_commit_id[head.commit_id] = head
-    heads = tuple(heads_by_commit_id.values())
-    if not heads:
-        return None
-    return t"run {ui.join(lambda revision: ui.cmd(f'jj-stack sync {revision.change_id}'), heads)}"
+    return tuple(heads_by_commit_id.values())

@@ -30,7 +30,7 @@ def _local_cleanup_observations(
         if not revisions:
             observations[change_id] = LocalCleanupObservation(
                 has_mutable_copy=False,
-                stale_reason="no visible local change matches that cached change ID",
+                stale_reason="no visible local copy remains",
             )
             continue
         if len(revisions) > 1:
@@ -74,6 +74,6 @@ def _local_cleanup_observations(
         if revision.commit_id not in supported_commit_ids:
             observations[revision.change_id] = LocalCleanupObservation(
                 has_mutable_copy=True,
-                stale_reason="local change no longer participates in a supported stack",
+                stale_reason="local change is no longer part of a review stack",
             )
     return observations

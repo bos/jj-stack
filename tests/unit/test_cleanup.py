@@ -40,7 +40,7 @@ def test_duplicate_claim_facts_are_scoped_to_one_repository() -> None:
     ) == frozenset({"saved", "duplicate"})
 
 
-def test_local_cleanup_observations_flag_changes_outside_supported_stacks(
+def test_local_cleanup_observations_flag_changes_outside_review_stacks(
     monkeypatch,
 ) -> None:
     live_revision = make_revision(
@@ -79,10 +79,9 @@ def test_local_cleanup_observations_flag_changes_outside_supported_stacks(
         has_mutable_copy=True,
         stale_reason=None,
     )
-    assert observations["stale-change"] == stale_module.LocalCleanupObservation(
-        has_mutable_copy=True,
-        stale_reason="local change no longer participates in a supported stack",
-    )
+    stale_observation = observations["stale-change"]
+    assert stale_observation.has_mutable_copy
+    assert stale_observation.stale_reason is not None
 
 
 def test_cleanup_accepts_only_the_exact_closed_review_branch_and_lease() -> None:

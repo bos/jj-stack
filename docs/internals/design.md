@@ -219,10 +219,10 @@ evidence, and mutation rules.
 - **`sync`** reconciles the selected stack after
   reviewed work lands. It may rewrite surviving local changes, update their existing reviews, and
   clean up merged reviews after the local update succeeds. It never creates a PR.
-- **`sync --all`** performs weaker repository-wide reconciliation. It may retarget and close
-  reviews proven on trunk by exact submitted-commit evidence and clean up their artifacts, but
-  never rewrites local stacks or submits work. A GitHub review that cannot be read does not block
-  independent candidates.
+- **`sync --all`** discovers every affected local stack and applies ordinary selected-stack
+  reconciliation to each one in turn. It also finishes reviews whose exact submitted commits are
+  on trunk and whose local changes are gone. A blocked stack does not prevent independent stacks
+  from continuing.
 - **`merge`** is the only command that asks GitHub to merge. It never pushes trunk. After GitHub
   completes a direct merge, it immediately performs the same selected-stack reconciliation as
   `sync`; queue acceptance leaves local history alone.
@@ -437,7 +437,7 @@ Only commands that successfully send or adopt a specific reviewed commit may rep
 - `relink`, from the observed remote target
 - `checkout`, when adopting an existing review
 
-`merge`, `sync --all`, `cleanup`, `view`, and `list` never advance a baseline.
+`merge`, `cleanup`, `view`, and `list` never advance a baseline.
 
 ### Submit and branch transport
 
@@ -574,9 +574,9 @@ merged is not one of them, because it says nothing about the trunk this reposito
   merged, still reports the submitted head, and reports a merge-result commit that is an ancestor
   of fetched trunk. This covers squash and rebase results.
 
-`sync` may use either proof. `sync --all` may use only exact submitted-commit evidence because a
-rewritten merge result proves only the stack named by the command and cannot support
-repository-wide local change.
+`sync` may use either proof. `sync --all` uses each rewritten merge result only to select and
+reconcile the local stack containing that review; it does not apply one review's evidence to a
+different stack. If no local copy remains, it uses that evidence only for ordinary cleanup.
 
 A PR merely reporting merged, or a merge result no longer reachable from fetched trunk,
 permits no change. Local revisions, identity, and baseline remain untouched until a later sync can
@@ -606,6 +606,11 @@ reconciles merged work or has nothing to do.
 It rebases surviving changes onto fetched trunk even when they contain conflicts. If a reviewed
 survivor remains conflicted, the local rebase stays in place but its review is not updated. The
 user resolves the conflict with `jj` and runs `submit` for the remaining stack.
+
+If a workspace directly has an obsolete merged change checked out, `sync` does not remove that
+change. Its diagnostic identifies the workspace and gives commands to move it to trunk or forget
+it and move its directory to the trash. A workspace on a surviving child does not block its
+ordinary rebase.
 
 Rewriting a selected revision may also rebase its local descendants under ordinary `jj` rules. If
 another local path still depends on a merged revision after that rewrite, `sync` leaves the

@@ -380,9 +380,9 @@ Conflicts do not prevent the local rebase. If a reviewed change remains conflict
 `sync` leaves the rebase in place and stops before updating that PR. Resolve the conflict with
 `jj`, then run `jj-stack submit <head-change-id>`.
 
-If another local path still depends on an old merged change, `sync` leaves that change and its
-tracking in place. It prints the head of each other stack that still needs `sync`. Work completed
-before any later stop remains in place, and rerunning `sync` continues from the current state.
+If another local path still depends on an old merged change, its PR link and review branch remain
+until that other stack is synced. Work completed before any later stop remains in place, and
+rerunning `sync` continues from the current state.
 
 `sync` does not otherwise rewrite history. If your stack simply drifted because `trunk()`
 advanced without anything in your stack merging, rebase only the intended bottom-to-head path
@@ -398,11 +398,8 @@ Use `jj-stack sync --dry-run <head-change-id>` to preview merged changes and any
 rebase. If a rebase is needed, the preview cannot show the resulting PR updates because the
 rebased commits do not exist yet. The real `sync` computes those updates after the rebase.
 
-`sync --all` checks every locally tracked PR and cleans up those whose exact submitted commits are
-already on trunk. It may retarget and close those PRs, then remove their branches, overview
-comments, and tracking data, but it never rewrites or submits a stack. When GitHub created a
-different commit, `sync --all` leaves tracking in place and prints the selected `jj-stack sync`
-command for each affected stack.
+`sync --all` checks every PR known to jj-stack, reconciles each affected local stack, and cleans
+up merged reviews whose local changes are gone. Independent stacks continue if one is blocked.
 
 ## 8. Close a stack without merging it
 

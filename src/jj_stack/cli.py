@@ -586,7 +586,8 @@ def _print_cli_error(error: CliError) -> None:
     hint = error_hint(error)
     if hint is not None:
         console.stderr_output(
-            ui.prefixed_line(ui.semantic_text("Hint: ", "hint", "heading"), hint),
+            (ui.semantic_text("Hint: ", "hint", "heading"), hint),
+            soft_wrap=True,
         )
 
 

@@ -49,6 +49,22 @@ def _simulate_stack_partial_merge(fake_repo) -> str:
     )
 
 
+def _add_other_workspace(repo: Path, root: Path, revision: str) -> None:
+    run_command(
+        [
+            "jj",
+            "workspace",
+            "add",
+            "--name",
+            "other",
+            "--revision",
+            revision,
+            str(root),
+        ],
+        repo,
+    )
+
+
 def test_sync_leaves_a_partially_merged_queued_review_alone(
     tmp_path: Path,
     monkeypatch,
@@ -146,26 +162,146 @@ def test_sync_recovers_a_clean_single_review_rebase_merge(
     assert f"refs/heads/{review_branch}" not in remote_refs(fake_repo.git_dir)
 
 
-def test_sync_all_finishes_and_cleans_an_exact_review(
+def test_sync_all_finds_cross_workspace_recovery(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    (on_trunk,) = selected_stack(repo).revisions
+    (reviewed,) = selected_stack(repo).revisions
+    other_workspace = tmp_path / "other-workspace"
+    _add_other_workspace(repo, other_workspace, reviewed.change_id)
+    commit_file(other_workspace, "dependent", "dependent.txt")
+    run_command(["jj", "edit", "@-"], other_workspace)
+    dependent = JjClient(other_workspace).resolve_revision("@")
     state_store = ReviewStateStore.for_repo(repo)
-    review_branch = state_store.load().review_identities[on_trunk.change_id].head_ref
-    fake_repo.apply_merge_commit((fake_repo.pull_requests[1],))
+    review_branch = state_store.load().review_identities[reviewed.change_id].head_ref
+    _squash_merge_pull_request(fake_repo, 1)
+    landed_commit_id = read_remote_ref(fake_repo.git_dir, "main")
+
     capsys.readouterr()
 
     exit_code = run_main(repo, config_path, "sync", "--all")
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.pull_requests[1].state == "closed"
-    assert on_trunk.change_id not in state_store.load().review_identities
+    assert reviewed.change_id not in state_store.load().review_identities
     assert f"refs/heads/{review_branch}" not in remote_refs(fake_repo.git_dir)
+    rewritten_dependent = JjClient(other_workspace).resolve_revision("@")
+    assert rewritten_dependent.change_id == dependent.change_id
+    assert rewritten_dependent.parents == (landed_commit_id,)
+
+
+def test_sync_all_rebases_a_workspace_child_of_an_exact_merge_side_copy(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    (reviewed,) = selected_stack(repo).revisions
+    other_workspace = tmp_path / "other-workspace"
+    _add_other_workspace(repo, other_workspace, reviewed.change_id)
+    commit_file(other_workspace, "dependent", "dependent.txt")
+    run_command(["jj", "edit", "@-"], other_workspace)
+    dependent = JjClient(other_workspace).resolve_revision("@")
+    fake_repo.apply_merge_commit((fake_repo.pull_requests[1],))
+    landed_commit_id = read_remote_ref(fake_repo.git_dir, "main")
+    run_command(["jj", "git", "fetch"], repo)
+    run_command(["jj", "new", "trunk()"], repo)
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    rewritten = JjClient(other_workspace).resolve_revision("@")
+    assert rewritten.change_id == dependent.change_id
+    assert rewritten.parents == (landed_commit_id,)
+
+
+def test_sync_all_exact_merge_does_not_select_an_unrelated_post_trunk_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    (reviewed,) = selected_stack(repo).revisions
+    state_store = ReviewStateStore.for_repo(repo)
+    review_branch = state_store.load().review_identities[reviewed.change_id].head_ref
+    fake_repo.apply_merge_commit((fake_repo.pull_requests[1],))
+    run_command(["jj", "git", "fetch"], repo)
+    run_command(["jj", "new", "trunk()"], repo)
+    commit_file(repo, "unrelated", "unrelated.txt")
+    unrelated = JjClient(repo).resolve_revision("@")
+    unrelated_snapshot = (unrelated.commit_id, unrelated.parents)
+    capsys.readouterr()
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    unchanged = JjClient(repo).resolve_revision(unrelated.change_id)
+    assert (unchanged.commit_id, unchanged.parents) == unrelated_snapshot
+    assert reviewed.change_id not in state_store.load().review_identities
+    assert f"refs/heads/{review_branch}" not in remote_refs(fake_repo.git_dir)
+
+
+def test_sync_all_cleans_a_rewritten_merge_after_its_local_copy_is_gone(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    (reviewed,) = selected_stack(repo).revisions
+    state_store = ReviewStateStore.for_repo(repo)
+    review_branch = state_store.load().review_identities[reviewed.change_id].head_ref
+    _squash_merge_pull_request(fake_repo, 1)
+    run_command(["jj", "abandon", reviewed.change_id], repo)
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert reviewed.change_id not in state_store.load().review_identities
+    assert f"refs/heads/{review_branch}" not in remote_refs(fake_repo.git_dir)
+
+
+def test_sync_all_stops_before_removing_a_change_checked_out_in_another_workspace(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    (reviewed,) = selected_stack(repo).revisions
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "independent", "independent.txt")
+    independent = selected_stack(repo).head
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+    other_workspace = tmp_path / "other-workspace"
+    _add_other_workspace(repo, other_workspace, reviewed.change_id)
+    run_command(["jj", "edit", reviewed.change_id], other_workspace)
+    _squash_merge_pull_request(fake_repo, 1)
+    _squash_merge_pull_request(fake_repo, 2)
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1, (captured.out, captured.err)
+    assert reviewed.change_id[:8] in captured.err
+    assert "other" in captured.err
+    assert str(other_workspace) in captured.err
+    assert "jj new" in captured.err
+    assert "jj workspace forget" in captured.err
+    assert "trash" in captured.err
+    assert JjClient(other_workspace).resolve_revision("@").change_id == reviewed.change_id
+    remaining = ReviewStateStore.for_repo(repo).load().review_identities
+    assert reviewed.change_id in remaining
+    assert independent.change_id not in remaining
 
 
 def test_sync_all_preserves_tracking_when_exact_pr_head_changed(
@@ -185,7 +321,8 @@ def test_sync_all_preserves_tracking_when_exact_pr_head_changed(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "no longer reports the submitted head" in captured.err
+    assert "PR #1" in captured.err
+    assert "submitted head" in captured.err
     assert reviewed.change_id in state_store.load().review_identities
 
 
@@ -206,7 +343,7 @@ def test_sync_all_reports_batch_pull_request_failure_without_traceback(
     captured = capsys.readouterr()
 
     assert exit_code == EXIT_GITHUB
-    assert "Could not inspect tracked pull requests" in captured.err
+    assert "Could not inspect pull requests" in captured.err
     assert "unavailable" in captured.err
     assert "Traceback" not in captured.err
 
@@ -432,7 +569,7 @@ def test_sync_all_requires_terminal_stack_merge_for_exact_stack_member(
     blocked = capsys.readouterr()
 
     assert blocked_exit == 1
-    assert "still lists PR #1 as an active member" in " ".join(blocked.err.split())
+    assert "GitHub still lists PR #1 as an active member" in " ".join(blocked.err.split())
     assert first.change_id in state_store.load().review_identities
     assert fake_repo.pull_requests[1].state == "open"
 
@@ -573,8 +710,9 @@ def test_sync_converges_selected_path_while_a_sibling_still_needs_the_merged_cha
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert "another local stack still uses this merged change" in captured.out
-    assert f"jj-stack sync {sibling.change_id}" in captured.out
+    assert "PR #1" in captured.out
+    assert f"jj-stack sync {sibling.change_id[:8]}" in captured.out
+    assert f"jj-stack sync {sibling.change_id}" not in captured.out
     rewritten_reviewed = jj.resolve_revision(reviewed.change_id)
     assert rewritten_reviewed.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
     assert fake_repo.pull_requests[2].head_sha == rewritten_reviewed.commit_id
@@ -685,7 +823,8 @@ def test_sync_all_isolates_an_unavailable_snapshot_from_an_exact_review(
     captured = capsys.readouterr()
 
     assert exit_code == 1, (captured.out, captured.err)
-    assert "leave" in captured.err.lower()
+    assert "PR #1" in captured.err
+    assert first.change_id[:8] in captured.err
     assert "submitted commit is unavailable locally" in captured.err
     state = state_store.load()
     assert first.change_id in state.review_identities

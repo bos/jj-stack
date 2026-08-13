@@ -32,9 +32,8 @@ A different local path may share a merged change with the stack being synced. If
 uses the old local change, `sync` leaves the change in place and prints the other stack to sync
 next. A rerun observes work already completed and continues from there.
 
-`sync --all` never rebases or submits. It checks every locally tracked pull request and finishes
-those whose submitted commit is already on trunk. For stacks that need a rebase, it prints a
-`jj-stack sync <head-change-id>` command instead.
+`sync --all` checks every pull request known to jj-stack. It reconciles each affected local stack
+in turn and also cleans up exact submitted commits whose local changes are gone.
 
 Use plain `jj rebase` when trunk merely advanced and nothing in the stack merged.
 """
@@ -53,7 +52,14 @@ from jj_stack.commands.submit.command import print_selected_line, run_submit_asy
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
 from jj_stack.commands.sync_global import run_global_recovery
-from jj_stack.errors import CliError, ConflictedStackError, UsageError
+from jj_stack.errors import (
+    CliError,
+    ConflictedStackError,
+    UsageError,
+    error_hint,
+    error_message,
+    resolve_exit_code,
+)
 from jj_stack.github.client import GithubClient, build_github_client
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
@@ -98,13 +104,44 @@ def sync(
         command="sync --all" if all_ else "sync",
     ):
         if all_:
-            return asyncio.run(run_global_recovery(context=context, dry_run=dry_run))
+            return _run_all_convergence(context=context, dry_run=dry_run)
         return run_stack_convergence(
             context=context,
             dry_run=dry_run,
             print_selected=revset is None,
             revset=revset,
         )
+
+
+def _run_all_convergence(*, context: CommandContext, dry_run: bool) -> int:
+    result = asyncio.run(run_global_recovery(context=context, dry_run=dry_run))
+    exit_code = result.exit_code
+    for change_id in result.sync_change_ids:
+        console.output(t"Syncing local stack {ui.change_id(change_id[:8])}:")
+        try:
+            stack_exit_code = run_stack_convergence(
+                context=context,
+                dry_run=dry_run,
+                fetch_remote_state=False,
+                revset=change_id,
+                trunk_branch=result.trunk_branch,
+            )
+        except CliError as error:
+            console.error(
+                t"Could not sync local stack {ui.change_id(change_id[:8])}: "
+                t"{error_message(error)}"
+            )
+            if hint := error_hint(error):
+                console.stderr_output(
+                    (ui.semantic_text("Hint: ", "hint", "heading"), hint),
+                    soft_wrap=True,
+                )
+            if exit_code == 0:
+                exit_code = resolve_exit_code(error)
+        else:
+            if exit_code == 0:
+                exit_code = stack_exit_code
+    return exit_code
 
 
 def run_stack_convergence(
@@ -114,6 +151,7 @@ def run_stack_convergence(
     fetch_remote_state: bool = True,
     print_selected: bool = False,
     revset: str | None,
+    trunk_branch: str | None = None,
 ) -> int:
     try:
         prepared_status = prepare_status(
@@ -132,6 +170,7 @@ def run_stack_convergence(
             context=context,
             dry_run=dry_run,
             prepared_status=prepared_status,
+            trunk_branch=trunk_branch,
         )
     )
 
@@ -141,6 +180,7 @@ async def _run_selected_convergence(
     context: CommandContext,
     dry_run: bool,
     prepared_status: PreparedStatus,
+    trunk_branch: str | None,
 ) -> int:
     prepared = prepared_status.prepared
     target, selected = _selected_target(prepared_status)
@@ -148,13 +188,14 @@ async def _run_selected_convergence(
         console.output("Nothing to sync: the selected revision is already on trunk.")
         return 0
     async with build_github_client(repository=target.repository) as github:
-        repository_state = await github.get_repository()
-        trunk_branch, _trunk_targets = resolve_trunk_branch(
-            client=prepared.client,
-            github_repository_state=repository_state,
-            remote=target.remote,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
-        )
+        if trunk_branch is None:
+            repository_state = await github.get_repository()
+            trunk_branch, _trunk_targets = resolve_trunk_branch(
+                client=prepared.client,
+                github_repository_state=repository_state,
+                remote=target.remote,
+                trunk_commit_id=prepared.stack.trunk.commit_id,
+            )
         observation = await observe_reviews(
             change_ids=tuple(revision.change_id for revision in selected),
             context=context,
@@ -381,7 +422,8 @@ async def _cleanup_reconciled_reviews(
         )
         if blocker is not None:
             console.output(
-                t"  ! leave {ui.change_id(result.candidate.change_id)} tracked: {blocker}"
+                t"  ! kept PR #{result.candidate.review_identity.pr_number} and its review "
+                t"branch for {ui.change_id(result.candidate.change_id)}: {blocker}"
             )
             continue
         cleanup_candidates.append(result.candidate)

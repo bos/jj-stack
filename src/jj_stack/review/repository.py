@@ -22,7 +22,8 @@ def observe_repository_paths(
     jj_client: JjClient,
     state: ReviewState,
     descendant_of: Sequence[str] = (),
-    include_current_working_copy: bool = False,
+    exclude_trunk_descendants: bool = False,
+    include_working_copies: bool = False,
 ) -> RepositoryReviewPaths:
     """Batch the visible facts for ordinary maximal paths.
 
@@ -34,12 +35,15 @@ def observe_repository_paths(
     visible_scope = "visible()"
     if descendant_of:
         anchors = " | ".join(json.dumps(commit_id) for commit_id in descendant_of)
-        visible_scope = f"(visible() & ({anchors})::)"
+        descendants = f"({anchors})::"
+        if exclude_trunk_descendants:
+            descendants += " ~ trunk()::"
+        visible_scope = f"(visible() & {descendants})"
     candidates = f"(({visible_scope}) ~ {trunk_path} ~ working_copies())"
-    if include_current_working_copy:
+    if include_working_copies:
         if not descendant_of:
             raise ValueError("Working-copy dependency observation requires an exact ancestor.")
-        candidates = f"({candidates} | (@ & {visible_scope}))"
+        candidates = f"({candidates} | (working_copies() & {visible_scope}))"
     prepare_visible_review_snapshots(jj_client=jj_client, state=state)
     rows = jj_client.query_revisions_with_membership(
         f"trunk() | ({candidates}) | parents({candidates}) | @",

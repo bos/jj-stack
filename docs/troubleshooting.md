@@ -491,10 +491,6 @@ each time.
   request. A matching request still in progress asks you to wait. If GitHub completed the merge
   but automatic sync stopped, do not rerun `merge`; follow the printed local recovery instead.
 
-`jj-stack sync <head-change-id>` handles commits rewritten by GitHub while keeping a review
-branch that a PR above still needs. `sync --all` checks independently tracked exact commits
-already on trunk. Both inspect current GitHub state and trunk history.
-
 ### Remove an unwanted review
 
 If a failed `submit` created PRs or review branches that you no longer want, remove any GitHub

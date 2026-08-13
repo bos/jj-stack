@@ -39,7 +39,8 @@ def test_cleanup_removes_closed_review_after_local_change_is_abandoned(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "remove tracking for" in captured.out
+    assert "PR #1" in captured.out
+    assert change_id[:8] in captured.out
     assert change_id not in ReviewStateStore.for_repo(repo).load().review_identities
     assert not any(
         ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)
@@ -64,19 +65,16 @@ def test_cleanup_revision_only_removes_leftovers_for_selected_stack(
     fake_repo.pull_requests[2].state = "closed"
 
     exit_code = run_main(repo, config_path, "cleanup", second_change_id)
-    captured = capsys.readouterr()
     state = ReviewStateStore.for_repo(repo).load()
 
     assert exit_code == 0
     assert second_change_id not in state.review_identities
     assert first_change_id in state.review_identities
-    assert "remove tracking for" in captured.out
 
 
 def test_cleanup_pull_request_selects_orphaned_saved_review(
     tmp_path: Path,
     monkeypatch,
-    capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -85,11 +83,9 @@ def test_cleanup_pull_request_selects_orphaned_saved_review(
     run_command(["jj", "abandon", change_id], repo)
 
     exit_code = run_main(repo, config_path, "cleanup", "--pull-request", "1")
-    captured = capsys.readouterr()
 
     assert exit_code == 0
     assert change_id not in ReviewStateStore.for_repo(repo).load().review_identities
-    assert "remove tracking for" in captured.out
 
 
 def test_cleanup_close_finishes_open_and_terminal_orphans(

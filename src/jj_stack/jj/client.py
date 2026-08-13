@@ -47,6 +47,10 @@ _BOOKMARK_TEMPLATE = r'json(self) ++ "\n"'
 _REVIEW_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
 _REVIEW_TEMP_REF = f"refs/heads/{_REVIEW_TEMP_BOOKMARK}"
 _CONFIG_ORIGIN_TEMPLATE = r'json(source) ++ "\t" ++ json(path) ++ "\n"'
+_WORKSPACE_TEMPLATE = (
+    r'json(name) ++ "\t" ++ if(root, json(root.absolute()), "null") ++ "\t" ++ '
+    r'json(target.current_working_copy()) ++ "\n"'
+)
 
 
 class JjCommandError(CliError):
@@ -80,6 +84,15 @@ class ReviewTempArtifacts:
 
     bookmark_targets: tuple[str, ...]
     ref_target: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class JjWorkspace:
+    """A named jj workspace and its recorded working-copy location."""
+
+    name: str
+    root: Path | None
+    current: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +219,40 @@ class JjClient:
                 return ()
             raise
 
+    def list_workspaces(self) -> tuple[JjWorkspace, ...]:
+        """Return named workspaces with any working-copy roots recorded by jj."""
+
+        stdout = self._run_jj(("workspace", "list", "-T", _WORKSPACE_TEMPLATE))
+        workspaces: list[JjWorkspace] = []
+        for line in stdout.splitlines():
+            if not line.strip():
+                continue
+            try:
+                name_json, root_json, current_json = line.split("\t")
+                name = json.loads(name_json)
+                root = json.loads(root_json)
+                current = json.loads(current_json)
+            except (ValueError, json.JSONDecodeError) as error:
+                raise JjCommandError(
+                    t"{ui.cmd('jj workspace list')} output has unexpected format: {line!r}"
+                ) from error
+            if (
+                not isinstance(name, str)
+                or not (root is None or isinstance(root, str))
+                or not isinstance(current, bool)
+            ):
+                raise JjCommandError(
+                    t"{ui.cmd('jj workspace list')} output has unexpected values: {line!r}"
+                )
+            workspaces.append(
+                JjWorkspace(
+                    name=name,
+                    root=None if root is None else Path(root),
+                    current=current,
+                )
+            )
+        return tuple(workspaces)
+
     def query_revisions_with_membership(
         self,
         revset: str,
@@ -234,6 +281,8 @@ class JjClient:
     def query_revisions_by_change_ids(
         self,
         change_ids: Sequence[str],
+        *,
+        off_trunk: bool = False,
     ) -> dict[str, tuple[LocalRevision, ...]]:
         """Return visible revisions grouped by logical change ID."""
 
@@ -245,7 +294,10 @@ class JjClient:
             change_id: [] for change_id in ordered_change_ids
         }
         for chunk in _chunked(ordered_change_ids):
-            revisions = self._query_revisions(_change_ids_revset(chunk))
+            revset = _change_ids_revset(chunk)
+            if off_trunk:
+                revset = f"({revset}) ~ first_ancestors(trunk())"
+            revisions = self._query_revisions(revset)
             for revision in revisions:
                 if projected := self._project(revision):
                     grouped.setdefault(revision.change_id, []).append(projected)
@@ -521,6 +573,32 @@ class JjClient:
             remotes.append(GitRemote(name=name, fetch_url=fetch_url, push_url=push_url))
         return tuple(remotes)
 
+    def remote_bookmarks_at_revision(
+        self,
+        *,
+        remote: str,
+        revision: str,
+    ) -> tuple[str, ...]:
+        """Return locally observed remote bookmarks pointing at one revision."""
+
+        stdout = self._run_jj(
+            (
+                "bookmark",
+                "list",
+                "--remote",
+                remote,
+                "--revision",
+                revision,
+                "-T",
+                _BOOKMARK_TEMPLATE,
+            )
+        )
+        return tuple(
+            str(row["name"])
+            for row in _parse_bookmark_rows(stdout)
+            if row.get("remote") == remote
+        )
+
     def ensure_review_fetch_isolation(
         self,
         *,
@@ -662,20 +740,7 @@ class JjClient:
         stdout = self._run_jj(
             ("bookmark", "list", "--all-remotes", "-T", _BOOKMARK_TEMPLATE, *patterns)
         )
-        rows: list[dict[str, object]] = []
-        for line in stdout.splitlines():
-            raw = json.loads(line)
-            if (
-                not isinstance(raw, dict)
-                or not isinstance(raw.get("name"), str)
-                or not isinstance(raw.get("target"), list)
-                or not all(isinstance(target, str) for target in raw["target"])
-            ):
-                raise JjCommandError(
-                    t"Unexpected {ui.cmd('jj bookmark list')} payload while checking bookmarks."
-                )
-            rows.append(raw)
-        return tuple(rows)
+        return _parse_bookmark_rows(stdout)
 
     def review_temp_ref_target(self) -> str | None:
         """Return the exact temporary review-import ref target, if it exists."""
@@ -806,12 +871,16 @@ class JjClient:
     def fetch_remote(
         self,
         *,
+        branches: Sequence[str] = (),
         remote: str,
     ) -> None:
         """Fetch ordinary repository state using its configured selection."""
 
         # Normal fetch also imports backing-Git ref changes in a colocated repository.
-        self._run_jj(("git", "fetch", "--remote", remote), manage_working_copy=True)
+        args = ["git", "fetch", "--remote", remote]
+        for branch in dict.fromkeys(branches):
+            args.extend(("--branch", branch))
+        self._run_jj(tuple(args), manage_working_copy=True)
 
     def list_remote_branches(
         self,
@@ -1168,6 +1237,23 @@ def divergent_change_id_from_error(error: JjCommandError) -> str | None:
     first_line = _unwrap_command_error_message(str(error)).splitlines()[0].strip()
     match = re.fullmatch(r"Error: Change ID `([k-z]+)` is divergent", first_line)
     return match.group(1) if match is not None else None
+
+
+def _parse_bookmark_rows(stdout: str) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
+    for line in stdout.splitlines():
+        raw = json.loads(line)
+        if (
+            not isinstance(raw, dict)
+            or not isinstance(raw.get("name"), str)
+            or not isinstance(raw.get("target"), list)
+            or not all(isinstance(target, str) for target in raw["target"])
+        ):
+            raise JjCommandError(
+                t"Unexpected {ui.cmd('jj bookmark list')} payload while checking bookmarks."
+            )
+        rows.append(raw)
+    return tuple(rows)
 
 
 def _parse_revision_line(line: str) -> LocalRevision:
