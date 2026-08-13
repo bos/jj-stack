@@ -46,6 +46,10 @@ compatibility code, migration code, or the like.
 - User-facing docs live in `docs/`. See [docs/AGENTS.md](docs/AGENTS.md) for the vocabulary
   rules and the public/internal split. Built-in `--help` text is held to the same standard as
   the user docs: assume jj/git familiarity, avoid `jj-stack` internal design jargon.
+- The web version of the user docs normally lives in the sibling jj repository at
+  `$(jj root)/../website`. When user-facing docs change here, inspect and update the corresponding
+  web docs there too when needed. If the change here is committed, commit the corresponding
+  website update in that repository as well; preserve unrelated work in either working copy.
 - Active internal docs use ordinary technical language too. Introduce a project-specific term
   only when it names a real type, field, or enduring rule, define it at first use, and prefer
   describing concrete inputs and effects.
