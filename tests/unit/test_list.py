@@ -22,4 +22,4 @@ def test_orphan_hint_is_emitted_once_for_all_rows(monkeypatch) -> None:
     _emit_orphan_hint((row, row))
 
     assert len(notes) == 1
-    assert "cleanup --pull-request orphans" in ui.plain_text(notes[0])
+    assert "cleanup --pull-request orphans --close" in ui.plain_text(notes[0])

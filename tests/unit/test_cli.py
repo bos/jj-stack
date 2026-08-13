@@ -98,6 +98,14 @@ def test_main_renders_cli_error_hint_on_separate_line(
     assert "Hint: Run view and retry." in err_lines
 
 
+def test_cleanup_close_requires_pull_request_selection(capsys) -> None:
+    exit_code = main(["cleanup", "--close"])
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_USAGE
+    assert "cleanup --close requires --pull-request" in captured.err
+
+
 def test_sync_help_hanging_indents_wrapped_bullets(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

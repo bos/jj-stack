@@ -500,5 +500,5 @@ already on trunk. Both inspect current GitHub state and trunk history.
 If a failed `submit` created PRs or review branches that you no longer want, remove any GitHub
 stack grouping with `unstack`, close the PRs on GitHub, then preview and run
 `jj-stack cleanup <head-change-id>`. If the local change is gone, use `jj-stack list` to find the
-orphaned PR and select it with `jj-stack cleanup --pull-request <pr>`. After closing every orphan
-shown by `list`, use `jj-stack cleanup --pull-request orphans` to remove their leftovers.
+orphaned PR and run `jj-stack cleanup --pull-request <pr> --close`. To close and clean up every
+orphan shown by `list`, use `jj-stack cleanup --pull-request orphans --close`.

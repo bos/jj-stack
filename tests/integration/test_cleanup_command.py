@@ -92,27 +92,30 @@ def test_cleanup_pull_request_selects_orphaned_saved_review(
     assert "remove tracking for" in captured.out
 
 
-def test_cleanup_orphans_only_removes_abandoned_closed_reviews(
+def test_cleanup_close_finishes_open_and_terminal_orphans(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    first_change_id = selected_stack(repo).head.change_id
+    change_ids = [selected_stack(repo).head.change_id]
 
-    run_command(["jj", "new", "main"], repo)
-    commit_file(repo, "feature 2", "feature-2.txt")
-    second_change_id = selected_stack(repo).head.change_id
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
+    for index in (2, 3):
+        run_command(["jj", "new", "main"], repo)
+        commit_file(repo, f"feature {index}", f"feature-{index}.txt")
+        change_ids.append(selected_stack(repo).head.change_id)
+        assert run_main(repo, config_path, "submit") == 0
+        capsys.readouterr()
 
     state_store = ReviewStateStore.for_repo(repo)
     initial_state = state_store.load()
-    first_identity = initial_state.review_identities[first_change_id]
-    second_identity = initial_state.review_identities[second_change_id]
-    fake_repo.pull_requests[first_identity.pr_number].state = "closed"
-    run_command(["jj", "abandon", first_change_id], repo)
+    identities = tuple(initial_state.review_identities[change_id] for change_id in change_ids)
+    fake_repo.pull_requests[identities[1].pr_number].state = "closed"
+    merged_pull_request = fake_repo.pull_requests[identities[2].pr_number]
+    merged_pull_request.state = "closed"
+    merged_pull_request.merged_at = "2026-08-13T12:00:00Z"
+    run_command(["jj", "abandon", *change_ids], repo)
 
     preview_exit_code = run_main(
         repo,
@@ -120,24 +123,42 @@ def test_cleanup_orphans_only_removes_abandoned_closed_reviews(
         "cleanup",
         "--pull-request",
         "orphans",
+        "--close",
         "--dry-run",
     )
     preview = capsys.readouterr()
 
     assert preview_exit_code == 0
-    assert first_identity.head_ref in preview.out
-    assert second_identity.head_ref not in preview.out
+    assert f"close PR #{identities[0].pr_number}" in preview.out
+    assert f"close PR #{identities[1].pr_number}" not in preview.out
+    assert f"close PR #{identities[2].pr_number}" not in preview.out
+    assert all(identity.head_ref in preview.out for identity in identities)
+    assert fake_repo.pull_requests[identities[0].pr_number].state == "open"
     assert state_store.load() == initial_state
 
-    exit_code = run_main(repo, config_path, "cleanup", "--pull-request", "orphans")
-    capsys.readouterr()
+    exit_code = run_main(
+        repo,
+        config_path,
+        "cleanup",
+        "--pull-request",
+        "orphans",
+        "--close",
+    )
+    applied = capsys.readouterr()
     refreshed_state = state_store.load()
 
     assert exit_code == 0
-    assert first_change_id not in refreshed_state.review_identities
-    assert second_change_id in refreshed_state.review_identities
-    assert f"refs/heads/{first_identity.head_ref}" not in remote_refs(fake_repo.git_dir)
-    assert f"refs/heads/{second_identity.head_ref}" in remote_refs(fake_repo.git_dir)
+    assert f"close PR #{identities[0].pr_number}" in applied.out
+    assert f"close PR #{identities[1].pr_number}" not in applied.out
+    assert f"close PR #{identities[2].pr_number}" not in applied.out
+    assert all(change_id not in refreshed_state.review_identities for change_id in change_ids)
+    assert all(
+        f"refs/heads/{identity.head_ref}" not in remote_refs(fake_repo.git_dir)
+        for identity in identities
+    )
+    assert all(
+        fake_repo.pull_requests[identity.pr_number].state == "closed" for identity in identities
+    )
 
 
 def test_cleanup_blocks_closed_review_still_claimed_by_github_stack(

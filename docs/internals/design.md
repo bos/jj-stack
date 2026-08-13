@@ -230,8 +230,9 @@ evidence, and mutation rules.
   stack number selects the remote resource directly; otherwise a local review stack selects its
   matching GitHub stack. `--local` only forgets local tracking and does not change GitHub.
 - **`cleanup`** removes eligible branches, managed overview comments, and tracking for closed or
-  merged reviews. `sync` invokes the same operation after reconciling merged work. The standalone
-  command handles closed reviews and cleanup retries; with no selector it checks the repository,
+  merged reviews. With an explicit pull-request selector, `--close` first closes selected open
+  reviews. `sync` invokes cleanup after reconciling merged work. The standalone command handles
+  review closure, closed reviews, and cleanup retries; with no selector it checks the repository,
   while a revision or pull request limits it to the named review.
 - **`checkout`** adopts review state already on GitHub. It sets up tracking but does not move the
   workspace or rewrite local commits.
@@ -415,7 +416,8 @@ The command-specific planning requirements are:
   `SubmittedBaseline.commit_id`, plus a live snapshot match. Tree or diff equivalence is not
   sufficient.
 - `sync --all` requires a snapshot match before retargeting, closing, or cleaning up a review.
-- cleanup requires a snapshot match before deleting artifacts or removing saved links.
+- cleanup requires a snapshot match before closing a PR, deleting artifacts, or removing saved
+  links.
 
 When the platform supports a conditional write or lease, the mutation is bound to the identity
 and version observed while planning. A remote swap, repository retarget, renamed head, moved
@@ -689,6 +691,13 @@ in place, so `submit` does not silently reuse a closed review and `cleanup` can 
 branches and comments belong to it. Starting reviews over means closing the old pull requests,
 running selected cleanup, and then submitting again.
 
+`cleanup --pull-request <pr> --close` and `cleanup --pull-request orphans --close` combine closure
+and cleanup for an explicit saved selection. The flag is invalid without `--pull-request`.
+Identity, snapshot, review-branch ownership, open dependents, GitHub stack membership, and the
+managed overview comment are all checked before closing an open PR. A PR already closed or merged
+skips closure and follows ordinary cleanup. A closure failure stops later selected mutations; a
+rerun observes the current PR state.
+
 Cleanup acts only on one complete identity/baseline pair, whether it runs directly or at the end
 of `sync`. It may remove the managed overview comment, the exact saved review ref only while it
 still points to the expected commit, and the two records.
@@ -776,7 +785,7 @@ explicit rules:
 
 - **Abandon**: the change leaves every current local stack and descendants attach to its parent.
   Its PR becomes orphaned. Surviving stacks never close, reuse, or retarget it. Explicit closure
-  uses GitHub or `gh pr close`; `cleanup --pull-request <pr>` then removes its leftovers.
+  and cleanup use `cleanup --pull-request <pr> --close`.
 - **Split**: new logical changes get new change IDs and normally new PRs. The change retaining the
   original change ID retains its PR.
 
@@ -805,8 +814,7 @@ wait for their own explicit commands.
 Stacks not yet resubmitted may still show old overview comments. That is expected:
 `submit` does not mutate stacks outside its selection. `list` identifies stale reviews across the
 repository by comparing each baseline with the current change and naming the stack to refresh.
-Close orphaned PRs on GitHub, then remove their leftovers with
-`cleanup --pull-request <pr>`.
+Close orphaned PRs and remove their leftovers with `cleanup --pull-request <pr> --close`.
 
 ## CLI contract
 

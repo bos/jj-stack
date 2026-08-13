@@ -438,20 +438,21 @@ jj-stack cleanup <head-change-id>
 Cleanup keeps a review branch whenever another open PR still uses it as a base. Close or retarget
 the PR named in the message, then rerun the same cleanup command.
 
-If `jj-stack list` shows an `orphan` row, close that PR and select it directly for cleanup:
+If `jj-stack list` shows an `orphan` row, select it directly for closure and cleanup:
 
 ```bash
-gh pr close 7
-jj-stack cleanup --pull-request 7 --dry-run
-jj-stack cleanup --pull-request 7
+jj-stack cleanup --pull-request 7 --close --dry-run
+jj-stack cleanup --pull-request 7 --close
 ```
 
-After closing every orphan shown by `list`, select all of them with:
+To close and clean up every orphan shown by `list` at once:
 
 ```bash
-jj-stack cleanup --pull-request orphans --dry-run
-jj-stack cleanup --pull-request orphans
+jj-stack cleanup --pull-request orphans --close --dry-run
+jj-stack cleanup --pull-request orphans --close
 ```
+
+Already closed or merged PRs do not make `--close` fail; cleanup simply skips their closure.
 
 Use `--local` only when you want this repository to forget its saved PR links while leaving
 GitHub unchanged:

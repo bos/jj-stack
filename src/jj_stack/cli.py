@@ -444,6 +444,11 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Preview the cleanup without deleting review branches, comments, or tracking",
     )
+    cleanup_parser.add_argument(
+        "--close",
+        action="store_true",
+        help="Close selected open pull requests before cleanup; requires --pull-request",
+    )
     add_help_argument(
         cleanup_parser,
         *_PULL_REQUEST_OPTION_STRINGS,

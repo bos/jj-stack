@@ -2,10 +2,10 @@
 
 With no selector, it checks the whole repository. A revision limits cleanup to one local stack;
 `--pull-request` selects one saved review, and `--pull-request orphans` selects every saved review
-whose local change is gone. Cleanup only acts on pull requests GitHub reports as closed or merged.
+whose local change is gone. Add `--close` to close selected open pull requests before cleanup.
 
-Open pull requests are left alone. Close them on GitHub or with `gh pr close`, then rerun the same
-cleanup command.
+Without `--close`, open pull requests are left alone. Already closed or merged pull requests do
+not need the flag and are cleaned up normally.
 
 If another open pull request still uses a review branch as its base, that branch stays. Close or
 retarget the pull request named in the message, then rerun the same cleanup command.
@@ -78,6 +78,7 @@ HELP = "Remove review artifacts that are no longer in use"
 def cleanup(
     *,
     cli_args: JjCliArgs,
+    close: bool,
     debug: bool,
     dry_run: bool,
     pull_request: str | None,
@@ -88,6 +89,8 @@ def cleanup(
 
     if pull_request is not None and revset is not None:
         raise UsageError("cleanup --pull-request cannot be combined with a revision.")
+    if close and pull_request is None:
+        raise UsageError("cleanup --close requires --pull-request.")
 
     context = bootstrap_context(
         repository=repository,
@@ -99,6 +102,7 @@ def cleanup(
         command="cleanup",
     ):
         return _run_cleanup_command(
+            close=close,
             context=context,
             dry_run=dry_run,
             pull_request=pull_request,
@@ -108,6 +112,7 @@ def cleanup(
 
 def _run_cleanup_command(
     *,
+    close: bool,
     context: CommandContext,
     dry_run: bool,
     pull_request: str | None,
@@ -117,6 +122,7 @@ def _run_cleanup_command(
 
     with console.spinner(description="Loading review state"):
         prepared_cleanup = _prepare_cleanup(
+            close=close,
             context=context,
             dry_run=dry_run,
             pull_request=pull_request,
@@ -166,6 +172,7 @@ async def cleanup_tracked_reviews(
     if not dry_run:
         context.state_store.require_writable()
     prepared_cleanup = PreparedCleanup(
+        close_open_pull_requests=False,
         context=context,
         github_target=github_target,
         dry_run=dry_run,
@@ -199,6 +206,7 @@ async def cleanup_tracked_reviews(
 
 def _prepare_cleanup(
     *,
+    close: bool,
     context: CommandContext,
     dry_run: bool,
     pull_request: str | None,
@@ -218,6 +226,7 @@ def _prepare_cleanup(
     )
 
     return PreparedCleanup(
+        close_open_pull_requests=close,
         context=context,
         github_target=None,
         dry_run=dry_run,
@@ -462,6 +471,7 @@ async def _cleanup_tracked_review(
 
     identity = prepared_change.review_identity
     review_state, update, blocker_action = _review_cleanup_update(
+        close_open_pull_requests=prepared_cleanup.close_open_pull_requests,
         observation=initial_observation,
         prepared_change=prepared_change,
         preview_detached_dependents=preview_detached_dependents,
@@ -469,7 +479,7 @@ async def _cleanup_tracked_review(
     if blocker_action is not None:
         record_action(blocker_action)
         return False
-    if review_state == "open":
+    if review_state == "open" and not prepared_cleanup.close_open_pull_requests:
         if prepared_change.stale_reason is not None:
             record_action(
                 CleanupAction(
@@ -504,6 +514,25 @@ async def _cleanup_tracked_review(
     )
     if overview_lookup is None:
         return False
+    if review_state == "open":
+        close_action = CleanupAction(
+            kind="pull request",
+            status="planned" if prepared_cleanup.dry_run else "applied",
+            body=t"close PR #{identity.pr_number}",
+        )
+        if not prepared_cleanup.dry_run:
+            try:
+                await github_client.close_pull_request(pull_number=identity.pr_number)
+            except GithubClientError as error:
+                record_action(
+                    CleanupAction(
+                        kind="pull request",
+                        status="blocked",
+                        body=t"cannot close PR #{identity.pr_number}: {error}",
+                    )
+                )
+                return True
+        record_action(close_action)
     return await _apply_tracked_review_cleanup(
         branch_update=update,
         overview_lookup=overview_lookup,
@@ -517,6 +546,7 @@ async def _cleanup_tracked_review(
 
 def _review_cleanup_update(
     *,
+    close_open_pull_requests: bool,
     observation: RepositoryObservation,
     prepared_change: PreparedCleanupChange,
     preview_detached_dependents: frozenset[int] = frozenset(),
@@ -535,10 +565,14 @@ def _review_cleanup_update(
         return "blocked", None, _cleanup_action(blocker)
     if pull_request is None:
         raise AssertionError("Exact cleanup lookup must return a pull request.")
-    if pull_request.state == "open":
+    if pull_request.state == "open" and not close_open_pull_requests:
         return "open", None, None
     _pull_request, update, blocker = plan_review_cleanup(
-        allowed_states=frozenset({"closed", "merged"}),
+        allowed_states=(
+            frozenset({"open", "closed", "merged"})
+            if close_open_pull_requests
+            else frozenset({"closed", "merged"})
+        ),
         change_id=prepared_change.change_id,
         observation=observation,
         preview_detached_dependents=preview_detached_dependents,

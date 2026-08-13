@@ -52,6 +52,7 @@ class PreparedCleanup:
     """Locally prepared cleanup inputs before any GitHub inspection."""
 
     context: CommandContext
+    close_open_pull_requests: bool
     # None until plain cleanup proves it needs remote or GitHub state.
     github_target: GithubTarget | UnresolvedGithubTarget | None
     dry_run: bool

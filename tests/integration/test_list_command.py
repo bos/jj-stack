@@ -83,7 +83,7 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     assert "orphan" in captured.out
     assert f"PR #{orphaned_pr_number}" in captured.out
     assert "local change missing" in captured.out
-    assert_output_contains(captured.out, "cleanup --pull-request orphans")
+    assert_output_contains(captured.out, "cleanup --pull-request orphans --close")
 
     exit_code = run_main(repo, config_path, "list", "--json")
     captured = capsys.readouterr()
