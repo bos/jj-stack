@@ -23,8 +23,51 @@ jj-stack doctor --fix
 ```
 
 `doctor` checks your repository, trunk, Git remote, GitHub access, and Stacks API availability.
-It does not change anything on GitHub. If the `GitHub stacks` check fails, follow its link to
-GitHub's current availability and requirements before retrying `submit`.
+It does not change anything on GitHub.
+
+### The repository works, but GitHub stacks are unavailable
+
+If `doctor` can reach the repository but says stacked pull requests are unavailable, follow its
+availability link and rerun `doctor`. For another `GitHub stacks` failure, follow the specific
+access or request error it prints. `submit` stops before pushing any review branch while this
+check fails.
+
+## A review branch moved outside jj-stack
+
+**How this can happen:** someone force-pushed, renamed, or deleted a `jj-stack/` branch, or
+another tool updated it.
+
+`jj-stack` leaves the branch untouched and prints a recovery hint for the condition it observed.
+For an accidentally moved `submit --base` branch, restore the immutable submitted commit ID named
+in that error. For another moved branch, inspect and repair it as the hint directs; for a missing
+branch, either restore it or close the PR on GitHub, run `jj-stack cleanup`, and submit again.
+
+If remote contents are intentional, preserve or reproduce them in the local `jj` change before
+submitting. Use `jj-stack relink <pull-request> <change-id>` only when the PR is open and unique,
+its branch belongs to the same repository and remains a managed `jj-stack/` name for that change,
+and its head still carries that jj change ID. `relink` verifies those conditions and updates
+tracking; it does not copy the remote contents into your local change.
+
+Do not force a submit past the mismatch. The stop is what prevents one tool from silently
+overwriting another tool's work.
+
+## A pull request was added to or reordered in the GitHub stack
+
+**How this can happen:** someone changed native stack membership or pull request bases through
+GitHub or another client.
+
+Run `jj-stack view <head-change-id>` and compare the GitHub order with your local stack. If the
+GitHub edit is the intended order, reproduce it with `jj` and submit the resulting local stack.
+If the local order is intended, submit it; jj-stack replaces unambiguous native grouping and pull
+request bases. When the diagnostic says membership is ambiguous, remove the named GitHub grouping
+with `jj-stack unstack --stack <number>`, then submit the intended local stack again.
+
+## A stack was removed from the merge queue
+
+GitHub enqueues stack members in dependency order. If one pull request is removed or ejected,
+GitHub also removes every pull request above it. Fix the failing check, approval, conflict, or
+repository rule, then rerun the same `jj-stack merge` command. If GitHub merged any lower pull
+requests before the ejection, run `jj-stack sync <head-change-id>` first.
 
 ## You merged pull requests on GitHub
 
@@ -59,9 +102,11 @@ Run `sync` after GitHub reports that the rebase completed:
 jj-stack sync <head-change-id>
 ```
 
-`sync` verifies the rewritten contents, restores the original jj change IDs, and updates the same
-review branches. If you changed the stack locally after submitting it, `sync` stops rather than
-choosing between your local work and GitHub's result.
+GitHub's rewritten commits do not contain jj change-ID headers. This is expected; do not relink
+the pull requests by hand. `sync` verifies the rewritten contents, rebases the original local
+changes, and updates the review branches with equivalent commits that retain their change IDs. If
+you changed the stack locally after submitting it, `sync` stops rather than choosing between your
+local work and GitHub's result.
 
 ## `merge` did not merge your whole stack
 
