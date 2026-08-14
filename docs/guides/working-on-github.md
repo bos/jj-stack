@@ -47,3 +47,6 @@ If an external edit was intentional, inspect the result before deciding whether 
 GitHub state, reproduce the change with `jj` and submit it, or remove the GitHub grouping with
 `jj-stack unstack --stack <number>`. See [troubleshooting](../troubleshooting.md) for specific
 recovery paths.
+
+For reviewer and repository configuration guidance, see
+[review and operate a stack](review-a-stack.md).

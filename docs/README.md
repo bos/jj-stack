@@ -13,6 +13,7 @@ web navigation and presentation.
 
 - [Submit and update a stack](guides/submit-and-update.md)
 - [Work with a stack on GitHub](guides/working-on-github.md)
+- [Review and operate a stack](guides/review-a-stack.md)
 - [Edit and rearrange a stack](guides/revise.md)
 - [Merge and sync](guides/merge-and-sync.md)
 - [Multiple stacks and dependent work](guides/multiple-stacks.md)
