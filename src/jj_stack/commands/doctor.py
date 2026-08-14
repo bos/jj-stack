@@ -34,6 +34,7 @@ from jj_stack.github.resolution import (
     parse_github_repo,
     select_submit_remote,
 )
+from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
@@ -101,6 +102,7 @@ async def _run_checks(
                 "GitHub remote",
                 "GitHub auth",
                 "connectivity",
+                "GitHub stacks",
                 "trunk branch",
             )
         )
@@ -116,7 +118,7 @@ async def _run_checks(
     results.append(github_result)
 
     if parsed_repo is None:
-        results.extend(_skipped("GitHub auth", "connectivity", "trunk branch"))
+        results.extend(_skipped("GitHub auth", "connectivity", "GitHub stacks", "trunk branch"))
         return results
 
     # Check 3: GitHub auth
@@ -124,14 +126,15 @@ async def _run_checks(
     results.append(auth_result)
 
     if token is None:
-        results.extend(_skipped("connectivity", "trunk branch"))
+        results.extend(_skipped("connectivity", "GitHub stacks", "trunk branch"))
         return results
 
-    # Checks 4 & 5: Connectivity and trunk branch
-    connectivity_result, github_repo = await _check_github_connectivity(
+    # Checks 4-6: Connectivity, Stacks API availability, and trunk branch
+    connectivity_result, stacks_result, github_repo = await _check_github_connectivity(
         parsed_repo=parsed_repo,
     )
     results.append(connectivity_result)
+    results.append(stacks_result)
 
     if github_repo is not None:
         results.append(_check_trunk_branch(github_repo))
@@ -277,7 +280,7 @@ def _check_github_auth() -> tuple[CheckResult, str | None]:
 async def _check_github_connectivity(
     *,
     parsed_repo: GithubRepoAddress,
-) -> tuple[CheckResult, GithubRepository | None]:
+) -> tuple[CheckResult, CheckResult, GithubRepository | None]:
     async with build_github_client(repository=parsed_repo) as client:
         try:
             github_repo = await client.get_repository()
@@ -288,6 +291,7 @@ async def _check_github_connectivity(
                     "fail",
                     f"{parsed_repo.full_name}: {error.user_facing_reason()}",
                 ),
+                CheckResult("GitHub stacks", "skip", "connectivity failed"),
                 None,
             )
         except Exception as error:
@@ -297,14 +301,31 @@ async def _check_github_connectivity(
                     "fail",
                     f"{parsed_repo.full_name}: request failed ({error})",
                 ),
+                CheckResult("GitHub stacks", "skip", "connectivity failed"),
                 None,
             )
+        try:
+            await client.list_stacks()
+        except GithubClientError as error:
+            unavailable = github_stacks_unavailable_error(
+                error=error,
+                repository=parsed_repo.full_name,
+            )
+            detail: CheckDetail = (
+                (unavailable.message, t" {unavailable.hint}")
+                if unavailable is not None
+                else f"could not inspect stacks: {error.user_facing_reason()}"
+            )
+            stacks_result = CheckResult("GitHub stacks", "fail", detail)
+        else:
+            stacks_result = CheckResult("GitHub stacks", "ok", "Stacks API available")
     return (
         CheckResult(
             "connectivity",
             "ok",
             f"reached {parsed_repo.full_name}",
         ),
+        stacks_result,
         github_repo,
     )
 

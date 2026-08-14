@@ -11,7 +11,11 @@ weight: 10
 - Python 3.14 or newer
 - [`uv`](https://docs.astral.sh/uv/)
 - `jj` 0.43.0 or newer
-- a GitHub repository and GitHub authentication
+- a GitHub repository you can push to, and GitHub authentication
+
+GitHub stacked pull requests are in
+[public preview](https://docs.github.com/en/pull-requests/tutorials/roll-out-stacked-prs) and
+require no repository or organization setup.
 
 ## Install
 
@@ -30,6 +34,9 @@ Inside your `jj` repository, prepare it for use:
 ```console
 jj-stack doctor --fix
 ```
+
+Confirm that the `GitHub stacks` check passes. `doctor` explains how to resolve an unavailable
+Stacks API before `submit` pushes anything.
 
 ## Build your local stack
 

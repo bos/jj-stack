@@ -22,8 +22,9 @@ Prepare your repository again and look for any failed checks:
 jj-stack doctor --fix
 ```
 
-`doctor` checks your repository, trunk, Git remote, and GitHub access. It does not change anything
-on GitHub.
+`doctor` checks your repository, trunk, Git remote, GitHub access, and Stacks API availability.
+It does not change anything on GitHub. If the `GitHub stacks` check fails, follow its link to
+GitHub's current availability and requirements before retrying `submit`.
 
 ## You merged pull requests on GitHub
 

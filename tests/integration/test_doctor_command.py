@@ -20,7 +20,13 @@ from ..support.integration_helpers import (
 from .submit_command_helpers import run_main
 
 
-def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Path:
+def _configure_doctor_environment(
+    monkeypatch,
+    tmp_path: Path,
+    fake_repo,
+    *,
+    client_type: type[GithubClient] = GithubClient,
+) -> Path:
     """Set up a fake GitHub environment for doctor integration tests.
 
     Patches build_github_client and parse_github_repo in the doctor module so that
@@ -33,7 +39,7 @@ def _configure_doctor_environment(monkeypatch, tmp_path: Path, fake_repo) -> Pat
     app = create_app(FakeGithubState.single_repository(fake_repo))
 
     def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
-        return GithubClient(
+        return client_type(
             httpxyz.AsyncClient(
                 base_url="https://api.github.test",
                 transport=httpxyz.ASGITransport(app=app),
@@ -65,8 +71,34 @@ def test_doctor_exits_zero_for_healthy_repo(
 
     assert exit_code == 0
     assert "GitHub auth" in captured.out
+    assert "Stacks API available" in captured.out
     assert "checkout/sync leftovers" in captured.out
     assert "Traceback" not in captured.out + captured.err
+
+
+def test_doctor_reports_when_github_stacks_are_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+
+    class StacksUnavailableClient(GithubClient):
+        async def list_stacks(self):
+            raise doctor_mod.GithubClientError("Not Found", status_code=404)
+
+    config_path = _configure_doctor_environment(
+        monkeypatch,
+        tmp_path,
+        fake_repo,
+        client_type=StacksUnavailableClient,
+    )
+
+    assert run_main(repo, config_path, "doctor") == 1
+    output = capsys.readouterr().out
+    assert "GitHub stacked pull requests are unavailable" in output
+    assert "https://gh.io/stacksbeta" in output
+    assert output.count("https://gh.io/stacksbeta") == 1
 
 
 def test_doctor_warns_about_an_imported_review_bookmark(

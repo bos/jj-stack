@@ -447,6 +447,10 @@ Only commands that successfully send or adopt a specific reviewed commit may rep
 `submit` publishes only the selected stack, bottom-up. It creates missing PRs, moves existing
 review branches, updates PR bases and content, and refreshes GitHub stack membership.
 
+Before any remote mutation, `submit` confirms that the repository is reachable and the GitHub
+Stacks API is available, then observes PRs and complete stack membership. An unavailable Stacks
+API stops the command before any review branch or pull request changes.
+
 `submit --base B H` publishes only `(B, H]`. `B` must be an ancestor of `H` on the exact
 single-parent path and is excluded from every mutation. The base is accepted only when its local
 commit, submitted baseline, remote review branch, and live PR head are the same commit; its saved
@@ -767,9 +771,10 @@ same-repository head branch, then saves the identity and exact observed remote t
 Replacing the stale baseline lets a later `submit` update the known review rather than reject the
 branch as foreign.
 
-`doctor` observes setup and local leftovers from interrupted `checkout` or `sync`. It
-changes nothing without `--fix`; currently the only automatic repair is restoring the reserved
-review-branch exclusion in remote fetch configuration. It never mutates GitHub.
+`doctor` observes setup, GitHub Stacks API availability, and local leftovers from interrupted
+`checkout` or `sync`. It changes nothing without `--fix`; currently the only automatic repair is
+restoring the reserved review-branch exclusion in remote fetch configuration. It never mutates
+GitHub.
 
 ### Inspection
 

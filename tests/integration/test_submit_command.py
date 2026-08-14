@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -715,10 +716,12 @@ def test_submit_stack_preflight_failures_recover_without_persisted_phase(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
     app = create_app(FakeGithubState.single_repository(fake_repo))
-    failure = "membership"
+    failure = "availability"
 
     class PreflightFailureClient(GithubClient):
         async def list_stacks(self):
+            if failure == "availability":
+                raise GithubClientError("Not Found", status_code=404)
             if failure == "membership":
                 raise GithubClientError("Simulated membership failure", status_code=500)
             return await super().list_stacks()
@@ -738,9 +741,29 @@ def test_submit_stack_preflight_failures_recover_without_persisted_phase(
     )
     state_before = ReviewStateStore.for_repo(repo).load()
     remote_before = remote_refs(fake_repo.git_dir)
+    pull_requests_before = {
+        number: asdict(pull_request) for number, pull_request in fake_repo.pull_requests.items()
+    }
+    stacks_before = dict(fake_repo.github_stacks)
 
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
+    error = capsys.readouterr().err
+    assert "GitHub stacked pull requests are unavailable" in error
+    assert "https://gh.io/stacksbeta" in error
+    assert "repo not found" not in error
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert remote_refs(fake_repo.git_dir) == remote_before
+    assert {
+        number: asdict(pull_request) for number, pull_request in fake_repo.pull_requests.items()
+    } == pull_requests_before
+    assert fake_repo.github_stacks == stacks_before
+
+    failure = "membership"
+    assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     assert "Could not inspect GitHub repository" in capsys.readouterr().err
+    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert remote_refs(fake_repo.git_dir) == remote_before
+    assert fake_repo.github_stacks == stacks_before
 
     # Reordering the stack makes the desired membership differ from the live one, so submit
     # must unstack the resource before it can move any branch or base.

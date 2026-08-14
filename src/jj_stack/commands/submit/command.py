@@ -61,6 +61,7 @@ from jj_stack.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
 )
+from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote
@@ -505,24 +506,47 @@ async def run_submit_async(
     async with build_github_client(repository=github_repository) as github_client:
         generated_descriptions = prepared_inputs.generated_pull_request_descriptions
         with console.spinner(description="Inspecting GitHub"):
-            try:
-                (
-                    github_repository_state,
-                    discovered_pull_requests,
-                    observed_stacks,
-                ) = await asyncio.gather(
-                    github_client.get_repository(),
-                    discover_pull_requests_by_branch(
-                        github_client=github_client,
-                        branches=review_branches,
-                        tracked_pull_requests=tracked_pull_requests,
-                    ),
-                    github_client.list_stacks(),
-                )
-            except GithubClientError as error:
+            (
+                github_repository_result,
+                discovered_pull_requests_result,
+                observed_stacks_result,
+            ) = await asyncio.gather(
+                github_client.get_repository(),
+                discover_pull_requests_by_branch(
+                    github_client=github_client,
+                    branches=review_branches,
+                    tracked_pull_requests=tracked_pull_requests,
+                ),
+                github_client.list_stacks(),
+                return_exceptions=True,
+            )
+            if isinstance(github_repository_result, GithubClientError):
                 raise CliError(
                     f"Could not inspect GitHub repository {github_repository.full_name}"
-                ) from error
+                ) from github_repository_result
+            if isinstance(github_repository_result, BaseException):
+                raise github_repository_result
+            if isinstance(observed_stacks_result, GithubClientError):
+                unavailable = github_stacks_unavailable_error(
+                    error=observed_stacks_result,
+                    repository=github_repository.full_name,
+                )
+                if unavailable is not None:
+                    raise unavailable from None
+                raise CliError(
+                    f"Could not inspect GitHub repository {github_repository.full_name}"
+                ) from observed_stacks_result
+            if isinstance(observed_stacks_result, BaseException):
+                raise observed_stacks_result
+            if isinstance(discovered_pull_requests_result, GithubClientError):
+                raise CliError(
+                    f"Could not inspect GitHub repository {github_repository.full_name}"
+                ) from discovered_pull_requests_result
+            if isinstance(discovered_pull_requests_result, BaseException):
+                raise discovered_pull_requests_result
+            github_repository_state = github_repository_result
+            discovered_pull_requests = discovered_pull_requests_result
+            observed_stacks = observed_stacks_result
             trunk_branch, trunk_targets = resolve_trunk_branch(
                 client=client,
                 github_repository_state=github_repository_state,
