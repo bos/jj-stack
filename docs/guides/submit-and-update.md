@@ -92,6 +92,9 @@ request out of its old stack before moving it into its new one.
 If you get into such a state, `jj-stack submit` stops and tells you which of your stacks to submit
 first.
 
+For the exact contract between local history and edits made in the GitHub UI, see
+[work with a stack on GitHub](working-on-github.md).
+
 (If you wanted to get pathological, you could move commit A from stack 1 to stack 2, and commit
 B from stack 2 to stack 1, in which case any automated stack surgery would start to get complex.
 `jj-stack submit` does *not* try to detect or deal with cases like this. If you really need to
