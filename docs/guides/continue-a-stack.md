@@ -9,7 +9,20 @@ weight: 70
 Use this workflow when you submitted your stack from another machine or checkout and want to work
 on it here.
 
-## Connect your pull requests to local changes
+## Pick a stack
+
+List the active stacks already tracked here and those available only on GitHub:
+
+```console
+jj-stack checkout --pick
+```
+
+Each GitHub row shows the stack number, top pull request, base branch, size, status, and whether
+the stack is local, partly local, or available only on GitHub. Choosing a partly local or
+GitHub-only stack completes its local tracking, fetches any missing commits, and edits its top
+active change. Choosing a local stack just edits its head.
+
+## Connect a pull request directly
 
 Choose any pull request in your stack:
 
@@ -26,15 +39,6 @@ To start a new change on top instead of editing that change directly, run:
 ```console
 jj new
 ```
-
-## What `--pick` does
-
-`jj-stack checkout --pick` is only a convenience for selecting a stack this repository already
-tracks. It lists the head change ID and subject of each tracked stack and asks you to choose a
-number. The command then edits that head, just as if you had passed its change ID to `--revset`.
-
-`--pick` does not discover stacks that exist only on GitHub. Use `--pull-request <pr>` to fetch
-one of those stacks into this repository and edit the selected PR's change.
 
 ## If your change is already here with local edits
 

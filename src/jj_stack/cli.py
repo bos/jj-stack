@@ -972,10 +972,7 @@ def _add_checkout_parser(
         selector,
         "--pick",
         action="store_true",
-        help=(
-            "Interactively choose a locally tracked stack head to edit; "
-            "does not discover GitHub-only stacks"
-        ),
+        help="Interactively choose a local or GitHub stack to check out",
     )
     return parser
 

@@ -4,9 +4,8 @@ Pass `--pull-request PR` to adopt the stack ending at that pull request. If its 
 are not present locally, the command fetches them automatically. It records which pull request
 belongs to each local change, then runs `jj edit` on the selected pull request's change.
 
-Without `--pull-request`, `checkout` selects a stack that this repository already tracks. Pass
-`--revset` to select its head by a local revision, or `--pick` to choose a head from an
-interactive numbered list. `--pick` does not discover stacks that exist only on GitHub.
+Pass `--pull-request` to select a GitHub pull request directly, `--revset` to select a locally
+tracked head, or `--pick` to choose from local and GitHub stacks in an interactive numbered list.
 
 The working copy moves only after the complete stack has been validated and any new tracking has
 been saved. `checkout` does not rebase changes or modify GitHub. To create a new change on top of
@@ -17,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,9 +31,10 @@ from jj_stack.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
+from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient, UnsupportedStackError
-from jj_stack.models.github import GithubPullRequest
+from jj_stack.models.github import GithubPullRequest, GithubStack
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import (
@@ -60,6 +61,16 @@ class CheckoutResult:
     stack: LocalStack
 
 
+@dataclass(frozen=True, slots=True)
+class CheckoutPickerChoice:
+    """One local or GitHub stack offered by the interactive picker."""
+
+    details: tuple[str, ...]
+    heading: str
+    pull_request: str | None = None
+    revset: str | None = None
+
+
 def checkout(
     *,
     cli_args: JjCliArgs,
@@ -73,7 +84,9 @@ def checkout(
 
     context = bootstrap_context(repository=repository, cli_args=cli_args, debug=debug)
     if pick:
-        revset = _pick_tracked_stack_head(context)
+        choice = asyncio.run(_pick_stack(context))
+        pull_request = choice.pull_request
+        revset = choice.revset
     with acquire_operation_lock(context.state_store.require_writable(), command="checkout"):
         result = asyncio.run(
             _run_checkout_async(
@@ -496,39 +509,190 @@ def _require_branch_matches_revision(*, branch: str, revision: LocalRevision) ->
         )
 
 
-def _pick_tracked_stack_head(context: CommandContext) -> str:
-    """Prompt for one locally tracked stack without holding the operation lock."""
+async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
+    """Prompt for one local or GitHub stack without holding the operation lock."""
 
     state = context.state_store.load()
     if not state.review_identities:
-        stacks: list[LocalStack] = []
+        local_stacks: list[LocalStack] = []
     else:
         repository_paths = observe_repository_paths(
             jj_client=context.jj_client,
             state=state,
         )
-        stacks = sorted(
+        local_stacks = sorted(
             (path.stack for path in repository_paths.paths if path.tracked_change_ids),
             key=lambda stack: stack.head.change_id,
         )
-    if not stacks:
+    remote = select_submit_remote(context.jj_client.list_git_remotes())
+    repository = require_github_repo(remote)
+    async with build_github_client(repository=repository) as github_client:
+        repository_result, stacks_result = await asyncio.gather(
+            github_client.get_repository(),
+            github_client.list_stacks(),
+            return_exceptions=True,
+        )
+        if isinstance(repository_result, GithubClientError):
+            raise CliError(
+                f"Could not inspect GitHub repository {repository.full_name}"
+            ) from repository_result
+        if isinstance(repository_result, BaseException):
+            raise repository_result
+        if isinstance(stacks_result, GithubClientError):
+            unavailable = github_stacks_unavailable_error(
+                error=stacks_result,
+                repository=repository.full_name,
+            )
+            if unavailable is not None:
+                raise unavailable from None
+            raise CliError("Could not list GitHub stacks for checkout.") from stacks_result
+        if isinstance(stacks_result, BaseException):
+            raise stacks_result
+        github_stacks = stacks_result
+        try:
+            pull_requests = await github_client.get_pull_requests_by_numbers(
+                pull_numbers=tuple(
+                    member.number for stack in github_stacks for member in stack.pull_requests
+                ),
+            )
+        except GithubClientError as error:
+            raise CliError("Could not list GitHub stacks for checkout.") from error
+    choices = _picker_choices(
+        github_stacks=github_stacks,
+        local_stacks=local_stacks,
+        pull_requests=pull_requests,
+        repository=repository,
+        state=state,
+        visible_commit_ids={
+            revision.commit_id
+            for revision in context.jj_client.query_revisions_by_commit_ids(
+                tuple(
+                    member.head.sha for stack in github_stacks for member in stack.pull_requests
+                )
+            )
+            if not revision.hidden
+        },
+    )
+    return _prompt_picker_choice(choices)
+
+
+def _prompt_picker_choice(
+    choices: tuple[CheckoutPickerChoice, ...],
+) -> CheckoutPickerChoice:
+    """Read one validated numbered selection from the interactive picker."""
+
+    if not choices:
         raise CliError(
-            "No locally tracked stacks to pick from.",
-            hint=t"Use {ui.cmd('checkout --pull-request PR')} to attach one.",
+            "No active local or GitHub stacks to pick from.",
+            hint=t"Use {ui.cmd('checkout --pull-request PR')} to attach a pull request directly.",
         )
-    console.output("Locally tracked stacks:")
-    for index, stack in enumerate(stacks, start=1):
-        count = len(stack.revisions)
-        noun = "change" if count == 1 else "changes"
-        console.output(
-            t"  [{index}] {ui.change_id(stack.head.change_id)} "
-            t"{stack.head.subject} ({count} {noun})"
-        )
-    console.output(t"Pick a stack [1-{len(stacks)}]: ")
+    console.output("Available stacks:")
+    for index, choice in enumerate(choices, start=1):
+        console.output(f"  [{index}] {choice.heading}")
+        for detail in choice.details:
+            console.output(f"      {detail}")
+    console.output(t"Pick a stack [1-{len(choices)}]: ")
     selection = sys.stdin.readline().strip()
-    if not selection.isdigit() or not 1 <= int(selection) <= len(stacks):
+    if not selection.isdigit() or not 1 <= int(selection) <= len(choices):
         raise UsageError(
             t"{ui.cmd(selection or '(empty)')} is not a valid stack number; "
-            t"expected 1-{len(stacks)}."
+            t"expected 1-{len(choices)}."
         )
-    return stacks[int(selection) - 1].head.change_id
+    return choices[int(selection) - 1]
+
+
+def _picker_choices(
+    *,
+    github_stacks: tuple[GithubStack, ...],
+    local_stacks: list[LocalStack],
+    pull_requests: dict[int, GithubPullRequest | None],
+    repository: GithubRepoAddress,
+    state: ReviewState,
+    visible_commit_ids: set[str],
+) -> tuple[CheckoutPickerChoice, ...]:
+    saved_by_pull = {
+        identity.pr_number: (change_id, identity)
+        for change_id, identity in state.review_identities.items()
+        if identity.repository_key == repository.repository_key
+    }
+    choices: list[CheckoutPickerChoice] = []
+    listed_pull_numbers: set[int] = set()
+    for stack in sorted(github_stacks, key=lambda candidate: candidate.number):
+        active_numbers = stack.active_pull_request_numbers
+        if not active_numbers:
+            continue
+        numbers = stack.pull_request_numbers
+        members = tuple(pull_requests.get(number) for number in numbers)
+        if any(member is None for member in members):
+            missing = next(
+                number for number, member in zip(numbers, members, strict=True) if member is None
+            )
+            raise CliError(f"GitHub stack #{stack.number} refers to missing PR #{missing}.")
+        resolved = tuple(member for member in members if member is not None)
+        if not all(_picker_pull_request_is_adoptable(member, repository) for member in resolved):
+            continue
+        bottom = resolved[0]
+        top = next(member for member in reversed(resolved) if member.number in active_numbers)
+        statuses = Counter(_picker_pull_request_status(member) for member in resolved)
+        status = ", ".join(
+            f"{count} {name}"
+            for name in ("open", "draft", "closed", "merged")
+            if (count := statuses[name])
+        )
+        active_members = tuple(member for member in resolved if member.number in active_numbers)
+        change_id_by_pull = {
+            member.number: saved[0]
+            for member in active_members
+            if (saved := saved_by_pull.get(member.number)) is not None
+            and saved[1].matches_pull_request(member)
+        }
+        local = len(change_id_by_pull) == len(active_members) and all(
+            member.head.sha in visible_commit_ids for member in active_members
+        )
+        visible_count = sum(member.head.sha in visible_commit_ids for member in active_members)
+        locality = "local" if local else "partly local" if visible_count else "GitHub only"
+        noun = "PR" if len(numbers) == 1 else "PRs"
+        choices.append(
+            CheckoutPickerChoice(
+                heading=f"GitHub stack #{stack.number} ({locality})",
+                details=(
+                    f"Top: PR #{top.number} {top.title}",
+                    f"Base: {bottom.base.ref}",
+                    f"Size: {len(numbers)} {noun}",
+                    f"Status: {status}",
+                ),
+                revset=change_id_by_pull[top.number] if local else None,
+                pull_request=None if local else str(top.number),
+            )
+        )
+        listed_pull_numbers.update(numbers)
+    for stack in local_stacks:
+        identity = state.review_identities.get(stack.head.change_id)
+        if identity is not None and identity.pr_number in listed_pull_numbers:
+            continue
+        count = len(stack.revisions)
+        noun = "change" if count == 1 else "changes"
+        choices.append(
+            CheckoutPickerChoice(
+                heading=f"Local stack {stack.head.change_id}",
+                details=(f"Head: {stack.head.subject}", f"Size: {count} {noun}"),
+                revset=stack.head.change_id,
+            )
+        )
+    return tuple(choices)
+
+
+def _picker_pull_request_status(pull_request: GithubPullRequest) -> str:
+    normalized = pull_request.normalize_state()
+    if normalized.state == "open" and normalized.is_draft:
+        return "draft"
+    return normalized.state
+
+
+def _picker_pull_request_is_adoptable(
+    pull_request: GithubPullRequest,
+    repository: GithubRepoAddress,
+) -> bool:
+    return is_review_branch(pull_request.head.ref) and (
+        pull_request.head.label == f"{repository.owner}:{pull_request.head.ref}"
+    )

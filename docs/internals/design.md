@@ -754,8 +754,11 @@ a rerun.
 ### Adoption and repair
 
 `checkout --pull-request` treats the selected PR as the head of the remote chain to adopt and
-edit. `--revset` selects an exact local head, while `--pick` lists the heads of locally tracked
-stacks and edits the chosen one. The picker never discovers a stack that exists only on GitHub.
+edit. `--revset` selects an exact local head. `--pick` combines locally tracked paths with active
+GitHub stack resources, showing each GitHub stack's number, top active PR, base, size, status, and
+whether it is already local. Choosing a GitHub-only or partially tracked stack passes its top
+active PR through the same adoption path as `--pull-request`; the picker does not create another
+tracking path.
 
 Before choosing a local or fetched snapshot, `checkout` reads each PR head's change ID. If that
 change ID already exists locally at another commit, it stops and names `relink` rather than

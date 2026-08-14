@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 from jj_stack.cli import main
@@ -18,7 +19,7 @@ from ..support.integration_helpers import (
 )
 
 
-def test_checkout_fetches_missing_stack_then_adopts_and_edits_selected_change(
+def test_checkout_pick_fetches_github_stack_then_adopts_and_edits_selected_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -39,11 +40,28 @@ def test_checkout_fetches_missing_stack_then_adopts_and_edits_selected_change(
     client.fetch_remote(remote="origin")
     run_command(["jj", "bookmark", "create", "main", "-r", "main@origin"], repo)
     assert client.query_revisions_by_commit_ids((expected_head.commit_id,)) == ()
+    ReviewStateStore.for_repo(repo).relink_reviews(
+        replacements={
+            change_id: (
+                identity,
+                expected.submitted_baselines[change_id],
+            )
+            for change_id, identity in expected.review_identities.items()
+        }
+    )
     capsys.readouterr()
 
-    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 0
+    monkeypatch.setattr("sys.stdin", io.StringIO("1\n"))
+    assert _main(repo, config_path, "checkout", "--pick") == 0
 
     captured = capsys.readouterr()
+    assert "Available stacks:" in captured.out
+    normalized = " ".join(captured.out.split())
+    assert "GitHub stack #1 (GitHub only)" in normalized
+    assert "Top: PR #2 feature 2" in normalized
+    assert "Base: main" in normalized
+    assert "Size: 2 PRs" in normalized
+    assert "Status: 2 open" in normalized
     assert "Fetched tip commit:" in captured.out
     assert "Working copy now edits" in captured.out
     assert JjClient(repo).resolve_revision("@").change_id == expected_head.change_id
@@ -51,6 +69,58 @@ def test_checkout_fetches_missing_stack_then_adopts_and_edits_selected_change(
     assert client.visible_review_bookmark_targets() == {}
     review_temp = client.review_temp_artifacts()
     assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
+
+
+def test_checkout_pick_completes_a_partly_local_github_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    publisher, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(publisher, "feature 1", "feature-1.txt")
+    commit_file(publisher, "feature 2", "feature-2.txt")
+    assert _main(publisher, config_path, "submit") == 0
+    expected = ReviewStateStore.for_repo(publisher).load()
+
+    repo = tmp_path / "consumer"
+    run_command(["jj", "git", "init", str(repo)], tmp_path)
+    run_command(["jj", "git", "remote", "add", "origin", str(fake_repo.git_dir)], repo)
+    client = JjClient(repo)
+    client.ensure_review_fetch_isolation(remote="origin")
+    client.fetch_remote(remote="origin")
+    run_command(["jj", "bookmark", "create", "main", "-r", "main@origin"], repo)
+
+    assert _main(repo, config_path, "checkout", "--pull-request", "1") == 0
+    assert len(ReviewStateStore.for_repo(repo).load().review_identities) == 1
+    capsys.readouterr()
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("1\n"))
+    assert _main(repo, config_path, "checkout", "--pick") == 0
+
+    output = " ".join(capsys.readouterr().out.split())
+    assert output.count("GitHub stack #1") == 1
+    assert "GitHub stack #1 (partly local)" in output
+    assert ReviewStateStore.for_repo(repo).load() == expected
+
+
+def test_checkout_pick_refetches_an_abandoned_tracked_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    stack = selected_stack(repo)
+    run_command(["jj", "abandon", *(revision.change_id for revision in stack.revisions)], repo)
+    capsys.readouterr()
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("1\n"))
+    assert _main(repo, config_path, "checkout", "--pick") == 0
+
+    output = " ".join(capsys.readouterr().out.split())
+    assert "GitHub stack #1 (GitHub only)" in output
+    assert JjClient(repo).resolve_revision("@").change_id == stack.head.change_id
 
 
 def test_checkout_accepts_a_matching_visible_review_bookmark(
@@ -218,9 +288,30 @@ def test_checkout_pick_edits_selected_tracked_stack(
     commit_file(repo, "feature 2", "feature-2.txt")
     assert _main(repo, config_path, "submit") == 0
     feature_2_change_id = selected_stack(repo).head.change_id
+    feature_1_identity = (
+        ReviewStateStore.for_repo(repo).load().review_identities[feature_1_change_id]
+    )
+    feature_1_head = fake_repo.ref_target(feature_1_identity.head_ref)
+    assert feature_1_head is not None
+    run_command(
+        [
+            "git",
+            "--git-dir",
+            str(fake_repo.git_dir),
+            "update-ref",
+            "refs/heads/not-managed",
+            feature_1_head,
+        ],
+        repo,
+    )
+    unmanaged = fake_repo.create_pull_request(
+        base_ref="main",
+        head_ref="not-managed",
+        title="not adoptable",
+        body="",
+    )
+    fake_repo.github_stacks[9] = (unmanaged.number,)
     capsys.readouterr()
-
-    import io
 
     ordered_heads = sorted((feature_1_change_id, feature_2_change_id))
     selection = ordered_heads.index(feature_1_change_id) + 1
@@ -228,8 +319,9 @@ def test_checkout_pick_edits_selected_tracked_stack(
     assert _main(repo, config_path, "checkout", "--pick") == 0
 
     captured = capsys.readouterr()
-    assert "Locally tracked stacks:" in captured.out
+    assert "Available stacks:" in captured.out
     assert "feature 1" in captured.out
+    assert "not adoptable" not in captured.out
     assert "Local tracking is already up to date for this stack." in captured.out
     assert "Working copy now edits" in captured.out
     assert JjClient(repo).resolve_revision("@").change_id == feature_1_change_id
