@@ -36,16 +36,25 @@ def test_parse_jj_version_returns_none_for_unexpected_format() -> None:
 # --- check_jj_version ---
 
 
-def test_check_jj_version_rejects_older_version() -> None:
+def test_check_jj_version_enforces_minimum_version() -> None:
     old_version = subprocess.CompletedProcess(
         args=["jj", "--version"],
         returncode=0,
-        stdout="jj 0.42.0\n",
+        stdout="jj 0.43.0\n",
         stderr="",
     )
     with patch("subprocess.run", return_value=old_version):
-        with pytest.raises(CliError, match="0.42.0 is too old"):
+        with pytest.raises(CliError, match="requires jj 0.44.0 or later"):
             check_jj_version()
+
+    minimum_version = subprocess.CompletedProcess(
+        args=["jj", "--version"],
+        returncode=0,
+        stdout="jj 0.44.0\n",
+        stderr="",
+    )
+    with patch("subprocess.run", return_value=minimum_version):
+        check_jj_version()
 
 
 def test_check_jj_version_rejects_unparseable_output() -> None:

@@ -11,9 +11,9 @@ without building from source. Prints the directory containing the installed
 `jj` binary on stdout.
 
 Examples:
-  tools/install-jj-release.sh v0.43.0
-  PATH="$(tools/install-jj-release.sh v0.43.0):$PATH" ./check.py
-  tools/install-jj-release.sh 0.43.0 .tmp/jj/v0.43.0
+  tools/install-jj-release.sh v0.44.0
+  PATH="$(tools/install-jj-release.sh v0.44.0):$PATH" ./check.py
+  tools/install-jj-release.sh 0.44.0 .tmp/jj/v0.44.0
 EOF
 }
 
@@ -151,6 +151,24 @@ expected_sha256() {
       ;;
     v0.43.0/x86_64-unknown-linux-musl)
       printf '%s\n' "59e5588583ac82b623239929368c65b90735931c0f26b5a16c1f04d5bb97643d"
+      ;;
+    v0.44.0/aarch64-apple-darwin)
+      printf '%s\n' "22b92ed109378a9638f0ae55ca7a7bdc9ef26aa60124215a1f04f6808623ba94"
+      ;;
+    v0.44.0/aarch64-pc-windows-msvc)
+      printf '%s\n' "c2eeadd868372d5e7274c3a781dda7d92260eced332c8e28fe94c7289bc1bdd7"
+      ;;
+    v0.44.0/x86_64-apple-darwin)
+      printf '%s\n' "aaec25cbe08e52ba98db0773369c76f248d3a77578e2d4b7b4079aa335ef02a3"
+      ;;
+    v0.44.0/x86_64-pc-windows-msvc)
+      printf '%s\n' "a33732415db40e84f43c911b04751cf88aa2c7a5d12ea86bec3ac18f23f463fd"
+      ;;
+    v0.44.0/aarch64-unknown-linux-musl)
+      printf '%s\n' "60d42fa2a9abaa445eff10cd2087458562aaad5a54b90309e5a3787ecc985ff2"
+      ;;
+    v0.44.0/x86_64-unknown-linux-musl)
+      printf '%s\n' "0a07bab4641a55fd2bc2fd1563ba3a3f9a577584086ad74086a1c5b69b3ffce9"
       ;;
     *)
       echo "unsupported jj version for checksum verification: $1" >&2

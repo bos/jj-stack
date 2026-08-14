@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        jj-version: ["v0.43.0"]
+        jj-version: ["v0.44.0"]
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.14"]
     runs-on: ${{ matrix.os }}
@@ -71,7 +71,7 @@ jobs:
   submit-property-smoke:
     runs-on: ubuntu-latest
     env:
-      JJ_VERSION: v0.43.0
+      JJ_VERSION: v0.44.0
 
     steps:
       - name: Check out repository

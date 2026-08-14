@@ -16,6 +16,13 @@ from fastapi.responses import JSONResponse
 
 from jj_stack.models.github import GithubStack
 
+_FAKE_GITHUB_GIT_ENV = {
+    "GIT_AUTHOR_EMAIL": "fake-github@example.com",
+    "GIT_AUTHOR_NAME": "Fake GitHub",
+    "GIT_COMMITTER_EMAIL": "fake-github@example.com",
+    "GIT_COMMITTER_NAME": "Fake GitHub",
+}
+
 
 @dataclass(slots=True)
 class FakeGithubPullRequest:
@@ -345,12 +352,6 @@ class FakeGithubRepository:
         heads = self.branch_heads()
         head_commit = heads[pull_request.head_ref]
         base_commit = heads[pull_request.base_ref]
-        git_env = {
-            "GIT_AUTHOR_EMAIL": "fake-github@example.com",
-            "GIT_AUTHOR_NAME": "Fake GitHub",
-            "GIT_COMMITTER_EMAIL": "fake-github@example.com",
-            "GIT_COMMITTER_NAME": "Fake GitHub",
-        }
         tree = self._run_backing_git("rev-parse", f"{head_commit}^{{tree}}")
         squash_commit = self._run_backing_git(
             "commit-tree",
@@ -359,7 +360,7 @@ class FakeGithubRepository:
             base_commit,
             "-m",
             f"{pull_request.title} (#{pull_request.number})",
-            env=git_env,
+            env=_FAKE_GITHUB_GIT_ENV,
         )
         self._run_backing_git(
             "update-ref",
@@ -424,12 +425,6 @@ class FakeGithubRepository:
         base_ref = pull_requests[0].base_ref
         base_commit = heads[base_ref]
         head_commit = heads[pull_requests[-1].head_ref]
-        git_env = {
-            "GIT_AUTHOR_EMAIL": "fake-github@example.com",
-            "GIT_AUTHOR_NAME": "Fake GitHub",
-            "GIT_COMMITTER_EMAIL": "fake-github@example.com",
-            "GIT_COMMITTER_NAME": "Fake GitHub",
-        }
         tree = self._run_backing_git("rev-parse", f"{head_commit}^{{tree}}")
         merge_commit = self._run_backing_git(
             "commit-tree",
@@ -440,7 +435,7 @@ class FakeGithubRepository:
             head_commit,
             "-m",
             f"Merge through PR #{pull_requests[-1].number}",
-            env=git_env,
+            env=_FAKE_GITHUB_GIT_ENV,
         )
         self._run_backing_git(
             "update-ref",
@@ -498,6 +493,7 @@ class FakeGithubRepository:
             parent,
             "-m",
             "advance trunk for stack rebase",
+            env=_FAKE_GITHUB_GIT_ENV,
         )
         self._run_backing_git("update-ref", f"refs/heads/{branch}", commit)
         return commit

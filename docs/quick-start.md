@@ -10,7 +10,7 @@ weight: 10
 
 - Python 3.14 or newer
 - [`uv`](https://docs.astral.sh/uv/)
-- `jj` 0.43.0 or newer
+- `jj` 0.44.0 or newer
 - a GitHub repository you can push to, and GitHub authentication
 
 GitHub stacked pull requests are in

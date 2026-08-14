@@ -10,7 +10,7 @@ matching PRs.
 
 - Python 3.14 or newer
 - `uv`
-- `jj` 0.43.0 or newer
+- `jj` 0.44.0 or newer
 - GitHub authentication
 
 ### Install
