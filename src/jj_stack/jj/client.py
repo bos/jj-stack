@@ -308,7 +308,7 @@ class JjClient:
         self,
         commit_ids: Sequence[str],
     ) -> tuple[LocalRevision, ...]:
-        """Return visible revisions for the supplied commit IDs in evaluation order."""
+        """Return locally available revisions for the supplied commit IDs in evaluation order."""
 
         ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
         if not ordered_commit_ids:
@@ -316,7 +316,7 @@ class JjClient:
 
         revisions_by_commit_id: dict[str, LocalRevision] = {}
         for chunk in _chunked(ordered_commit_ids):
-            for revision in self._query_revisions(_union_revset_symbols(chunk)):
+            for revision in self._query_revisions(_present_symbols_revset(chunk)):
                 revisions_by_commit_id.setdefault(revision.commit_id, revision)
         return tuple(revisions_by_commit_id.values())
 
@@ -950,6 +950,11 @@ class JjClient:
             desired = update.desired_target or ""
             command.append(f"{desired}:{ref}")
         self._run_git(command)
+
+    def edit_revision(self, commit_id: str) -> None:
+        """Set the current workspace's working-copy revision to one exact commit."""
+
+        self._run_jj(("edit", commit_id), manage_working_copy=True)
 
     def rebase_revisions_only(
         self,

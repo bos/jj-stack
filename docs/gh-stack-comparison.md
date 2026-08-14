@@ -27,7 +27,7 @@ automates.
 | Navigate | `jj` commands and workspaces | `gh stack` navigation commands |
 | Refresh PRs | Submit after a `jj` rewrite | Rebase higher branches; push or submit |
 | Submission UI | Flags, an editor, or helper programs | A full-screen editor, or `--auto` |
-| Remote checkout | Import by PR; do not move `@` | Discover, create branches, and switch |
+| Remote checkout | Adopt by PR and edit its change | Discover, create branches, and switch |
 | Multiple stacks | From the DAG; shown by `list` | Explicit lists in `.git/gh-stack` |
 
 In `jj-stack`, Git branches are machinery for GitHub, and are not how you organize local work.

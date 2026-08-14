@@ -1,7 +1,16 @@
-"""Connect existing GitHub pull requests to local jj changes.
+"""Check out an existing stack of pull requests.
 
-With --pull-request --fetch, fetch the reviewed commits without moving the working copy or leaving
-persistent review bookmarks.
+Pass `--pull-request PR` to adopt the stack ending at that pull request. If its reviewed commits
+are not present locally, the command fetches them automatically. It records which pull request
+belongs to each local change, then runs `jj edit` on the selected pull request's change.
+
+Without `--pull-request`, `checkout` selects a stack that this repository already tracks. Pass
+`--revset` to select its head by a local revision, or `--pick` to choose a head from an
+interactive numbered list. `--pick` does not discover stacks that exist only on GitHub.
+
+The working copy moves only after the complete stack has been validated and any new tracking has
+been saved. `checkout` does not rebase changes or modify GitHub. To create a new change on top of
+the checked-out change, run `jj new` afterward.
 """
 
 from __future__ import annotations
@@ -29,6 +38,7 @@ from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedB
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import (
     is_review_branch,
+    prepare_visible_review_snapshots,
     review_branch_matches_change,
     review_namespace,
 )
@@ -38,7 +48,7 @@ from jj_stack.review.selected import select_review_path
 from jj_stack.review.status import status_preparation_cli_error
 from jj_stack.state.operation_lock import acquire_operation_lock
 
-HELP = "Connect jj-stack to an existing stack of pull requests"
+HELP = "Check out an existing stack of pull requests"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +64,6 @@ def checkout(
     *,
     cli_args: JjCliArgs,
     debug: bool,
-    fetch: bool,
     pick: bool,
     pull_request: str | None,
     repository: Path | None,
@@ -69,11 +78,17 @@ def checkout(
         result = asyncio.run(
             _run_checkout_async(
                 context=context,
-                fetch=fetch,
                 pull_request_reference=pull_request,
                 revset=revset,
             )
         )
+        if result.stack.revisions:
+            if result.adopted_count:
+                prepare_visible_review_snapshots(
+                    jj_client=context.jj_client,
+                    state=context.state_store.load(),
+                )
+            context.jj_client.edit_revision(result.stack.head.commit_id)
     if result.fetched_tip_commit is not None:
         console.output(ui.prefixed_line("Fetched tip commit: ", result.fetched_tip_commit))
     if result.adopted_count:
@@ -83,13 +98,17 @@ def checkout(
         console.output("Local tracking is already up to date for this stack.")
     else:
         console.output("The selected stack has no changes to review.")
+    if result.stack.revisions:
+        console.output(
+            t"Working copy now edits {ui.change_id(result.stack.head.change_id)} "
+            t"({result.stack.head.subject})."
+        )
     return 0
 
 
 async def _run_checkout_async(
     *,
     context: CommandContext,
-    fetch: bool,
     pull_request_reference: str | None,
     revset: str | None,
 ) -> CheckoutResult:
@@ -99,10 +118,9 @@ async def _run_checkout_async(
             t"{ui.cmd('--pull-request')} or {ui.cmd('--revset')}."
         )
     if pull_request_reference is None:
-        return _checkout_saved_stack(context=context, fetch=fetch, revset=revset)
+        return _checkout_saved_stack(context=context, revset=revset)
     return await _checkout_pull_request_stack(
         context=context,
-        fetch=fetch,
         pull_request_reference=pull_request_reference,
     )
 
@@ -110,16 +128,10 @@ async def _run_checkout_async(
 def _checkout_saved_stack(
     *,
     context: CommandContext,
-    fetch: bool,
     revset: str | None,
 ) -> CheckoutResult:
     client = context.jj_client
     state = context.state_store.load()
-    remote = select_submit_remote(client.list_git_remotes())
-    if fetch:
-        client.fetch_remote(
-            remote=remote.name,
-        )
     stack = select_review_path(jj_client=client, revset=revset, state=state).stack
     incomplete = tuple(
         revision
@@ -130,7 +142,7 @@ def _checkout_saved_stack(
         raise CliError(
             t"jj-stack has no saved pull request for some changes in this stack: "
             t"{ui.join(ui.change_id, (revision.change_id for revision in incomplete))}.",
-            hint=t"Attach it with {ui.cmd('checkout --pull-request PR --fetch')}.",
+            hint=t"Attach it with {ui.cmd('checkout --pull-request PR')}.",
         )
     return CheckoutResult(adopted_count=0, fetched_tip_commit=None, stack=stack)
 
@@ -138,7 +150,6 @@ def _checkout_saved_stack(
 async def _checkout_pull_request_stack(
     *,
     context: CommandContext,
-    fetch: bool,
     pull_request_reference: str,
 ) -> CheckoutResult:
     client = context.jj_client
@@ -178,14 +189,16 @@ async def _checkout_pull_request_stack(
             top=top_pull_request,
         )
 
-        if fetch:
-            for pull_request in reversed(pull_requests):
-                _reject_locally_rewritten_change(
-                    client=client,
-                    head_sha=_require_pull_request_head_sha(pull_request),
-                    pull_number=pull_request.number,
-                    remote_name=remote.name,
-                )
+        for pull_request in reversed(pull_requests):
+            _reject_locally_rewritten_change(
+                client=client,
+                head_sha=_require_pull_request_head_sha(pull_request),
+                pull_number=pull_request.number,
+                remote_name=remote.name,
+            )
+        matches = client.query_revisions_by_commit_ids((top_head_sha,))
+        fetched = not matches
+        if fetched:
             client.fetch_remote(
                 remote=remote.name,
             )
@@ -204,12 +217,6 @@ async def _checkout_pull_request_stack(
                     state=state,
                 )
         else:
-            matches = client.query_revisions_by_commit_ids((top_head_sha,))
-            if len(matches) != 1:
-                raise CliError(
-                    t"PR #{pull_number}'s head commit is not present locally.",
-                    hint=t"Re-run with {ui.cmd('--fetch')} to attach it.",
-                )
             _require_branch_matches_revision(
                 branch=top_pull_request.head.ref,
                 revision=matches[0],
@@ -230,7 +237,7 @@ async def _checkout_pull_request_stack(
         )
     return CheckoutResult(
         adopted_count=adopted_count,
-        fetched_tip_commit=(top_head_sha if fetch else None),
+        fetched_tip_commit=(top_head_sha if fetched else None),
         stack=stack,
     )
 
@@ -242,12 +249,12 @@ def _reject_locally_rewritten_change(
     pull_number: int,
     remote_name: str,
 ) -> None:
-    """Reject a fetch that would import a rewritten copy of a visible local change.
+    """Reject a reviewed snapshot that disagrees with a visible local change.
 
-    The remote commit's change ID is read without creating a ref, because importing it first
-    would leave a divergent second copy behind that no rerun can remove. On a fresh checkout
-    that costs one extra object fetch; reading the same header inside the import primitive
-    would instead give that shared primitive a second policy path.
+    The remote commit's change ID is read without creating a ref. On a fresh checkout that costs
+    one extra object fetch; reading the same header inside the import primitive would instead
+    give that shared primitive a second policy path. The check also covers an already visible
+    reviewed snapshot, where editing it would silently choose against the rewritten local change.
     """
 
     change_id = client.read_remote_git_change_id(
@@ -271,7 +278,7 @@ def _reject_locally_rewritten_change(
         )
     raise CliError(
         t"Change {ui.change_id(change_id)} is already here at a different commit than "
-        t"PR #{pull_number}'s head, so fetching it would leave two copies.",
+        t"PR #{pull_number}'s head, so checkout cannot choose between them.",
         hint=t"Attach the pull request to the local change with "
         t"{ui.cmd(f'jj-stack relink {pull_number} {change_id}')}.",
     )
@@ -507,13 +514,15 @@ def _pick_tracked_stack_head(context: CommandContext) -> str:
     if not stacks:
         raise CliError(
             "No locally tracked stacks to pick from.",
-            hint=t"Use {ui.cmd('checkout --pull-request PR --fetch')} to attach one.",
+            hint=t"Use {ui.cmd('checkout --pull-request PR')} to attach one.",
         )
     console.output("Locally tracked stacks:")
     for index, stack in enumerate(stacks, start=1):
+        count = len(stack.revisions)
+        noun = "change" if count == 1 else "changes"
         console.output(
             t"  [{index}] {ui.change_id(stack.head.change_id)} "
-            t"{stack.head.subject} ({len(stack.revisions)} changes)"
+            t"{stack.head.subject} ({count} {noun})"
         )
     console.output(t"Pick a stack [1-{len(stacks)}]: ")
     selection = sys.stdin.readline().strip()

@@ -18,34 +18,42 @@ from ..support.integration_helpers import (
 )
 
 
-def test_checkout_bootstraps_tracking_without_importing_review_branches(
+def test_checkout_fetches_missing_stack_then_adopts_and_edits_selected_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo(tmp_path)
+    publisher, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    assert _main(repo, config_path, "submit") == 0
-    expected = ReviewStateStore.for_repo(repo).load()
-    resolve_state_path(repo).unlink()
+    commit_file(publisher, "feature 1", "feature-1.txt")
+    commit_file(publisher, "feature 2", "feature-2.txt")
+    assert _main(publisher, config_path, "submit") == 0
+    expected = ReviewStateStore.for_repo(publisher).load()
+    expected_head = selected_stack(publisher).head
+
+    repo = tmp_path / "consumer"
+    run_command(["jj", "git", "init", str(repo)], tmp_path)
+    run_command(["jj", "git", "remote", "add", "origin", str(fake_repo.git_dir)], repo)
+    client = JjClient(repo)
+    client.ensure_review_fetch_isolation(remote="origin")
+    client.fetch_remote(remote="origin")
+    run_command(["jj", "bookmark", "create", "main", "-r", "main@origin"], repo)
+    assert client.query_revisions_by_commit_ids((expected_head.commit_id,)) == ()
     capsys.readouterr()
 
-    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2") == 0
+    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 0
 
     captured = capsys.readouterr()
     assert "Fetched tip commit:" in captured.out
+    assert "Working copy now edits" in captured.out
+    assert JjClient(repo).resolve_revision("@").change_id == expected_head.change_id
     assert ReviewStateStore.for_repo(repo).load() == expected
-    client = JjClient(repo)
-    assert set(client.visible_review_bookmark_targets()) == {
-        identity.head_ref for identity in expected.review_identities.values()
-    }
+    assert client.visible_review_bookmark_targets() == {}
     review_temp = client.review_temp_artifacts()
     assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
 
 
-def test_checkout_without_fetch_accepts_a_matching_visible_review_bookmark(
+def test_checkout_accepts_a_matching_visible_review_bookmark(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -65,7 +73,7 @@ def test_checkout_without_fetch_accepts_a_matching_visible_review_bookmark(
     assert set(JjClient(repo).visible_review_bookmark_targets()) == {identity.head_ref}
 
 
-def test_checkout_fetch_rejects_a_locally_rewritten_pull_request_without_importing(
+def test_checkout_rejects_a_locally_rewritten_pull_request_before_importing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -78,15 +86,15 @@ def test_checkout_fetch_rejects_a_locally_rewritten_pull_request_without_importi
     run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
     capsys.readouterr()
 
-    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "1") == 1
+    assert _main(repo, config_path, "checkout", "--pull-request", "1") == 1
 
     captured = capsys.readouterr()
     unwrapped = " ".join(captured.err.split())
-    assert "fetching it would leave two copies" in unwrapped
+    assert "checkout cannot choose between them" in unwrapped
     assert len(JjClient(repo).query_revisions(f"change_id({change_id})")) == 1
 
 
-def test_checkout_fetch_rejects_a_rewritten_lower_pull_request(
+def test_checkout_rejects_a_rewritten_lower_pull_request_before_importing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -110,9 +118,9 @@ def test_checkout_fetch_rejects_a_rewritten_lower_pull_request(
     )
     capsys.readouterr()
 
-    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2") == 1
+    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 1
 
-    assert "fetching it would leave two copies" in " ".join(capsys.readouterr().err.split())
+    assert "checkout cannot choose between them" in " ".join(capsys.readouterr().err.split())
     assert len(JjClient(repo).query_revisions(f"change_id({bottom_change_id})")) == 1
 
 
@@ -126,7 +134,7 @@ def test_checkout_pull_request_rejects_cross_repository_head(
     initial_state = ReviewStateStore.for_repo(repo).load()
     fake_repo.pull_requests[2].head_label = f"someone-else:{fake_repo.pull_requests[2].head_ref}"
 
-    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2") == 1
+    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 1
 
     assert "does not belong to" in capsys.readouterr().err
     assert ReviewStateStore.for_repo(repo).load() == initial_state
@@ -148,7 +156,7 @@ def test_checkout_pull_request_rejects_ambiguous_top_head(
         title="duplicate",
     )
 
-    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2") == 1
+    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 1
 
     assert "does not uniquely identify" in capsys.readouterr().err
     assert ReviewStateStore.for_repo(repo).load() == initial_state
@@ -177,7 +185,7 @@ def test_checkout_rejects_missing_parent_remote_branch_without_partial_tracking(
         repo,
     )
 
-    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2") == 1
+    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 1
 
     assert "no longer identify the same commit" in capsys.readouterr().err
     current = ReviewStateStore.for_repo(repo).load()
@@ -193,32 +201,38 @@ def test_checkout_reports_up_to_date_for_an_already_attached_stack(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
 
-    assert _main(repo, config_path, "checkout", "--fetch", "--pull-request", "2") == 0
+    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 0
 
     assert "Local tracking is already up to date for this stack." in capsys.readouterr().out
 
 
-def test_checkout_pick_uses_saved_tracking(
+def test_checkout_pick_edits_selected_tracked_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    feature_1_change_id = selected_stack(repo).head.change_id
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "feature 2", "feature-2.txt")
     assert _main(repo, config_path, "submit") == 0
+    feature_2_change_id = selected_stack(repo).head.change_id
     capsys.readouterr()
 
     import io
 
-    monkeypatch.setattr("sys.stdin", io.StringIO("2\n"))
+    ordered_heads = sorted((feature_1_change_id, feature_2_change_id))
+    selection = ordered_heads.index(feature_1_change_id) + 1
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{selection}\n"))
     assert _main(repo, config_path, "checkout", "--pick") == 0
 
     captured = capsys.readouterr()
     assert "Locally tracked stacks:" in captured.out
     assert "feature 1" in captured.out
     assert "Local tracking is already up to date for this stack." in captured.out
+    assert "Working copy now edits" in captured.out
+    assert JjClient(repo).resolve_revision("@").change_id == feature_1_change_id
 
 
 def _configure_checkout_environment(

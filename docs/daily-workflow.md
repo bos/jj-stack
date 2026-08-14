@@ -185,18 +185,18 @@ If review state already exists on another machine or only on GitHub, connect it 
 with:
 
 ```bash
-jj-stack checkout --pull-request <pr> --fetch
+jj-stack checkout --pull-request <pr>
 ```
 
-Despite its name, `checkout` does not move the working copy. It fetches the reviewed commits
-needed to identify the stack, saves local tracking, and prints the tip commit. Its temporary
-import bookmark is removed. A custom fetch configuration may also expose ordinary review
-bookmarks; those do not prevent adoption when they match the saved review. To continue on top of
-the reviewed commits, use `jj new <tip-commit-id>` afterward; to edit an existing change directly,
-use `jj edit <change-id>`.
+`checkout` fetches the reviewed commits through the selected PR, saves local tracking, and runs
+`jj edit` on that PR's change. Its temporary import bookmark is removed. A custom fetch
+configuration may also expose ordinary review bookmarks; those do not prevent adoption when they
+match the saved review. To create a new change on top instead of editing the selected change, run
+`jj new` afterward.
 
-When several stacks are already tracked in this repository and you do not remember a head change
-ID, `jj-stack checkout --pick` presents a numbered list. It does not discover GitHub-only stacks.
+`--pick` is the interactive form for a stack this repository already tracks. It lists each
+tracked stack's head change ID and subject, asks for a number, and edits that head. It does not
+discover GitHub-only stacks; use `--pull-request <pr>` when continuing work from another machine.
 
 If you want to inspect the stack for one linked PR directly:
 

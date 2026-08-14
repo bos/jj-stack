@@ -41,7 +41,7 @@ produced rewritten merge commits, it leaves tracking in place and prints a selec
 
 ## Recover an interrupted or rejected operation
 
-Run `doctor` first for leftovers from interrupted `checkout --fetch` or `sync`, repository setup,
+Run `doctor` first for leftovers from interrupted `checkout` or `sync`, repository setup,
 authentication, and remote resolution. Then run `view` with the original explicit selector and
 retry the same command from current observations.
 
@@ -54,8 +54,8 @@ stack number as the command requires. Do not repair ambiguity by guessing.
 
 ## Adopt, repair, or forget tracking
 
-- Use `checkout --pull-request <pr> --fetch` to fetch and adopt a whole existing review without
-  moving the working copy, rewriting changes, or touching GitHub.
+- Use `checkout --pull-request <pr>` to fetch as needed and adopt the existing review through
+  that PR, then edit the PR's change without rebasing changes or touching GitHub.
 - Use `relink <pr> <revset>` when one known open PR and review branch must be attached to one
   existing local change.
 - Use `unstack --local <head-change-id>` only to forget saved links without changing GitHub,

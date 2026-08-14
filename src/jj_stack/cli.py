@@ -958,13 +958,13 @@ def _add_checkout_parser(
         selector,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
-        help="Pull request number or URL",
+        help="Pull request whose change to edit, by number or URL",
     )
     add_help_argument(
         selector,
         "--revset",
         help=(
-            t"Local stack to connect; defaults to {ui.revset('@')} when the working-copy "
+            t"Local stack whose head to edit; defaults to {ui.revset('@')} when the working-copy "
             t"change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
@@ -972,16 +972,9 @@ def _add_checkout_parser(
         selector,
         "--pick",
         action="store_true",
-        help="Choose from a numbered list of the stacks jj-stack already tracks",
-    )
-    add_help_argument(
-        parser,
-        "--fetch",
-        action="store_true",
         help=(
-            t"Fetch ordinary remote state and, for "
-            t"{ui.cmd('--pull-request')}, fetch the reviewed commits without "
-            t"leaving persistent review bookmarks"
+            "Interactively choose a locally tracked stack head to edit; "
+            "does not discover GitHub-only stacks"
         ),
     )
     return parser

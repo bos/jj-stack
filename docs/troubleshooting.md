@@ -322,24 +322,25 @@ Possible causes:
 What to do:
 
 ```bash
-jj-stack checkout --pull-request <pr> --fetch
+jj-stack checkout --pull-request <pr>
 ```
 
 Use `checkout` when the problem is "these PRs exist on GitHub but I can't manage them locally
-yet." It connects the PRs to local tracking and prints their tip without moving the working copy.
-To continue from that tip:
+yet." It connects the PRs to local tracking and edits the change for the selected PR. To create a
+new change on top instead:
 
 ```bash
-jj new <tip-commit-id>
+jj new
 ```
 
-Use `jj-stack checkout --pick` only for stacks this local repository already tracks; to discover
-a GitHub-only stack, select one of its PRs explicitly as shown above.
+Use `jj-stack checkout --pick` only as an interactive alternative to `--revset` for stacks this
+local repository already tracks. It edits the head you choose. To discover a GitHub-only stack,
+select one of its PRs explicitly as shown above.
 
 If `checkout` instead reports that the change is already here at a different commit, this
-repository already has the change and you have edited it since the last submit. Fetching would
-leave two copies of it, so `checkout` stops. Attach the pull request to the change you already
-have, then publish your edit:
+repository already has the change and you have edited it since the last submit. `checkout` will
+not choose between the reviewed snapshot and the local rewrite. Attach the pull request to the
+change you want to keep, then publish your edit:
 
 ```bash
 jj-stack relink <pr> <change-id>

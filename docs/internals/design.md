@@ -234,8 +234,8 @@ evidence, and mutation rules.
   reviews. `sync` invokes cleanup after reconciling merged work. The standalone command handles
   review closure, closed reviews, and cleanup retries; with no selector it checks the repository,
   while a revision or pull request limits it to the named review.
-- **`checkout`** adopts review state already on GitHub. It sets up tracking but does not move the
-  workspace or rewrite local commits.
+- **`checkout`** adopts review state already on GitHub and edits the selected change in the
+  current workspace.
 - **`relink`** attaches one known PR and same-repository head branch to one selected change when
   the user knows the identity but the tool cannot prove it.
 - **`doctor`** reports setup, connectivity, and observable leftovers from interrupted local
@@ -248,11 +248,12 @@ evidence, and mutation rules.
 
 There is no standalone `rebase` command; `jj` owns general descendant rewrites.
 
-`sync`, `merge`, and `checkout --fetch` run `jj git fetch` themselves before they act. A direct
-`merge` fetches once while preparing the GitHub request and again after GitHub completes it so
-local reconciliation observes the result. No other command fetches, so when local trunk is stale
-the user runs `jj git fetch`. **Fetched trunk** below always means `trunk()` as evaluated after
-the running command's relevant fetch.
+`sync` and `merge` run `jj git fetch` themselves before they act. `checkout --pull-request`
+fetches when the selected PR's exact head commit is not already local. A direct `merge` fetches
+once while preparing the GitHub request and again after GitHub completes it so local
+reconciliation observes the result. No other command fetches, so when local trunk is stale the
+user runs `jj git fetch`. **Fetched trunk** below always means `trunk()` as evaluated after the
+running command's relevant fetch.
 
 ## Sources of truth
 
@@ -723,17 +724,25 @@ a rerun.
 
 ### Adoption and repair
 
-`checkout` adopts review state already on GitHub and never rewrites commits, restacks
-descendants, moves the workspace, or mutates PRs. Before `--fetch` imports anything, it stops if
-the PR's change ID already exists locally at another commit and names `relink`; importing it
-would create divergence. The command leaves no review bookmarks behind.
+`checkout --pull-request` treats the selected PR as the head of the remote chain to adopt and
+edit. `--revset` selects an exact local head, while `--pick` lists the heads of locally tracked
+stacks and edits the chosen one. The picker never discovers a stack that exists only on GitHub.
+
+Before choosing a local or fetched snapshot, `checkout` reads each PR head's change ID. If that
+change ID already exists locally at another commit, it stops and names `relink` rather than
+choosing between the reviewed snapshot and the local rewrite. When the selected PR's exact head
+commit is absent locally, it fetches ordinary remote state and imports the selected review
+through a temporary ref. It validates the complete selected stack and saves any new tracking
+before it runs `jj edit` on the exact head commit it observed. If the workspace move fails after
+adoption, a rerun observes the saved tracking and retries the move. The command does not rebase
+review changes, restack descendants, or mutate PRs, and it leaves no review bookmarks behind.
 
 `relink` explicitly replaces uncertain tracking for one change. It verifies the known PR and
 same-repository head branch, then saves the identity and exact observed remote target as one pair.
 Replacing the stale baseline lets a later `submit` update the known review rather than reject the
 branch as foreign.
 
-`doctor` observes setup and local leftovers from interrupted `checkout --fetch` or `sync`. It
+`doctor` observes setup and local leftovers from interrupted `checkout` or `sync`. It
 changes nothing without `--fix`; currently the only automatic repair is restoring the reserved
 review-branch exclusion in remote fetch configuration. It never mutates GitHub.
 

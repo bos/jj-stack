@@ -247,8 +247,9 @@ def _check_review_temp(*, context: CommandContext) -> CheckResult:
     return CheckResult(
         "checkout/sync leftovers",
         "warn",
-        t"leftovers from an interrupted command remain; retry the "
-        t"{ui.cmd('jj-stack checkout --fetch')} or {ui.cmd('jj-stack sync')} command to clear it",
+        t"leftovers from an interrupted command remain; rerun the interrupted "
+        t"{ui.cmd('jj-stack checkout --pull-request PR')} or "
+        t"{ui.cmd('jj-stack sync')} command to clear it",
     )
 
 
