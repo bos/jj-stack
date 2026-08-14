@@ -54,8 +54,8 @@ The normal lifecycle is:
 5. Use `jj-stack merge` to ask GitHub to merge a reviewed prefix from the bottom. When GitHub
    completes a direct merge, the same command fetches its result and reconciles the remaining
    local changes and reviews with what reached trunk.
-6. After a queued merge, or a merge completed outside `jj-stack`, run `jj-stack sync` for that
-   selected stack once GitHub has finished.
+6. After a queued merge, a merge completed outside `jj-stack`, or a native GitHub stack rebase,
+   run `jj-stack sync` for that selected stack once GitHub has finished.
 
 ## Core concepts
 
@@ -216,9 +216,9 @@ evidence, and mutation rules.
   not inventory wholly untracked stacks.
 - **`submit`** publishes the selected stack. It is the only command that creates a PR or
   publishes a never-submitted change.
-- **`sync`** reconciles the selected stack after
-  reviewed work lands. It may rewrite surviving local changes, update their existing reviews, and
-  clean up merged reviews after the local update succeeds. It never creates a PR.
+- **`sync`** reconciles the selected stack after reviewed work lands or GitHub rebases the whole
+  active stack. It may rewrite surviving local changes, update their existing reviews, and clean
+  up merged reviews after the local update succeeds. It never creates a PR.
 - **`sync --all`** discovers every affected local stack and applies ordinary selected-stack
   reconciliation to each one in turn. It also finishes reviews whose exact submitted commits are
   on trunk and whose local changes are gone. A blocked stack does not prevent independent stacks
@@ -435,6 +435,8 @@ Only commands that successfully send or adopt a specific reviewed commit may rep
 
 - `submit` and `sync`, after a survivor's review update succeeds
 - `sync`, when adopting an exact surviving GitHub stack commit
+- `sync`, after replacing a GitHub-rebased stack with equivalent commits that retain the original
+  change IDs
 - `relink`, from the observed remote target
 - `checkout`, when adopting an existing review
 
@@ -551,8 +553,9 @@ stack holds a copy of work already on trunk.
 
 ### Repository policy
 
-A merge initiated through GitHub's UI, auto-merge, or another client is supported. A later
-`sync` on that stack reconciles it under the trunk-evidence rules below.
+A merge initiated through GitHub's UI, auto-merge, or another client is supported. Rebasing a
+complete native GitHub stack through GitHub's UI is also supported. A later `sync` reconciles
+either result under the rules below.
 
 `jj-stack` does not duplicate repository policy. Apart from choosing direct merge or queue
 routing for the trunk branch, it does not preflight approvals, checks, conflicts, or auto-merge
@@ -631,9 +634,31 @@ merges. A matching full change ID on fetched trunk identifies the successor rath
 an arbitrary visible side copy. When fetched trunk has no matching change ID, `sync` retires the
 old local change without relabeling that commit or storing an alias.
 
-When a GitHub stack merge rewrites active members above the merged prefix, `sync` adopts
-the exact commits GitHub reports rather than replaying equivalent diffs. It accepts those heads
-and bases only while a merged tracked member of the same GitHub stack proves the transition.
+When a GitHub stack merge rewrites active members above the merged prefix, `sync` adopts the exact
+commits GitHub reports rather than replaying equivalent diffs. It accepts those heads and bases
+only while a merged tracked member of the same GitHub stack proves the transition.
+
+GitHub's native stack rebase instead rewrites every active member and removes `jj`'s change-ID
+commit headers. With no merged member, those remote commits cannot become the identity of the
+local changes. `sync` recognizes this result only when all of these observations agree:
+
+- the GitHub stack contains exactly the selected tracked reviews, in their local parent order
+- every PR still uses its saved head branch and the expected base branch
+- every PR head and review branch moved from its submitted baseline to the same reported commit
+- the reported commits form one first-parent chain rooted at fetched trunk
+- the selected local changes have no divergent revisions
+
+`sync` then computes a rebase of the original local changes without first changing the local DAG.
+The computed change IDs must remain the selected change IDs, conflicts are rejected, and each
+computed commit tree must exactly equal the corresponding GitHub commit tree. This comparison is
+also the recovery proof when a previous run integrated the local rebase but failed before moving
+the review branches.
+
+After the proof succeeds, `sync` integrates the local rebase, atomically replaces every rewritten
+review branch using the observed GitHub heads as exact leases, and records the resulting local
+commits as the submitted baselines. A changed lease leaves the local rebase in place and advances
+no baseline; a retry proves its trees against the freshly observed stack. No alias from a GitHub
+commit to a local change ID is stored.
 
 ### GitHub stack membership
 
@@ -665,7 +690,7 @@ they do not block the mutation because they are no longer active.
 ### Derived artifacts
 
 PR titles, bodies, and the stack overview comment are derived on every submit and never determine
-topology; see [description helpers](../description-helpers.md).
+topology; see [pull request descriptions](../reference/descriptions.md).
 
 The managed overview comment is rediscovered by an unambiguous body marker, never a stored
 comment ID. Ambiguous matches are left untouched. A one-PR review has no overview comment. New
@@ -855,7 +880,8 @@ extension, the code matches. Codes 7-9 remain reserved because their `gh stack` 
 - `11` — `in-use` could not determine its result
 - `130` — interrupted
 
-The user-facing table lives in [docs/exit-codes.md](../exit-codes.md).
+The user-facing table lives in
+[docs/reference/automation.md](../reference/automation.md#exit-codes).
 
 ## Current scope
 

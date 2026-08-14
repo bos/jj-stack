@@ -61,8 +61,7 @@ Specific patterns to watch for in help text:
 When you add a feature or change behavior, ask:
 
 1. Does `docs/troubleshooting.md` need a new symptom/fix entry?
-2. Does `docs/daily-workflow.md` need a new step or a note in "When something
-   goes wrong"?
+2. Does one of the guides under `docs/guides/` need a new step or note?
 3. Does `docs/README.md` need an updated command list?
 
 The `--help` output is the canonical flag reference. User docs should explain

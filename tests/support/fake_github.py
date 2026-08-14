@@ -483,6 +483,104 @@ class FakeGithubRepository:
         pull_request.head_sha = rewritten
         return rewritten
 
+    def advance_branch(self, branch: str, *, path: str, contents: str) -> str:
+        """Add one file in a new commit on a backing branch."""
+
+        parent = self.ref_target(branch)
+        if parent is None:
+            raise AssertionError(f"Missing fake GitHub branch {branch}")
+        parent_tree = self._run_backing_git("rev-parse", f"{parent}^{{tree}}")
+        tree = self._tree_with_file(parent_tree, path=path, contents=contents)
+        commit = self._run_backing_git(
+            "commit-tree",
+            tree,
+            "-p",
+            parent,
+            "-m",
+            "advance trunk for stack rebase",
+        )
+        self._run_backing_git("update-ref", f"refs/heads/{branch}", commit)
+        return commit
+
+    def rebase_stack_onto_base(self, stack_number: int, *, base_ref: str) -> tuple[str, ...]:
+        """Model GitHub's native stack rebase, which drops jj change-ID headers.
+
+        A credentialed test against GitHub's stack UI confirmed this commit shape on 2026-08-13.
+        """
+
+        members = self.github_stacks[stack_number]
+        original_heads = self.branch_heads()
+        parent = original_heads[base_ref]
+        rewritten_heads: list[str] = []
+        expected_base = base_ref
+        for pull_number in members:
+            pull_request = self.pull_requests[pull_number]
+            original = original_heads[pull_request.head_ref]
+            original_parent = self._run_backing_git("rev-parse", f"{original}^")
+            tree = self._run_backing_git(
+                "merge-tree",
+                "--write-tree",
+                f"--merge-base={original_parent}",
+                parent,
+                original,
+            )
+            rewritten = self._replay_commit(
+                commit_id=original,
+                drop_change_id=True,
+                extra_header="x-fake-github-stack-rebase true",
+                parent_commit_id=parent,
+                tree_id=tree,
+            )
+            self._run_backing_git(
+                "update-ref",
+                f"refs/heads/{pull_request.head_ref}",
+                rewritten,
+            )
+            self.update_pull_request_base(pull_request, base_ref=expected_base)
+            pull_request.head_sha = rewritten
+            rewritten_heads.append(rewritten)
+            expected_base = pull_request.head_ref
+            parent = rewritten
+        return tuple(rewritten_heads)
+
+    def replace_pull_request_head_contents(
+        self,
+        pull_request: FakeGithubPullRequest,
+        *,
+        path: str,
+        contents: str,
+    ) -> str:
+        """Replace one rewritten PR head with a same-parent commit containing another file."""
+
+        head = self.ref_target(pull_request.head_ref)
+        if head is None:
+            raise AssertionError(f"Missing fake GitHub branch {pull_request.head_ref}")
+        parent = self._run_backing_git("rev-parse", f"{head}^")
+        original_tree = self._run_backing_git("rev-parse", f"{head}^{{tree}}")
+        tree = self._tree_with_file(original_tree, path=path, contents=contents)
+        rewritten = self._replay_commit(
+            commit_id=head,
+            drop_change_id=True,
+            extra_header="x-fake-github-content-edit true",
+            parent_commit_id=parent,
+            tree_id=tree,
+        )
+        self._run_backing_git(
+            "update-ref",
+            f"refs/heads/{pull_request.head_ref}",
+            rewritten,
+        )
+        pull_request.head_sha = rewritten
+        return rewritten
+
+    def _tree_with_file(self, tree: str, *, path: str, contents: str) -> str:
+        blob = self._run_backing_git("hash-object", "-w", "--stdin", stdin=contents)
+        entries = self._run_backing_git("ls-tree", tree)
+        return self._run_backing_git(
+            "mktree",
+            stdin=f"{entries}\n100644 blob {blob}\t{path}\n",
+        )
+
     def force_push_pull_request_head(self, pull_request: FakeGithubPullRequest) -> str:
         """Rewrite one PR head externally while preserving its jj change ID."""
 
@@ -508,17 +606,20 @@ class FakeGithubRepository:
         self,
         *,
         commit_id: str,
+        drop_change_id: bool = False,
         extra_header: str | None = None,
         message_suffix: str = "",
         parent_commit_id: str,
+        tree_id: str | None = None,
     ) -> str:
-        tree = self._run_backing_git("rev-parse", f"{commit_id}^{{tree}}")
+        tree = tree_id or self._run_backing_git("rev-parse", f"{commit_id}^{{tree}}")
         raw_commit = self._run_backing_git("cat-file", "commit", commit_id)
         headers, separator, message = raw_commit.partition("\n\n")
         rewritten_headers = [
             f"tree {tree}" if line.startswith("tree ") else line
             for line in headers.splitlines()
             if not line.startswith("parent ")
+            and not (drop_change_id and line.startswith("change-id "))
         ]
         rewritten_headers.insert(1, f"parent {parent_commit_id}")
         if extra_header is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import jj_stack.review.observation as review_observation
 import jj_stack.ui as ui
@@ -27,9 +28,16 @@ class GithubStackHistoryReview:
 
 
 @dataclass(frozen=True, slots=True)
-class GithubStackSurvivorReview:
+class GithubStackActiveReview:
     candidate: TrackedReview
     remote_head_commit_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GithubStackRewrite:
+    mode: Literal["merge", "rebase"]
+    history: tuple[GithubStackHistoryReview, ...]
+    active: tuple[GithubStackActiveReview, ...]
 
 
 async def observe_github_stacks(
@@ -111,7 +119,7 @@ def _changed_review(observed: review_observation.ReviewObservation) -> bool:
     )
 
 
-def build_selected_github_stack_sync(
+def build_selected_github_stack_rewrite(
     *,
     context: CommandContext,
     github_stacks: tuple[GithubStack, ...],
@@ -119,8 +127,9 @@ def build_selected_github_stack_sync(
     repository: GithubRepoAddress,
     selected: tuple[LocalRevision, ...],
     state: ReviewState,
+    trunk_branch: str,
     trunk_commit_id: str,
-) -> tuple[tuple[GithubStackHistoryReview, ...], tuple[GithubStackSurvivorReview, ...]]:
+) -> GithubStackRewrite | None:
     selected_by_change_id = {revision.change_id: revision for revision in selected}
     candidates_by_pull = {
         candidate.review_identity.pr_number: candidate
@@ -141,7 +150,7 @@ def build_selected_github_stack_sync(
         stacks=github_stacks,
     )
     if stack is None:
-        return (), ()
+        return None
     selected_resource_numbers = tuple(
         pull_number
         for pull_number in stack.pull_request_numbers
@@ -157,8 +166,13 @@ def build_selected_github_stack_sync(
             t"grouping with {ui.cmd(f'jj-stack unstack --stack {stack.number}')} and resubmit.",
         )
     historical: list[GithubStackHistoryReview] = []
-    survivors: list[GithubStackSurvivorReview] = []
-    _require_history(stack, set(candidates_by_pull))
+    active: list[GithubStackActiveReview] = []
+    mode = _rewrite_mode(stack, set(candidates_by_pull))
+    if mode == "rebase" and stack.active_pull_request_numbers != tuple(
+        candidate.review_identity.pr_number for candidate in selected_candidates
+    ):
+        raise _unproven_rewrite_error(stack)
+    expected_base = trunk_branch
     for member in stack.pull_requests:
         candidate = candidates_by_pull.get(member.number)
         if candidate is None:
@@ -193,55 +207,96 @@ def build_selected_github_stack_sync(
                 )
             )
             continue
-        selected_revision = selected_by_change_id[candidate.change_id]
-        if selected_revision.immutable and selected_revision.commit_id != member.head.sha:
-            raise CliError(
-                t"GitHub still lists PR #{member.number} as active in stack #{stack.number}, "
-                t"but {ui.change_id(candidate.change_id)} is already immutable here, so this "
-                t"repository cannot tell what GitHub did with it.",
-                hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then "
-                t"rerun sync once it reports the merge.",
-            )
-        if selected_revision.holds_unpublished_edit(
-            (candidate.submitted_baseline.commit_id, member.head.sha)
-        ):
-            raise CliError(
-                t"Cannot sync {ui.change_id(candidate.change_id)} because it has unpublished "
-                t"local edits since submit.",
-                hint=t"Publish them with {ui.cmd('jj-stack submit')}, or drop them, then rerun "
-                t"sync.",
-            )
-        observed = observation.reviews[candidate.change_id]
-        # A closed or draft active member is still an affected survivor; only its branch has
-        # to match here. Convergence decides which surviving reviews can still be updated.
-        if (
-            pull_request.head.sha != member.head.sha
-            or observed.remote_review_target != member.head.sha
-        ):
-            raise CliError(
-                t"Active stack member PR #{member.number} does not match its reviewed branch.",
-                hint=t"Republish the review with {ui.cmd('jj-stack submit')}, then rerun sync.",
-            )
-        survivors.append(
-            GithubStackSurvivorReview(
+        active.append(
+            _active_review(
                 candidate=candidate,
-                remote_head_commit_id=member.head.sha,
+                expected_base=expected_base,
+                member=member,
+                mode=mode,
+                observation=observation,
+                pull_request=pull_request,
+                selected_revision=selected_by_change_id[candidate.change_id],
+                stack=stack,
             )
         )
-    return tuple(historical), tuple(survivors)
+        expected_base = candidate.review_identity.head_ref
+    if mode == "rebase" and any(
+        item.remote_head_commit_id == item.candidate.submitted_baseline.commit_id
+        for item in active
+    ):
+        raise _unproven_rewrite_error(stack)
+    return GithubStackRewrite(mode=mode, history=tuple(historical), active=tuple(active))
 
 
-def _require_history(stack: GithubStack, tracked: set[int]) -> None:
-    if not any(member.number in tracked for member in stack.historical_pull_requests):
+def _active_review(
+    *,
+    candidate: TrackedReview,
+    expected_base: str,
+    member: GithubStackPullRequest,
+    mode: Literal["merge", "rebase"],
+    observation: review_observation.RepositoryObservation,
+    pull_request: GithubPullRequest,
+    selected_revision: LocalRevision,
+    stack: GithubStack,
+) -> GithubStackActiveReview:
+    if selected_revision.immutable and selected_revision.commit_id != member.head.sha:
         raise CliError(
-            t"GitHub stack #{stack.number} changed, but none of its merged members is tracked "
-            t"here, so this repository cannot prove what GitHub did to the reviews in it.",
-            hint=t"Inspect it with {ui.cmd('jj-stack view')}. Attach a merged member that "
-            t"belongs here with {ui.cmd('jj-stack relink')}; if nothing in the stack has merged, "
-            t"there is no completed merge for sync to apply, so rebase with "
-            t"{ui.cmd('jj rebase')} "
-            t"instead.",
+            t"GitHub still lists PR #{member.number} as active in stack #{stack.number}, "
+            t"but {ui.change_id(candidate.change_id)} is already immutable here, so this "
+            t"repository cannot tell what GitHub did with it.",
+            hint=t"Check GitHub's result with {ui.cmd('jj-stack view')}, then "
+            t"rerun sync once it reports the merge.",
         )
+    if (
+        selected_revision.holds_unpublished_edit(
+            (candidate.submitted_baseline.commit_id, member.head.sha)
+        )
+        and mode == "merge"
+    ):
+        raise CliError(
+            t"Cannot sync {ui.change_id(candidate.change_id)} because it has unpublished "
+            t"local edits since submit.",
+            hint=t"Publish them with {ui.cmd('jj-stack submit')}, or drop them, then rerun sync.",
+        )
+    observed = observation.reviews[candidate.change_id]
+    # A closed or draft active member is still an affected survivor; only its branch has to match
+    # here. Convergence decides which surviving reviews can still be updated.
+    if (
+        pull_request.head.sha != member.head.sha
+        or observed.remote_review_target != member.head.sha
+    ):
+        raise CliError(
+            t"Active stack member PR #{member.number} does not match its reviewed branch.",
+            hint=t"Republish the review with {ui.cmd('jj-stack submit')}, then rerun sync.",
+        )
+    if mode == "rebase" and pull_request.base.ref != expected_base:
+        raise CliError(
+            t"PR #{member.number} no longer has the base expected for this stack.",
+            hint=t"Restore the stack on GitHub, or run "
+            t"{ui.cmd(f'jj-stack unstack --stack {stack.number}')} and resubmit it.",
+        )
+    return GithubStackActiveReview(
+        candidate=candidate,
+        remote_head_commit_id=member.head.sha,
+    )
+
+
+def _rewrite_mode(stack: GithubStack, tracked: set[int]) -> Literal["merge", "rebase"]:
+    if any(member.number in tracked for member in stack.historical_pull_requests):
+        return "merge"
+    if stack.historical_pull_requests:
+        raise _unproven_rewrite_error(stack)
+    return "rebase"
+
+
+def _unproven_rewrite_error(stack: GithubStack) -> CliError:
+    return CliError(
+        t"GitHub stack #{stack.number} changed, but none of its merged members is tracked "
+        t"here and the whole active stack was not rebased, so this repository cannot prove "
+        t"what GitHub did to its reviews.",
+        hint=t"Inspect it with {ui.cmd('jj-stack view')}. Restore or resubmit the review "
+        t"branches, then rerun sync.",
+    )
 
 
 def _historical_review(

@@ -33,7 +33,7 @@ eval "$(jj-stack completion zsh)"
 `bash` and `fish` work the same way.
 
 To invoke it as `jj stack` and complete that alias too, see
-[Configuration](docs/configuration.md).
+[Configuration](docs/reference/configuration.md).
 
 ### Submit your first stack
 
@@ -50,10 +50,9 @@ Inspect the stack that ends at your working copy:
 jj-stack
 ```
 
-Preview the changes that submitting would make, then create one GitHub PR per local change:
+Create one GitHub PR per local change:
 
 ```bash
-jj-stack submit --dry-run
 jj-stack submit
 ```
 
@@ -87,22 +86,22 @@ The review branches normally stay out of your local bookmark view. When you rewr
    `jj-stack sync <head-change-id>`.
 
 `view`, `submit`, `merge`, and `sync` accept a change ID when you need to select a stack other
-than the one ending at the working copy. `submit`, `merge`, `sync`, and `cleanup` support
-`--dry-run` where a useful preview is possible.
+than the one ending at the working copy.
 
-See the [daily workflow](docs/daily-workflow.md) for draft PRs, descriptions, merge queues,
-cleanup, and working with multiple stacks.
+See the [user guide](docs/README.md) for drafts, descriptions, merge queues, cleanup, and working
+with multiple stacks.
 
 ## Learn more
 
 - [Mental model](docs/mental-model.md)
-- [Daily workflow](docs/daily-workflow.md)
-- [Configuration](docs/configuration.md)
-- [Writing PR descriptions](docs/description-helpers.md)
+- [Quick start](docs/quick-start.md)
+- [Everyday workflows](docs/guides/submit-and-update.md)
+- [Configuration](docs/reference/configuration.md)
+- [Writing PR descriptions](docs/reference/descriptions.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [`jj-stack` and `gh stack`](docs/gh-stack-comparison.md)
-- [JSON output](docs/json-output.md)
-- [Exit codes](docs/exit-codes.md)
+- [`jj-stack` and `gh stack`](docs/gh-stack.md)
+- [JSON output](docs/reference/json-output.md)
+- [Automation and exit codes](docs/reference/automation.md)
 
 The built-in help is the canonical flag reference:
 

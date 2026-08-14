@@ -2,8 +2,9 @@
 
 `sync` fetches trunk and proves which reviewed changes reached it. It then rebases the remaining
 changes, updates only their existing pull requests, and removes the merged reviews' branches,
-comments, and saved links. A completed direct `merge` invokes the same selected-stack update.
-Neither path creates a pull request.
+comments, and saved links. It also verifies and applies a native GitHub stack rebase while
+restoring the original jj change IDs. A completed direct `merge` invokes the same selected-stack
+update. Neither path creates a pull request.
 
 Some local states stop `sync` before it rebases:
 
@@ -35,7 +36,7 @@ next. A rerun observes work already completed and continues from there.
 `sync --all` checks every pull request known to jj-stack. It reconciles each affected local stack
 in turn and also cleans up exact submitted commits whose local changes are gone.
 
-Use plain `jj rebase` when trunk merely advanced and nothing in the stack merged.
+Use plain `jj rebase` when trunk merely advanced and GitHub did not rebase the stack.
 """
 
 from __future__ import annotations
@@ -78,6 +79,7 @@ from jj_stack.review.finish import (
     finish_reviews,
     render_finish_results,
 )
+from jj_stack.review.github_stack_rebase import recover_github_stack_rebase
 from jj_stack.review.github_stack_sync import resolve_selected_github_stack_observation
 from jj_stack.review.observation import observe_reviews
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
@@ -229,6 +231,7 @@ async def _run_selected_convergence(
             observation=observation,
             prepared_status=prepared_status,
             repository=target.repository,
+            trunk_branch=trunk_branch,
         )
         _render_selected_plan(dry_run=dry_run, plan=plan)
         return await _apply_selected_plan(
@@ -272,6 +275,16 @@ async def _apply_selected_plan(
     trunk_branch: str,
     trunk_commit_id: str,
 ) -> int:
+    rewrite = plan.github_stack_rewrite
+    if rewrite is not None and rewrite.mode == "rebase":
+        return recover_github_stack_rebase(
+            context=context,
+            dry_run=dry_run,
+            plan=plan,
+            remote_name=target.remote.name,
+            rewrite=rewrite,
+            trunk_commit_id=trunk_commit_id,
+        )
     finish_context = FinishContext(
         dry_run=dry_run,
         github=github,
@@ -292,7 +305,7 @@ async def _apply_selected_plan(
     )
 
     if not dry_run:
-        github_stack_survivors = plan.github_stack_survivors
+        github_stack_survivors = rewrite.active if rewrite is not None else ()
         if github_stack_survivors:
             top = github_stack_survivors[-1]
             rebase_revision_ids = rebase_revision_ids[len(github_stack_survivors) :]
@@ -484,6 +497,11 @@ async def _update_selected_reviews(
 
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
+    rewrite = plan.github_stack_rewrite
+    if rewrite is not None and rewrite.mode == "rebase":
+        action = "Would restore" if dry_run else "Restoring"
+        console.output(f"{action} the stack's jj change IDs after GitHub rebased it.")
+        return
     if not plan.on_trunk:
         console.output("No merged changes in this stack need rebasing.")
         return

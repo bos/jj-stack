@@ -103,6 +103,9 @@ class JjWorkspace(BaseModel):
     current: bool
 
 
+ExpectedGitChangeId = str | None | tuple[str | None, ...]
+
+
 class _ConfigOrigin(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
@@ -762,20 +765,25 @@ class JjClient:
         branch: str,
         expected_target: str,
         expected_change_id: str | None = None,
-        expected_chain: Sequence[tuple[str, str, str]] = (),
+        expected_chain: Sequence[tuple[str, str, ExpectedGitChangeId]] = (),
         expected_parent_commit_id: str | None = None,
     ) -> Iterator[LocalRevision]:
         """Import one exact remote review ref, then remove all temporary artifacts.
 
-        An expected chain guards every member's raw Git change ID and first-parent ancestry.
+        An expected chain guards every member's raw Git change ID and first-parent ancestry. A
+        tuple accepts any listed ID, including a missing change-ID header represented by `None`.
         """
 
         ref = review_branch_ref(branch)
         chain = tuple(expected_chain)
         if chain and (
             expected_parent_commit_id is None
-            or chain[-1] != (branch, expected_target, expected_change_id)
+            or chain[-1][:2] != (branch, expected_target)
             or len({item[0] for item in chain}) != len(chain)
+            or (
+                expected_change_id is not None
+                and not _expected_git_change_id_matches(chain[-1][2], expected_change_id)
+            )
         ):
             raise ValueError("invalid expected remote review chain")
         self._clear_review_temp_ref()
@@ -797,9 +805,11 @@ class JjClient:
                 )
             if chain:
                 expected_parent = expected_parent_commit_id
-                for _chain_branch, target, change_id in chain:
+                for _chain_branch, target, expected_git_change_id in chain:
                     actual_change_id, parents = self._read_git_commit_metadata(target)
-                    if actual_change_id != change_id or parents != (expected_parent,):
+                    if not _expected_git_change_id_matches(
+                        expected_git_change_id, actual_change_id
+                    ) or parents != (expected_parent,):
                         raise CliError("Imported review heads no longer form the expected stack.")
                     expected_parent = target
             self._run_jj(("git", "import"))
@@ -980,6 +990,98 @@ class JjClient:
             manage_working_copy=True,
         )
 
+    def prepare_rebase_revisions_only(
+        self,
+        *,
+        revisions: Sequence[str],
+        destination: str,
+    ) -> str:
+        """Compute a rebase in an unintegrated operation and return its operation ID."""
+
+        ordered_revisions = list(dict.fromkeys(revisions))
+        if not ordered_revisions:
+            raise ValueError("speculative rebase requires at least one revision")
+        selected_head = ordered_revisions[-1]
+        ordered_revisions.extend(
+            revision.commit_id
+            for revision in self.query_descendant_revisions((selected_head,))
+            if revision.is_working_copy
+            and revision.empty
+            and revision.parents == (selected_head,)
+        )
+        output = self._run_jj(
+            (
+                "--no-integrate-operation",
+                "rebase",
+                "-r",
+                "|".join(ordered_revisions),
+                "-d",
+                destination,
+            ),
+            return_stderr=True,
+        )
+        match = re.search(
+            r"Operation left uncommitted because --no-integrate-operation was requested: "
+            r"([0-9a-f]+)",
+            output,
+        )
+        if match is None:
+            raise JjCommandError(
+                t"{ui.cmd('jj --no-integrate-operation rebase')} did not report its operation ID."
+            )
+        return match.group(1)
+
+    def query_revisions_at_operation(
+        self,
+        *,
+        change_ids: Sequence[str],
+        operation_id: str,
+    ) -> dict[str, tuple[LocalRevision, ...]]:
+        """Return visible revisions for logical changes in one unintegrated operation."""
+
+        ordered_change_ids = tuple(dict.fromkeys(change_ids))
+        if not ordered_change_ids:
+            return {}
+        stdout = self._run_jj(
+            (
+                f"--at-op={operation_id}",
+                "log",
+                "--no-graph",
+                "-r",
+                _change_ids_revset(ordered_change_ids),
+                "-T",
+                _COMMIT_TEMPLATE,
+            )
+        )
+        grouped: dict[str, list[LocalRevision]] = {
+            change_id: [] for change_id in ordered_change_ids
+        }
+        for line in stdout.splitlines():
+            if line.strip():
+                revision = _parse_revision_line(line)
+                grouped.setdefault(revision.change_id, []).append(revision)
+        return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
+
+    def integrate_operation(self, operation_id: str) -> None:
+        """Integrate one previously prepared jj operation."""
+
+        self._run_jj(("op", "integrate", operation_id), manage_working_copy=True)
+        self._run_jj(("workspace", "update-stale"), manage_working_copy=True)
+
+    def git_tree_ids(self, commit_ids: Sequence[str]) -> dict[str, str]:
+        """Return backing-Git tree IDs for exact commits."""
+
+        ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
+        if not ordered_commit_ids:
+            return {}
+        stdout = self._run_git(
+            ("rev-parse", *(f"{commit_id}^{{tree}}" for commit_id in ordered_commit_ids))
+        )
+        tree_ids = tuple(line.strip() for line in stdout.splitlines() if line.strip())
+        if len(tree_ids) != len(ordered_commit_ids):
+            raise JjCommandError(t"{ui.cmd('git rev-parse')} returned incomplete tree data.")
+        return dict(zip(ordered_commit_ids, tree_ids, strict=True))
+
     def abandon_revisions(self, revsets: Sequence[str]) -> None:
         """Abandon revisions; jj rebases descendants and drops pointing bookmarks."""
 
@@ -1024,7 +1126,13 @@ class JjClient:
         stdout = self._run_jj(command)
         return [stripped for line in stdout.splitlines() if (stripped := line.strip())]
 
-    def _run_jj(self, args: Sequence[str], *, manage_working_copy: bool = False) -> str:
+    def _run_jj(
+        self,
+        args: Sequence[str],
+        *,
+        manage_working_copy: bool = False,
+        return_stderr: bool = False,
+    ) -> str:
         """Run jj without touching the working copy unless the caller explicitly requires it."""
 
         use_working_copy = manage_working_copy or self._initial_working_copy_snapshot_pending
@@ -1034,6 +1142,7 @@ class JjClient:
             ["jj", *self._cli_args.to_argv(), *extra_args, *args],
             missing_tool_message=t"{ui.cmd('jj')} is not installed or is not on PATH.",
             detect_stale_workspace=True,
+            return_stderr=return_stderr,
         )
 
     def _run_git(
@@ -1141,6 +1250,7 @@ class JjClient:
         missing_tool_message: ErrorMessage,
         detect_stale_workspace: bool,
         allowed_returncodes: frozenset[int] = frozenset({0}),
+        return_stderr: bool = False,
     ) -> str:
         try:
             completed = subprocess.run(
@@ -1163,7 +1273,7 @@ class JjClient:
             displayed_command = _redact_http_url_userinfo(shlex.join(command))
             displayed_message = _redact_http_url_userinfo(message)
             raise JjCommandError(t"{ui.cmd(displayed_command)} failed: {displayed_message}")
-        return completed.stdout
+        return completed.stderr if return_stderr else completed.stdout
 
 
 _HTTP_URL_AUTHORITY_PATTERN = re.compile(
@@ -1326,6 +1436,14 @@ def _change_ids_revset(change_ids: Sequence[str]) -> str:
         tuple(f"change_id({_quote_revset_symbol(change_id)})" for change_id in change_ids),
         quote=False,
     )
+
+
+def _expected_git_change_id_matches(
+    expected: ExpectedGitChangeId,
+    actual: str | None,
+) -> bool:
+    accepted = expected if isinstance(expected, tuple) else (expected,)
+    return actual in accepted
 
 
 def _union_revset_symbols(symbols: Sequence[str], *, quote: bool = True) -> str:

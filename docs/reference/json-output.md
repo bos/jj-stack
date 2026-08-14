@@ -1,15 +1,22 @@
-# JSON Output
+---
+title: JSON output
+description: Read stable stack and pull request data from scripts and agents.
+navGroup: Look things up
+weight: 105
+---
 
 `jj-stack view --json` and `jj-stack list --json` print structured versions of the
 normal command output. The JSON schema uses the same user-facing concepts as the text
 output: stacks, rows, changes, review branches, pull requests, and status.
 
-The checked-in schema is [json-output.schema.json](json-output.schema.json).
+The checked-in schema is
+[json-output.schema.json](https://github.com/bos/jj-stack/blob/main/docs/json-output.schema.json).
 Integration tests validate real command output against that file.
 
 Command failures and incomplete GitHub inspection still use the normal CLI contract:
 stderr explains the problem and the process exit code says what kind of problem it was
-(see [exit-codes.md](exit-codes.md)). In particular, `view --json` and `list --json`
+(see [Automation and agents](automation.md#exit-codes)). In particular, `view --json` and
+`list --json`
 print a valid payload and exit 10 when the report is incomplete. The JSON payload is not
 an error-reporting format.
 

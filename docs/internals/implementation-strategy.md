@@ -59,6 +59,11 @@ rewrite preserve normal `jj` snapshot and checkout behavior. Remote review refs 
 without importing them into the ordinary `jj` view; commands that must attach a remote commit use
 a temporary ref and remove it before returning.
 
+When correctness depends on the result of a local rebase before that rebase is allowed to affect
+the repository, the jj client uses `--no-integrate-operation`. It inspects the candidate DAG with
+`--at-op` and integrates that exact operation only after the caller's proof succeeds. Operation
+IDs are transient values within one command and are never saved as recovery state.
+
 GitHub transport owns authentication, pagination, bounded retries, batching, response validation,
 and error decoding. It returns typed observations and mutation results but does not decide stack
 topology, selection, branch names, or mutation eligibility.

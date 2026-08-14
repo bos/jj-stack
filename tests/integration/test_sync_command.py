@@ -596,6 +596,94 @@ def test_sync_does_not_trust_active_stack_head_drift_without_merged_history(
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
 
+def test_sync_restores_change_ids_after_an_exact_github_stack_rebase(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    original_reviews = selected_stack(repo).revisions
+    original_state = state_store.load()
+    commit_file(repo, "local trailing work", "local-trailing.txt")
+    original = selected_stack(repo).revisions
+    fake_repo.github_stacks = {7: (1, 2)}
+    trunk = fake_repo.advance_branch(
+        "main",
+        path="github-stack-rebase-trunk.txt",
+        contents="new trunk contents\n",
+    )
+    github_heads = fake_repo.rebase_stack_onto_base(7, base_ref="main")
+    changed_head = fake_repo.replace_pull_request_head_contents(
+        fake_repo.pull_requests[2],
+        path="github-only-edit.txt",
+        contents="not in the submitted stack\n",
+    )
+
+    rejected_exit = run_main(repo, config_path, "sync", original[-1].change_id)
+    rejected = capsys.readouterr()
+
+    assert rejected_exit == 1
+    assert "does not have the same contents" in rejected.err
+    assert state_store.load() == original_state
+    assert tuple(
+        JjClient(repo).resolve_revision(revision.change_id).commit_id for revision in original
+    ) == tuple(revision.commit_id for revision in original)
+    assert fake_repo.ref_target(fake_repo.pull_requests[2].head_ref) == changed_head
+
+    update_remote_ref(
+        fake_repo,
+        branch=fake_repo.pull_requests[2].head_ref,
+        target=github_heads[1],
+    )
+    real_relink_reviews = ReviewStateStore.relink_reviews
+
+    def fail_relink_reviews(self, *, replacements):
+        raise CliError("injected tracking update failure")
+
+    monkeypatch.setattr(ReviewStateStore, "relink_reviews", fail_relink_reviews)
+    interrupted_exit = run_main(repo, config_path, "sync", original[-1].change_id)
+    interrupted = capsys.readouterr()
+
+    assert interrupted_exit == 1
+    assert "injected tracking update failure" in interrupted.err
+    interrupted_rebase = tuple(
+        JjClient(repo).resolve_revision(revision.change_id) for revision in original
+    )
+    assert tuple(
+        fake_repo.ref_target(fake_repo.pull_requests[index].head_ref) for index in (1, 2)
+    ) == tuple(revision.commit_id for revision in interrupted_rebase[:2])
+    assert state_store.load() == original_state
+
+    monkeypatch.setattr(ReviewStateStore, "relink_reviews", real_relink_reviews)
+    exit_code = run_main(repo, config_path, "sync", original[-1].change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "Restoring the stack's jj change IDs" in captured.out
+    rewritten = tuple(
+        JjClient(repo).resolve_revision(revision.change_id) for revision in original
+    )
+    assert tuple(revision.change_id for revision in rewritten) == tuple(
+        revision.change_id for revision in original
+    )
+    assert rewritten[0].parents == (trunk,)
+    assert rewritten[1].parents == (rewritten[0].commit_id,)
+    assert rewritten[2].parents == (rewritten[1].commit_id,)
+    assert tuple(
+        fake_repo.ref_target(fake_repo.pull_requests[index].head_ref) for index in (1, 2)
+    ) == tuple(revision.commit_id for revision in rewritten[:2])
+    assert tuple(
+        state_store.load().submitted_baselines[revision.change_id].commit_id
+        for revision in original_reviews
+    ) == tuple(revision.commit_id for revision in rewritten[:2])
+    assert tuple(revision.commit_id for revision in rewritten[:2]) != github_heads
+    assert (repo / "local-trailing.txt").read_text() == "local trailing work\n"
+    assert (repo / "github-stack-rebase-trunk.txt").read_text() == "new trunk contents\n"
+    assert JjClient(repo).review_temp_artifacts().ref_target is None
+
+
 def test_sync_rejects_a_reviewed_unreviewed_reviewed_sandwich_before_mutation(
     tmp_path: Path,
     monkeypatch,

@@ -1,97 +1,65 @@
-# Mental model
+---
+title: How jj-stack works
+linkTitle: How it works
+description: See how local jj changes become GitHub pull requests.
+navGroup: Start here
+weight: 20
+---
 
-`jj-stack` is easiest to use when its job boundary is clear.
+The short version: create and rearrange your changes with `jj`, then run `jj-stack submit` to
+bring your pull requests up to date on GitHub.
 
-## What `jj` owns
+## The whole workflow
 
-You (or your agent) use `jj` to manage mutable local history in the ways you'd expect:
+```mermaid
+flowchart LR
+  JJ["1. Work with jj<br/>create and rearrange changes"]
+  SUBMIT["2. Run jj-stack submit<br/>create or update one PR per change"]
+  GH["3. Review and merge<br/>review on GitHub; merge with jj-stack"]
+  JJ --> SUBMIT --> GH
+```
 
-- splitting work into several changes
-- reordering or rebasing those changes
-- rewriting commit descriptions and diffs
-- keeping the local DAG coherent
+### Local work
 
-## What `jj-stack` owns
+Use familiar `jj` commands to create, split, squash, reorder, rebase, or abandon your changes.
+Their order determines the order of your pull requests on GitHub.
 
-`jj-stack` takes care of turning your local changes into stacked GitHub PRs for a person or
-agent to review:
+### Each of your changes becomes one pull request
 
-- picking the selected linear stack
-- assigning one `git` review branch and one PR per change in the stack
-- setting the base branch for each PR
-- refreshing those PRs after local rewrites
-- inspecting review state and asking GitHub to merge reviewed changes
+When you first submit your work, `jj-stack` creates one pull request for each of your changes,
+then adds your pull requests to a GitHub stack.
 
-Each review branch is named `<prefix>/<subject-slug>-<short-change-id>`, where `<prefix>` is
-`jj-stack` unless the repo sets `branch_prefix`. The readable subject hints at the change's
-purpose; the suffix ties the name to its stable change ID. The branches normally stay on the Git
-remote, so they do not clutter local `jj` bookmark output. `jj-stack` creates them for review and
-removes them while syncing merged reviews. Use `jj-stack cleanup` directly for reviews you closed
-without merging or to retry an interrupted cleanup. When GitHub completes a direct merge,
-`jj-stack merge` immediately fetches and brings local history in line with it. After a queued
-merge or a merge completed through another client, run `jj-stack sync <head-change-id>` once
-GitHub finishes.
+### Review on GitHub, merge with jj-stack
 
-## Stack structure
+Use GitHub as usual for comments, approvals, checks, repository rules, and merge queues. When
+your stack is ready, `jj-stack merge` asks GitHub to merge it and updates your local `jj`
+changes.
 
-The local `jj` DAG determines which stack changes exist, their order, and their relationships.
+## Editing a change keeps its pull request
 
-To stay in sync with GitHub, `jj-stack` uses a small amount of supporting local metadata. That
-metadata helps it:
+A `jj` change ID is a persistent identifier for a change as you edit it. The underlying Git
+commit ID changes every time you update your work. `jj-stack` follows a change ID, and ensures
+that a matching PR is created, updated, reordered, or removed on GitHub.
 
-- remember which GitHub PR goes with which local change
-- keep the branch name of a review stable, even if you rewrite the change or its title
-- safely recover if a command is interrupted, by re-deriving what remains to do
+```mermaid
+flowchart LR
+  Before["<b>before</b><br/>change <code>puvuntsm</code><br/>commit <code>2b9f83a1</code><br/>PR 42"]
+  Edit["edit with jj"]
+  After["<b>after</b><br/>change <code>puvuntsm</code><br/><i>new</i> commit <code>761b55c9</code><br/><i>same</i> PR 42"]
+  Before --> Edit --> After
+```
 
-This has a few consequences:
+In this example, the existing comments and review history stay on PR 42 even though the Git
+commit ID has changed.
 
-- Local rewrites are easy and flexible.
-- `jj-stack` keeps only a small amount of supporting metadata. Your local `jj` history still
-  determines the stack.
-- If `jj-stack` cannot tell which GitHub PR or branch belongs to a local change, it stops and
-  asks you to fix the ambiguity instead of updating the wrong PR.
+## You do not manage review branches
 
-## What gets reviewed on GitHub
+GitHub requires a branch for every pull request. `jj-stack` creates and updates these branches
+for you. Review branches are normally hidden from local `jj` output, and you do not need to
+think about Git branches to arrange your stacks.
 
-The "unit to review" is one visible mutable `jj` change. We issue one pull request per change,
-from the bottom of the stack to its head. Often that bottom change sits directly
-on `trunk()`, but it may also fork from a recent ancestor of `trunk()`. Each successive PR is
-based on the preceding PR in the stack.
+## When jj-stack is unsure, it stops
 
-This allows you to escape from the trap of thinking about "one long-lived local branch per pull
-request." `jj-stack` creates review branches only because GitHub requires them. Those branches are
-a transport layer; the main authoring model is still local `jj` history.
-
-A review first submitted with one change remains one ordinary PR. Once the review has at least
-two PRs, `jj-stack` registers their order with GitHub's stack feature. After lower PRs
-merge, GitHub may keep them in that group as history, so the remaining PR can still belong to the
-existing group. The local DAG decides change order and ancestry. An ordinary trunk boundary or an
-explicit `submit --base` boundary decides which selected changes form one GitHub review.
-
-An explicit `submit --base <parent> <head>` makes the changes after that reviewed parent a
-separate GitHub review. The boundary applies only to that command and is never saved, so repeat
-`--base` when refreshing the child. After that exact base lands, use a bounded `jj rebase` to move
-only the child range onto `trunk()`, then submit it normally, even if higher parent work remains.
-
-Most commands follow the selected change's parent chain. `view` treats a bare change ID or linked
-PR as the identity of a stack member and shows the complete containing stack instead. If the
-local DAG has several possible containing heads, the identity is ambiguous and `view` stops.
-An arbitrary revset still names an exact stack head.
-
-`view` and `list` project those local DAG paths, so one report can contain changes belonging to
-several native GitHub reviews. They display observed review membership but do not divide a path
-into inferred review segments.
-
-The existing GitHub stack remains a safety boundary: if GitHub groups active PRs into one unit
-for an operation, `jj-stack` stops rather than changing only an unsafe subset of that group.
-
-## Practical rule
-
-When in doubt:
-
-- use `jj` to change the stack
-- use `jj-stack view` to inspect the matching GitHub PR stack
-- use `jj-stack submit` to refresh that PR stack
-- use `jj-stack merge` to ask GitHub to merge the reviewed bottom changes
-- use `jj-stack sync <head-change-id>` to apply a queued or externally completed merge locally
-  and refresh the PRs that remain, or to continue when automatic sync reports a local problem
+Before updating anything, `jj-stack` checks that it can safely match each of your local changes
+to the right pull request. If it cannot, it stops with an error and tells you what to inspect and
+what to do next.

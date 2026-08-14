@@ -11,8 +11,8 @@ from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.github_stack_sync import (
-    GithubStackSurvivorReview,
-    build_selected_github_stack_sync,
+    GithubStackRewrite,
+    build_selected_github_stack_rewrite,
 )
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.review.repository import observe_repository_paths
@@ -36,7 +36,7 @@ class OnTrunkChange:
 @dataclass(frozen=True, slots=True)
 class SelectedConvergencePlan:
     on_trunk: tuple[OnTrunkChange, ...]
-    github_stack_survivors: tuple[GithubStackSurvivorReview, ...]
+    github_stack_rewrite: GithubStackRewrite | None
     reviewed_survivors: tuple[LocalRevision, ...]
     survivors: tuple[LocalRevision, ...]
 
@@ -48,20 +48,24 @@ def build_selected_convergence_plan(
     observation: RepositoryObservation,
     prepared_status: PreparedStatus,
     repository: GithubRepoAddress,
+    trunk_branch: str,
 ) -> SelectedConvergencePlan:
     selected = prepared_status.prepared.stack.revisions
     state = prepared_status.prepared.state
-    stack_history, stack_survivor_reviews = build_selected_github_stack_sync(
+    github_stack_rewrite = build_selected_github_stack_rewrite(
         context=context,
         github_stacks=github_stacks,
         observation=observation,
         repository=repository,
         selected=selected,
         state=state,
+        trunk_branch=trunk_branch,
         trunk_commit_id=prepared_status.prepared.stack.trunk.commit_id,
     )
+    stack_history = github_stack_rewrite.history if github_stack_rewrite is not None else ()
+    stack_active_reviews = github_stack_rewrite.active if github_stack_rewrite is not None else ()
     stack_history_by_change_id = {item.candidate.change_id: item for item in stack_history}
-    github_stack_survivors = {item.candidate.change_id: item for item in stack_survivor_reviews}
+    github_stack_active = {item.candidate.change_id: item for item in stack_active_reviews}
     on_trunk: list[OnTrunkChange] = [
         OnTrunkChange(
             candidate=item.candidate,
@@ -79,7 +83,7 @@ def build_selected_convergence_plan(
         candidate = state.tracked_review(revision.change_id)
         evidence_kind = (
             None
-            if candidate is None or revision.change_id in github_stack_survivors
+            if candidate is None or revision.change_id in github_stack_active
             else _trunk_evidence_kind_for(
                 candidate=candidate,
                 context=context,
@@ -163,7 +167,7 @@ def build_selected_convergence_plan(
         reviewed.append(revision)
     plan = SelectedConvergencePlan(
         on_trunk=tuple(on_trunk),
-        github_stack_survivors=tuple(github_stack_survivors.values()),
+        github_stack_rewrite=github_stack_rewrite,
         reviewed_survivors=tuple(reviewed),
         survivors=tuple(survivors),
     )
