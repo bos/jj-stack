@@ -66,10 +66,11 @@ async def observe_reviews(
     context: CommandContext | None = None,
     github_client: GithubClient,
     include_open_dependents: bool = False,
+    include_remote_targets: bool = True,
     remote_name: str | None = None,
     state_store: ReviewStateStore | None = None,
 ) -> RepositoryObservation:
-    """Reload observations needed by an immediately following mutation."""
+    """Reload review facts, optionally deferring exact remote-ref observation."""
 
     remotes = () if context is None else context.jj_client.list_git_remotes()
     remote = next((item for item in remotes if item.name == remote_name), None)
@@ -95,11 +96,10 @@ async def observe_reviews(
         github_client.get_repository() if context is not None else asyncio.sleep(0, result=None),
     )
     remote_targets: dict[str, str] = {}
-    remote_refs = head_refs
-    if context is not None and remote is not None and remote_refs:
+    if include_remote_targets and context is not None and remote is not None and head_refs:
         remote_targets = context.jj_client.list_remote_branches(
             remote=remote.name,
-            patterns=tuple(f"refs/heads/{ref}" for ref in remote_refs),
+            patterns=tuple(f"refs/heads/{ref}" for ref in head_refs),
         )
     if context is None:
         local_revisions = {}

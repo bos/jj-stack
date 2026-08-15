@@ -174,6 +174,7 @@ def prepare_status(
     context: CommandContext,
     fetch_remote_state: bool = False,
     fetch_only_when_tracked: bool = False,
+    observe_remote_targets: bool = True,
     re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
     containing_change_id: str | None = None,
@@ -201,6 +202,7 @@ def prepare_status(
         state = state_store.load()
     prepared = prepare_stack_for_status(
         context=context,
+        observed_remote_targets=None if observe_remote_targets else {},
         remote=github_target.remote,
         remote_error=github_target.remote_error,
         stack=selected_path.stack,

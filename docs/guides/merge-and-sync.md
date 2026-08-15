@@ -52,6 +52,10 @@ After GitHub merges some or all of your pull requests, `sync` fetches trunk, rem
 changes from your local history if needed, rebases your remaining changes, updates your remaining
 pull requests, and removes your review branches when they are no longer needed.
 
+If no selected pull request has merged and GitHub has not rebased the stack, `sync` reports that
+there are no merged changes and leaves the pull requests unchanged. Run `submit` explicitly when
+you want to publish local changes.
+
 What does “removes the merged changes from your local history” mean? If GitHub uses a merge
 commit or rebase merge for your pull requests, it preserves their `jj` change IDs, and
 `jj git fetch` gets your local history right. A squash merge drops those change IDs. After you

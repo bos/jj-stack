@@ -80,8 +80,11 @@ from jj_stack.review.finish import (
     render_finish_results,
 )
 from jj_stack.review.github_stack_rebase import recover_github_stack_rebase
-from jj_stack.review.github_stack_sync import resolve_selected_github_stack_observation
-from jj_stack.review.observation import observe_reviews
+from jj_stack.review.github_stack_sync import (
+    observe_github_stacks,
+    resolve_selected_github_stack_observation,
+)
+from jj_stack.review.observation import RepositoryObservation, observe_reviews
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
 from jj_stack.review.trunk_evidence import TrackedReview
 from jj_stack.state.operation_lock import acquire_operation_lock
@@ -159,6 +162,7 @@ def run_stack_convergence(
         prepared_status = prepare_status(
             context=context,
             fetch_remote_state=fetch_remote_state,
+            observe_remote_targets=False,
             re_resolve_after_remote_refresh=True,
             revset=revset,
         )
@@ -190,41 +194,44 @@ async def _run_selected_convergence(
         console.output("Nothing to sync: the selected revision is already on trunk.")
         return 0
     async with build_github_client(repository=target.repository) as github:
-        if trunk_branch is None:
-            repository_state = await github.get_repository()
-            trunk_branch, _trunk_targets = resolve_trunk_branch(
-                client=prepared.client,
-                github_repository_state=repository_state,
-                remote=target.remote,
-                trunk_commit_id=prepared.stack.trunk.commit_id,
-            )
-        observation = await observe_reviews(
-            change_ids=tuple(revision.change_id for revision in selected),
-            context=context,
-            github_client=github,
-            remote_name=target.remote.name,
+        observation, observed_stacks = await asyncio.gather(
+            observe_reviews(
+                change_ids=tuple(revision.change_id for revision in selected),
+                context=context,
+                github_client=github,
+                include_remote_targets=False,
+                remote_name=target.remote.name,
+            ),
+            observe_github_stacks(github=github),
         )
-        observation, github_stacks = await resolve_selected_github_stack_observation(
+        if queued_pull_numbers := _queued_pull_numbers(observation, selected):
+            _render_queued_sync(queued_pull_numbers)
+            return 0
+        observation, github_stacks, complete = await resolve_selected_github_stack_observation(
             context=context,
             github=github,
             initial=observation,
             remote_name=target.remote.name,
             repository=target.repository,
             selected=selected,
+            stacks=observed_stacks,
         )
-        queued_pull_numbers = tuple(
-            pull_request.number
-            for revision in selected
-            if (pull_request := observation.reviews[revision.change_id].pull_request) is not None
-            and pull_request.normalize_state().state == "open"
-            and pull_request.is_queued
-        )
-        if queued_pull_numbers:
-            console.output(
-                t"Nothing to sync while the selected review is in the merge queue "
-                t"({ui.join(lambda number: f'PR #{number}', queued_pull_numbers)})."
-            )
+        if queued_pull_numbers := _queued_pull_numbers(observation, selected):
+            _render_queued_sync(queued_pull_numbers)
             return 0
+        if not complete:
+            console.output("No merged changes in this stack need rebasing.")
+            return 0
+        repository_state = observation.github_repository
+        if repository_state is None:
+            raise AssertionError("Sync observation requires GitHub repository state.")
+        if trunk_branch is None:
+            trunk_branch, _trunk_targets = resolve_trunk_branch(
+                client=prepared.client,
+                github_repository_state=repository_state,
+                remote=target.remote,
+                trunk_commit_id=prepared.stack.trunk.commit_id,
+            )
         plan = build_selected_convergence_plan(
             context=context,
             github_stacks=github_stacks,
@@ -249,6 +256,26 @@ async def _run_selected_convergence(
             trunk_branch=trunk_branch,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
+
+
+def _render_queued_sync(pull_numbers: tuple[int, ...]) -> None:
+    console.output(
+        t"Nothing to sync while the selected review is in the merge queue "
+        t"({ui.join(lambda number: f'PR #{number}', pull_numbers)})."
+    )
+
+
+def _queued_pull_numbers(
+    observation: RepositoryObservation,
+    selected: tuple[LocalRevision, ...],
+) -> tuple[int, ...]:
+    return tuple(
+        pull_request.number
+        for revision in selected
+        if (pull_request := observation.reviews[revision.change_id].pull_request) is not None
+        and pull_request.normalize_state().state == "open"
+        and pull_request.is_queued
+    )
 
 
 def _selected_target(
@@ -463,7 +490,9 @@ async def _update_selected_reviews(
     dry_run: bool,
     plan: SelectedConvergencePlan,
 ) -> int:
-    if plan.on_trunk and plan.survivors and dry_run:
+    if not plan.on_trunk:
+        return 0
+    if plan.survivors and dry_run:
         console.output(
             t"Run {ui.cmd(f'jj-stack sync {plan.survivors[-1].change_id}')} to apply the rebase "
             t"and then compute updates for the remaining existing PRs."

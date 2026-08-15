@@ -393,6 +393,35 @@ def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
 
+def test_sync_noop_after_partial_merge_does_not_read_review_refs_or_submit(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    _, survivor = selected_stack(repo).revisions
+    _simulate_stack_partial_merge(fake_repo)
+    first_exit_code = run_main(repo, config_path, "sync", survivor.change_id)
+    first = capsys.readouterr()
+    assert first_exit_code == 0, (first.out, first.err)
+
+    survivor = selected_stack(repo).head
+    pull_request_before = deepcopy(fake_repo.pull_requests[2])
+
+    def fail_review_ref_read(*_args, **_kwargs):
+        raise AssertionError("no-op sync should not read exact review refs")
+
+    monkeypatch.setattr(JjClient, "list_remote_branches", fail_review_ref_read)
+    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "No merged changes in this stack need rebasing." in captured.out
+    assert "Submitted changes:" not in captured.out
+    assert fake_repo.pull_requests[2] == pull_request_before
+
+
 def test_sync_preserves_unpublished_edits_to_an_active_stack_survivor(
     tmp_path: Path,
     monkeypatch,

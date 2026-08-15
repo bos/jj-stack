@@ -628,10 +628,10 @@ updates reviews outside the selected chain.
 After survivor updates succeed, `sync` invokes cleanup for merged reviews that no local path still
 needs. Cleanup removes each eligible review branch and managed overview comment before it removes
 the corresponding tracking. A blocked or failed cleanup leaves tracking for a retry. A failure
-after local convergence leaves completed work in place; a rerun observes the current DAG,
-tracking, and GitHub state and continues from there. `sync` never rebases merely because trunk
-advanced; ordinary `jj rebase` owns that workflow. Its output describes reconciliation and
-cleanup, not submission, including when no reviews survive.
+after local convergence leaves completed work in place; later commands observe the current DAG,
+tracking, and GitHub state instead of replaying saved operation state. `sync` never rebases merely
+because trunk advanced; ordinary `jj rebase` owns that workflow. Its output describes
+reconciliation and cleanup, not submission, including when no reviews survive.
 
 GitHub preserves `jj`'s `change-id` commit header through rebase merges of PRs, but not squash
 merges. A matching full change ID on fetched trunk identifies the successor rather than

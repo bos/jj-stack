@@ -63,21 +63,9 @@ async def resolve_selected_github_stack_observation(
     remote_name: str,
     repository: GithubRepoAddress,
     selected: tuple[LocalRevision, ...],
-) -> tuple[review_observation.RepositoryObservation, tuple[GithubStack, ...]]:
+    stacks: tuple[GithubStack, ...],
+) -> tuple[review_observation.RepositoryObservation, tuple[GithubStack, ...], bool]:
     state = context.state_store.load()
-    selected_change_ids = {revision.change_id for revision in selected}
-    has_unselected_tracking = any(
-        change_id not in selected_change_ids
-        and (candidate := state.tracked_review(change_id)) is not None
-        and candidate.review_identity.repository_key == repository.repository_key
-        for change_id in state.review_identities
-    )
-    if not has_unselected_tracking and not any(
-        _changed_review(initial.reviews[revision.change_id]) for revision in selected
-    ):
-        return initial, ()
-    stacks = await observe_github_stacks(github=github)
-
     selected_pull_numbers = {
         identity.pr_number
         for revision in selected
@@ -91,6 +79,16 @@ async def resolve_selected_github_stack_observation(
     resource_pull_numbers = {
         pull_number for stack in affected for pull_number in stack.pull_request_numbers
     }
+    tracked_pull_numbers = {
+        identity.pr_number
+        for identity in state.review_identities.values()
+        if identity.repository_key == repository.repository_key
+    }
+    if not any(
+        _changed_review(initial.reviews[revision.change_id], include_remote_target=False)
+        for revision in selected
+    ) and (resource_pull_numbers & tracked_pull_numbers).issubset(selected_pull_numbers):
+        return initial, (), False
     change_ids = tuple(
         change_id
         for change_id, identity in state.review_identities.items()
@@ -104,17 +102,24 @@ async def resolve_selected_github_stack_observation(
         github_client=github,
         remote_name=remote_name,
     )
-    return observation, stacks if any(map(_changed_review, observation.reviews.values())) else ()
+    changed = any(_changed_review(item) for item in observation.reviews.values())
+    return observation, stacks if changed else (), changed
 
 
-def _changed_review(observed: review_observation.ReviewObservation) -> bool:
+def _changed_review(
+    observed: review_observation.ReviewObservation,
+    *,
+    include_remote_target: bool = True,
+) -> bool:
     pull_request = observed.pull_request
-    if pull_request is None or (baseline := observed.baseline) is None:
+    if (baseline := observed.baseline) is None:
         return False
+    if pull_request is None:
+        return True
     return (
         pull_request.normalize_state().state == "merged"
         or pull_request.head.sha != baseline.commit_id
-        or observed.remote_review_target != baseline.commit_id
+        or (include_remote_target and observed.remote_review_target != baseline.commit_id)
         or any(revision.immutable for revision in observed.local_revisions)
     )
 
