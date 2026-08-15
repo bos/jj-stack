@@ -19,10 +19,10 @@ require no repository or organization setup.
 
 ## Install
 
-`jj-stack` has not been released to PyPI yet. Install it directly from the repository:
+Install `jj-stack` from PyPI:
 
 ```console
-uv tool install git+https://github.com/bos/jj-stack
+uv tool install jj-stack
 ```
 
 To upgrade later, rerun the command with `--force`.

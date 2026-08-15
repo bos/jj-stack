@@ -54,7 +54,7 @@ def normalized_help_text(content: ui.Message | str) -> str:
     return textwrap.dedent(ui.plain_text(content)).strip()
 
 
-_ACTION_HELP_RENDERABLES: dict[int, ui.Message] = {}
+_ACTION_HELP_RENDERABLE_ATTRIBUTE = "_jj_stack_help_renderable"
 _HELP_SECTIONS_ATTRIBUTE = "_jj_stack_help_sections"
 
 
@@ -69,7 +69,7 @@ def add_help_argument(
     action = parser.add_argument(*name_or_flags, **kwargs)
     action.help = normalized_help_text(help)
     if not isinstance(help, str):
-        _ACTION_HELP_RENDERABLES[id(action)] = help
+        setattr(action, _ACTION_HELP_RENDERABLE_ATTRIBUTE, help)
     return action
 
 
@@ -334,7 +334,7 @@ def _action_label_html(action: Any) -> str:
 
 
 def _action_help_html(action: Any) -> str:
-    content = _ACTION_HELP_RENDERABLES.get(id(action), action.help or "")
+    content = getattr(action, _ACTION_HELP_RENDERABLE_ATTRIBUTE, action.help or "")
     return _message_html(content)
 
 
@@ -593,7 +593,7 @@ def _help_heading(text: str) -> ui.SemanticText:
 
 
 def _action_help_body(action: Any) -> ui.Message | str:
-    content = _ACTION_HELP_RENDERABLES.get(id(action))
+    content = getattr(action, _ACTION_HELP_RENDERABLE_ATTRIBUTE, None)
     if content is not None:
         return content
     return "\n\n".join(_help_paragraphs(action.help or ""))

@@ -76,6 +76,9 @@ combine-as-imports = true
 [tool.pyrefly]
 search_path = ["src", "."]
 
+[tool.hatch.build]
+exclude = ["/.jj", "/.tmp"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/jj_stack"]
 

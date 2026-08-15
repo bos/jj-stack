@@ -15,10 +15,10 @@ matching PRs.
 
 ### Install
 
-`jj-stack` has not been released to PyPI yet, so install it from the repository:
+Install `jj-stack` from PyPI:
 
 ```bash
-uv tool install git+https://github.com/bos/jj-stack
+uv tool install jj-stack
 ```
 
 To upgrade, rerun that command with `--force`. If the command is not on your shell `PATH`, run
@@ -88,20 +88,20 @@ The review branches normally stay out of your local bookmark view. When you rewr
 `view`, `submit`, `merge`, and `sync` accept a change ID when you need to select a stack other
 than the one ending at the working copy.
 
-See the [user guide](docs/README.md) for drafts, descriptions, merge queues, cleanup, and working
-with multiple stacks.
+See the [user guide](https://www.serpentine.com/software/jj-stack/) for drafts, descriptions,
+merge queues, cleanup, and working with multiple stacks.
 
 ## Learn more
 
-- [Mental model](docs/mental-model.md)
-- [Quick start](docs/quick-start.md)
-- [Everyday workflows](docs/guides/submit-and-update.md)
-- [Configuration](docs/reference/configuration.md)
-- [Writing PR descriptions](docs/reference/descriptions.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [`jj-stack` and `gh stack`](docs/gh-stack.md)
-- [JSON output](docs/reference/json-output.md)
-- [Automation and exit codes](docs/reference/automation.md)
+- [Mental model](https://www.serpentine.com/software/jj-stack/mental-model/)
+- [Quick start](https://www.serpentine.com/software/jj-stack/quick-start/)
+- [Everyday workflows](https://www.serpentine.com/software/jj-stack/guides/submit-and-update/)
+- [Configuration](https://www.serpentine.com/software/jj-stack/reference/configuration/)
+- [Writing PR descriptions](https://www.serpentine.com/software/jj-stack/reference/descriptions/)
+- [Troubleshooting](https://www.serpentine.com/software/jj-stack/troubleshooting/)
+- [`jj-stack` and `gh stack`](https://www.serpentine.com/software/jj-stack/gh-stack/)
+- [JSON output](https://www.serpentine.com/software/jj-stack/reference/json-output/)
+- [Automation and exit codes](https://www.serpentine.com/software/jj-stack/reference/automation/)
 
 The built-in help is the canonical flag reference:
 
@@ -120,7 +120,8 @@ GitHub PRs safely:
 gh skill install bos/jj-stack jj-stack
 ```
 
-The [skill source](skills/jj-stack/SKILL.md) contains the workflow it teaches.
+The [skill source](https://github.com/bos/jj-stack/blob/main/skills/jj-stack/SKILL.md) contains the
+workflow it teaches.
 
 ## Performance
 
