@@ -33,7 +33,7 @@ eval "$(jj-stack completion zsh)"
 `bash` and `fish` work the same way.
 
 To invoke it as `jj stack` and complete that alias too, see
-[Configuration](docs/reference/configuration.md).
+[Configuration](https://www.serpentine.com/software/jj-stack/reference/configuration/).
 
 ### Submit your first stack
 
