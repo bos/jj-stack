@@ -5,6 +5,7 @@ htmlcov/
 .pytest_cache/
 .roam/
 .ruff_cache/
+.tmp/
 .ty_cache/
 .uv-cache/
 .venv
