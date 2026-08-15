@@ -1,32 +1,18 @@
 """Create or update GitHub pull requests for the selected stack of changes.
 
 This pushes or updates the review branches for that stack, then opens or refreshes one pull
-request per change from bottom to top. Selected local changes must be free of unresolved
-conflicts before `submit` pushes review branches or updates GitHub.
+request per change from bottom to top. The selected changes must have no unresolved conflicts.
 
-Pull request titles come from each change's subject line and bodies from the rest of the
-description. When a description has no body, the repository's pull request template
-(`.github/PULL_REQUEST_TEMPLATE.md`, `PULL_REQUEST_TEMPLATE.md`, or
-`docs/PULL_REQUEST_TEMPLATE.md`) is used instead, and the subject line if there is no
-template.
-
-Use `--describe CHANGE=FILE` to read a prepared pull request body from a Markdown file,
-or `--describe stack=FILE` to read prepared overview text for a multi-change stack.
-Relative file paths are read from the current directory where `jj-stack` was invoked.
-
-Use `--describe-with HELPER` to author pull request titles and bodies, and an overall
-description of a stack. The helper can be interactive, in which case you enter these yourself,
-or automated, such as invoking an LLM to generate these descriptions.
-
-`jj-stack` invokes the helper as `helper --pr <change_id>` for each pull request and `helper
---stack <revset>` for the selected stack. The helper must output JSON with string `title` and
-`body` fields.
+Pull request titles come from each change's subject line, and bodies come from the rest of the
+description. When a description has no body, `jj-stack` uses the repository's pull request
+template (`.github/PULL_REQUEST_TEMPLATE.md`, `PULL_REQUEST_TEMPLATE.md`, or
+`docs/PULL_REQUEST_TEMPLATE.md`), or repeats the subject line if no template exists.
 
 Use `--edit` to review and edit the planned pull request titles, bodies, and draft states in your
 editor before anything is pushed. Each `JJ: Draft:` field accepts `yes` or `no`, with `y` and `n`
-as short forms. Saving the document continues the submit; a malformed document or a non-zero
-editor exit aborts it before any change is made. The editor is the one jj's `ui.editor` setting
-resolves to. `--edit` cannot be combined with `--describe-with`.
+as short forms. Saving the document continues the command; a malformed document or a non-zero
+editor exit aborts it before any change is made. `jj-stack` uses the editor selected by `jj`'s
+`ui.editor` setting. `--edit` cannot be combined with `--describe-with`.
 
 The `--label`, `--reviewers`, and `--team-reviewers` flags accept comma-separated values and may
 be repeated. When passed, they override the corresponding configured defaults for this run.
@@ -40,7 +26,7 @@ Common examples:
 - `jj-stack submit <head-change-id>` selects another stack explicitly.
 
 - `jj-stack submit --base <parent-change-id> <child-head-change-id>` submits only the changes
-  after an exact open parent review. Repeat `--base` whenever that child review is refreshed.
+  after an open parent pull request. Repeat `--base` whenever you refresh the child stack.
 """
 
 from __future__ import annotations
@@ -111,7 +97,19 @@ from .pull_requests import (
 from .render import print_submit_result, render_selected_line
 from .revisions import prepare_submit_revisions
 
-HELP = "Send a jj stack to GitHub for review"
+HELP = "Send a `jj` stack to GitHub for review"
+DESCRIPTION_HELP = """
+Use `--describe CHANGE=FILE` to read a prepared pull request body from a Markdown file, or
+`--describe stack=FILE` to read prepared overview text for a multi-change stack. Relative file
+paths are read from the current directory where `jj-stack` was invoked.
+
+Use `--describe-with HELPER` to author pull request titles, bodies, and the stack overview. The
+helper may be interactive or may generate the text noninteractively.
+
+`jj-stack` invokes the helper as `helper --pr <change_id>` for each pull request and
+`helper --stack <revset>` for the selected stack. The helper must output JSON with string `title`
+and `body` fields.
+"""
 
 
 _GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
@@ -335,7 +333,7 @@ def _recover_interrupted_first_submissions(
     resolutions: tuple[ResolvedReviewBranch, ...],
     state_identities: Mapping[str, ReviewIdentity],
 ) -> tuple[ResolvedReviewBranch, ...]:
-    """Reuse only one suffix candidate whose Git header proves the full change ID."""
+    """Reuse only one suffix candidate whose Git header records the full change ID."""
 
     candidates_by_change: dict[str, dict[str, str]] = {}
     unresolved = tuple(
@@ -377,7 +375,7 @@ def _recover_interrupted_first_submissions(
             != resolution.change_id
         ):
             raise CliError(
-                t"Could not prove that remote branch {ui.bookmark(branch)} belongs to "
+                t"Remote branch {ui.bookmark(branch)} does not record the expected change ID "
                 t"{ui.change_id(resolution.change_id)}.",
                 hint="Inspect or remove that branch, then retry the submission.",
             )

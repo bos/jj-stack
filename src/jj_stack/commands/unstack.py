@@ -1,10 +1,10 @@
-"""Remove a GitHub stack grouping without closing its pull requests.
+"""Separate a GitHub stack without closing its pull requests.
 
 With a revision or pull request, `unstack` uses the matching local review stack. Use
-`--stack <number>` when the GitHub grouping no longer matches one local path.
+`--stack <number>` when the GitHub stack no longer corresponds to a single local stack.
 
-`--local` only forgets jj-stack's saved pull request links. It does not change GitHub, close pull
-requests, delete review branches, or modify local commits.
+`--local` only forgets `jj-stack`'s saved pull request links. It does not change GitHub, close
+pull requests, delete review branches, or modify local commits.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from jj_stack.review.selection import (
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import plain_text
 
-HELP = "Remove a GitHub stack grouping while leaving its pull requests open"
+HELP = "Separate a GitHub stack while leaving its pull requests open"
 
 
 @dataclass(frozen=True, slots=True)

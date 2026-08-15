@@ -1,20 +1,22 @@
-"""Show how the selected jj stack(s) currently appear locally and on GitHub.
+"""Compare the local and GitHub state of the selected `jj` stacks.
 
 By default it summarizes the submitted and unsubmitted changes in each selected stack;
 `--verbose` expands those summaries.
 
-It reads pull request state from GitHub but does not fetch, so run `jj git fetch` first when your
-local trunk may be behind. Mix revsets and repeated `--pull-request` values to inspect several
-stacks in one run.
+It reads pull request state from GitHub, but derives stack membership from the local DAG using
+local `trunk()` as the lower boundary. If your local copy of trunk is behind, `jj-stack`'s picture
+of membership can be stale even though the pull request state is current. Run `jj git fetch`
+first when the view needs to reflect the latest trunk. Mix revsets and repeated `--pull-request`
+values to inspect several stacks in one run.
 
 Common examples:
 
 - `jj-stack view` inspects the stack ending at `@` when the working-copy change is described and
   nonempty, otherwise `@-`.
 
-- `jj-stack view --pull-request 123` finds the complete local stack containing one linked PR.
+- `jj-stack view --pull-request 123` finds the full local stack containing that PR.
 
-- `jj-stack view <change-id>` finds the complete local stack containing that change.
+- `jj-stack view <change-id>` finds the full local stack containing that change.
 """
 
 from __future__ import annotations
@@ -75,7 +77,7 @@ from jj_stack.review.status import (
 _SUMMARY_SECTION_HEAD_COUNT = 3
 _SUMMARY_SECTION_TAIL_COUNT = 3
 
-HELP = "Check the review status of one or more jj stacks"
+HELP = "Check the review status of one or more `jj` stacks"
 
 ViewSelectorKind = Literal["pull_request", "revset"]
 

@@ -17,6 +17,7 @@ _JJ_STYLE_ATTRIBUTES = frozenset({"bg", "bold", "dim", "fg", "italic", "reverse"
 _SEMANTIC_STYLE_FALLBACKS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     (frozenset({"command"}), ("config_list", "name")),
     (frozenset({"revset"}), ("bookmark",)),
+    (frozenset({"metavar"}), ("bookmark",)),
     (frozenset({"code"}), ("config_list", "value")),
 )
 

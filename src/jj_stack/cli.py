@@ -39,9 +39,11 @@ from jj_stack import __version__
 from jj_stack.cli_help import (
     HelpCommand,
     add_help_argument,
+    add_help_section,
     emit_command_help,
     emit_top_level_help,
     normalized_help_text,
+    render_all_in_one_markdown,
 )
 from jj_stack.completion import emit_shell_completion, validate_jj_alias
 from jj_stack.console import RequestedColorMode, configured_console, rich_color_mode
@@ -63,11 +65,11 @@ _TOP_LEVEL_HELP_DESCRIPTION = """
 
 Use it to submit and refresh changes for review, inspect pull request status, merge reviewed
 changes, and clean up after a review. Keep creating and editing changes with `jj`; `jj-stack`
-handles the GitHub review workflow around them.
+submits and updates them for review on GitHub.
 
 Running `jj-stack` with no command shows the current stack. A typical workflow is
-`jj-stack submit`, `jj-stack view`, then `jj-stack merge`. A completed direct merge updates the
-local stack; apply a queued or externally completed merge later with `jj-stack sync`.
+`jj-stack submit`, `jj-stack view`, then `jj-stack merge`. After a direct merge, `jj-stack`
+updates the local stack; apply a queued or externally completed merge later with `jj-stack sync`.
 """
 _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
 _REORDERABLE_GLOBAL_OPTIONS_WITH_VALUES = frozenset({"--repository", "--color"})
@@ -75,13 +77,18 @@ _HELP_FLAGS = frozenset({"-h", "--help"})
 _COMPLETION_HELP = "Print shell completion setup for bash, zsh, or fish"
 _HELP_HELP = "Show top-level help, or help for one command"
 _COMPLETION_DESCRIPTION = """
-Print the shell completion script for bash, zsh, or fish. This only prints
-local shell setup text and does not inspect the repository or GitHub. Pass
-`--jj-alias NAME` to also complete a jj command alias that runs jj-stack.
+Print the shell completion script for bash, zsh, or fish. It does not inspect the repository or
+GitHub.
+
+If you already have a `jj` alias that runs `jj-stack`, such as `jj stack`, and use `jj`'s built-in
+shell completion, pass `--jj-alias stack` here. Then typing `jj sta` and pressing Tab completes it
+to `jj stack`; completion after `jj stack` also offers `jj-stack` commands and options. Other `jj`
+completions remain available.
 """
 _HELP_DESCRIPTION = """
-Show top-level help or the detailed help for one command. Use `--all` to also
-show the advanced repair commands and hidden global options.
+Show top-level help or the detailed help for one command. Use `--all` to show every command and
+global option in top-level help. Use `--all-in-one` to generate one Markdown reference containing
+every command and option.
 """
 
 
@@ -182,11 +189,12 @@ def build_parser() -> ArgumentParser:
     _add_common_options(parser, suppress_defaults=False)
     parser.set_defaults(command="view", handler=_default_view_handler)
     _normalize_help_action_text(parser)
-    parser.add_argument(
+    add_help_argument(
+        parser,
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
-        help="Show the jj-stack version and exit",
+        help=t"Show the {ui.code('jj-stack')} version and exit",
     )
 
     subcommands = parser.add_subparsers(
@@ -205,17 +213,25 @@ def build_parser() -> ArgumentParser:
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
+    add_help_section(
+        submit_parser,
+        title="Supplying descriptions",
+        body=submit_command.DESCRIPTION_HELP,
+    )
     add_help_argument(
         submit_parser,
         "--base",
         metavar="REVISION",
-        help="Submit only changes after this reviewed ancestor, using its review branch as base",
+        help=(
+            "Submit only changes after this reviewed ancestor, using its review branch as the "
+            "base"
+        ),
     )
     add_help_argument(
         submit_parser,
         "--dry-run",
         action="store_true",
-        help="Preview the submit without pushing branches or changing pull requests",
+        help="Preview submission without pushing branches or changing pull requests",
     )
     submit_description_mode = submit_parser.add_mutually_exclusive_group()
     add_help_argument(
@@ -224,19 +240,28 @@ def build_parser() -> ArgumentParser:
         dest="descriptions",
         metavar="TARGET=FILE",
         action="append",
-        help="Read Markdown body text from FILE for CHANGE or stack",
+        help=(
+            t"Read a pull request body for {ui.metavar('CHANGE')}, or a stack overview, from "
+            t"{ui.metavar('FILE')}"
+        ),
     )
     add_help_argument(
         submit_description_mode,
         "--describe-with",
         metavar="HELPER",
-        help="Delegate pull request and stack-overview text generation to HELPER",
+        help=(
+            t"Generate pull request titles, bodies, and the stack overview with "
+            t"{ui.metavar('HELPER')}"
+        ),
     )
     add_help_argument(
         submit_parser,
         "--edit",
         action="store_true",
-        help="Edit planned pull request titles, bodies, and draft states in your editor first",
+        help=(
+            "Open planned pull request titles, bodies, and draft states in your editor before "
+            "submitting"
+        ),
     )
     submit_draft_mode = submit_parser.add_mutually_exclusive_group()
     add_help_argument(
@@ -244,7 +269,7 @@ def build_parser() -> ArgumentParser:
         "--draft",
         action="store_true",
         help=(
-            t"Create pull requests as drafts; use {ui.cmd('--draft=all')} to "
+            t"Create pull requests as drafts; use {ui.option('--draft=all')} to "
             t"return existing pull requests to draft"
         ),
     )
@@ -257,7 +282,7 @@ def build_parser() -> ArgumentParser:
         "--open",
         dest="open",
         action="store_true",
-        help="Mark existing draft pull requests ready for review on submit",
+        help="Mark existing draft pull requests ready for review when submitting",
     )
     add_help_argument(
         submit_parser,
@@ -287,8 +312,8 @@ def build_parser() -> ArgumentParser:
         "--re-request",
         action="store_true",
         help=(
-            "Request review again from users whose latest review on an existing "
-            "pull request approved it or requested changes"
+            "Request another review from users who last approved or requested changes on an "
+            "existing pull request"
         ),
     )
     view_parser = _add_revision_command(
@@ -303,8 +328,8 @@ def build_parser() -> ArgumentParser:
             selectors=lambda args: args.view_selectors,
         ),
         revset_help=(
-            "Revsets select an exact stack head; change IDs select their complete containing "
-            "stack; can be mixed with --pull-request selectors; defaults to the current stack"
+            t"Select a stack by its head revset or by any change ID it contains. Combine either "
+            t"with {ui.option('--pull-request')}; defaults to the current stack"
         ),
         revset_nargs="*",
     )
@@ -314,7 +339,7 @@ def build_parser() -> ArgumentParser:
         metavar="PR",
         action="append",
         help=(
-            "Inspect the complete stack containing this PR number or URL; repeat to inspect "
+            "Inspect the full stack containing this PR number or URL; repeat to inspect "
             "several stacks"
         ),
     )
@@ -360,7 +385,7 @@ def build_parser() -> ArgumentParser:
         revset_help=(
             t"Revision or change ID to merge; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
-            t"cannot be combined with {ui.cmd('--pull-request')}"
+            t"cannot be combined with {ui.option('--pull-request')}"
         ),
     )
     merge_parser.add_argument(
@@ -381,8 +406,9 @@ def build_parser() -> ArgumentParser:
         choices=("merge", "rebase", "squash"),
         metavar="METHOD",
         help=(
-            "GitHub merge method: merge, rebase, or squash. Defaults to jj-stack.merge_method, "
-            "or to the repository's only allowed method"
+            t"GitHub merge method: {ui.metavar('merge')}, {ui.metavar('rebase')}, or "
+            t"{ui.metavar('squash')}. Defaults to {ui.code('jj-stack.merge_method')}, or to "
+            t"the repository's only allowed method"
         ),
     )
     unstack_parser = _add_revision_command(
@@ -394,13 +420,13 @@ def build_parser() -> ArgumentParser:
         revset_help=(
             t"Revision or change ID to unstack; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
-            t"cannot be combined with {ui.cmd('--pull-request')} or {ui.cmd('--stack')}"
+            t"cannot be combined with {ui.option('--pull-request')} or {ui.option('--stack')}"
         ),
     )
     unstack_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview the GitHub grouping removal or locally forgotten saved links",
+        help="Preview separating the GitHub stack or forgetting saved links locally",
     )
     unstack_parser.add_argument(
         "--local",
@@ -418,7 +444,7 @@ def build_parser() -> ArgumentParser:
         "--stack",
         type=int,
         metavar="NUMBER",
-        help="Remove this GitHub stack grouping without requiring local tracking",
+        help="Separate this GitHub stack even when no matching local stack is available",
     )
     _add_checkout_parser(
         subcommands,
@@ -435,8 +461,8 @@ def build_parser() -> ArgumentParser:
         description_text=cleanup_command.__doc__ or "",
         handler=_forward_handler(cleanup_command.cleanup),
         revset_help=(
-            "Revision or change ID whose stack should be cleaned up; omit it to check every "
-            "saved review; cannot be combined with --pull-request"
+            t"Revision or change ID whose stack should be cleaned up; omit it to check every "
+            t"tracked pull request; cannot be combined with {ui.option('--pull-request')}"
         ),
     )
     cleanup_parser.add_argument(
@@ -444,16 +470,23 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Preview the cleanup without deleting review branches, comments, or tracking",
     )
-    cleanup_parser.add_argument(
+    add_help_argument(
+        cleanup_parser,
         "--close",
         action="store_true",
-        help="Close selected open pull requests before cleanup; requires --pull-request",
+        help=(
+            t"Close selected open pull requests before cleanup; requires "
+            t"{ui.option('--pull-request')}"
+        ),
     )
     add_help_argument(
         cleanup_parser,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
-        help="Clean up this saved pull request, or use 'orphans' for every orphaned review",
+        help=(
+            t"Clean up this tracked pull request, or use {ui.metavar('orphans')} for every "
+            t"tracked pull request whose local change is gone"
+        ),
     )
 
     sync_parser = _add_revision_command(
@@ -481,8 +514,8 @@ def build_parser() -> ArgumentParser:
         "--all",
         action="store_true",
         help=(
-            "Across all stacks, finish reviews whose submitted commit is already on trunk and "
-            "remove their saved PR links; never rebases or changes local commits"
+            "Finish reviews across all stacks when their submitted commits are already on trunk "
+            "and remove their saved PR links; never rebases or changes local commits"
         ),
     )
 
@@ -496,7 +529,7 @@ def build_parser() -> ArgumentParser:
     doctor_parser.add_argument(
         "--fix",
         action="store_true",
-        help="Apply the local repairs doctor can make safely, instead of only reporting them",
+        help="Apply safe local repairs instead of only reporting problems",
     )
 
     _add_command_parser(
@@ -520,11 +553,12 @@ def build_parser() -> ArgumentParser:
         choices=("bash", "zsh", "fish"),
         help="Shell to generate completion support for",
     )
-    completion_parser.add_argument(
+    add_help_argument(
+        completion_parser,
         "--jj-alias",
         metavar="NAME",
         type=_parse_jj_alias,
-        help="Also complete jj NAME as jj-stack while preserving other jj completions",
+        help=t"Name of an existing {ui.code('jj')} alias that runs {ui.code('jj-stack')}",
     )
     help_parser = _add_command_parser(
         subcommands,
@@ -534,11 +568,18 @@ def build_parser() -> ArgumentParser:
         handler=_help_handler,
         common_options=False,
     )
+    help_scope = help_parser.add_mutually_exclusive_group()
     add_help_argument(
-        help_parser,
+        help_scope,
         "--all",
         action="store_true",
-        help="Include advanced repair and shell integration commands",
+        help="Show every command and global option in top-level help",
+    )
+    add_help_argument(
+        help_scope,
+        "--all-in-one",
+        action="store_true",
+        help="Generate one Markdown reference containing every command and option",
     )
     help_parser.add_argument(
         "command",
@@ -550,6 +591,19 @@ def build_parser() -> ArgumentParser:
 
 def _help_handler(args: Namespace) -> int:
     parser = build_parser()
+    if args.all_in_one:
+        if args.command is not None:
+            raise UsageError("help --all-in-one cannot be combined with a command")
+        console.output(
+            render_all_in_one_markdown(
+                parser,
+                groups=_TOP_LEVEL_HELP_GROUPS,
+                aliases=_COMMAND_ALIASES,
+            ),
+            end="",
+            soft_wrap=True,
+        )
+        return 0
     if args.command is None:
         emit_top_level_help(
             parser,
@@ -933,7 +987,7 @@ def _add_relink_parser(
         parser,
         "revset",
         metavar="REVSET",
-        help="Revision or change ID to reassociate with the pull request",
+        help="Revision or change ID to reconnect to the pull request",
     )
     return parser
 
@@ -958,14 +1012,14 @@ def _add_checkout_parser(
         selector,
         *_PULL_REQUEST_OPTION_STRINGS,
         metavar="PR",
-        help="Pull request whose change to edit, by number or URL",
+        help="Pull request to check out, by number or URL",
     )
     add_help_argument(
         selector,
         "--revset",
         help=(
-            t"Local stack whose head to edit; defaults to {ui.revset('@')} when the working-copy "
-            t"change is described and nonempty, otherwise {ui.revset('@-')}"
+            t"Local stack to check out by head revision; defaults to {ui.revset('@')} when the "
+            t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
     add_help_argument(
@@ -994,23 +1048,26 @@ def _add_common_options(
     # subparsers create fresh namespaces and would otherwise clobber any
     # overrides passed before the subcommand. These registrations exist only
     # so the flags appear in --help output.
-    parser.add_argument(
+    add_help_argument(
+        parser,
         "--config",
         action="store",
         default=SUPPRESS,
         dest=SUPPRESS,
         metavar="NAME=VALUE",
         help=(
-            "Additional jj config option as a TOML dotted-key assignment (e.g. ui.color=always)"
+            t"Additional {ui.code('jj')} config option as a TOML dotted-key assignment "
+            t"(e.g. {ui.code('ui.color=always')})"
         ),
     )
-    parser.add_argument(
+    add_help_argument(
+        parser,
         "--config-file",
         action="store",
         default=SUPPRESS,
         dest=SUPPRESS,
         metavar="PATH",
-        help="Additional jj config file to load; repeat for several",
+        help=t"Additional {ui.code('jj')} config file to load; repeat for several",
     )
     parser.add_argument(
         "--debug",
@@ -1018,18 +1075,19 @@ def _add_common_options(
         default=SUPPRESS if suppress_defaults else False,
         help="Enable debug logging",
     )
-    parser.add_argument(
+    add_help_argument(
+        parser,
         "--color",
         choices=_COLOR_CHOICES,
         default=SUPPRESS if suppress_defaults else None,
         metavar="WHEN",
-        help="When to colorize output; possible values: always, never, debug, auto",
+        help=(t"When to colorize output; possible values: {ui.join(ui.metavar, _COLOR_CHOICES)}"),
     )
     parser.add_argument(
         "--time-output",
         action="store_true",
         default=SUPPRESS if suppress_defaults else False,
-        help="Prefix each printed line with elapsed seconds since process start",
+        help="Prefix each printed line with the seconds elapsed since the process started",
     )
 
 

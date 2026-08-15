@@ -1,9 +1,8 @@
-"""Check whether jj-stack has stored tracking in this local repository.
+"""Check whether this repository contains valid `jj-stack` tracking data.
 
-The command is a silent predicate for scripts and coding-agent instructions. It exits 0 when a
-valid jj-stack tracking file exists and 1 when none exists. It does not inspect the working copy,
-read GitHub, or create tracking. A repository or tracking error is reported on stderr and exits
-11, so callers can distinguish an error from a clean negative result.
+Intended for scripts and automation, the command prints nothing and exits 0 when `jj-stack` is in
+use, 1 when it is not, and 11 for repository or tracking errors. It does not inspect the working
+copy, read GitHub, or create tracking.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from jj_stack.bootstrap import resolve_repo_root
 from jj_stack.errors import CliError, ProbeError
 from jj_stack.state.store import ReviewStateStore
 
-HELP = "Check whether jj-stack is in use in this local repository"
+HELP = "Check whether this repository uses `jj-stack`"
 
 
 def in_use(*, repository: Path | None) -> int:

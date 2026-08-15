@@ -41,7 +41,7 @@ from jj_stack.ui import Message
 
 logger = logging.getLogger(__name__)
 
-HELP = "Check the review status of one or more jj stacks"
+HELP = "Check the review status of one or more `jj` stacks"
 
 PullRequestLookupState = Literal["ambiguous", "closed", "error", "missing", "open"]
 PullRequestLookupSource = Literal["head", "remembered"]

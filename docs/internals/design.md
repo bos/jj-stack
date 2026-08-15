@@ -868,6 +868,11 @@ Close orphaned PRs and remove their leftovers with `cleanup --pull-request <pr> 
 Built-in `--help` and the user guide own exact parser syntax and aliases. This specification owns
 enduring selection rules, command effects, and exit meanings.
 
+`help --all` adds advanced commands and hidden global options to ordinary top-level help.
+`help --all-in-one` emits one deterministic Markdown document containing the detailed help for
+every command. It adds semantic HTML classes for commands, options, and metavariables so a
+documentation site can style the syntax without parsing terminal output.
+
 Running the executable without a subcommand is equivalent to `view` without arguments.
 
 ### Exit codes

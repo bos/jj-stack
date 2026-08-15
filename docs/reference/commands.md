@@ -6,7 +6,7 @@ navGroup: Look things up
 weight: 80
 ---
 
-The built-in help has the complete list of flags and aliases:
+The built-in help is the exact flag and alias reference:
 
 ```console
 jj-stack --help
@@ -14,7 +14,11 @@ jj-stack <command> --help
 jj-stack help --all
 ```
 
-This page explains which command owns a task without duplicating every flag.
+`help --all` adds advanced commands and global options to the top-level command list. The
+[complete CLI reference](https://www.serpentine.com/software/jj-stack/reference/cli/) combines
+the detailed help for every command in one browser-readable page.
+
+This page explains which command owns a task without duplicating that generated reference.
 
 ## Core workflow
 
@@ -49,7 +53,8 @@ Running `jj-stack` without a subcommand is equivalent to `jj-stack view` without
 | Command | Use it to |
 |---|---|
 | `completion` | Generate shell completion for `jj-stack` or a `jj stack` alias. |
-| `help --all` | Print every command, option, and alias in one document. |
+| `help --all` | Include advanced commands and global options in top-level help. |
+| `help --all-in-one` | Generate the complete semantic Markdown CLI reference. |
 
 ## Choose a stack
 

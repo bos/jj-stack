@@ -1,12 +1,12 @@
-"""Apply completed GitHub merges to a local stack and refresh the PRs that remain.
+"""Apply completed GitHub merges to a local stack and refresh the pull requests that remain.
 
-`sync` fetches trunk and proves which reviewed changes reached it. It then rebases the remaining
-changes, updates only their existing pull requests, and removes the merged reviews' branches,
-comments, and saved links. It also verifies and applies a native GitHub stack rebase while
-restoring the original jj change IDs. A completed direct `merge` invokes the same selected-stack
-update. Neither path creates a pull request.
+`sync` fetches trunk and determines which reviewed changes have reached it. It then rebases the
+remaining changes, updates only their existing pull requests, and removes review branches,
+comments, and saved links for merged pull requests. If GitHub used rebase merging, `sync`
+verifies the new commits, applies them locally, and restores the original `jj` change IDs. A
+completed direct `merge` performs the same update. Neither command creates a pull request.
 
-Some local states stop `sync` before it rebases:
+`sync` stops before rebasing in any of these cases:
 
 - A remaining change has multiple visible revisions. `sync` cannot choose one.
 
@@ -16,27 +16,28 @@ Some local states stop `sync` before it rebases:
   local change could put it before or after the merged work. `sync` will not choose for you.
 
 - An unreviewed change sits between reviewed changes. `sync` updates existing pull requests but
-  never creates the missing review.
+  never creates the missing pull request.
 
 Before rebasing, `sync` also checks saved pull request links and GitHub stack membership. A
-missing, moved, closed, or ambiguous review stops the run before local history changes. The
-message names the state to inspect or repair.
+missing or closed pull request, a changed stack relationship, or ambiguous tracking stops the
+command before it changes local history. The error identifies what needs attention.
 
-Conflicts do not prevent the local rebase. If a rebased review remains conflicted, `sync` leaves
+Conflicts do not prevent the local rebase. If a rebased change remains conflicted, `sync` leaves
 the conflict in local history and stops before updating that pull request. Resolve the conflict
 with `jj`, then run `jj-stack submit`.
 
 Rebasing a `jj` change also rebases its descendants. This may move local work above the selected
 stack, but `sync` updates pull requests only for the selected stack.
 
-A different local path may share a merged change with the stack being synced. If that path still
+Another local stack may share a merged change with the stack being synced. If that stack still
 uses the old local change, `sync` leaves the change in place and prints the other stack to sync
-next. A rerun observes work already completed and continues from there.
+next. Rerunning `sync` skips completed work and continues.
 
-`sync --all` checks every pull request known to jj-stack. It reconciles each affected local stack
-in turn and also cleans up exact submitted commits whose local changes are gone.
+`sync --all` checks every pull request known to `jj-stack`. It updates each affected local stack
+in turn and also cleans up pull requests whose submitted commits are on trunk even when their
+local changes are gone.
 
-Use plain `jj rebase` when trunk merely advanced and GitHub did not rebase the stack.
+Use plain `jj rebase` when trunk merely advanced and GitHub did not rewrite the commits.
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ from jj_stack.review.status import PreparedStatus, prepare_status, status_prepar
 from jj_stack.review.trunk_evidence import TrackedReview
 from jj_stack.state.operation_lock import acquire_operation_lock
 
-HELP = "Apply completed GitHub merges locally and refresh the PRs that remain"
+HELP = "Apply completed GitHub merges locally and refresh the pull requests that remain"
 
 
 def sync(

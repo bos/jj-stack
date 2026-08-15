@@ -77,6 +77,14 @@ dataclasses where practical. Public `--json` output is a separate interface gove
 [`docs/json-output.schema.json`](../json-output.schema.json), not by the tracking or GitHub
 models.
 
+## Documentation generation
+
+The CLI parser and help text are the source for both terminal help and the complete online CLI
+reference. `jj-stack help --all-in-one` renders a Markdown fragment with semantic HTML classes;
+it does not add site navigation or styling. The website invokes that renderer from the same
+jj-stack checkout whose canonical user guides it snapshots, then owns the generated page's front
+matter, CSS, and publication.
+
 ## Test boundaries
 
 The local integration environment uses real `jj` and Git repositories with a purpose-built

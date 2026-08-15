@@ -1,14 +1,14 @@
-"""Check jj-stack's configuration and connectivity.
+"""Check `jj-stack`'s configuration and connectivity.
 
 Checks review-branch fetch settings, visible review bookmarks, leftovers from interrupted
 checkout or sync commands, remote selection, GitHub connectivity, authentication, and trunk
-discovery.
-Reports only; pass --fix to also apply the local repairs it can make safely, which
-today means reserving the review-branch namespace in the remote's fetch configuration.
-Nothing on GitHub is ever changed.
+discovery. By default, it only reports problems. Pass `--fix` to also apply the local repairs it
+can make safely. Currently, the only automatic repair is reserving the review-branch namespace
+in the remote's fetch configuration. The command never changes GitHub.
 
-Exit status is 0 if every check passed, warned, or was fixed; 1 if any check failed.
-Failures name a recovery command where jj-stack can determine one.
+Exit status is 0 unless a check fails; warnings and problems repaired by `--fix` do not count as
+failures. When a check fails, the command exits 1 and names a recovery command when `jj-stack` can
+determine one.
 """
 
 from __future__ import annotations

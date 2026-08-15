@@ -1,25 +1,25 @@
 """Ask GitHub to merge reviewed changes at the bottom of a stack.
 
-Candidates are the consecutive open, non-draft pull requests from the bottom. Each must still
-match the exact commit last submitted; GitHub decides whether reviews, checks, conflicts, and
-repository rules allow the merge.
+Starting at the bottom of the stack, `jj-stack` selects consecutive open, non-draft pull
+requests. Each must still match the commit that was last submitted; GitHub decides whether
+reviews, checks, conflicts, and repository rules allow the merge.
 
 For a direct merge, the command waits for GitHub to finish. It then fetches trunk, removes the
 merged changes from the local stack, rebases any remaining changes onto the updated trunk, and
 updates their existing pull requests.
 
-When the trunk branch uses a merge queue, the command adds the changes to the queue and exits as
-soon as GitHub accepts them. It does not wait for them to merge or update the local stack. After
-GitHub finishes, run `jj-stack sync <head-change-id>`.
+When the trunk branch uses a merge queue, the command adds the pull requests to the queue and
+exits once GitHub accepts them. It does not wait for them to merge or update the local stack.
+After GitHub finishes, run `jj-stack sync <head-change-id>`.
 
 Common examples:
 
 - `jj-stack merge --dry-run` previews the merge without changing GitHub.
 
-- `jj-stack merge` asks GitHub to merge the ready bottom changes.
+- `jj-stack merge` asks GitHub to merge the ready changes at the bottom of the stack.
 
-- `jj-stack merge --pull-request 123 --method squash` stops at one linked PR and chooses the
-  merge method explicitly.
+- `jj-stack merge --pull-request 123 --method squash` selects PR 123 as the last PR to merge and
+  chooses the merge method explicitly.
 """
 
 from __future__ import annotations

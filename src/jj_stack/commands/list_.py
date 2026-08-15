@@ -1,14 +1,16 @@
-"""List the review stacks jj-stack is tracking in this local repository.
+"""List the review stacks `jj-stack` is tracking in this local repository.
 
-Shows one row per locally known stack, including the head change ID, stack size, review state,
+It shows one row per locally known stack, including the head change ID, stack size, review state,
 and description of the head change. It does not discover stacks that exist only on GitHub.
 
 It also shows orphaned PRs: tracked PRs whose local change is no longer part of any current
 stack. Close them and remove their branches, comments, and saved links with
 `jj-stack cleanup --pull-request orphans --close`.
 
-It reads pull request state from GitHub but does not fetch, so run `jj git fetch` first when your
-local trunk may be behind.
+It reads pull request state from GitHub, but discovers stack membership from the local DAG using
+local `trunk()` as the lower boundary. If your local copy of trunk is behind, `jj-stack`'s picture
+of membership can be stale even though the pull request state is current. Run `jj git fetch`
+first when the list needs to reflect the latest trunk.
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ from jj_stack.review.status import (
     prepare_stack_for_status,
 )
 
-HELP = "List the review stacks jj-stack is tracking in this repository"
+HELP = "List the review stacks `jj-stack` is tracking in this repository"
 
 
 @dataclass(frozen=True, slots=True)

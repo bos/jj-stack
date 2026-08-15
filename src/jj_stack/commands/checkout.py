@@ -1,15 +1,14 @@
 """Check out an existing stack of pull requests.
 
-Pass `--pull-request PR` to adopt the stack ending at that pull request. If its reviewed commits
-are not present locally, the command fetches them automatically. It records which pull request
-belongs to each local change, then runs `jj edit` on the selected pull request's change.
+Use `--pull-request` to select a GitHub pull request, `--revset` to select a locally tracked head,
+or `--pick` to choose from local and GitHub stacks in an interactive numbered list. When a pull
+request's reviewed commits are not present locally, the command fetches them automatically. It
+records which pull request belongs to each local change, then runs `jj edit` on the selected
+change.
 
-Pass `--pull-request` to select a GitHub pull request directly, `--revset` to select a locally
-tracked head, or `--pick` to choose from local and GitHub stacks in an interactive numbered list.
-
-The working copy moves only after the complete stack has been validated and any new tracking has
-been saved. `checkout` does not rebase changes or modify GitHub. To create a new change on top of
-the checked-out change, run `jj new` afterward.
+`jj-stack` changes the working copy only after validating the entire stack and saving any new
+pull request links. `checkout` does not rebase changes or modify GitHub. To create a new change
+on top of the checked-out change, run `jj new` afterward.
 """
 
 from __future__ import annotations

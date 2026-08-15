@@ -1,4 +1,4 @@
-"""Reconnect one exact GitHub pull request to a selected local change."""
+"""Reconnect a GitHub pull request to a selected local change."""
 
 from __future__ import annotations
 

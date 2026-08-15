@@ -1,8 +1,9 @@
-"""Remove review branches, comments, and saved links that no active review still needs.
+"""Remove review branches, comments, and saved links no active pull request needs.
 
 With no selector, it checks the whole repository. A revision limits cleanup to one local stack;
-`--pull-request` selects one saved review, and `--pull-request orphans` selects every saved review
-whose local change is gone. Add `--close` to close selected open pull requests before cleanup.
+`--pull-request` selects one tracked pull request, and `--pull-request orphans` selects every
+tracked pull request whose local change is gone. Add `--close` to close selected open pull
+requests before cleanup.
 
 Without `--close`, open pull requests are left alone. Already closed or merged pull requests do
 not need the flag and are cleaned up normally.
@@ -72,7 +73,7 @@ from .stale import (
     _local_cleanup_observations,
 )
 
-HELP = "Remove review artifacts that are no longer in use"
+HELP = "Remove review data that no active pull request needs"
 
 
 def cleanup(

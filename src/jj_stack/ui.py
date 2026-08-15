@@ -101,6 +101,12 @@ def revset(text: str) -> SemanticText:
     return semantic_text(text, "revset")
 
 
+def metavar(text: str) -> SemanticText:
+    """Wrap a command-line metavariable."""
+
+    return semantic_text(text, "metavar")
+
+
 def code(text: str) -> SemanticText:
     """Wrap a code-like token for semantic rendering."""
 
@@ -114,6 +120,12 @@ def cmd(text: str) -> SemanticText:
     """
 
     return semantic_text(text, "command", "hint")
+
+
+def option(text: str) -> SemanticText:
+    """Wrap one command-line option."""
+
+    return semantic_text(text, "option", "command", "hint")
 
 
 def status(value: StatusValue) -> StatusBadge:

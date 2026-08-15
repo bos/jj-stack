@@ -297,8 +297,8 @@ def _rewrite_mode(stack: GithubStack, tracked: set[int]) -> Literal["merge", "re
 def _unproven_rewrite_error(stack: GithubStack) -> CliError:
     return CliError(
         t"GitHub stack #{stack.number} changed, but none of its merged members is tracked "
-        t"here and the whole active stack was not rebased, so this repository cannot prove "
-        t"what GitHub did to its reviews.",
+        t"here and the whole active stack was not rebased, so jj-stack cannot determine how "
+        t"GitHub changed the reviews.",
         hint=t"Inspect it with {ui.cmd('jj-stack view')}. Restore or resubmit the review "
         t"branches, then rerun sync.",
     )
