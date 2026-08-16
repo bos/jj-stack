@@ -17,11 +17,6 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._cleanup_actions import check_tracked_review
-from jj_stack.commands._github_stack_safety import (
-    GithubStackSelection,
-    dissolve_github_stack,
-    selected_github_stack,
-)
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
@@ -29,6 +24,11 @@ from jj_stack.github.resolution import GithubTarget, resolve_github_target
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubStack
 from jj_stack.models.review_state import ReviewState
+from jj_stack.review.github_stack_safety import (
+    GithubStackSelection,
+    dissolve_github_stack,
+    selected_github_stack,
+)
 from jj_stack.review.observation import observe_reviews
 from jj_stack.review.selected import select_review_path
 from jj_stack.review.selection import (
@@ -194,6 +194,7 @@ def _resolve_local_github_stack(
     with console.spinner(description="Inspecting jj stack"):
         stack = select_review_path(
             jj_client=context.jj_client,
+            namespace=context.review_namespace,
             revset=selected_revset,
             state=state,
         ).stack
@@ -259,6 +260,7 @@ def _run_local_unstack(
     with console.spinner(description="Inspecting jj stack"):
         stack = select_review_path(
             jj_client=context.jj_client,
+            namespace=context.review_namespace,
             revset=selected_revset,
             state=state,
         ).stack

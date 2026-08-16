@@ -38,16 +38,15 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._github_stack_safety import dissolve_github_stack
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError, DriftError
-from jj_stack.formatting import short_change_id
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
 )
 from jj_stack.github.stack_availability import github_stacks_unavailable_error
+from jj_stack.identifiers import short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote
@@ -58,13 +57,13 @@ from jj_stack.review.branches import (
     ResolvedReviewBranch,
     ensure_new_review_branches_unclaimed,
     ensure_unique_review_branches,
-    review_branch_glob,
-    review_branch_matches_change,
 )
+from jj_stack.review.github_stack_safety import dissolve_github_stack
 from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
 )
+from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from . import auto_close
@@ -320,6 +319,7 @@ def _desired_draft_state(
 def _recover_interrupted_first_submissions(
     *,
     client: JjClient,
+    namespace: ReviewNamespace,
     remote: GitRemote,
     resolutions: tuple[ResolvedReviewBranch, ...],
     state_identities: Mapping[str, ReviewIdentity],
@@ -333,7 +333,7 @@ def _recover_interrupted_first_submissions(
     if not unresolved:
         return resolutions
     patterns = tuple(
-        f"refs/heads/{review_branch_glob()}-{short_change_id(resolution.change_id)}"
+        f"refs/heads/{namespace.branch_glob}-{short_change_id(resolution.change_id)}"
         for resolution in unresolved
     )
     remote_candidates = client.list_remote_branches(remote=remote.name, patterns=patterns)
@@ -433,6 +433,7 @@ async def run_submit_async(
     github_repository = require_github_repo(remote)
     branch_resolutions = _recover_interrupted_first_submissions(
         client=client,
+        namespace=context.review_namespace,
         remote=remote,
         resolutions=prepared_inputs.branch_resolutions,
         state_identities=state.review_identities,
@@ -442,7 +443,7 @@ async def run_submit_async(
         state.review_identities,
         github_repository.repository_key,
     )
-    visible_bookmarks = client.visible_review_bookmark_targets()
+    visible_bookmarks = client.visible_review_bookmark_targets(namespace=context.review_namespace)
     collisions = tuple(
         resolution.branch
         for resolution in branch_resolutions
@@ -539,6 +540,7 @@ async def run_submit_async(
             trunk_branch, trunk_targets = resolve_trunk_branch(
                 client=client,
                 github_repository_state=github_repository_state,
+                namespace=context.review_namespace,
                 remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,
             )
@@ -680,6 +682,7 @@ async def run_submit_async(
                 )
             with console.spinner(description="Pushing review branches"):
                 client.mutate_remote_review_refs(
+                    namespace=context.review_namespace,
                     remote=remote.name,
                     updates=tuple(
                         ReviewRefUpdate(

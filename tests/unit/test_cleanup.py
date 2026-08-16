@@ -16,6 +16,7 @@ from jj_stack.review.observation import (
     ReviewObservation,
     duplicate_review_claim_change_ids,
 )
+from jj_stack.review_namespace import ReviewNamespace
 from jj_stack.state.store import ReviewStateStore
 from jj_stack.ui import plain_text
 from tests.support.revision_helpers import make_revision
@@ -128,6 +129,7 @@ def _fake_context(
         CommandContext,
         SimpleNamespace(
             jj_client=cast(JjClient, SimpleNamespace()) if jj_client is None else jj_client,
+            review_namespace=ReviewNamespace("jj-stack"),
             state_store=(
                 cast(ReviewStateStore, SimpleNamespace(load=ReviewState))
                 if state_store is None

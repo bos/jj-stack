@@ -28,12 +28,7 @@ from jj_stack.errors import (
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.branches import (
-    review_branch_glob,
-    review_branch_ref,
-    review_fetch_refspec,
-    review_namespace,
-)
+from jj_stack.review_namespace import ReviewNamespace
 
 _REVISION_JSON_FIELDS = (
     r'"\"change_id\":" ++ json(change_id) ++ '
@@ -598,6 +593,7 @@ class JjClient:
     def ensure_review_fetch_isolation(
         self,
         *,
+        namespace: ReviewNamespace,
         remote: str,
         dry_run: bool = False,
     ) -> ReviewFetchIsolation:
@@ -621,14 +617,14 @@ class JjClient:
                 )
             raise CliError(
                 t"Effective jj setting {ui.code(override_key)} from {origin} overrides "
-                t"Git fetch refspecs and can import {ui.bookmark(review_namespace())} "
+                t"Git fetch refspecs and can import {ui.bookmark(namespace.branch_prefix)} "
                 t"bookmarks.",
                 hint=hint,
             )
 
         config_key = f"remote.{remote}.fetch"
         configured = self._git_fetch_refspecs(remote)
-        refspec = review_fetch_refspec()
+        refspec = namespace.fetch_refspec
         count = configured.count(refspec)
         if count == 1:
             return ReviewFetchIsolation(status="ready", problem=None)
@@ -672,11 +668,15 @@ class JjClient:
             )
         return result
 
-    def visible_review_bookmark_targets(self) -> dict[str, frozenset[str]]:
+    def visible_review_bookmark_targets(
+        self,
+        *,
+        namespace: ReviewNamespace,
+    ) -> dict[str, frozenset[str]]:
         """Return visible reserved-namespace bookmark targets grouped by name."""
 
         targets_by_name: dict[str, set[str]] = {}
-        for row in self._bookmark_rows(review_branch_glob()):
+        for row in self._bookmark_rows(namespace.branch_glob):
             targets_by_name.setdefault(row.name, set()).update(row.target)
         return {name: frozenset(targets) for name, targets in sorted(targets_by_name.items())}
 
@@ -759,6 +759,7 @@ class JjClient:
         *,
         remote: str,
         branch: str,
+        namespace: ReviewNamespace,
         expected_target: str,
         expected_change_id: str | None = None,
         expected_chain: Sequence[tuple[str, str, ExpectedGitChangeId]] = (),
@@ -770,7 +771,7 @@ class JjClient:
         tuple accepts any listed ID, including a missing change-ID header represented by `None`.
         """
 
-        ref = review_branch_ref(branch)
+        ref = namespace.branch_ref(branch)
         chain = tuple(expected_chain)
         if chain and (
             expected_parent_commit_id is None
@@ -923,6 +924,7 @@ class JjClient:
     def mutate_remote_review_refs(
         self,
         *,
+        namespace: ReviewNamespace,
         remote: str,
         updates: Sequence[ReviewRefUpdate],
     ) -> None:
@@ -934,7 +936,7 @@ class JjClient:
         branches = tuple(update.branch for update in ordered_updates)
         if len(set(branches)) != len(branches):
             raise ValueError("remote review-ref update set contains duplicate branches")
-        refs = tuple(review_branch_ref(branch) for branch in branches)
+        refs = tuple(namespace.branch_ref(branch) for branch in branches)
         if any(
             update.expected_target is None and update.desired_target is None
             for update in ordered_updates

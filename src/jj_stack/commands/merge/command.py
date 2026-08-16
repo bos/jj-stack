@@ -30,7 +30,6 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.commands.sync import run_stack_convergence
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError
@@ -38,6 +37,7 @@ from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepository
+from jj_stack.review.github_stack_safety import GithubStackSelection
 from jj_stack.review.observation import observe_reviews
 from jj_stack.review.selection import (
     resolve_linked_change_for_pull_request,
@@ -234,6 +234,7 @@ async def _stream_merge_async(
             trunk_branch, _trunk_targets = resolve_trunk_branch(
                 client=prepared.client,
                 github_repository_state=github_repository_state,
+                namespace=prepared_merge.context.review_namespace,
                 remote=remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )

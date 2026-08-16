@@ -36,16 +36,12 @@ from jj_stack.jj.client import JjClient, UnsupportedStackError
 from jj_stack.models.github import GithubPullRequest, GithubStack
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
 from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.branches import (
-    is_review_branch,
-    prepare_visible_review_snapshots,
-    review_branch_matches_change,
-    review_namespace,
-)
+from jj_stack.review.branches import prepare_visible_review_snapshots
 from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.selected import select_review_path
 from jj_stack.review.status import status_preparation_cli_error
+from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 HELP = "Check out an existing stack of pull requests"
@@ -98,6 +94,7 @@ def checkout(
             if result.adopted_count:
                 prepare_visible_review_snapshots(
                     jj_client=context.jj_client,
+                    namespace=context.review_namespace,
                     state=context.state_store.load(),
                 )
             context.jj_client.edit_revision(result.stack.head.commit_id)
@@ -144,7 +141,12 @@ def _checkout_saved_stack(
 ) -> CheckoutResult:
     client = context.jj_client
     state = context.state_store.load()
-    stack = select_review_path(jj_client=client, revset=revset, state=state).stack
+    stack = select_review_path(
+        jj_client=client,
+        namespace=context.review_namespace,
+        revset=revset,
+        state=state,
+    ).stack
     incomplete = tuple(
         revision
         for revision in stack.revisions
@@ -178,6 +180,7 @@ async def _checkout_pull_request_stack(
             pull_number=pull_number,
         )
         _validate_same_repository_managed_pull_request(
+            namespace=context.review_namespace,
             pull_request=top_pull_request,
             repository=repository,
         )
@@ -197,6 +200,7 @@ async def _checkout_pull_request_stack(
             )
         pull_requests = await _load_pull_request_chain(
             github_client=github_client,
+            namespace=context.review_namespace,
             repository=repository,
             top=top_pull_request,
         )
@@ -217,6 +221,7 @@ async def _checkout_pull_request_stack(
             with client.import_remote_review_ref(
                 remote=remote.name,
                 branch=top_pull_request.head.ref,
+                namespace=context.review_namespace,
                 expected_target=top_head_sha,
             ) as imported:
                 _require_branch_matches_revision(
@@ -225,6 +230,7 @@ async def _checkout_pull_request_stack(
                 )
                 stack = _discover_checkout_stack(
                     client=client,
+                    namespace=context.review_namespace,
                     revision=imported.commit_id,
                     state=state,
                 )
@@ -235,6 +241,7 @@ async def _checkout_pull_request_stack(
             )
             stack = _discover_checkout_stack(
                 client=client,
+                namespace=context.review_namespace,
                 revision=top_head_sha,
                 state=state,
             )
@@ -299,13 +306,19 @@ def _reject_locally_rewritten_change(
 def _discover_checkout_stack(
     *,
     client: JjClient,
+    namespace: ReviewNamespace,
     revision: str,
     state: ReviewState,
 ) -> LocalStack:
     """Resolve the reviewed stack, translating shape failures into repair guidance."""
 
     try:
-        return select_review_path(jj_client=client, revset=revision, state=state).stack
+        return select_review_path(
+            jj_client=client,
+            namespace=namespace,
+            revset=revision,
+            state=state,
+        ).stack
     except UnsupportedStackError as error:
         raise status_preparation_cli_error(error) from error
 
@@ -324,6 +337,7 @@ async def _load_pull_request(
 async def _load_pull_request_chain(
     *,
     github_client: GithubClient,
+    namespace: ReviewNamespace,
     repository: GithubRepoAddress,
     top: GithubPullRequest,
 ) -> tuple[GithubPullRequest, ...]:
@@ -332,7 +346,7 @@ async def _load_pull_request_chain(
     top_down = [top]
     seen = {top.head.ref}
     base = top.base.ref
-    while is_review_branch(base):
+    while namespace.contains(base):
         if base in seen:
             raise CliError(
                 t"Pull request base branches point at each other in a loop, starting at "
@@ -357,6 +371,7 @@ async def _load_pull_request_chain(
             )
         parent = matches[0]
         _validate_same_repository_managed_pull_request(
+            namespace=namespace,
             pull_request=parent,
             repository=repository,
         )
@@ -472,6 +487,7 @@ def _reject_duplicate_checkout_claims(
 
 def _validate_same_repository_managed_pull_request(
     *,
+    namespace: ReviewNamespace,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
 ) -> None:
@@ -482,11 +498,11 @@ def _validate_same_repository_managed_pull_request(
             t"{ui.bookmark(pull_request.head.label or pull_request.head.ref)} does not "
             t"belong to {repository.full_name}."
         )
-    if not is_review_branch(pull_request.head.ref):
+    if not namespace.contains(pull_request.head.ref):
         raise CliError(
             t"Pull request #{pull_request.number} head "
             t"{ui.bookmark(pull_request.head.ref)} is not in the reserved "
-            t"{ui.bookmark(review_namespace())} namespace."
+            t"{ui.bookmark(namespace.branch_prefix)} namespace."
         )
 
 
@@ -517,6 +533,7 @@ async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
     else:
         repository_paths = observe_repository_paths(
             jj_client=context.jj_client,
+            namespace=context.review_namespace,
             state=state,
         )
         local_stacks = sorted(
@@ -559,6 +576,7 @@ async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
     choices = _picker_choices(
         github_stacks=github_stacks,
         local_stacks=local_stacks,
+        namespace=context.review_namespace,
         pull_requests=pull_requests,
         repository=repository,
         state=state,
@@ -604,6 +622,7 @@ def _picker_choices(
     *,
     github_stacks: tuple[GithubStack, ...],
     local_stacks: list[LocalStack],
+    namespace: ReviewNamespace,
     pull_requests: dict[int, GithubPullRequest | None],
     repository: GithubRepoAddress,
     state: ReviewState,
@@ -628,7 +647,10 @@ def _picker_choices(
             )
             raise CliError(f"GitHub stack #{stack.number} refers to missing PR #{missing}.")
         resolved = tuple(member for member in members if member is not None)
-        if not all(_picker_pull_request_is_adoptable(member, repository) for member in resolved):
+        if not all(
+            _picker_pull_request_is_adoptable(member, namespace, repository)
+            for member in resolved
+        ):
             continue
         bottom = resolved[0]
         top = next(member for member in reversed(resolved) if member.number in active_numbers)
@@ -690,8 +712,9 @@ def _picker_pull_request_status(pull_request: GithubPullRequest) -> str:
 
 def _picker_pull_request_is_adoptable(
     pull_request: GithubPullRequest,
+    namespace: ReviewNamespace,
     repository: GithubRepoAddress,
 ) -> bool:
-    return is_review_branch(pull_request.head.ref) and (
+    return namespace.contains(pull_request.head.ref) and (
         pull_request.head.label == f"{repository.owner}:{pull_request.head.ref}"
     )

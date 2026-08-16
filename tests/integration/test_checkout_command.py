@@ -9,6 +9,7 @@ from jj_stack.state.store import ReviewStateStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubRepository
 from ..support.integration_helpers import (
+    TEST_REVIEW_NAMESPACE,
     commit_file,
     configure_fake_github_environment,
     init_fake_github_repo,
@@ -36,7 +37,7 @@ def test_checkout_pick_fetches_github_stack_then_adopts_and_edits_selected_chang
     run_command(["jj", "git", "init", str(repo)], tmp_path)
     run_command(["jj", "git", "remote", "add", "origin", str(fake_repo.git_dir)], repo)
     client = JjClient(repo)
-    client.ensure_review_fetch_isolation(remote="origin")
+    client.ensure_review_fetch_isolation(namespace=TEST_REVIEW_NAMESPACE, remote="origin")
     client.fetch_remote(remote="origin")
     run_command(["jj", "bookmark", "create", "main", "-r", "main@origin"], repo)
     assert client.query_revisions_by_commit_ids((expected_head.commit_id,)) == ()
@@ -66,7 +67,7 @@ def test_checkout_pick_fetches_github_stack_then_adopts_and_edits_selected_chang
     assert "Working copy now edits" in captured.out
     assert JjClient(repo).resolve_revision("@").change_id == expected_head.change_id
     assert ReviewStateStore.for_repo(repo).load() == expected
-    assert client.visible_review_bookmark_targets() == {}
+    assert client.visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE) == {}
     review_temp = client.review_temp_artifacts()
     assert (review_temp.ref_target, review_temp.bookmark_targets) == (None, ())
 
@@ -87,7 +88,7 @@ def test_checkout_pick_completes_a_partly_local_github_stack(
     run_command(["jj", "git", "init", str(repo)], tmp_path)
     run_command(["jj", "git", "remote", "add", "origin", str(fake_repo.git_dir)], repo)
     client = JjClient(repo)
-    client.ensure_review_fetch_isolation(remote="origin")
+    client.ensure_review_fetch_isolation(namespace=TEST_REVIEW_NAMESPACE, remote="origin")
     client.fetch_remote(remote="origin")
     run_command(["jj", "bookmark", "create", "main", "-r", "main@origin"], repo)
 
@@ -140,7 +141,9 @@ def test_checkout_accepts_a_matching_visible_review_bookmark(
 
     assert "Updated local tracking for 1 review" in capsys.readouterr().out
     assert state_store.load().review_identities == state.review_identities
-    assert set(JjClient(repo).visible_review_bookmark_targets()) == {identity.head_ref}
+    assert set(
+        JjClient(repo).visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE)
+    ) == {identity.head_ref}
 
 
 def test_checkout_rejects_a_locally_rewritten_pull_request_before_importing(

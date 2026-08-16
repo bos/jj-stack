@@ -8,10 +8,10 @@ import jj_stack.commands.doctor as doctor_mod
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
-from jj_stack.review.branches import review_fetch_refspec
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
+    TEST_REVIEW_NAMESPACE,
     init_fake_github_repo,
     run_command,
     write_fake_github_config,
@@ -63,7 +63,10 @@ def test_doctor_exits_zero_for_healthy_repo(
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
-    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
+    JjClient(repo).ensure_review_fetch_isolation(
+        namespace=TEST_REVIEW_NAMESPACE,
+        remote="origin",
+    )
 
     exit_code = run_main(repo, config_path, "doctor")
     captured = capsys.readouterr()
@@ -129,7 +132,7 @@ def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
     output = " ".join(capsys.readouterr().out.split())
 
     assert exit_code == 0
-    assert f"missing {review_fetch_refspec()} exclusion" in output
+    assert f"missing {TEST_REVIEW_NAMESPACE.fetch_refspec} exclusion" in output
     assert "multiple" not in output
     assert "jj-stack doctor --fix" in output
     assert "without --dry-run" not in output
@@ -143,9 +146,9 @@ def test_doctor_distinguishes_duplicate_fetch_exclusions(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
     client = JjClient(repo)
-    client.ensure_review_fetch_isolation(remote="origin")
+    client.ensure_review_fetch_isolation(namespace=TEST_REVIEW_NAMESPACE, remote="origin")
     run_command(
-        ["git", "config", "--add", "remote.origin.fetch", review_fetch_refspec()],
+        ["git", "config", "--add", "remote.origin.fetch", TEST_REVIEW_NAMESPACE.fetch_refspec],
         repo,
     )
 
@@ -153,7 +156,7 @@ def test_doctor_distinguishes_duplicate_fetch_exclusions(
     output = " ".join(capsys.readouterr().out.split())
 
     assert exit_code == 0
-    assert f"multiple {review_fetch_refspec()} exclusions" in output
+    assert f"multiple {TEST_REVIEW_NAMESPACE.fetch_refspec} exclusions" in output
     assert "keep one with jj-stack doctor --fix" in output
     assert "missing" not in output
 

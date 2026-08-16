@@ -15,9 +15,7 @@ from jj_stack.config import AppConfig, load_config
 from jj_stack.errors import CliError
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
-from jj_stack.review.branches import (
-    install_review_namespace,
-)
+from jj_stack.review_namespace import ReviewNamespace
 from jj_stack.state.store import ReviewStateStore
 
 _MINIMUM_JJ_VERSION = (0, 44, 0)
@@ -54,6 +52,7 @@ class CommandContext:
     config: AppConfig
     jj_client: JjClient
     options: RuntimeOptions
+    review_namespace: ReviewNamespace
     repo_root: Path
     state_store: ReviewStateStore
 
@@ -74,8 +73,6 @@ def bootstrap_context(
     config = load_config(jj_client=jj_client)
     jj_client.enable_initial_working_copy_snapshot()
     configure_logging(debug=debug, configured_level=config.logging.level)
-    install_review_namespace(config.branch_prefix)
-
     return CommandContext(
         config=config,
         jj_client=jj_client,
@@ -84,6 +81,7 @@ def bootstrap_context(
             debug=debug,
             repository=repository,
         ),
+        review_namespace=ReviewNamespace(config.branch_prefix),
         repo_root=repo_root,
         state_store=ReviewStateStore.for_repo(repo_root),
     )

@@ -6,10 +6,10 @@ import asyncio
 from dataclasses import dataclass, replace
 
 import jj_stack.ui as ui
-from jj_stack.commands._github_stack_safety import selected_github_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubStack, GithubStackMerge
+from jj_stack.review.github_stack_safety import selected_github_stack
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.ui import Message
 

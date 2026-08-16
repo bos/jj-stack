@@ -36,6 +36,7 @@ def recover_github_stack_rebase(
     with context.jj_client.import_remote_review_ref(
         remote=remote_name,
         branch=top.candidate.review_identity.head_ref,
+        namespace=context.review_namespace,
         expected_target=top.remote_head_commit_id,
         expected_chain=tuple(
             (
@@ -57,6 +58,7 @@ def recover_github_stack_rebase(
             context.jj_client.integrate_operation(operation_id)
         reviewed = desired[: len(active)]
         context.jj_client.mutate_remote_review_refs(
+            namespace=context.review_namespace,
             remote=remote_name,
             updates=tuple(
                 ReviewRefUpdate(

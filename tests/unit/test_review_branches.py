@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-import jj_stack.review.branches as review_branches
 from jj_stack.errors import CliError
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalRevision
@@ -12,11 +11,11 @@ from jj_stack.review.branches import (
     ResolvedReviewBranch,
     ensure_new_review_branches_unclaimed,
     ensure_unique_review_branches,
-    generate_review_branch,
     resolve_review_branches,
-    review_branch_matches_change,
-    review_namespace,
 )
+from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
+
+_NAMESPACE = ReviewNamespace("jj-stack")
 
 
 def test_generate_review_branch_normalizes_subject() -> None:
@@ -25,7 +24,7 @@ def test_generate_review_branch_normalizes_subject() -> None:
         description="Fix cache invalidation!!!\n\nBody text.\n",
     )
 
-    branch = generate_review_branch(revision)
+    branch = _NAMESPACE.generate_branch(revision)
 
     assert branch == "jj-stack/fix-cache-invalidation-zvlywqkx"
 
@@ -33,7 +32,7 @@ def test_generate_review_branch_normalizes_subject() -> None:
 def test_generate_review_branch_falls_back_for_blank_subject() -> None:
     revision = _revision(change_id="abcdefghijklmno", description="\n")
 
-    branch = generate_review_branch(revision)
+    branch = _NAMESPACE.generate_branch(revision)
 
     assert branch == "jj-stack/change-abcdefgh"
 
@@ -67,6 +66,7 @@ def test_review_branch_resolution_keeps_saved_branch_stable_after_subject_change
     )
 
     resolutions = resolve_review_branches(
+        namespace=_NAMESPACE,
         revisions=(renamed_revision,),
         review_identities=identities,
     )
@@ -97,6 +97,7 @@ def test_review_branch_resolution_rejects_new_branch_claimed_by_another_stack() 
 
     identities = {existing_change_id: _identity(head_ref=branch)}
     resolutions = resolve_review_branches(
+        namespace=_NAMESPACE,
         revisions=(_revision(change_id=new_change_id, description="shared"),),
         review_identities=identities,
     )
@@ -143,11 +144,16 @@ def _revision(*, change_id: str, description: str) -> LocalRevision:
     )
 
 
-def test_reading_the_namespace_before_bootstrap_installs_it_fails_loudly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A default here would let a wrong prefix name someone else's branches for a force-push."""
+def test_review_namespaces_keep_branch_ownership_independent() -> None:
+    """Two configured contexts must not share authority over review refs."""
 
-    monkeypatch.setattr(review_branches, "_prefix", None)
-    with pytest.raises(RuntimeError, match="before bootstrap"):
-        review_namespace()
+    team = ReviewNamespace("team-reviews")
+    revision = _revision(change_id="zvlywqkxtmnpqrstu", description="Fix cache")
+
+    assert _NAMESPACE.generate_branch(revision) == "jj-stack/fix-cache-zvlywqkx"
+    assert team.generate_branch(revision) == "team-reviews/fix-cache-zvlywqkx"
+    assert team.branch_ref("team-reviews/fix-cache-zvlywqkx") == (
+        "refs/heads/team-reviews/fix-cache-zvlywqkx"
+    )
+    with pytest.raises(ValueError, match="not a branch"):
+        team.branch_ref("jj-stack/fix-cache-zvlywqkx")

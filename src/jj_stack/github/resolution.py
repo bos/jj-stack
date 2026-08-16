@@ -10,9 +10,7 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
-from jj_stack.review.branches import (
-    is_review_branch,
-)
+from jj_stack.review_namespace import ReviewNamespace
 
 if TYPE_CHECKING:
     from jj_stack.jj.client import JjClient
@@ -169,6 +167,7 @@ def resolve_trunk_branch(
     *,
     client: JjClient,
     github_repository_state: GithubRepository,
+    namespace: ReviewNamespace,
     remote: GitRemote,
     trunk_commit_id: str,
 ) -> tuple[str, dict[str, str]]:
@@ -180,7 +179,7 @@ def resolve_trunk_branch(
             remote=remote.name,
             patterns=("refs/heads/*",),
         ).items()
-        if not is_review_branch(branch)
+        if not namespace.contains(branch)
     }
     matches = tuple(
         branch for branch, target in remote_targets.items() if target == trunk_commit_id

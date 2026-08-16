@@ -230,6 +230,7 @@ async def _run_selected_convergence(
             trunk_branch, _trunk_targets = resolve_trunk_branch(
                 client=prepared.client,
                 github_repository_state=repository_state,
+                namespace=context.review_namespace,
                 remote=target.remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )
@@ -350,6 +351,7 @@ async def _apply_selected_plan(
             attachment = context.jj_client.import_remote_review_ref(
                 remote=target.remote.name,
                 branch=top.candidate.review_identity.head_ref,
+                namespace=context.review_namespace,
                 expected_target=destination,
                 expected_change_id=top.candidate.change_id,
                 expected_chain=tuple(

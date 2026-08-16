@@ -11,7 +11,6 @@ from typing import Literal
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ErrorMessage, error_message
-from jj_stack.formatting import short_change_id
 from jj_stack.github.client import (
     GithubClient,
     GithubClientError,
@@ -26,6 +25,7 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
+from jj_stack.identifiers import short_change_id
 from jj_stack.jj.client import JjClient, UnsupportedStackError
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPullRequest
@@ -37,6 +37,7 @@ from jj_stack.review.change_status import (
 )
 from jj_stack.review.path import SelectedReviewPath
 from jj_stack.review.selected import select_review_path, select_review_path_containing_change
+from jj_stack.review_namespace import ReviewNamespace
 from jj_stack.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -192,6 +193,7 @@ def prepare_status(
         fetch_remote_state=fetch_remote_state,
         containing_change_id=containing_change_id,
         jj_client=jj_client,
+        namespace=context.review_namespace,
         re_resolve_after_remote_refresh=re_resolve_after_remote_refresh,
         remote=github_target.remote,
         revset=revset,
@@ -227,6 +229,7 @@ def _resolve_selected_stack(
     fetch_remote_state: bool,
     containing_change_id: str | None,
     jj_client: JjClient,
+    namespace: ReviewNamespace,
     re_resolve_after_remote_refresh: bool,
     remote: GitRemote | None,
     revset: str | None,
@@ -254,11 +257,13 @@ def _resolve_selected_stack(
                 change_id=containing_change_id,
                 inspection_mode=inspection_mode,
                 jj_client=jj_client,
+                namespace=namespace,
                 state=state,
             )
         return select_review_path(
             inspection_mode=inspection_mode,
             jj_client=jj_client,
+            namespace=namespace,
             revset=revset,
             state=state,
         )

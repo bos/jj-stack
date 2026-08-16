@@ -264,6 +264,7 @@ def _resolve_cleanup_change_ids(
     if pull_request == "orphans":
         repository_paths = observe_repository_paths(
             jj_client=context.jj_client,
+            namespace=context.review_namespace,
             state=state,
         )
         tracked_stacks = tuple(
@@ -292,6 +293,7 @@ def _resolve_cleanup_change_ids(
         return None
     stack = select_review_path(
         jj_client=context.jj_client,
+        namespace=context.review_namespace,
         revset=revset,
         state=state,
     ).stack
@@ -645,6 +647,7 @@ async def _apply_tracked_review_cleanup(
     apply_remote_branch_cleanup(
         dry_run=prepared_cleanup.dry_run,
         jj_client=prepared_cleanup.context.jj_client,
+        namespace=prepared_cleanup.context.review_namespace,
         record_action=lambda action: record_action(_cleanup_action(action)),
         remote_name=remote_name,
         update=branch_update,

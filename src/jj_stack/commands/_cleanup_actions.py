@@ -8,7 +8,6 @@ from typing import Literal
 
 import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.commands._github_stack_safety import GithubStackSelection
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import (
@@ -19,8 +18,9 @@ from jj_stack.github.overview_comments import (
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
-from jj_stack.review.branches import review_branch_matches_change
+from jj_stack.review.github_stack_safety import GithubStackSelection
 from jj_stack.review.observation import RepositoryObservation
+from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
 from jj_stack.ui import Message
 
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -372,6 +372,7 @@ def apply_remote_branch_cleanup(
     *,
     dry_run: bool,
     jj_client: JjClient,
+    namespace: ReviewNamespace,
     record_action: Callable[[ReviewMutationAction], None],
     remote_name: str,
     update: ReviewRefUpdate | None,
@@ -384,6 +385,7 @@ def apply_remote_branch_cleanup(
     if update is not None:
         if not dry_run:
             jj_client.mutate_remote_review_refs(
+                namespace=namespace,
                 remote=remote_name,
                 updates=(update,),
             )

@@ -18,7 +18,7 @@ from jj_stack.models.review_state import (
     ReviewState,
     SubmittedBaseline,
 )
-from jj_stack.review.branches import review_branch_matches_change
+from jj_stack.review_namespace import review_branch_matches_change
 
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"

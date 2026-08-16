@@ -38,9 +38,6 @@ from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
-from jj_stack.review.branches import (
-    review_fetch_refspec,
-)
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
@@ -195,12 +192,14 @@ def _check_review_fetch_isolation(
     fix: bool,
     remote: GitRemote,
 ) -> CheckResult:
-    visible = tuple(context.jj_client.visible_review_bookmark_targets())
+    namespace = context.review_namespace
+    visible = tuple(context.jj_client.visible_review_bookmark_targets(namespace=namespace))
     visible_detail: CheckDetail = (
         t" Visible bookmarks remain: {ui.join(ui.bookmark, visible)}." if visible else ""
     )
     try:
         isolation = context.jj_client.ensure_review_fetch_isolation(
+            namespace=namespace,
             remote=remote.name,
             dry_run=not fix,
         )
@@ -212,12 +211,12 @@ def _check_review_fetch_isolation(
     if isolation.status == "required":
         if isolation.problem == "missing":
             problem_detail = (
-                t"missing {ui.code(review_fetch_refspec())} exclusion; ",
+                t"missing {ui.code(namespace.fetch_refspec)} exclusion; ",
                 t"add it with {ui.cmd('jj-stack doctor --fix')}.",
             )
         elif isolation.problem == "duplicate":
             problem_detail = (
-                t"found multiple {ui.code(review_fetch_refspec())} exclusions; ",
+                t"found multiple {ui.code(namespace.fetch_refspec)} exclusions; ",
                 t"keep one with {ui.cmd('jj-stack doctor --fix')}.",
             )
         else:
@@ -239,7 +238,7 @@ def _check_review_fetch_isolation(
     return CheckResult(
         "review branch fetch",
         "fixed" if isolation.status == "applied" else "ok",
-        t"exactly one {ui.code(review_fetch_refspec())} exclusion",
+        t"exactly one {ui.code(namespace.fetch_refspec)} exclusion",
     )
 
 

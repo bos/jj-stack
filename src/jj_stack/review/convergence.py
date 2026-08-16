@@ -388,6 +388,7 @@ def dependent_path_heads(
     excluded_changes = excluded_change_ids or set()
     repository_paths = observe_repository_paths(
         jj_client=context.jj_client,
+        namespace=context.review_namespace,
         descendant_of=(ancestor_commit_id,),
         include_working_copies=True,
         state=context.state_store.load(),

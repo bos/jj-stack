@@ -9,6 +9,7 @@ from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedB
 from jj_stack.review.selected import select_review_path
 
 from ..support.integration_helpers import (
+    TEST_REVIEW_NAMESPACE,
     commit_file,
     init_repo,
     run_command,
@@ -22,6 +23,7 @@ def test_selected_path_observes_linear_history_from_default_head(tmp_path: Path)
 
     path = select_review_path(
         jj_client=JjClient(repo),
+        namespace=TEST_REVIEW_NAMESPACE,
         state=ReviewState(),
     )
     stack = path.stack
@@ -44,6 +46,7 @@ def test_selected_path_maximality_ignores_excluded_working_copy_child(
 
     path = select_review_path(
         jj_client=JjClient(repo),
+        namespace=TEST_REVIEW_NAMESPACE,
         revset=feature,
         state=ReviewState(),
     )
@@ -62,6 +65,7 @@ def test_selected_path_ignores_off_path_reviewable_child(tmp_path: Path) -> None
 
     stack = select_review_path(
         jj_client=JjClient(repo),
+        namespace=TEST_REVIEW_NAMESPACE,
         revset=feature_2,
         state=ReviewState(),
     ).stack
@@ -137,7 +141,7 @@ def test_visible_review_bookmark_does_not_block_broad_operations(
     run_command(["jj", "git", "export"], repo)
     run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
     client = JjClient(repo)
-    client.ensure_review_fetch_isolation(remote="origin")
+    client.ensure_review_fetch_isolation(namespace=TEST_REVIEW_NAMESPACE, remote="origin")
 
     git_root = Path(run_command(["jj", "git", "root"], repo).stdout.strip())
     run_command(
@@ -151,7 +155,7 @@ def test_visible_review_bookmark_does_not_block_broad_operations(
         ],
         repo,
     )
-    assert client.visible_review_bookmark_targets() == {}
+    assert client.visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE) == {}
 
     if exposure == "fetch":
         client.fetch_remote(remote="origin")
@@ -159,12 +163,15 @@ def test_visible_review_bookmark_does_not_block_broad_operations(
         with client.import_remote_review_ref(
             remote="origin",
             branch=branch,
+            namespace=TEST_REVIEW_NAMESPACE,
             expected_target=commit_id,
             expected_change_id=change_id,
         ) as imported:
             assert imported.commit_id == commit_id
 
-    assert set(client.visible_review_bookmark_targets()) == {branch}
+    assert set(client.visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE)) == {
+        branch
+    }
     assert client.review_temp_artifacts().bookmark_targets == ()
     assert client.review_temp_artifacts().ref_target is None
 
@@ -181,7 +188,12 @@ def test_visible_review_bookmark_does_not_block_broad_operations(
         submitted_baselines={change_id: SubmittedBaseline(commit_id=commit_id)},
     )
 
-    selected = select_review_path(jj_client=client, revset=change_id, state=state).stack.head
+    selected = select_review_path(
+        jj_client=client,
+        namespace=TEST_REVIEW_NAMESPACE,
+        revset=change_id,
+        state=state,
+    ).stack.head
 
     assert selected.change_id == change_id
     assert selected.commit_id != commit_id
@@ -223,7 +235,10 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
 
     client.fetch_remote(remote="origin")
     visible_review_bookmarks = {branch: frozenset({old_commit})}
-    assert client.visible_review_bookmark_targets() == visible_review_bookmarks
+    assert (
+        client.visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE)
+        == visible_review_bookmarks
+    )
     assert client.list_remote_branches(
         remote="origin",
         patterns=(f"refs/heads/{branch}",),
@@ -252,7 +267,10 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
         )
         == remote_only_change
     )
-    assert client.visible_review_bookmark_targets() == visible_review_bookmarks
+    assert (
+        client.visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE)
+        == visible_review_bookmarks
+    )
 
     git_root = Path(run_command(["jj", "git", "root"], repo).stdout.strip())
     temp_ref = "refs/heads/jj-stack-tmp/checkout"
@@ -266,6 +284,7 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     with client.import_remote_review_ref(
         remote="origin",
         branch=branch,
+        namespace=TEST_REVIEW_NAMESPACE,
         expected_target=old_commit,
         expected_change_id=old_change_id,
     ) as imported:
@@ -282,6 +301,7 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     )
 
     client.mutate_remote_review_refs(
+        namespace=TEST_REVIEW_NAMESPACE,
         remote="origin",
         updates=(
             ReviewRefUpdate(
@@ -315,6 +335,7 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
     stale_targets = {branch: old_commit, created_branch: new_commit}
     with pytest.raises(JjCommandError):
         client.mutate_remote_review_refs(
+            namespace=TEST_REVIEW_NAMESPACE,
             remote="origin",
             updates=(
                 ReviewRefUpdate(
@@ -349,6 +370,7 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
         repo,
     )
     client.mutate_remote_review_refs(
+        namespace=TEST_REVIEW_NAMESPACE,
         remote="origin",
         updates=(
             ReviewRefUpdate(
@@ -370,7 +392,10 @@ def test_direct_git_review_ref_operations_use_the_backing_store(
         )
         == {}
     )
-    assert client.visible_review_bookmark_targets() == visible_review_bookmarks
+    assert (
+        client.visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE)
+        == visible_review_bookmarks
+    )
     assert (git_root == repo / ".git") is (layout_flag == "--colocate")
 
 

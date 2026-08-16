@@ -17,7 +17,6 @@ from jj_stack.models.github import (
     GithubStackPullRequest,
 )
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.branches import is_review_branch
 from jj_stack.review.finish import (
     FinishContext,
     finish_reviews,
@@ -59,7 +58,7 @@ async def run_global_recovery(*, context: CommandContext, dry_run: bool) -> Glob
                 remote=target.remote.name,
                 revision=previous_trunk.commit_id,
             )
-            if not is_review_branch(branch)
+            if not context.review_namespace.contains(branch)
         )
         context.jj_client.fetch_remote(
             branches=trunk_branches,
@@ -244,6 +243,7 @@ def _resolve_global_trunk_branch(
     branch, _targets = github_resolution.resolve_trunk_branch(
         client=context.jj_client,
         github_repository_state=repository_state,
+        namespace=context.review_namespace,
         remote=target.remote,
         trunk_commit_id=trunk_commit_id,
     )
@@ -266,6 +266,7 @@ def _observe_local_recovery_paths(
         return local_copies, ()
     paths = observe_repository_paths(
         jj_client=context.jj_client,
+        namespace=context.review_namespace,
         descendant_of=anchors,
         exclude_trunk_descendants=True,
         include_working_copies=True,

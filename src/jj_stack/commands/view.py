@@ -50,10 +50,6 @@ from jj_stack.jj.client import (
     divergent_change_id_from_error,
 )
 from jj_stack.models.review_state import ReviewIdentity
-from jj_stack.review.branches import (
-    is_review_branch,
-    review_branch_glob,
-)
 from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
@@ -73,6 +69,7 @@ from jj_stack.review.status import (
     status_preparation_cli_error,
     stream_status,
 )
+from jj_stack.review_namespace import ReviewNamespace
 
 _SUMMARY_SECTION_HEAD_COUNT = 3
 _SUMMARY_SECTION_TAIL_COUNT = 3
@@ -154,6 +151,7 @@ def _run_status(
             console.machine_output(json.dumps(_view_json_payload(stacks=(rendered,)), indent=2))
             return EXIT_INCOMPLETE if incomplete else 0
         exit_code = _render_prepared_status(
+            namespace=context.review_namespace,
             prepared_status=prepared_status,
             verbose=verbose,
         )
@@ -219,6 +217,7 @@ def _run_status(
         exit_code = max(
             exit_code,
             _render_prepared_status(
+                namespace=context.review_namespace,
                 prepared_status=prepared_status,
                 verbose=verbose,
             ),
@@ -444,6 +443,7 @@ def _json_status_result(
 
 def _render_prepared_status(
     *,
+    namespace: ReviewNamespace,
     prepared_status: PreparedStatus,
     verbose: bool,
 ) -> int:
@@ -505,6 +505,7 @@ def _render_prepared_status(
     )
     _emit_lines(
         render_status_advisory_lines(
+            namespace=namespace,
             result=result,
         )
     )
@@ -685,6 +686,7 @@ def _render_submitted_section_title(revisions: tuple) -> str:
 
 def render_status_advisory_lines(
     *,
+    namespace: ReviewNamespace,
     result: StatusResult,
 ) -> tuple[ui.Renderable, ...]:
     """Render any advisories that follow the status stack output."""
@@ -720,14 +722,14 @@ def render_status_advisory_lines(
         if pull_request is None:
             continue
         base_ref = pull_request.base.ref
-        if not is_review_branch(base_ref):
+        if not namespace.contains(base_ref):
             continue
         policy_warning_rows.append(
             (
                 "Repository policy",
                 t"Repository policy warning: PR #{pull_request.number} merged into "
                 t"{ui.bookmark(base_ref)}; configure GitHub to block merges of PRs "
-                t"targeting {ui.bookmark(review_branch_glob())}",
+                t"targeting {ui.bookmark(namespace.branch_glob)}",
             )
         )
     if (

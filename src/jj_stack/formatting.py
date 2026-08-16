@@ -1,4 +1,4 @@
-"""Shared short change ID and output-formatting helpers."""
+"""Shared output-formatting helpers."""
 
 from __future__ import annotations
 
@@ -38,12 +38,6 @@ class RevisionRenderClient(Protocol):
         *,
         color_when: Literal["always", "debug", "never"],
     ) -> dict[str, tuple[str, ...]]: ...
-
-
-def short_change_id(change_id: str) -> str:
-    """Return a stable short prefix for a full change ID."""
-
-    return change_id[:8]
 
 
 def format_pull_request_label(

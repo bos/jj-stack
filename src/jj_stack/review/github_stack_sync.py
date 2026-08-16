@@ -6,13 +6,13 @@ from typing import Literal
 import jj_stack.review.observation as review_observation
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._github_stack_safety import selected_github_stack
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubPullRequest, GithubStack, GithubStackPullRequest
 from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision
+from jj_stack.review.github_stack_safety import selected_github_stack
 from jj_stack.review.trunk_evidence import (
     TrackedReview,
     TrunkEvidenceKind,

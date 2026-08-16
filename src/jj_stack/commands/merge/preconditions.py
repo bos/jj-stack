@@ -6,8 +6,8 @@ from collections.abc import Mapping
 
 import jj_stack.ui as ui
 from jj_stack.commands.merge.models import MergeRevision
-from jj_stack.formatting import short_change_id
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.identifiers import short_change_id
 from jj_stack.review.observation import RepositoryObservation, ReviewObservation
 from jj_stack.ui import Message
 

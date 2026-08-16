@@ -20,6 +20,7 @@ from ..support.fake_github import (
     create_app,
 )
 from ..support.integration_helpers import (
+    TEST_REVIEW_NAMESPACE,
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
@@ -614,7 +615,10 @@ def test_submit_recreates_github_stack_only_after_active_review_grows_to_two(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
-    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
+    JjClient(repo).ensure_review_fetch_isolation(
+        namespace=TEST_REVIEW_NAMESPACE,
+        remote="origin",
+    )
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
     active_change_id = selected_stack(repo).head.change_id
     run_command(["jj", "rebase", "-s", active_change_id, "-d", "main"], repo)
@@ -646,7 +650,10 @@ def test_submit_appends_to_active_suffix_after_historical_prefix(
         fake_repo.pull_requests[2],
         base_ref="main",
     )
-    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
+    JjClient(repo).ensure_review_fetch_isolation(
+        namespace=TEST_REVIEW_NAMESPACE,
+        remote="origin",
+    )
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
     active_change_id = selected_stack(repo).head.change_id
     run_command(["jj", "rebase", "-s", active_change_id, "-d", "main"], repo)
@@ -996,7 +1003,7 @@ def test_submit_uses_readable_review_branch_names(
 
     assert run_main(repo, config_path, "submit") == 0
     state = ReviewStateStore.for_repo(repo).load()
-    assert JjClient(repo).visible_review_bookmark_targets() == {}
+    assert JjClient(repo).visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE) == {}
 
     for revision, subject in zip(stack.revisions, ("feature-1", "feature-2"), strict=True):
         branch = state.review_identities[revision.change_id].head_ref
@@ -1336,7 +1343,10 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
-    JjClient(repo).ensure_review_fetch_isolation(remote="origin")
+    JjClient(repo).ensure_review_fetch_isolation(
+        namespace=TEST_REVIEW_NAMESPACE,
+        remote="origin",
+    )
 
     initial_remote_refs = remote_refs(fake_repo.git_dir)
 
@@ -1401,7 +1411,9 @@ def test_submit_accepts_a_matching_visible_review_bookmark(
     if tracked:
         run_command(["jj", "bookmark", "track", f"{identity.head_ref}@origin"], repo)
 
-    assert identity.head_ref in JjClient(repo).visible_review_bookmark_targets()
+    assert identity.head_ref in JjClient(repo).visible_review_bookmark_targets(
+        namespace=TEST_REVIEW_NAMESPACE
+    )
     assert run_main(repo, config_path, "submit", change_id) == 0
     assert "divergent changes are not supported" not in capsys.readouterr().err
 
@@ -1704,10 +1716,11 @@ def test_submit_rerun_recovers_after_lost_remote_update_response(
     def mutate_then_fail(
         self,
         *,
+        namespace,
         remote: str,
         updates,
     ) -> None:
-        original_mutate(self, remote=remote, updates=updates)
+        original_mutate(self, namespace=namespace, remote=remote, updates=updates)
         raise RuntimeError("Simulated failure after remote update")
 
     monkeypatch.setattr(

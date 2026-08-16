@@ -104,7 +104,11 @@ async def observe_reviews(
     if context is None:
         local_revisions = {}
     else:
-        prepare_visible_review_snapshots(jj_client=context.jj_client, state=state)
+        prepare_visible_review_snapshots(
+            jj_client=context.jj_client,
+            namespace=context.review_namespace,
+            state=state,
+        )
         local_revisions = context.jj_client.query_revisions_by_change_ids(tuple(identities))
     reviews = {
         change_id: ReviewObservation(

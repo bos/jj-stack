@@ -16,14 +16,10 @@ from jj_stack.github.resolution import require_github_repo, select_submit_remote
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.review.branches import (
-    is_review_branch,
-    review_branch_glob,
-    review_branch_matches_change,
-)
 from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.review.selected import require_reviewable_revisions, select_review_path
 from jj_stack.review.selection import resolve_selected_revset
+from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 HELP = "Reconnect an existing pull request to a local change"
@@ -80,6 +76,7 @@ async def _run_relink_async(
     )
     stack = select_review_path(
         jj_client=client,
+        namespace=context.review_namespace,
         revset=selected,
         state=state,
     ).stack
@@ -104,6 +101,7 @@ async def _run_relink_async(
         pull_request, head_sha = await _load_exact_relink_pull_request(
             change_id=revision.change_id,
             github_client=github_client,
+            namespace=context.review_namespace,
             pull_number=pull_number,
             repository_owner=repository.owner,
         )
@@ -161,6 +159,7 @@ async def _load_exact_relink_pull_request(
     *,
     change_id: str,
     github_client: GithubClient,
+    namespace: ReviewNamespace,
     pull_number: int,
     repository_owner: str,
 ) -> tuple[GithubPullRequest, str]:
@@ -190,13 +189,13 @@ async def _load_exact_relink_pull_request(
         raise CliError(
             t"Head branch {ui.bookmark(branch)} does not uniquely identify PR #{pull_number}."
         )
-    if not is_review_branch(branch) or not review_branch_matches_change(
+    if not namespace.contains(branch) or not review_branch_matches_change(
         branch,
         change_id,
     ):
         raise CliError(
             t"Pull request #{pull_number} head {ui.bookmark(branch)} does not match "
-            t"change {ui.change_id(change_id)} under {ui.bookmark(review_branch_glob())}."
+            t"change {ui.change_id(change_id)} under {ui.bookmark(namespace.branch_glob)}."
         )
     head_sha = pull_request.head.sha
     if head_sha is None:

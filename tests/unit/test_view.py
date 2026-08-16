@@ -16,6 +16,9 @@ from jj_stack.review.status import (
     ReviewStatusRevision,
     StatusResult,
 )
+from jj_stack.review_namespace import ReviewNamespace
+
+_NAMESPACE = ReviewNamespace("jj-stack")
 
 
 def _lookup(
@@ -95,6 +98,7 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
 
     lines = _render_lines(
         *view_module.render_status_advisory_lines(
+            namespace=_NAMESPACE,
             result=cast(
                 StatusResult,
                 SimpleNamespace(
@@ -120,6 +124,7 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
 def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     lines = _render_lines(
         *view_module.render_status_advisory_lines(
+            namespace=_NAMESPACE,
             result=cast(
                 StatusResult,
                 SimpleNamespace(
@@ -152,6 +157,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_end_review() -> None:
 
     lines = _render_lines(
         *view_module.render_status_advisory_lines(
+            namespace=_NAMESPACE,
             result=cast(
                 StatusResult,
                 SimpleNamespace(
@@ -187,6 +193,7 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
 
     lines = _render_lines(
         *view_module.render_status_advisory_lines(
+            namespace=_NAMESPACE,
             result=cast(
                 StatusResult,
                 SimpleNamespace(

@@ -14,7 +14,13 @@ from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline as St
 from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import FakeGithubRepository
-from .integration_helpers import commit_file, run_command, selected_stack, write_file
+from .integration_helpers import (
+    TEST_REVIEW_NAMESPACE,
+    commit_file,
+    run_command,
+    selected_stack,
+    write_file,
+)
 from .submit_property_scenarios import (
     DriftOperation,
     ExternalDriftScenario,
@@ -261,7 +267,9 @@ def replay_external_drift_scenario(
     if scenario.drift.spec.expected_outcome == "fail_closed":
         before_refs = _remote_refs(fake_repo.git_dir)
         before_github = _github_snapshot(fake_repo)
-        before_imported_reviews = JjClient(repo).visible_review_bookmark_targets()
+        before_imported_reviews = JjClient(repo).visible_review_bookmark_targets(
+            namespace=TEST_REVIEW_NAMESPACE
+        )
         before_state = ReviewStateStore.for_repo(repo).load()
         fake_repo.pull_request_events.clear()
 
@@ -274,9 +282,10 @@ def replay_external_drift_scenario(
         assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
         assert _github_snapshot(fake_repo) == before_github, scenario.trace
         assert fake_repo.pull_request_events == [], scenario.trace
-        assert JjClient(repo).visible_review_bookmark_targets() == before_imported_reviews, (
-            scenario.trace
-        )
+        assert (
+            JjClient(repo).visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE)
+            == before_imported_reviews
+        ), scenario.trace
         assert ReviewStateStore.for_repo(repo).load() == before_state, scenario.trace
     else:
         stack = _discover_stack_for_labels(
